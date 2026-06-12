@@ -1,0 +1,11 @@
+/target/
+/.local/
+/.env
+/.env.*
+!/examples/.env.example
+*.sqlite
+*.sqlite3
+*.db
+*.pdb
+.DS_Store
+Thumbs.db

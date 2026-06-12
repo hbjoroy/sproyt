@@ -1,0 +1,105 @@
+# Sproyt
+
+Sproyt is an early Rust chat application for human and agentic users.
+
+The project direction is Rust end to end: a Rust backend, a Rust/WASM frontend with Leptos, container-first delivery, and a database setup that is light in development but production-ready with PostgreSQL.
+
+## Current Status
+
+This repository is at the "Hello Chat" stage. The current runnable program uses axum, Tokio, WebSocket, and a small mailbox-based chat core. Leptos, SQLx, OIDC, and containers are planned next.
+
+## Direction
+
+- Rust edition 2024, pinned to Rust 1.96.0 when the local toolchain is available.
+- Leptos for the frontend, using SSR plus hydration as the default architecture.
+- axum, Tokio, and Tower for the backend.
+- SQLx for database access.
+- SQLite as the simple local development database.
+- PostgreSQL as the production database contract.
+- External OIDC for identity, with an explicit development auth mode.
+- WebSocket for chat realtime events.
+- OCI-compatible containers that work with Podman, Docker, Rancher, and Kubernetes-style deployments.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the living architecture notes.
+
+See [docs/persistence-plan.md](docs/persistence-plan.md) for the planned persistent channel, membership, message, and agent/API interface work.
+
+See [docs/protocol.md](docs/protocol.md) for the first WebSocket/agent/MCP protocol sketch.
+
+## Prerequisites
+
+- Rust 1.96.0, via rustup.
+- The `wasm32-unknown-unknown` Rust target.
+- LLVM/clang is useful for Rust crates that build or bind to C/C++ code.
+- Podman or Docker.
+- Later: `cargo-leptos` for the Leptos SSR/WASM build.
+
+On this workstation, Rust 1.95.0, Podman 5.8.2, and LLVM/clang 22.1.6 were available when the project was started. Installing Rust 1.96.0 failed because the C: drive had too little free space, so the repository is pinned to 1.96.0 as the intended toolchain but the first local verification can be run with the installed 1.95.0 toolchain.
+
+## Run Hello Chat
+
+Start the development server:
+
+```powershell
+cargo run
+```
+
+Then open:
+
+```text
+http://127.0.0.1:9010/
+```
+
+Health check:
+
+```text
+http://127.0.0.1:9010/healthz
+```
+
+Open the same URL in multiple browser tabs, choose the same channel, and use different participant names to try the in-memory chat loop.
+
+Messages render in view mode by default. The current browser client supports:
+
+- Markdown headings, paragraphs, blockquotes, ordered and unordered lists.
+- Inline code with backticks.
+- Fenced code blocks.
+- Mermaid diagrams in fenced `mermaid` blocks.
+- Raw mode for inspecting the exact message text.
+
+Example message:
+
+````markdown
+# Plan
+
+- Write the core
+- Render the view
+
+```mermaid
+flowchart LR
+  A[Client] --> B[Mailbox]
+  B --> C[Channel]
+```
+````
+
+The WebSocket endpoint is:
+
+```text
+ws://127.0.0.1:9010/ws?channel=general&participant=alice
+```
+
+To use another local port:
+
+```powershell
+$env:SPROYT_ADDR='127.0.0.1:9011'
+cargo run
+```
+
+## Near-Term Roadmap
+
+1. Replace the dependency-free HTTP server with axum.
+2. Add a Leptos SSR plus hydration shell with `cargo-leptos`.
+3. Add configuration loading and structured tracing.
+4. Add SQLx with SQLite dev mode and PostgreSQL prod-like mode.
+5. Add durable chat domain storage: users, agent users, channels, memberships, and messages.
+6. Add OIDC and a clearly separate development auth provider.
+7. Add container and compose files for dev and prod-like runs.

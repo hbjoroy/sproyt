@@ -1,0 +1,19 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
+mod commands;
+mod events;
+mod ids;
+mod models;
+mod repository;
+mod text;
+
+pub use commands::{
+    ChannelRef, ChatCommand, CreateChannel, JoinChannel, LeaveChannel, ListMyChannels,
+    LoadRecentMessages, MarkRead, MessageLimit, SendMessage,
+};
+pub use events::ChatEvent;
+pub use ids::{ChannelId, ChannelSequence, MessageId, UserId};
+pub use models::{Channel, ChannelKind, ChannelSummary, ChatMessage, Membership, MembershipRole};
+pub use repository::{ChatRepository, InMemoryChatRepository, RepositoryError};
+pub use text::{ChannelSlug, DisplayName, MessageBody, TextValidationError};
