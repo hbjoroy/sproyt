@@ -34,7 +34,7 @@ See [docs/protocol.md](docs/protocol.md) for the first WebSocket/agent/MCP proto
 - Podman or Docker.
 - Later: `cargo-leptos` for the Leptos SSR/WASM build.
 
-On this workstation, Rust 1.95.0, Podman 5.8.2, and LLVM/clang 22.1.6 were available when the project was started. Installing Rust 1.96.0 failed because the C: drive had too little free space, so the repository is pinned to 1.96.0 as the intended toolchain but the first local verification can be run with the installed 1.95.0 toolchain.
+On this workstation, Rust 1.96.0, Podman 5.8.2, and LLVM/clang 22.1.6 are available.
 
 ## Run Hello Chat
 
@@ -93,6 +93,17 @@ To use another local port:
 $env:SPROYT_ADDR='127.0.0.1:9011'
 cargo run
 ```
+
+## Configuration
+
+Runtime configuration is read from environment variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SPROYT_ADDR` | `127.0.0.1:9010` | HTTP/WebSocket bind address. |
+| `DATABASE_URL` | `sqlite://.local/sproyt.sqlite` | Database URL. Supports `sqlite:`, `postgres://`, and `postgresql://` profiles. |
+
+The database URL is detected and typed at startup, but the current chat loop still uses the in-memory repository until the SQLx implementation is wired in.
 
 ## Near-Term Roadmap
 

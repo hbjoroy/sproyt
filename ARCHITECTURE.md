@@ -33,6 +33,7 @@ The main engineering bias is to use Rust idiomatically, lean on the type system,
 - Use Tower/Tower HTTP for middleware concerns.
 - Keep application state typed and explicit.
 - Prefer ordinary HTTP APIs and WebSocket endpoints over framework magic when domain boundaries matter.
+- Runtime configuration should be parsed into typed values at startup before being passed into services.
 
 ### Realtime
 

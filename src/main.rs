@@ -1,7 +1,6 @@
 mod chat;
+mod config;
 mod domain;
-
-use std::{env, net::SocketAddr};
 
 use axum::{
     Router,
@@ -17,10 +16,9 @@ use tokio::sync::broadcast;
 
 use crate::{
     chat::{ChatEngine, ChatError},
+    config::AppConfig,
     domain::{ChannelId, ChatEvent, ChatMessage, MessageBody, UserId},
 };
-
-const DEFAULT_ADDRESS: &str = "127.0.0.1:9010";
 
 #[derive(Clone)]
 struct AppState {
@@ -29,8 +27,8 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let address = env::var("SPROYT_ADDR").unwrap_or_else(|_| DEFAULT_ADDRESS.to_string());
-    let address: SocketAddr = address.parse()?;
+    let config = AppConfig::from_env()?;
+    let address = config.bind_address();
     let state = AppState {
         chat: ChatEngine::start(),
     };
@@ -43,6 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!("Hello Chat is listening on http://{address}");
+    println!("Database profile: {}", config.database().kind());
     axum::serve(listener, app).await?;
 
     Ok(())
