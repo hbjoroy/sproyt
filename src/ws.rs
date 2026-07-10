@@ -120,7 +120,12 @@ async fn execute_command(
         ClientCommand::Hello => Ok(ServerEvent::Hello {
             participant_id: participant_id.clone(),
         }),
-        ClientCommand::CreateChannel { slug, name, kind } => {
+        ClientCommand::CreateChannel {
+            slug,
+            name,
+            kind,
+            circle_id,
+        } => {
             async {
                 let channel = chat
                     .create_channel(
@@ -128,6 +133,7 @@ async fn execute_command(
                         ChannelSlug::new(slug)?,
                         DisplayName::new(name)?,
                         kind,
+                        circle_id,
                     )
                     .await?;
                 Ok(ServerEvent::ChannelCreated { channel })
@@ -226,6 +232,31 @@ async fn execute_command(
             .mark_read(participant_id.clone(), channel_id, sequence)
             .await
             .map(|membership| ServerEvent::ReadMarkerUpdated { membership }),
+        ClientCommand::CreateCircle { slug, name } => {
+            async {
+                let circle = chat
+                    .create_circle(
+                        participant_id.clone(),
+                        ChannelSlug::new(slug)?,
+                        DisplayName::new(name)?,
+                    )
+                    .await?;
+                Ok(ServerEvent::CircleCreated { circle })
+            }
+            .await
+        }
+        ClientCommand::ListMyCircles => chat
+            .list_circles(participant_id.clone())
+            .await
+            .map(|circles| ServerEvent::CirclesListed { circles }),
+        ClientCommand::CreateCircleInvitation { circle_id } => chat
+            .create_circle_invitation(participant_id.clone(), circle_id)
+            .await
+            .map(|invitation| ServerEvent::CircleInvitationCreated { invitation }),
+        ClientCommand::AcceptCircleInvitation { token } => chat
+            .accept_circle_invitation(participant_id.clone(), token)
+            .await
+            .map(|membership| ServerEvent::CircleInvitationAccepted { membership }),
         ClientCommand::Ping => Ok(ServerEvent::Pong),
     };
 

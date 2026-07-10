@@ -1,13 +1,17 @@
 use std::str::FromStr;
 
-use chrono::{DateTime, Utc};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Duration, Utc};
+use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions};
 
 use crate::domain::{
-    Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug, ChannelSummary,
-    ChatMessage, ChatRepository, CreateChannel, DisplayName, JoinChannel, LeaveChannel,
-    LoadRecentMessages, MarkRead, Membership, MembershipRole, MessageBody, MessageId,
-    RepositoryError, RepositoryFuture, SendMessage, User, UserId,
+    AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
+    ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId, CircleInvitation,
+    CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName,
+    InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
+    Membership, MembershipRole, MessageBody, MessageId, RepositoryError, RepositoryFuture,
+    SendMessage, User, UserId,
 };
 
 use super::{sql_error, storage};
@@ -53,6 +57,114 @@ impl ChatRepository for SqliteChatRepository {
         })
     }
 
+    fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle> {
+        Box::pin(async move {
+            let circle = Circle {
+                id: CircleId::generate(),
+                slug: command.slug,
+                name: command.name,
+                created_by: command.actor,
+                created_at: Utc::now(),
+            };
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            sqlx::query("insert into circles (id, slug, name, created_by, created_at) values (?, ?, ?, ?, ?)")
+                .bind(circle.id.to_string())
+                .bind(circle.slug.as_str())
+                .bind(circle.name.as_str())
+                .bind(circle.created_by.to_string())
+                .bind(circle.created_at)
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            sqlx::query("insert into circle_memberships (circle_id, user_id, role, joined_at) values (?, ?, 'owner', ?)")
+                .bind(circle.id.to_string())
+                .bind(circle.created_by.to_string())
+                .bind(circle.created_at)
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(circle)
+        })
+    }
+
+    fn list_circles_for_user<'a>(
+        &'a self,
+        actor: UserId,
+    ) -> RepositoryFuture<'a, Vec<(Circle, CircleRole)>> {
+        Box::pin(async move {
+            let rows = sqlx::query("select c.id, c.slug, c.name, c.created_by, c.created_at, m.role from circles c join circle_memberships m on m.circle_id = c.id where m.user_id = ? order by c.slug")
+                .bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(circle_with_role).collect()
+        })
+    }
+
+    fn create_circle_invitation<'a>(
+        &'a self,
+        command: CreateCircleInvitation,
+    ) -> RepositoryFuture<'a, IssuedInvitation> {
+        Box::pin(async move {
+            let role: Option<String> = sqlx::query_scalar(
+                "select role from circle_memberships where circle_id = ? and user_id = ?",
+            )
+            .bind(command.circle_id.to_string())
+            .bind(command.actor.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if role.as_deref() != Some("owner") {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut secret = [0_u8; 32];
+            getrandom::fill(&mut secret).map_err(storage)?;
+            let token = URL_SAFE_NO_PAD.encode(secret);
+            let token_hash = Sha256::digest(token.as_bytes()).to_vec();
+            let invitation = CircleInvitation {
+                id: InvitationId::generate(),
+                circle_id: command.circle_id,
+                invited_by: command.actor,
+                expires_at: Utc::now() + Duration::days(7),
+            };
+            sqlx::query("insert into circle_invitations (id, circle_id, invited_by, token_hash, expires_at) values (?, ?, ?, ?, ?)")
+                .bind(invitation.id.as_uuid().to_string()).bind(invitation.circle_id.to_string())
+                .bind(invitation.invited_by.to_string()).bind(token_hash).bind(invitation.expires_at)
+                .execute(&self.pool).await.map_err(sql_error)?;
+            Ok(IssuedInvitation { invitation, token })
+        })
+    }
+
+    fn accept_circle_invitation<'a>(
+        &'a self,
+        command: AcceptCircleInvitation,
+    ) -> RepositoryFuture<'a, CircleMembership> {
+        Box::pin(async move {
+            let token_hash = Sha256::digest(command.token.as_bytes()).to_vec();
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let row = sqlx::query("select id, circle_id, expires_at from circle_invitations where token_hash = ? and accepted_at is null")
+                .bind(token_hash).fetch_optional(&mut *transaction).await.map_err(sql_error)?
+                .ok_or(RepositoryError::NotFound)?;
+            let invitation_id: String = row.try_get("id").map_err(storage)?;
+            let circle_id = CircleId::from_uuid(
+                uuid::Uuid::parse_str(&row.try_get::<String, _>("circle_id").map_err(storage)?)
+                    .map_err(storage)?,
+            );
+            let expires_at: DateTime<Utc> = row.try_get("expires_at").map_err(storage)?;
+            if expires_at < Utc::now() {
+                return Err(RepositoryError::NotFound);
+            }
+            let joined_at = Utc::now();
+            sqlx::query("update circle_invitations set accepted_by = ?, accepted_at = ? where id = ? and accepted_at is null")
+                .bind(command.actor.to_string()).bind(joined_at).bind(invitation_id)
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            sqlx::query("insert into circle_memberships (circle_id, user_id, role, joined_at) values (?, ?, 'member', ?) on conflict(circle_id, user_id) do nothing")
+                .bind(circle_id.to_string()).bind(command.actor.to_string()).bind(joined_at)
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(CircleMembership {
+                circle_id,
+                user_id: command.actor,
+                role: CircleRole::Member,
+                joined_at,
+            })
+        })
+    }
+
     fn create_channel<'a>(&'a self, command: CreateChannel) -> RepositoryFuture<'a, Channel> {
         Box::pin(async move {
             let channel = Channel {
@@ -60,16 +172,31 @@ impl ChatRepository for SqliteChatRepository {
                 slug: command.slug,
                 name: command.name,
                 kind: command.kind,
+                circle_id: command.circle_id,
                 created_by: command.actor,
             };
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            if let Some(circle_id) = &channel.circle_id {
+                let allowed: Option<i64> = sqlx::query_scalar(
+                    "select 1 from circle_memberships where circle_id = ? and user_id = ?",
+                )
+                .bind(circle_id.to_string())
+                .bind(channel.created_by.to_string())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                if allowed.is_none() {
+                    return Err(RepositoryError::PermissionDenied);
+                }
+            }
             sqlx::query(
-                "insert into channels (id, slug, name, kind, created_by) values (?, ?, ?, ?, ?)",
+                "insert into channels (id, slug, name, kind, circle_id, created_by) values (?, ?, ?, ?, ?, ?)",
             )
             .bind(channel.id.to_string())
             .bind(channel.slug.as_str())
             .bind(channel.name.as_str())
             .bind(channel.kind.as_str())
+            .bind(channel.circle_id.as_ref().map(ToString::to_string))
             .bind(channel.created_by.to_string())
             .execute(&mut *transaction)
             .await
@@ -135,7 +262,7 @@ impl ChatRepository for SqliteChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id, c.slug, c.name, c.kind, m.role from channels c join channel_memberships m on m.channel_id = c.id where m.user_id = ? order by c.slug")
+            let rows = sqlx::query("select c.id, c.slug, c.name, c.kind, c.circle_id, m.role from channels c join channel_memberships m on m.channel_id = c.id where m.user_id = ? order by c.slug")
                 .bind(actor.to_string())
                 .fetch_all(&self.pool)
                 .await
@@ -380,11 +507,16 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
     let name: String = row.try_get("name").map_err(storage)?;
     let kind: String = row.try_get("kind").map_err(storage)?;
     let role: String = row.try_get("role").map_err(storage)?;
+    let circle_id: Option<String> = row.try_get("circle_id").map_err(storage)?;
     Ok(ChannelSummary {
         id: ChannelId::new(id).map_err(storage)?,
         slug: ChannelSlug::new(slug).map_err(storage)?,
         name: DisplayName::new(name).map_err(storage)?,
         kind: ChannelKind::parse(&kind).ok_or_else(|| storage("invalid channel kind"))?,
+        circle_id: circle_id
+            .map(|id| uuid::Uuid::parse_str(&id).map(CircleId::from_uuid))
+            .transpose()
+            .map_err(storage)?,
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
     })
 }
@@ -405,6 +537,26 @@ fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryE
         sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
         sent_at,
     })
+}
+
+fn circle_with_role(row: sqlx::sqlite::SqliteRow) -> Result<(Circle, CircleRole), RepositoryError> {
+    let id = uuid::Uuid::parse_str(&row.try_get::<String, _>("id").map_err(storage)?)
+        .map_err(storage)?;
+    let created_by =
+        UserId::new(row.try_get::<String, _>("created_by").map_err(storage)?).map_err(storage)?;
+    let role: String = row.try_get("role").map_err(storage)?;
+    Ok((
+        Circle {
+            id: CircleId::from_uuid(id),
+            slug: ChannelSlug::new(row.try_get::<String, _>("slug").map_err(storage)?)
+                .map_err(storage)?,
+            name: DisplayName::new(row.try_get::<String, _>("name").map_err(storage)?)
+                .map_err(storage)?,
+            created_by,
+            created_at: row.try_get("created_at").map_err(storage)?,
+        },
+        CircleRole::parse(&role).ok_or_else(|| storage("invalid circle role"))?,
+    ))
 }
 
 #[cfg(test)]
@@ -436,6 +588,7 @@ mod tests {
                 slug: ChannelSlug::new("sqlite").unwrap(),
                 name: DisplayName::new("SQLite").unwrap(),
                 kind: ChannelKind::Private,
+                circle_id: None,
             })
             .await
             .unwrap();
@@ -481,5 +634,47 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first, repeated);
+
+        let bob = UserId::named("sqlite-bob");
+        repository
+            .upsert_user(User {
+                id: bob.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Bob").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: UserId::named("sqlite-alice"),
+                slug: ChannelSlug::new("sqlite-friends").unwrap(),
+                name: DisplayName::new("SQLite Friends").unwrap(),
+            })
+            .await
+            .unwrap();
+        let invitation = repository
+            .create_circle_invitation(CreateCircleInvitation {
+                actor: UserId::named("sqlite-alice"),
+                circle_id: circle.id.clone(),
+            })
+            .await
+            .unwrap();
+        repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: bob.clone(),
+                token: invitation.token.clone(),
+            })
+            .await
+            .unwrap();
+        let reused = repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: bob,
+                token: invitation.token,
+            })
+            .await;
+        assert_eq!(reused, Err(RepositoryError::NotFound));
     }
 }

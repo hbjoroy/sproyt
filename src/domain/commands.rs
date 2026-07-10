@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ChannelId, ChannelKind, ChannelSequence, ChannelSlug, DisplayName, MembershipRole, MessageBody,
-    UserId,
+    ChannelId, ChannelKind, ChannelSequence, ChannelSlug, CircleId, DisplayName, MembershipRole,
+    MessageBody, UserId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -15,6 +15,9 @@ pub enum ChatCommand {
     LoadRecentMessages(LoadRecentMessages),
     SendMessage(SendMessage),
     MarkRead(MarkRead),
+    CreateCircle(CreateCircle),
+    CreateCircleInvitation(CreateCircleInvitation),
+    AcceptCircleInvitation(AcceptCircleInvitation),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -23,6 +26,26 @@ pub struct CreateChannel {
     pub slug: ChannelSlug,
     pub name: DisplayName,
     pub kind: ChannelKind,
+    pub circle_id: Option<CircleId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CreateCircle {
+    pub actor: UserId,
+    pub slug: ChannelSlug,
+    pub name: DisplayName,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CreateCircleInvitation {
+    pub actor: UserId,
+    pub circle_id: CircleId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AcceptCircleInvitation {
+    pub actor: UserId,
+    pub token: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

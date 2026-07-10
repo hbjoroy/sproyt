@@ -9,14 +9,15 @@ mod repository;
 mod text;
 
 pub use commands::{
-    ChannelRef, ChatCommand, CreateChannel, JoinChannel, LeaveChannel, ListMyChannels,
-    LoadRecentMessages, MarkRead, MessageLimit, SendMessage,
+    AcceptCircleInvitation, ChannelRef, ChatCommand, CreateChannel, CreateCircle,
+    CreateCircleInvitation, JoinChannel, LeaveChannel, ListMyChannels, LoadRecentMessages,
+    MarkRead, MessageLimit, SendMessage,
 };
 pub use events::ChatEvent;
-pub use ids::{ChannelId, ChannelSequence, MessageId, UserId};
+pub use ids::{ChannelId, ChannelSequence, CircleId, InvitationId, MessageId, UserId};
 pub use models::{
-    Channel, ChannelKind, ChannelSummary, ChatMessage, Membership, MembershipRole, PrincipalKind,
-    User,
+    Channel, ChannelKind, ChannelSummary, ChatMessage, Circle, CircleInvitation, CircleMembership,
+    CircleRole, IssuedInvitation, Membership, MembershipRole, PrincipalKind, User,
 };
 pub use repository::{ChatRepository, InMemoryChatRepository, RepositoryError, RepositoryFuture};
 pub use text::{ChannelSlug, DisplayName, MessageBody, TextValidationError};

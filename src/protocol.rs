@@ -23,6 +23,7 @@ pub enum ClientCommand {
         slug: String,
         name: String,
         kind: ChannelKind,
+        circle_id: Option<crate::domain::CircleId>,
     },
     JoinChannel {
         channel: ChannelRef,
@@ -51,6 +52,17 @@ pub enum ClientCommand {
         sequence: ChannelSequence,
     },
     Ping,
+    CreateCircle {
+        slug: String,
+        name: String,
+    },
+    ListMyCircles,
+    CreateCircleInvitation {
+        circle_id: crate::domain::CircleId,
+    },
+    AcceptCircleInvitation {
+        token: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -126,6 +138,18 @@ pub enum ServerEvent {
         hint: &'static str,
     },
     Pong,
+    CircleCreated {
+        circle: crate::domain::Circle,
+    },
+    CirclesListed {
+        circles: Vec<(crate::domain::Circle, crate::domain::CircleRole)>,
+    },
+    CircleInvitationCreated {
+        invitation: crate::domain::IssuedInvitation,
+    },
+    CircleInvitationAccepted {
+        membership: crate::domain::CircleMembership,
+    },
     Error {
         code: &'static str,
         message: String,

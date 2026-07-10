@@ -65,6 +65,48 @@ impl ChannelId {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CircleId(Uuid);
+
+impl CircleId {
+    pub fn generate() -> Self {
+        Self(Uuid::now_v7())
+    }
+
+    pub const fn as_uuid(&self) -> &Uuid {
+        &self.0
+    }
+
+    pub const fn from_uuid(value: Uuid) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for CircleId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct InvitationId(Uuid);
+
+impl InvitationId {
+    pub fn generate() -> Self {
+        Self(Uuid::now_v7())
+    }
+
+    pub const fn as_uuid(&self) -> &Uuid {
+        &self.0
+    }
+
+    pub const fn from_uuid(value: Uuid) -> Self {
+        Self(value)
+    }
+}
+
 impl fmt::Display for ChannelId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)

@@ -7,11 +7,15 @@ use std::{
 };
 
 use super::{
-    Channel, ChannelId, ChannelRef, ChannelSequence, ChannelSummary, ChatMessage, CreateChannel,
-    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MembershipRole, MessageId,
+    AcceptCircleInvitation, Channel, ChannelId, ChannelRef, ChannelSequence, ChannelSummary,
+    ChatMessage, Circle, CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel,
+    CreateCircle, CreateCircleInvitation, InvitationId, IssuedInvitation, JoinChannel,
+    LeaveChannel, LoadRecentMessages, MarkRead, Membership, MembershipRole, MessageId,
     RepositoryError::NotFound, SendMessage, User, UserId,
 };
-use chrono::Utc;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{Duration, Utc};
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 pub type RepositoryFuture<'a, T> =
@@ -19,6 +23,19 @@ pub type RepositoryFuture<'a, T> =
 
 pub trait ChatRepository: Send + Sync + 'static {
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
+    fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle>;
+    fn list_circles_for_user<'a>(
+        &'a self,
+        actor: UserId,
+    ) -> RepositoryFuture<'a, Vec<(Circle, CircleRole)>>;
+    fn create_circle_invitation<'a>(
+        &'a self,
+        command: CreateCircleInvitation,
+    ) -> RepositoryFuture<'a, IssuedInvitation>;
+    fn accept_circle_invitation<'a>(
+        &'a self,
+        command: AcceptCircleInvitation,
+    ) -> RepositoryFuture<'a, CircleMembership>;
     fn create_channel<'a>(&'a self, command: CreateChannel) -> RepositoryFuture<'a, Channel>;
     fn join_channel<'a>(&'a self, command: JoinChannel) -> RepositoryFuture<'a, Membership>;
     fn leave_channel<'a>(&'a self, command: LeaveChannel) -> RepositoryFuture<'a, ()>;
@@ -82,6 +99,123 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            if !state.users.contains_key(&command.actor) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if state.circles_by_slug.contains_key(&command.slug) {
+                return Err(RepositoryError::Conflict);
+            }
+            let circle = Circle {
+                id: CircleId::generate(),
+                slug: command.slug,
+                name: command.name,
+                created_by: command.actor.clone(),
+                created_at: Utc::now(),
+            };
+            state
+                .circles_by_slug
+                .insert(circle.slug.clone(), circle.id.clone());
+            state.circles.insert(circle.id.clone(), circle.clone());
+            state.circle_memberships.insert(
+                (circle.id.clone(), command.actor.clone()),
+                CircleMembership {
+                    circle_id: circle.id.clone(),
+                    user_id: command.actor,
+                    role: CircleRole::Owner,
+                    joined_at: circle.created_at,
+                },
+            );
+            Ok(circle)
+        })
+    }
+
+    fn list_circles_for_user<'a>(
+        &'a self,
+        actor: UserId,
+    ) -> RepositoryFuture<'a, Vec<(Circle, CircleRole)>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let mut circles = state
+                .circle_memberships
+                .values()
+                .filter(|membership| membership.user_id == actor)
+                .filter_map(|membership| {
+                    state
+                        .circles
+                        .get(&membership.circle_id)
+                        .cloned()
+                        .map(|circle| (circle, membership.role.clone()))
+                })
+                .collect::<Vec<_>>();
+            circles.sort_by(|left, right| left.0.slug.cmp(&right.0.slug));
+            Ok(circles)
+        })
+    }
+
+    fn create_circle_invitation<'a>(
+        &'a self,
+        command: CreateCircleInvitation,
+    ) -> RepositoryFuture<'a, IssuedInvitation> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let membership = state
+                .circle_memberships
+                .get(&(command.circle_id.clone(), command.actor.clone()))
+                .ok_or(RepositoryError::PermissionDenied)?;
+            if membership.role != CircleRole::Owner {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut secret = [0_u8; 32];
+            getrandom::fill(&mut secret)
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+            let token = URL_SAFE_NO_PAD.encode(secret);
+            let token_hash = Sha256::digest(token.as_bytes()).to_vec();
+            let invitation = CircleInvitation {
+                id: InvitationId::generate(),
+                circle_id: command.circle_id,
+                invited_by: command.actor,
+                expires_at: Utc::now() + Duration::days(7),
+            };
+            state
+                .circle_invitations
+                .insert(token_hash, invitation.clone());
+            Ok(IssuedInvitation { invitation, token })
+        })
+    }
+
+    fn accept_circle_invitation<'a>(
+        &'a self,
+        command: AcceptCircleInvitation,
+    ) -> RepositoryFuture<'a, CircleMembership> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            if !state.users.contains_key(&command.actor) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let token_hash = Sha256::digest(command.token.as_bytes()).to_vec();
+            let invitation = state
+                .circle_invitations
+                .remove(&token_hash)
+                .ok_or(RepositoryError::NotFound)?;
+            if invitation.expires_at < Utc::now() {
+                return Err(RepositoryError::NotFound);
+            }
+            let membership = CircleMembership {
+                circle_id: invitation.circle_id.clone(),
+                user_id: command.actor.clone(),
+                role: CircleRole::Member,
+                joined_at: Utc::now(),
+            };
+            state
+                .circle_memberships
+                .insert((invitation.circle_id, command.actor), membership.clone());
+            Ok(membership)
+        })
+    }
+
     fn create_channel<'a>(&'a self, command: CreateChannel) -> RepositoryFuture<'a, Channel> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
@@ -91,12 +225,20 @@ impl ChatRepository for InMemoryChatRepository {
             if state.channels_by_slug.contains_key(&command.slug) {
                 return Err(RepositoryError::Conflict);
             }
+            if command.circle_id.as_ref().is_some_and(|circle_id| {
+                !state
+                    .circle_memberships
+                    .contains_key(&(circle_id.clone(), command.actor.clone()))
+            }) {
+                return Err(RepositoryError::PermissionDenied);
+            }
 
             let channel = Channel {
                 id: ChannelId::generate(),
                 slug: command.slug,
                 name: command.name,
                 kind: command.kind,
+                circle_id: command.circle_id,
                 created_by: command.actor.clone(),
             };
 
@@ -166,6 +308,7 @@ impl ChatRepository for InMemoryChatRepository {
                         slug: channel.slug.clone(),
                         name: channel.name.clone(),
                         kind: channel.kind.clone(),
+                        circle_id: channel.circle_id.clone(),
                         role: membership.role.clone(),
                     })
                 })
@@ -334,6 +477,10 @@ impl InMemoryChatRepository {
 
 #[derive(Default)]
 struct RepositoryState {
+    circles: HashMap<CircleId, Circle>,
+    circles_by_slug: HashMap<super::ChannelSlug, CircleId>,
+    circle_memberships: HashMap<(CircleId, UserId), CircleMembership>,
+    circle_invitations: HashMap<Vec<u8>, CircleInvitation>,
     channels: HashMap<ChannelId, Channel>,
     channels_by_slug: HashMap<super::ChannelSlug, ChannelId>,
     memberships: HashMap<(ChannelId, UserId), Membership>,
@@ -396,6 +543,7 @@ mod tests {
                 slug: ChannelSlug::new("general").unwrap(),
                 name: DisplayName::new("General").unwrap(),
                 kind: ChannelKind::Public,
+                circle_id: None,
             })
             .await
             .unwrap();
@@ -440,6 +588,7 @@ mod tests {
                 slug: ChannelSlug::new("general").unwrap(),
                 name: DisplayName::new("General").unwrap(),
                 kind: ChannelKind::Private,
+                circle_id: None,
             })
             .await
             .unwrap();
@@ -492,6 +641,7 @@ mod tests {
                 slug: ChannelSlug::new("private").unwrap(),
                 name: DisplayName::new("Private").unwrap(),
                 kind: ChannelKind::Private,
+                circle_id: None,
             })
             .await
             .unwrap();
@@ -524,6 +674,7 @@ mod tests {
                 slug: ChannelSlug::new("idempotent").unwrap(),
                 name: DisplayName::new("Idempotent").unwrap(),
                 kind: ChannelKind::Private,
+                circle_id: None,
             })
             .await
             .unwrap();
@@ -554,5 +705,54 @@ mod tests {
             repository.latest_sequence(channel.id).await.unwrap(),
             ChannelSequence::first()
         );
+    }
+
+    #[tokio::test]
+    async fn circle_invitation_is_single_use_and_grants_membership() {
+        let repository = InMemoryChatRepository::default();
+        let alice = add_human(&repository, "circle-alice").await;
+        let bob = add_human(&repository, "circle-bob").await;
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: alice.clone(),
+                slug: ChannelSlug::new("friends").unwrap(),
+                name: DisplayName::new("Friends").unwrap(),
+            })
+            .await
+            .unwrap();
+        let issued = repository
+            .create_circle_invitation(CreateCircleInvitation {
+                actor: alice,
+                circle_id: circle.id.clone(),
+            })
+            .await
+            .unwrap();
+        let membership = repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: bob.clone(),
+                token: issued.token.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(membership.role, CircleRole::Member);
+        assert_eq!(membership.circle_id, circle.id);
+        let reused = repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: bob.clone(),
+                token: issued.token,
+            })
+            .await;
+        assert_eq!(reused, Err(RepositoryError::NotFound));
+        let channel = repository
+            .create_channel(CreateChannel {
+                actor: bob,
+                slug: ChannelSlug::new("friends-general").unwrap(),
+                name: DisplayName::new("General").unwrap(),
+                kind: ChannelKind::Private,
+                circle_id: Some(circle.id.clone()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(channel.circle_id, Some(circle.id));
     }
 }

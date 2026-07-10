@@ -8,10 +8,11 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::domain::{
-    ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent,
-    ChatMessage, ChatRepository, CreateChannel, DisplayName, JoinChannel, LeaveChannel,
-    LoadRecentMessages, MarkRead, Membership, MessageBody, MessageId, MessageLimit, PrincipalKind,
-    RepositoryError, SendMessage, TextValidationError, User, UserId,
+    AcceptCircleInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
+    ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
+    CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName, IssuedInvitation,
+    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MessageBody, MessageId,
+    MessageLimit, PrincipalKind, RepositoryError, SendMessage, TextValidationError, User, UserId,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -105,6 +106,7 @@ impl ChatEngine {
                 slug: slug.clone(),
                 name: DisplayName::new(channel_slug)?,
                 kind: ChannelKind::Private,
+                circle_id: None,
             })
             .await
         {
@@ -128,6 +130,7 @@ impl ChatEngine {
         slug: ChannelSlug,
         name: DisplayName,
         kind: ChannelKind,
+        circle_id: Option<crate::domain::CircleId>,
     ) -> Result<crate::domain::Channel, ChatError> {
         self.repository
             .create_channel(CreateChannel {
@@ -135,7 +138,52 @@ impl ChatEngine {
                 slug,
                 name,
                 kind,
+                circle_id,
             })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn create_circle(
+        &self,
+        actor: UserId,
+        slug: ChannelSlug,
+        name: DisplayName,
+    ) -> Result<Circle, ChatError> {
+        self.repository
+            .create_circle(CreateCircle { actor, slug, name })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn list_circles(
+        &self,
+        actor: UserId,
+    ) -> Result<Vec<(Circle, CircleRole)>, ChatError> {
+        self.repository
+            .list_circles_for_user(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn create_circle_invitation(
+        &self,
+        actor: UserId,
+        circle_id: crate::domain::CircleId,
+    ) -> Result<IssuedInvitation, ChatError> {
+        self.repository
+            .create_circle_invitation(CreateCircleInvitation { actor, circle_id })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn accept_circle_invitation(
+        &self,
+        actor: UserId,
+        token: String,
+    ) -> Result<CircleMembership, ChatError> {
+        self.repository
+            .accept_circle_invitation(AcceptCircleInvitation { actor, token })
             .await
             .map_err(ChatError::from)
     }

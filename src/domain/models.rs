@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::{ChannelId, ChannelSequence, ChannelSlug, DisplayName, MessageBody, MessageId, UserId};
+use super::{
+    ChannelId, ChannelSequence, ChannelSlug, CircleId, DisplayName, InvitationId, MessageBody,
+    MessageId, UserId,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +68,61 @@ pub enum MembershipRole {
     Observer,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CircleRole {
+    Owner,
+    Member,
+}
+
+impl CircleRole {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Member => "member",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "owner" => Some(Self::Owner),
+            "member" => Some(Self::Member),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Circle {
+    pub id: CircleId,
+    pub slug: ChannelSlug,
+    pub name: DisplayName,
+    pub created_by: UserId,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CircleMembership {
+    pub circle_id: CircleId,
+    pub user_id: UserId,
+    pub role: CircleRole,
+    pub joined_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CircleInvitation {
+    pub id: InvitationId,
+    pub circle_id: CircleId,
+    pub invited_by: UserId,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct IssuedInvitation {
+    pub invitation: CircleInvitation,
+    pub token: String,
+}
+
 impl MembershipRole {
     pub const fn as_str(&self) -> &'static str {
         match self {
@@ -92,6 +150,7 @@ pub struct Channel {
     pub slug: ChannelSlug,
     pub name: DisplayName,
     pub kind: ChannelKind,
+    pub circle_id: Option<CircleId>,
     pub created_by: UserId,
 }
 
@@ -101,6 +160,7 @@ pub struct ChannelSummary {
     pub slug: ChannelSlug,
     pub name: DisplayName,
     pub kind: ChannelKind,
+    pub circle_id: Option<CircleId>,
     pub role: MembershipRole,
 }
 
