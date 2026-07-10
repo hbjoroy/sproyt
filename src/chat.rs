@@ -63,6 +63,12 @@ impl ChatEngine {
     }
 
     /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
+    pub async fn ensure_user(&self, user: User) -> Result<(), ChatError> {
+        self.repository.upsert_user(user).await?;
+        Ok(())
+    }
+
+    /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
     pub async fn prepare_development_user(
         &self,
         participant_id: UserId,

@@ -1,3 +1,4 @@
+mod auth;
 mod chat;
 mod config;
 mod db;
@@ -14,7 +15,10 @@ use axum::{
         Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::HeaderName,
+    http::{
+        HeaderMap, HeaderName, HeaderValue,
+        header::{COOKIE, LOCATION, SET_COOKIE},
+    },
     middleware,
     response::{Html, IntoResponse},
     routing::get,
@@ -29,14 +33,16 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
+    auth::AuthService,
     chat::{ChatEngine, ChatError},
-    config::{AppConfig, LogFormat},
+    config::{AppConfig, AuthMode, LogFormat},
     domain::{ChannelId, ChannelSequence, ChatEvent, ChatMessage, MessageBody, UserId},
     operations::{OperationalState, healthz, metrics, readyz, record_metrics},
 };
 
 #[derive(Clone)]
 struct AppState {
+    auth: AuthService,
     chat: ChatEngine,
     operations: OperationalState,
 }
@@ -59,7 +65,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let address = config.bind_address();
     let operations = OperationalState::default();
     let repository = db::connect_repository(config.database()).await?;
+    let auth = match config.auth_mode() {
+        AuthMode::Development => AuthService::development(),
+        AuthMode::Oidc => {
+            AuthService::oidc(
+                config
+                    .oidc()
+                    .expect("OIDC config is present when OIDC mode is selected"),
+            )
+            .await?
+        }
+    };
     let state = AppState {
+        auth,
         chat: ChatEngine::start(repository),
         operations: operations.clone(),
     };
@@ -70,6 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
+        .route("/auth/login", get(auth_login))
+        .route("/auth/callback", get(auth_callback))
+        .route("/auth/logout", get(auth_logout))
         .route("/ws", get(ws_handler))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
@@ -147,9 +168,75 @@ async fn shutdown_signal(operations: OperationalState) {
 async fn ws_handler(
     State(state): State<AppState>,
     Query(query): Query<WsQuery>,
+    headers: HeaderMap,
     upgrade: WebSocketUpgrade,
-) -> impl IntoResponse {
-    upgrade.on_upgrade(move |socket| ws::handle_socket(state.chat, query.participant, socket))
+) -> axum::response::Response {
+    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    let principal = match state.auth.authenticate_request(query.participant, cookie) {
+        Ok(principal) => principal,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    upgrade
+        .on_upgrade(move |socket| ws::handle_socket(state.chat, principal, socket))
+        .into_response()
+}
+
+async fn auth_login(State(state): State<AppState>) -> axum::response::Response {
+    match state.auth.login() {
+        Ok(login) => redirect_with_cookies(&login.authorization_url, &[login.set_cookie]),
+        Err(error) => (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OidcCallbackQuery {
+    code: String,
+    state: String,
+}
+
+async fn auth_callback(
+    State(state): State<AppState>,
+    Query(query): Query<OidcCallbackQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    match state.auth.callback(query.code, query.state, cookie).await {
+        Ok(login) => {
+            if let Err(error) = state.chat.ensure_user(login.principal.user).await {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    error.to_string(),
+                )
+                    .into_response();
+            }
+            redirect_with_cookies("/", &[login.set_cookie, login.clear_transaction_cookie])
+        }
+        Err(error) => (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response(),
+    }
+}
+
+async fn auth_logout(State(state): State<AppState>) -> axum::response::Response {
+    let logout = state.auth.logout();
+    redirect_with_cookies(&logout.redirect_url, &[logout.clear_cookie])
+}
+
+fn redirect_with_cookies(location: &str, cookies: &[String]) -> axum::response::Response {
+    let mut response = axum::http::StatusCode::SEE_OTHER.into_response();
+    let headers = response.headers_mut();
+    match HeaderValue::from_str(location) {
+        Ok(location) => {
+            headers.insert(LOCATION, location);
+        }
+        Err(_) => return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+    for cookie in cookies {
+        if let Ok(cookie) = HeaderValue::from_str(cookie) {
+            headers.append(SET_COOKIE, cookie);
+        }
+    }
+    response
 }
 
 #[allow(dead_code)]

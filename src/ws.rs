@@ -4,6 +4,7 @@ use axum::extract::ws::{Message, WebSocket};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
+    auth::AuthenticatedPrincipal,
     chat::{ChatEngine, ChatError, ConnectionId},
     domain::{
         ChannelId, ChannelSequence, ChannelSlug, DisplayName, MessageBody, MessageLimit,
@@ -14,15 +15,11 @@ use crate::{
 
 pub async fn handle_socket(
     chat: ChatEngine,
-    participant_name: Option<String>,
+    principal: AuthenticatedPrincipal,
     mut socket: WebSocket,
 ) {
-    let participant_name = participant_name.unwrap_or_else(|| "guest".to_owned());
-    let participant_id = UserId::named(&participant_name);
-    if let Err(error) = chat
-        .prepare_development_user(participant_id.clone(), &participant_name)
-        .await
-    {
+    let participant_id = principal.user.id.clone();
+    if let Err(error) = chat.ensure_user(principal.user).await {
         let _ = send(&mut socket, &ServerEnvelope::event(error_event(error))).await;
         return;
     }

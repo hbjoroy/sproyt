@@ -119,6 +119,20 @@ Runtime configuration is read from environment variables:
 | `SPROYT_ENV` | `development` | Deployment mode: `development`, `test`, or `production`. |
 | `SPROYT_LOG_FORMAT` | `pretty` | Structured log output: `pretty` or `json`. |
 | `RUST_LOG` | `sproyt=info` | Tracing filter. |
+| `SPROYT_AUTH_MODE` | `development` | `development` or `oidc`; development auth is rejected in production. |
+| `SPROYT_OIDC_ISSUER` | required for OIDC | Authentik issuer, normally `https://identity.limani-parou.com/application/o/<provider-slug>/`. |
+| `SPROYT_OIDC_CLIENT_ID` | required for OIDC | Authentik OAuth2/OIDC client ID. |
+| `SPROYT_OIDC_CLIENT_SECRET` | required for OIDC | Confidential client secret; supply through a secret store. |
+| `SPROYT_OIDC_REDIRECT_URL` | required for OIDC | Absolute callback URL ending in `/auth/callback`. |
+| `SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL` | required for OIDC | Safe redirect after local logout. |
+| `SPROYT_SESSION_KEY` | required for OIDC | URL-safe base64 encoding of exactly 32 random bytes. |
+
+OIDC uses discovery and does not hard-code Authentik endpoints. Register the
+exact redirect URL with the provider. Login starts at `/auth/login`, the
+provider returns to `/auth/callback`, and `/auth/logout` clears the local
+session. Authentication transactions and sessions are encrypted cookies, so
+all Kubernetes replicas can validate them with the same session key without
+server-local session state.
 
 The database URL is detected and typed at startup, but the current chat loop still uses the in-memory repository until the SQLx implementation is wired in.
 

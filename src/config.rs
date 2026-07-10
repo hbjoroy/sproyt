@@ -4,6 +4,7 @@ const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:9010";
 const DEFAULT_DATABASE_URL: &str = "sqlite://.local/sproyt.sqlite";
 const DEFAULT_ENVIRONMENT: &str = "development";
 const DEFAULT_LOG_FORMAT: &str = "pretty";
+const DEFAULT_AUTH_MODE: &str = "development";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppConfig {
@@ -11,6 +12,8 @@ pub struct AppConfig {
     database: DatabaseConfig,
     environment: DeploymentEnvironment,
     log_format: LogFormat,
+    auth_mode: AuthMode,
+    oidc: Option<OidcConfig>,
 }
 
 impl AppConfig {
@@ -22,7 +25,19 @@ impl AppConfig {
         let environment = env::var("SPROYT_ENV").unwrap_or_else(|_| DEFAULT_ENVIRONMENT.to_owned());
         let log_format =
             env::var("SPROYT_LOG_FORMAT").unwrap_or_else(|_| DEFAULT_LOG_FORMAT.to_owned());
-        Self::from_values(bind_address, database_url, environment, log_format)
+        let auth_mode =
+            env::var("SPROYT_AUTH_MODE").unwrap_or_else(|_| DEFAULT_AUTH_MODE.to_owned());
+        let mut config = Self::from_values(
+            bind_address,
+            database_url,
+            environment,
+            log_format,
+            auth_mode,
+        )?;
+        if config.auth_mode == AuthMode::Oidc {
+            config.oidc = Some(OidcConfig::from_env()?);
+        }
+        Ok(config)
     }
 
     pub fn from_values(
@@ -30,6 +45,7 @@ impl AppConfig {
         database_url: impl Into<String>,
         environment: impl AsRef<str>,
         log_format: impl AsRef<str>,
+        auth_mode: impl AsRef<str>,
     ) -> Result<Self, ConfigError> {
         let bind_address = bind_address
             .as_ref()
@@ -38,11 +54,17 @@ impl AppConfig {
         let database = DatabaseConfig::new(database_url.into())?;
         let environment = DeploymentEnvironment::parse(environment.as_ref())?;
         let log_format = LogFormat::parse(log_format.as_ref())?;
+        let auth_mode = AuthMode::parse(auth_mode.as_ref())?;
+        if environment == DeploymentEnvironment::Production && auth_mode == AuthMode::Development {
+            return Err(ConfigError::DevelopmentAuthInProduction);
+        }
         Ok(Self {
             bind_address,
             database,
             environment,
             log_format,
+            auth_mode,
+            oidc: None,
         })
     }
 
@@ -60,6 +82,86 @@ impl AppConfig {
 
     pub const fn log_format(&self) -> LogFormat {
         self.log_format
+    }
+
+    pub const fn auth_mode(&self) -> AuthMode {
+        self.auth_mode
+    }
+
+    pub const fn oidc(&self) -> Option<&OidcConfig> {
+        self.oidc.as_ref()
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct OidcConfig {
+    issuer: String,
+    client_id: String,
+    client_secret: String,
+    redirect_url: String,
+    post_logout_redirect_url: String,
+    session_key: String,
+}
+
+impl OidcConfig {
+    fn from_env() -> Result<Self, ConfigError> {
+        Ok(Self {
+            issuer: required_env("SPROYT_OIDC_ISSUER")?,
+            client_id: required_env("SPROYT_OIDC_CLIENT_ID")?,
+            client_secret: required_env("SPROYT_OIDC_CLIENT_SECRET")?,
+            redirect_url: required_env("SPROYT_OIDC_REDIRECT_URL")?,
+            post_logout_redirect_url: required_env("SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL")?,
+            session_key: required_env("SPROYT_SESSION_KEY")?,
+        })
+    }
+
+    pub fn issuer(&self) -> &str {
+        &self.issuer
+    }
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+    pub fn client_secret(&self) -> &str {
+        &self.client_secret
+    }
+    pub fn redirect_url(&self) -> &str {
+        &self.redirect_url
+    }
+    pub fn post_logout_redirect_url(&self) -> &str {
+        &self.post_logout_redirect_url
+    }
+    pub fn session_key(&self) -> &str {
+        &self.session_key
+    }
+}
+
+impl fmt::Debug for OidcConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OidcConfig")
+            .field("issuer", &self.issuer)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .field("redirect_url", &self.redirect_url)
+            .field("post_logout_redirect_url", &self.post_logout_redirect_url)
+            .field("session_key", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthMode {
+    Development,
+    Oidc,
+}
+
+impl AuthMode {
+    fn parse(value: &str) -> Result<Self, ConfigError> {
+        match value {
+            "development" => Ok(Self::Development),
+            "oidc" => Ok(Self::Oidc),
+            _ => Err(ConfigError::InvalidAuthMode(value.to_owned())),
+        }
     }
 }
 
@@ -107,10 +209,20 @@ impl LogFormat {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct DatabaseConfig {
     url: String,
     kind: DatabaseKind,
+}
+
+impl fmt::Debug for DatabaseConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DatabaseConfig")
+            .field("url", &redact_database_url(&self.url))
+            .field("kind", &self.kind)
+            .finish()
+    }
 }
 
 impl DatabaseConfig {
@@ -161,8 +273,11 @@ impl fmt::Display for DatabaseKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigError {
     InvalidBindAddress(String),
+    DevelopmentAuthInProduction,
+    InvalidAuthMode(String),
     InvalidEnvironment(String),
     InvalidLogFormat(String),
+    MissingEnvironmentVariable(&'static str),
     UnsupportedDatabaseUrl(String),
 }
 
@@ -172,11 +287,20 @@ impl fmt::Display for ConfigError {
             Self::InvalidBindAddress(value) => {
                 write!(formatter, "invalid SPROYT_ADDR value: {value}")
             }
+            Self::DevelopmentAuthInProduction => {
+                formatter.write_str("development authentication is forbidden in production")
+            }
+            Self::InvalidAuthMode(value) => {
+                write!(formatter, "invalid SPROYT_AUTH_MODE value: {value}")
+            }
             Self::InvalidEnvironment(value) => {
                 write!(formatter, "invalid SPROYT_ENV value: {value}")
             }
             Self::InvalidLogFormat(value) => {
                 write!(formatter, "invalid SPROYT_LOG_FORMAT value: {value}")
+            }
+            Self::MissingEnvironmentVariable(name) => {
+                write!(formatter, "required environment variable {name} is missing")
             }
             Self::UnsupportedDatabaseUrl(value) => {
                 write!(formatter, "unsupported DATABASE_URL value: {value}")
@@ -197,6 +321,13 @@ fn redact_database_url(url: &str) -> String {
     format!("{scheme}://<credentials>@{host_and_path}")
 }
 
+fn required_env(name: &'static str) -> Result<String, ConfigError> {
+    env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(ConfigError::MissingEnvironmentVariable(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +339,7 @@ mod tests {
             "sqlite://.local/dev.sqlite",
             "development",
             "pretty",
+            "development",
         )
         .expect("sqlite config should parse");
 
@@ -222,6 +354,7 @@ mod tests {
             "postgres://user:secret@localhost/sproyt",
             "production",
             "json",
+            "oidc",
         )
         .expect("postgres config should parse");
 
@@ -229,6 +362,7 @@ mod tests {
         assert_eq!(config.database().kind(), DatabaseKind::Postgres);
         assert_eq!(config.environment(), DeploymentEnvironment::Production);
         assert_eq!(config.log_format(), LogFormat::Json);
+        assert_eq!(config.auth_mode(), AuthMode::Oidc);
     }
 
     #[test]
@@ -255,20 +389,43 @@ mod tests {
 
     #[test]
     fn rejects_unknown_environment_and_log_format() {
-        let environment =
-            AppConfig::from_values("127.0.0.1:9010", "sqlite://dev.sqlite", "staging", "pretty")
-                .unwrap_err();
+        let environment = AppConfig::from_values(
+            "127.0.0.1:9010",
+            "sqlite://dev.sqlite",
+            "staging",
+            "pretty",
+            "development",
+        )
+        .unwrap_err();
         assert_eq!(
             environment,
             ConfigError::InvalidEnvironment("staging".to_owned())
         );
 
-        let log_format =
-            AppConfig::from_values("127.0.0.1:9010", "sqlite://dev.sqlite", "test", "compact")
-                .unwrap_err();
+        let log_format = AppConfig::from_values(
+            "127.0.0.1:9010",
+            "sqlite://dev.sqlite",
+            "test",
+            "compact",
+            "development",
+        )
+        .unwrap_err();
         assert_eq!(
             log_format,
             ConfigError::InvalidLogFormat("compact".to_owned())
         );
+    }
+
+    #[test]
+    fn refuses_development_auth_in_production() {
+        let error = AppConfig::from_values(
+            "127.0.0.1:9010",
+            "postgres://localhost/sproyt",
+            "production",
+            "json",
+            "development",
+        )
+        .unwrap_err();
+        assert_eq!(error, ConfigError::DevelopmentAuthInProduction);
     }
 }
