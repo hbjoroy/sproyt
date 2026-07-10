@@ -14,6 +14,9 @@ pub use commands::{
 };
 pub use events::ChatEvent;
 pub use ids::{ChannelId, ChannelSequence, MessageId, UserId};
-pub use models::{Channel, ChannelKind, ChannelSummary, ChatMessage, Membership, MembershipRole};
-pub use repository::{ChatRepository, InMemoryChatRepository, RepositoryError};
+pub use models::{
+    Channel, ChannelKind, ChannelSummary, ChatMessage, Membership, MembershipRole, PrincipalKind,
+    User,
+};
+pub use repository::{ChatRepository, InMemoryChatRepository, RepositoryError, RepositoryFuture};
 pub use text::{ChannelSlug, DisplayName, MessageBody, TextValidationError};

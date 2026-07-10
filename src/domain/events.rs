@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ChannelId, ChatMessage, MessageId, UserId};
+use super::{ChannelId, ChannelSequence, ChatMessage, UserId};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -23,6 +23,6 @@ pub enum ChatEvent {
     ReadMarkerUpdated {
         channel_id: ChannelId,
         user_id: UserId,
-        message_id: MessageId,
+        sequence: ChannelSequence,
     },
 }

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum TextValidationError {
     Empty { field: &'static str },
     InvalidSlug,
+    InvalidSequence,
+    InvalidUuid { field: &'static str },
     TooLarge { field: &'static str, max: usize },
 }
 
@@ -17,6 +19,8 @@ impl fmt::Display for TextValidationError {
                 formatter,
                 "channel slug can only contain lowercase letters, numbers, '-' and '_'"
             ),
+            Self::InvalidSequence => formatter.write_str("channel sequence cannot be negative"),
+            Self::InvalidUuid { field } => write!(formatter, "{field} must be a UUID"),
             Self::TooLarge { field, max } => write!(formatter, "{field} cannot exceed {max} bytes"),
         }
     }
@@ -34,6 +38,10 @@ impl MessageBody {
     pub fn new(value: impl Into<String>) -> Result<Self, TextValidationError> {
         bounded_non_empty(value, "message body", Self::MAX_BYTES).map(Self)
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl fmt::Display for MessageBody {
@@ -42,7 +50,7 @@ impl fmt::Display for MessageBody {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ChannelSlug(String);
 
@@ -59,6 +67,10 @@ impl ChannelSlug {
             return Err(TextValidationError::InvalidSlug);
         }
         Ok(Self(normalized))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -77,6 +89,10 @@ impl DisplayName {
 
     pub fn new(value: impl Into<String>) -> Result<Self, TextValidationError> {
         bounded_non_empty(value, "display name", Self::MAX_BYTES).map(Self)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

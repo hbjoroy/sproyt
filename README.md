@@ -26,6 +26,13 @@ See [docs/persistence-plan.md](docs/persistence-plan.md) for the planned persist
 
 See [docs/protocol.md](docs/protocol.md) for the first WebSocket/agent/MCP protocol sketch.
 
+See [docs/roadmap.md](docs/roadmap.md) for the phased delivery plan from the
+current prototype through durable private chat, OIDC, Kubernetes, Heart process
+orchestration, and agent participation.
+
+See [docs/development.md](docs/development.md) for the local and CI quality
+gates used for contributions.
+
 ## Prerequisites
 
 - Rust 1.96.0, via rustup.
@@ -54,6 +61,13 @@ Health check:
 
 ```text
 http://127.0.0.1:9010/healthz
+```
+
+Readiness and Prometheus-compatible operational metrics:
+
+```text
+http://127.0.0.1:9010/readyz
+http://127.0.0.1:9010/metrics
 ```
 
 Open the same URL in multiple browser tabs, choose the same channel, and use different participant names to try the in-memory chat loop.
@@ -102,6 +116,9 @@ Runtime configuration is read from environment variables:
 |---|---|---|
 | `SPROYT_ADDR` | `127.0.0.1:9010` | HTTP/WebSocket bind address. |
 | `DATABASE_URL` | `sqlite://.local/sproyt.sqlite` | Database URL. Supports `sqlite:`, `postgres://`, and `postgresql://` profiles. |
+| `SPROYT_ENV` | `development` | Deployment mode: `development`, `test`, or `production`. |
+| `SPROYT_LOG_FORMAT` | `pretty` | Structured log output: `pretty` or `json`. |
+| `RUST_LOG` | `sproyt=info` | Tracing filter. |
 
 The database URL is detected and typed at startup, but the current chat loop still uses the in-memory repository until the SQLx implementation is wired in.
 

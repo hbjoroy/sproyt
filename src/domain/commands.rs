@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ChannelId, ChannelKind, ChannelSequence, ChannelSlug, DisplayName, MembershipRole, MessageBody,
-    MessageId, UserId,
+    UserId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -61,7 +61,7 @@ pub struct SendMessage {
 pub struct MarkRead {
     pub actor: UserId,
     pub channel_id: ChannelId,
-    pub message_id: MessageId,
+    pub sequence: ChannelSequence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -1,6 +1,10 @@
 mod chat;
 mod config;
+mod db;
 mod domain;
+mod operations;
+
+use std::time::Duration;
 
 use axum::{
     Router,
@@ -8,41 +12,83 @@ use axum::{
         Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
+    http::HeaderName,
+    middleware,
     response::{Html, IntoResponse},
     routing::get,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+use tower_http::{
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+    trace::TraceLayer,
+};
+use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
 
 use crate::{
     chat::{ChatEngine, ChatError},
-    config::AppConfig,
-    domain::{ChannelId, ChatEvent, ChatMessage, MessageBody, UserId},
+    config::{AppConfig, LogFormat},
+    domain::{ChannelId, ChannelSequence, ChatEvent, ChatMessage, MessageBody, UserId},
+    operations::{OperationalState, healthz, metrics, readyz, record_metrics},
 };
 
 #[derive(Clone)]
 struct AppState {
     chat: ChatEngine,
+    operations: OperationalState,
+}
+
+impl axum::extract::FromRef<AppState> for OperationalState {
+    fn from_ref(state: &AppState) -> Self {
+        state.operations.clone()
+    }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = AppConfig::from_env()?;
+    init_tracing(config.log_format())?;
+    if std::env::args().nth(1).as_deref() == Some("migrate") {
+        db::migrate(config.database()).await?;
+        info!(database = %config.database().kind(), "database migrations applied");
+        return Ok(());
+    }
     let address = config.bind_address();
+    let operations = OperationalState::default();
+    let repository = db::connect_repository(config.database()).await?;
     let state = AppState {
-        chat: ChatEngine::start(),
+        chat: ChatEngine::start(repository),
+        operations: operations.clone(),
     };
+    let request_id_header = HeaderName::from_static("x-request-id");
 
     let app = Router::new()
         .route("/", get(index))
         .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics))
         .route("/ws", get(ws_handler))
-        .with_state(state);
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            operations.clone(),
+            record_metrics,
+        ))
+        .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
+        .layer(TraceLayer::new_for_http())
+        .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid));
 
     let listener = tokio::net::TcpListener::bind(address).await?;
-    println!("Hello Chat is listening on http://{address}");
-    println!("Database profile: {}", config.database().kind());
-    axum::serve(listener, app).await?;
+    operations.set_ready(true);
+    info!(
+        %address,
+        environment = %config.environment(),
+        database = %config.database().kind(),
+        "Sproyt is ready"
+    );
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(operations))
+        .await?;
 
     Ok(())
 }
@@ -51,8 +97,49 @@ async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
 }
 
-async fn healthz() -> &'static str {
-    "ok\n"
+fn init_tracing(log_format: LogFormat) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("sproyt=info"));
+    match log_format {
+        LogFormat::Json => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .json()
+            .try_init()?,
+        LogFormat::Pretty => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .try_init()?,
+    }
+    Ok(())
+}
+
+async fn shutdown_signal(operations: OperationalState) {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            warn!(%error, "failed to install Ctrl+C handler");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(error) => warn!(%error, "failed to install SIGTERM handler"),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {},
+        () = terminate => {},
+    }
+
+    operations.set_ready(false);
+    info!(grace_period_seconds = 30, "shutdown requested");
+    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 async fn ws_handler(
@@ -64,18 +151,16 @@ async fn ws_handler(
 }
 
 async fn handle_socket(chat: ChatEngine, query: WsQuery, mut socket: WebSocket) {
-    let channel_id = match ChannelId::new(query.channel.unwrap_or_else(|| "general".to_owned())) {
+    let channel_name = query.channel.unwrap_or_else(|| "general".to_owned());
+    let participant_name = query.participant.unwrap_or_else(|| "guest".to_owned());
+    let participant_id = UserId::named(&participant_name);
+    let channel_id = match chat
+        .prepare_development_session(participant_id.clone(), &participant_name, &channel_name)
+        .await
+    {
         Ok(channel_id) => channel_id,
         Err(error) => {
-            send_error(&mut socket, error.into()).await;
-            return;
-        }
-    };
-    let participant_id = match UserId::new(query.participant.unwrap_or_else(|| "guest".to_owned()))
-    {
-        Ok(participant_id) => participant_id,
-        Err(error) => {
-            send_error(&mut socket, error.into()).await;
+            send_error(&mut socket, error).await;
             return;
         }
     };
@@ -91,10 +176,14 @@ async fn handle_socket(chat: ChatEngine, query: WsQuery, mut socket: WebSocket) 
         }
     };
 
+    let mut last_seen_sequence = subscription
+        .history
+        .last()
+        .map_or(ChannelSequence::new(0), |message| message.sequence);
     if send_server_event(
         &mut socket,
         &ServerEvent::History {
-            messages: subscription.history,
+            messages: std::mem::take(&mut subscription.history),
         },
     )
     .await
@@ -108,12 +197,28 @@ async fn handle_socket(chat: ChatEngine, query: WsQuery, mut socket: WebSocket) 
             event = subscription.receiver.recv() => {
                 match event {
                     Ok(event) => {
+                        if let ChatEvent::MessageAccepted { message } = &event {
+                            last_seen_sequence = message.sequence;
+                        }
                         if send_server_event(&mut socket, &ServerEvent::Chat { event }).await.is_err() {
                             break;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        let event = ServerEvent::Lagged { skipped };
+                        let latest_known_sequence = match chat.latest_sequence(channel_id.clone()).await {
+                            Ok(sequence) => sequence,
+                            Err(error) => {
+                                send_error(&mut socket, error).await;
+                                break;
+                            }
+                        };
+                        let event = ServerEvent::Lagged {
+                            channel_id: channel_id.clone(),
+                            last_seen_sequence,
+                            latest_known_sequence,
+                            skipped,
+                            hint: "load_recent_messages_after",
+                        };
                         if send_server_event(&mut socket, &event).await.is_err() {
                             break;
                         }
@@ -156,7 +261,9 @@ async fn handle_socket(chat: ChatEngine, query: WsQuery, mut socket: WebSocket) 
         }
     }
 
-    let _ = chat.leave(channel_id, participant_id).await;
+    let _ = chat
+        .leave(channel_id, participant_id, subscription.connection_id)
+        .await;
 }
 
 async fn send_error(socket: &mut WebSocket, error: ChatError) {
@@ -186,11 +293,25 @@ enum ClientCommand {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ServerEvent {
-    Chat { event: ChatEvent },
-    Error { message: String },
-    History { messages: Vec<ChatMessage> },
-    Lagged { skipped: u64 },
-    ProtocolError { reason: String },
+    Chat {
+        event: ChatEvent,
+    },
+    Error {
+        message: String,
+    },
+    History {
+        messages: Vec<ChatMessage>,
+    },
+    Lagged {
+        channel_id: ChannelId,
+        last_seen_sequence: ChannelSequence,
+        latest_known_sequence: ChannelSequence,
+        skipped: u64,
+        hint: &'static str,
+    },
+    ProtocolError {
+        reason: String,
+    },
 }
 
 const INDEX_HTML: &str = r##"<!doctype html>

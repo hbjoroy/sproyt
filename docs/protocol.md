@@ -43,7 +43,7 @@ Server response or event:
   "request_id": "request-123",
   "type": "message_accepted",
   "payload": {
-    "message_id": 1,
+    "message_id": "019c1e71-4f6a-7000-8000-000000000001",
     "channel_id": "channel-1",
     "sequence": 42,
     "sender_id": "alice",
