@@ -212,6 +212,76 @@ impl ChatRepository for SqliteChatRepository {
         })
     }
 
+    fn append_message_idempotent<'a>(
+        &'a self,
+        command: SendMessage,
+        request_id: String,
+    ) -> RepositoryFuture<'a, ChatMessage> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let reservation = sqlx::query("insert into command_receipts (principal_id, request_id) values (?, ?) on conflict(principal_id, request_id) do nothing")
+                .bind(command.actor.to_string())
+                .bind(&request_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            if reservation.rows_affected() == 0 {
+                let row = sqlx::query("select m.id, m.channel_id, m.sender_id, m.sequence, m.body, m.created_at from command_receipts r join messages m on m.id = r.message_id where r.principal_id = ? and r.request_id = ?")
+                    .bind(command.actor.to_string())
+                    .bind(&request_id)
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?
+                    .ok_or_else(|| storage("idempotency receipt has no message"))?;
+                return chat_message(row);
+            }
+            let membership: Option<i64> = sqlx::query_scalar(
+                "select 1 from channel_memberships where channel_id = ? and user_id = ?",
+            )
+            .bind(command.channel_id.to_string())
+            .bind(command.actor.to_string())
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(sql_error)?;
+            if membership.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence = next_sequence + 1 where channel_id = ? returning next_sequence - 1")
+                .bind(command.channel_id.to_string())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::NotFound)?;
+            let message = ChatMessage {
+                id: MessageId::generate(),
+                channel_id: command.channel_id,
+                sender_id: command.actor,
+                body: command.body,
+                sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
+                sent_at: Utc::now(),
+            };
+            sqlx::query("insert into messages (id, channel_id, sender_id, sequence, body, created_at) values (?, ?, ?, ?, ?, ?)")
+                .bind(message.id.as_uuid().to_string())
+                .bind(message.channel_id.to_string())
+                .bind(message.sender_id.to_string())
+                .bind(sequence)
+                .bind(message.body.as_str())
+                .bind(message.sent_at)
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("update command_receipts set message_id = ? where principal_id = ? and request_id = ?")
+                .bind(message.id.as_uuid().to_string())
+                .bind(message.sender_id.to_string())
+                .bind(&request_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(message)
+        })
+    }
+
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
             let row = sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where id = ?")
@@ -380,12 +450,36 @@ mod tests {
         let loaded = repository
             .load_recent_messages(LoadRecentMessages {
                 actor: alice,
-                channel_id: channel.id,
+                channel_id: channel.id.clone(),
                 limit: crate::domain::MessageLimit::DEFAULT,
                 after: None,
             })
             .await
             .unwrap();
         assert_eq!(loaded, vec![message]);
+
+        let first = repository
+            .append_message_idempotent(
+                SendMessage {
+                    actor: UserId::named("sqlite-alice"),
+                    channel_id: channel.id.clone(),
+                    body: MessageBody::new("once").unwrap(),
+                },
+                "request-1".to_owned(),
+            )
+            .await
+            .unwrap();
+        let repeated = repository
+            .append_message_idempotent(
+                SendMessage {
+                    actor: UserId::named("sqlite-alice"),
+                    channel_id: channel.id,
+                    body: MessageBody::new("twice").unwrap(),
+                },
+                "request-1".to_owned(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first, repeated);
     }
 }

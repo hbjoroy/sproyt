@@ -8,9 +8,10 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::domain::{
-    ChannelId, ChannelKind, ChannelRef, ChannelSlug, ChatEvent, ChatMessage, ChatRepository,
-    CreateChannel, DisplayName, JoinChannel, LoadRecentMessages, MessageBody, MessageId,
-    MessageLimit, PrincipalKind, RepositoryError, SendMessage, TextValidationError, User, UserId,
+    ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent,
+    ChatMessage, ChatRepository, CreateChannel, DisplayName, JoinChannel, LeaveChannel,
+    LoadRecentMessages, MarkRead, Membership, MessageBody, MessageId, MessageLimit, PrincipalKind,
+    RepositoryError, SendMessage, TextValidationError, User, UserId,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -62,21 +63,32 @@ impl ChatEngine {
     }
 
     /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
-    pub async fn prepare_development_session(
+    pub async fn prepare_development_user(
         &self,
         participant_id: UserId,
         participant_name: &str,
-        channel_slug: &str,
-    ) -> Result<ChannelId, ChatError> {
+    ) -> Result<(), ChatError> {
         self.repository
             .upsert_user(User {
-                id: participant_id.clone(),
+                id: participant_id,
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new(participant_name)?,
                 external_provider: Some("development".to_owned()),
                 external_subject: Some(participant_name.to_owned()),
                 created_at: chrono::Utc::now(),
             })
+            .await?;
+        Ok(())
+    }
+
+    /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
+    pub async fn prepare_development_session(
+        &self,
+        participant_id: UserId,
+        participant_name: &str,
+        channel_slug: &str,
+    ) -> Result<ChannelId, ChatError> {
+        self.prepare_development_user(participant_id.clone(), participant_name)
             .await?;
 
         let slug = ChannelSlug::new(channel_slug)?;
@@ -102,6 +114,87 @@ impl ChatEngine {
                 .map_err(ChatError::from),
             Err(error) => Err(error.into()),
         }
+    }
+
+    pub async fn create_channel(
+        &self,
+        actor: UserId,
+        slug: ChannelSlug,
+        name: DisplayName,
+        kind: ChannelKind,
+    ) -> Result<crate::domain::Channel, ChatError> {
+        self.repository
+            .create_channel(CreateChannel {
+                actor,
+                slug,
+                name,
+                kind,
+            })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn join_channel(
+        &self,
+        actor: UserId,
+        channel: ChannelRef,
+    ) -> Result<Membership, ChatError> {
+        self.repository
+            .join_channel(JoinChannel { actor, channel })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn leave_channel(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> Result<(), ChatError> {
+        self.repository
+            .leave_channel(LeaveChannel { actor, channel_id })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn list_channels(&self, actor: UserId) -> Result<Vec<ChannelSummary>, ChatError> {
+        self.repository
+            .list_channels_for_user(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn load_messages(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+        limit: MessageLimit,
+        after: Option<ChannelSequence>,
+    ) -> Result<Vec<ChatMessage>, ChatError> {
+        self.repository
+            .load_recent_messages(LoadRecentMessages {
+                actor,
+                channel_id,
+                limit,
+                after,
+            })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn mark_read(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+        sequence: ChannelSequence,
+    ) -> Result<Membership, ChatError> {
+        self.repository
+            .mark_read(MarkRead {
+                actor,
+                channel_id,
+                sequence,
+            })
+            .await
+            .map_err(ChatError::from)
     }
 
     pub async fn subscribe(
@@ -146,12 +239,35 @@ impl ChatEngine {
         sender_id: UserId,
         body: MessageBody,
     ) -> Result<ChatMessage, ChatError> {
+        self.send_message_command(channel_id, sender_id, body, None)
+            .await
+    }
+
+    pub async fn send_message_idempotent(
+        &self,
+        channel_id: ChannelId,
+        sender_id: UserId,
+        body: MessageBody,
+        request_id: String,
+    ) -> Result<ChatMessage, ChatError> {
+        self.send_message_command(channel_id, sender_id, body, Some(request_id))
+            .await
+    }
+
+    async fn send_message_command(
+        &self,
+        channel_id: ChannelId,
+        sender_id: UserId,
+        body: MessageBody,
+        request_id: Option<String>,
+    ) -> Result<ChatMessage, ChatError> {
         let (reply, response) = oneshot::channel();
         self.mailbox
             .send(Command::SendMessage {
                 channel_id,
                 sender_id,
                 body,
+                request_id,
                 reply,
             })
             .await
@@ -233,6 +349,7 @@ enum Command {
         channel_id: ChannelId,
         sender_id: UserId,
         body: MessageBody,
+        request_id: Option<String>,
         reply: oneshot::Sender<Result<ChatMessage, ChatError>>,
     },
     ExternalMessage {
@@ -281,9 +398,12 @@ impl ChatActor {
                     channel_id,
                     sender_id,
                     body,
+                    request_id,
                     reply,
                 } => {
-                    let response = self.send_message(channel_id, sender_id, body).await;
+                    let response = self
+                        .send_message(channel_id, sender_id, body, request_id)
+                        .await;
                     let _ = reply.send(response);
                 }
                 Command::ExternalMessage { message_id } => {
@@ -364,15 +484,21 @@ impl ChatActor {
         channel_id: ChannelId,
         sender_id: UserId,
         body: MessageBody,
+        request_id: Option<String>,
     ) -> Result<ChatMessage, ChatError> {
-        let message = self
-            .repository
-            .append_message(SendMessage {
-                actor: sender_id,
-                channel_id: channel_id.clone(),
-                body,
-            })
-            .await?;
+        let command = SendMessage {
+            actor: sender_id,
+            channel_id: channel_id.clone(),
+            body,
+        };
+        let message = match request_id {
+            Some(request_id) => {
+                self.repository
+                    .append_message_idempotent(command, request_id)
+                    .await?
+            }
+            None => self.repository.append_message(command).await?,
+        };
         self.publish_message(message.clone());
         Ok(message)
     }

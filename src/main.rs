@@ -3,6 +3,8 @@ mod config;
 mod db;
 mod domain;
 mod operations;
+mod protocol;
+mod ws;
 
 use std::time::Duration;
 
@@ -147,9 +149,10 @@ async fn ws_handler(
     Query(query): Query<WsQuery>,
     upgrade: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    upgrade.on_upgrade(move |socket| handle_socket(state.chat, query, socket))
+    upgrade.on_upgrade(move |socket| ws::handle_socket(state.chat, query.participant, socket))
 }
 
+#[allow(dead_code)]
 async fn handle_socket(chat: ChatEngine, query: WsQuery, mut socket: WebSocket) {
     let channel_name = query.channel.unwrap_or_else(|| "general".to_owned());
     let participant_name = query.participant.unwrap_or_else(|| "guest".to_owned());
@@ -662,6 +665,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       let socket = null;
       let renderMode = "view";
+      let requestNumber = 0;
+      let activeChannelId = null;
+      let requestedChannelSlug = "general";
       const timeline = [];
 
       connectForm.addEventListener("submit", (event) => {
@@ -672,10 +678,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       sendForm.addEventListener("submit", (event) => {
         event.preventDefault();
         const body = bodyInput.value.trim();
-        if (!socket || socket.readyState !== WebSocket.OPEN || body.length === 0) {
+        if (!socket || socket.readyState !== WebSocket.OPEN || !activeChannelId || body.length === 0) {
           return;
         }
-        socket.send(JSON.stringify({ type: "send", body }));
+        sendCommand("send_message", { channel_id: activeChannelId, body });
         bodyInput.value = "";
         bodyInput.focus();
       });
@@ -689,15 +695,20 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         timeline.length = 0;
+        activeChannelId = null;
         messagesEl.replaceChildren();
-        const channel = encodeURIComponent(channelInput.value.trim() || "general");
+        requestedChannelSlug = (channelInput.value.trim() || "general")
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/g, "-");
         const participant = encodeURIComponent(participantInput.value.trim() || "guest");
         const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-        socket = new WebSocket(`${protocol}://${window.location.host}/ws?channel=${channel}&participant=${participant}`);
+        socket = new WebSocket(`${protocol}://${window.location.host}/ws?participant=${participant}`);
         setConnected(false, "Koplar til ...");
 
         socket.addEventListener("open", () => {
-          setConnected(true, `Tilkopla ${decodeURIComponent(channel)} som ${decodeURIComponent(participant)}`);
+          setConnected(true, `Tilkopla ${requestedChannelSlug} som ${decodeURIComponent(participant)}`);
+          sendCommand("hello");
+          sendCommand("list_my_channels");
         });
 
         socket.addEventListener("message", (event) => {
@@ -711,6 +722,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
         socket.addEventListener("error", () => {
           setConnected(false, "WebSocket-feil");
         });
+      }
+
+      function sendCommand(type, payload) {
+        requestNumber += 1;
+        const command = {
+          protocol: "sproyt.chat.v1",
+          request_id: `browser-${requestNumber}`,
+          type
+        };
+        if (payload !== undefined) {
+          command.payload = payload;
+        }
+        socket.send(JSON.stringify(command));
       }
 
       function setConnected(connected, status) {
@@ -727,14 +751,42 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function renderServerEvent(event) {
-        if (event.type === "history") {
-          event.messages.forEach((message) => timeline.push({ type: "message", message }));
+        if (event.protocol !== "sproyt.chat.v1") {
+          pushSystem("Serveren svarte med ein ukjend protokoll.");
+          return;
+        }
+        const payload = event.payload || {};
+
+        if (event.type === "channels_listed") {
+          const existing = payload.channels.find((channel) => channel.slug === requestedChannelSlug);
+          if (existing) {
+            activeChannelId = existing.id;
+            sendCommand("subscribe_channel", { channel_id: activeChannelId });
+          } else {
+            sendCommand("create_channel", {
+              slug: requestedChannelSlug,
+              name: requestedChannelSlug,
+              kind: "private"
+            });
+          }
+          return;
+        }
+
+        if (event.type === "channel_created") {
+          activeChannelId = payload.channel.id;
+          sendCommand("subscribe_channel", { channel_id: activeChannelId });
+          return;
+        }
+
+        if (event.type === "subscription_started") {
+          activeChannelId = payload.channel_id;
+          payload.history.forEach((message) => timeline.push({ type: "message", message }));
           renderTimeline();
           return;
         }
 
         if (event.type === "chat") {
-          const chatEvent = event.event;
+          const chatEvent = payload.event;
           if (chatEvent.type === "message_accepted") {
             timeline.push({ type: "message", message: chatEvent.message });
             renderTimeline();
@@ -747,12 +799,23 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "lagged") {
-          pushSystem(`Klienten låg etter og hoppa over ${event.skipped} event.`);
+          pushSystem(`Klienten låg etter og hoppa over ${payload.skipped} event; lastar inn att.`);
+          sendCommand("load_recent_messages", {
+            channel_id: payload.channel_id,
+            after: payload.last_seen_sequence,
+            limit: 200
+          });
           return;
         }
 
-        if (event.type === "error" || event.type === "protocol_error") {
-          pushSystem(event.message || event.reason);
+        if (event.type === "messages_loaded") {
+          payload.messages.forEach((message) => timeline.push({ type: "message", message }));
+          renderTimeline();
+          return;
+        }
+
+        if (event.type === "error") {
+          pushSystem(payload.message || payload.code);
         }
       }
 

@@ -31,6 +31,11 @@ pub trait ChatRepository: Send + Sync + 'static {
         query: LoadRecentMessages,
     ) -> RepositoryFuture<'a, Vec<ChatMessage>>;
     fn append_message<'a>(&'a self, command: SendMessage) -> RepositoryFuture<'a, ChatMessage>;
+    fn append_message_idempotent<'a>(
+        &'a self,
+        command: SendMessage,
+        request_id: String,
+    ) -> RepositoryFuture<'a, ChatMessage>;
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage>;
     fn latest_sequence<'a>(
         &'a self,
@@ -226,6 +231,48 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn append_message_idempotent<'a>(
+        &'a self,
+        command: SendMessage,
+        request_id: String,
+    ) -> RepositoryFuture<'a, ChatMessage> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let key = (command.actor.clone(), request_id);
+            if let Some(message_id) = state.command_receipts.get(&key) {
+                return state
+                    .messages
+                    .values()
+                    .flatten()
+                    .find(|message| &message.id == message_id)
+                    .cloned()
+                    .ok_or(RepositoryError::NotFound);
+            }
+            if !state
+                .memberships
+                .contains_key(&(command.channel_id.clone(), command.actor.clone()))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let next_sequence = state.next_sequence(&command.channel_id);
+            let message = ChatMessage {
+                id: MessageId::generate(),
+                channel_id: command.channel_id.clone(),
+                sender_id: command.actor,
+                body: command.body,
+                sequence: next_sequence,
+                sent_at: Utc::now(),
+            };
+            state.command_receipts.insert(key, message.id);
+            state
+                .messages
+                .entry(command.channel_id)
+                .or_default()
+                .push(message.clone());
+            Ok(message)
+        })
+    }
+
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
             let state = self.lock_state()?;
@@ -293,6 +340,7 @@ struct RepositoryState {
     messages: HashMap<ChannelId, Vec<ChatMessage>>,
     next_sequences: HashMap<ChannelId, ChannelSequence>,
     users: HashMap<UserId, User>,
+    command_receipts: HashMap<(UserId, String), MessageId>,
 }
 
 impl RepositoryState {
@@ -464,5 +512,47 @@ mod tests {
             })
             .await;
         assert_eq!(result, Err(RepositoryError::PermissionDenied));
+    }
+
+    #[tokio::test]
+    async fn repeated_request_id_returns_original_message() {
+        let repository = InMemoryChatRepository::default();
+        let alice = add_human(&repository, "idempotent-alice").await;
+        let channel = repository
+            .create_channel(CreateChannel {
+                actor: alice.clone(),
+                slug: ChannelSlug::new("idempotent").unwrap(),
+                name: DisplayName::new("Idempotent").unwrap(),
+                kind: ChannelKind::Private,
+            })
+            .await
+            .unwrap();
+        let first = repository
+            .append_message_idempotent(
+                SendMessage {
+                    actor: alice.clone(),
+                    channel_id: channel.id.clone(),
+                    body: MessageBody::new("first").unwrap(),
+                },
+                "request-1".to_owned(),
+            )
+            .await
+            .unwrap();
+        let repeated = repository
+            .append_message_idempotent(
+                SendMessage {
+                    actor: alice,
+                    channel_id: channel.id.clone(),
+                    body: MessageBody::new("must not replace").unwrap(),
+                },
+                "request-1".to_owned(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first, repeated);
+        assert_eq!(
+            repository.latest_sequence(channel.id).await.unwrap(),
+            ChannelSequence::first()
+        );
     }
 }
