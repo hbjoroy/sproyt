@@ -10,7 +10,7 @@ use crate::domain::{
     ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId, CircleInvitation,
     CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName,
     InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
-    Membership, MembershipRole, MessageBody, MessageId, RepositoryError, RepositoryFuture,
+    Membership, MembershipRole, MessageBody, MessageId, Policy, RepositoryError, RepositoryFuture,
     SendMessage, User, UserId,
 };
 
@@ -108,7 +108,8 @@ impl ChatRepository for SqliteChatRepository {
             .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?;
-            if role.as_deref() != Some("owner") {
+            let role = role.as_deref().and_then(CircleRole::parse);
+            if !Policy::can_invite_to_circle(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
             let mut secret = [0_u8; 32];
@@ -177,15 +178,16 @@ impl ChatRepository for SqliteChatRepository {
             };
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             if let Some(circle_id) = &channel.circle_id {
-                let allowed: Option<i64> = sqlx::query_scalar(
-                    "select 1 from circle_memberships where circle_id = ? and user_id = ?",
+                let allowed: Option<String> = sqlx::query_scalar(
+                    "select role from circle_memberships where circle_id = ? and user_id = ?",
                 )
                 .bind(circle_id.to_string())
                 .bind(channel.created_by.to_string())
                 .fetch_optional(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
-                if allowed.is_none() {
+                let role = allowed.as_deref().and_then(CircleRole::parse);
+                if !Policy::can_create_channel_in_circle(role.as_ref()) {
                     return Err(RepositoryError::PermissionDenied);
                 }
             }
@@ -299,15 +301,16 @@ impl ChatRepository for SqliteChatRepository {
     fn append_message<'a>(&'a self, command: SendMessage) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
-            let membership: Option<i64> = sqlx::query_scalar(
-                "select 1 from channel_memberships where channel_id = ? and user_id = ?",
+            let membership: Option<String> = sqlx::query_scalar(
+                "select role from channel_memberships where channel_id = ? and user_id = ?",
             )
             .bind(command.channel_id.to_string())
             .bind(command.actor.to_string())
             .fetch_optional(&mut *transaction)
             .await
             .map_err(sql_error)?;
-            if membership.is_none() {
+            let role = membership.as_deref().and_then(MembershipRole::parse);
+            if !Policy::can_send_to_channel(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
             let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence = next_sequence + 1 where channel_id = ? returning next_sequence - 1")
@@ -362,15 +365,16 @@ impl ChatRepository for SqliteChatRepository {
                     .ok_or_else(|| storage("idempotency receipt has no message"))?;
                 return chat_message(row);
             }
-            let membership: Option<i64> = sqlx::query_scalar(
-                "select 1 from channel_memberships where channel_id = ? and user_id = ?",
+            let membership: Option<String> = sqlx::query_scalar(
+                "select role from channel_memberships where channel_id = ? and user_id = ?",
             )
             .bind(command.channel_id.to_string())
             .bind(command.actor.to_string())
             .fetch_optional(&mut *transaction)
             .await
             .map_err(sql_error)?;
-            if membership.is_none() {
+            let role = membership.as_deref().and_then(MembershipRole::parse);
+            if !Policy::can_send_to_channel(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
             let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence = next_sequence + 1 where channel_id = ? returning next_sequence - 1")
@@ -676,5 +680,10 @@ mod tests {
             })
             .await;
         assert_eq!(reused, Err(RepositoryError::NotFound));
+        let audit_count: i64 = sqlx::query_scalar("select count(*) from audit_events")
+            .fetch_one(&repository.pool)
+            .await
+            .unwrap();
+        assert!(audit_count >= 6);
     }
 }

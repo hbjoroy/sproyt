@@ -10,7 +10,7 @@ use super::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelRef, ChannelSequence, ChannelSummary,
     ChatMessage, Circle, CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel,
     CreateCircle, CreateCircleInvitation, InvitationId, IssuedInvitation, JoinChannel,
-    LeaveChannel, LoadRecentMessages, MarkRead, Membership, MembershipRole, MessageId,
+    LeaveChannel, LoadRecentMessages, MarkRead, Membership, MembershipRole, MessageId, Policy,
     RepositoryError::NotFound, SendMessage, User, UserId,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -161,11 +161,11 @@ impl ChatRepository for InMemoryChatRepository {
     ) -> RepositoryFuture<'a, IssuedInvitation> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
-            let membership = state
+            let role = state
                 .circle_memberships
                 .get(&(command.circle_id.clone(), command.actor.clone()))
-                .ok_or(RepositoryError::PermissionDenied)?;
-            if membership.role != CircleRole::Owner {
+                .map(|membership| &membership.role);
+            if !Policy::can_invite_to_circle(role) {
                 return Err(RepositoryError::PermissionDenied);
             }
             let mut secret = [0_u8; 32];
@@ -225,12 +225,14 @@ impl ChatRepository for InMemoryChatRepository {
             if state.channels_by_slug.contains_key(&command.slug) {
                 return Err(RepositoryError::Conflict);
             }
-            if command.circle_id.as_ref().is_some_and(|circle_id| {
-                !state
+            if let Some(circle_id) = &command.circle_id {
+                let role = state
                     .circle_memberships
-                    .contains_key(&(circle_id.clone(), command.actor.clone()))
-            }) {
-                return Err(RepositoryError::PermissionDenied);
+                    .get(&(circle_id.clone(), command.actor.clone()))
+                    .map(|membership| &membership.role);
+                if !Policy::can_create_channel_in_circle(role) {
+                    return Err(RepositoryError::PermissionDenied);
+                }
             }
 
             let channel = Channel {
@@ -348,10 +350,11 @@ impl ChatRepository for InMemoryChatRepository {
     fn append_message<'a>(&'a self, command: SendMessage) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
-            if !state
+            let role = state
                 .memberships
-                .contains_key(&(command.channel_id.clone(), command.actor.clone()))
-            {
+                .get(&(command.channel_id.clone(), command.actor.clone()))
+                .map(|membership| &membership.role);
+            if !Policy::can_send_to_channel(role) {
                 return Err(RepositoryError::PermissionDenied);
             }
 
@@ -391,10 +394,11 @@ impl ChatRepository for InMemoryChatRepository {
                     .cloned()
                     .ok_or(RepositoryError::NotFound);
             }
-            if !state
+            let role = state
                 .memberships
-                .contains_key(&(command.channel_id.clone(), command.actor.clone()))
-            {
+                .get(&(command.channel_id.clone(), command.actor.clone()))
+                .map(|membership| &membership.role);
+            if !Policy::can_send_to_channel(role) {
                 return Err(RepositoryError::PermissionDenied);
             }
             let next_sequence = state.next_sequence(&command.channel_id);

@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "sproyt.fullname" . }}
+  labels:
+    {{- include "sproyt.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "sproyt.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}

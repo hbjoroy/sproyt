@@ -110,3 +110,60 @@ jobs:
 
       - name: Audit locked dependencies
         run: cargo audit
+
+  delivery:
+    name: Container and Kubernetes delivery
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Lint Helm chart
+        run: helm lint helm/sproyt --strict
+
+      - name: Render production manifests
+        run: >-
+          helm template sproyt helm/sproyt
+          --namespace sproyt
+          --set ingress.enabled=true
+          --set config.oidcClientId=ci-client
+          --set secret.existingSecret=sproyt-ci
+          > rendered-manifests.yaml
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local container image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: local/sproyt:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/sproyt:${{ github.sha }}
+          format: spdx-json
+          output-file: sproyt.spdx.json
+
+      - name: Scan image for vulnerabilities
+        uses: anchore/scan-action@v7
+        with:
+          image: local/sproyt:${{ github.sha }}
+          fail-build: true
+          severity-cutoff: high
+
+      - name: Upload delivery evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: delivery-evidence
+          path: |
+            rendered-manifests.yaml
+            sproyt.spdx.json

@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "sproyt.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "sproyt.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "sproyt.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "sproyt.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret }}
+                  key: {{ .Values.secret.databaseUrlKey }}
+            - name: SPROYT_ENV
+              value: production
+            - name: SPROYT_AUTH_MODE
+              value: oidc
+            - name: SPROYT_OIDC_ISSUER
+              value: {{ .Values.config.oidcIssuer | quote }}
+            - name: SPROYT_OIDC_CLIENT_ID
+              value: {{ .Values.config.oidcClientId | quote }}
+            - name: SPROYT_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret }}
+                  key: {{ .Values.secret.oidcClientSecretKey }}
+            - name: SPROYT_OIDC_REDIRECT_URL
+              value: {{ .Values.config.oidcRedirectUrl | quote }}
+            - name: SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL
+              value: {{ .Values.config.oidcPostLogoutRedirectUrl | quote }}
+            - name: SPROYT_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret }}
+                  key: {{ .Values.secret.sessionKeyKey }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
