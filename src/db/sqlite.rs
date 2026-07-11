@@ -579,6 +579,25 @@ impl ProcessRepository for SqliteChatRepository {
         })
     }
 
+    fn complete_operation<'a>(
+        &'a self,
+        job: OutboxJob,
+        event_type: &'a str,
+        payload: serde_json::Value,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let now = Utc::now();
+            sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,occurred_at) values(?,?,?,?,?,?) on conflict(process_link_id,event_key) do nothing")
+                .bind(Uuid::now_v7().to_string()).bind(job.process_link_id.as_uuid().to_string())
+                .bind(job.id.as_uuid().to_string()).bind(event_type).bind(payload.to_string()).bind(now)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("update process_outbox set status='completed',completed_at=?,lease_until=null where id=?")
+                .bind(now).bind(job.id.as_uuid().to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)
+        })
+    }
+
     fn reschedule<'a>(
         &'a self,
         job: OutboxJob,

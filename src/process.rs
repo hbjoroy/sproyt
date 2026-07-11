@@ -100,6 +100,12 @@ pub trait ProcessRepository: Send + Sync + 'static {
         job: OutboxJob,
         result: StartedProcess,
     ) -> ProcessRepositoryFuture<'a, ()>;
+    fn complete_operation<'a>(
+        &'a self,
+        job: OutboxJob,
+        event_type: &'a str,
+        payload: Value,
+    ) -> ProcessRepositoryFuture<'a, ()>;
     fn reschedule<'a>(
         &'a self,
         job: OutboxJob,
@@ -138,26 +144,22 @@ async fn run_outbox(repository: SharedProcessRepository, gateway: SharedProcessG
     loop {
         match repository.lease_next(Duration::from_secs(30)).await {
             Ok(Some(job)) => {
-                let outcome = match &job.operation {
-                    OutboxOperation::Start { command } => {
-                        gateway.start(command, job.id.as_uuid()).await
-                    }
-                    OutboxOperation::Correlate { command } => gateway
-                        .correlate(command, job.id.as_uuid())
-                        .await
-                        .map(|_| StartedProcess {
-                            instance_id: job.process_link_id.as_uuid(),
-                        }),
-                    OutboxOperation::Inspect { instance_id } => gateway
-                        .inspect(*instance_id, job.id.as_uuid())
-                        .await
-                        .map(|result| StartedProcess {
-                            instance_id: result.id,
-                        }),
+                let outcome: Result<WorkerResult, ProcessError> = match &job.operation {
+                    OutboxOperation::Start { command } => gateway.start(command, job.id.as_uuid()).await.map(WorkerResult::Started),
+                    OutboxOperation::Correlate { command } => gateway.correlate(command, job.id.as_uuid()).await.map(|result| WorkerResult::Event("process.correlated", serde_json::json!({"matched_instances": result.matched_instances, "instance_ids": result.instance_ids}))),
+                    OutboxOperation::Inspect { instance_id } => gateway.inspect(*instance_id, job.id.as_uuid()).await.map(|result| WorkerResult::Event("process.inspected", serde_json::json!({"instance_id": result.id, "status": result.status, "current_node": result.current_node}))),
                 };
                 match outcome {
-                    Ok(result) => {
+                    Ok(WorkerResult::Started(result)) => {
                         if let Err(error) = repository.complete_start(job, result).await {
+                            warn!(%error, "failed to complete process outbox job");
+                        }
+                    }
+                    Ok(WorkerResult::Event(event_type, payload)) => {
+                        if let Err(error) = repository
+                            .complete_operation(job, event_type, payload)
+                            .await
+                        {
                             warn!(%error, "failed to complete process outbox job");
                         }
                     }
@@ -178,6 +180,11 @@ async fn run_outbox(repository: SharedProcessRepository, gateway: SharedProcessG
             }
         }
     }
+}
+
+enum WorkerResult {
+    Started(StartedProcess),
+    Event(&'static str, Value),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

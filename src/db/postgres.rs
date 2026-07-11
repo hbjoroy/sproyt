@@ -596,6 +596,24 @@ impl ProcessRepository for PostgresChatRepository {
         })
     }
 
+    fn complete_operation<'a>(
+        &'a self,
+        job: OutboxJob,
+        event_type: &'a str,
+        payload: serde_json::Value,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let now = Utc::now();
+            sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,occurred_at) values($1,$2,$3,$4,$5,$6) on conflict(process_link_id,event_key) do nothing")
+                .bind(Uuid::now_v7()).bind(job.process_link_id.as_uuid()).bind(job.id.as_uuid().to_string())
+                .bind(event_type).bind(payload).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("update process_outbox set status='completed',completed_at=$1,lease_until=null where id=$2")
+                .bind(now).bind(job.id.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)
+        })
+    }
+
     fn reschedule<'a>(
         &'a self,
         job: OutboxJob,
