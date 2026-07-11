@@ -4,6 +4,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions};
+use uuid::Uuid;
 
 use crate::domain::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
@@ -12,6 +13,10 @@ use crate::domain::{
     InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
     Membership, MembershipRole, MessageBody, MessageId, Policy, RepositoryError, RepositoryFuture,
     SendMessage, User, UserId,
+};
+use crate::process::{
+    EnqueueProcessStart, OutboxId, OutboxJob, OutboxOperation, ProcessError, ProcessLink,
+    ProcessLinkId, ProcessRepository, ProcessRepositoryFuture, StartProcess, StartedProcess,
 };
 
 use super::{sql_error, storage};
@@ -467,6 +472,170 @@ impl ChatRepository for SqliteChatRepository {
     }
 }
 
+impl ProcessRepository for SqliteChatRepository {
+    fn enqueue_start<'a>(
+        &'a self,
+        command: EnqueueProcessStart,
+    ) -> ProcessRepositoryFuture<'a, ProcessLink> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let allowed: Option<i64> = sqlx::query_scalar(
+                "select 1 from channel_memberships where channel_id = ? and user_id = ?",
+            )
+            .bind(command.channel_id.to_string())
+            .bind(command.actor.to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if let Some(row) = sqlx::query("select id, heart_instance_id, namespace, definition_name, definition_version, status from process_links where initiated_by = ? and request_id = ?")
+                .bind(command.actor.to_string()).bind(&command.request_id).fetch_optional(&mut *tx).await.map_err(sql_error)? {
+                tx.commit().await.map_err(sql_error)?;
+                return process_link_from_sqlite(row, command.channel_id, command.actor);
+            }
+            let link_id = ProcessLinkId::generate();
+            let outbox_id = OutboxId::generate();
+            let now = Utc::now();
+            let operation = OutboxOperation::Start {
+                command: StartProcess {
+                    namespace: command.namespace.clone(),
+                    definition_name: command.definition_name.clone(),
+                    version: command.definition_version.clone(),
+                    metadata: command.metadata,
+                },
+            };
+            sqlx::query("insert into process_links (id, channel_id, namespace, definition_name, definition_version, initiated_by, request_id, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(link_id.as_uuid().to_string()).bind(command.channel_id.to_string()).bind(&command.namespace)
+                .bind(&command.definition_name).bind(&command.definition_version).bind(command.actor.to_string())
+                .bind(&command.request_id).bind(now).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into process_outbox (id, process_link_id, operation, payload, available_at, created_at) values (?, ?, 'start', ?, ?, ?)")
+                .bind(outbox_id.as_uuid().to_string()).bind(link_id.as_uuid().to_string())
+                .bind(serde_json::to_string(&operation).map_err(storage)?).bind(now).bind(now)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(ProcessLink {
+                id: link_id,
+                channel_id: command.channel_id,
+                heart_instance_id: None,
+                namespace: command.namespace,
+                definition_name: command.definition_name,
+                definition_version: command.definition_version,
+                initiated_by: command.actor,
+                status: "starting".into(),
+            })
+        })
+    }
+
+    fn lease_next<'a>(
+        &'a self,
+        lease_for: std::time::Duration,
+    ) -> ProcessRepositoryFuture<'a, Option<OutboxJob>> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let now = Utc::now();
+            let row = sqlx::query("select id, process_link_id, payload, attempts from process_outbox where (status = 'pending' or (status = 'leased' and lease_until < ?)) and available_at <= ? order by created_at limit 1")
+                .bind(now).bind(now).fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            let Some(row) = row else {
+                tx.commit().await.map_err(sql_error)?;
+                return Ok(None);
+            };
+            let id: String = row.try_get("id").map_err(storage)?;
+            let lease_until = now + chrono::Duration::from_std(lease_for).map_err(storage)?;
+            let updated = sqlx::query("update process_outbox set status = 'leased', lease_until = ?, attempts = attempts + 1 where id = ? and (status = 'pending' or lease_until < ?)")
+                .bind(lease_until).bind(&id).bind(now).execute(&mut *tx).await.map_err(sql_error)?.rows_affected();
+            if updated == 0 {
+                tx.commit().await.map_err(sql_error)?;
+                return Ok(None);
+            }
+            let job = outbox_from_sqlite(&row)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(Some(OutboxJob {
+                attempts: job.attempts + 1,
+                ..job
+            }))
+        })
+    }
+
+    fn complete_start<'a>(
+        &'a self,
+        job: OutboxJob,
+        result: StartedProcess,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let now = Utc::now();
+            sqlx::query("update process_links set heart_instance_id = ?, status = 'active', updated_at = ? where id = ? and (heart_instance_id is null or heart_instance_id = ?)")
+                .bind(result.instance_id.to_string()).bind(now).bind(job.process_link_id.as_uuid().to_string())
+                .bind(result.instance_id.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into process_events (id, process_link_id, event_key, event_type, payload, occurred_at) values (?, ?, 'started', 'process.started', ?, ?) on conflict(process_link_id, event_key) do nothing")
+                .bind(Uuid::now_v7().to_string()).bind(job.process_link_id.as_uuid().to_string())
+                .bind(serde_json::json!({"instance_id": result.instance_id}).to_string()).bind(now)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("update process_outbox set status = 'completed', completed_at = ?, lease_until = null where id = ?")
+                .bind(now).bind(job.id.as_uuid().to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)
+        })
+    }
+
+    fn reschedule<'a>(
+        &'a self,
+        job: OutboxJob,
+        error: ProcessError,
+        delay: std::time::Duration,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let terminal = !error.retryable || job.attempts >= 8;
+            let available = Utc::now() + chrono::Duration::from_std(delay).map_err(storage)?;
+            sqlx::query("update process_outbox set status = ?, available_at = ?, lease_until = null, last_error = ? where id = ?")
+                .bind(if terminal { "failed" } else { "pending" }).bind(available)
+                .bind(error.to_string()).bind(job.id.as_uuid().to_string()).execute(&self.pool).await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+}
+
+fn process_link_from_sqlite(
+    row: sqlx::sqlite::SqliteRow,
+    channel_id: ChannelId,
+    actor: UserId,
+) -> Result<ProcessLink, RepositoryError> {
+    let id = Uuid::parse_str(&row.try_get::<String, _>("id").map_err(storage)?).map_err(storage)?;
+    let heart = row
+        .try_get::<Option<String>, _>("heart_instance_id")
+        .map_err(storage)?
+        .map(|value| Uuid::parse_str(&value))
+        .transpose()
+        .map_err(storage)?;
+    Ok(ProcessLink {
+        id: ProcessLinkId::from_uuid(id),
+        channel_id,
+        heart_instance_id: heart,
+        namespace: row.try_get("namespace").map_err(storage)?,
+        definition_name: row.try_get("definition_name").map_err(storage)?,
+        definition_version: row.try_get("definition_version").map_err(storage)?,
+        initiated_by: actor,
+        status: row.try_get("status").map_err(storage)?,
+    })
+}
+
+fn outbox_from_sqlite(row: &sqlx::sqlite::SqliteRow) -> Result<OutboxJob, RepositoryError> {
+    let id = Uuid::parse_str(&row.try_get::<String, _>("id").map_err(storage)?).map_err(storage)?;
+    let link = Uuid::parse_str(
+        &row.try_get::<String, _>("process_link_id")
+            .map_err(storage)?,
+    )
+    .map_err(storage)?;
+    let payload: String = row.try_get("payload").map_err(storage)?;
+    Ok(OutboxJob {
+        id: OutboxId::from_uuid(id),
+        process_link_id: ProcessLinkId::from_uuid(link),
+        operation: serde_json::from_str(&payload).map_err(storage)?,
+        attempts: row.try_get::<i64, _>("attempts").map_err(storage)? as u32,
+    })
+}
+
 async fn ensure_membership(
     pool: &SqlitePool,
     channel_id: &ChannelId,
@@ -606,7 +775,7 @@ mod tests {
             .unwrap();
         let loaded = repository
             .load_recent_messages(LoadRecentMessages {
-                actor: alice,
+                actor: alice.clone(),
                 channel_id: channel.id.clone(),
                 limit: crate::domain::MessageLimit::DEFAULT,
                 after: None,
@@ -630,7 +799,7 @@ mod tests {
             .append_message_idempotent(
                 SendMessage {
                     actor: UserId::named("sqlite-alice"),
-                    channel_id: channel.id,
+                    channel_id: channel.id.clone(),
                     body: MessageBody::new("twice").unwrap(),
                 },
                 "request-1".to_owned(),
@@ -638,6 +807,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first, repeated);
+
+        let process = repository
+            .enqueue_start(EnqueueProcessStart {
+                channel_id: channel.id.clone(),
+                actor: alice.clone(),
+                request_id: "process-request-1".to_owned(),
+                namespace: "sproyt".to_owned(),
+                definition_name: "event-plan".to_owned(),
+                definition_version: Some("1".to_owned()),
+                metadata: serde_json::json!({"title": "Dinner"}),
+            })
+            .await
+            .unwrap();
+        let repeated_process = repository
+            .enqueue_start(EnqueueProcessStart {
+                channel_id: channel.id.clone(),
+                actor: alice.clone(),
+                request_id: "process-request-1".to_owned(),
+                namespace: "sproyt".to_owned(),
+                definition_name: "ignored-on-replay".to_owned(),
+                definition_version: None,
+                metadata: serde_json::Value::Null,
+            })
+            .await
+            .unwrap();
+        assert_eq!(process.id, repeated_process.id);
+        let job = repository
+            .lease_next(std::time::Duration::from_secs(30))
+            .await
+            .unwrap()
+            .unwrap();
+        let instance_id = Uuid::now_v7();
+        repository
+            .complete_start(job, StartedProcess { instance_id })
+            .await
+            .unwrap();
+        let completed: (String, i64) = sqlx::query_as(
+            "select status, (select count(*) from process_events where process_link_id = ?) from process_links where id = ?",
+        )
+        .bind(process.id.as_uuid().to_string())
+        .bind(process.id.as_uuid().to_string())
+        .fetch_one(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(completed, ("active".to_owned(), 1));
 
         let bob = UserId::named("sqlite-bob");
         repository

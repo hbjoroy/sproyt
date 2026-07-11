@@ -10,6 +10,12 @@ use std::sync::Arc;
 
 use crate::config::{DatabaseConfig, DatabaseKind};
 use crate::domain::{ChatRepository, RepositoryError};
+use crate::process::{ProcessRepository, SharedProcessRepository};
+
+pub struct Repositories {
+    pub chat: Arc<dyn ChatRepository>,
+    pub process: SharedProcessRepository,
+}
 
 pub async fn migrate(config: &DatabaseConfig) -> Result<(), RepositoryError> {
     match config.kind() {
@@ -24,14 +30,22 @@ pub async fn migrate(config: &DatabaseConfig) -> Result<(), RepositoryError> {
     }
 }
 
-pub async fn connect_repository(
+pub async fn connect_repositories(
     config: &DatabaseConfig,
-) -> Result<Arc<dyn ChatRepository>, RepositoryError> {
+) -> Result<Repositories, RepositoryError> {
     match config.kind() {
-        DatabaseKind::Sqlite => Ok(Arc::new(SqliteChatRepository::connect(config.url()).await?)),
-        DatabaseKind::Postgres => Ok(Arc::new(
-            PostgresChatRepository::connect(config.url()).await?,
-        )),
+        DatabaseKind::Sqlite => {
+            let repository = Arc::new(SqliteChatRepository::connect(config.url()).await?);
+            let chat: Arc<dyn ChatRepository> = repository.clone();
+            let process: Arc<dyn ProcessRepository> = repository;
+            Ok(Repositories { chat, process })
+        }
+        DatabaseKind::Postgres => {
+            let repository = Arc::new(PostgresChatRepository::connect(config.url()).await?);
+            let chat: Arc<dyn ChatRepository> = repository.clone();
+            let process: Arc<dyn ProcessRepository> = repository;
+            Ok(Repositories { chat, process })
+        }
     }
 }
 

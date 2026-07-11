@@ -4,13 +4,14 @@ mod config;
 mod db;
 mod domain;
 mod operations;
+mod process;
 mod protocol;
 mod ws;
 
 use std::time::Duration;
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{
         Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -21,7 +22,7 @@ use axum::{
     },
     middleware,
     response::{Html, IntoResponse},
-    routing::get,
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -38,6 +39,7 @@ use crate::{
     config::{AppConfig, AuthMode, LogFormat},
     domain::{ChannelId, ChannelSequence, ChatEvent, ChatMessage, MessageBody, UserId},
     operations::{OperationalState, healthz, metrics, readyz, record_metrics},
+    process::{EnqueueProcessStart, HeartGateway, ProcessService, SharedProcessGateway},
 };
 
 #[derive(Clone)]
@@ -45,6 +47,7 @@ struct AppState {
     auth: AuthService,
     chat: ChatEngine,
     operations: OperationalState,
+    processes: ProcessService,
 }
 
 impl axum::extract::FromRef<AppState> for OperationalState {
@@ -64,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     let address = config.bind_address();
     let operations = OperationalState::default();
-    let repository = db::connect_repository(config.database()).await?;
+    let repositories = db::connect_repositories(config.database()).await?;
     let auth = match config.auth_mode() {
         AuthMode::Development => AuthService::development(),
         AuthMode::Oidc => {
@@ -78,8 +81,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     let state = AppState {
         auth,
-        chat: ChatEngine::start(repository),
+        chat: ChatEngine::start(repositories.chat),
         operations: operations.clone(),
+        processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
     };
     let request_id_header = HeaderName::from_static("x-request-id");
 
@@ -92,6 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/auth/callback", get(auth_callback))
         .route("/auth/logout", get(auth_logout))
         .route("/ws", get(ws_handler))
+        .route("/api/v1/processes", post(start_process))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
             operations.clone(),
@@ -114,6 +119,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     Ok(())
+}
+
+fn process_gateway_from_env() -> Result<Option<SharedProcessGateway>, crate::process::ProcessError>
+{
+    let Some(url) = std::env::var("SPROYT_HEART_URL").ok() else {
+        return Ok(None);
+    };
+    let gateway = HeartGateway::new(url, Duration::from_secs(5), 2)?;
+    Ok(Some(std::sync::Arc::new(gateway)))
+}
+
+#[derive(Deserialize)]
+struct StartProcessRequest {
+    channel_id: String,
+    request_id: String,
+    namespace: String,
+    definition_name: String,
+    definition_version: Option<String>,
+    #[serde(default)]
+    metadata: serde_json::Value,
+}
+
+async fn start_process(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(body): Json<StartProcessRequest>,
+) -> axum::response::Response {
+    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    let principal = match state.auth.authenticate_request(query.participant, cookie) {
+        Ok(principal) => principal,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    let channel_id = match ChannelId::new(body.channel_id) {
+        Ok(id) => id,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    match state
+        .processes
+        .enqueue_start(EnqueueProcessStart {
+            channel_id,
+            actor: principal.user.id,
+            request_id: body.request_id,
+            namespace: body.namespace,
+            definition_name: body.definition_name,
+            definition_version: body.definition_version,
+            metadata: body.metadata,
+        })
+        .await
+    {
+        Ok(link) => (
+            axum::http::StatusCode::ACCEPTED,
+            Json(serde_json::json!({"process_link_id": link.id.as_uuid(), "status": link.status})),
+        )
+            .into_response(),
+        Err(error) => (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    }
 }
 
 async fn index() -> Html<&'static str> {

@@ -126,6 +126,7 @@ Runtime configuration is read from environment variables:
 | `SPROYT_OIDC_REDIRECT_URL` | required for OIDC | Absolute callback URL ending in `/auth/callback`. |
 | `SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL` | required for OIDC | Safe redirect after local logout. |
 | `SPROYT_SESSION_KEY` | required for OIDC | URL-safe base64 encoding of exactly 32 random bytes. |
+| `SPROYT_HEART_URL` | unset | Heart API root. When unset, ordinary chat runs normally and no outbox worker calls Heart. |
 
 OIDC uses discovery and does not hard-code Authentik endpoints. Register the
 exact redirect URL with the provider. Login starts at `/auth/login`, the
