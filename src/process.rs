@@ -28,6 +28,10 @@ impl ProcessLinkId {
     pub const fn from_uuid(value: Uuid) -> Self {
         Self(value)
     }
+
+    pub fn parse(value: &str) -> Result<Self, uuid::Error> {
+        Uuid::parse_str(value).map(Self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -56,6 +60,22 @@ pub struct EnqueueProcessStart {
     pub definition_name: String,
     pub definition_version: Option<String>,
     pub metadata: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct EnqueueCorrelation {
+    pub process_link_id: ProcessLinkId,
+    pub actor: UserId,
+    pub request_id: String,
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct SetCircleFeature {
+    pub circle_id: crate::domain::CircleId,
+    pub actor: UserId,
+    pub feature: String,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -91,6 +111,14 @@ pub trait ProcessRepository: Send + Sync + 'static {
         &'a self,
         command: EnqueueProcessStart,
     ) -> ProcessRepositoryFuture<'a, ProcessLink>;
+    fn enqueue_correlation<'a>(
+        &'a self,
+        command: EnqueueCorrelation,
+    ) -> ProcessRepositoryFuture<'a, OutboxId>;
+    fn set_circle_feature<'a>(
+        &'a self,
+        command: SetCircleFeature,
+    ) -> ProcessRepositoryFuture<'a, ()>;
     fn lease_next<'a>(
         &'a self,
         lease_for: Duration,
@@ -137,6 +165,20 @@ impl ProcessService {
         command: EnqueueProcessStart,
     ) -> Result<ProcessLink, RepositoryError> {
         self.repository.enqueue_start(command).await
+    }
+
+    pub async fn enqueue_correlation(
+        &self,
+        command: EnqueueCorrelation,
+    ) -> Result<OutboxId, RepositoryError> {
+        self.repository.enqueue_correlation(command).await
+    }
+
+    pub async fn set_circle_feature(
+        &self,
+        command: SetCircleFeature,
+    ) -> Result<(), RepositoryError> {
+        self.repository.set_circle_feature(command).await
     }
 }
 

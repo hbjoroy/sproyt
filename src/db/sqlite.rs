@@ -15,8 +15,9 @@ use crate::domain::{
     SendMessage, User, UserId,
 };
 use crate::process::{
-    EnqueueProcessStart, OutboxId, OutboxJob, OutboxOperation, ProcessError, ProcessLink,
-    ProcessLinkId, ProcessRepository, ProcessRepositoryFuture, StartProcess, StartedProcess,
+    EnqueueCorrelation, EnqueueProcessStart, OutboxId, OutboxJob, OutboxOperation, ProcessError,
+    ProcessLink, ProcessLinkId, ProcessRepository, ProcessRepositoryFuture, SetCircleFeature,
+    StartProcess, StartedProcess,
 };
 
 use super::{sql_error, storage};
@@ -528,6 +529,75 @@ impl ProcessRepository for SqliteChatRepository {
         })
     }
 
+    fn enqueue_correlation<'a>(
+        &'a self,
+        command: EnqueueCorrelation,
+    ) -> ProcessRepositoryFuture<'a, OutboxId> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "select outbox_id from process_command_receipts where actor_id=? and request_id=?",
+            )
+            .bind(command.actor.to_string())
+            .bind(&command.request_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?
+            {
+                tx.commit().await.map_err(sql_error)?;
+                return Uuid::parse_str(&existing)
+                    .map(OutboxId::from_uuid)
+                    .map_err(storage);
+            }
+            let namespace: Option<String> = sqlx::query_scalar("select p.namespace from process_links p join channels c on c.id=p.channel_id join channel_memberships m on m.channel_id=c.id and m.user_id=? join circle_features f on f.circle_id=c.circle_id and f.feature='heart.event-planning' and f.enabled=1 where p.id=?")
+                .bind(command.actor.to_string()).bind(command.process_link_id.as_uuid().to_string())
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            let namespace = namespace.ok_or(RepositoryError::PermissionDenied)?;
+            let outbox_id = OutboxId::generate();
+            let now = Utc::now();
+            let operation = OutboxOperation::Correlate {
+                command: crate::process::CorrelateMessage {
+                    namespace,
+                    correlation_key: "process_link_id".into(),
+                    correlation_value: command.process_link_id.as_uuid().to_string(),
+                    payload: command.payload,
+                },
+            };
+            sqlx::query("insert into process_outbox(id,process_link_id,operation,payload,available_at,created_at) values(?,?,'correlate',?,?,?)")
+                .bind(outbox_id.as_uuid().to_string()).bind(command.process_link_id.as_uuid().to_string())
+                .bind(serde_json::to_string(&operation).map_err(storage)?).bind(now).bind(now)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into process_command_receipts(actor_id,request_id,process_link_id,outbox_id,command_type,created_at) values(?,?,?,?, 'correlate', ?)")
+                .bind(command.actor.to_string()).bind(command.request_id).bind(command.process_link_id.as_uuid().to_string())
+                .bind(outbox_id.as_uuid().to_string()).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(outbox_id)
+        })
+    }
+
+    fn set_circle_feature<'a>(
+        &'a self,
+        command: SetCircleFeature,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let owner: Option<i64> = sqlx::query_scalar(
+                "select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'",
+            )
+            .bind(command.circle_id.to_string())
+            .bind(command.actor.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if owner.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("insert into circle_features(circle_id,feature,enabled,updated_by,updated_at) values(?,?,?,?,?) on conflict(circle_id,feature) do update set enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+                .bind(command.circle_id.to_string()).bind(command.feature).bind(command.enabled)
+                .bind(command.actor.to_string()).bind(Utc::now()).execute(&self.pool).await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
     fn lease_next<'a>(
         &'a self,
         lease_for: std::time::Duration,
@@ -892,6 +962,56 @@ mod tests {
             })
             .await
             .unwrap();
+        repository
+            .set_circle_feature(SetCircleFeature {
+                circle_id: circle.id.clone(),
+                actor: alice.clone(),
+                feature: "heart.event-planning".to_owned(),
+                enabled: true,
+            })
+            .await
+            .unwrap();
+        let pilot_channel = repository
+            .create_channel(CreateChannel {
+                actor: alice.clone(),
+                slug: ChannelSlug::new("event-pilot").unwrap(),
+                name: DisplayName::new("Event pilot").unwrap(),
+                kind: ChannelKind::Private,
+                circle_id: Some(circle.id.clone()),
+            })
+            .await
+            .unwrap();
+        let pilot_link = repository
+            .enqueue_start(EnqueueProcessStart {
+                channel_id: pilot_channel.id,
+                actor: alice.clone(),
+                request_id: "pilot-start".to_owned(),
+                namespace: "sproyt".to_owned(),
+                definition_name: "sproyt-event-planning".to_owned(),
+                definition_version: Some("1.0.0".to_owned()),
+                metadata: serde_json::json!({"title": "Dinner"}),
+            })
+            .await
+            .unwrap();
+        let first_correlation = repository
+            .enqueue_correlation(EnqueueCorrelation {
+                process_link_id: pilot_link.id,
+                actor: alice.clone(),
+                request_id: "pilot-answer".to_owned(),
+                payload: serde_json::json!({"decision": "yes"}),
+            })
+            .await
+            .unwrap();
+        let repeated_correlation = repository
+            .enqueue_correlation(EnqueueCorrelation {
+                process_link_id: pilot_link.id,
+                actor: alice.clone(),
+                request_id: "pilot-answer".to_owned(),
+                payload: serde_json::json!({"decision": "no"}),
+            })
+            .await
+            .unwrap();
+        assert_eq!(first_correlation, repeated_correlation);
         let invitation = repository
             .create_circle_invitation(CreateCircleInvitation {
                 actor: UserId::named("sqlite-alice"),

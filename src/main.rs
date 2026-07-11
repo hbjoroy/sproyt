@@ -13,7 +13,7 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     extract::{
-        Query, State,
+        Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{
@@ -39,7 +39,10 @@ use crate::{
     config::{AppConfig, AuthMode, LogFormat},
     domain::{ChannelId, ChannelSequence, ChatEvent, ChatMessage, MessageBody, UserId},
     operations::{OperationalState, healthz, metrics, readyz, record_metrics},
-    process::{EnqueueProcessStart, HeartGateway, ProcessService, SharedProcessGateway},
+    process::{
+        EnqueueCorrelation, EnqueueProcessStart, HeartGateway, ProcessLinkId, ProcessService,
+        SetCircleFeature, SharedProcessGateway,
+    },
 };
 
 #[derive(Clone)]
@@ -97,6 +100,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/auth/logout", get(auth_logout))
         .route("/ws", get(ws_handler))
         .route("/api/v1/processes", post(start_process))
+        .route("/api/v1/processes/{id}/messages", post(correlate_process))
+        .route(
+            "/api/v1/circles/{id}/features/heart-event-planning",
+            post(set_heart_feature),
+        )
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
             operations.clone(),
@@ -180,6 +188,113 @@ async fn start_process(
             .into_response(),
         Err(error) => (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     }
+}
+
+#[derive(Deserialize)]
+struct CorrelateProcessRequest {
+    request_id: String,
+    #[serde(default)]
+    payload: serde_json::Value,
+}
+
+async fn correlate_process(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(body): Json<CorrelateProcessRequest>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers) {
+        Ok(principal) => principal,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    let process_link_id = match ProcessLinkId::parse(&id) {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                "invalid process link id",
+            )
+                .into_response();
+        }
+    };
+    match state
+        .processes
+        .enqueue_correlation(EnqueueCorrelation {
+            process_link_id,
+            actor: principal.user.id,
+            request_id: body.request_id,
+            payload: body.payload,
+        })
+        .await
+    {
+        Ok(outbox_id) => (
+            axum::http::StatusCode::ACCEPTED,
+            Json(serde_json::json!({"outbox_id": outbox_id.as_uuid()})),
+        )
+            .into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct SetFeatureRequest {
+    enabled: bool,
+}
+
+async fn set_heart_feature(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(body): Json<SetFeatureRequest>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers) {
+        Ok(principal) => principal,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    let circle_id = match uuid::Uuid::parse_str(&id) {
+        Ok(id) => crate::domain::CircleId::from_uuid(id),
+        Err(_) => {
+            return (axum::http::StatusCode::BAD_REQUEST, "invalid circle id").into_response();
+        }
+    };
+    match state
+        .processes
+        .set_circle_feature(SetCircleFeature {
+            circle_id,
+            actor: principal.user.id,
+            feature: "heart.event-planning".to_owned(),
+            enabled: body.enabled,
+        })
+        .await
+    {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+fn authenticate_http(
+    state: &AppState,
+    query: WsQuery,
+    headers: &HeaderMap,
+) -> Result<crate::auth::AuthenticatedPrincipal, crate::auth::AuthError> {
+    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    state.auth.authenticate_request(query.participant, cookie)
+}
+
+fn repository_response(error: crate::domain::RepositoryError) -> axum::response::Response {
+    let status = match error {
+        crate::domain::RepositoryError::PermissionDenied => axum::http::StatusCode::FORBIDDEN,
+        crate::domain::RepositoryError::NotFound => axum::http::StatusCode::NOT_FOUND,
+        crate::domain::RepositoryError::Conflict => axum::http::StatusCode::CONFLICT,
+        crate::domain::RepositoryError::Storage(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, error.to_string()).into_response()
 }
 
 async fn index() -> Html<&'static str> {

@@ -18,8 +18,9 @@ use crate::domain::{
     SendMessage, User, UserId,
 };
 use crate::process::{
-    EnqueueProcessStart, OutboxId, OutboxJob, OutboxOperation, ProcessError, ProcessLink,
-    ProcessLinkId, ProcessRepository, ProcessRepositoryFuture, StartProcess, StartedProcess,
+    EnqueueCorrelation, EnqueueProcessStart, OutboxId, OutboxJob, OutboxOperation, ProcessError,
+    ProcessLink, ProcessLinkId, ProcessRepository, ProcessRepositoryFuture, SetCircleFeature,
+    StartProcess, StartedProcess,
 };
 
 use super::{sql_error, storage};
@@ -550,6 +551,59 @@ impl ProcessRepository for PostgresChatRepository {
                 initiated_by: command.actor,
                 status: "starting".into(),
             })
+        })
+    }
+
+    fn enqueue_correlation<'a>(
+        &'a self,
+        command: EnqueueCorrelation,
+    ) -> ProcessRepositoryFuture<'a, OutboxId> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            if let Some(existing) = sqlx::query_scalar::<_, Uuid>("select outbox_id from process_command_receipts where actor_id=$1 and request_id=$2")
+                .bind(*command.actor.as_uuid()).bind(&command.request_id).fetch_optional(&mut *tx).await.map_err(sql_error)? {
+                tx.commit().await.map_err(sql_error)?;
+                return Ok(OutboxId::from_uuid(existing));
+            }
+            let namespace: Option<String> = sqlx::query_scalar("select p.namespace from process_links p join channels c on c.id=p.channel_id join channel_memberships m on m.channel_id=c.id and m.user_id=$1 join circle_features f on f.circle_id=c.circle_id and f.feature='heart.event-planning' and f.enabled where p.id=$2")
+                .bind(*command.actor.as_uuid()).bind(command.process_link_id.as_uuid())
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            let namespace = namespace.ok_or(RepositoryError::PermissionDenied)?;
+            let outbox_id = OutboxId::generate();
+            let now = Utc::now();
+            let operation = OutboxOperation::Correlate {
+                command: crate::process::CorrelateMessage {
+                    namespace,
+                    correlation_key: "process_link_id".into(),
+                    correlation_value: command.process_link_id.as_uuid().to_string(),
+                    payload: command.payload,
+                },
+            };
+            sqlx::query("insert into process_outbox(id,process_link_id,operation,payload,available_at,created_at) values($1,$2,'correlate',$3,$4,$4)")
+                .bind(outbox_id.as_uuid()).bind(command.process_link_id.as_uuid()).bind(serde_json::to_value(&operation).map_err(storage)?)
+                .bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into process_command_receipts(actor_id,request_id,process_link_id,outbox_id,command_type,created_at) values($1,$2,$3,$4,'correlate',$5)")
+                .bind(*command.actor.as_uuid()).bind(command.request_id).bind(command.process_link_id.as_uuid())
+                .bind(outbox_id.as_uuid()).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(outbox_id)
+        })
+    }
+
+    fn set_circle_feature<'a>(
+        &'a self,
+        command: SetCircleFeature,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let owner: Option<i32> = sqlx::query_scalar("select 1 from circle_memberships where circle_id=$1 and user_id=$2 and role='owner'")
+                .bind(*command.circle_id.as_uuid()).bind(*command.actor.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?;
+            if owner.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("insert into circle_features(circle_id,feature,enabled,updated_by,updated_at) values($1,$2,$3,$4,$5) on conflict(circle_id,feature) do update set enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+                .bind(*command.circle_id.as_uuid()).bind(command.feature).bind(command.enabled)
+                .bind(*command.actor.as_uuid()).bind(Utc::now()).execute(&self.pool).await.map_err(sql_error)?;
+            Ok(())
         })
     }
 
