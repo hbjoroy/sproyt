@@ -848,6 +848,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         align-items: end;
       }
 
+      .circle-tools {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+        gap: 8px;
+        align-items: end;
+      }
+
       .status {
         color: #506057;
         min-height: 1.2em;
@@ -988,6 +995,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         .connect,
+        .circle-tools,
         form.send {
           grid-template-columns: 1fr;
         }
@@ -1058,6 +1066,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="connect" type="submit">Kople til</button>
         </form>
         <div class="status" id="status">Ikkje tilkopla</div>
+        <div class="circle-tools" aria-label="Vennekretsar">
+          <label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label>
+          <label>Namn<input id="circle-name" placeholder="Turvenner"></label>
+          <label>Slug<input id="circle-slug" placeholder="turvenner"></label>
+          <button id="create-circle" type="button" disabled>Lag krets</button>
+          <label>Ny kanal<input id="circle-channel" placeholder="planlegging"></label>
+          <button id="create-circle-channel" type="button" disabled>Lag kanal</button>
+          <button id="create-invitation" type="button" disabled>Lag invitasjon</button>
+          <label>Invitasjonstoken<input id="invitation-token" placeholder="Lim inn token"></label>
+          <button id="accept-invitation" type="button" disabled>Godta</button>
+        </div>
         <div class="view-controls" aria-label="Meldingsvising">
           <button id="view-mode" type="button" aria-pressed="true">View</button>
           <button id="raw-mode" type="button" aria-pressed="false">Raw</button>
@@ -1089,6 +1108,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const rawModeButton = document.querySelector("#raw-mode");
       const statusEl = document.querySelector("#status");
       const messagesEl = document.querySelector("#messages");
+      const circleSelect = document.querySelector("#circle-select");
+      const circleName = document.querySelector("#circle-name");
+      const circleSlug = document.querySelector("#circle-slug");
+      const circleChannel = document.querySelector("#circle-channel");
+      const invitationToken = document.querySelector("#invitation-token");
+      const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation"].map((id) => document.querySelector(id));
 
       let socket = null;
       let renderMode = "view";
@@ -1115,6 +1140,24 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       viewModeButton.addEventListener("click", () => setRenderMode("view"));
       rawModeButton.addEventListener("click", () => setRenderMode("raw"));
+      circleButtons[0].addEventListener("click", () => sendCommand("create_circle", {
+        name: circleName.value.trim(), slug: slugify(circleSlug.value || circleName.value)
+      }));
+      circleButtons[1].addEventListener("click", () => {
+        if (!circleSelect.value) return;
+        const slug = slugify(circleChannel.value);
+        sendCommand("create_channel", { slug, name: circleChannel.value.trim(), kind: "private", circle_id: circleSelect.value });
+      });
+      circleButtons[2].addEventListener("click", () => {
+        if (circleSelect.value) sendCommand("create_circle_invitation", { circle_id: circleSelect.value });
+      });
+      circleButtons[3].addEventListener("click", () => {
+        if (invitationToken.value.trim()) sendCommand("accept_circle_invitation", { token: invitationToken.value.trim() });
+      });
+
+      function slugify(value) {
+        return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+      }
 
       function connect() {
         if (socket) {
@@ -1136,6 +1179,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           setConnected(true, `Tilkopla ${requestedChannelSlug} som ${decodeURIComponent(participant)}`);
           sendCommand("hello");
           sendCommand("list_my_channels");
+          sendCommand("list_my_circles");
         });
 
         socket.addEventListener("message", (event) => {
@@ -1168,6 +1212,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         statusEl.textContent = status;
         bodyInput.disabled = !connected;
         sendButton.disabled = !connected;
+        circleButtons.forEach((button) => { button.disabled = !connected; });
       }
 
       function setRenderMode(mode) {
@@ -1183,6 +1228,29 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         const payload = event.payload || {};
+
+        if (event.type === "circles_listed") {
+          circleSelect.replaceChildren(new Option("Ingen", ""));
+          payload.circles.forEach(([circle, role]) => circleSelect.add(new Option(`${circle.name} (${role})`, circle.id)));
+          return;
+        }
+        if (event.type === "circle_created") {
+          circleSelect.add(new Option(`${payload.circle.name} (owner)`, payload.circle.id));
+          circleSelect.value = payload.circle.id;
+          pushSystem(`Vennekretsen ${payload.circle.name} er oppretta.`);
+          return;
+        }
+        if (event.type === "circle_invitation_created") {
+          invitationToken.value = payload.invitation.token;
+          pushSystem("Invitasjonstoken er laga og lagt i tokenfeltet.");
+          return;
+        }
+        if (event.type === "circle_invitation_accepted") {
+          pushSystem("Invitasjonen er godteken.");
+          sendCommand("list_my_circles");
+          sendCommand("list_my_channels");
+          return;
+        }
 
         if (event.type === "channels_listed") {
           const existing = payload.channels.find((channel) => channel.slug === requestedChannelSlug);
