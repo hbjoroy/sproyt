@@ -65,6 +65,13 @@ impl ChatEngine {
         }
     }
 
+    pub async fn health_check(&self) -> Result<(), ChatError> {
+        self.repository
+            .health_check()
+            .await
+            .map_err(ChatError::from)
+    }
+
     /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
     pub async fn ensure_user(&self, user: User) -> Result<(), ChatError> {
         self.repository.upsert_user(user).await?;

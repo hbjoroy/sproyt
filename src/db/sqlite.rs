@@ -49,6 +49,15 @@ impl SqliteChatRepository {
 }
 
 impl ChatRepository for SqliteChatRepository {
+    fn health_check(&self) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            sqlx::query_scalar::<_, i64>("select 1")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sql_error)
+                .map(|_| ())
+        })
+    }
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
             sqlx::query(

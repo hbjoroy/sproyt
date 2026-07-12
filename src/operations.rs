@@ -9,9 +9,8 @@ use std::{
 
 use axum::{
     extract::{Request, State},
-    http::StatusCode,
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
 };
 
 #[derive(Clone, Debug)]
@@ -47,7 +46,7 @@ impl OperationalState {
         self.inner.ready.store(ready, Ordering::Release);
     }
 
-    fn is_ready(&self) -> bool {
+    pub fn is_ready(&self) -> bool {
         self.inner.ready.load(Ordering::Acquire)
     }
 
@@ -116,14 +115,6 @@ pub async fn record_metrics(
 
 pub async fn healthz() -> &'static str {
     "ok\n"
-}
-
-pub async fn readyz(State(operations): State<OperationalState>) -> Response {
-    if operations.is_ready() {
-        (StatusCode::OK, "ready\n").into_response()
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response()
-    }
 }
 
 pub async fn metrics(State(operations): State<OperationalState>) -> String {

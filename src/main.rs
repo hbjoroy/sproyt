@@ -36,7 +36,7 @@ use crate::{
     chat::{ChatEngine, ChatError},
     config::{AppConfig, AuthMode, LogFormat},
     domain::{ChannelId, ChannelSequence, MessageBody, MessageLimit, UserId},
-    operations::{OperationalState, healthz, metrics, readyz, record_metrics},
+    operations::{OperationalState, healthz, metrics, record_metrics},
     process::{
         EnqueueCorrelation, EnqueueProcessStart, HeartGateway, ProcessLinkId, ProcessService,
         SetCircleFeature, SharedProcessGateway,
@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(index))
         .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
+        .route("/readyz", get(app_readyz))
         .route("/metrics", get(metrics))
         .route("/auth/login", get(auth_login))
         .route("/auth/callback", get(auth_callback))
@@ -144,6 +144,31 @@ fn process_gateway_from_env() -> Result<Option<SharedProcessGateway>, crate::pro
     };
     let gateway = HeartGateway::new(url, Duration::from_secs(5), 2)?;
     Ok(Some(std::sync::Arc::new(gateway)))
+}
+
+async fn app_readyz(State(state): State<AppState>) -> axum::response::Response {
+    if !state.operations.is_ready() {
+        return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response();
+    }
+    match tokio::time::timeout(Duration::from_secs(2), state.chat.health_check()).await {
+        Ok(Ok(())) => (axum::http::StatusCode::OK, "ready\n").into_response(),
+        Ok(Err(error)) => {
+            warn!(%error, "readiness database probe failed");
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "dependency unavailable\n",
+            )
+                .into_response()
+        }
+        Err(_) => {
+            warn!("readiness database probe timed out");
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "dependency timeout\n",
+            )
+                .into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]

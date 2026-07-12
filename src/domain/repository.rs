@@ -28,6 +28,7 @@ pub type RepositoryFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, RepositoryError>> + Send + 'a>>;
 
 pub trait ChatRepository: Send + Sync + 'static {
+    fn health_check(&self) -> RepositoryFuture<'_, ()>;
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
     fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle>;
     fn list_circles_for_user<'a>(
@@ -99,6 +100,9 @@ pub struct InMemoryChatRepository {
 
 #[cfg(test)]
 impl ChatRepository for InMemoryChatRepository {
+    fn health_check(&self) -> RepositoryFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
             let mut state = self.lock_state()?;

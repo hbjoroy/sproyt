@@ -74,6 +74,15 @@ impl PostgresChatRepository {
 }
 
 impl ChatRepository for PostgresChatRepository {
+    fn health_check(&self) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            sqlx::query_scalar::<_, i32>("select 1")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sql_error)
+                .map(|_| ())
+        })
+    }
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
             sqlx::query("insert into users (id, kind, display_name, external_provider, external_subject, created_at) values ($1, $2, $3, $4, $5, $6) on conflict(id) do update set kind = excluded.kind, display_name = excluded.display_name, external_provider = excluded.external_provider, external_subject = excluded.external_subject")
