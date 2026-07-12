@@ -988,10 +988,11 @@ mod tests {
         let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
             return;
         };
-        let repository = PostgresChatRepository::connect(&url).await.unwrap();
+        let repository = std::sync::Arc::new(PostgresChatRepository::connect(&url).await.unwrap());
         repository.migrate().await.unwrap();
         let suffix = uuid::Uuid::now_v7().simple().to_string();
-        super::super::verify_repository_contract(&repository, &format!("pg-{suffix}")).await;
+        super::super::verify_repository_contract(repository.as_ref(), &format!("pg-{suffix}"))
+            .await;
         let alice = UserId::named(format!("postgres-alice-{suffix}"));
         repository
             .upsert_user(User {
@@ -1024,13 +1025,40 @@ mod tests {
             .unwrap();
         let loaded = repository
             .load_recent_messages(LoadRecentMessages {
-                actor: alice,
-                channel_id: channel.id,
+                actor: alice.clone(),
+                channel_id: channel.id.clone(),
                 limit: crate::domain::MessageLimit::DEFAULT,
                 after: None,
             })
             .await
             .unwrap();
         assert_eq!(loaded, vec![message]);
+
+        let mut writers = tokio::task::JoinSet::new();
+        for index in 0..32 {
+            let repository = repository.clone();
+            let actor = alice.clone();
+            let channel_id = channel.id.clone();
+            writers.spawn(async move {
+                repository
+                    .append_message_idempotent(
+                        SendMessage {
+                            actor,
+                            channel_id,
+                            body: MessageBody::new(format!("concurrent-{index}")).unwrap(),
+                        },
+                        format!("concurrent-request-{index}"),
+                    )
+                    .await
+                    .unwrap()
+                    .sequence
+            });
+        }
+        let mut sequences = Vec::new();
+        while let Some(result) = writers.join_next().await {
+            sequences.push(u64::from(result.unwrap()));
+        }
+        sequences.sort_unstable();
+        assert_eq!(sequences, (2_u64..=33).collect::<Vec<_>>());
     }
 }
