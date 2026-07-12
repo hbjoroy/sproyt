@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{ChannelId, CircleId, RepositoryError, UserId};
+use crate::domain::{ChannelId, CircleId, MessageId, RepositoryError, UserId};
 
 pub type AgentFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, RepositoryError>> + Send + 'a>>;
 
@@ -21,6 +21,35 @@ pub enum AgentScope {
     SendMessages,
     StartProcesses,
     CompleteProcessWork,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityProvenance {
+    Human,
+    Generated,
+    Delegated,
+    HumanApproved,
+}
+impl ActivityProvenance {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "human" => Some(Self::Human),
+            "generated" => Some(Self::Generated),
+            "delegated" => Some(Self::Delegated),
+            "human_approved" => Some(Self::HumanApproved),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MessageProvenance {
+    pub message_id: MessageId,
+    pub provenance: ActivityProvenance,
+    pub agent_id: Option<UserId>,
+    pub owner_id: Option<UserId>,
+    pub approved_by: Option<UserId>,
 }
 
 impl AgentScope {
@@ -83,6 +112,13 @@ pub trait AgentRepository: Send + Sync + 'static {
         channel_id: Option<ChannelId>,
         scope: AgentScope,
     ) -> AgentFuture<'a, bool>;
+    fn mark_delegated<'a>(&'a self, agent_id: UserId, message_id: MessageId)
+    -> AgentFuture<'a, ()>;
+    fn approve_message<'a>(&'a self, actor: UserId, message_id: MessageId) -> AgentFuture<'a, ()>;
+    fn message_provenance<'a>(
+        &'a self,
+        message_id: MessageId,
+    ) -> AgentFuture<'a, MessageProvenance>;
 }
 
 pub type SharedAgentRepository = Arc<dyn AgentRepository>;
@@ -148,6 +184,26 @@ impl AgentService {
         drop(requests);
         tracing::debug!(agent_id=%principal.agent_id, owner_id=%principal.owner_id, purpose_declared=!principal.purpose.is_empty(), "authorized agent request");
         Ok(principal)
+    }
+    pub async fn mark_delegated(
+        &self,
+        agent_id: UserId,
+        message_id: MessageId,
+    ) -> Result<(), RepositoryError> {
+        self.repository.mark_delegated(agent_id, message_id).await
+    }
+    pub async fn approve_message(
+        &self,
+        actor: UserId,
+        message_id: MessageId,
+    ) -> Result<(), RepositoryError> {
+        self.repository.approve_message(actor, message_id).await
+    }
+    pub async fn message_provenance(
+        &self,
+        message_id: MessageId,
+    ) -> Result<MessageProvenance, RepositoryError> {
+        self.repository.message_provenance(message_id).await
     }
 }
 

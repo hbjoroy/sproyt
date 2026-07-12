@@ -108,6 +108,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/api/v1/agents", post(create_agent))
         .route("/api/v1/agents/{id}/grants", post(grant_agent))
         .route("/api/v1/agent-grants/{id}/revoke", post(revoke_agent_grant))
+        .route(
+            "/api/v1/messages/{id}/approve-agent",
+            post(approve_agent_message),
+        )
         .route("/mcp", post(mcp_handler))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
@@ -468,7 +472,7 @@ fn mcp_tools() -> serde_json::Value {
     serde_json::json!([
       {"name":"list_channels","description":"List channels granted to this agent","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
       {"name":"read_messages","description":"Read channel history","inputSchema":{"type":"object","required":["channel_id"],"properties":{"channel_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200},"after_sequence":{"type":"integer","minimum":0}},"additionalProperties":false}},
-      {"name":"send_message","description":"Send an agent-authored message","inputSchema":{"type":"object","required":["channel_id","body","request_id"],"properties":{"channel_id":{"type":"string"},"body":{"type":"string"},"request_id":{"type":"string"}},"additionalProperties":false}},
+      {"name":"send_message","description":"Send an agent-authored message","inputSchema":{"type":"object","required":["channel_id","body","request_id"],"properties":{"channel_id":{"type":"string"},"body":{"type":"string"},"request_id":{"type":"string"},"provenance":{"type":"string","enum":["generated","delegated"],"default":"generated"}},"additionalProperties":false}},
       {"name":"mark_read","description":"Advance the agent read marker","inputSchema":{"type":"object","required":["channel_id","sequence"],"properties":{"channel_id":{"type":"string"},"sequence":{"type":"integer","minimum":0}},"additionalProperties":false}}
     ])
 }
@@ -560,14 +564,27 @@ async fn mcp_call(
                 .and_then(|v| v.as_str())
                 .ok_or((-32602, "missing request_id".to_owned()))?
                 .to_owned();
-            serde_json::to_value(
+            let delegated =
+                args.get("provenance").and_then(|value| value.as_str()) == Some("delegated");
+            let agent_id = principal.agent_id;
+            let message = state
+                .chat
+                .send_message_idempotent(channel, agent_id.clone(), body, request_id)
+                .await
+                .map_err(mcp_chat_error)?;
+            if delegated {
                 state
-                    .chat
-                    .send_message_idempotent(channel, principal.agent_id, body, request_id)
+                    .agents
+                    .mark_delegated(agent_id, message.id)
                     .await
-                    .map_err(mcp_chat_error)?,
-            )
-            .map_err(|e| (-32603, e.to_string()))?
+                    .map_err(mcp_repository_error)?;
+            }
+            let provenance = state
+                .agents
+                .message_provenance(message.id)
+                .await
+                .map_err(mcp_repository_error)?;
+            serde_json::json!({"message":message,"provenance":provenance})
         }
         "mark_read" => {
             let channel = mcp_channel(&args)?;
@@ -614,6 +631,34 @@ fn mcp_repository_error(error: crate::domain::RepositoryError) -> (i64, String) 
 }
 fn mcp_chat_error(error: ChatError) -> (i64, String) {
     (-32004, error.to_string())
+}
+
+async fn approve_agent_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers) {
+        Ok(value) => value,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    let message_id = match uuid::Uuid::parse_str(&id) {
+        Ok(id) => crate::domain::MessageId::from_uuid(id),
+        Err(_) => {
+            return (axum::http::StatusCode::BAD_REQUEST, "invalid message id").into_response();
+        }
+    };
+    match state
+        .agents
+        .approve_message(principal.user.id, message_id)
+        .await
+    {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => repository_response(error),
+    }
 }
 
 async fn index() -> Html<&'static str> {
@@ -1615,7 +1660,7 @@ mod mcp_tests {
         let call = |id| McpRequest {
             id: serde_json::json!(id),
             method: "tools/call".to_owned(),
-            params: serde_json::json!({"name":"send_message","arguments":{"channel_id":channel.id.to_string(),"body":"from agent","request_id":"mcp-send-1"}}),
+            params: serde_json::json!({"name":"send_message","arguments":{"channel_id":channel.id.to_string(),"body":"from agent","request_id":"mcp-send-1","provenance":"delegated"}}),
         };
         let first = mcp_handler(State(state.clone()), headers.clone(), Json(call(1)))
             .await
@@ -1625,8 +1670,32 @@ mod mcp_tests {
             .0;
         assert!(first.get("result").is_some(), "{first}");
         assert_eq!(
-            first["result"]["structuredContent"]["id"],
-            repeated["result"]["structuredContent"]["id"]
+            first["result"]["structuredContent"]["message"]["id"],
+            repeated["result"]["structuredContent"]["message"]["id"]
+        );
+        assert_eq!(
+            first["result"]["structuredContent"]["provenance"]["provenance"],
+            "delegated"
+        );
+        let message_id = crate::domain::MessageId::from_uuid(
+            uuid::Uuid::parse_str(
+                first["result"]["structuredContent"]["message"]["id"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap(),
+        );
+        agents
+            .approve_message(owner.clone(), message_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            agents
+                .message_provenance(message_id)
+                .await
+                .unwrap()
+                .provenance,
+            crate::agent::ActivityProvenance::HumanApproved
         );
         agents.revoke(owner, grant_id).await.unwrap();
         let revoked = mcp_handler(State(state), headers, Json(call(3))).await.0;

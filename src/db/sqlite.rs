@@ -7,7 +7,8 @@ use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions};
 use uuid::Uuid;
 
 use crate::agent::{
-    AgentFuture, AgentPrincipal, AgentRepository, AgentScope, CreateAgent, CreatedAgent, GrantAgent,
+    ActivityProvenance, AgentFuture, AgentPrincipal, AgentRepository, AgentScope, CreateAgent,
+    CreatedAgent, GrantAgent, MessageProvenance,
 };
 use crate::domain::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
@@ -819,6 +820,53 @@ impl AgentRepository for SqliteChatRepository {
                 .bind(agent_id.to_string()).bind(scope.as_str()).bind(Utc::now()).bind(channel_id.map(|v| v.to_string()))
                 .bind(circle_id.map(|v| v.to_string())).fetch_optional(&self.pool).await.map_err(sql_error)?;
             Ok(found.is_some())
+        })
+    }
+
+    fn mark_delegated<'a>(
+        &'a self,
+        agent_id: UserId,
+        message_id: MessageId,
+    ) -> AgentFuture<'a, ()> {
+        Box::pin(async move {
+            let changed=sqlx::query("update message_provenance set provenance='delegated',delegated_by=owner_id where message_id=? and agent_id=? and provenance in ('generated','delegated')")
+                .bind(message_id.as_uuid().to_string()).bind(agent_id.to_string()).execute(&self.pool).await.map_err(sql_error)?.rows_affected();
+            if changed == 0 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(())
+        })
+    }
+
+    fn approve_message<'a>(&'a self, actor: UserId, message_id: MessageId) -> AgentFuture<'a, ()> {
+        Box::pin(async move {
+            let changed=sqlx::query("update message_provenance set provenance='human_approved',approved_by=?,approved_at=? where message_id=? and owner_id=? and agent_id is not null")
+                .bind(actor.to_string()).bind(Utc::now()).bind(message_id.as_uuid().to_string()).bind(actor.to_string())
+                .execute(&self.pool).await.map_err(sql_error)?.rows_affected();
+            if changed == 0 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(())
+        })
+    }
+
+    fn message_provenance<'a>(
+        &'a self,
+        message_id: MessageId,
+    ) -> AgentFuture<'a, MessageProvenance> {
+        Box::pin(async move {
+            let row=sqlx::query("select provenance,agent_id,owner_id,approved_by from message_provenance where message_id=?").bind(message_id.as_uuid().to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
+            let parse_user =
+                |value: Option<String>| value.map(UserId::new).transpose().map_err(storage);
+            let raw: String = row.try_get("provenance").map_err(storage)?;
+            Ok(MessageProvenance {
+                message_id,
+                provenance: ActivityProvenance::parse(&raw)
+                    .ok_or_else(|| storage("invalid provenance"))?,
+                agent_id: parse_user(row.try_get("agent_id").map_err(storage)?)?,
+                owner_id: parse_user(row.try_get("owner_id").map_err(storage)?)?,
+                approved_by: parse_user(row.try_get("approved_by").map_err(storage)?)?,
+            })
         })
     }
 }
