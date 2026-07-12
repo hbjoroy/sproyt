@@ -76,3 +76,213 @@ fn sql_error(error: sqlx::Error) -> RepositoryError {
         _ => storage(error),
     }
 }
+
+#[cfg(test)]
+pub async fn verify_repository_contract<R>(repository: &R, suffix: &str)
+where
+    R: ChatRepository + ProcessRepository + AgentRepository,
+{
+    use crate::{
+        agent::{AgentScope, CreateAgent, GrantAgent},
+        domain::{
+            AcceptCircleInvitation, ChannelKind, ChannelSlug, CreateChannel, CreateCircle,
+            CreateCircleInvitation, DisplayName, LoadRecentMessages, MarkRead, MessageBody,
+            MessageLimit, PrincipalKind, SendMessage, User, UserId,
+        },
+        process::{EnqueueProcessStart, StartedProcess},
+    };
+    use chrono::Utc;
+    let actor = UserId::named(format!("contract-actor-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: actor.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Contract actor").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("contract-{suffix}")).unwrap(),
+            name: DisplayName::new("Contract channel").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: None,
+        })
+        .await
+        .unwrap();
+    let first = repository
+        .append_message_idempotent(
+            SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                body: MessageBody::new("first").unwrap(),
+            },
+            "same-request".to_owned(),
+        )
+        .await
+        .unwrap();
+    let replay = repository
+        .append_message_idempotent(
+            SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                body: MessageBody::new("different").unwrap(),
+            },
+            "same-request".to_owned(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first, replay);
+    let loaded = repository
+        .load_recent_messages(LoadRecentMessages {
+            actor: actor.clone(),
+            channel_id: channel.id.clone(),
+            limit: MessageLimit::DEFAULT,
+            after: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(loaded, vec![first.clone()]);
+    let membership = repository
+        .mark_read(MarkRead {
+            actor: actor.clone(),
+            channel_id: channel.id.clone(),
+            sequence: first.sequence,
+        })
+        .await
+        .unwrap();
+    assert_eq!(membership.last_read_sequence, first.sequence);
+
+    let circle = repository
+        .create_circle(CreateCircle {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("circle-{suffix}")).unwrap(),
+            name: DisplayName::new("Contract circle").unwrap(),
+        })
+        .await
+        .unwrap();
+    let invite = repository
+        .create_circle_invitation(CreateCircleInvitation {
+            actor: actor.clone(),
+            circle_id: circle.id.clone(),
+        })
+        .await
+        .unwrap();
+    let member = UserId::named(format!("contract-member-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: member.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Contract member").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    repository
+        .accept_circle_invitation(AcceptCircleInvitation {
+            actor: member.clone(),
+            token: invite.token.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: member,
+                token: invite.token
+            })
+            .await,
+        Err(RepositoryError::NotFound)
+    );
+
+    let created_agent = repository
+        .create_agent(CreateAgent {
+            actor: actor.clone(),
+            owner_id: actor.clone(),
+            display_name: "Contract agent".to_owned(),
+            provider: "contract".to_owned(),
+            service_identity: format!("agent-{suffix}"),
+            purpose: "Repository conformance".to_owned(),
+            rate_limit_per_minute: 10,
+            expires_at: None,
+        })
+        .await
+        .unwrap();
+    assert!(repository.authenticate_agent("invalid").await.is_err());
+    assert_eq!(
+        repository
+            .authenticate_agent(&created_agent.credential)
+            .await
+            .unwrap()
+            .agent_id,
+        created_agent.agent_id
+    );
+    let grant = repository
+        .grant_agent(GrantAgent {
+            actor: actor.clone(),
+            agent_id: created_agent.agent_id.clone(),
+            circle_id: None,
+            channel_id: Some(channel.id.clone()),
+            scope: AgentScope::ReadHistory,
+            expires_at: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .has_scope(
+                created_agent.agent_id.clone(),
+                None,
+                Some(channel.id.clone()),
+                AgentScope::ReadHistory
+            )
+            .await
+            .unwrap()
+    );
+    repository.revoke_grant(actor.clone(), grant).await.unwrap();
+    assert!(
+        !repository
+            .has_scope(
+                created_agent.agent_id,
+                None,
+                Some(channel.id.clone()),
+                AgentScope::ReadHistory
+            )
+            .await
+            .unwrap()
+    );
+
+    let link = repository
+        .enqueue_start(EnqueueProcessStart {
+            channel_id: channel.id,
+            actor,
+            request_id: "process-contract".to_owned(),
+            namespace: "contract".to_owned(),
+            definition_name: "contract".to_owned(),
+            definition_version: None,
+            metadata: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    let job = repository
+        .lease_next(std::time::Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.process_link_id, link.id);
+    repository
+        .complete_start(
+            job,
+            StartedProcess {
+                instance_id: uuid::Uuid::now_v7(),
+            },
+        )
+        .await
+        .unwrap();
+}

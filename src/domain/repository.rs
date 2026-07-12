@@ -378,7 +378,7 @@ impl ChatRepository for InMemoryChatRepository {
                 sender_id: command.actor,
                 body: command.body,
                 sequence: next_sequence,
-                sent_at: Utc::now(),
+                sent_at: persisted_now(),
             };
 
             state
@@ -421,7 +421,7 @@ impl ChatRepository for InMemoryChatRepository {
                 sender_id: command.actor,
                 body: command.body,
                 sequence: next_sequence,
-                sent_at: Utc::now(),
+                sent_at: persisted_now(),
             };
             state.command_receipts.insert(key, message.id);
             state
@@ -535,6 +535,12 @@ impl RepositoryState {
         self.next_sequences.insert(channel_id.clone(), sequence);
         Ok(sequence)
     }
+}
+
+#[cfg(test)]
+fn persisted_now() -> chrono::DateTime<Utc> {
+    chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+        .expect("current UTC timestamp is representable")
 }
 
 #[cfg(test)]

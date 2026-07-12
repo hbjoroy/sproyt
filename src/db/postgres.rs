@@ -352,7 +352,7 @@ impl ChatRepository for PostgresChatRepository {
                 sender_id: command.actor,
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
-                sent_at: Utc::now(),
+                sent_at: persisted_now(),
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sequence, body, created_at) values ($1, $2, $3, $4, $5, $6)")
                 .bind(*message.id.as_uuid())
@@ -423,7 +423,7 @@ impl ChatRepository for PostgresChatRepository {
                 sender_id: command.actor,
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
-                sent_at: Utc::now(),
+                sent_at: persisted_now(),
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sequence, body, created_at) values ($1, $2, $3, $4, $5, $6)")
                 .bind(*message.id.as_uuid())
@@ -957,6 +957,11 @@ fn chat_message(row: PgRow) -> Result<ChatMessage, RepositoryError> {
     })
 }
 
+fn persisted_now() -> chrono::DateTime<Utc> {
+    chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+        .expect("current UTC timestamp is representable")
+}
+
 fn circle_with_role(row: PgRow) -> Result<(Circle, CircleRole), RepositoryError> {
     let role: String = row.try_get("role").map_err(storage)?;
     Ok((
@@ -986,6 +991,7 @@ mod tests {
         let repository = PostgresChatRepository::connect(&url).await.unwrap();
         repository.migrate().await.unwrap();
         let suffix = uuid::Uuid::now_v7().simple().to_string();
+        super::super::verify_repository_contract(&repository, &format!("pg-{suffix}")).await;
         let alice = UserId::named(format!("postgres-alice-{suffix}"));
         repository
             .upsert_user(User {

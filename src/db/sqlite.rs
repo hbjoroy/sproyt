@@ -344,7 +344,7 @@ impl ChatRepository for SqliteChatRepository {
                 sender_id: command.actor,
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
-                sent_at: Utc::now(),
+                sent_at: persisted_now(),
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sequence, body, created_at) values (?, ?, ?, ?, ?, ?)")
                 .bind(message.id.as_uuid().to_string())
@@ -408,7 +408,7 @@ impl ChatRepository for SqliteChatRepository {
                 sender_id: command.actor,
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
-                sent_at: Utc::now(),
+                sent_at: persisted_now(),
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sequence, body, created_at) values (?, ?, ?, ?, ?, ?)")
                 .bind(message.id.as_uuid().to_string())
@@ -999,6 +999,11 @@ fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryE
     })
 }
 
+fn persisted_now() -> DateTime<Utc> {
+    DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+        .expect("current UTC timestamp is representable")
+}
+
 fn circle_with_role(row: sqlx::sqlite::SqliteRow) -> Result<(Circle, CircleRole), RepositoryError> {
     let id = uuid::Uuid::parse_str(&row.try_get::<String, _>("id").map_err(storage)?)
         .map_err(storage)?;
@@ -1023,6 +1028,15 @@ fn circle_with_role(row: sqlx::sqlite::SqliteRow) -> Result<(Circle, CircleRole)
 mod tests {
     use super::*;
     use crate::domain::{PrincipalKind, User};
+
+    #[tokio::test]
+    async fn sqlite_passes_shared_repository_contract() {
+        let repository = SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        repository.migrate().await.unwrap();
+        super::super::verify_repository_contract(&repository, "sqlite-shared").await;
+    }
 
     #[tokio::test]
     async fn sqlite_repository_persists_and_reads_messages() {
