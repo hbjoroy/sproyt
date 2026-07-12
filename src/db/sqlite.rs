@@ -6,6 +6,9 @@ use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions};
 use uuid::Uuid;
 
+use crate::agent::{
+    AgentFuture, AgentPrincipal, AgentRepository, AgentScope, CreateAgent, CreatedAgent, GrantAgent,
+};
 use crate::domain::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
     ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId, CircleInvitation,
@@ -685,6 +688,141 @@ impl ProcessRepository for SqliteChatRepository {
     }
 }
 
+impl AgentRepository for SqliteChatRepository {
+    fn create_agent<'a>(&'a self, command: CreateAgent) -> AgentFuture<'a, CreatedAgent> {
+        Box::pin(async move {
+            if command.actor != command.owner_id
+                || !(1..=600).contains(&command.rate_limit_per_minute)
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let agent_id = UserId::from_uuid(Uuid::now_v7());
+            let now = Utc::now();
+            let credential_expires_at = now + Duration::days(90);
+            let mut secret = [0_u8; 32];
+            getrandom::fill(&mut secret).map_err(storage)?;
+            let credential = URL_SAFE_NO_PAD.encode(secret);
+            let hash = Sha256::digest(credential.as_bytes()).to_vec();
+            let display_name = DisplayName::new(command.display_name).map_err(storage)?;
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            sqlx::query("insert into users(id,kind,display_name,external_provider,external_subject,created_at) values(?,'agent',?,?,?,?)")
+                .bind(agent_id.to_string()).bind(display_name.as_str()).bind(&command.provider)
+                .bind(&command.service_identity).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into agent_profiles(agent_id,owner_id,invited_by,provider,service_identity,purpose,rate_limit_per_minute,expires_at,created_at) values(?,?,?,?,?,?,?,?,?)")
+                .bind(agent_id.to_string()).bind(command.owner_id.to_string()).bind(command.actor.to_string())
+                .bind(command.provider).bind(command.service_identity).bind(command.purpose)
+                .bind(i64::from(command.rate_limit_per_minute)).bind(command.expires_at).bind(now)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into agent_credentials(id,agent_id,token_hash,expires_at,created_at) values(?,?,?,?,?)")
+                .bind(Uuid::now_v7().to_string()).bind(agent_id.to_string()).bind(hash)
+                .bind(credential_expires_at).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(CreatedAgent {
+                agent_id,
+                credential,
+                credential_expires_at,
+            })
+        })
+    }
+
+    fn grant_agent<'a>(&'a self, command: GrantAgent) -> AgentFuture<'a, Uuid> {
+        Box::pin(async move {
+            if command.circle_id.is_none() && command.channel_id.is_none() {
+                return Err(RepositoryError::Conflict);
+            }
+            let owner: Option<i64> = sqlx::query_scalar("select 1 from agent_profiles where agent_id=? and owner_id=? and revoked_at is null and (expires_at is null or expires_at>?)")
+                .bind(command.agent_id.to_string()).bind(command.actor.to_string()).bind(Utc::now())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?;
+            if owner.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if let Some(circle_id) = &command.circle_id {
+                let allowed: Option<i64> = sqlx::query_scalar("select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'")
+                    .bind(circle_id.to_string()).bind(command.actor.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?;
+                if allowed.is_none() {
+                    return Err(RepositoryError::PermissionDenied);
+                }
+            }
+            if let Some(channel_id) = &command.channel_id {
+                let allowed: Option<i64> = sqlx::query_scalar("select 1 from channel_memberships where channel_id=? and user_id=? and role in ('owner','moderator')")
+                    .bind(channel_id.to_string()).bind(command.actor.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?;
+                if allowed.is_none() {
+                    return Err(RepositoryError::PermissionDenied);
+                }
+            }
+            let id = Uuid::now_v7();
+            sqlx::query("insert into agent_grants(id,agent_id,circle_id,channel_id,scope,granted_by,expires_at,created_at) values(?,?,?,?,?,?,?,?) on conflict do update set revoked_at=null,revoked_by=null,expires_at=excluded.expires_at,granted_by=excluded.granted_by")
+                .bind(id.to_string()).bind(command.agent_id.to_string()).bind(command.circle_id.map(|v| v.to_string()))
+                .bind(command.channel_id.as_ref().map(ToString::to_string)).bind(command.scope.as_str()).bind(command.actor.to_string())
+                .bind(command.expires_at).bind(Utc::now()).execute(&self.pool).await.map_err(sql_error)?;
+            if let Some(channel_id) = command.channel_id {
+                let role = if matches!(command.scope, AgentScope::ReadHistory) {
+                    "observer"
+                } else {
+                    "member"
+                };
+                sqlx::query("insert into channel_memberships(channel_id,user_id,role,last_read_sequence,joined_at) values(?,?,?,0,?) on conflict(channel_id,user_id) do update set role=case when channel_memberships.role='observer' and excluded.role='member' then 'member' else channel_memberships.role end")
+                    .bind(channel_id.to_string()).bind(command.agent_id.to_string()).bind(role).bind(Utc::now()).execute(&self.pool).await.map_err(sql_error)?;
+            }
+            Ok(id)
+        })
+    }
+
+    fn revoke_grant<'a>(&'a self, actor: UserId, grant_id: Uuid) -> AgentFuture<'a, ()> {
+        Box::pin(async move {
+            let changed = sqlx::query("update agent_grants set revoked_at=?,revoked_by=? where id=? and revoked_at is null and agent_id in (select agent_id from agent_profiles where owner_id=?)")
+                .bind(Utc::now()).bind(actor.to_string()).bind(grant_id.to_string()).bind(actor.to_string()).execute(&self.pool).await.map_err(sql_error)?.rows_affected();
+            if changed == 0 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(())
+        })
+    }
+
+    fn authenticate_agent<'a>(&'a self, credential: &'a str) -> AgentFuture<'a, AgentPrincipal> {
+        Box::pin(async move {
+            let hash = Sha256::digest(credential.as_bytes()).to_vec();
+            let now = Utc::now();
+            let row = sqlx::query("select p.agent_id,p.owner_id,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where c.token_hash=? and c.revoked_at is null and c.expires_at>? and p.revoked_at is null and (p.expires_at is null or p.expires_at>?)")
+                .bind(hash).bind(now).bind(now).fetch_optional(&self.pool).await.map_err(sql_error)?
+                .ok_or(RepositoryError::PermissionDenied)?;
+            sqlx::query("update agent_credentials set last_used_at=? where token_hash=?")
+                .bind(now)
+                .bind(Sha256::digest(credential.as_bytes()).to_vec())
+                .execute(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            Ok(AgentPrincipal {
+                agent_id: UserId::new(row.try_get::<String, _>("agent_id").map_err(storage)?)
+                    .map_err(storage)?,
+                owner_id: UserId::new(row.try_get::<String, _>("owner_id").map_err(storage)?)
+                    .map_err(storage)?,
+                purpose: row.try_get("purpose").map_err(storage)?,
+                rate_limit_per_minute: u16::try_from(
+                    row.try_get::<i64, _>("rate_limit_per_minute")
+                        .map_err(storage)?,
+                )
+                .map_err(storage)?,
+            })
+        })
+    }
+
+    fn has_scope<'a>(
+        &'a self,
+        agent_id: UserId,
+        circle_id: Option<CircleId>,
+        channel_id: Option<ChannelId>,
+        scope: AgentScope,
+    ) -> AgentFuture<'a, bool> {
+        Box::pin(async move {
+            let found: Option<i64> = sqlx::query_scalar("select 1 from agent_grants where agent_id=? and scope=? and revoked_at is null and (expires_at is null or expires_at>?) and ((channel_id is not null and channel_id=?) or (circle_id is not null and circle_id=?)) limit 1")
+                .bind(agent_id.to_string()).bind(scope.as_str()).bind(Utc::now()).bind(channel_id.map(|v| v.to_string()))
+                .bind(circle_id.map(|v| v.to_string())).fetch_optional(&self.pool).await.map_err(sql_error)?;
+            Ok(found.is_some())
+        })
+    }
+}
+
 fn process_link_from_sqlite(
     row: sqlx::sqlite::SqliteRow,
     channel_id: ChannelId,
@@ -854,6 +992,62 @@ mod tests {
             })
             .await
             .unwrap();
+        let agent = repository
+            .create_agent(CreateAgent {
+                actor: alice.clone(),
+                owner_id: alice.clone(),
+                display_name: "Planner agent".to_owned(),
+                provider: "contract-test".to_owned(),
+                service_identity: "planner-1".to_owned(),
+                purpose: "Help plan events".to_owned(),
+                rate_limit_per_minute: 60,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        assert!(repository.authenticate_agent("wrong-token").await.is_err());
+        let authenticated = repository
+            .authenticate_agent(&agent.credential)
+            .await
+            .unwrap();
+        assert_eq!(authenticated.agent_id, agent.agent_id);
+        let grant_id = repository
+            .grant_agent(GrantAgent {
+                actor: alice.clone(),
+                agent_id: agent.agent_id.clone(),
+                circle_id: None,
+                channel_id: Some(channel.id.clone()),
+                scope: AgentScope::ReadHistory,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        assert!(
+            repository
+                .has_scope(
+                    agent.agent_id.clone(),
+                    None,
+                    Some(channel.id.clone()),
+                    AgentScope::ReadHistory
+                )
+                .await
+                .unwrap()
+        );
+        repository
+            .revoke_grant(alice.clone(), grant_id)
+            .await
+            .unwrap();
+        assert!(
+            !repository
+                .has_scope(
+                    agent.agent_id,
+                    None,
+                    Some(channel.id.clone()),
+                    AgentScope::ReadHistory
+                )
+                .await
+                .unwrap()
+        );
         let message = repository
             .append_message(SendMessage {
                 actor: alice.clone(),

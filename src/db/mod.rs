@@ -8,6 +8,7 @@ pub use sqlite::SqliteChatRepository;
 
 use std::sync::Arc;
 
+use crate::agent::{AgentRepository, SharedAgentRepository};
 use crate::config::{DatabaseConfig, DatabaseKind};
 use crate::domain::{ChatRepository, RepositoryError};
 use crate::process::{ProcessRepository, SharedProcessRepository};
@@ -15,6 +16,7 @@ use crate::process::{ProcessRepository, SharedProcessRepository};
 pub struct Repositories {
     pub chat: Arc<dyn ChatRepository>,
     pub process: SharedProcessRepository,
+    pub agent: SharedAgentRepository,
 }
 
 pub async fn migrate(config: &DatabaseConfig) -> Result<(), RepositoryError> {
@@ -37,14 +39,24 @@ pub async fn connect_repositories(
         DatabaseKind::Sqlite => {
             let repository = Arc::new(SqliteChatRepository::connect(config.url()).await?);
             let chat: Arc<dyn ChatRepository> = repository.clone();
-            let process: Arc<dyn ProcessRepository> = repository;
-            Ok(Repositories { chat, process })
+            let process: Arc<dyn ProcessRepository> = repository.clone();
+            let agent: Arc<dyn AgentRepository> = repository;
+            Ok(Repositories {
+                chat,
+                process,
+                agent,
+            })
         }
         DatabaseKind::Postgres => {
             let repository = Arc::new(PostgresChatRepository::connect(config.url()).await?);
             let chat: Arc<dyn ChatRepository> = repository.clone();
-            let process: Arc<dyn ProcessRepository> = repository;
-            Ok(Repositories { chat, process })
+            let process: Arc<dyn ProcessRepository> = repository.clone();
+            let agent: Arc<dyn AgentRepository> = repository;
+            Ok(Repositories {
+                chat,
+                process,
+                agent,
+            })
         }
     }
 }

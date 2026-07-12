@@ -1,3 +1,4 @@
+mod agent;
 mod auth;
 mod chat;
 mod config;
@@ -18,7 +19,7 @@ use axum::{
     },
     http::{
         HeaderMap, HeaderName, HeaderValue,
-        header::{COOKIE, LOCATION, SET_COOKIE},
+        header::{AUTHORIZATION, COOKIE, LOCATION, SET_COOKIE},
     },
     middleware,
     response::{Html, IntoResponse},
@@ -34,10 +35,13 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
+    agent::{AgentScope, AgentService, CreateAgent, GrantAgent},
     auth::AuthService,
     chat::{ChatEngine, ChatError},
     config::{AppConfig, AuthMode, LogFormat},
-    domain::{ChannelId, ChannelSequence, ChatEvent, ChatMessage, MessageBody, UserId},
+    domain::{
+        ChannelId, ChannelSequence, ChatEvent, ChatMessage, MessageBody, MessageLimit, UserId,
+    },
     operations::{OperationalState, healthz, metrics, readyz, record_metrics},
     process::{
         EnqueueCorrelation, EnqueueProcessStart, HeartGateway, ProcessLinkId, ProcessService,
@@ -51,6 +55,7 @@ struct AppState {
     chat: ChatEngine,
     operations: OperationalState,
     processes: ProcessService,
+    agents: AgentService,
 }
 
 impl axum::extract::FromRef<AppState> for OperationalState {
@@ -87,6 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         chat: ChatEngine::start(repositories.chat),
         operations: operations.clone(),
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
+        agents: AgentService::new(repositories.agent),
     };
     let request_id_header = HeaderName::from_static("x-request-id");
 
@@ -105,6 +111,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "/api/v1/circles/{id}/features/heart-event-planning",
             post(set_heart_feature),
         )
+        .route("/api/v1/agents", post(create_agent))
+        .route("/api/v1/agents/{id}/grants", post(grant_agent))
+        .route("/api/v1/agent-grants/{id}/revoke", post(revoke_agent_grant))
+        .route("/mcp", post(mcp_handler))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
             operations.clone(),
@@ -295,6 +305,321 @@ fn repository_response(error: crate::domain::RepositoryError) -> axum::response:
         crate::domain::RepositoryError::Storage(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, error.to_string()).into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateAgentRequest {
+    display_name: String,
+    provider: String,
+    service_identity: String,
+    purpose: String,
+    #[serde(default = "default_agent_rate_limit")]
+    rate_limit_per_minute: u16,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+const fn default_agent_rate_limit() -> u16 {
+    60
+}
+
+async fn create_agent(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(body): Json<CreateAgentRequest>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers) {
+        Ok(value) => value,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    match state
+        .agents
+        .create(CreateAgent {
+            actor: principal.user.id.clone(),
+            owner_id: principal.user.id,
+            display_name: body.display_name,
+            provider: body.provider,
+            service_identity: body.service_identity,
+            purpose: body.purpose,
+            rate_limit_per_minute: body.rate_limit_per_minute,
+            expires_at: body.expires_at,
+        })
+        .await
+    {
+        Ok(created) => (axum::http::StatusCode::CREATED, Json(created)).into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct GrantAgentRequest {
+    circle_id: Option<String>,
+    channel_id: Option<String>,
+    scope: AgentScope,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn grant_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(body): Json<GrantAgentRequest>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers) {
+        Ok(value) => value,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    let agent_id = match UserId::new(id) {
+        Ok(id) => id,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    let circle_id = match body
+        .circle_id
+        .map(|id| uuid::Uuid::parse_str(&id).map(crate::domain::CircleId::from_uuid))
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(_) => {
+            return (axum::http::StatusCode::BAD_REQUEST, "invalid circle id").into_response();
+        }
+    };
+    let channel_id = match body.channel_id.map(ChannelId::new).transpose() {
+        Ok(id) => id,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    match state
+        .agents
+        .grant(GrantAgent {
+            actor: principal.user.id,
+            agent_id,
+            circle_id,
+            channel_id,
+            scope: body.scope,
+            expires_at: body.expires_at,
+        })
+        .await
+    {
+        Ok(id) => (
+            axum::http::StatusCode::CREATED,
+            Json(serde_json::json!({"grant_id":id})),
+        )
+            .into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+async fn revoke_agent_grant(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers) {
+        Ok(value) => value,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    let grant_id = match uuid::Uuid::parse_str(&id) {
+        Ok(id) => id,
+        Err(_) => return (axum::http::StatusCode::BAD_REQUEST, "invalid grant id").into_response(),
+    };
+    match state.agents.revoke(principal.user.id, grant_id).await {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct McpRequest {
+    #[serde(default)]
+    id: serde_json::Value,
+    method: String,
+    #[serde(default)]
+    params: serde_json::Value,
+}
+
+async fn mcp_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<McpRequest>,
+) -> Json<serde_json::Value> {
+    let response = match request.method.as_str() {
+        "initialize" => Ok(
+            serde_json::json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"sproyt","version":env!("CARGO_PKG_VERSION")}}),
+        ),
+        "notifications/initialized" => Ok(serde_json::Value::Null),
+        "tools/list" => Ok(serde_json::json!({"tools": mcp_tools()})),
+        "tools/call" => mcp_call(&state, &headers, request.params).await,
+        _ => Err((-32601, "method not found".to_owned())),
+    };
+    Json(match response {
+        Ok(result) => serde_json::json!({"jsonrpc":"2.0","id":request.id,"result":result}),
+        Err((code, message)) => {
+            serde_json::json!({"jsonrpc":"2.0","id":request.id,"error":{"code":code,"message":message}})
+        }
+    })
+}
+
+fn mcp_tools() -> serde_json::Value {
+    serde_json::json!([
+      {"name":"list_channels","description":"List channels granted to this agent","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
+      {"name":"read_messages","description":"Read channel history","inputSchema":{"type":"object","required":["channel_id"],"properties":{"channel_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200},"after_sequence":{"type":"integer","minimum":0}},"additionalProperties":false}},
+      {"name":"send_message","description":"Send an agent-authored message","inputSchema":{"type":"object","required":["channel_id","body","request_id"],"properties":{"channel_id":{"type":"string"},"body":{"type":"string"},"request_id":{"type":"string"}},"additionalProperties":false}},
+      {"name":"mark_read","description":"Advance the agent read marker","inputSchema":{"type":"object","required":["channel_id","sequence"],"properties":{"channel_id":{"type":"string"},"sequence":{"type":"integer","minimum":0}},"additionalProperties":false}}
+    ])
+}
+
+async fn mcp_call(
+    state: &AppState,
+    headers: &HeaderMap,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, (i64, String)> {
+    let credential = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or((-32001, "missing bearer credential".to_owned()))?;
+    let name = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or((-32602, "missing tool name".to_owned()))?;
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let result = match name {
+        "list_channels" => {
+            let principal = state
+                .agents
+                .authenticate(credential)
+                .await
+                .map_err(mcp_repository_error)?;
+            serde_json::to_value(
+                state
+                    .chat
+                    .list_channels(principal.agent_id)
+                    .await
+                    .map_err(mcp_chat_error)?,
+            )
+            .map_err(|e| (-32603, e.to_string()))?
+        }
+        "read_messages" => {
+            let channel = mcp_channel(&args)?;
+            let principal = state
+                .agents
+                .authorize(
+                    credential,
+                    None,
+                    Some(channel.clone()),
+                    AgentScope::ReadHistory,
+                )
+                .await
+                .map_err(mcp_repository_error)?;
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50)
+                .min(200) as u16;
+            let after = args
+                .get("after_sequence")
+                .and_then(|v| v.as_u64())
+                .map(ChannelSequence::new);
+            serde_json::to_value(
+                state
+                    .chat
+                    .load_messages(principal.agent_id, channel, MessageLimit::new(limit), after)
+                    .await
+                    .map_err(mcp_chat_error)?,
+            )
+            .map_err(|e| (-32603, e.to_string()))?
+        }
+        "send_message" => {
+            let channel = mcp_channel(&args)?;
+            let principal = state
+                .agents
+                .authorize(
+                    credential,
+                    None,
+                    Some(channel.clone()),
+                    AgentScope::SendMessages,
+                )
+                .await
+                .map_err(mcp_repository_error)?;
+            let body = MessageBody::new(
+                args.get("body")
+                    .and_then(|v| v.as_str())
+                    .ok_or((-32602, "missing body".to_owned()))?,
+            )
+            .map_err(|e| (-32602, e.to_string()))?;
+            let request_id = args
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .ok_or((-32602, "missing request_id".to_owned()))?
+                .to_owned();
+            serde_json::to_value(
+                state
+                    .chat
+                    .send_message_idempotent(channel, principal.agent_id, body, request_id)
+                    .await
+                    .map_err(mcp_chat_error)?,
+            )
+            .map_err(|e| (-32603, e.to_string()))?
+        }
+        "mark_read" => {
+            let channel = mcp_channel(&args)?;
+            let principal = state
+                .agents
+                .authorize(
+                    credential,
+                    None,
+                    Some(channel.clone()),
+                    AgentScope::ReadHistory,
+                )
+                .await
+                .map_err(mcp_repository_error)?;
+            let sequence = args
+                .get("sequence")
+                .and_then(|v| v.as_u64())
+                .ok_or((-32602, "missing sequence".to_owned()))?;
+            serde_json::to_value(
+                state
+                    .chat
+                    .mark_read(principal.agent_id, channel, ChannelSequence::new(sequence))
+                    .await
+                    .map_err(mcp_chat_error)?,
+            )
+            .map_err(|e| (-32603, e.to_string()))?
+        }
+        _ => return Err((-32602, "unknown tool".to_owned())),
+    };
+    Ok(
+        serde_json::json!({"content":[{"type":"text","text":serde_json::to_string(&result).map_err(|e|(-32603,e.to_string()))?}],"structuredContent":result}),
+    )
+}
+
+fn mcp_channel(args: &serde_json::Value) -> Result<ChannelId, (i64, String)> {
+    ChannelId::new(
+        args.get("channel_id")
+            .and_then(|v| v.as_str())
+            .ok_or((-32602, "missing channel_id".to_owned()))?,
+    )
+    .map_err(|e| (-32602, e.to_string()))
+}
+fn mcp_repository_error(error: crate::domain::RepositoryError) -> (i64, String) {
+    (-32003, error.to_string())
+}
+fn mcp_chat_error(error: ChatError) -> (i64, String) {
+    (-32004, error.to_string())
 }
 
 async fn index() -> Html<&'static str> {
@@ -1302,3 +1627,107 @@ const INDEX_HTML: &str = r##"<!doctype html>
   </body>
 </html>
 "##;
+
+#[cfg(test)]
+mod mcp_tests {
+    use super::*;
+    use crate::{
+        agent::{AgentRepository, AgentService},
+        db::SqliteChatRepository,
+        domain::{ChannelKind, ChannelSlug, DisplayName, PrincipalKind, User},
+        process::{ProcessRepository, ProcessService},
+    };
+    use chrono::Utc;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn mcp_uses_agent_scope_idempotency_and_immediate_revocation() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
+        let process_repository: Arc<dyn ProcessRepository> = repository.clone();
+        let agent_repository: Arc<dyn AgentRepository> = repository;
+        let chat = ChatEngine::start(chat_repository);
+        let agents = AgentService::new(agent_repository);
+        let owner = UserId::named("mcp-owner");
+        chat.ensure_user(User {
+            id: owner.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("MCP owner").unwrap(),
+            external_provider: Some("test".to_owned()),
+            external_subject: Some("mcp-owner".to_owned()),
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+        let channel = chat
+            .create_channel(
+                owner.clone(),
+                ChannelSlug::new("mcp-test").unwrap(),
+                DisplayName::new("MCP test").unwrap(),
+                ChannelKind::Private,
+                None,
+            )
+            .await
+            .unwrap();
+        let created = agents
+            .create(CreateAgent {
+                actor: owner.clone(),
+                owner_id: owner.clone(),
+                display_name: "MCP agent".to_owned(),
+                provider: "test".to_owned(),
+                service_identity: "mcp-agent".to_owned(),
+                purpose: "MCP conformance".to_owned(),
+                rate_limit_per_minute: 60,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        let grant_id = agents
+            .grant(GrantAgent {
+                actor: owner.clone(),
+                agent_id: created.agent_id.clone(),
+                circle_id: None,
+                channel_id: Some(channel.id.clone()),
+                scope: AgentScope::SendMessages,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        let state = AppState {
+            auth: AuthService::development(),
+            chat,
+            operations: OperationalState::default(),
+            processes: ProcessService::start(process_repository, None),
+            agents: agents.clone(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", created.credential)).unwrap(),
+        );
+        let call = |id| McpRequest {
+            id: serde_json::json!(id),
+            method: "tools/call".to_owned(),
+            params: serde_json::json!({"name":"send_message","arguments":{"channel_id":channel.id.to_string(),"body":"from agent","request_id":"mcp-send-1"}}),
+        };
+        let first = mcp_handler(State(state.clone()), headers.clone(), Json(call(1)))
+            .await
+            .0;
+        let repeated = mcp_handler(State(state.clone()), headers.clone(), Json(call(2)))
+            .await
+            .0;
+        assert!(first.get("result").is_some(), "{first}");
+        assert_eq!(
+            first["result"]["structuredContent"]["id"],
+            repeated["result"]["structuredContent"]["id"]
+        );
+        agents.revoke(owner, grant_id).await.unwrap();
+        let revoked = mcp_handler(State(state), headers, Json(call(3))).await.0;
+        assert!(revoked.get("error").is_some(), "{revoked}");
+    }
+}
