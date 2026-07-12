@@ -19,7 +19,8 @@ config:
   environment: production
   logFormat: json
   authMode: oidc
-  oidcIssuer: https://identity.limani-parou.com/application/o/sproyt/
+  # Required: https://identity.limani-parou.com/application/o/<provider-slug>/
+  oidcIssuer: ""
   oidcClientId: ""
   oidcRedirectUrl: https://sproyt.example.com/auth/callback
   oidcPostLogoutRedirectUrl: https://sproyt.example.com/

@@ -1,5 +1,10 @@
 # Sproyt Helm chart
 
+`config.oidcIssuer` and `config.oidcClientId` are required. The issuer must be
+the exact discovery-capable Authentik provider URL under
+`https://identity.limani-parou.com/application/o/<provider-slug>/`; the chart
+deliberately has no guessed production slug.
+
 Create the referenced Secret before installation. It must contain
 `DATABASE_URL`, `SPROYT_OIDC_CLIENT_SECRET`, and `SPROYT_SESSION_KEY`.
 
