@@ -6,21 +6,6 @@ use super::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ChatCommand {
-    CreateChannel(CreateChannel),
-    JoinChannel(JoinChannel),
-    LeaveChannel(LeaveChannel),
-    ListMyChannels(ListMyChannels),
-    LoadRecentMessages(LoadRecentMessages),
-    SendMessage(SendMessage),
-    MarkRead(MarkRead),
-    CreateCircle(CreateCircle),
-    CreateCircleInvitation(CreateCircleInvitation),
-    AcceptCircleInvitation(AcceptCircleInvitation),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CreateChannel {
     pub actor: UserId,
     pub slug: ChannelSlug,
@@ -58,11 +43,6 @@ pub struct JoinChannel {
 pub struct LeaveChannel {
     pub actor: UserId,
     pub channel_id: ChannelId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ListMyChannels {
-    pub actor: UserId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

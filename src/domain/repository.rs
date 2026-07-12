@@ -1,20 +1,26 @@
+#[cfg(test)]
 use std::{
     collections::HashMap,
-    fmt,
-    future::Future,
-    pin::Pin,
     sync::{Arc, Mutex},
 };
+use std::{fmt, future::Future, pin::Pin};
 
 use super::{
-    AcceptCircleInvitation, Channel, ChannelId, ChannelRef, ChannelSequence, ChannelSummary,
-    ChatMessage, Circle, CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel,
-    CreateCircle, CreateCircleInvitation, InvitationId, IssuedInvitation, JoinChannel,
-    LeaveChannel, LoadRecentMessages, MarkRead, Membership, MembershipRole, MessageId, Policy,
-    RepositoryError::NotFound, SendMessage, User, UserId,
+    AcceptCircleInvitation, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatMessage,
+    Circle, CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation,
+    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership,
+    MessageId, SendMessage, User, UserId,
 };
+#[cfg(test)]
+use super::{
+    ChannelRef, CircleId, CircleInvitation, InvitationId, MembershipRole, Policy,
+    RepositoryError::NotFound,
+};
+#[cfg(test)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+#[cfg(test)]
 use chrono::{Duration, Utc};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
@@ -85,11 +91,13 @@ impl fmt::Display for RepositoryError {
 
 impl std::error::Error for RepositoryError {}
 
+#[cfg(test)]
 #[derive(Clone, Default)]
 pub struct InMemoryChatRepository {
     state: Arc<Mutex<RepositoryState>>,
 }
 
+#[cfg(test)]
 impl ChatRepository for InMemoryChatRepository {
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
@@ -326,10 +334,11 @@ impl ChatRepository for InMemoryChatRepository {
     ) -> RepositoryFuture<'a, Vec<ChatMessage>> {
         Box::pin(async move {
             let state = self.lock_state()?;
-            if !state
+            let role = state
                 .memberships
-                .contains_key(&(query.channel_id.clone(), query.actor))
-            {
+                .get(&(query.channel_id.clone(), query.actor))
+                .map(|membership| &membership.role);
+            if !Policy::can_read_channel(role) {
                 return Err(RepositoryError::PermissionDenied);
             }
 
@@ -471,6 +480,7 @@ impl ChatRepository for InMemoryChatRepository {
     }
 }
 
+#[cfg(test)]
 impl InMemoryChatRepository {
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, RepositoryState>, RepositoryError> {
         self.state
@@ -479,6 +489,7 @@ impl InMemoryChatRepository {
     }
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct RepositoryState {
     circles: HashMap<CircleId, Circle>,
@@ -494,6 +505,7 @@ struct RepositoryState {
     command_receipts: HashMap<(UserId, String), MessageId>,
 }
 
+#[cfg(test)]
 impl RepositoryState {
     fn resolve_channel_ref(&self, channel: &ChannelRef) -> Result<ChannelId, RepositoryError> {
         match channel {

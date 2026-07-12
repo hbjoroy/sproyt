@@ -70,13 +70,9 @@ First stable command set:
 - `mark_read`
 - `ping`
 
-Current prototype note: the running WebSocket endpoint still accepts a simpler message:
-
-```json
-{ "type": "send", "body": "Hei" }
-```
-
-That is a temporary browser adapter shape. It should be replaced by the envelope above when the persistent command surface lands.
+The running WebSocket endpoint accepts only the versioned `sproyt.chat.v1`
+envelope. Unknown protocol versions and command types return stable structured
+errors; there is no parallel legacy command path.
 
 ## Events
 

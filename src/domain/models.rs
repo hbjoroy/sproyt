@@ -76,13 +76,6 @@ pub enum CircleRole {
 }
 
 impl CircleRole {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Owner => "owner",
-            Self::Member => "member",
-        }
-    }
-
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "owner" => Some(Self::Owner),

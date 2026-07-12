@@ -13,10 +13,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    extract::{
-        Path, Query, State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
-    },
+    extract::{Path, Query, State, ws::WebSocketUpgrade},
     http::{
         HeaderMap, HeaderName, HeaderValue,
         header::{AUTHORIZATION, COOKIE, LOCATION, SET_COOKIE},
@@ -25,8 +22,7 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
-use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use serde::Deserialize;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
@@ -39,9 +35,7 @@ use crate::{
     auth::AuthService,
     chat::{ChatEngine, ChatError},
     config::{AppConfig, AuthMode, LogFormat},
-    domain::{
-        ChannelId, ChannelSequence, ChatEvent, ChatMessage, MessageBody, MessageLimit, UserId,
-    },
+    domain::{ChannelId, ChannelSequence, MessageBody, MessageLimit, UserId},
     operations::{OperationalState, healthz, metrics, readyz, record_metrics},
     process::{
         EnqueueCorrelation, EnqueueProcessStart, HeartGateway, ProcessLinkId, ProcessService,
@@ -745,169 +739,9 @@ fn redirect_with_cookies(location: &str, cookies: &[String]) -> axum::response::
     response
 }
 
-#[allow(dead_code)]
-async fn handle_socket(chat: ChatEngine, query: WsQuery, mut socket: WebSocket) {
-    let channel_name = query.channel.unwrap_or_else(|| "general".to_owned());
-    let participant_name = query.participant.unwrap_or_else(|| "guest".to_owned());
-    let participant_id = UserId::named(&participant_name);
-    let channel_id = match chat
-        .prepare_development_session(participant_id.clone(), &participant_name, &channel_name)
-        .await
-    {
-        Ok(channel_id) => channel_id,
-        Err(error) => {
-            send_error(&mut socket, error).await;
-            return;
-        }
-    };
-
-    let mut subscription = match chat
-        .subscribe(channel_id.clone(), participant_id.clone())
-        .await
-    {
-        Ok(subscription) => subscription,
-        Err(error) => {
-            send_error(&mut socket, error).await;
-            return;
-        }
-    };
-
-    let mut last_seen_sequence = subscription
-        .history
-        .last()
-        .map_or(ChannelSequence::new(0), |message| message.sequence);
-    if send_server_event(
-        &mut socket,
-        &ServerEvent::History {
-            messages: std::mem::take(&mut subscription.history),
-        },
-    )
-    .await
-    .is_err()
-    {
-        return;
-    }
-
-    loop {
-        tokio::select! {
-            event = subscription.receiver.recv() => {
-                match event {
-                    Ok(event) => {
-                        if let ChatEvent::MessageAccepted { message } = &event {
-                            last_seen_sequence = message.sequence;
-                        }
-                        if send_server_event(&mut socket, &ServerEvent::Chat { event }).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        let latest_known_sequence = match chat.latest_sequence(channel_id.clone()).await {
-                            Ok(sequence) => sequence,
-                            Err(error) => {
-                                send_error(&mut socket, error).await;
-                                break;
-                            }
-                        };
-                        let event = ServerEvent::Lagged {
-                            channel_id: channel_id.clone(),
-                            last_seen_sequence,
-                            latest_known_sequence,
-                            skipped,
-                            hint: "load_recent_messages_after",
-                        };
-                        if send_server_event(&mut socket, &event).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                }
-            }
-            frame = socket.recv() => {
-                match frame {
-                    Some(Ok(Message::Text(text))) => {
-                        match serde_json::from_str::<ClientCommand>(&text) {
-                            Ok(ClientCommand::Send { body }) => {
-                                match MessageBody::new(body) {
-                                    Ok(body) => {
-                                        if let Err(error) = chat.send_message(channel_id.clone(), participant_id.clone(), body).await {
-                                            send_error(&mut socket, error).await;
-                                        }
-                                    }
-                                    Err(error) => send_error(&mut socket, error.into()).await,
-                                }
-                            }
-                            Err(_) => {
-                                let event = ServerEvent::ProtocolError {
-                                    reason: "expected JSON like {\"type\":\"send\",\"body\":\"...\"}".to_owned(),
-                                };
-                                let _ = send_server_event(&mut socket, &event).await;
-                            }
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(Message::Ping(payload))) => {
-                        if socket.send(Message::Pong(payload)).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Ok(Message::Binary(_))) | Some(Ok(Message::Pong(_))) => {}
-                    Some(Err(_)) => break,
-                }
-            }
-        }
-    }
-
-    let _ = chat
-        .leave(channel_id, participant_id, subscription.connection_id)
-        .await;
-}
-
-async fn send_error(socket: &mut WebSocket, error: ChatError) {
-    let event = ServerEvent::Error {
-        message: error.to_string(),
-    };
-    let _ = send_server_event(socket, &event).await;
-}
-
-async fn send_server_event(socket: &mut WebSocket, event: &ServerEvent) -> Result<(), axum::Error> {
-    let payload = serde_json::to_string(event).expect("server events must serialize");
-    socket.send(Message::Text(payload.into())).await
-}
-
 #[derive(Debug, Deserialize)]
 struct WsQuery {
-    channel: Option<String>,
     participant: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ClientCommand {
-    Send { body: String },
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ServerEvent {
-    Chat {
-        event: ChatEvent,
-    },
-    Error {
-        message: String,
-    },
-    History {
-        messages: Vec<ChatMessage>,
-    },
-    Lagged {
-        channel_id: ChannelId,
-        last_seen_sequence: ChannelSequence,
-        latest_known_sequence: ChannelSequence,
-        skipped: u64,
-        hint: &'static str,
-    },
-    ProtocolError {
-        reason: String,
-    },
 }
 
 const INDEX_HTML: &str = r##"<!doctype html>

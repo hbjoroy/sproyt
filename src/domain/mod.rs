@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 mod commands;
 mod events;
 mod ids;
@@ -10,9 +7,8 @@ mod repository;
 mod text;
 
 pub use commands::{
-    AcceptCircleInvitation, ChannelRef, ChatCommand, CreateChannel, CreateCircle,
-    CreateCircleInvitation, JoinChannel, LeaveChannel, ListMyChannels, LoadRecentMessages,
-    MarkRead, MessageLimit, SendMessage,
+    AcceptCircleInvitation, ChannelRef, CreateChannel, CreateCircle, CreateCircleInvitation,
+    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MessageLimit, SendMessage,
 };
 pub use events::ChatEvent;
 pub use ids::{ChannelId, ChannelSequence, CircleId, InvitationId, MessageId, UserId};
@@ -21,5 +17,7 @@ pub use models::{
     CircleRole, IssuedInvitation, Membership, MembershipRole, PrincipalKind, User,
 };
 pub use policy::Policy;
-pub use repository::{ChatRepository, InMemoryChatRepository, RepositoryError, RepositoryFuture};
+#[cfg(test)]
+pub use repository::InMemoryChatRepository;
+pub use repository::{ChatRepository, RepositoryError, RepositoryFuture};
 pub use text::{ChannelSlug, DisplayName, MessageBody, TextValidationError};

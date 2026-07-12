@@ -7,12 +7,14 @@ use std::{
 use tokio::sync::{broadcast, mpsc, oneshot};
 use uuid::Uuid;
 
+#[cfg(test)]
+use crate::domain::PrincipalKind;
 use crate::domain::{
     AcceptCircleInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
     ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
     CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName, IssuedInvitation,
     JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MessageBody, MessageId,
-    MessageLimit, PrincipalKind, RepositoryError, SendMessage, TextValidationError, User, UserId,
+    MessageLimit, RepositoryError, SendMessage, TextValidationError, User, UserId,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -70,6 +72,7 @@ impl ChatEngine {
     }
 
     /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
+    #[cfg(test)]
     pub async fn prepare_development_user(
         &self,
         participant_id: UserId,
@@ -89,6 +92,7 @@ impl ChatEngine {
     }
 
     /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
+    #[cfg(test)]
     pub async fn prepare_development_session(
         &self,
         participant_id: UserId,
@@ -287,6 +291,7 @@ impl ChatEngine {
         response.await.map_err(|_| ChatError::EngineStopped)?
     }
 
+    #[cfg(test)]
     pub async fn send_message(
         &self,
         channel_id: ChannelId,

@@ -868,15 +868,18 @@ async fn ensure_membership(
     channel_id: &ChannelId,
     actor: &UserId,
 ) -> Result<(), RepositoryError> {
-    let found: Option<i64> = sqlx::query_scalar(
-        "select 1 from channel_memberships where channel_id = ? and user_id = ?",
+    let role: Option<String> = sqlx::query_scalar(
+        "select role from channel_memberships where channel_id = ? and user_id = ?",
     )
     .bind(channel_id.to_string())
     .bind(actor.to_string())
     .fetch_optional(pool)
     .await
     .map_err(sql_error)?;
-    found.map(|_| ()).ok_or(RepositoryError::PermissionDenied)
+    let role = role.as_deref().and_then(MembershipRole::parse);
+    Policy::can_read_channel(role.as_ref())
+        .then_some(())
+        .ok_or(RepositoryError::PermissionDenied)
 }
 
 async fn load_membership(

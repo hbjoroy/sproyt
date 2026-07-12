@@ -21,12 +21,12 @@ impl UserId {
         ))
     }
 
-    pub const fn as_uuid(&self) -> &Uuid {
-        &self.0
-    }
-
     pub const fn from_uuid(value: Uuid) -> Self {
         Self(value)
+    }
+
+    pub const fn as_uuid(&self) -> &Uuid {
+        &self.0
     }
 }
 
@@ -47,13 +47,6 @@ impl ChannelId {
 
     pub fn generate() -> Self {
         Self(Uuid::now_v7())
-    }
-
-    pub fn named(value: impl AsRef<str>) -> Self {
-        Self(Uuid::new_v5(
-            &Uuid::NAMESPACE_URL,
-            value.as_ref().as_bytes(),
-        ))
     }
 
     pub const fn as_uuid(&self) -> &Uuid {
@@ -100,10 +93,6 @@ impl InvitationId {
 
     pub const fn as_uuid(&self) -> &Uuid {
         &self.0
-    }
-
-    pub const fn from_uuid(value: Uuid) -> Self {
-        Self(value)
     }
 }
 
