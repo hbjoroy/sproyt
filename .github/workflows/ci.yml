@@ -111,6 +111,58 @@ jobs:
       - name: Audit locked dependencies
         run: cargo audit
 
+  recovery-drill:
+    name: PostgreSQL backup and restore drill
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: sproyt
+          POSTGRES_PASSWORD: sproyt-recovery
+          POSTGRES_DB: sproyt
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sproyt -d sproyt"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: sproyt-recovery
+      DATABASE_URL: postgres://sproyt:sproyt-recovery@127.0.0.1:5432/sproyt
+      SPROYT_ENV: test
+      SPROYT_AUTH_MODE: development
+    steps:
+      - uses: actions/checkout@v6
+      - name: Migrate source database
+        run: cargo run --locked -- migrate
+      - name: Seed durable chat evidence
+        run: |
+          psql "$DATABASE_URL" --set ON_ERROR_STOP=1 <<'SQL'
+          insert into users(id,kind,display_name,created_at) values('01900000-0000-7000-8000-000000000001','human','Recovery user',now());
+          insert into channels(id,slug,name,kind,created_by) values('01900000-0000-7000-8000-000000000002','recovery','Recovery','private','01900000-0000-7000-8000-000000000001');
+          insert into channel_memberships(channel_id,user_id,role) values('01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001','owner');
+          insert into channel_sequences(channel_id,next_sequence) values('01900000-0000-7000-8000-000000000002',2);
+          insert into messages(id,channel_id,sender_id,sequence,body) values('01900000-0000-7000-8000-000000000003','01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001',1,'restore-evidence');
+          SQL
+      - name: Backup and restore into isolated database
+        run: |
+          pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL" --file sproyt.dump
+          createdb --host 127.0.0.1 --username sproyt sproyt_restore
+          pg_restore --exit-on-error --no-owner --no-acl --host 127.0.0.1 --username sproyt --dbname sproyt_restore sproyt.dump
+      - name: Apply forward migrations and verify integrity
+        env:
+          DATABASE_URL: postgres://sproyt:sproyt-recovery@127.0.0.1:5432/sproyt_restore
+        run: |
+          cargo run --locked -- migrate
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select max(sequence) from messages where channel_id='01900000-0000-7000-8000-000000000002'")" = "1"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recovery-drill-backup
+          path: sproyt.dump
+          retention-days: 7
+
   delivery:
     name: Container and Kubernetes delivery
     runs-on: ubuntu-latest
