@@ -76,6 +76,10 @@ errors; there is no parallel legacy command path.
 
 ## Events
 
+Sequence `0` is reserved for an unread/catch-up cursor before the first
+message. Persisted messages always start at `1`. Allocation is checked and an
+exhausted sequence fails the command rather than wrapping.
+
 First event set:
 
 - `channel_created`

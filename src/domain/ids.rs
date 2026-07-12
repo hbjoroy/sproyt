@@ -133,8 +133,11 @@ impl ChannelSequence {
         Self(value)
     }
 
-    pub const fn next(self) -> Self {
-        Self(self.0 + 1)
+    pub const fn checked_next(self) -> Result<Self, TextValidationError> {
+        match self.0.checked_add(1) {
+            Some(value) => Ok(Self(value)),
+            None => Err(TextValidationError::SequenceOverflow),
+        }
     }
 }
 
@@ -166,4 +169,16 @@ fn non_empty(value: impl Into<String>, field: &'static str) -> Result<String, Te
 fn parse_uuid(value: impl Into<String>, field: &'static str) -> Result<Uuid, TextValidationError> {
     let value = non_empty(value, field)?;
     Uuid::parse_str(&value).map_err(|_| TextValidationError::InvalidUuid { field })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn sequence_overflow_is_explicit() {
+        assert_eq!(
+            ChannelSequence::new(u64::MAX).checked_next(),
+            Err(TextValidationError::SequenceOverflow)
+        );
+    }
 }

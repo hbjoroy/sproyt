@@ -7,6 +7,7 @@ pub enum TextValidationError {
     Empty { field: &'static str },
     InvalidSlug,
     InvalidSequence,
+    SequenceOverflow,
     InvalidUuid { field: &'static str },
     TooLarge { field: &'static str, max: usize },
 }
@@ -20,6 +21,7 @@ impl fmt::Display for TextValidationError {
                 "channel slug can only contain lowercase letters, numbers, '-' and '_'"
             ),
             Self::InvalidSequence => formatter.write_str("channel sequence cannot be negative"),
+            Self::SequenceOverflow => formatter.write_str("channel sequence is exhausted"),
             Self::InvalidUuid { field } => write!(formatter, "{field} must be a UUID"),
             Self::TooLarge { field, max } => write!(formatter, "{field} cannot exceed {max} bytes"),
         }

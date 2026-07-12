@@ -371,7 +371,7 @@ impl ChatRepository for InMemoryChatRepository {
                 return Err(RepositoryError::PermissionDenied);
             }
 
-            let next_sequence = state.next_sequence(&command.channel_id);
+            let next_sequence = state.next_sequence(&command.channel_id)?;
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id.clone(),
@@ -414,7 +414,7 @@ impl ChatRepository for InMemoryChatRepository {
             if !Policy::can_send_to_channel(role) {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let next_sequence = state.next_sequence(&command.channel_id);
+            let next_sequence = state.next_sequence(&command.channel_id)?;
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id.clone(),
@@ -521,13 +521,19 @@ impl RepositoryState {
         }
     }
 
-    fn next_sequence(&mut self, channel_id: &ChannelId) -> ChannelSequence {
+    fn next_sequence(
+        &mut self,
+        channel_id: &ChannelId,
+    ) -> Result<ChannelSequence, RepositoryError> {
         let sequence = self
             .next_sequences
             .get(channel_id)
-            .map_or(ChannelSequence::first(), |sequence| sequence.next());
+            .map_or(Ok(ChannelSequence::first()), |sequence| {
+                sequence.checked_next()
+            })
+            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
         self.next_sequences.insert(channel_id.clone(), sequence);
-        sequence
+        Ok(sequence)
     }
 }
 
@@ -645,7 +651,7 @@ mod tests {
             .mark_read(MarkRead {
                 actor: alice,
                 channel_id: channel.id,
-                sequence: message.sequence.next(),
+                sequence: message.sequence.checked_next().unwrap(),
             })
             .await;
         assert_eq!(ahead, Err(RepositoryError::NotFound));
