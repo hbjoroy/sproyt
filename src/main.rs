@@ -2018,6 +2018,15 @@ mod protocol_capacity_tests {
         repository: Arc<SqliteChatRepository>,
         websocket_idle_timeout: Duration,
     ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let (address, server, _) =
+            start_test_server_with_state(repository, websocket_idle_timeout).await;
+        (address, server)
+    }
+
+    async fn start_test_server_with_state(
+        repository: Arc<SqliteChatRepository>,
+        websocket_idle_timeout: Duration,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>, AppState) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
@@ -2025,21 +2034,19 @@ mod protocol_capacity_tests {
         let agent_repository: Arc<dyn AgentRepository> = repository;
         let operations = OperationalState::default();
         operations.set_ready(true);
-        let app = build_router(
-            AppState {
-                auth: AuthService::development(),
-                chat: ChatEngine::start(chat_repository),
-                operations: operations.clone(),
-                processes: ProcessService::start(process_repository, None),
-                agents: AgentService::new(agent_repository),
-                websocket_idle_timeout,
-            },
-            operations,
-        );
+        let state = AppState {
+            auth: AuthService::development(),
+            chat: ChatEngine::start(chat_repository),
+            operations: operations.clone(),
+            processes: ProcessService::start(process_repository, None),
+            agents: AgentService::new(agent_repository),
+            websocket_idle_timeout,
+        };
+        let app = build_router(state.clone(), operations);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        (address, server)
+        (address, server, state)
     }
 
     async fn connect(address: std::net::SocketAddr) -> TestSocket {
@@ -2097,6 +2104,202 @@ mod protocol_capacity_tests {
                 }
             }
         }
+    }
+
+    async fn mcp_tool(
+        state: &AppState,
+        headers: &HeaderMap,
+        id: &str,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = mcp_handler(
+            State(state.clone()),
+            headers.clone(),
+            Json(McpRequest {
+                jsonrpc: "2.0".to_owned(),
+                id: serde_json::json!(id),
+                method: "tools/call".to_owned(),
+                params: serde_json::json!({"name":name,"arguments":arguments}),
+            }),
+        )
+        .await;
+        let body = axum::body::to_bytes(response.into_body(), 1_048_576)
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(response.get("result").is_some(), "{response}");
+        response["result"]["structuredContent"].clone()
+    }
+
+    #[tokio::test]
+    async fn websocket_and_mcp_adapters_have_identical_chat_outcomes() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server, state) =
+            start_test_server_with_state(repository, Duration::from_secs(60)).await;
+        let mut browser = connect_as(address, "adapter-owner").await;
+        let created = command(
+            &mut browser,
+            "adapter-create",
+            "create_channel",
+            serde_json::json!({"slug":"adapter-contract","name":"Adapter contract","kind":"private","circle_id":null}),
+        )
+        .await;
+        let channel_id = created["payload"]["channel"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let owner = state
+            .auth
+            .authenticate_development(Some("adapter-owner".to_owned()))
+            .unwrap()
+            .user
+            .id;
+        let agent = state
+            .agents
+            .create(CreateAgent {
+                actor: owner.clone(),
+                owner_id: owner.clone(),
+                display_name: "Adapter agent".to_owned(),
+                provider: "contract".to_owned(),
+                service_identity: "adapter-agent".to_owned(),
+                purpose: "Adapter conformance".to_owned(),
+                rate_limit_per_minute: 60,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        for scope in [AgentScope::ReadHistory, AgentScope::SendMessages] {
+            state
+                .agents
+                .grant(GrantAgent {
+                    actor: owner.clone(),
+                    agent_id: agent.agent_id.clone(),
+                    circle_id: None,
+                    channel_id: Some(ChannelId::new(channel_id.clone()).unwrap()),
+                    scope,
+                    expires_at: None,
+                })
+                .await
+                .unwrap();
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", agent.credential)).unwrap(),
+        );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/event-stream"),
+        );
+        headers.insert(
+            HeaderName::from_static("mcp-protocol-version"),
+            HeaderValue::from_static(MCP_PROTOCOL_VERSION),
+        );
+
+        let browser_channels = command(
+            &mut browser,
+            "browser-list",
+            "list_my_channels",
+            serde_json::Value::Null,
+        )
+        .await;
+        let agent_channels = mcp_tool(
+            &state,
+            &headers,
+            "agent-list",
+            "list_channels",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(browser_channels["payload"]["channels"][0]["id"], channel_id);
+        assert_eq!(agent_channels[0]["id"], channel_id);
+
+        let browser_message = command(
+            &mut browser,
+            "browser-send",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"from browser"}),
+        )
+        .await;
+        let browser_replay = command(
+            &mut browser,
+            "browser-send",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"ignored browser replay"}),
+        )
+        .await;
+        assert_eq!(
+            browser_message["payload"]["message"]["id"],
+            browser_replay["payload"]["message"]["id"]
+        );
+        let agent_message = mcp_tool(
+            &state,
+            &headers,
+            "agent-send",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"from agent","request_id":"agent-domain-send"}),
+        )
+        .await;
+        let agent_replay = mcp_tool(
+            &state,
+            &headers,
+            "agent-send-replay",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"ignored agent replay","request_id":"agent-domain-send"}),
+        )
+        .await;
+        assert_eq!(
+            agent_message["message"]["id"],
+            agent_replay["message"]["id"]
+        );
+
+        let browser_history = command(
+            &mut browser,
+            "browser-read",
+            "load_recent_messages",
+            serde_json::json!({"channel_id":channel_id,"limit":50,"after":0}),
+        )
+        .await;
+        let agent_history = mcp_tool(
+            &state,
+            &headers,
+            "agent-read",
+            "read_messages",
+            serde_json::json!({"channel_id":channel_id,"limit":50,"after_sequence":0}),
+        )
+        .await;
+        assert_eq!(browser_history["payload"]["messages"], agent_history);
+        assert_eq!(agent_history.as_array().unwrap().len(), 2);
+
+        let browser_read = command(
+            &mut browser,
+            "browser-mark-read",
+            "mark_read",
+            serde_json::json!({"channel_id":channel_id,"sequence":2}),
+        )
+        .await;
+        let agent_read = mcp_tool(
+            &state,
+            &headers,
+            "agent-mark-read",
+            "mark_read",
+            serde_json::json!({"channel_id":channel_id,"sequence":2}),
+        )
+        .await;
+        assert_eq!(
+            browser_read["payload"]["membership"]["last_read_sequence"],
+            agent_read["last_read_sequence"]
+        );
+        assert_eq!(agent_read["last_read_sequence"], 2);
+
+        browser.close(None).await.unwrap();
+        server.abort();
     }
 
     #[tokio::test]
