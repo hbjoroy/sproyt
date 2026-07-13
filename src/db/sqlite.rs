@@ -934,11 +934,11 @@ impl AgentRepository for SqliteChatRepository {
                     return Err(RepositoryError::PermissionDenied);
                 }
             }
-            let id = Uuid::now_v7();
-            sqlx::query("insert into agent_grants(id,agent_id,circle_id,channel_id,scope,granted_by,expires_at,created_at) values(?,?,?,?,?,?,?,?) on conflict do update set revoked_at=null,revoked_by=null,expires_at=excluded.expires_at,granted_by=excluded.granted_by")
-                .bind(id.to_string()).bind(command.agent_id.to_string()).bind(command.circle_id.map(|v| v.to_string()))
+            let proposed_id = Uuid::now_v7();
+            let id: String = sqlx::query_scalar("insert into agent_grants(id,agent_id,circle_id,channel_id,scope,granted_by,expires_at,created_at) values(?,?,?,?,?,?,?,?) on conflict do update set revoked_at=null,revoked_by=null,expires_at=excluded.expires_at,granted_by=excluded.granted_by returning id")
+                .bind(proposed_id.to_string()).bind(command.agent_id.to_string()).bind(command.circle_id.map(|v| v.to_string()))
                 .bind(command.channel_id.as_ref().map(ToString::to_string)).bind(command.scope.as_str()).bind(command.actor.to_string())
-                .bind(command.expires_at).bind(Utc::now()).execute(&self.pool).await.map_err(sql_error)?;
+                .bind(command.expires_at).bind(Utc::now()).fetch_one(&self.pool).await.map_err(sql_error)?;
             if let Some(channel_id) = command.channel_id {
                 let role = if matches!(command.scope, AgentScope::ReadHistory) {
                     "observer"
@@ -948,7 +948,7 @@ impl AgentRepository for SqliteChatRepository {
                 sqlx::query("insert into channel_memberships(channel_id,user_id,role,last_read_sequence,joined_at) values(?,?,?,0,?) on conflict(channel_id,user_id) do update set role=case when channel_memberships.role='observer' and excluded.role='member' then 'member' else channel_memberships.role end")
                     .bind(channel_id.to_string()).bind(command.agent_id.to_string()).bind(role).bind(Utc::now()).execute(&self.pool).await.map_err(sql_error)?;
             }
-            Ok(id)
+            Uuid::parse_str(&id).map_err(storage)
         })
     }
 
@@ -1218,7 +1218,9 @@ mod tests {
         let rows = sqlx::query_as::<_, (String, Option<String>, String, String, String)>(
             "select action, actor_id, target_kind, target_id, payload from audit_events \
              where action in ('agent.created', 'agent.grant_created', \
-             'agent.grant_revoked', 'process.started')",
+             'agent.grant_changed', 'agent.grant_revoked', 'process.started', \
+             'process.correlation_requested', 'process.inspection_requested', \
+             'circle.feature_changed')",
         )
         .fetch_all(&repository.pool)
         .await
@@ -1226,8 +1228,12 @@ mod tests {
         for expected in [
             "agent.created",
             "agent.grant_created",
+            "agent.grant_changed",
             "agent.grant_revoked",
             "process.started",
+            "process.correlation_requested",
+            "process.inspection_requested",
+            "circle.feature_changed",
         ] {
             assert!(
                 rows.iter().any(|row| row.0 == expected),
@@ -1240,6 +1246,13 @@ mod tests {
             assert!(!target_id.is_empty(), "{action} has no target id");
             assert_ne!(payload, "{}", "{action} has no cause payload");
         }
+        let feature_changes: i64 = sqlx::query_scalar(
+            "select count(*) from audit_events where action='circle.feature_changed'",
+        )
+        .fetch_one(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(feature_changes, 2, "feature update was not audited");
         let membership_left = sqlx::query_as::<_, (Option<String>, String, String, String)>(
             "select actor_id,target_kind,target_id,payload from audit_events where action='channel.membership_left'",
         )

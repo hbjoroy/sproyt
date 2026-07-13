@@ -902,8 +902,8 @@ impl AgentRepository for PostgresChatRepository {
                     return Err(RepositoryError::PermissionDenied);
                 }
             }
-            let id = Uuid::now_v7();
-            sqlx::query("insert into agent_grants(id,agent_id,circle_id,channel_id,scope,granted_by,expires_at,created_at) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(agent_id,circle_id,channel_id,scope) do update set revoked_at=null,revoked_by=null,expires_at=excluded.expires_at,granted_by=excluded.granted_by").bind(id).bind(*command.agent_id.as_uuid()).bind(command.circle_id.as_ref().map(|v|*v.as_uuid())).bind(command.channel_id.as_ref().map(|v|*v.as_uuid())).bind(command.scope.as_str()).bind(*command.actor.as_uuid()).bind(command.expires_at).bind(Utc::now()).execute(&self.pool).await.map_err(sql_error)?;
+            let proposed_id = Uuid::now_v7();
+            let id: Uuid = sqlx::query_scalar("insert into agent_grants(id,agent_id,circle_id,channel_id,scope,granted_by,expires_at,created_at) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(agent_id,circle_id,channel_id,scope) do update set revoked_at=null,revoked_by=null,expires_at=excluded.expires_at,granted_by=excluded.granted_by returning id").bind(proposed_id).bind(*command.agent_id.as_uuid()).bind(command.circle_id.as_ref().map(|v|*v.as_uuid())).bind(command.channel_id.as_ref().map(|v|*v.as_uuid())).bind(command.scope.as_str()).bind(*command.actor.as_uuid()).bind(command.expires_at).bind(Utc::now()).fetch_one(&self.pool).await.map_err(sql_error)?;
             if let Some(channel_id) = command.channel_id {
                 let role = if matches!(command.scope, AgentScope::ReadHistory) {
                     "observer"
@@ -1164,7 +1164,9 @@ mod tests {
         >(
             "select action, actor_id, target_kind, target_id, payload from audit_events \
              where action in ('agent.created', 'agent.grant_created', \
-             'agent.grant_revoked', 'process.started')",
+             'agent.grant_changed', 'agent.grant_revoked', 'process.started', \
+             'process.correlation_requested', 'process.inspection_requested', \
+             'circle.feature_changed')",
         )
         .fetch_all(&repository.pool)
         .await
@@ -1172,8 +1174,12 @@ mod tests {
         for expected in [
             "agent.created",
             "agent.grant_created",
+            "agent.grant_changed",
             "agent.grant_revoked",
             "process.started",
+            "process.correlation_requested",
+            "process.inspection_requested",
+            "circle.feature_changed",
         ] {
             assert!(
                 rows.iter().any(|row| row.0 == expected),
@@ -1190,6 +1196,13 @@ mod tests {
                 "{action} has no cause payload"
             );
         }
+        let feature_changes: i64 = sqlx::query_scalar(
+            "select count(*) from audit_events where action='circle.feature_changed'",
+        )
+        .fetch_one(&repository.pool)
+        .await
+        .unwrap();
+        assert!(feature_changes >= 2, "feature update was not audited");
         let membership_left = sqlx::query_as::<
             _,
             (Option<uuid::Uuid>, String, String, serde_json::Value),

@@ -575,7 +575,7 @@ where
     assert!(
         !repository
             .has_scope(
-                created_agent.agent_id,
+                created_agent.agent_id.clone(),
                 None,
                 Some(channel.id.clone()),
                 AgentScope::ReadHistory
@@ -583,6 +583,33 @@ where
             .await
             .unwrap()
     );
+    let reactivated_grant = repository
+        .grant_agent(GrantAgent {
+            actor: actor.clone(),
+            agent_id: created_agent.agent_id.clone(),
+            circle_id: None,
+            channel_id: Some(channel.id.clone()),
+            scope: AgentScope::ReadHistory,
+            expires_at: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(reactivated_grant, grant, "regrant returned a phantom id");
+    assert!(
+        repository
+            .has_scope(
+                created_agent.agent_id.clone(),
+                None,
+                Some(channel.id.clone()),
+                AgentScope::ReadHistory
+            )
+            .await
+            .unwrap()
+    );
+    repository
+        .revoke_grant(actor.clone(), reactivated_grant)
+        .await
+        .unwrap();
 
     let link = repository
         .enqueue_start(process_start.clone())
