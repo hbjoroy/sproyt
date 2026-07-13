@@ -187,6 +187,9 @@ jobs:
           --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
           --set config.oidcClientId=ci-client
           --set secret.existingSecret=sproyt-ci
+          --set monitoring.serviceMonitor.enabled=true
+          --set monitoring.prometheusRule.enabled=true
+          --set monitoring.grafanaDashboard.enabled=true
           > rendered-manifests.yaml
 
       - name: Set up Docker Buildx

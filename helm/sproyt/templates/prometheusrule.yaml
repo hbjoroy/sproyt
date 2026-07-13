@@ -1,0 +1,35 @@
+{{- if .Values.monitoring.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "sproyt.fullname" . }}
+  labels:
+    {{- include "sproyt.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: sproyt.availability
+      rules:
+        - alert: SproytNotReady
+          expr: min_over_time(sproyt_ready{namespace={{ .Release.Namespace | quote }}}[5m]) < 1
+          for: 5m
+          labels:
+            severity: page
+          annotations:
+            summary: Sproyt has not been ready for five minutes
+            runbook_url: {{ printf "%s/docs/operations.md" .Chart.Home | quote }}
+        - alert: SproytServerErrorRatioHigh
+          expr: |
+            sum(rate(sproyt_http_server_errors_total{namespace={{ .Release.Namespace | quote }}}[5m]))
+              /
+            clamp_min(sum(rate(sproyt_http_requests_total{namespace={{ .Release.Namespace | quote }}}[5m])), 0.001)
+              > 0.02
+          for: 5m
+          labels:
+            severity: page
+          annotations:
+            summary: Sproyt HTTP server error ratio exceeds two percent
+            runbook_url: {{ printf "%s/docs/operations.md" .Chart.Home | quote }}
+{{- end }}

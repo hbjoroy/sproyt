@@ -45,6 +45,19 @@ resources:
 podDisruptionBudget:
   minAvailable: 1
 
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    additionalLabels: {}
+  prometheusRule:
+    enabled: false
+    additionalLabels: {}
+  grafanaDashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"
+
 networkPolicy:
   enabled: true
   ingressNamespaceSelector: {}

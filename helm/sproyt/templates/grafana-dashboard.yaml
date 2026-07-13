@@ -1,0 +1,27 @@
+{{- if .Values.monitoring.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sproyt.fullname" . }}-dashboard
+  labels:
+    {{- include "sproyt.labels" . | nindent 4 }}
+    {{- toYaml .Values.monitoring.grafanaDashboard.labels | nindent 4 }}
+data:
+  sproyt-overview.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": false,
+      "panels": [
+        {"id": 1, "title": "Ready replicas", "type": "stat", "targets": [{"expr": "sum(sproyt_ready{namespace=\"{{ .Release.Namespace }}\"})", "refId": "A"}], "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0}},
+        {"id": 2, "title": "HTTP server error ratio", "type": "timeseries", "targets": [{"expr": "sum(rate(sproyt_http_server_errors_total{namespace=\"{{ .Release.Namespace }}\"}[5m])) / clamp_min(sum(rate(sproyt_http_requests_total{namespace=\"{{ .Release.Namespace }}\"}[5m])), 0.001)", "refId": "A"}], "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0}},
+        {"id": 3, "title": "Average HTTP duration", "type": "timeseries", "targets": [{"expr": "sum(rate(sproyt_http_request_duration_microseconds_total{namespace=\"{{ .Release.Namespace }}\"}[5m])) / clamp_min(sum(rate(sproyt_http_requests_total{namespace=\"{{ .Release.Namespace }}\"}[5m])), 0.001) / 1000000", "refId": "A"}], "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0}}
+      ],
+      "schemaVersion": 39,
+      "tags": ["sproyt"],
+      "templating": {"list": []},
+      "time": {"from": "now-6h", "to": "now"},
+      "title": "Sproyt overview",
+      "uid": "sproyt-overview",
+      "version": 1
+    }
+{{- end }}
