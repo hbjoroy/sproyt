@@ -83,9 +83,9 @@ where
     R: ChatRepository,
 {
     use crate::domain::{
-        AcceptCircleInvitation, ChannelKind, ChannelSlug, CreateChannel, CreateCircle,
-        CreateCircleInvitation, DisplayName, LoadRecentMessages, MarkRead, MessageBody,
-        MessageLimit, PrincipalKind, SendMessage, User, UserId,
+        AcceptCircleInvitation, ChannelKind, ChannelSequence, ChannelSlug, CreateChannel,
+        CreateCircle, CreateCircleInvitation, DisplayName, LoadRecentMessages, MarkRead,
+        MessageBody, MessageLimit, PrincipalKind, SendMessage, User, UserId,
     };
     use chrono::Utc;
 
@@ -151,13 +151,59 @@ where
         repository
             .mark_read(MarkRead {
                 actor: actor.clone(),
-                channel_id: channel.id,
+                channel_id: channel.id.clone(),
                 sequence: first.sequence,
             })
             .await
             .unwrap()
             .last_read_sequence,
         first.sequence
+    );
+    let second = repository
+        .append_message_idempotent(
+            SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                body: MessageBody::new("second").unwrap(),
+            },
+            "second-request".to_owned(),
+        )
+        .await
+        .unwrap();
+    let third = repository
+        .append_message_idempotent(
+            SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                body: MessageBody::new("third").unwrap(),
+            },
+            "third-request".to_owned(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .load_recent_messages(LoadRecentMessages {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                limit: MessageLimit::new(2),
+                after: Some(ChannelSequence::new(0)),
+            })
+            .await
+            .unwrap(),
+        vec![first, second.clone()]
+    );
+    assert_eq!(
+        repository
+            .load_recent_messages(LoadRecentMessages {
+                actor: actor.clone(),
+                channel_id: channel.id,
+                limit: MessageLimit::new(2),
+                after: Some(second.sequence),
+            })
+            .await
+            .unwrap(),
+        vec![third]
     );
 
     let circle = repository
@@ -285,7 +331,6 @@ where
         .await
         .unwrap();
     assert_eq!(membership.last_read_sequence, first.sequence);
-
     let circle = repository
         .create_circle(CreateCircle {
             actor: actor.clone(),

@@ -704,6 +704,53 @@ mod tests {
         assert!(matches!(left, ChatEvent::ParticipantLeft { .. }));
     }
 
+    #[tokio::test]
+    async fn lagged_subscriber_recovers_exactly_from_durable_sequence() {
+        let (chat, channel, alice, bob) = chat_fixture().await;
+        let mut subscription = chat.subscribe(channel.clone(), bob.clone()).await.unwrap();
+        let _joined = subscription.receiver.recv().await.unwrap();
+        let message_count = CHANNEL_EVENT_CAPACITY + 44;
+
+        for index in 1..=message_count {
+            chat.send_message_idempotent(
+                channel.clone(),
+                alice.clone(),
+                MessageBody::new(format!("lag-{index}")).unwrap(),
+                format!("lag-request-{index}"),
+            )
+            .await
+            .unwrap();
+        }
+
+        let skipped = match subscription.receiver.recv().await {
+            Err(broadcast::error::RecvError::Lagged(skipped)) => skipped,
+            other => panic!("expected broadcast lag, received {other:?}"),
+        };
+        assert!(skipped > 0);
+        let mut recovered = Vec::new();
+        let mut cursor = ChannelSequence::new(0);
+        while u64::from(cursor) < message_count as u64 {
+            let page = chat
+                .load_messages(
+                    bob.clone(),
+                    channel.clone(),
+                    MessageLimit::new(200),
+                    Some(cursor),
+                )
+                .await
+                .unwrap();
+            assert!(!page.is_empty(), "catch-up stopped before latest sequence");
+            cursor = page.last().unwrap().sequence;
+            recovered.extend(page);
+        }
+        assert_eq!(recovered.len(), message_count);
+        assert_eq!(u64::from(recovered[0].sequence), 1);
+        assert_eq!(
+            u64::from(recovered.last().unwrap().sequence),
+            message_count as u64
+        );
+    }
+
     async fn next_message_event(receiver: &mut broadcast::Receiver<ChatEvent>) -> ChatMessage {
         loop {
             match receiver.recv().await.unwrap() {

@@ -1281,6 +1281,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let activeChannelId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
+      const seenMessageIds = new Set();
+      const catchUpTargets = new Map();
 
       connectForm.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -1329,6 +1331,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         timeline.length = 0;
+        seenMessageIds.clear();
+        catchUpTargets.clear();
         activeChannelId = null;
         messagesEl.replaceChildren();
         requestedChannelSlug = (channelInput.value.trim() || "general")
@@ -1444,7 +1448,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         if (event.type === "subscription_started") {
           activeChannelId = payload.channel_id;
-          payload.history.forEach((message) => timeline.push({ type: "message", message }));
+          payload.history.forEach(appendTimelineMessage);
           renderTimeline();
           return;
         }
@@ -1452,7 +1456,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "chat") {
           const chatEvent = payload.event;
           if (chatEvent.type === "message_accepted") {
-            timeline.push({ type: "message", message: chatEvent.message });
+            appendTimelineMessage(chatEvent.message);
             renderTimeline();
           } else if (chatEvent.type === "participant_joined") {
             pushSystem(`${chatEvent.participant_id} kom inn i ${chatEvent.channel_id}`);
@@ -1464,6 +1468,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         if (event.type === "lagged") {
           pushSystem(`Klienten låg etter og hoppa over ${payload.skipped} event; lastar inn att.`);
+          catchUpTargets.set(payload.channel_id, payload.latest_known_sequence);
           sendCommand("load_recent_messages", {
             channel_id: payload.channel_id,
             after: payload.last_seen_sequence,
@@ -1473,8 +1478,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "messages_loaded") {
-          payload.messages.forEach((message) => timeline.push({ type: "message", message }));
+          payload.messages.forEach(appendTimelineMessage);
           renderTimeline();
+          const target = catchUpTargets.get(payload.channel_id);
+          const last = payload.messages.at(-1);
+          if (target !== undefined && last && last.sequence < target) {
+            sendCommand("load_recent_messages", {
+              channel_id: payload.channel_id,
+              after: last.sequence,
+              limit: 200
+            });
+          } else if (target !== undefined) {
+            catchUpTargets.delete(payload.channel_id);
+          }
           return;
         }
 
@@ -1502,8 +1518,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function renderMessage(message) {
-        timeline.push({ type: "message", message });
+        appendTimelineMessage(message);
         renderTimeline();
+      }
+
+      function appendTimelineMessage(message) {
+        if (seenMessageIds.has(message.id)) return;
+        seenMessageIds.add(message.id);
+        timeline.push({ type: "message", message });
       }
 
       function appendMessage(message) {
@@ -1970,11 +1992,26 @@ mod protocol_capacity_tests {
     }
 
     async fn connect(address: std::net::SocketAddr) -> TestSocket {
-        let url = format!("ws://{address}/ws?participant=capacity-user");
+        connect_as(address, "capacity-user").await
+    }
+
+    async fn connect_as(address: std::net::SocketAddr, participant: &str) -> TestSocket {
+        let url = format!("ws://{address}/ws?participant={participant}");
         connect_async(url).await.unwrap().0
     }
 
     async fn command(
+        socket: &mut TestSocket,
+        request_id: &str,
+        command_type: &str,
+        payload: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = command_response(socket, request_id, command_type, payload).await;
+        assert_ne!(response["type"], "error", "{response}");
+        response
+    }
+
+    async fn command_response(
         socket: &mut TestSocket,
         request_id: &str,
         command_type: &str,
@@ -2001,7 +2038,6 @@ mod protocol_capacity_tests {
             if let ClientMessage::Text(text) = frame {
                 let response: serde_json::Value = serde_json::from_str(&text).unwrap();
                 if response.get("request_id").and_then(|id| id.as_str()) == Some(request_id) {
-                    assert_ne!(response["type"], "error", "{response}");
                     return response;
                 }
             }
@@ -2131,6 +2167,77 @@ mod protocol_capacity_tests {
                 assert_eq!(frame.reason, "idle timeout");
             }
             other => panic!("expected idle close frame, received {other:?}"),
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_reports_authorization_and_unknown_command_errors() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+        let mut owner = connect_as(address, "wire-owner").await;
+        let created = command(
+            &mut owner,
+            "create-private",
+            "create_channel",
+            serde_json::json!({"slug":"wire-private","name":"Wire private","kind":"private","circle_id":null}),
+        )
+        .await;
+        let channel_id = created["payload"]["channel"]["id"].clone();
+
+        let mut outsider = connect_as(address, "wire-outsider").await;
+        let denied = command_response(
+            &mut outsider,
+            "unauthorized-load",
+            "load_recent_messages",
+            serde_json::json!({"channel_id":channel_id,"limit":50,"after":0}),
+        )
+        .await;
+        assert_eq!(denied["type"], "error");
+        assert_eq!(denied["payload"]["code"], "permission_denied");
+
+        outsider
+            .send(ClientMessage::Text(
+                serde_json::json!({"protocol":"sproyt.chat.v1","request_id":"unknown","type":"future_command"})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        let unknown = tokio::time::timeout(Duration::from_secs(2), outsider.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let ClientMessage::Text(unknown) = unknown else {
+            panic!("expected structured unknown-command error")
+        };
+        let unknown: serde_json::Value = serde_json::from_str(&unknown).unwrap();
+        assert_eq!(unknown["type"], "error");
+        assert_eq!(unknown["payload"]["code"], "invalid_envelope");
+
+        outsider
+            .send(ClientMessage::Text(
+                serde_json::json!({"protocol":"sproyt.chat.v1","request_id":"future-field","type":"ping","future_extension":{"version":2}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        loop {
+            let frame = outsider.next().await.unwrap().unwrap();
+            if let ClientMessage::Text(text) = frame {
+                let response: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if response["request_id"] == "future-field" {
+                    assert_eq!(response["type"], "pong");
+                    break;
+                }
+            }
         }
         server.abort();
     }

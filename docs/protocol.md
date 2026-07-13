@@ -86,6 +86,12 @@ Sequence `0` is reserved for an unread/catch-up cursor before the first
 message. Persisted messages always start at `1`. Allocation is checked and an
 exhausted sequence fails the command rather than wrapping.
 
+`load_recent_messages` without `after` returns the most recent page in
+ascending sequence order. With `after`, it returns the next ascending page
+immediately after that cursor. Clients repeat the latter until the last loaded
+sequence reaches `latest_known_sequence`; the browser deduplicates message IDs
+while live delivery and durable catch-up overlap.
+
 First event set:
 
 - `channel_created`

@@ -362,8 +362,13 @@ impl ChatRepository for InMemoryChatRepository {
                 .into_iter()
                 .filter(|message| query.after.is_none_or(|after| message.sequence > after))
                 .collect::<Vec<_>>();
-            let keep_from = messages.len().saturating_sub(limit);
-            Ok(messages.split_off(keep_from))
+            if query.after.is_some() {
+                messages.truncate(limit);
+                Ok(messages)
+            } else {
+                let keep_from = messages.len().saturating_sub(limit);
+                Ok(messages.split_off(keep_from))
+            }
         })
     }
 

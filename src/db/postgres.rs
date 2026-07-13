@@ -319,20 +319,24 @@ impl ChatRepository for PostgresChatRepository {
     ) -> RepositoryFuture<'a, Vec<ChatMessage>> {
         Box::pin(async move {
             ensure_membership(&self.pool, &query.channel_id, &query.actor).await?;
-            let after = i64::try_from(query.after.map_or(0, u64::from)).map_err(storage)?;
             let limit = i64::try_from(usize::from(query.limit)).map_err(storage)?;
-            let rows = sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where channel_id = $1 and sequence > $2 order by sequence desc limit $3")
-                .bind(*query.channel_id.as_uuid())
-                .bind(after)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(sql_error)?;
+            let (rows, reverse) = if let Some(after) = query.after {
+                let after = i64::try_from(u64::from(after)).map_err(storage)?;
+                (sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where channel_id = $1 and sequence > $2 order by sequence asc limit $3")
+                    .bind(*query.channel_id.as_uuid()).bind(after).bind(limit)
+                    .fetch_all(&self.pool).await.map_err(sql_error)?, false)
+            } else {
+                (sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where channel_id = $1 order by sequence desc limit $2")
+                    .bind(*query.channel_id.as_uuid()).bind(limit)
+                    .fetch_all(&self.pool).await.map_err(sql_error)?, true)
+            };
             let mut messages = rows
                 .into_iter()
                 .map(chat_message)
                 .collect::<Result<Vec<_>, _>>()?;
-            messages.reverse();
+            if reverse {
+                messages.reverse();
+            }
             Ok(messages)
         })
     }
