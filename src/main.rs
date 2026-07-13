@@ -159,10 +159,23 @@ async fn app_readyz(State(state): State<AppState>) -> axum::response::Response {
     if !state.operations.is_ready() {
         return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response();
     }
-    match tokio::time::timeout(Duration::from_secs(2), state.chat.health_check()).await {
+    let dependencies = async {
+        state
+            .chat
+            .health_check()
+            .await
+            .map_err(|error| error.kind())?;
+        state
+            .auth
+            .health_check()
+            .await
+            .map_err(|error| error.kind())?;
+        Ok::<(), &'static str>(())
+    };
+    match tokio::time::timeout(Duration::from_secs(2), dependencies).await {
         Ok(Ok(())) => (axum::http::StatusCode::OK, "ready\n").into_response(),
-        Ok(Err(error)) => {
-            warn!(error_kind = error.kind(), "readiness database probe failed");
+        Ok(Err(error_kind)) => {
+            warn!(error_kind, "readiness dependency probe failed");
             (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 "dependency unavailable\n",
@@ -170,7 +183,7 @@ async fn app_readyz(State(state): State<AppState>) -> axum::response::Response {
                 .into_response()
         }
         Err(_) => {
-            warn!("readiness database probe timed out");
+            warn!("readiness dependency probe timed out");
             (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 "dependency timeout\n",
@@ -198,7 +211,11 @@ async fn start_process(
     Json(body): Json<StartProcessRequest>,
 ) -> axum::response::Response {
     let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
-    let principal = match state.auth.authenticate_request(query.participant, cookie) {
+    let principal = match state
+        .auth
+        .authenticate_request(query.participant, cookie)
+        .await
+    {
         Ok(principal) => principal,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -246,7 +263,7 @@ async fn correlate_process(
     headers: HeaderMap,
     Json(body): Json<CorrelateProcessRequest>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers) {
+    let principal = match authenticate_http(&state, query, &headers).await {
         Ok(principal) => principal,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -287,7 +304,7 @@ async fn get_process(
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers) {
+    let principal = match authenticate_http(&state, query, &headers).await {
         Ok(principal) => principal,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -325,7 +342,7 @@ async fn inspect_process(
     headers: HeaderMap,
     Json(body): Json<InspectProcessRequest>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers) {
+    let principal = match authenticate_http(&state, query, &headers).await {
         Ok(principal) => principal,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -371,7 +388,7 @@ async fn set_heart_feature(
     headers: HeaderMap,
     Json(body): Json<SetFeatureRequest>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers) {
+    let principal = match authenticate_http(&state, query, &headers).await {
         Ok(principal) => principal,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -398,13 +415,16 @@ async fn set_heart_feature(
     }
 }
 
-fn authenticate_http(
+async fn authenticate_http(
     state: &AppState,
     query: WsQuery,
     headers: &HeaderMap,
 ) -> Result<crate::auth::AuthenticatedPrincipal, crate::auth::AuthError> {
     let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
-    state.auth.authenticate_request(query.participant, cookie)
+    state
+        .auth
+        .authenticate_request(query.participant, cookie)
+        .await
 }
 
 fn repository_response(error: crate::domain::RepositoryError) -> axum::response::Response {
@@ -438,7 +458,7 @@ async fn create_agent(
     headers: HeaderMap,
     Json(body): Json<CreateAgentRequest>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers) {
+    let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -478,7 +498,7 @@ async fn grant_agent(
     headers: HeaderMap,
     Json(body): Json<GrantAgentRequest>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers) {
+    let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -533,7 +553,7 @@ async fn revoke_agent_grant(
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers) {
+    let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -840,7 +860,7 @@ async fn approve_agent_message(
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers) {
+    let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
@@ -917,7 +937,11 @@ async fn ws_handler(
     upgrade: WebSocketUpgrade,
 ) -> axum::response::Response {
     let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
-    let principal = match state.auth.authenticate_request(query.participant, cookie) {
+    let principal = match state
+        .auth
+        .authenticate_request(query.participant, cookie)
+        .await
+    {
         Ok(principal) => principal,
         Err(error) => {
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();

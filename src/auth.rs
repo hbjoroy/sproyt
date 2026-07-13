@@ -1,7 +1,7 @@
 use std::{
     fmt,
-    sync::{Arc, RwLock},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, RwLock},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use aes_gcm::{
@@ -10,10 +10,10 @@ use aes_gcm::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet,
-    EndpointSet, IssuerUrl, Nonce as OidcNonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
-    Scope, TokenResponse,
-    core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
+    AccessToken, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
+    EndpointNotSet, EndpointSet, IssuerUrl, Nonce as OidcNonce, OAuth2TokenResponse,
+    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, SubjectIdentifier, TokenResponse,
+    core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata, CoreUserInfoClaims},
     reqwest,
 };
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,7 @@ use crate::{
 
 const LOGIN_TTL_SECONDS: u64 = 600;
 const SESSION_TTL_SECONDS: u64 = 8 * 60 * 60;
+const DISCOVERY_HEALTH_TTL: Duration = Duration::from_secs(30);
 pub const LOGIN_COOKIE: &str = "sproyt_oidc_tx";
 pub const SESSION_COOKIE: &str = "sproyt_session";
 
@@ -72,24 +73,24 @@ impl AuthService {
         principal("urn:sproyt:development", &name, &name)
     }
 
-    pub fn authenticate_session(
+    pub async fn authenticate_session(
         &self,
         cookie_header: Option<&str>,
     ) -> Result<AuthenticatedPrincipal, AuthError> {
         match self {
             Self::Development => Err(AuthError::Unauthorized),
-            Self::Oidc(service) => service.authenticate_session(cookie_header),
+            Self::Oidc(service) => service.authenticate_session(cookie_header).await,
         }
     }
 
-    pub fn authenticate_request(
+    pub async fn authenticate_request(
         &self,
         requested_name: Option<String>,
         cookie_header: Option<&str>,
     ) -> Result<AuthenticatedPrincipal, AuthError> {
         match self {
             Self::Development => self.authenticate_development(requested_name),
-            Self::Oidc(_) => self.authenticate_session(cookie_header),
+            Self::Oidc(_) => self.authenticate_session(cookie_header).await,
         }
     }
 
@@ -124,6 +125,13 @@ impl AuthService {
             },
         }
     }
+
+    pub async fn health_check(&self) -> Result<(), AuthError> {
+        match self {
+            Self::Development => Ok(()),
+            Self::Oidc(service) => service.health_check().await,
+        }
+    }
 }
 
 pub struct LoginStart {
@@ -147,6 +155,7 @@ pub struct OidcService {
     http_client: reqwest::Client,
     codec: CookieCodec,
     config: OidcConfig,
+    last_discovery_check: Mutex<Option<Instant>>,
     issuer: String,
     post_logout_redirect_url: String,
 }
@@ -190,6 +199,7 @@ impl OidcService {
             http_client,
             codec: CookieCodec::new(config.session_key(), config.session_previous_keys())?,
             config: config.clone(),
+            last_discovery_check: Mutex::new(Some(Instant::now())),
             issuer: config.issuer().to_owned(),
             post_logout_redirect_url: config.post_logout_redirect_url().to_owned(),
         })
@@ -197,6 +207,25 @@ impl OidcService {
 
     async fn refreshed_client(&self) -> Result<DiscoveredCoreClient, AuthError> {
         discover_client(&self.config, &self.http_client).await
+    }
+
+    async fn health_check(&self) -> Result<(), AuthError> {
+        let recently_checked = self
+            .last_discovery_check
+            .lock()
+            .map_err(|_| AuthError::External("OIDC health lock poisoned".to_owned()))?
+            .is_some_and(|checked| checked.elapsed() < DISCOVERY_HEALTH_TTL);
+        if recently_checked {
+            return Ok(());
+        }
+        let refreshed = self.refreshed_client().await?;
+        self.replace_client(refreshed)?;
+        *self
+            .last_discovery_check
+            .lock()
+            .map_err(|_| AuthError::External("OIDC health lock poisoned".to_owned()))? =
+            Some(Instant::now());
+        Ok(())
     }
 
     fn current_client(&self) -> Result<DiscoveredCoreClient, AuthError> {
@@ -300,6 +329,7 @@ impl OidcService {
             issuer: self.issuer.clone(),
             subject,
             display_name: principal.user.display_name.to_string(),
+            access_token: Some(token.access_token().secret().to_owned()),
             expires_at,
         };
         let value = self.codec.seal(&session)?;
@@ -310,14 +340,39 @@ impl OidcService {
         })
     }
 
-    fn authenticate_session(
+    async fn authenticate_session(
         &self,
         cookie_header: Option<&str>,
     ) -> Result<AuthenticatedPrincipal, AuthError> {
         let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
         let claims: SessionClaims = self.codec.open(value)?;
         validate_session_claims(&claims, &self.issuer)?;
-        principal(&claims.issuer, &claims.subject, &claims.display_name)
+        let Some(access_token) = claims.access_token else {
+            // Expand/contract compatibility: sessions issued by the previous
+            // release remain usable only until their already bounded expiry.
+            return principal(&claims.issuer, &claims.subject, &claims.display_name);
+        };
+        let client = self.current_client()?;
+        let user_info: CoreUserInfoClaims = client
+            .user_info(
+                AccessToken::new(access_token),
+                Some(SubjectIdentifier::new(claims.subject.clone())),
+            )
+            .map_err(AuthError::external)?
+            .request_async(&self.http_client)
+            .await
+            .map_err(|_| AuthError::Unauthorized)?;
+        let display_name = user_info
+            .name()
+            .and_then(|name| name.get(None))
+            .map(|name| name.as_str())
+            .or_else(|| {
+                user_info
+                    .preferred_username()
+                    .map(|username| username.as_str())
+            })
+            .unwrap_or(&claims.display_name);
+        principal(&claims.issuer, &claims.subject, display_name)
     }
 }
 
@@ -334,6 +389,8 @@ struct SessionClaims {
     issuer: String,
     subject: String,
     display_name: String,
+    #[serde(default)]
+    access_token: Option<String>,
     expires_at: u64,
 }
 
@@ -450,6 +507,16 @@ impl AuthError {
     fn external(error: impl fmt::Display) -> Self {
         Self::External(error.to_string())
     }
+
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::InvalidIdentity(_) => "invalid_identity",
+            Self::InvalidSessionKey => "invalid_session_key",
+            Self::Unauthorized => "unauthorized",
+            Self::Unsupported(_) => "unsupported",
+            Self::External(_) => "external",
+        }
+    }
 }
 
 impl fmt::Display for AuthError {
@@ -480,6 +547,7 @@ mod tests {
         Form, Json, Router,
         extract::State,
         http::HeaderMap,
+        response::IntoResponse,
         routing::{get, post},
     };
     use rsa::{
@@ -490,7 +558,7 @@ mod tests {
         traits::PublicKeyParts,
     };
     use sha2::Sha256;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[derive(Clone)]
     struct TestProvider {
@@ -499,6 +567,7 @@ mod tests {
         client_secret: String,
         nonce: Arc<Mutex<String>>,
         signing_key: Arc<Mutex<(String, RsaPrivateKey)>>,
+        active: Arc<AtomicBool>,
     }
 
     async fn provider_metadata(State(provider): State<TestProvider>) -> Json<serde_json::Value> {
@@ -506,6 +575,7 @@ mod tests {
             "issuer":provider.issuer,
             "authorization_endpoint":format!("{}/authorize",provider.issuer),
             "token_endpoint":format!("{}/token",provider.issuer),
+            "userinfo_endpoint":format!("{}/userinfo",provider.issuer),
             "jwks_uri":format!("{}/jwks",provider.issuer),
             "response_types_supported":["code"],
             "subject_types_supported":["public"],
@@ -598,6 +668,24 @@ mod tests {
         }))
     }
 
+    async fn provider_user_info(
+        State(provider): State<TestProvider>,
+        headers: HeaderMap,
+    ) -> axum::response::Response {
+        let valid_token = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            == Some("Bearer test-access-token");
+        if !provider.active.load(Ordering::SeqCst) || !valid_token {
+            return axum::http::StatusCode::UNAUTHORIZED.into_response();
+        }
+        Json(serde_json::json!({
+            "sub":"authentik-user-1",
+            "name":"Current Authentik User"
+        }))
+        .into_response()
+    }
+
     async fn test_oidc_provider() -> (OidcConfig, TestProvider, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let issuer = format!("http://{}", listener.local_addr().unwrap());
@@ -607,11 +695,13 @@ mod tests {
             client_secret: "test-client-secret-with-enough-entropy".to_owned(),
             nonce: Arc::new(Mutex::new(String::new())),
             signing_key: Arc::new(Mutex::new(generate_signing_key("key-a"))),
+            active: Arc::new(AtomicBool::new(true)),
         };
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(provider_metadata))
             .route("/jwks", get(provider_jwks))
             .route("/token", post(provider_token))
+            .route("/userinfo", get(provider_user_info))
             .with_state(provider.clone());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = OidcConfig::for_test(
@@ -659,6 +749,7 @@ mod tests {
             issuer: "issuer".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            access_token: Some("test-token".to_owned()),
             expires_at: now_seconds() + 60,
         };
         let sealed = codec.seal(&value).unwrap();
@@ -672,6 +763,32 @@ mod tests {
     }
 
     #[test]
+    fn session_cookie_accepts_previous_release_shape_during_rollout() {
+        #[derive(Serialize)]
+        struct PreviousSessionClaims {
+            issuer: String,
+            subject: String,
+            display_name: String,
+            expires_at: u64,
+        }
+
+        let key = URL_SAFE_NO_PAD.encode([8_u8; 32]);
+        let codec = CookieCodec::new(&key, &[]).unwrap();
+        let sealed = codec
+            .seal(&PreviousSessionClaims {
+                issuer: "issuer".to_owned(),
+                subject: "alice".to_owned(),
+                display_name: "Alice".to_owned(),
+                expires_at: now_seconds() + 60,
+            })
+            .unwrap();
+        let opened: SessionClaims = codec.open(&sealed).unwrap();
+
+        assert_eq!(opened.subject, "alice");
+        assert!(opened.access_token.is_none());
+    }
+
+    #[test]
     fn rotated_cookie_key_reads_old_sessions_but_writes_only_with_primary() {
         let old_key = URL_SAFE_NO_PAD.encode([3_u8; 32]);
         let new_key = URL_SAFE_NO_PAD.encode([9_u8; 32]);
@@ -681,6 +798,7 @@ mod tests {
             issuer: "issuer".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            access_token: Some("test-token".to_owned()),
             expires_at: now_seconds() + 60,
         };
 
@@ -704,6 +822,7 @@ mod tests {
             issuer: "https://issuer.example".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            access_token: Some("test-token".to_owned()),
             expires_at: now_seconds().saturating_sub(1),
         };
 
@@ -768,8 +887,18 @@ mod tests {
         assert_ne!(max_age, SESSION_TTL_SECONDS);
         let restored = auth
             .authenticate_session(Some(&complete.set_cookie))
+            .await
             .unwrap();
         assert_eq!(restored.user.id, complete.principal.user.id);
+        assert_eq!(
+            restored.user.display_name.to_string(),
+            "Current Authentik User"
+        );
+        provider.active.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            auth.authenticate_session(Some(&complete.set_cookie)).await,
+            Err(AuthError::Unauthorized)
+        ));
 
         let nonce_login = auth.login().unwrap();
         let nonce_state = authorization_parameter(&nonce_login.authorization_url, "state");

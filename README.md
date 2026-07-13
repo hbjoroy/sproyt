@@ -149,11 +149,14 @@ Runtime configuration is read from environment variables:
 OIDC uses discovery and does not hard-code Authentik endpoints. Register the
 exact redirect URL with the provider. Login starts at `/auth/login`, the
 provider returns to `/auth/callback`, and `/auth/logout` clears the local
-session. Authentication transactions and sessions are encrypted cookies, so
-all Kubernetes replicas can validate them with the same session key without
+session. The provider must publish a `userinfo_endpoint`; authenticated HTTP
+and WebSocket handshakes validate the encrypted session's access token there,
+bind the response to the expected subject, and therefore fail closed for a
+revoked or disabled user. Session lifetime never exceeds the ID-token lifetime.
+All Kubernetes replicas can validate cookies with the same session key without
 server-local session state. Rotate that key by moving the old value to
 `SPROYT_SESSION_PREVIOUS_KEYS`, deploying a new `SPROYT_SESSION_KEY`, waiting
-at least the eight-hour session TTL, and then removing the old key.
+at least the configured provider token lifetime, and then removing the old key.
 
 Database migrations run only through `sproyt migrate` (the Compose migration
 service or Helm pre-install/pre-upgrade Job). Application pods do not mutate
