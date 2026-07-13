@@ -5,7 +5,7 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::{
-    auth::AuthenticatedPrincipal,
+    auth::{AuthService, AuthenticatedPrincipal},
     chat::{ChatEngine, ChatError, ConnectionId},
     domain::{
         ChannelId, ChannelSequence, ChannelSlug, DisplayName, MessageBody, MessageLimit,
@@ -14,13 +14,42 @@ use crate::{
     protocol::{ClientCommand, ClientEnvelope, PROTOCOL_ID, ServerEnvelope, ServerEvent},
 };
 
+pub struct SocketAuthentication {
+    service: AuthService,
+    principal: AuthenticatedPrincipal,
+    requested_name: Option<String>,
+    session_cookie: Option<String>,
+}
+
+impl SocketAuthentication {
+    pub fn new(
+        service: AuthService,
+        principal: AuthenticatedPrincipal,
+        requested_name: Option<String>,
+        session_cookie: Option<String>,
+    ) -> Self {
+        Self {
+            service,
+            principal,
+            requested_name,
+            session_cookie,
+        }
+    }
+}
+
 pub async fn handle_socket(
     chat: ChatEngine,
-    principal: AuthenticatedPrincipal,
+    authentication: SocketAuthentication,
     mut socket: WebSocket,
     mut shutdown: watch::Receiver<bool>,
     idle_timeout: Duration,
 ) {
+    let SocketAuthentication {
+        service: auth,
+        principal,
+        requested_name,
+        session_cookie,
+    } = authentication;
     let participant_id = principal.user.id.clone();
     if *shutdown.borrow() {
         let _ = socket
@@ -40,9 +69,25 @@ pub async fn handle_socket(
     let mut subscriptions: HashMap<ChannelId, ActiveSubscription> = HashMap::new();
     let idle = tokio::time::sleep(idle_timeout);
     tokio::pin!(idle);
+    let mut reauthentication = tokio::time::interval(Duration::from_secs(30));
+    reauthentication.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    reauthentication.tick().await;
 
     loop {
         tokio::select! {
+            _ = reauthentication.tick() => {
+                if auth
+                    .authenticate_request(requested_name.clone(), session_cookie.as_deref())
+                    .await
+                    .is_err()
+                {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: 1008,
+                        reason: "authentication expired".into(),
+                    }))).await;
+                    break;
+                }
+            }
             () = &mut idle => {
                 let _ = socket.send(Message::Close(Some(CloseFrame {
                     code: 1001,

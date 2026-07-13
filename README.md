@@ -152,7 +152,9 @@ provider returns to `/auth/callback`, and `/auth/logout` clears the local
 session. The provider must publish a `userinfo_endpoint`; authenticated HTTP
 and WebSocket handshakes validate the encrypted session's access token there,
 bind the response to the expected subject, and therefore fail closed for a
-revoked or disabled user. Session lifetime never exceeds the ID-token lifetime.
+revoked or disabled user. Open WebSockets repeat that validation every 30
+seconds and close with policy code `1008` when authentication is no longer
+valid. Session lifetime never exceeds the ID-token lifetime.
 All Kubernetes replicas can validate cookies with the same session key without
 server-local session state. Rotate that key by moving the old value to
 `SPROYT_SESSION_PREVIOUS_KEYS`, deploying a new `SPROYT_SESSION_KEY`, waiting

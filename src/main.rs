@@ -936,10 +936,14 @@ async fn ws_handler(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> axum::response::Response {
-    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    let cookie = headers
+        .get(COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let requested_name = query.participant;
     let principal = match state
         .auth
-        .authenticate_request(query.participant, cookie)
+        .authenticate_request(requested_name.clone(), cookie.as_deref())
         .await
     {
         Ok(principal) => principal,
@@ -952,7 +956,7 @@ async fn ws_handler(
         .on_upgrade(move |socket| {
             ws::handle_socket(
                 state.chat,
-                principal,
+                ws::SocketAuthentication::new(state.auth, principal, requested_name, cookie),
                 socket,
                 shutdown,
                 state.websocket_idle_timeout,
