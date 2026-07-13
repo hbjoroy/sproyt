@@ -1,17 +1,30 @@
 # Sproyt
 
-Sproyt is an early Rust chat application for human and agentic users.
+Sproyt is a Rust chat service for private friend circles, human users, and
+least-privileged agent users.
 
-The project direction is Rust end to end: a Rust backend, a Rust/WASM frontend with Leptos, container-first delivery, and a database setup that is light in development but production-ready with PostgreSQL.
+The service is container-first. SQLite keeps local development light, while
+PostgreSQL is the production persistence and cross-replica fan-out contract.
 
 ## Current Status
 
-This repository is at the "Hello Chat" stage. The current runnable program uses axum, Tokio, WebSocket, and a small mailbox-based chat core. Leptos, SQLx, OIDC, and containers are planned next.
+The repository contains the complete application path for durable private
+circles: SQLx repositories, `sproyt.chat.v1` WebSockets, development auth,
+OIDC authorization-code flow, OCI delivery, a Helm chart, optional Heart
+process orchestration, and an MCP adapter for scoped agents. The browser client
+is currently a dependency-light inline view adapter; a later Leptos split must
+continue to use the same HTTP/WebSocket application contracts.
+
+Production activation still requires environment-owned evidence: the actual
+Authentik provider slug/client registration, registry-pushed image digest,
+cluster-specific secrets/TLS, and the operational sign-offs listed in
+[`docs/release-checklist.md`](docs/release-checklist.md).
 
 ## Direction
 
 - Rust edition 2024, pinned to Rust 1.96.0 when the local toolchain is available.
-- Leptos for the frontend, using SSR plus hydration as the default architecture.
+- A replaceable browser view adapter; Leptos SSR/hydration remains the intended
+  frontend split when a separate app crate becomes useful.
 - axum, Tokio, and Tower for the backend.
 - SQLx for database access.
 - SQLite as the simple local development database.
@@ -24,7 +37,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the living architecture notes.
 
 See [docs/persistence-plan.md](docs/persistence-plan.md) for the planned persistent channel, membership, message, and agent/API interface work.
 
-See [docs/protocol.md](docs/protocol.md) for the first WebSocket/agent/MCP protocol sketch.
+See [docs/protocol.md](docs/protocol.md) for the stable WebSocket and agent/MCP
+protocol contract.
 
 See [docs/roadmap.md](docs/roadmap.md) for the phased delivery plan from the
 current prototype through durable private chat, OIDC, Kubernetes, Heart process
@@ -36,18 +50,18 @@ gates used for contributions.
 ## Prerequisites
 
 - Rust 1.96.0, via rustup.
-- The `wasm32-unknown-unknown` Rust target.
 - LLVM/clang is useful for Rust crates that build or bind to C/C++ code.
-- Podman or Docker.
-- Later: `cargo-leptos` for the Leptos SSR/WASM build.
+- An OCI runtime such as `wslc`, Docker, or Podman for image/database tests.
+- Helm for local chart validation.
 
-On this workstation, Rust 1.96.0, Podman 5.8.2, and LLVM/clang 22.1.6 are available.
+## Run Sproyt locally
 
-## Run Hello Chat
-
-Start the development server:
+Create the local data directory, apply migrations, and start the development
+server:
 
 ```powershell
+New-Item -ItemType Directory -Force .local | Out-Null
+cargo run -- migrate
 cargo run
 ```
 
@@ -70,7 +84,8 @@ http://127.0.0.1:9010/readyz
 http://127.0.0.1:9010/metrics
 ```
 
-Open the same URL in multiple browser tabs, choose the same channel, and use different participant names to try the in-memory chat loop.
+Open the same URL in multiple browser tabs and use different development
+participant names. State is stored through the configured SQLx repository.
 
 Messages render in view mode by default. The current browser client supports:
 
@@ -98,7 +113,7 @@ flowchart LR
 The WebSocket endpoint is:
 
 ```text
-ws://127.0.0.1:9010/ws?channel=general&participant=alice
+ws://127.0.0.1:9010/ws?participant=alice
 ```
 
 To use another local port:
@@ -140,14 +155,6 @@ server-local session state. Rotate that key by moving the old value to
 `SPROYT_SESSION_PREVIOUS_KEYS`, deploying a new `SPROYT_SESSION_KEY`, waiting
 at least the eight-hour session TTL, and then removing the old key.
 
-The database URL is detected and typed at startup, but the current chat loop still uses the in-memory repository until the SQLx implementation is wired in.
-
-## Near-Term Roadmap
-
-1. Replace the dependency-free HTTP server with axum.
-2. Add a Leptos SSR plus hydration shell with `cargo-leptos`.
-3. Add configuration loading and structured tracing.
-4. Add SQLx with SQLite dev mode and PostgreSQL prod-like mode.
-5. Add durable chat domain storage: users, agent users, channels, memberships, and messages.
-6. Add OIDC and a clearly separate development auth provider.
-7. Add container and compose files for dev and prod-like runs.
+Database migrations run only through `sproyt migrate` (the Compose migration
+service or Helm pre-install/pre-upgrade Job). Application pods do not mutate
+the production schema during normal startup.

@@ -13,9 +13,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features --locked
 ```
 
-The test suite must keep tests that do not need a database fast and isolated.
-Repository conformance tests will run against the in-memory adapter and SQLite
-locally, while CI also runs the PostgreSQL contract.
+The test suite keeps tests that do not need an external database fast and
+isolated. Chat-domain conformance runs against the in-memory adapter, the full
+chat/process/agent contract runs against SQLite locally, and CI also executes
+that full contract against PostgreSQL 17.
 
 ## PostgreSQL schema check
 
@@ -30,8 +31,8 @@ psql --host 127.0.0.1 --username sproyt --dbname sproyt --set ON_ERROR_STOP=1 --
 Shared migrations are immutable. Add a new numbered migration for every schema
 change after a migration has reached `main`.
 
-The application exposes an explicit migration command for local use and the
-future Kubernetes migration Job:
+The application exposes an explicit migration command used locally, by
+Compose, and by the Helm pre-install/pre-upgrade migration Job:
 
 ```powershell
 cargo run -- migrate
