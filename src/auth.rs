@@ -10,10 +10,11 @@ use aes_gcm::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use openidconnect::{
-    AccessToken, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
-    EndpointNotSet, EndpointSet, IssuerUrl, Nonce as OidcNonce, OAuth2TokenResponse,
-    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, SubjectIdentifier, TokenResponse,
-    core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata, CoreUserInfoClaims},
+    AccessToken, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndSessionUrl,
+    EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, LogoutRequest, Nonce as OidcNonce,
+    OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, PostLogoutRedirectUrl,
+    ProviderMetadataWithLogout, RedirectUrl, Scope, SubjectIdentifier, TokenResponse,
+    core::{CoreAuthenticationFlow, CoreClient, CoreUserInfoClaims},
     reqwest,
 };
 use serde::{Deserialize, Serialize};
@@ -120,7 +121,7 @@ impl AuthService {
                 clear_cookie: clear_cookie(SESSION_COOKIE, "/"),
             },
             Self::Oidc(service) => Logout {
-                redirect_url: service.post_logout_redirect_url.clone(),
+                redirect_url: service.logout_redirect_url(),
                 clear_cookie: clear_cookie(SESSION_COOKIE, "/"),
             },
         }
@@ -152,6 +153,7 @@ pub struct Logout {
 
 pub struct OidcService {
     client: RwLock<DiscoveredCoreClient>,
+    end_session_endpoint: RwLock<Option<EndSessionUrl>>,
     http_client: reqwest::Client,
     codec: CookieCodec,
     config: OidcConfig,
@@ -169,22 +171,32 @@ type DiscoveredCoreClient = CoreClient<
     EndpointMaybeSet,
 >;
 
+struct DiscoveredOidc {
+    client: DiscoveredCoreClient,
+    end_session_endpoint: Option<EndSessionUrl>,
+}
+
 async fn discover_client(
     config: &OidcConfig,
     http_client: &reqwest::Client,
-) -> Result<DiscoveredCoreClient, AuthError> {
+) -> Result<DiscoveredOidc, AuthError> {
     let issuer = IssuerUrl::new(config.issuer().to_owned()).map_err(AuthError::external)?;
-    let metadata = CoreProviderMetadata::discover_async(issuer, http_client)
+    let metadata = ProviderMetadataWithLogout::discover_async(issuer, http_client)
         .await
         .map_err(AuthError::external)?;
-    Ok(CoreClient::from_provider_metadata(
+    let end_session_endpoint = metadata.additional_metadata().end_session_endpoint.clone();
+    let client = CoreClient::from_provider_metadata(
         metadata,
         ClientId::new(config.client_id().to_owned()),
         Some(ClientSecret::new(config.client_secret().to_owned())),
     )
     .set_redirect_uri(
         RedirectUrl::new(config.redirect_url().to_owned()).map_err(AuthError::external)?,
-    ))
+    );
+    Ok(DiscoveredOidc {
+        client,
+        end_session_endpoint,
+    })
 }
 
 impl OidcService {
@@ -193,9 +205,10 @@ impl OidcService {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(AuthError::external)?;
-        let client = discover_client(config, &http_client).await?;
+        let discovered = discover_client(config, &http_client).await?;
         Ok(Self {
-            client: RwLock::new(client),
+            client: RwLock::new(discovered.client),
+            end_session_endpoint: RwLock::new(discovered.end_session_endpoint),
             http_client,
             codec: CookieCodec::new(config.session_key(), config.session_previous_keys())?,
             config: config.clone(),
@@ -205,7 +218,7 @@ impl OidcService {
         })
     }
 
-    async fn refreshed_client(&self) -> Result<DiscoveredCoreClient, AuthError> {
+    async fn refreshed_client(&self) -> Result<DiscoveredOidc, AuthError> {
         discover_client(&self.config, &self.http_client).await
     }
 
@@ -235,12 +248,35 @@ impl OidcService {
             .map_err(|_| AuthError::External("OIDC client lock poisoned".to_owned()))
     }
 
-    fn replace_client(&self, client: DiscoveredCoreClient) -> Result<(), AuthError> {
+    fn replace_client(&self, discovered: DiscoveredOidc) -> Result<(), AuthError> {
         *self
             .client
             .write()
-            .map_err(|_| AuthError::External("OIDC client lock poisoned".to_owned()))? = client;
+            .map_err(|_| AuthError::External("OIDC client lock poisoned".to_owned()))? =
+            discovered.client;
+        *self
+            .end_session_endpoint
+            .write()
+            .map_err(|_| AuthError::External("OIDC logout lock poisoned".to_owned()))? =
+            discovered.end_session_endpoint;
         Ok(())
+    }
+
+    fn logout_redirect_url(&self) -> String {
+        let endpoint = self
+            .end_session_endpoint
+            .read()
+            .ok()
+            .and_then(|endpoint| endpoint.clone());
+        let redirect = PostLogoutRedirectUrl::new(self.post_logout_redirect_url.clone());
+        match (endpoint, redirect) {
+            (Some(endpoint), Ok(redirect)) => LogoutRequest::from(endpoint)
+                .set_client_id(ClientId::new(self.config.client_id().to_owned()))
+                .set_post_logout_redirect_uri(redirect)
+                .http_get_url()
+                .to_string(),
+            _ => self.post_logout_redirect_url.clone(),
+        }
     }
 
     fn login(&self) -> Result<LoginStart, AuthError> {
@@ -297,11 +333,14 @@ impl OidcService {
             Ok(claims) => claims,
             Err(_) => {
                 let refreshed = self.refreshed_client().await?;
-                let refreshed_verifier = refreshed.id_token_verifier();
+                let refreshed_verifier = refreshed.client.id_token_verifier();
                 let claims = id_token
                     .claims(&refreshed_verifier, &nonce)
                     .map_err(AuthError::external)?;
-                self.replace_client(refreshed.clone())?;
+                self.replace_client(DiscoveredOidc {
+                    client: refreshed.client.clone(),
+                    end_session_endpoint: refreshed.end_session_endpoint.clone(),
+                })?;
                 claims
             }
         };
@@ -576,6 +615,7 @@ mod tests {
             "authorization_endpoint":format!("{}/authorize",provider.issuer),
             "token_endpoint":format!("{}/token",provider.issuer),
             "userinfo_endpoint":format!("{}/userinfo",provider.issuer),
+            "end_session_endpoint":format!("{}/logout",provider.issuer),
             "jwks_uri":format!("{}/jwks",provider.issuer),
             "response_types_supported":["code"],
             "subject_types_supported":["public"],
@@ -914,7 +954,26 @@ mod tests {
         );
 
         let logout = auth.logout();
-        assert_eq!(logout.redirect_url, "https://chat.example/");
+        let logout_url = reqwest::Url::parse(&logout.redirect_url).unwrap();
+        assert_eq!(
+            logout_url.as_str().split('?').next().unwrap(),
+            format!("{}/logout", provider.issuer)
+        );
+        let logout_parameters = logout_url
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            logout_parameters
+                .get("client_id")
+                .map(|value| value.as_ref()),
+            Some("sproyt-test")
+        );
+        assert_eq!(
+            logout_parameters
+                .get("post_logout_redirect_uri")
+                .map(|value| value.as_ref()),
+            Some("https://chat.example/")
+        );
         assert!(logout.clear_cookie.contains("sproyt_session="));
         assert!(logout.clear_cookie.contains("Max-Age=0"));
         server.abort();

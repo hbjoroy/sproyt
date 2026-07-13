@@ -155,6 +155,9 @@ bind the response to the expected subject, and therefore fail closed for a
 revoked or disabled user. Open WebSockets repeat that validation every 30
 seconds and close with policy code `1008` when authentication is no longer
 valid. Session lifetime never exceeds the ID-token lifetime.
+Logout uses the discovered `end_session_endpoint` with the registered client
+and post-logout redirect when the provider supports RP-initiated logout; local
+cookie clearing and the configured application redirect remain the fallback.
 All Kubernetes replicas can validate cookies with the same session key without
 server-local session state. Rotate that key by moving the old value to
 `SPROYT_SESSION_PREVIOUS_KEYS`, deploying a new `SPROYT_SESSION_KEY`, waiting
