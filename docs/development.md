@@ -50,8 +50,13 @@ CI runs `cargo audit` against `Cargo.lock`. To run the same check locally:
 
 ```powershell
 cargo install cargo-audit --locked
-cargo audit
+cargo audit --ignore RUSTSEC-2023-0071
 ```
+
+The single accepted advisory is scoped and reviewed in
+[`security-exceptions.md`](security-exceptions.md). Do not add another ignore
+without documenting its dependency path, reachable operation, severity,
+compensating controls, owner, and removal condition.
 
 Do not suppress an advisory without a documented risk assessment and a linked
 tracking issue.
