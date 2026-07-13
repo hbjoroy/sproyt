@@ -97,3 +97,11 @@ production-sized PostgreSQL tier. Exercise concurrent sends to one hot channel,
 many quiet channels, reconnect/catch-up, rolling restart, and a temporarily
 unavailable database. Pass only when the objectives above hold, sequences stay
 unique and contiguous, and recovery creates no duplicate acknowledged message.
+
+CI also runs `websocket_capacity_reconnect_and_service_restart_gate` as a fast
+regression baseline. It uses the real `sproyt.chat.v1` WebSocket adapter, sends
+40 durable messages, enforces the 750 ms p99 send objective, restarts the
+application service, and requires an exact cursor-based catch-up within five
+seconds. This deterministic single-process gate catches protocol and recovery
+regressions early; it does not replace the two-replica, production-sized
+PostgreSQL exercise required before a material traffic increase.

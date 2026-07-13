@@ -22,7 +22,9 @@ production-ready based only on a successful build.
 
 ## Performance and operations
 
-- [ ] Load/reconnect evidence meets the objectives in `operations.md`.
+- [ ] The CI WebSocket capacity/reconnect baseline passes, and pre-release
+      two-replica load/reconnect evidence meets the objectives in
+      `operations.md`.
 - [ ] Dashboard, alerts, on-call owner, and incident channel are recorded.
 - [ ] Capacity headroom covers at least twice the measured beta peak.
 - [ ] Retention, deletion limitations, and privacy owner are accepted.

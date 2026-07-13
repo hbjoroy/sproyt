@@ -88,9 +88,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),
     };
-    let request_id_header = HeaderName::from_static("x-request-id");
+    let app = build_router(state, operations.clone());
 
-    let app = Router::new()
+    let listener = tokio::net::TcpListener::bind(address).await?;
+    operations.set_ready(true);
+    info!(
+        %address,
+        environment = %config.environment(),
+        database = %config.database().kind(),
+        "Sproyt is ready"
+    );
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(operations))
+        .await?;
+
+    Ok(())
+}
+
+fn build_router(state: AppState, operations: OperationalState) -> Router {
+    let request_id_header = HeaderName::from_static("x-request-id");
+    Router::new()
         .route("/", get(index))
         .route("/healthz", get(healthz))
         .route("/readyz", get(app_readyz))
@@ -120,21 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         ))
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(TraceLayer::new_for_http())
-        .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid));
-
-    let listener = tokio::net::TcpListener::bind(address).await?;
-    operations.set_ready(true);
-    info!(
-        %address,
-        environment = %config.environment(),
-        database = %config.database().kind(),
-        "Sproyt is ready"
-    );
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(operations))
-        .await?;
-
-    Ok(())
+        .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
 }
 
 fn process_gateway_from_env() -> Result<Option<SharedProcessGateway>, crate::process::ProcessError>
@@ -1841,5 +1844,165 @@ mod mcp_tests {
         );
         let response = mcp_handler(State(state), headers, Json(request())).await;
         assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+}
+
+#[cfg(test)]
+mod protocol_capacity_tests {
+    use super::*;
+    use crate::{
+        agent::{AgentRepository, AgentService},
+        db::SqliteChatRepository,
+        process::{ProcessRepository, ProcessService},
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use std::{sync::Arc, time::Instant};
+    use tokio_tungstenite::{
+        MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message as ClientMessage,
+    };
+
+    type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+    async fn start_test_server(
+        repository: Arc<SqliteChatRepository>,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
+        let process_repository: Arc<dyn ProcessRepository> = repository.clone();
+        let agent_repository: Arc<dyn AgentRepository> = repository;
+        let operations = OperationalState::default();
+        operations.set_ready(true);
+        let app = build_router(
+            AppState {
+                auth: AuthService::development(),
+                chat: ChatEngine::start(chat_repository),
+                operations: operations.clone(),
+                processes: ProcessService::start(process_repository, None),
+                agents: AgentService::new(agent_repository),
+            },
+            operations,
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (address, server)
+    }
+
+    async fn connect(address: std::net::SocketAddr) -> TestSocket {
+        let url = format!("ws://{address}/ws?participant=capacity-user");
+        connect_async(url).await.unwrap().0
+    }
+
+    async fn command(
+        socket: &mut TestSocket,
+        request_id: &str,
+        command_type: &str,
+        payload: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut envelope = serde_json::json!({
+            "protocol": crate::protocol::PROTOCOL_ID,
+            "request_id": request_id,
+            "type": command_type,
+        });
+        if !payload.is_null() {
+            envelope["payload"] = payload;
+        }
+        socket
+            .send(ClientMessage::Text(envelope.to_string().into()))
+            .await
+            .unwrap();
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+                .await
+                .expect("protocol response exceeded five seconds")
+                .expect("server closed before protocol response")
+                .unwrap();
+            if let ClientMessage::Text(text) = frame {
+                let response: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if response.get("request_id").and_then(|id| id.as_str()) == Some(request_id) {
+                    assert_ne!(response["type"], "error", "{response}");
+                    return response;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_capacity_reconnect_and_service_restart_gate() {
+        const MESSAGE_COUNT: usize = 40;
+        const CURSOR: u64 = 20;
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, first_server) = start_test_server(repository.clone()).await;
+        let mut socket = connect(address).await;
+        let created = command(
+            &mut socket,
+            "create",
+            "create_channel",
+            serde_json::json!({"slug":"capacity-gate","name":"Capacity gate","kind":"private","circle_id":null}),
+        )
+        .await;
+        let channel_id = created["payload"]["channel"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let mut latencies = Vec::with_capacity(MESSAGE_COUNT);
+        for index in 1..=MESSAGE_COUNT {
+            let started = Instant::now();
+            let accepted = command(
+                &mut socket,
+                &format!("send-{index}"),
+                "send_message",
+                serde_json::json!({"channel_id":channel_id,"body":format!("capacity-{index}")}),
+            )
+            .await;
+            latencies.push(started.elapsed());
+            assert_eq!(
+                accepted["payload"]["message"]["sequence"].as_u64(),
+                Some(index as u64)
+            );
+        }
+        latencies.sort_unstable();
+        let p99_index = ((MESSAGE_COUNT * 99).div_ceil(100)).saturating_sub(1);
+        assert!(
+            latencies[p99_index] < Duration::from_millis(750),
+            "p99 send latency was {:?}",
+            latencies[p99_index]
+        );
+
+        socket.close(None).await.unwrap();
+        first_server.abort();
+        let _ = first_server.await;
+
+        let (restart_address, restarted_server) = start_test_server(repository).await;
+        let reconnect_started = Instant::now();
+        let mut reconnected = connect(restart_address).await;
+        let loaded = command(
+            &mut reconnected,
+            "catch-up",
+            "load_recent_messages",
+            serde_json::json!({"channel_id":channel_id,"limit":MESSAGE_COUNT,"after":CURSOR}),
+        )
+        .await;
+        assert!(reconnect_started.elapsed() < Duration::from_secs(5));
+        let messages = loaded["payload"]["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), MESSAGE_COUNT - CURSOR as usize);
+        assert_eq!(
+            messages.first().unwrap()["sequence"].as_u64(),
+            Some(CURSOR + 1)
+        );
+        assert_eq!(
+            messages.last().unwrap()["sequence"].as_u64(),
+            Some(MESSAGE_COUNT as u64)
+        );
+
+        reconnected.close(None).await.unwrap();
+        restarted_server.abort();
     }
 }
