@@ -1,5 +1,7 @@
 use std::{env, fmt, net::SocketAddr, time::Duration};
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
 const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:9010";
 const DEFAULT_DATABASE_URL: &str = "sqlite://.local/sproyt.sqlite";
 const DEFAULT_ENVIRONMENT: &str = "development";
@@ -49,7 +51,7 @@ impl AppConfig {
             auth_mode,
         )?;
         if config.auth_mode == AuthMode::Oidc {
-            config.oidc = Some(OidcConfig::from_env()?);
+            config.oidc = Some(OidcConfig::from_env(config.environment)?);
         }
         config.websocket_idle_timeout =
             parse_idle_timeout(env::var("SPROYT_WS_IDLE_TIMEOUT_SECONDS").ok().as_deref())?;
@@ -141,8 +143,8 @@ pub struct OidcConfig {
 }
 
 impl OidcConfig {
-    fn from_env() -> Result<Self, ConfigError> {
-        Ok(Self {
+    fn from_env(environment: DeploymentEnvironment) -> Result<Self, ConfigError> {
+        let config = Self {
             issuer: required_env("SPROYT_OIDC_ISSUER")?,
             client_id: required_env("SPROYT_OIDC_CLIENT_ID")?,
             client_secret: required_env("SPROYT_OIDC_CLIENT_SECRET")?,
@@ -156,7 +158,50 @@ impl OidcConfig {
                 .filter(|key| !key.is_empty())
                 .map(str::to_owned)
                 .collect(),
-        })
+        };
+        config.validate(environment)?;
+        Ok(config)
+    }
+
+    fn validate(&self, environment: DeploymentEnvironment) -> Result<(), ConfigError> {
+        let issuer = validate_oidc_url("SPROYT_OIDC_ISSUER", &self.issuer, environment)?;
+        if environment == DeploymentEnvironment::Production
+            && (issuer.host_str() != Some("identity.limani-parou.com")
+                || !issuer.path().starts_with("/application/o/")
+                || !issuer.path().ends_with('/'))
+        {
+            return Err(ConfigError::InvalidOidcConfig(
+                "SPROYT_OIDC_ISSUER",
+                "expected https://identity.limani-parou.com/application/o/<provider-slug>/",
+            ));
+        }
+        let redirect =
+            validate_oidc_url("SPROYT_OIDC_REDIRECT_URL", &self.redirect_url, environment)?;
+        if !redirect.path().ends_with("/auth/callback") {
+            return Err(ConfigError::InvalidOidcConfig(
+                "SPROYT_OIDC_REDIRECT_URL",
+                "path must end with /auth/callback",
+            ));
+        }
+        let post_logout = validate_oidc_url(
+            "SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL",
+            &self.post_logout_redirect_url,
+            environment,
+        )?;
+        if redirect.scheme() != post_logout.scheme()
+            || redirect.host_str() != post_logout.host_str()
+            || redirect.port_or_known_default() != post_logout.port_or_known_default()
+        {
+            return Err(ConfigError::InvalidOidcConfig(
+                "SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL",
+                "must use the same origin as SPROYT_OIDC_REDIRECT_URL",
+            ));
+        }
+        validate_session_key("SPROYT_SESSION_KEY", &self.session_key)?;
+        for key in &self.session_previous_keys {
+            validate_session_key("SPROYT_SESSION_PREVIOUS_KEYS", key)?;
+        }
+        Ok(())
     }
 
     pub fn issuer(&self) -> &str {
@@ -201,6 +246,47 @@ impl OidcConfig {
             session_previous_keys,
         }
     }
+}
+
+fn validate_oidc_url(
+    name: &'static str,
+    value: &str,
+    environment: DeploymentEnvironment,
+) -> Result<reqwest::Url, ConfigError> {
+    let url = reqwest::Url::parse(value)
+        .map_err(|_| ConfigError::InvalidOidcConfig(name, "must be an absolute URL"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ConfigError::InvalidOidcConfig(
+            name,
+            "must be an absolute HTTP(S) URL without credentials, query, or fragment",
+        ));
+    }
+    if environment == DeploymentEnvironment::Production && url.scheme() != "https" {
+        return Err(ConfigError::InvalidOidcConfig(
+            name,
+            "must use HTTPS in production",
+        ));
+    }
+    Ok(url)
+}
+
+fn validate_session_key(name: &'static str, value: &str) -> Result<(), ConfigError> {
+    let valid = URL_SAFE_NO_PAD
+        .decode(value)
+        .is_ok_and(|decoded| decoded.len() == 32);
+    if !valid {
+        return Err(ConfigError::InvalidOidcConfig(
+            name,
+            "must be URL-safe base64 without padding for exactly 32 bytes",
+        ));
+    }
+    Ok(())
 }
 
 impl fmt::Debug for OidcConfig {
@@ -347,6 +433,7 @@ pub enum ConfigError {
     InvalidEnvironment(String),
     InvalidLogFormat(String),
     InvalidWebSocketIdleTimeout(String),
+    InvalidOidcConfig(&'static str, &'static str),
     MissingEnvironmentVariable(&'static str),
     UnsupportedDatabaseUrl(String),
 }
@@ -373,6 +460,9 @@ impl fmt::Display for ConfigError {
                 formatter,
                 "invalid SPROYT_WS_IDLE_TIMEOUT_SECONDS value: {value}; expected 5 to 3600"
             ),
+            Self::InvalidOidcConfig(name, reason) => {
+                write!(formatter, "invalid {name}: {reason}")
+            }
             Self::MissingEnvironmentVariable(name) => {
                 write!(formatter, "required environment variable {name} is missing")
             }
@@ -513,5 +603,68 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, ConfigError::DevelopmentAuthInProduction);
+    }
+
+    #[test]
+    fn validates_production_oidc_urls_and_session_keys_before_discovery() {
+        let key = URL_SAFE_NO_PAD.encode([42_u8; 32]);
+        let config = |issuer: &str, redirect: &str, logout: &str, session_key: &str| OidcConfig {
+            issuer: issuer.to_owned(),
+            client_id: "sproyt".to_owned(),
+            client_secret: "secret".to_owned(),
+            redirect_url: redirect.to_owned(),
+            post_logout_redirect_url: logout.to_owned(),
+            session_key: session_key.to_owned(),
+            session_previous_keys: vec![URL_SAFE_NO_PAD.encode([41_u8; 32])],
+        };
+        let issuer = "https://identity.limani-parou.com/application/o/sproyt/";
+        let redirect = "https://chat.limani-parou.com/auth/callback";
+        let logout = "https://chat.limani-parou.com/";
+
+        assert!(
+            config(issuer, redirect, logout, &key)
+                .validate(DeploymentEnvironment::Production)
+                .is_ok()
+        );
+        assert!(
+            config(
+                "https://identity.example/application/o/sproyt/",
+                redirect,
+                logout,
+                &key
+            )
+            .validate(DeploymentEnvironment::Production)
+            .is_err()
+        );
+        assert!(
+            config(
+                "http://identity.limani-parou.com/application/o/sproyt/",
+                redirect,
+                logout,
+                &key
+            )
+            .validate(DeploymentEnvironment::Production)
+            .is_err()
+        );
+        assert!(
+            config(
+                issuer,
+                "https://user:secret@chat.limani-parou.com/auth/callback",
+                logout,
+                &key
+            )
+            .validate(DeploymentEnvironment::Production)
+            .is_err()
+        );
+        assert!(
+            config(issuer, redirect, "https://other.example/", &key)
+                .validate(DeploymentEnvironment::Production)
+                .is_err()
+        );
+        assert!(
+            config(issuer, redirect, logout, "not-a-key")
+                .validate(DeploymentEnvironment::Production)
+                .is_err()
+        );
     }
 }

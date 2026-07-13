@@ -159,6 +159,11 @@ rotate refresh tokens and renew the encrypted HttpOnly session. The browser
 uses a cross-tab lock and schedules renewal from the access-token lifetime;
 tokens are never exposed to JavaScript. Session lifetime never exceeds the
 current ID/access-token lifetime.
+In production, startup requires an HTTPS issuer matching
+`https://identity.limani-parou.com/application/o/<provider-slug>/`, an HTTPS
+callback ending in `/auth/callback`, a post-logout URL on the same origin, and
+unpadded URL-safe base64 session keys decoding to exactly 32 bytes. Invalid
+values fail before provider discovery or socket binding.
 Logout uses the discovered `end_session_endpoint` with the registered client
 and post-logout redirect when the provider supports RP-initiated logout; local
 cookie clearing and the configured application redirect remain the fallback.
