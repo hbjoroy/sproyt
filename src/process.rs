@@ -480,6 +480,112 @@ fn backoff(attempt: usize) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::{
+        Json, Router,
+        extract::{Path, State},
+        http::HeaderMap,
+        response::IntoResponse,
+        routing::{get, post},
+    };
+
+    #[derive(Clone)]
+    struct HeartContractState {
+        starts: Arc<AtomicUsize>,
+        instance_id: Uuid,
+        timeout_id: Uuid,
+    }
+
+    fn assert_correlation(headers: &HeaderMap) {
+        assert!(
+            headers
+                .get("x-correlation-id")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .is_some(),
+            "missing valid correlation id"
+        );
+    }
+
+    async fn start_contract(
+        State(state): State<HeartContractState>,
+        headers: HeaderMap,
+        Json(command): Json<StartProcess>,
+    ) -> impl IntoResponse {
+        assert_correlation(&headers);
+        assert_eq!(command.namespace, "friends");
+        assert_eq!(command.definition_name, "event-planning");
+        if state.starts.fetch_add(1, Ordering::SeqCst) == 0 {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error":"try again"})),
+            );
+        }
+        (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"instance_id":state.instance_id})),
+        )
+    }
+
+    async fn inspect_contract(
+        State(state): State<HeartContractState>,
+        Path(instance_id): Path<Uuid>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_correlation(&headers);
+        if instance_id == state.timeout_id {
+            sleep(Duration::from_millis(100)).await;
+        }
+        Json(serde_json::json!({
+            "id":instance_id,
+            "definition_id":Uuid::nil(),
+            "namespace":"friends",
+            "status":"waiting",
+            "current_node":"collect-rsvp",
+            "metadata":{"channel":"private"}
+        }))
+    }
+
+    async fn correlate_contract(
+        headers: HeaderMap,
+        Json(command): Json<CorrelateMessage>,
+    ) -> impl IntoResponse {
+        assert_correlation(&headers);
+        if command.correlation_value == "forbidden" {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error":"not a participant"})),
+            );
+        }
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "matched_instances":1,
+                "instance_ids":[Uuid::nil()]
+            })),
+        )
+    }
+
+    async fn heart_contract_server() -> (HeartGateway, HeartContractState) {
+        let state = HeartContractState {
+            starts: Arc::new(AtomicUsize::new(0)),
+            instance_id: Uuid::now_v7(),
+            timeout_id: Uuid::now_v7(),
+        };
+        let app = Router::new()
+            .route("/api/v1/instances", post(start_contract))
+            .route("/api/v1/instances/{id}", get(inspect_contract))
+            .route("/api/v1/messages", post(correlate_contract))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (
+            HeartGateway::new(format!("http://{address}"), Duration::from_millis(30), 1).unwrap(),
+            state,
+        )
+    }
 
     #[test]
     fn classifies_remote_failures_for_retry() {
@@ -499,5 +605,72 @@ mod tests {
     fn retry_backoff_is_bounded() {
         assert_eq!(backoff(0), Duration::from_millis(100));
         assert_eq!(backoff(100), Duration::from_millis(1600));
+    }
+
+    #[tokio::test]
+    async fn heart_gateway_contract_covers_success_failure_timeout_and_retry() {
+        let (gateway, state) = heart_contract_server().await;
+        let correlation_id = Uuid::now_v7();
+        let started = gateway
+            .start(
+                &StartProcess {
+                    namespace: "friends".to_owned(),
+                    definition_name: "event-planning".to_owned(),
+                    version: Some("1".to_owned()),
+                    metadata: serde_json::json!({"circle":"weekend"}),
+                },
+                correlation_id,
+            )
+            .await
+            .unwrap();
+        assert_eq!(started.instance_id, state.instance_id);
+        assert_eq!(
+            state.starts.load(Ordering::SeqCst),
+            2,
+            "start was not retried"
+        );
+
+        let inspected = gateway
+            .inspect(state.instance_id, correlation_id)
+            .await
+            .unwrap();
+        assert_eq!(inspected.id, state.instance_id);
+        assert_eq!(inspected.current_node.as_deref(), Some("collect-rsvp"));
+
+        let correlated = gateway
+            .correlate(
+                &CorrelateMessage {
+                    namespace: "friends".to_owned(),
+                    correlation_key: "event".to_owned(),
+                    correlation_value: "weekend".to_owned(),
+                    payload: serde_json::json!({"answer":"yes"}),
+                },
+                correlation_id,
+            )
+            .await
+            .unwrap();
+        assert_eq!(correlated.matched_instances, 1);
+
+        let rejected = gateway
+            .correlate(
+                &CorrelateMessage {
+                    namespace: "friends".to_owned(),
+                    correlation_key: "event".to_owned(),
+                    correlation_value: "forbidden".to_owned(),
+                    payload: serde_json::json!({}),
+                },
+                correlation_id,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.kind, ProcessErrorKind::Unauthorized);
+        assert!(!rejected.retryable);
+
+        let timed_out = gateway
+            .inspect(state.timeout_id, correlation_id)
+            .await
+            .unwrap_err();
+        assert_eq!(timed_out.kind, ProcessErrorKind::Timeout);
+        assert!(timed_out.retryable);
     }
 }
