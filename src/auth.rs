@@ -415,6 +415,134 @@ impl From<TextValidationError> for AuthError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        Form, Json, Router,
+        extract::State,
+        http::HeaderMap,
+        routing::{get, post},
+    };
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use std::sync::Mutex;
+
+    #[derive(Clone)]
+    struct TestProvider {
+        issuer: String,
+        client_id: String,
+        client_secret: String,
+        nonce: Arc<Mutex<String>>,
+    }
+
+    async fn provider_metadata(State(provider): State<TestProvider>) -> Json<serde_json::Value> {
+        Json(serde_json::json!({
+            "issuer":provider.issuer,
+            "authorization_endpoint":format!("{}/authorize",provider.issuer),
+            "token_endpoint":format!("{}/token",provider.issuer),
+            "jwks_uri":format!("{}/jwks",provider.issuer),
+            "response_types_supported":["code"],
+            "subject_types_supported":["public"],
+            "id_token_signing_alg_values_supported":["HS256"],
+            "token_endpoint_auth_methods_supported":["client_secret_basic"],
+            "scopes_supported":["openid","profile","email"],
+            "claims_supported":["iss","sub","aud","exp","iat","nonce"]
+        }))
+    }
+
+    async fn provider_jwks() -> Json<serde_json::Value> {
+        Json(serde_json::json!({"keys":[]}))
+    }
+
+    fn signed_id_token(provider: &TestProvider) -> String {
+        let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
+        let now = now_seconds();
+        let claims = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "iss":provider.issuer,
+                "sub":"authentik-user-1",
+                "aud":provider.client_id,
+                "exp":now+300,
+                "iat":now,
+                "nonce":provider.nonce.lock().unwrap().clone()
+            }))
+            .unwrap(),
+        );
+        let signing_input = format!("{header}.{claims}");
+        let mut mac =
+            <Hmac<Sha256> as Mac>::new_from_slice(provider.client_secret.as_bytes()).unwrap();
+        mac.update(signing_input.as_bytes());
+        format!(
+            "{signing_input}.{}",
+            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+        )
+    }
+
+    async fn provider_token(
+        State(provider): State<TestProvider>,
+        headers: HeaderMap,
+        Form(form): Form<std::collections::HashMap<String, String>>,
+    ) -> Json<serde_json::Value> {
+        assert!(
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with("Basic ")),
+            "OIDC client did not authenticate at the token endpoint"
+        );
+        assert_eq!(
+            form.get("grant_type").map(String::as_str),
+            Some("authorization_code")
+        );
+        assert_eq!(form.get("code").map(String::as_str), Some("valid-code"));
+        assert!(
+            form.get("code_verifier")
+                .is_some_and(|value| !value.is_empty())
+        );
+        Json(serde_json::json!({
+            "access_token":"test-access-token",
+            "token_type":"Bearer",
+            "expires_in":300,
+            "id_token":signed_id_token(&provider)
+        }))
+    }
+
+    async fn test_oidc_provider() -> (OidcConfig, TestProvider, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let issuer = format!("http://{}", listener.local_addr().unwrap());
+        let provider = TestProvider {
+            issuer: issuer.clone(),
+            client_id: "sproyt-test".to_owned(),
+            client_secret: "test-client-secret-with-enough-entropy".to_owned(),
+            nonce: Arc::new(Mutex::new(String::new())),
+        };
+        let app = Router::new()
+            .route("/.well-known/openid-configuration", get(provider_metadata))
+            .route("/jwks", get(provider_jwks))
+            .route("/token", post(provider_token))
+            .with_state(provider.clone());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let config = OidcConfig::for_test(
+            issuer,
+            provider.client_id.clone(),
+            provider.client_secret.clone(),
+            "https://chat.example/auth/callback".to_owned(),
+            "https://chat.example/".to_owned(),
+            URL_SAFE_NO_PAD.encode([11_u8; 32]),
+            Vec::new(),
+        );
+        (config, provider, server)
+    }
+
+    fn authorization_parameter(url: &str, name: &str) -> String {
+        url.split_once('?')
+            .unwrap()
+            .1
+            .split('&')
+            .find_map(|parameter| {
+                let (key, value) = parameter.split_once('=')?;
+                (key == name).then(|| value.to_owned())
+            })
+            .unwrap()
+    }
 
     #[test]
     fn development_identities_are_deterministic() {
@@ -474,5 +602,67 @@ mod tests {
             rotated.open::<SessionClaims>(&new_session).unwrap().subject,
             "alice"
         );
+    }
+
+    #[tokio::test]
+    async fn oidc_discovery_callback_state_nonce_session_and_logout_contract() {
+        let (config, provider, server) = test_oidc_provider().await;
+        let auth = AuthService::oidc(&config).await.unwrap();
+
+        let login = auth.login().unwrap();
+        assert!(
+            login
+                .authorization_url
+                .starts_with(&format!("{}/authorize?", provider.issuer))
+        );
+        assert!(
+            login
+                .authorization_url
+                .contains("code_challenge_method=S256")
+        );
+        assert!(login.set_cookie.contains("HttpOnly; Secure; SameSite=Lax"));
+        let state = authorization_parameter(&login.authorization_url, "state");
+        let nonce = authorization_parameter(&login.authorization_url, "nonce");
+        *provider.nonce.lock().unwrap() = nonce;
+        assert!(matches!(
+            auth.callback(
+                "valid-code".to_owned(),
+                "wrong-state".to_owned(),
+                Some(&login.set_cookie),
+            )
+            .await,
+            Err(AuthError::Unauthorized)
+        ));
+
+        let complete = auth
+            .callback("valid-code".to_owned(), state, Some(&login.set_cookie))
+            .await
+            .unwrap();
+        assert_eq!(complete.principal.subject, "authentik-user-1");
+        assert_eq!(complete.principal.issuer, provider.issuer);
+        assert!(complete.clear_transaction_cookie.contains("Max-Age=0"));
+        let restored = auth
+            .authenticate_session(Some(&complete.set_cookie))
+            .unwrap();
+        assert_eq!(restored.user.id, complete.principal.user.id);
+
+        let nonce_login = auth.login().unwrap();
+        let nonce_state = authorization_parameter(&nonce_login.authorization_url, "state");
+        *provider.nonce.lock().unwrap() = "wrong-nonce".to_owned();
+        assert!(
+            auth.callback(
+                "valid-code".to_owned(),
+                nonce_state,
+                Some(&nonce_login.set_cookie),
+            )
+            .await
+            .is_err()
+        );
+
+        let logout = auth.logout();
+        assert_eq!(logout.redirect_url, "https://chat.example/");
+        assert!(logout.clear_cookie.contains("sproyt_session="));
+        assert!(logout.clear_cookie.contains("Max-Age=0"));
+        server.abort();
     }
 }

@@ -180,6 +180,27 @@ impl OidcConfig {
     pub fn session_previous_keys(&self) -> &[String] {
         &self.session_previous_keys
     }
+
+    #[cfg(test)]
+    pub fn for_test(
+        issuer: String,
+        client_id: String,
+        client_secret: String,
+        redirect_url: String,
+        post_logout_redirect_url: String,
+        session_key: String,
+        session_previous_keys: Vec<String>,
+    ) -> Self {
+        Self {
+            issuer,
+            client_id,
+            client_secret,
+            redirect_url,
+            post_logout_redirect_url,
+            session_key,
+            session_previous_keys,
+        }
+    }
 }
 
 impl fmt::Debug for OidcConfig {
