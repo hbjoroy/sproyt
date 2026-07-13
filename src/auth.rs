@@ -13,7 +13,7 @@ use openidconnect::{
     AccessToken, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndSessionUrl,
     EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, LogoutRequest, Nonce as OidcNonce,
     OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, PostLogoutRedirectUrl,
-    ProviderMetadataWithLogout, RedirectUrl, Scope, SubjectIdentifier, TokenResponse,
+    ProviderMetadataWithLogout, RedirectUrl, RefreshToken, Scope, SubjectIdentifier, TokenResponse,
     core::{CoreAuthenticationFlow, CoreClient, CoreUserInfoClaims},
     reqwest,
 };
@@ -114,6 +114,16 @@ impl AuthService {
         }
     }
 
+    pub async fn renew_session(
+        &self,
+        cookie_header: Option<&str>,
+    ) -> Result<SessionRenewal, AuthError> {
+        match self {
+            Self::Development => Err(AuthError::Unsupported("OIDC is disabled".to_owned())),
+            Self::Oidc(service) => service.renew_session(cookie_header).await,
+        }
+    }
+
     pub fn logout(&self) -> Logout {
         match self {
             Self::Development => Logout {
@@ -144,6 +154,11 @@ pub struct LoginComplete {
     pub principal: AuthenticatedPrincipal,
     pub set_cookie: String,
     pub clear_transaction_cookie: String,
+}
+
+pub struct SessionRenewal {
+    pub set_cookie: String,
+    pub refresh_after_seconds: u64,
 }
 
 pub struct Logout {
@@ -291,6 +306,7 @@ impl OidcService {
             .add_scope(Scope::new("openid".to_owned()))
             .add_scope(Scope::new("profile".to_owned()))
             .add_scope(Scope::new("email".to_owned()))
+            .add_scope(Scope::new("offline_access".to_owned()))
             .set_pkce_challenge(challenge)
             .url();
         let transaction = LoginTransaction {
@@ -369,6 +385,7 @@ impl OidcService {
             subject,
             display_name: principal.user.display_name.to_string(),
             access_token: Some(token.access_token().secret().to_owned()),
+            refresh_token: token.refresh_token().map(|token| token.secret().to_owned()),
             expires_at,
         };
         let value = self.codec.seal(&session)?;
@@ -413,6 +430,60 @@ impl OidcService {
             .unwrap_or(&claims.display_name);
         principal(&claims.issuer, &claims.subject, display_name)
     }
+
+    async fn renew_session(
+        &self,
+        cookie_header: Option<&str>,
+    ) -> Result<SessionRenewal, AuthError> {
+        let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
+        let claims: SessionClaims = self.codec.open(value)?;
+        if claims.issuer != self.issuer {
+            return Err(AuthError::Unauthorized);
+        }
+        let refresh_token = claims.refresh_token.ok_or(AuthError::Unauthorized)?;
+        let client = self.current_client()?;
+        let token = client
+            .exchange_refresh_token(&RefreshToken::new(refresh_token.clone()))
+            .map_err(AuthError::external)?
+            .request_async(&self.http_client)
+            .await
+            .map_err(|_| AuthError::Unauthorized)?;
+        let access_token = token.access_token().secret().to_owned();
+        let user_info: CoreUserInfoClaims = client
+            .user_info(
+                AccessToken::new(access_token.clone()),
+                Some(SubjectIdentifier::new(claims.subject.clone())),
+            )
+            .map_err(AuthError::external)?
+            .request_async(&self.http_client)
+            .await
+            .map_err(|_| AuthError::Unauthorized)?;
+        let display_name = user_info
+            .name()
+            .and_then(|name| name.get(None))
+            .map_or(claims.display_name, |name| name.to_string());
+        let max_age = token
+            .expires_in()
+            .unwrap_or(Duration::from_secs(300))
+            .min(Duration::from_secs(SESSION_TTL_SECONDS))
+            .as_secs()
+            .max(1);
+        let renewed = SessionClaims {
+            issuer: claims.issuer,
+            subject: claims.subject,
+            display_name,
+            access_token: Some(access_token),
+            refresh_token: token
+                .refresh_token()
+                .map_or(Some(refresh_token), |token| Some(token.secret().to_owned())),
+            expires_at: now_seconds().saturating_add(max_age),
+        };
+        let value = self.codec.seal(&renewed)?;
+        Ok(SessionRenewal {
+            set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", max_age),
+            refresh_after_seconds: (max_age / 2).clamp(30, 300),
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -430,6 +501,8 @@ struct SessionClaims {
     display_name: String,
     #[serde(default)]
     access_token: Option<String>,
+    #[serde(default)]
+    refresh_token: Option<String>,
     expires_at: u64,
 }
 
@@ -621,7 +694,7 @@ mod tests {
             "subject_types_supported":["public"],
             "id_token_signing_alg_values_supported":["RS256"],
             "token_endpoint_auth_methods_supported":["client_secret_basic"],
-            "scopes_supported":["openid","profile","email"],
+            "scopes_supported":["openid","profile","email","offline_access"],
             "claims_supported":["iss","sub","aud","exp","iat","nonce","name","preferred_username"]
         }))
     }
@@ -691,20 +764,30 @@ mod tests {
                 .is_some_and(|value| value.starts_with("Basic ")),
             "OIDC client did not authenticate at the token endpoint"
         );
-        assert_eq!(
-            form.get("grant_type").map(String::as_str),
-            Some("authorization_code")
-        );
-        assert_eq!(form.get("code").map(String::as_str), Some("valid-code"));
-        assert!(
-            form.get("code_verifier")
-                .is_some_and(|value| !value.is_empty())
-        );
+        let refresh_token = match form.get("grant_type").map(String::as_str) {
+            Some("authorization_code") => {
+                assert_eq!(form.get("code").map(String::as_str), Some("valid-code"));
+                assert!(
+                    form.get("code_verifier")
+                        .is_some_and(|value| !value.is_empty())
+                );
+                "refresh-a"
+            }
+            Some("refresh_token") => {
+                assert_eq!(
+                    form.get("refresh_token").map(String::as_str),
+                    Some("refresh-a")
+                );
+                "refresh-b"
+            }
+            grant => panic!("unexpected grant type {grant:?}"),
+        };
         Json(serde_json::json!({
             "access_token":"test-access-token",
             "token_type":"Bearer",
             "expires_in":300,
-            "id_token":signed_id_token(&provider)
+            "id_token":signed_id_token(&provider),
+            "refresh_token":refresh_token
         }))
     }
 
@@ -790,6 +873,7 @@ mod tests {
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
             access_token: Some("test-token".to_owned()),
+            refresh_token: None,
             expires_at: now_seconds() + 60,
         };
         let sealed = codec.seal(&value).unwrap();
@@ -839,6 +923,7 @@ mod tests {
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
             access_token: Some("test-token".to_owned()),
+            refresh_token: None,
             expires_at: now_seconds() + 60,
         };
 
@@ -863,6 +948,7 @@ mod tests {
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
             access_token: Some("test-token".to_owned()),
+            refresh_token: None,
             expires_at: now_seconds().saturating_sub(1),
         };
 
@@ -888,6 +974,7 @@ mod tests {
                 .authorization_url
                 .contains("code_challenge_method=S256")
         );
+        assert!(login.authorization_url.contains("offline_access"));
         assert!(login.set_cookie.contains("HttpOnly; Secure; SameSite=Lax"));
         let state = authorization_parameter(&login.authorization_url, "state");
         let nonce = authorization_parameter(&login.authorization_url, "nonce");
@@ -934,9 +1021,28 @@ mod tests {
             restored.user.display_name.to_string(),
             "Current Authentik User"
         );
+        let renewal = auth
+            .renew_session(Some(&complete.set_cookie))
+            .await
+            .unwrap();
+        assert_eq!(renewal.refresh_after_seconds, 150);
+        let renewed_cookie = renewal.set_cookie;
+        let AuthService::Oidc(service) = &auth else {
+            panic!("expected OIDC service")
+        };
+        let renewed: SessionClaims = service
+            .codec
+            .open(read_cookie(Some(&renewed_cookie), SESSION_COOKIE).unwrap())
+            .unwrap();
+        assert_eq!(renewed.refresh_token.as_deref(), Some("refresh-b"));
+        assert!(
+            auth.authenticate_session(Some(&renewed_cookie))
+                .await
+                .is_ok()
+        );
         provider.active.store(false, Ordering::SeqCst);
         assert!(matches!(
-            auth.authenticate_session(Some(&complete.set_cookie)).await,
+            auth.authenticate_session(Some(&renewed_cookie)).await,
             Err(AuthError::Unauthorized)
         ));
 

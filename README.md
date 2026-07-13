@@ -154,7 +154,11 @@ and WebSocket handshakes validate the encrypted session's access token there,
 bind the response to the expected subject, and therefore fail closed for a
 revoked or disabled user. Open WebSockets repeat that validation every 30
 seconds and close with policy code `1008` when authentication is no longer
-valid. Session lifetime never exceeds the ID-token lifetime.
+valid. Request the provider's `offline_access` scope so `/auth/refresh` can
+rotate refresh tokens and renew the encrypted HttpOnly session. The browser
+uses a cross-tab lock and schedules renewal from the access-token lifetime;
+tokens are never exposed to JavaScript. Session lifetime never exceeds the
+current ID/access-token lifetime.
 Logout uses the discovered `end_session_endpoint` with the registered client
 and post-logout redirect when the provider supports RP-initiated logout; local
 cookie clearing and the configured application redirect remain the fallback.

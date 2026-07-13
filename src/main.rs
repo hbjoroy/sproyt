@@ -118,6 +118,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/metrics", get(metrics))
         .route("/auth/login", get(auth_login))
         .route("/auth/callback", get(auth_callback))
+        .route("/auth/refresh", post(auth_refresh))
         .route("/auth/logout", get(auth_logout))
         .route("/ws", get(ws_handler))
         .route("/api/v1/processes", post(start_process))
@@ -1004,6 +1005,33 @@ async fn auth_logout(State(state): State<AppState>) -> axum::response::Response 
     redirect_with_cookies(&logout.redirect_url, &[logout.clear_cookie])
 }
 
+async fn auth_refresh(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    match state.auth.renew_session(cookie).await {
+        Ok(renewal) => {
+            let mut response = Json(serde_json::json!({
+                "refresh_after_seconds": renewal.refresh_after_seconds
+            }))
+            .into_response();
+            match HeaderValue::from_str(&renewal.set_cookie) {
+                Ok(cookie) => {
+                    response.headers_mut().append(SET_COOKIE, cookie);
+                    response
+                }
+                Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        Err(crate::auth::AuthError::Unsupported(_)) => Json(serde_json::json!({
+            "refresh_after_seconds": 300
+        }))
+        .into_response(),
+        Err(error) => (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response(),
+    }
+}
+
 fn redirect_with_cookies(location: &str, cookies: &[String]) -> axum::response::Response {
     let mut response = axum::http::StatusCode::SEE_OTHER.into_response();
     let headers = response.headers_mut();
@@ -1456,6 +1484,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       let socket = null;
       let heartbeatTimer = null;
+      let sessionRefreshTimer = null;
       let renderMode = "view";
       let requestNumber = 0;
       let activeChannelId = null;
@@ -1463,6 +1492,42 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const timeline = [];
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
+
+      function scheduleSessionRefresh(seconds) {
+        if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
+        sessionRefreshTimer = window.setTimeout(refreshSession, Math.max(30, seconds) * 1000);
+      }
+
+      async function performSessionRefresh() {
+        const response = await fetch("/auth/refresh", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "accept": "application/json" }
+        });
+        if (response.status === 401) {
+          window.location.assign("/auth/login");
+          return;
+        }
+        if (!response.ok) {
+          scheduleSessionRefresh(30);
+          return;
+        }
+        const result = await response.json();
+        scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
+      }
+
+      async function refreshSession() {
+        if (navigator.locks) {
+          await navigator.locks.request("sproyt-session-refresh", { ifAvailable: true }, async (lock) => {
+            if (lock) await performSessionRefresh();
+            else scheduleSessionRefresh(30);
+          });
+        } else {
+          await performSessionRefresh();
+        }
+      }
+
+      refreshSession().catch(() => scheduleSessionRefresh(30));
 
       connectForm.addEventListener("submit", (event) => {
         event.preventDefault();
