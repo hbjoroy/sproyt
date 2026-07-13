@@ -205,6 +205,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Create ephemeral Kubernetes cluster
+        uses: engineerd/setup-kind@v0.6.0
+        with:
+          version: v0.24.0
+
+      - name: Load image and exercise install, scale, and rollback
+        env:
+          SPROYT_IMAGE: local/sproyt:${{ github.sha }}
+        run: |
+          kind load docker-image "$SPROYT_IMAGE"
+          bash tools/kind-smoke.sh
+
       - name: Generate image SBOM
         uses: anchore/sbom-action@v0
         with:

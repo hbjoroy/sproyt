@@ -72,6 +72,12 @@ work through Axum's graceful-shutdown path, and sends WebSocket close code
 before Kubernetes may terminate the container. Keep the chart's
 `terminationGracePeriodSeconds` at or above the application grace period.
 
+The delivery CI job also creates an ephemeral kind cluster, loads the exact
+image built by that job, installs the Helm release at two replicas against
+PostgreSQL 17, checks both probes, scales to one replica, and rolls back to the
+first two-replica revision. `tools/kind-smoke.sh` is the executable evidence for
+that install/scale/rollback gate.
+
 For application regressions, roll back the Deployment to the previous image.
 Migrations must remain expand-and-contract compatible; never roll a database
 schema backward as the first response. Disable an incomplete capability with
