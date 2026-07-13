@@ -101,6 +101,7 @@ pub struct OidcConfig {
     redirect_url: String,
     post_logout_redirect_url: String,
     session_key: String,
+    session_previous_keys: Vec<String>,
 }
 
 impl OidcConfig {
@@ -112,6 +113,13 @@ impl OidcConfig {
             redirect_url: required_env("SPROYT_OIDC_REDIRECT_URL")?,
             post_logout_redirect_url: required_env("SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL")?,
             session_key: required_env("SPROYT_SESSION_KEY")?,
+            session_previous_keys: std::env::var("SPROYT_SESSION_PREVIOUS_KEYS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|key| !key.is_empty())
+                .map(str::to_owned)
+                .collect(),
         })
     }
 
@@ -133,6 +141,9 @@ impl OidcConfig {
     pub fn session_key(&self) -> &str {
         &self.session_key
     }
+    pub fn session_previous_keys(&self) -> &[String] {
+        &self.session_previous_keys
+    }
 }
 
 impl fmt::Debug for OidcConfig {
@@ -145,6 +156,7 @@ impl fmt::Debug for OidcConfig {
             .field("redirect_url", &self.redirect_url)
             .field("post_logout_redirect_url", &self.post_logout_redirect_url)
             .field("session_key", &"<redacted>")
+            .field("session_previous_keys", &"<redacted>")
             .finish()
     }
 }

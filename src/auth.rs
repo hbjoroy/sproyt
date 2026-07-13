@@ -180,7 +180,7 @@ impl OidcService {
         Ok(Self {
             client,
             http_client,
-            codec: CookieCodec::new(config.session_key())?,
+            codec: CookieCodec::new(config.session_key(), config.session_previous_keys())?,
             issuer: config.issuer().to_owned(),
             post_logout_redirect_url: config.post_logout_redirect_url().to_owned(),
         })
@@ -283,26 +283,26 @@ struct SessionClaims {
     expires_at: u64,
 }
 
-struct CookieCodec(Aes256Gcm);
+struct CookieCodec {
+    primary: Aes256Gcm,
+    readers: Vec<Aes256Gcm>,
+}
 
 impl CookieCodec {
-    fn new(encoded_key: &str) -> Result<Self, AuthError> {
-        let key = URL_SAFE_NO_PAD
-            .decode(encoded_key)
-            .map_err(AuthError::external)?;
-        if key.len() != 32 {
-            return Err(AuthError::InvalidSessionKey);
-        }
-        Ok(Self(
-            Aes256Gcm::new_from_slice(&key).map_err(|_| AuthError::InvalidSessionKey)?,
-        ))
+    fn new(encoded_key: &str, previous_keys: &[String]) -> Result<Self, AuthError> {
+        let primary = decode_cookie_key(encoded_key)?;
+        let readers = std::iter::once(encoded_key)
+            .chain(previous_keys.iter().map(String::as_str))
+            .map(decode_cookie_key)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { primary, readers })
     }
 
     fn seal<T: Serialize>(&self, value: &T) -> Result<String, AuthError> {
         let plaintext = serde_json::to_vec(value).map_err(AuthError::external)?;
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let encrypted = self
-            .0
+            .primary
             .encrypt(&nonce, plaintext.as_ref())
             .map_err(|_| AuthError::External("session encryption failed".to_owned()))?;
         let mut output = nonce.to_vec();
@@ -318,12 +318,22 @@ impl CookieCodec {
             return Err(AuthError::Unauthorized);
         }
         let (nonce, encrypted) = data.split_at(12);
-        let plaintext = self
-            .0
-            .decrypt(Nonce::from_slice(nonce), encrypted)
-            .map_err(|_| AuthError::Unauthorized)?;
-        serde_json::from_slice(&plaintext).map_err(|_| AuthError::Unauthorized)
+        self.readers
+            .iter()
+            .find_map(|cipher| cipher.decrypt(Nonce::from_slice(nonce), encrypted).ok())
+            .and_then(|plaintext| serde_json::from_slice(&plaintext).ok())
+            .ok_or(AuthError::Unauthorized)
     }
+}
+
+fn decode_cookie_key(encoded_key: &str) -> Result<Aes256Gcm, AuthError> {
+    let key = URL_SAFE_NO_PAD
+        .decode(encoded_key)
+        .map_err(AuthError::external)?;
+    if key.len() != 32 {
+        return Err(AuthError::InvalidSessionKey);
+    }
+    Aes256Gcm::new_from_slice(&key).map_err(|_| AuthError::InvalidSessionKey)
 }
 
 fn principal(
@@ -422,7 +432,7 @@ mod tests {
     #[test]
     fn encrypted_cookie_round_trips_and_rejects_tampering() {
         let key = URL_SAFE_NO_PAD.encode([7_u8; 32]);
-        let codec = CookieCodec::new(&key).unwrap();
+        let codec = CookieCodec::new(&key, &[]).unwrap();
         let value = SessionClaims {
             issuer: "issuer".to_owned(),
             subject: "alice".to_owned(),
@@ -437,5 +447,32 @@ mod tests {
         tampered[last] = if tampered[last] == b'A' { b'B' } else { b'A' };
         let tampered = String::from_utf8(tampered).unwrap();
         assert!(codec.open::<SessionClaims>(&tampered).is_err());
+    }
+
+    #[test]
+    fn rotated_cookie_key_reads_old_sessions_but_writes_only_with_primary() {
+        let old_key = URL_SAFE_NO_PAD.encode([3_u8; 32]);
+        let new_key = URL_SAFE_NO_PAD.encode([9_u8; 32]);
+        let old_codec = CookieCodec::new(&old_key, &[]).unwrap();
+        let rotated = CookieCodec::new(&new_key, std::slice::from_ref(&old_key)).unwrap();
+        let claims = SessionClaims {
+            issuer: "issuer".to_owned(),
+            subject: "alice".to_owned(),
+            display_name: "Alice".to_owned(),
+            expires_at: now_seconds() + 60,
+        };
+
+        let old_session = old_codec.seal(&claims).unwrap();
+        assert_eq!(
+            rotated.open::<SessionClaims>(&old_session).unwrap().subject,
+            "alice"
+        );
+
+        let new_session = rotated.seal(&claims).unwrap();
+        assert!(old_codec.open::<SessionClaims>(&new_session).is_err());
+        assert_eq!(
+            rotated.open::<SessionClaims>(&new_session).unwrap().subject,
+            "alice"
+        );
     }
 }

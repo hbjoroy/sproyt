@@ -7,6 +7,8 @@ deliberately has no guessed production slug.
 
 Create the referenced Secret before installation. It must contain
 `DATABASE_URL`, `SPROYT_OIDC_CLIENT_SECRET`, and `SPROYT_SESSION_KEY`.
+During session-key rotation it may also contain the optional
+`SPROYT_SESSION_PREVIOUS_KEYS` value.
 
 ```sh
 helm upgrade --install sproyt ./helm/sproyt \

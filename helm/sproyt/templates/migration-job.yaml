@@ -58,6 +58,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secret.existingSecret }}
                   key: {{ .Values.secret.sessionKeyKey }}
+            - name: SPROYT_SESSION_PREVIOUS_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret }}
+                  key: {{ .Values.secret.sessionPreviousKeysKey }}
+                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

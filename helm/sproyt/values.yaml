@@ -33,6 +33,7 @@ secret:
   databaseUrlKey: DATABASE_URL
   oidcClientSecretKey: SPROYT_OIDC_CLIENT_SECRET
   sessionKeyKey: SPROYT_SESSION_KEY
+  sessionPreviousKeysKey: SPROYT_SESSION_PREVIOUS_KEYS
 
 resources:
   requests:

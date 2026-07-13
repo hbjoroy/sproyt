@@ -126,6 +126,7 @@ Runtime configuration is read from environment variables:
 | `SPROYT_OIDC_REDIRECT_URL` | required for OIDC | Absolute callback URL ending in `/auth/callback`. |
 | `SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL` | required for OIDC | Safe redirect after local logout. |
 | `SPROYT_SESSION_KEY` | required for OIDC | URL-safe base64 encoding of exactly 32 random bytes. |
+| `SPROYT_SESSION_PREVIOUS_KEYS` | unset | Comma-separated prior session keys accepted only for decrypting cookies during a rotation window. |
 | `SPROYT_HEART_URL` | unset | Heart API root. When unset, ordinary chat runs normally and no outbox worker calls Heart. |
 | `SPROYT_MCP_ALLOWED_ORIGINS` | unset | Exact, comma-separated browser origins allowed to call `/mcp`. Requests without an `Origin` header remain valid for non-browser MCP clients; browser-origin requests fail closed when unset. |
 
@@ -134,7 +135,9 @@ exact redirect URL with the provider. Login starts at `/auth/login`, the
 provider returns to `/auth/callback`, and `/auth/logout` clears the local
 session. Authentication transactions and sessions are encrypted cookies, so
 all Kubernetes replicas can validate them with the same session key without
-server-local session state.
+server-local session state. Rotate that key by moving the old value to
+`SPROYT_SESSION_PREVIOUS_KEYS`, deploying a new `SPROYT_SESSION_KEY`, waiting
+at least the eight-hour session TTL, and then removing the old key.
 
 The database URL is detected and typed at startup, but the current chat loop still uses the in-memory repository until the SQLx implementation is wired in.
 
