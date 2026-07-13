@@ -239,7 +239,17 @@ impl OidcService {
             .claims(&self.client.id_token_verifier(), &nonce)
             .map_err(AuthError::external)?;
         let subject = claims.subject().as_str().to_owned();
-        let principal = principal(&self.issuer, &subject, &subject)?;
+        let display_name = claims
+            .name()
+            .and_then(|name| name.get(None))
+            .map(|name| name.as_str())
+            .or_else(|| {
+                claims
+                    .preferred_username()
+                    .map(|username| username.as_str())
+            })
+            .unwrap_or(&subject);
+        let principal = principal(&self.issuer, &subject, display_name)?;
         let now = now_seconds();
         let token_expires_at =
             u64::try_from(claims.expiration().timestamp()).map_err(|_| AuthError::Unauthorized)?;
@@ -457,7 +467,7 @@ mod tests {
             "id_token_signing_alg_values_supported":["HS256"],
             "token_endpoint_auth_methods_supported":["client_secret_basic"],
             "scopes_supported":["openid","profile","email"],
-            "claims_supported":["iss","sub","aud","exp","iat","nonce"]
+            "claims_supported":["iss","sub","aud","exp","iat","nonce","name","preferred_username"]
         }))
     }
 
@@ -475,7 +485,9 @@ mod tests {
                 "aud":provider.client_id,
                 "exp":now+300,
                 "iat":now,
-                "nonce":provider.nonce.lock().unwrap().clone()
+                "nonce":provider.nonce.lock().unwrap().clone(),
+                "name":"Authentik Test User",
+                "preferred_username":"ignored-fallback"
             }))
             .unwrap(),
         );
@@ -668,6 +680,10 @@ mod tests {
             .unwrap();
         assert_eq!(complete.principal.subject, "authentik-user-1");
         assert_eq!(complete.principal.issuer, provider.issuer);
+        assert_eq!(
+            complete.principal.user.display_name.to_string(),
+            "Authentik Test User"
+        );
         assert!(complete.clear_transaction_cookie.contains("Max-Age=0"));
         let max_age = complete
             .set_cookie
