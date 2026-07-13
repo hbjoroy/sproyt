@@ -374,6 +374,20 @@ where
             .await
             .unwrap()
     );
+    assert_eq!(
+        repository
+            .enqueue_start(EnqueueProcessStart {
+                channel_id: channel.id.clone(),
+                actor: created_agent.agent_id.clone(),
+                request_id: "observer-must-not-start".to_owned(),
+                namespace: "contract".to_owned(),
+                definition_name: "contract".to_owned(),
+                definition_version: None,
+                metadata: serde_json::json!({}),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
     repository.revoke_grant(actor.clone(), grant).await.unwrap();
     assert!(
         !repository

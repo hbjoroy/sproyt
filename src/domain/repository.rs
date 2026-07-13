@@ -298,6 +298,13 @@ impl ChatRepository for InMemoryChatRepository {
         Box::pin(async move {
             let mut state = self.lock_state()?;
             let key = (command.channel_id, command.actor);
+            let role = state
+                .memberships
+                .get(&key)
+                .map(|membership| &membership.role);
+            if !Policy::can_leave_channel(role) {
+                return Err(RepositoryError::NotFound);
+            }
             if state.memberships.remove(&key).is_none() {
                 return Err(RepositoryError::NotFound);
             }

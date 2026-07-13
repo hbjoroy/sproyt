@@ -264,6 +264,18 @@ impl ChatRepository for SqliteChatRepository {
 
     fn leave_channel<'a>(&'a self, command: LeaveChannel) -> RepositoryFuture<'a, ()> {
         Box::pin(async move {
+            let role: Option<String> = sqlx::query_scalar(
+                "select role from channel_memberships where channel_id = ? and user_id = ?",
+            )
+            .bind(command.channel_id.to_string())
+            .bind(command.actor.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            let role = role.as_deref().and_then(MembershipRole::parse);
+            if !Policy::can_leave_channel(role.as_ref()) {
+                return Err(RepositoryError::NotFound);
+            }
             let result =
                 sqlx::query("delete from channel_memberships where channel_id = ? and user_id = ?")
                     .bind(command.channel_id.to_string())
@@ -493,15 +505,16 @@ impl ProcessRepository for SqliteChatRepository {
     ) -> ProcessRepositoryFuture<'a, ProcessLink> {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
-            let allowed: Option<i64> = sqlx::query_scalar(
-                "select 1 from channel_memberships where channel_id = ? and user_id = ?",
+            let role: Option<String> = sqlx::query_scalar(
+                "select role from channel_memberships where channel_id = ? and user_id = ?",
             )
             .bind(command.channel_id.to_string())
             .bind(command.actor.to_string())
             .fetch_optional(&mut *tx)
             .await
             .map_err(sql_error)?;
-            if allowed.is_none() {
+            let role = role.as_deref().and_then(MembershipRole::parse);
+            if !Policy::can_start_process(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
             if let Some(row) = sqlx::query("select id, heart_instance_id, namespace, definition_name, definition_version, status from process_links where initiated_by = ? and request_id = ?")
@@ -562,10 +575,14 @@ impl ProcessRepository for SqliteChatRepository {
                     .map(OutboxId::from_uuid)
                     .map_err(storage);
             }
-            let namespace: Option<String> = sqlx::query_scalar("select p.namespace from process_links p join channels c on c.id=p.channel_id join channel_memberships m on m.channel_id=c.id and m.user_id=? join circle_features f on f.circle_id=c.circle_id and f.feature='heart.event-planning' and f.enabled=1 where p.id=?")
+            let access: Option<(String, String)> = sqlx::query_as("select p.namespace,m.role from process_links p join channels c on c.id=p.channel_id join channel_memberships m on m.channel_id=c.id and m.user_id=? join circle_features f on f.circle_id=c.circle_id and f.feature='heart.event-planning' and f.enabled=1 where p.id=?")
                 .bind(command.actor.to_string()).bind(command.process_link_id.as_uuid().to_string())
                 .fetch_optional(&mut *tx).await.map_err(sql_error)?;
-            let namespace = namespace.ok_or(RepositoryError::PermissionDenied)?;
+            let (namespace, role) = access.ok_or(RepositoryError::PermissionDenied)?;
+            let role = MembershipRole::parse(&role);
+            if !Policy::can_complete_process_work(role.as_ref()) {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let outbox_id = OutboxId::generate();
             let now = Utc::now();
             let operation = OutboxOperation::Correlate {
@@ -593,15 +610,16 @@ impl ProcessRepository for SqliteChatRepository {
         command: SetCircleFeature,
     ) -> ProcessRepositoryFuture<'a, ()> {
         Box::pin(async move {
-            let owner: Option<i64> = sqlx::query_scalar(
-                "select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'",
+            let role: Option<String> = sqlx::query_scalar(
+                "select role from circle_memberships where circle_id=? and user_id=?",
             )
             .bind(command.circle_id.to_string())
             .bind(command.actor.to_string())
             .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?;
-            if owner.is_none() {
+            let role = role.as_deref().and_then(CircleRole::parse);
+            if !Policy::can_invite_to_circle(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
             sqlx::query("insert into circle_features(circle_id,feature,enabled,updated_by,updated_at) values(?,?,?,?,?) on conflict(circle_id,feature) do update set enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
@@ -747,16 +765,30 @@ impl AgentRepository for SqliteChatRepository {
                 return Err(RepositoryError::PermissionDenied);
             }
             if let Some(circle_id) = &command.circle_id {
-                let allowed: Option<i64> = sqlx::query_scalar("select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'")
-                    .bind(circle_id.to_string()).bind(command.actor.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?;
-                if allowed.is_none() {
+                let role: Option<String> = sqlx::query_scalar(
+                    "select role from circle_memberships where circle_id=? and user_id=?",
+                )
+                .bind(circle_id.to_string())
+                .bind(command.actor.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?;
+                let role = role.as_deref().and_then(CircleRole::parse);
+                if !Policy::can_invite_agent_to_circle(role.as_ref()) {
                     return Err(RepositoryError::PermissionDenied);
                 }
             }
             if let Some(channel_id) = &command.channel_id {
-                let allowed: Option<i64> = sqlx::query_scalar("select 1 from channel_memberships where channel_id=? and user_id=? and role in ('owner','moderator')")
-                    .bind(channel_id.to_string()).bind(command.actor.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?;
-                if allowed.is_none() {
+                let role: Option<String> = sqlx::query_scalar(
+                    "select role from channel_memberships where channel_id=? and user_id=?",
+                )
+                .bind(channel_id.to_string())
+                .bind(command.actor.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?;
+                let role = role.as_deref().and_then(MembershipRole::parse);
+                if !Policy::can_invite_agent_to_channel(role.as_ref()) {
                     return Err(RepositoryError::PermissionDenied);
                 }
             }
