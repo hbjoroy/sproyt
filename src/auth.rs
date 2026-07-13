@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -143,9 +143,10 @@ pub struct Logout {
 }
 
 pub struct OidcService {
-    client: DiscoveredCoreClient,
+    client: RwLock<DiscoveredCoreClient>,
     http_client: reqwest::Client,
     codec: CookieCodec,
+    config: OidcConfig,
     issuer: String,
     post_logout_redirect_url: String,
 }
@@ -159,37 +160,64 @@ type DiscoveredCoreClient = CoreClient<
     EndpointMaybeSet,
 >;
 
+async fn discover_client(
+    config: &OidcConfig,
+    http_client: &reqwest::Client,
+) -> Result<DiscoveredCoreClient, AuthError> {
+    let issuer = IssuerUrl::new(config.issuer().to_owned()).map_err(AuthError::external)?;
+    let metadata = CoreProviderMetadata::discover_async(issuer, http_client)
+        .await
+        .map_err(AuthError::external)?;
+    Ok(CoreClient::from_provider_metadata(
+        metadata,
+        ClientId::new(config.client_id().to_owned()),
+        Some(ClientSecret::new(config.client_secret().to_owned())),
+    )
+    .set_redirect_uri(
+        RedirectUrl::new(config.redirect_url().to_owned()).map_err(AuthError::external)?,
+    ))
+}
+
 impl OidcService {
     async fn discover(config: &OidcConfig) -> Result<Self, AuthError> {
-        let issuer = IssuerUrl::new(config.issuer().to_owned()).map_err(AuthError::external)?;
         let http_client = reqwest::ClientBuilder::new()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(AuthError::external)?;
-        let metadata = CoreProviderMetadata::discover_async(issuer, &http_client)
-            .await
-            .map_err(AuthError::external)?;
-        let client = CoreClient::from_provider_metadata(
-            metadata,
-            ClientId::new(config.client_id().to_owned()),
-            Some(ClientSecret::new(config.client_secret().to_owned())),
-        )
-        .set_redirect_uri(
-            RedirectUrl::new(config.redirect_url().to_owned()).map_err(AuthError::external)?,
-        );
+        let client = discover_client(config, &http_client).await?;
         Ok(Self {
-            client,
+            client: RwLock::new(client),
             http_client,
             codec: CookieCodec::new(config.session_key(), config.session_previous_keys())?,
+            config: config.clone(),
             issuer: config.issuer().to_owned(),
             post_logout_redirect_url: config.post_logout_redirect_url().to_owned(),
         })
     }
 
-    fn login(&self) -> Result<LoginStart, AuthError> {
-        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        let (url, state, nonce) = self
+    async fn refreshed_client(&self) -> Result<DiscoveredCoreClient, AuthError> {
+        discover_client(&self.config, &self.http_client).await
+    }
+
+    fn current_client(&self) -> Result<DiscoveredCoreClient, AuthError> {
+        self.client
+            .read()
+            .map(|client| client.clone())
+            .map_err(|_| AuthError::External("OIDC client lock poisoned".to_owned()))
+    }
+
+    fn replace_client(&self, client: DiscoveredCoreClient) -> Result<(), AuthError> {
+        *self
             .client
+            .write()
+            .map_err(|_| AuthError::External("OIDC client lock poisoned".to_owned()))? = client;
+        Ok(())
+    }
+
+    fn login(&self) -> Result<LoginStart, AuthError> {
+        let client = self.current_client()?;
+        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+        let (url, state, nonce) = client
             .authorize_url(
                 CoreAuthenticationFlow::AuthorizationCode,
                 CsrfToken::new_random,
@@ -225,8 +253,8 @@ impl OidcService {
         if transaction.expires_at < now_seconds() || transaction.state != state {
             return Err(AuthError::Unauthorized);
         }
-        let token = self
-            .client
+        let client = self.current_client()?;
+        let token = client
             .exchange_code(AuthorizationCode::new(code))
             .map_err(AuthError::external)?
             .set_pkce_verifier(PkceCodeVerifier::new(transaction.pkce_verifier))
@@ -235,9 +263,19 @@ impl OidcService {
             .map_err(AuthError::external)?;
         let id_token = token.id_token().ok_or(AuthError::Unauthorized)?;
         let nonce = OidcNonce::new(transaction.nonce);
-        let claims = id_token
-            .claims(&self.client.id_token_verifier(), &nonce)
-            .map_err(AuthError::external)?;
+        let initial_verifier = client.id_token_verifier();
+        let claims = match id_token.claims(&initial_verifier, &nonce) {
+            Ok(claims) => claims,
+            Err(_) => {
+                let refreshed = self.refreshed_client().await?;
+                let refreshed_verifier = refreshed.id_token_verifier();
+                let claims = id_token
+                    .claims(&refreshed_verifier, &nonce)
+                    .map_err(AuthError::external)?;
+                self.replace_client(refreshed.clone())?;
+                claims
+            }
+        };
         let subject = claims.subject().as_str().to_owned();
         let display_name = claims
             .name()
@@ -444,7 +482,13 @@ mod tests {
         http::HeaderMap,
         routing::{get, post},
     };
-    use hmac::{Hmac, Mac};
+    use rsa::{
+        RsaPrivateKey, RsaPublicKey,
+        pkcs1v15::SigningKey,
+        rand_core::OsRng,
+        signature::{SignatureEncoding, Signer},
+        traits::PublicKeyParts,
+    };
     use sha2::Sha256;
     use std::sync::Mutex;
 
@@ -454,6 +498,7 @@ mod tests {
         client_id: String,
         client_secret: String,
         nonce: Arc<Mutex<String>>,
+        signing_key: Arc<Mutex<(String, RsaPrivateKey)>>,
     }
 
     async fn provider_metadata(State(provider): State<TestProvider>) -> Json<serde_json::Value> {
@@ -464,19 +509,36 @@ mod tests {
             "jwks_uri":format!("{}/jwks",provider.issuer),
             "response_types_supported":["code"],
             "subject_types_supported":["public"],
-            "id_token_signing_alg_values_supported":["HS256"],
+            "id_token_signing_alg_values_supported":["RS256"],
             "token_endpoint_auth_methods_supported":["client_secret_basic"],
             "scopes_supported":["openid","profile","email"],
             "claims_supported":["iss","sub","aud","exp","iat","nonce","name","preferred_username"]
         }))
     }
 
-    async fn provider_jwks() -> Json<serde_json::Value> {
-        Json(serde_json::json!({"keys":[]}))
+    async fn provider_jwks(State(provider): State<TestProvider>) -> Json<serde_json::Value> {
+        let signing_key = provider.signing_key.lock().unwrap();
+        let public_key = RsaPublicKey::from(&signing_key.1);
+        Json(serde_json::json!({"keys":[{
+            "kty":"RSA",
+            "use":"sig",
+            "alg":"RS256",
+            "kid":signing_key.0,
+            "n":URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be()),
+            "e":URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be())
+        }]}))
     }
 
     fn signed_id_token(provider: &TestProvider) -> String {
-        let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
+        let signing_key = provider.signing_key.lock().unwrap();
+        let header = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "alg":"RS256",
+                "typ":"JWT",
+                "kid":signing_key.0
+            }))
+            .unwrap(),
+        );
         let now = now_seconds();
         let claims = URL_SAFE_NO_PAD.encode(
             serde_json::to_vec(&serde_json::json!({
@@ -492,12 +554,18 @@ mod tests {
             .unwrap(),
         );
         let signing_input = format!("{header}.{claims}");
-        let mut mac =
-            <Hmac<Sha256> as Mac>::new_from_slice(provider.client_secret.as_bytes()).unwrap();
-        mac.update(signing_input.as_bytes());
+        let signature =
+            SigningKey::<Sha256>::new(signing_key.1.clone()).sign(signing_input.as_bytes());
         format!(
             "{signing_input}.{}",
-            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+            URL_SAFE_NO_PAD.encode(signature.to_bytes())
+        )
+    }
+
+    fn generate_signing_key(kid: &str) -> (String, RsaPrivateKey) {
+        (
+            kid.to_owned(),
+            RsaPrivateKey::new(&mut OsRng, 2048).unwrap(),
         )
     }
 
@@ -538,6 +606,7 @@ mod tests {
             client_id: "sproyt-test".to_owned(),
             client_secret: "test-client-secret-with-enough-entropy".to_owned(),
             nonce: Arc::new(Mutex::new(String::new())),
+            signing_key: Arc::new(Mutex::new(generate_signing_key("key-a"))),
         };
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(provider_metadata))
@@ -673,6 +742,8 @@ mod tests {
             .await,
             Err(AuthError::Unauthorized)
         ));
+
+        *provider.signing_key.lock().unwrap() = generate_signing_key("key-b");
 
         let complete = auth
             .callback("valid-code".to_owned(), state, Some(&login.set_cookie))

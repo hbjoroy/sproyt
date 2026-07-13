@@ -27,4 +27,5 @@ uuid = { version = "1", features = ["serde", "v5", "v7"] }
 [dev-dependencies]
 futures-util = "0.3"
 hmac = "0.12"
+rsa = { version = "0.9", features = ["sha2"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
