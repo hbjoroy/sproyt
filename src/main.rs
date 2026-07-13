@@ -1953,6 +1953,7 @@ mod protocol_capacity_tests {
             .to_owned();
 
         let mut latencies = Vec::with_capacity(MESSAGE_COUNT);
+        let mut first_message_id = None;
         for index in 1..=MESSAGE_COUNT {
             let started = Instant::now();
             let accepted = command(
@@ -1967,7 +1968,28 @@ mod protocol_capacity_tests {
                 accepted["payload"]["message"]["sequence"].as_u64(),
                 Some(index as u64)
             );
+            if index == 1 {
+                first_message_id = accepted["payload"]["message"]["id"]
+                    .as_str()
+                    .map(str::to_owned);
+            }
         }
+        let replay = command(
+            &mut socket,
+            "send-1",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"must not replace the accepted body"}),
+        )
+        .await;
+        assert_eq!(
+            replay["payload"]["message"]["id"].as_str(),
+            first_message_id.as_deref()
+        );
+        assert_eq!(replay["payload"]["message"]["sequence"].as_u64(), Some(1));
+        assert_eq!(
+            replay["payload"]["message"]["body"].as_str(),
+            Some("capacity-1")
+        );
         latencies.sort_unstable();
         let p99_index = ((MESSAGE_COUNT * 99).div_ceil(100)).saturating_sub(1);
         assert!(
