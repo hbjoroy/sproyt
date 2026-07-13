@@ -281,6 +281,17 @@ impl ChatRepository for InMemoryChatRepository {
                 return Err(RepositoryError::PermissionDenied);
             }
             let channel_id = state.resolve_channel_ref(&command.channel)?;
+            let channel = state
+                .channels
+                .get(&channel_id)
+                .ok_or(RepositoryError::NotFound)?;
+            if channel.circle_id.as_ref().is_some_and(|circle_id| {
+                !state
+                    .circle_memberships
+                    .contains_key(&(circle_id.clone(), command.actor.clone()))
+            }) {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let membership = Membership {
                 channel_id: channel_id.clone(),
                 user_id: command.actor.clone(),
@@ -331,6 +342,12 @@ impl ChatRepository for InMemoryChatRepository {
                         kind: channel.kind.clone(),
                         circle_id: channel.circle_id.clone(),
                         role: membership.role.clone(),
+                        last_read_sequence: membership.last_read_sequence,
+                        latest_sequence: state
+                            .messages
+                            .get(&channel.id)
+                            .and_then(|messages| messages.last())
+                            .map_or(ChannelSequence::new(0), |message| message.sequence),
                     })
                 })
                 .collect::<Vec<_>>();

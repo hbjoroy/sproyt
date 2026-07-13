@@ -92,6 +92,11 @@ immediately after that cursor. Clients repeat the latter until the last loaded
 sequence reaches `latest_known_sequence`; the browser deduplicates message IDs
 while live delivery and durable catch-up overlap.
 
+Channel summaries carry both `last_read_sequence` and `latest_sequence`, so
+clients can compute unread count after reconnect without loading message
+bodies. Joining a channel owned by a circle requires current circle membership;
+knowing a private channel ID or slug is not authorization.
+
 First event set:
 
 - `channel_created`

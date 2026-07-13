@@ -124,6 +124,12 @@ impl MessageId {
 #[serde(transparent)]
 pub struct ChannelSequence(u64);
 
+impl Default for ChannelSequence {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 impl ChannelSequence {
     pub const fn first() -> Self {
         Self(1)

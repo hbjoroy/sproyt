@@ -155,6 +155,10 @@ pub struct ChannelSummary {
     pub kind: ChannelKind,
     pub circle_id: Option<CircleId>,
     pub role: MembershipRole,
+    #[serde(default)]
+    pub last_read_sequence: ChannelSequence,
+    #[serde(default)]
+    pub latest_sequence: ChannelSequence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

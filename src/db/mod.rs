@@ -83,9 +83,10 @@ where
     R: ChatRepository,
 {
     use crate::domain::{
-        AcceptCircleInvitation, ChannelKind, ChannelSequence, ChannelSlug, CreateChannel,
-        CreateCircle, CreateCircleInvitation, DisplayName, LoadRecentMessages, MarkRead,
-        MessageBody, MessageLimit, PrincipalKind, SendMessage, User, UserId,
+        AcceptCircleInvitation, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
+        CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName, JoinChannel,
+        LoadRecentMessages, MarkRead, MessageBody, MessageLimit, PrincipalKind, SendMessage, User,
+        UserId,
     };
     use chrono::Utc;
 
@@ -197,7 +198,7 @@ where
         repository
             .load_recent_messages(LoadRecentMessages {
                 actor: actor.clone(),
-                channel_id: channel.id,
+                channel_id: channel.id.clone(),
                 limit: MessageLimit::new(2),
                 after: Some(second.sequence),
             })
@@ -205,6 +206,15 @@ where
             .unwrap(),
         vec![third]
     );
+    let summary = repository
+        .list_channels_for_user(actor.clone())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|summary| summary.id == channel.id)
+        .unwrap();
+    assert_eq!(summary.last_read_sequence, ChannelSequence::new(1));
+    assert_eq!(summary.latest_sequence, ChannelSequence::new(3));
 
     let circle = repository
         .create_circle(CreateCircle {
@@ -217,7 +227,17 @@ where
     let invite = repository
         .create_circle_invitation(CreateCircleInvitation {
             actor: actor.clone(),
-            circle_id: circle.id,
+            circle_id: circle.id.clone(),
+        })
+        .await
+        .unwrap();
+    let circle_channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("chat-circle-channel-{suffix}")).unwrap(),
+            name: DisplayName::new("Circle channel").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: Some(circle.id.clone()),
         })
         .await
         .unwrap();
@@ -233,10 +253,26 @@ where
         })
         .await
         .unwrap();
+    assert_eq!(
+        repository
+            .join_channel(JoinChannel {
+                actor: member.clone(),
+                channel: ChannelRef::Id(circle_channel.id.clone()),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
     repository
         .accept_circle_invitation(AcceptCircleInvitation {
             actor: member.clone(),
             token: invite.token.clone(),
+        })
+        .await
+        .unwrap();
+    repository
+        .join_channel(JoinChannel {
+            actor: member.clone(),
+            channel: ChannelRef::Id(circle_channel.id),
         })
         .await
         .unwrap();

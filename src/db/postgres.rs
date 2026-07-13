@@ -260,6 +260,12 @@ impl ChatRepository for PostgresChatRepository {
                     ChannelId::from_uuid(value.ok_or(RepositoryError::NotFound)?)
                 }
             };
+            let allowed: Option<i32> = sqlx::query_scalar("select 1 from channels c where c.id=$1 and (c.circle_id is null or exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=$2))")
+                .bind(*channel_id.as_uuid()).bind(*command.actor.as_uuid())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
             sqlx::query("insert into channel_memberships (channel_id, user_id, role) values ($1, $2, 'member') on conflict(channel_id, user_id) do nothing")
                 .bind(*channel_id.as_uuid())
                 .bind(*command.actor.as_uuid())
@@ -304,7 +310,7 @@ impl ChatRepository for PostgresChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id, c.slug, c.name, c.kind, c.circle_id, m.role from channels c join channel_memberships m on m.channel_id = c.id where m.user_id = $1 order by c.slug")
+            let rows = sqlx::query("select c.id, c.slug, c.name, c.kind, c.circle_id, m.role, m.last_read_sequence, coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id = c.id where m.user_id = $1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
                 .await
@@ -974,6 +980,8 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let kind: String = row.try_get("kind").map_err(storage)?;
     let role: String = row.try_get("role").map_err(storage)?;
     let circle_id: Option<uuid::Uuid> = row.try_get("circle_id").map_err(storage)?;
+    let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
+    let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
         id: ChannelId::from_uuid(id),
         slug: ChannelSlug::new(slug).map_err(storage)?,
@@ -981,6 +989,8 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
         kind: ChannelKind::parse(&kind).ok_or_else(|| storage("invalid channel kind"))?,
         circle_id: circle_id.map(CircleId::from_uuid),
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
+        last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,
+        latest_sequence: ChannelSequence::try_from(latest_sequence).map_err(storage)?,
     })
 }
 

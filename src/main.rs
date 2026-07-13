@@ -1429,6 +1429,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const existing = payload.channels.find((channel) => channel.slug === requestedChannelSlug);
           if (existing) {
             activeChannelId = existing.id;
+            const unread = Math.max(0, existing.latest_sequence - existing.last_read_sequence);
+            if (unread > 0) pushSystem(`${unread} uleste meldingar i ${existing.name}.`);
             sendCommand("subscribe_channel", { channel_id: activeChannelId });
           } else {
             sendCommand("create_channel", {
@@ -2032,7 +2034,11 @@ mod protocol_capacity_tests {
         loop {
             let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
                 .await
-                .expect("protocol response exceeded five seconds")
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "protocol response exceeded five seconds for {command_type}/{request_id}"
+                    )
+                })
                 .expect("server closed before protocol response")
                 .unwrap();
             if let ClientMessage::Text(text) = frame {
@@ -2239,6 +2245,126 @@ mod protocol_capacity_tests {
                 }
             }
         }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn two_users_complete_private_circle_slice_with_unread_reconnect() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+        let mut owner = connect_as(address, "circle-owner").await;
+        let circle = command(
+            &mut owner,
+            "circle-create",
+            "create_circle",
+            serde_json::json!({"slug":"friends","name":"Friends"}),
+        )
+        .await;
+        let circle_id = circle["payload"]["circle"]["id"].clone();
+        let invitation = command(
+            &mut owner,
+            "circle-invite",
+            "create_circle_invitation",
+            serde_json::json!({"circle_id":circle_id}),
+        )
+        .await;
+        let token = invitation["payload"]["invitation"]["token"].clone();
+        let channel = command(
+            &mut owner,
+            "circle-channel",
+            "create_channel",
+            serde_json::json!({"slug":"friends-chat","name":"Friends chat","kind":"private","circle_id":circle_id}),
+        )
+        .await;
+        let channel_id = channel["payload"]["channel"]["id"].clone();
+
+        let mut member = connect_as(address, "circle-member").await;
+        let denied = command_response(
+            &mut member,
+            "join-before-invite",
+            "join_channel",
+            serde_json::json!({"channel":{"type":"id","value":channel_id}}),
+        )
+        .await;
+        assert_eq!(denied["payload"]["code"], "permission_denied");
+        command(
+            &mut member,
+            "accept-invite",
+            "accept_circle_invitation",
+            serde_json::json!({"token":token}),
+        )
+        .await;
+        command(
+            &mut member,
+            "join-after-invite",
+            "join_channel",
+            serde_json::json!({"channel":{"type":"id","value":channel_id}}),
+        )
+        .await;
+
+        for sequence in 1..=2 {
+            command(
+                &mut owner,
+                &format!("circle-send-{sequence}"),
+                "send_message",
+                serde_json::json!({"channel_id":channel_id,"body":format!("friend-message-{sequence}")}),
+            )
+            .await;
+        }
+        member.close(None).await.unwrap();
+        let mut member = connect_as(address, "circle-member").await;
+        let listed = command(
+            &mut member,
+            "list-unread",
+            "list_my_channels",
+            serde_json::Value::Null,
+        )
+        .await;
+        let summary = listed["payload"]["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|summary| summary["id"] == channel_id)
+            .unwrap();
+        assert_eq!(summary["last_read_sequence"].as_u64(), Some(0));
+        assert_eq!(summary["latest_sequence"].as_u64(), Some(2));
+        let loaded = command(
+            &mut member,
+            "load-unread",
+            "load_recent_messages",
+            serde_json::json!({"channel_id":channel_id,"limit":50,"after":0}),
+        )
+        .await;
+        assert_eq!(loaded["payload"]["messages"].as_array().unwrap().len(), 2);
+        command(
+            &mut member,
+            "mark-all-read",
+            "mark_read",
+            serde_json::json!({"channel_id":channel_id,"sequence":2}),
+        )
+        .await;
+        member.close(None).await.unwrap();
+        let mut member = connect_as(address, "circle-member").await;
+        let listed = command(
+            &mut member,
+            "list-read",
+            "list_my_channels",
+            serde_json::Value::Null,
+        )
+        .await;
+        let summary = listed["payload"]["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|summary| summary["id"] == channel_id)
+            .unwrap();
+        assert_eq!(summary["last_read_sequence"].as_u64(), Some(2));
+        assert_eq!(summary["latest_sequence"].as_u64(), Some(2));
         server.abort();
     }
 }
