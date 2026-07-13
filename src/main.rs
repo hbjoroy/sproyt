@@ -50,6 +50,7 @@ struct AppState {
     operations: OperationalState,
     processes: ProcessService,
     agents: AgentService,
+    websocket_idle_timeout: Duration,
 }
 
 impl axum::extract::FromRef<AppState> for OperationalState {
@@ -89,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         operations: operations.clone(),
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),
+        websocket_idle_timeout: config.websocket_idle_timeout(),
     };
     let app = build_router(state, operations.clone());
 
@@ -828,7 +830,15 @@ async fn ws_handler(
     };
     let shutdown = state.operations.subscribe_shutdown();
     upgrade
-        .on_upgrade(move |socket| ws::handle_socket(state.chat, principal, socket, shutdown))
+        .on_upgrade(move |socket| {
+            ws::handle_socket(
+                state.chat,
+                principal,
+                socket,
+                shutdown,
+                state.websocket_idle_timeout,
+            )
+        })
         .into_response()
 }
 
@@ -1265,6 +1275,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation"].map((id) => document.querySelector(id));
 
       let socket = null;
+      let heartbeatTimer = null;
       let renderMode = "view";
       let requestNumber = 0;
       let activeChannelId = null;
@@ -1309,6 +1320,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function connect() {
+        if (heartbeatTimer !== null) {
+          window.clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         if (socket) {
           socket.close();
         }
@@ -1329,6 +1344,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           sendCommand("hello");
           sendCommand("list_my_channels");
           sendCommand("list_my_circles");
+          heartbeatTimer = window.setInterval(() => sendCommand("ping"), 20_000);
         });
 
         socket.addEventListener("message", (event) => {
@@ -1336,6 +1352,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         });
 
         socket.addEventListener("close", () => {
+          if (heartbeatTimer !== null) {
+            window.clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
           setConnected(false, "Fråkopla");
         });
 
@@ -1762,6 +1782,7 @@ mod mcp_tests {
             operations: OperationalState::default(),
             processes: ProcessService::start(process_repository, None),
             agents: agents.clone(),
+            websocket_idle_timeout: Duration::from_secs(60),
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1866,6 +1887,7 @@ mod mcp_tests {
             operations: OperationalState::default(),
             processes: ProcessService::start(repository.clone(), None),
             agents: AgentService::new(repository),
+            websocket_idle_timeout: Duration::from_secs(60),
         };
         let request = || McpRequest {
             jsonrpc: "2.0".to_owned(),
@@ -1921,6 +1943,7 @@ mod protocol_capacity_tests {
 
     async fn start_test_server(
         repository: Arc<SqliteChatRepository>,
+        websocket_idle_timeout: Duration,
     ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1936,6 +1959,7 @@ mod protocol_capacity_tests {
                 operations: operations.clone(),
                 processes: ProcessService::start(process_repository, None),
                 agents: AgentService::new(agent_repository),
+                websocket_idle_timeout,
             },
             operations,
         );
@@ -1994,7 +2018,8 @@ mod protocol_capacity_tests {
                 .unwrap(),
         );
         repository.migrate().await.unwrap();
-        let (address, first_server) = start_test_server(repository.clone()).await;
+        let (address, first_server) =
+            start_test_server(repository.clone(), Duration::from_secs(60)).await;
         let mut socket = connect(address).await;
         let created = command(
             &mut socket,
@@ -2058,7 +2083,8 @@ mod protocol_capacity_tests {
         first_server.abort();
         let _ = first_server.await;
 
-        let (restart_address, restarted_server) = start_test_server(repository).await;
+        let (restart_address, restarted_server) =
+            start_test_server(repository, Duration::from_secs(60)).await;
         let reconnect_started = Instant::now();
         let mut reconnected = connect(restart_address).await;
         let loaded = command(
@@ -2082,5 +2108,30 @@ mod protocol_capacity_tests {
 
         reconnected.close(None).await.unwrap();
         restarted_server.abort();
+    }
+
+    #[tokio::test]
+    async fn idle_websocket_is_closed_with_a_stable_reason() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_millis(100)).await;
+        let mut socket = connect(address).await;
+
+        let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("idle close frame exceeded test deadline")
+            .expect("server closed without a WebSocket close frame")
+            .unwrap();
+        match frame {
+            ClientMessage::Close(Some(frame)) => {
+                assert_eq!(frame.reason, "idle timeout");
+            }
+            other => panic!("expected idle close frame, received {other:?}"),
+        }
+        server.abort();
     }
 }

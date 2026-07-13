@@ -129,6 +129,7 @@ Runtime configuration is read from environment variables:
 | `SPROYT_SESSION_PREVIOUS_KEYS` | unset | Comma-separated prior session keys accepted only for decrypting cookies during a rotation window. |
 | `SPROYT_HEART_URL` | unset | Heart API root. When unset, ordinary chat runs normally and no outbox worker calls Heart. |
 | `SPROYT_MCP_ALLOWED_ORIGINS` | unset | Exact, comma-separated browser origins allowed to call `/mcp`. Requests without an `Origin` header remain valid for non-browser MCP clients; browser-origin requests fail closed when unset. |
+| `SPROYT_WS_IDLE_TIMEOUT_SECONDS` | `60` | Close WebSockets with no inbound frame or application heartbeat; valid range is 5–3600 seconds. |
 
 OIDC uses discovery and does not hard-code Authentik endpoints. Register the
 exact redirect URL with the provider. Login starts at `/auth/login`, the

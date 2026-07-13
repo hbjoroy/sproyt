@@ -9,6 +9,7 @@ data:
   SPROYT_ENV: {{ .Values.config.environment | quote }}
   SPROYT_LOG_FORMAT: {{ .Values.config.logFormat | quote }}
   SPROYT_AUTH_MODE: {{ .Values.config.authMode | quote }}
+  SPROYT_WS_IDLE_TIMEOUT_SECONDS: {{ .Values.config.websocketIdleTimeoutSeconds | quote }}
   SPROYT_OIDC_ISSUER: {{ required "config.oidcIssuer must be the Authentik provider issuer" .Values.config.oidcIssuer | quote }}
   SPROYT_OIDC_CLIENT_ID: {{ required "config.oidcClientId must be set" .Values.config.oidcClientId | quote }}
   SPROYT_OIDC_REDIRECT_URL: {{ .Values.config.oidcRedirectUrl | quote }}

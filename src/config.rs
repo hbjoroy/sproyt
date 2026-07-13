@@ -1,10 +1,11 @@
-use std::{env, fmt, net::SocketAddr};
+use std::{env, fmt, net::SocketAddr, time::Duration};
 
 const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:9010";
 const DEFAULT_DATABASE_URL: &str = "sqlite://.local/sproyt.sqlite";
 const DEFAULT_ENVIRONMENT: &str = "development";
 const DEFAULT_LOG_FORMAT: &str = "pretty";
 const DEFAULT_AUTH_MODE: &str = "development";
+const DEFAULT_WS_IDLE_TIMEOUT_SECONDS: u64 = 60;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppConfig {
@@ -14,6 +15,7 @@ pub struct AppConfig {
     log_format: LogFormat,
     auth_mode: AuthMode,
     oidc: Option<OidcConfig>,
+    websocket_idle_timeout: Duration,
 }
 
 impl AppConfig {
@@ -49,6 +51,8 @@ impl AppConfig {
         if config.auth_mode == AuthMode::Oidc {
             config.oidc = Some(OidcConfig::from_env()?);
         }
+        config.websocket_idle_timeout =
+            parse_idle_timeout(env::var("SPROYT_WS_IDLE_TIMEOUT_SECONDS").ok().as_deref())?;
         Ok(config)
     }
 
@@ -77,6 +81,7 @@ impl AppConfig {
             log_format,
             auth_mode,
             oidc: None,
+            websocket_idle_timeout: Duration::from_secs(DEFAULT_WS_IDLE_TIMEOUT_SECONDS),
         })
     }
 
@@ -103,6 +108,25 @@ impl AppConfig {
     pub const fn oidc(&self) -> Option<&OidcConfig> {
         self.oidc.as_ref()
     }
+
+    pub const fn websocket_idle_timeout(&self) -> Duration {
+        self.websocket_idle_timeout
+    }
+}
+
+fn parse_idle_timeout(value: Option<&str>) -> Result<Duration, ConfigError> {
+    let seconds = match value {
+        None => DEFAULT_WS_IDLE_TIMEOUT_SECONDS,
+        Some(value) => value
+            .parse::<u64>()
+            .map_err(|_| ConfigError::InvalidWebSocketIdleTimeout(value.to_owned()))?,
+    };
+    if !(5..=3600).contains(&seconds) {
+        return Err(ConfigError::InvalidWebSocketIdleTimeout(
+            seconds.to_string(),
+        ));
+    }
+    Ok(Duration::from_secs(seconds))
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -301,6 +325,7 @@ pub enum ConfigError {
     InvalidAuthMode(String),
     InvalidEnvironment(String),
     InvalidLogFormat(String),
+    InvalidWebSocketIdleTimeout(String),
     MissingEnvironmentVariable(&'static str),
     UnsupportedDatabaseUrl(String),
 }
@@ -323,6 +348,10 @@ impl fmt::Display for ConfigError {
             Self::InvalidLogFormat(value) => {
                 write!(formatter, "invalid SPROYT_LOG_FORMAT value: {value}")
             }
+            Self::InvalidWebSocketIdleTimeout(value) => write!(
+                formatter,
+                "invalid SPROYT_WS_IDLE_TIMEOUT_SECONDS value: {value}; expected 5 to 3600"
+            ),
             Self::MissingEnvironmentVariable(name) => {
                 write!(formatter, "required environment variable {name} is missing")
             }
@@ -355,6 +384,18 @@ fn required_env(name: &'static str) -> Result<String, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn websocket_idle_timeout_is_bounded() {
+        assert_eq!(parse_idle_timeout(None).unwrap(), Duration::from_secs(60));
+        assert_eq!(
+            parse_idle_timeout(Some("30")).unwrap(),
+            Duration::from_secs(30)
+        );
+        assert!(parse_idle_timeout(Some("0")).is_err());
+        assert!(parse_idle_timeout(Some("3601")).is_err());
+        assert!(parse_idle_timeout(Some("not-a-number")).is_err());
+    }
 
     #[test]
     fn detects_sqlite_database_url() {

@@ -27,6 +27,7 @@ config:
   oidcPostLogoutRedirectUrl: https://sproyt.example.com/
   heartUrl: ""
   mcpAllowedOrigins: ""
+  websocketIdleTimeoutSeconds: 60
 
 secret:
   existingSecret: sproyt

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -18,6 +19,7 @@ pub async fn handle_socket(
     principal: AuthenticatedPrincipal,
     mut socket: WebSocket,
     mut shutdown: watch::Receiver<bool>,
+    idle_timeout: Duration,
 ) {
     let participant_id = principal.user.id.clone();
     if *shutdown.borrow() {
@@ -36,9 +38,18 @@ pub async fn handle_socket(
 
     let (outbound, mut outbound_events) = mpsc::channel::<ServerEnvelope>(256);
     let mut subscriptions: HashMap<ChannelId, ActiveSubscription> = HashMap::new();
+    let idle = tokio::time::sleep(idle_timeout);
+    tokio::pin!(idle);
 
     loop {
         tokio::select! {
+            () = &mut idle => {
+                let _ = socket.send(Message::Close(Some(CloseFrame {
+                    code: 1001,
+                    reason: "idle timeout".into(),
+                }))).await;
+                break;
+            }
             result = shutdown.changed() => {
                 if result.is_err() || *shutdown.borrow() {
                     let _ = socket.send(Message::Close(Some(CloseFrame {
@@ -54,6 +65,7 @@ pub async fn handle_socket(
                 }
             }
             frame = socket.recv() => {
+                idle.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
                 match frame {
                     Some(Ok(Message::Text(text))) => {
                         let envelope = match serde_json::from_str::<ClientEnvelope>(&text) {

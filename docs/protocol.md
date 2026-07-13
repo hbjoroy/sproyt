@@ -70,6 +70,12 @@ First stable command set:
 - `mark_read`
 - `ping`
 
+Clients should send `ping` more frequently than the configured
+`SPROYT_WS_IDLE_TIMEOUT_SECONDS` value. The browser sends one every 20 seconds.
+Any inbound WebSocket frame renews the idle deadline; an expired connection is
+closed with WebSocket code 1001 and reason `idle timeout`, after which clients
+reconnect and catch up by sequence.
+
 The running WebSocket endpoint accepts only the versioned `sproyt.chat.v1`
 envelope. Unknown protocol versions and command types return stable structured
 errors; there is no parallel legacy command path.
