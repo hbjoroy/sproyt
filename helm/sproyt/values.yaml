@@ -37,6 +37,8 @@ secret:
   oidcClientSecretKey: SPROYT_OIDC_CLIENT_SECRET
   sessionKeyKey: SPROYT_SESSION_KEY
   sessionPreviousKeysKey: SPROYT_SESSION_PREVIOUS_KEYS
+  # Change this opaque value when externally managed secret contents change.
+  rolloutChecksum: ""
 
 resources:
   requests:
@@ -64,5 +66,12 @@ monitoring:
 
 networkPolicy:
   enabled: true
+  # Empty means ingress is limited to pods in the release namespace.
   ingressNamespaceSelector: {}
+  dnsNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: kube-system
+  databaseSameNamespace: true
+  databaseNamespaceSelector: {}
+  databasePodSelector: {}
   databaseCidrs: []

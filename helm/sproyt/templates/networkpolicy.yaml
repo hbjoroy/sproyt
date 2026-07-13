@@ -13,14 +13,18 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
+        - podSelector: {}
+        {{- with .Values.networkPolicy.ingressNamespaceSelector }}
         - namespaceSelector:
-            {{- toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: 9010
   egress:
     - to:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.dnsNamespaceSelector | nindent 12 }}
       ports:
         - protocol: UDP
           port: 53
@@ -29,8 +33,25 @@ spec:
     - ports:
         - protocol: TCP
           port: 443
+    {{- if .Values.networkPolicy.databaseSameNamespace }}
+    - to:
+        - podSelector: {}
+      ports:
         - protocol: TCP
           port: 5432
+    {{- end }}
+    {{- with .Values.networkPolicy.databaseNamespaceSelector }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- with $.Values.networkPolicy.databasePodSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
     {{- range .Values.networkPolicy.databaseCidrs }}
     - to:
         - ipBlock:

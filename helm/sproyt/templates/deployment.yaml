@@ -19,6 +19,11 @@ spec:
     metadata:
       labels:
         {{- include "sproyt.labels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.secret.rolloutChecksum }}
+        sproyt.me/secret-rollout-checksum: {{ . | quote }}
+        {{- end }}
     spec:
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       serviceAccountName: {{ include "sproyt.fullname" . }}

@@ -7,6 +7,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{- define "sproyt.image" -}}
+{{- if and (eq .Values.config.environment "production") (not .Values.image.digest) -}}
+{{- fail "image.digest is required when config.environment=production" -}}
+{{- end -}}
 {{- if .Values.image.digest -}}
 {{ printf "%s@%s" .Values.image.repository .Values.image.digest }}
 {{- else -}}

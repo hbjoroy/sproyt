@@ -226,6 +226,9 @@ jobs:
           --set monitoring.grafanaDashboard.enabled=true
           > rendered-manifests.yaml
 
+      - name: Verify Helm production delivery contract
+        run: bash tools/verify-helm-delivery.sh helm/sproyt ${{ steps.image-evidence.outputs.digest }}
+
       - name: Create ephemeral Kubernetes cluster
         uses: engineerd/setup-kind@v0.6.0
         with:
