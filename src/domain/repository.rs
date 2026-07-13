@@ -90,6 +90,17 @@ impl fmt::Display for RepositoryError {
     }
 }
 
+impl RepositoryError {
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Conflict => "conflict",
+            Self::NotFound => "not_found",
+            Self::PermissionDenied => "permission_denied",
+            Self::Storage(_) => "storage",
+        }
+    }
+}
+
 impl std::error::Error for RepositoryError {}
 
 #[cfg(test)]

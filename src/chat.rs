@@ -387,6 +387,16 @@ impl fmt::Display for ChatError {
 
 impl std::error::Error for ChatError {}
 
+impl ChatError {
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::EngineStopped => "engine_stopped",
+            Self::Repository(error) => error.kind(),
+            Self::Validation(_) => "validation",
+        }
+    }
+}
+
 impl From<TextValidationError> for ChatError {
     fn from(value: TextValidationError) -> Self {
         Self::Validation(value)
@@ -475,7 +485,10 @@ impl ChatActor {
                 Command::ExternalMessage { message_id } => {
                     match self.repository.load_message(message_id).await {
                         Ok(message) => self.publish_message(message),
-                        Err(error) => tracing::warn!(%error, "failed to load notified message"),
+                        Err(error) => tracing::warn!(
+                            error_kind = error.kind(),
+                            "failed to load notified message"
+                        ),
                     }
                 }
             }

@@ -54,12 +54,18 @@ impl PostgresChatRepository {
                         Ok(id) => {
                             let _ = publisher.send(MessageId::from_uuid(id));
                         }
-                        Err(error) => {
-                            tracing::warn!(%error, "ignored invalid sproyt_messages notification")
+                        Err(_) => {
+                            tracing::warn!(
+                                error_kind = "invalid_uuid",
+                                "ignored invalid sproyt_messages notification"
+                            )
                         }
                     },
-                    Err(error) => {
-                        tracing::error!(%error, "PostgreSQL message listener stopped");
+                    Err(_) => {
+                        tracing::error!(
+                            error_kind = "database_listener",
+                            "PostgreSQL message listener stopped"
+                        );
                         break;
                     }
                 }
@@ -387,12 +393,13 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             transaction.commit().await.map_err(sql_error)?;
-            if let Err(error) = sqlx::query("select pg_notify('sproyt_messages', $1)")
+            if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())
                 .execute(&self.pool)
                 .await
+                .is_err()
             {
-                tracing::warn!(%error, message_id = %message.id.as_uuid(), "message persisted but realtime notification failed");
+                tracing::warn!(error_kind = "database_notify", message_id = %message.id.as_uuid(), "message persisted but realtime notification failed");
             }
             Ok(message)
         })
@@ -465,12 +472,13 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             transaction.commit().await.map_err(sql_error)?;
-            if let Err(error) = sqlx::query("select pg_notify('sproyt_messages', $1)")
+            if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())
                 .execute(&self.pool)
                 .await
+                .is_err()
             {
-                tracing::warn!(%error, message_id = %message.id.as_uuid(), "message persisted but realtime notification failed");
+                tracing::warn!(error_kind = "database_notify", message_id = %message.id.as_uuid(), "message persisted but realtime notification failed");
             }
             Ok(message)
         })

@@ -162,7 +162,7 @@ async fn app_readyz(State(state): State<AppState>) -> axum::response::Response {
     match tokio::time::timeout(Duration::from_secs(2), state.chat.health_check()).await {
         Ok(Ok(())) => (axum::http::StatusCode::OK, "ready\n").into_response(),
         Ok(Err(error)) => {
-            warn!(%error, "readiness database probe failed");
+            warn!(error_kind = error.kind(), "readiness database probe failed");
             (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 "dependency unavailable\n",

@@ -241,7 +241,10 @@ async fn run_outbox(repository: SharedProcessRepository, gateway: SharedProcessG
                 match outcome {
                     Ok(WorkerResult::Started(result)) => {
                         if let Err(error) = repository.complete_start(job, result).await {
-                            warn!(%error, "failed to complete process outbox job");
+                            warn!(
+                                error_kind = error.kind(),
+                                "failed to complete process outbox job"
+                            );
                         }
                     }
                     Ok(WorkerResult::Event(event_type, payload)) => {
@@ -249,7 +252,10 @@ async fn run_outbox(repository: SharedProcessRepository, gateway: SharedProcessG
                             .complete_operation(job, event_type, payload)
                             .await
                         {
-                            warn!(%error, "failed to complete process outbox job");
+                            warn!(
+                                error_kind = error.kind(),
+                                "failed to complete process outbox job"
+                            );
                         }
                     }
                     Err(error) => {
@@ -257,14 +263,17 @@ async fn run_outbox(repository: SharedProcessRepository, gateway: SharedProcessG
                         if let Err(repository_error) =
                             repository.reschedule(job, error, delay).await
                         {
-                            warn!(%repository_error, "failed to reschedule process outbox job");
+                            warn!(
+                                error_kind = repository_error.kind(),
+                                "failed to reschedule process outbox job"
+                            );
                         }
                     }
                 }
             }
             Ok(None) => sleep(Duration::from_millis(500)).await,
             Err(error) => {
-                warn!(%error, "process outbox poll failed");
+                warn!(error_kind = error.kind(), "process outbox poll failed");
                 sleep(Duration::from_secs(2)).await;
             }
         }
@@ -287,6 +296,21 @@ pub enum ProcessErrorKind {
     Unavailable,
     Timeout,
     InvalidResponse,
+}
+
+impl ProcessErrorKind {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::InvalidRequest => "invalid_request",
+            Self::Unauthorized => "unauthorized",
+            Self::NotFound => "not_found",
+            Self::Conflict => "conflict",
+            Self::RateLimited => "rate_limited",
+            Self::Unavailable => "unavailable",
+            Self::Timeout => "timeout",
+            Self::InvalidResponse => "invalid_response",
+        }
+    }
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -411,10 +435,21 @@ impl HeartGateway {
         retries: usize,
     ) -> Result<Self, ProcessError> {
         let base_url = base_url.into().trim_end_matches('/').to_owned();
-        if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
+        let parsed = reqwest::Url::parse(&base_url).map_err(|_| ProcessError {
+            kind: ProcessErrorKind::InvalidRequest,
+            message: "Heart base URL must be an absolute http or https URL".to_owned(),
+            retryable: false,
+        })?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
             return Err(ProcessError {
                 kind: ProcessErrorKind::InvalidRequest,
-                message: "Heart base URL must use http or https".to_owned(),
+                message: "Heart base URL must not contain credentials, query, or fragment"
+                    .to_owned(),
                 retryable: false,
             });
         }
@@ -441,8 +476,8 @@ impl HeartGateway {
                     continue;
                 }
                 Err(_) => return Err(ProcessError::timeout()),
-                Ok(Err(error)) if attempt < self.retries => {
-                    warn!(attempt, %error, "retrying Heart transport failure");
+                Ok(Err(_)) if attempt < self.retries => {
+                    warn!(attempt, error_kind = "transport", "retrying Heart request");
                     sleep(backoff(attempt)).await;
                     continue;
                 }
@@ -454,6 +489,7 @@ impl HeartGateway {
                 let message = response.text().await.unwrap_or_default();
                 let error = ProcessError::status(status, message);
                 if error.retryable && attempt < self.retries {
+                    warn!(attempt, error_kind = error.kind.as_str(), "retrying Heart request");
                     sleep(backoff(attempt)).await;
                     continue;
                 }
@@ -470,7 +506,7 @@ impl HeartGateway {
 }
 
 impl ProcessGateway for HeartGateway {
-    #[instrument(skip_all, fields(%correlation_id, definition = %command.definition_name))]
+    #[instrument(skip_all, fields(%correlation_id))]
     fn start<'a>(
         &'a self,
         command: &'a StartProcess,
@@ -503,7 +539,7 @@ impl ProcessGateway for HeartGateway {
         })
     }
 
-    #[instrument(skip_all, fields(%correlation_id, correlation_key = %command.correlation_key))]
+    #[instrument(skip_all, fields(%correlation_id))]
     fn correlate<'a>(
         &'a self,
         command: &'a CorrelateMessage,
@@ -528,7 +564,10 @@ fn backoff(attempt: usize) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        io::{self, Write},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use axum::{
         Json, Router,
@@ -543,6 +582,30 @@ mod tests {
         starts: Arc<AtomicUsize>,
         instance_id: Uuid,
         timeout_id: Uuid,
+    }
+
+    #[derive(Clone, Default)]
+    struct LogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    struct LogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for LogWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            LogWriter(self.0.clone())
+        }
     }
 
     fn assert_correlation(headers: &HeaderMap) {
@@ -567,7 +630,7 @@ mod tests {
         if state.starts.fetch_add(1, Ordering::SeqCst) == 0 {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error":"try again"})),
+                Json(serde_json::json!({"error":"try again","private":"DO_NOT_LOG_HEART_BODY"})),
             );
         }
         (
@@ -647,6 +710,22 @@ mod tests {
     fn validates_heart_endpoint() {
         assert!(HeartGateway::new("https://heart.example", Duration::from_secs(2), 2).is_ok());
         assert!(HeartGateway::new("heart.example", Duration::from_secs(2), 2).is_err());
+        assert!(
+            HeartGateway::new(
+                "https://service:secret@heart.example",
+                Duration::from_secs(2),
+                2
+            )
+            .is_err()
+        );
+        assert!(
+            HeartGateway::new(
+                "https://heart.example?token=secret",
+                Duration::from_secs(2),
+                2
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -659,6 +738,13 @@ mod tests {
     async fn heart_gateway_contract_covers_success_failure_timeout_and_retry() {
         let (gateway, state) = heart_contract_server().await;
         let correlation_id = Uuid::now_v7();
+        let logs = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_writer(logs.clone())
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
         let started = gateway
             .start(
                 &StartProcess {
@@ -677,6 +763,9 @@ mod tests {
             2,
             "start was not retried"
         );
+        let rendered_logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(rendered_logs.contains("error_kind=\"unavailable\""));
+        assert!(!rendered_logs.contains("DO_NOT_LOG_HEART_BODY"));
 
         let inspected = gateway
             .inspect(state.instance_id, correlation_id)
