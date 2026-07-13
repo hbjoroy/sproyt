@@ -481,6 +481,10 @@ fn mcp_jsonrpc() -> String {
 }
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
+fn is_supported_mcp_version(version: &str) -> bool {
+    matches!(version, "2025-03-26" | "2025-06-18" | MCP_PROTOCOL_VERSION)
+}
+
 async fn mcp_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -514,7 +518,7 @@ async fn mcp_handler(
             .get("mcp-protocol-version")
             .and_then(|value| value.to_str().ok())
             .unwrap_or("2025-03-26");
-        if !matches!(version, "2025-03-26" | "2025-06-18" | MCP_PROTOCOL_VERSION) {
+        if !is_supported_mcp_version(version) {
             return axum::http::StatusCode::BAD_REQUEST.into_response();
         }
     }
@@ -532,9 +536,17 @@ async fn mcp_handler(
     };
     let notification = request.id.is_null() || request.method.starts_with("notifications/");
     let response = match request.method.as_str() {
-        "initialize" => Ok(
-            serde_json::json!({"protocolVersion":MCP_PROTOCOL_VERSION,"capabilities":{"tools":{}},"serverInfo":{"name":"sproyt","version":env!("CARGO_PKG_VERSION")}}),
-        ),
+        "initialize" => {
+            let protocol_version = request
+                .params
+                .get("protocolVersion")
+                .and_then(|version| version.as_str())
+                .filter(|version| is_supported_mcp_version(version))
+                .unwrap_or(MCP_PROTOCOL_VERSION);
+            Ok(
+                serde_json::json!({"protocolVersion":protocol_version,"capabilities":{"tools":{}},"serverInfo":{"name":"sproyt","version":env!("CARGO_PKG_VERSION")}}),
+            )
+        }
         "notifications/initialized" => Ok(serde_json::Value::Null),
         "tools/list" => Ok(serde_json::json!({"tools": mcp_tools()})),
         "tools/call" => mcp_call(&state, &principal, request.params).await,
@@ -1762,6 +1774,36 @@ mod mcp_tests {
             HeaderName::from_static("mcp-protocol-version"),
             HeaderValue::from_static(MCP_PROTOCOL_VERSION),
         );
+        let initialized = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(McpRequest {
+                    jsonrpc: "2.0".to_owned(),
+                    id: serde_json::json!("initialize"),
+                    method: "initialize".to_owned(),
+                    params: serde_json::json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}),
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            initialized["result"]["protocolVersion"],
+            serde_json::json!("2025-06-18")
+        );
+        let notification = mcp_handler(
+            State(state.clone()),
+            headers.clone(),
+            Json(McpRequest {
+                jsonrpc: "2.0".to_owned(),
+                id: serde_json::Value::Null,
+                method: "notifications/initialized".to_owned(),
+                params: serde_json::json!({}),
+            }),
+        )
+        .await;
+        assert_eq!(notification.status(), axum::http::StatusCode::ACCEPTED);
         let call = |id| McpRequest {
             jsonrpc: "2.0".to_owned(),
             id: serde_json::json!(id),
@@ -1842,8 +1884,20 @@ mod mcp_tests {
             ORIGIN,
             HeaderValue::from_static("https://untrusted.invalid"),
         );
-        let response = mcp_handler(State(state), headers, Json(request())).await;
+        let response = mcp_handler(State(state.clone()), headers, Json(request())).await;
         assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/event-stream"),
+        );
+        headers.insert(
+            HeaderName::from_static("mcp-protocol-version"),
+            HeaderValue::from_static("2099-01-01"),
+        );
+        let response = mcp_handler(State(state), headers, Json(request())).await;
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 }
 
