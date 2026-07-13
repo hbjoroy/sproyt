@@ -1109,6 +1109,37 @@ const INDEX_HTML: &str = r##"<!doctype html>
         align-items: end;
       }
 
+      .process-tools {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        align-items: end;
+        padding-top: 10px;
+        border-top: 1px solid #e4e5de;
+      }
+
+      .process-view {
+        display: grid;
+        gap: 8px;
+        padding: 10px;
+        border: 1px solid #dfe3dc;
+        border-radius: 8px;
+      }
+
+      .process-event {
+        display: grid;
+        gap: 4px;
+        padding: 8px;
+        border-left: 3px solid #245b45;
+        background: #f4f6f3;
+      }
+
+      .process-event pre {
+        margin: 0;
+        overflow-x: auto;
+        white-space: pre-wrap;
+      }
+
       .status {
         color: #506057;
         min-height: 1.2em;
@@ -1250,6 +1281,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         .connect,
         .circle-tools,
+        .process-tools,
         form.send {
           grid-template-columns: 1fr;
         }
@@ -1301,6 +1333,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
           background: #eef3ee;
           border-color: #344038;
         }
+
+        .process-tools {
+          border-color: #344038;
+        }
+
+        .process-view,
+        .process-event {
+          background: #19211c;
+          border-color: #344038;
+        }
       }
     </style>
   </head>
@@ -1331,6 +1373,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <label>Invitasjonstoken<input id="invitation-token" placeholder="Lim inn token"></label>
           <button id="accept-invitation" type="button" disabled>Godta</button>
         </div>
+        <div class="process-tools" aria-label="Event-planlegging">
+          <button id="enable-heart" type="button" disabled>Slå på event-planlegging</button>
+          <label>Tittel<input id="process-title" placeholder="Middag på laurdag"></label>
+          <button id="start-process" type="button" disabled>Start planlegging</button>
+          <label>Prosess-ID<input id="process-id" autocomplete="off"></label>
+          <button id="refresh-process" type="button" disabled>Oppdater status</button>
+          <button id="inspect-process" type="button" disabled>Hent Heart-status</button>
+          <button id="process-yes" type="button" disabled>Svar ja</button>
+          <button id="process-no" type="button" disabled>Svar nei</button>
+        </div>
+        <section class="process-view" id="process-view" aria-live="polite" hidden></section>
         <div class="view-controls" aria-label="Meldingsvising">
           <button id="view-mode" type="button" aria-pressed="true">View</button>
           <button id="raw-mode" type="button" aria-pressed="false">Raw</button>
@@ -1368,6 +1421,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const circleChannel = document.querySelector("#circle-channel");
       const invitationToken = document.querySelector("#invitation-token");
       const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation"].map((id) => document.querySelector(id));
+      const processTitle = document.querySelector("#process-title");
+      const processId = document.querySelector("#process-id");
+      const processView = document.querySelector("#process-view");
+      const processButtons = ["#enable-heart", "#start-process", "#refresh-process", "#inspect-process", "#process-yes", "#process-no"].map((id) => document.querySelector(id));
 
       let socket = null;
       let heartbeatTimer = null;
@@ -1411,6 +1468,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       circleButtons[3].addEventListener("click", () => {
         if (invitationToken.value.trim()) sendCommand("accept_circle_invitation", { token: invitationToken.value.trim() });
       });
+      processButtons[0].addEventListener("click", () => setHeartFeature(true));
+      processButtons[1].addEventListener("click", startEventPlanning);
+      processButtons[2].addEventListener("click", refreshProcess);
+      processButtons[3].addEventListener("click", inspectProcess);
+      processButtons[4].addEventListener("click", () => answerProcess("yes"));
+      processButtons[5].addEventListener("click", () => answerProcess("no"));
 
       function slugify(value) {
         return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
@@ -1429,6 +1492,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         seenMessageIds.clear();
         catchUpTargets.clear();
         activeChannelId = null;
+        processId.value = "";
+        processView.hidden = true;
+        processView.replaceChildren();
         messagesEl.replaceChildren();
         requestedChannelSlug = (channelInput.value.trim() || "general")
           .toLowerCase()
@@ -1481,6 +1547,108 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bodyInput.disabled = !connected;
         sendButton.disabled = !connected;
         circleButtons.forEach((button) => { button.disabled = !connected; });
+        processButtons.forEach((button) => { button.disabled = !connected; });
+      }
+
+      async function processApi(path, method = "GET", body = undefined) {
+        const participant = encodeURIComponent(participantInput.value.trim() || "guest");
+        const separator = path.includes("?") ? "&" : "?";
+        const response = await fetch(`${path}${separator}participant=${participant}`, {
+          method,
+          credentials: "same-origin",
+          headers: body === undefined ? {} : { "content-type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        const text = await response.text();
+        if (!response.ok) throw new Error(text || `HTTP ${response.status}`);
+        return text ? JSON.parse(text) : null;
+      }
+
+      async function setHeartFeature(enabled) {
+        if (!circleSelect.value) {
+          pushSystem("Vel ein vennekrets før event-planlegging blir slått på.");
+          return;
+        }
+        try {
+          await processApi(`/api/v1/circles/${circleSelect.value}/features/heart-event-planning`, "POST", { enabled });
+          pushSystem(enabled ? "Event-planlegging er slått på for kretsen." : "Event-planlegging er slått av.");
+        } catch (error) {
+          pushSystem(`Kunne ikkje endre event-planlegging: ${error.message}`);
+        }
+      }
+
+      async function startEventPlanning() {
+        if (!activeChannelId || !circleSelect.value) {
+          pushSystem("Vel ein kretskanal før du startar planlegging.");
+          return;
+        }
+        try {
+          const result = await processApi("/api/v1/processes", "POST", {
+            channel_id: activeChannelId,
+            request_id: crypto.randomUUID(),
+            namespace: "sproyt",
+            definition_name: "event-planning",
+            definition_version: "1",
+            metadata: { title: processTitle.value.trim() || "Event-planlegging" }
+          });
+          processId.value = result.process_link_id;
+          await refreshProcess();
+        } catch (error) {
+          pushSystem(`Kunne ikkje starte planlegging: ${error.message}`);
+        }
+      }
+
+      async function refreshProcess() {
+        const id = processId.value.trim();
+        if (!id) return;
+        try {
+          renderProcess(await processApi(`/api/v1/processes/${id}`));
+        } catch (error) {
+          pushSystem(`Kunne ikkje hente prosess: ${error.message}`);
+        }
+      }
+
+      async function inspectProcess() {
+        const id = processId.value.trim();
+        if (!id) return;
+        try {
+          await processApi(`/api/v1/processes/${id}/inspect`, "POST", { request_id: crypto.randomUUID() });
+          pushSystem("Heart-status er lagd i den varige køen. Oppdater status om litt.");
+        } catch (error) {
+          pushSystem(`Kunne ikkje hente Heart-status: ${error.message}`);
+        }
+      }
+
+      async function answerProcess(answer) {
+        const id = processId.value.trim();
+        if (!id) return;
+        try {
+          await processApi(`/api/v1/processes/${id}/messages`, "POST", {
+            request_id: crypto.randomUUID(), payload: { answer }
+          });
+          pushSystem(`Svaret «${answer}» er lagd i den varige køen.`);
+        } catch (error) {
+          pushSystem(`Kunne ikkje svare på prosessen: ${error.message}`);
+        }
+      }
+
+      function renderProcess(view) {
+        processView.replaceChildren();
+        processView.hidden = false;
+        const heading = document.createElement("strong");
+        heading.textContent = `${view.process.definition_name}: ${view.process.status}`;
+        processView.append(heading);
+        for (const event of view.events) {
+          const article = document.createElement("article");
+          article.className = "process-event";
+          const meta = document.createElement("span");
+          meta.className = "meta";
+          meta.textContent = `${event.event_type} · ${event.actor_id}`;
+          const payload = document.createElement("pre");
+          payload.textContent = JSON.stringify(event.payload, null, 2);
+          article.append(meta, payload);
+          processView.append(article);
+        }
       }
 
       function setRenderMode(mode) {
@@ -2084,7 +2252,7 @@ mod protocol_capacity_tests {
     use crate::{
         agent::{AgentRepository, AgentService},
         db::SqliteChatRepository,
-        process::{ProcessRepository, ProcessService},
+        process::{ProcessRepository, ProcessService, StartedProcess},
     };
     use futures_util::{SinkExt, StreamExt};
     use std::{sync::Arc, time::Instant};
@@ -2379,6 +2547,119 @@ mod protocol_capacity_tests {
         assert_eq!(agent_read["last_read_sequence"], 2);
 
         browser.close(None).await.unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn browser_process_pilot_exposes_durable_status_and_idempotent_inspect() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) =
+            start_test_server(repository.clone(), Duration::from_secs(60)).await;
+        let mut owner = connect_as(address, "process-browser-owner").await;
+        let circle = command(
+            &mut owner,
+            "process-circle",
+            "create_circle",
+            serde_json::json!({"slug":"process-circle","name":"Process circle"}),
+        )
+        .await;
+        let circle_id = circle["payload"]["circle"]["id"].as_str().unwrap();
+        let channel = command(
+            &mut owner,
+            "process-channel",
+            "create_channel",
+            serde_json::json!({"slug":"process-channel","name":"Process channel","kind":"private","circle_id":circle_id}),
+        )
+        .await;
+        let channel_id = channel["payload"]["channel"]["id"].as_str().unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{address}");
+        let feature = client
+            .post(format!("{base}/api/v1/circles/{circle_id}/features/heart-event-planning?participant=process-browser-owner"))
+            .json(&serde_json::json!({"enabled":true}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(feature.status(), reqwest::StatusCode::NO_CONTENT);
+        let started = client
+            .post(format!(
+                "{base}/api/v1/processes?participant=process-browser-owner"
+            ))
+            .json(&serde_json::json!({
+                "channel_id":channel_id,
+                "request_id":"browser-process-start",
+                "namespace":"sproyt",
+                "definition_name":"event-planning",
+                "definition_version":"1",
+                "metadata":{"title":"Dinner"}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(started.status(), reqwest::StatusCode::ACCEPTED);
+        let started: serde_json::Value = started.json().await.unwrap();
+        let process_id = started["process_link_id"].as_str().unwrap();
+        let job = repository
+            .lease_next(Duration::from_secs(30))
+            .await
+            .unwrap()
+            .unwrap();
+        repository
+            .complete_start(
+                job,
+                StartedProcess {
+                    instance_id: uuid::Uuid::now_v7(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let view = client
+            .get(format!(
+                "{base}/api/v1/processes/{process_id}?participant=process-browser-owner"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(view.status(), reqwest::StatusCode::OK);
+        let view: serde_json::Value = view.json().await.unwrap();
+        assert_eq!(view["process"]["status"], "active");
+        assert_eq!(view["events"][0]["event_type"], "process.started");
+
+        let inspect_url = format!(
+            "{base}/api/v1/processes/{process_id}/inspect?participant=process-browser-owner"
+        );
+        let inspect = client
+            .post(&inspect_url)
+            .json(&serde_json::json!({"request_id":"browser-inspect"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(inspect.status(), reqwest::StatusCode::ACCEPTED);
+        let inspect: serde_json::Value = inspect.json().await.unwrap();
+        let replay = client
+            .post(inspect_url)
+            .json(&serde_json::json!({"request_id":"browser-inspect"}))
+            .send()
+            .await
+            .unwrap();
+        let replay: serde_json::Value = replay.json().await.unwrap();
+        assert_eq!(inspect["outbox_id"], replay["outbox_id"]);
+
+        let denied = client
+            .get(format!(
+                "{base}/api/v1/processes/{process_id}?participant=process-outsider"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
+        owner.close(None).await.unwrap();
         server.abort();
     }
 
