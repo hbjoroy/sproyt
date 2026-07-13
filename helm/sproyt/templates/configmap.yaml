@@ -16,3 +16,6 @@ data:
   {{- with .Values.config.heartUrl }}
   SPROYT_HEART_URL: {{ . | quote }}
   {{- end }}
+  {{- with .Values.config.mcpAllowedOrigins }}
+  SPROYT_MCP_ALLOWED_ORIGINS: {{ . | quote }}
+  {{- end }}

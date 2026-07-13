@@ -145,22 +145,22 @@ impl AgentService {
     pub async fn revoke(&self, actor: UserId, id: Uuid) -> Result<(), RepositoryError> {
         self.repository.revoke_grant(actor, id).await
     }
-    pub async fn authorize(
+    pub async fn require_scope(
         &self,
-        credential: &str,
+        principal: &AgentPrincipal,
         circle_id: Option<CircleId>,
         channel_id: Option<ChannelId>,
         scope: AgentScope,
-    ) -> Result<AgentPrincipal, RepositoryError> {
-        let principal = self.authenticate(credential).await?;
-        if !self
+    ) -> Result<(), RepositoryError> {
+        if self
             .repository
             .has_scope(principal.agent_id.clone(), circle_id, channel_id, scope)
             .await?
         {
-            return Err(RepositoryError::PermissionDenied);
+            Ok(())
+        } else {
+            Err(RepositoryError::PermissionDenied)
         }
-        Ok(principal)
     }
     pub async fn authenticate(&self, credential: &str) -> Result<AgentPrincipal, RepositoryError> {
         let principal = self.repository.authenticate_agent(credential).await?;

@@ -12,6 +12,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use tokio::sync::watch;
 
 #[derive(Clone, Debug)]
 pub struct OperationalState {
@@ -25,6 +26,7 @@ struct OperationalStateInner {
     in_flight: AtomicU64,
     server_errors: AtomicU64,
     duration_micros: AtomicU64,
+    shutdown: watch::Sender<bool>,
 }
 
 impl Default for OperationalState {
@@ -36,6 +38,7 @@ impl Default for OperationalState {
                 in_flight: AtomicU64::new(0),
                 server_errors: AtomicU64::new(0),
                 duration_micros: AtomicU64::new(0),
+                shutdown: watch::channel(false).0,
             }),
         }
     }
@@ -48,6 +51,15 @@ impl OperationalState {
 
     pub fn is_ready(&self) -> bool {
         self.inner.ready.load(Ordering::Acquire)
+    }
+
+    pub fn begin_shutdown(&self) {
+        self.set_ready(false);
+        self.inner.shutdown.send_replace(true);
+    }
+
+    pub fn subscribe_shutdown(&self) -> watch::Receiver<bool> {
+        self.inner.shutdown.subscribe()
     }
 
     fn metrics(&self) -> String {
@@ -139,5 +151,19 @@ mod tests {
         let metrics = operations.metrics();
         assert!(metrics.contains("sproyt_ready 0"));
         assert!(!metrics.contains("message"));
+    }
+
+    #[tokio::test]
+    async fn shutdown_is_retained_for_existing_and_late_subscribers() {
+        let operations = OperationalState::default();
+        operations.set_ready(true);
+        let mut existing = operations.subscribe_shutdown();
+
+        operations.begin_shutdown();
+
+        existing.changed().await.unwrap();
+        assert!(*existing.borrow());
+        assert!(*operations.subscribe_shutdown().borrow());
+        assert!(!operations.is_ready());
     }
 }

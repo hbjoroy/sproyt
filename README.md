@@ -127,6 +127,7 @@ Runtime configuration is read from environment variables:
 | `SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL` | required for OIDC | Safe redirect after local logout. |
 | `SPROYT_SESSION_KEY` | required for OIDC | URL-safe base64 encoding of exactly 32 random bytes. |
 | `SPROYT_HEART_URL` | unset | Heart API root. When unset, ordinary chat runs normally and no outbox worker calls Heart. |
+| `SPROYT_MCP_ALLOWED_ORIGINS` | unset | Exact, comma-separated browser origins allowed to call `/mcp`. Requests without an `Origin` header remain valid for non-browser MCP clients; browser-origin requests fail closed when unset. |
 
 OIDC uses discovery and does not hard-code Authentik endpoints. Register the
 exact redirect URL with the provider. Login starts at `/auth/login`, the

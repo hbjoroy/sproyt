@@ -20,6 +20,7 @@ spec:
       labels:
         {{- include "sproyt.labels" . | nindent 8 }}
     spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       serviceAccountName: {{ include "sproyt.fullname" . }}
       automountServiceAccountToken: false
       securityContext:

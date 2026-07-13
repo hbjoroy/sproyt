@@ -1,4 +1,5 @@
 replicaCount: 2
+terminationGracePeriodSeconds: 30
 
 image:
   repository: oci.bjoroy.me/sproyt/sproyt
@@ -25,6 +26,7 @@ config:
   oidcRedirectUrl: https://sproyt.example.com/auth/callback
   oidcPostLogoutRedirectUrl: https://sproyt.example.com/
   heartUrl: ""
+  mcpAllowedOrigins: ""
 
 secret:
   existingSecret: sproyt

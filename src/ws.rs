@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use axum::extract::ws::{Message, WebSocket};
-use tokio::sync::{broadcast, mpsc};
+use axum::extract::ws::{CloseFrame, Message, WebSocket};
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::{
     auth::AuthenticatedPrincipal,
@@ -17,8 +17,18 @@ pub async fn handle_socket(
     chat: ChatEngine,
     principal: AuthenticatedPrincipal,
     mut socket: WebSocket,
+    mut shutdown: watch::Receiver<bool>,
 ) {
     let participant_id = principal.user.id.clone();
+    if *shutdown.borrow() {
+        let _ = socket
+            .send(Message::Close(Some(CloseFrame {
+                code: 1001,
+                reason: "server shutdown".into(),
+            })))
+            .await;
+        return;
+    }
     if let Err(error) = chat.ensure_user(principal.user).await {
         let _ = send(&mut socket, &ServerEnvelope::event(error_event(error))).await;
         return;
@@ -29,6 +39,15 @@ pub async fn handle_socket(
 
     loop {
         tokio::select! {
+            result = shutdown.changed() => {
+                if result.is_err() || *shutdown.borrow() {
+                    let _ = socket.send(Message::Close(Some(CloseFrame {
+                        code: 1001,
+                        reason: "server shutdown".into(),
+                    }))).await;
+                    break;
+                }
+            }
             Some(message) = outbound_events.recv() => {
                 if send(&mut socket, &message).await.is_err() {
                     break;

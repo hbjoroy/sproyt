@@ -58,6 +58,12 @@ operator in the release evidence.
 5. Watch readiness, errors, latency, restarts, PostgreSQL connections, and
    storage for at least 15 minutes.
 
+On `SIGTERM`, Sproyt first marks readiness false, stops accepting new HTTP
+work through Axum's graceful-shutdown path, and sends WebSocket close code
+1001 to every connected client. The Helm chart gives this drain 30 seconds
+before Kubernetes may terminate the container. Keep the chart's
+`terminationGracePeriodSeconds` at or above the application grace period.
+
 For application regressions, roll back the Deployment to the previous image.
 Migrations must remain expand-and-contract compatible; never roll a database
 schema backward as the first response. Disable an incomplete capability with

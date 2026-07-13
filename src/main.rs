@@ -16,7 +16,7 @@ use axum::{
     extract::{Path, Query, State, ws::WebSocketUpgrade},
     http::{
         HeaderMap, HeaderName, HeaderValue,
-        header::{AUTHORIZATION, COOKIE, LOCATION, SET_COOKIE},
+        header::{ACCEPT, AUTHORIZATION, COOKIE, LOCATION, ORIGIN, SET_COOKIE},
     },
     middleware,
     response::{Html, IntoResponse},
@@ -31,7 +31,7 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    agent::{AgentScope, AgentService, CreateAgent, GrantAgent},
+    agent::{AgentPrincipal, AgentScope, AgentService, CreateAgent, GrantAgent},
     auth::AuthService,
     chat::{ChatEngine, ChatError},
     config::{AppConfig, AuthMode, LogFormat},
@@ -464,6 +464,8 @@ async fn revoke_agent_grant(
 
 #[derive(Deserialize)]
 struct McpRequest {
+    #[serde(default = "mcp_jsonrpc")]
+    jsonrpc: String,
     #[serde(default)]
     id: serde_json::Value,
     method: String,
@@ -471,26 +473,89 @@ struct McpRequest {
     params: serde_json::Value,
 }
 
+fn mcp_jsonrpc() -> String {
+    "2.0".to_owned()
+}
+const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+
 async fn mcp_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<McpRequest>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    if let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok()) {
+        let allowed = std::env::var("SPROYT_MCP_ALLOWED_ORIGINS").unwrap_or_default();
+        if !allowed
+            .split(',')
+            .map(str::trim)
+            .any(|candidate| !candidate.is_empty() && candidate == origin)
+        {
+            return axum::http::StatusCode::FORBIDDEN.into_response();
+        }
+    }
+    let accepts = headers
+        .get(ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !(accepts.contains("application/json") && accepts.contains("text/event-stream")) {
+        return axum::http::StatusCode::NOT_ACCEPTABLE.into_response();
+    }
+    if request.jsonrpc != "2.0" {
+        return mcp_json_response(
+            axum::http::StatusCode::BAD_REQUEST,
+            serde_json::json!({"jsonrpc":"2.0","id":request.id,"error":{"code":-32600,"message":"invalid JSON-RPC version"}}),
+        );
+    }
+    if request.method != "initialize" {
+        let version = headers
+            .get("mcp-protocol-version")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("2025-03-26");
+        if !matches!(version, "2025-03-26" | "2025-06-18" | MCP_PROTOCOL_VERSION) {
+            return axum::http::StatusCode::BAD_REQUEST.into_response();
+        }
+    }
+    let credential = match headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    {
+        Some(value) => value,
+        None => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+    };
+    let principal = match state.agents.authenticate(credential).await {
+        Ok(value) => value,
+        Err(_) => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+    };
+    let notification = request.id.is_null() || request.method.starts_with("notifications/");
     let response = match request.method.as_str() {
         "initialize" => Ok(
-            serde_json::json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"sproyt","version":env!("CARGO_PKG_VERSION")}}),
+            serde_json::json!({"protocolVersion":MCP_PROTOCOL_VERSION,"capabilities":{"tools":{}},"serverInfo":{"name":"sproyt","version":env!("CARGO_PKG_VERSION")}}),
         ),
         "notifications/initialized" => Ok(serde_json::Value::Null),
         "tools/list" => Ok(serde_json::json!({"tools": mcp_tools()})),
-        "tools/call" => mcp_call(&state, &headers, request.params).await,
+        "tools/call" => mcp_call(&state, &principal, request.params).await,
         _ => Err((-32601, "method not found".to_owned())),
     };
-    Json(match response {
-        Ok(result) => serde_json::json!({"jsonrpc":"2.0","id":request.id,"result":result}),
-        Err((code, message)) => {
-            serde_json::json!({"jsonrpc":"2.0","id":request.id,"error":{"code":code,"message":message}})
-        }
-    })
+    if notification {
+        return axum::http::StatusCode::ACCEPTED.into_response();
+    }
+    mcp_json_response(
+        axum::http::StatusCode::OK,
+        match response {
+            Ok(result) => serde_json::json!({"jsonrpc":"2.0","id":request.id,"result":result}),
+            Err((code, message)) => {
+                serde_json::json!({"jsonrpc":"2.0","id":request.id,"error":{"code":code,"message":message}})
+            }
+        },
+    )
+}
+
+fn mcp_json_response(
+    status: axum::http::StatusCode,
+    value: serde_json::Value,
+) -> axum::response::Response {
+    (status, Json(value)).into_response()
 }
 
 fn mcp_tools() -> serde_json::Value {
@@ -504,14 +569,9 @@ fn mcp_tools() -> serde_json::Value {
 
 async fn mcp_call(
     state: &AppState,
-    headers: &HeaderMap,
+    principal: &AgentPrincipal,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, (i64, String)> {
-    let credential = headers
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or((-32001, "missing bearer credential".to_owned()))?;
     let name = params
         .get("name")
         .and_then(|v| v.as_str())
@@ -521,27 +581,20 @@ async fn mcp_call(
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
     let result = match name {
-        "list_channels" => {
-            let principal = state
-                .agents
-                .authenticate(credential)
+        "list_channels" => serde_json::to_value(
+            state
+                .chat
+                .list_channels(principal.agent_id.clone())
                 .await
-                .map_err(mcp_repository_error)?;
-            serde_json::to_value(
-                state
-                    .chat
-                    .list_channels(principal.agent_id)
-                    .await
-                    .map_err(mcp_chat_error)?,
-            )
-            .map_err(|e| (-32603, e.to_string()))?
-        }
+                .map_err(mcp_chat_error)?,
+        )
+        .map_err(|e| (-32603, e.to_string()))?,
         "read_messages" => {
             let channel = mcp_channel(&args)?;
-            let principal = state
+            state
                 .agents
-                .authorize(
-                    credential,
+                .require_scope(
+                    principal,
                     None,
                     Some(channel.clone()),
                     AgentScope::ReadHistory,
@@ -560,7 +613,12 @@ async fn mcp_call(
             serde_json::to_value(
                 state
                     .chat
-                    .load_messages(principal.agent_id, channel, MessageLimit::new(limit), after)
+                    .load_messages(
+                        principal.agent_id.clone(),
+                        channel,
+                        MessageLimit::new(limit),
+                        after,
+                    )
                     .await
                     .map_err(mcp_chat_error)?,
             )
@@ -568,10 +626,10 @@ async fn mcp_call(
         }
         "send_message" => {
             let channel = mcp_channel(&args)?;
-            let principal = state
+            state
                 .agents
-                .authorize(
-                    credential,
+                .require_scope(
+                    principal,
                     None,
                     Some(channel.clone()),
                     AgentScope::SendMessages,
@@ -591,7 +649,7 @@ async fn mcp_call(
                 .to_owned();
             let delegated =
                 args.get("provenance").and_then(|value| value.as_str()) == Some("delegated");
-            let agent_id = principal.agent_id;
+            let agent_id = principal.agent_id.clone();
             let message = state
                 .chat
                 .send_message_idempotent(channel, agent_id.clone(), body, request_id)
@@ -613,10 +671,10 @@ async fn mcp_call(
         }
         "mark_read" => {
             let channel = mcp_channel(&args)?;
-            let principal = state
+            state
                 .agents
-                .authorize(
-                    credential,
+                .require_scope(
+                    principal,
                     None,
                     Some(channel.clone()),
                     AgentScope::ReadHistory,
@@ -630,7 +688,11 @@ async fn mcp_call(
             serde_json::to_value(
                 state
                     .chat
-                    .mark_read(principal.agent_id, channel, ChannelSequence::new(sequence))
+                    .mark_read(
+                        principal.agent_id.clone(),
+                        channel,
+                        ChannelSequence::new(sequence),
+                    )
                     .await
                     .map_err(mcp_chat_error)?,
             )
@@ -730,9 +792,8 @@ async fn shutdown_signal(operations: OperationalState) {
         () = terminate => {},
     }
 
-    operations.set_ready(false);
+    operations.begin_shutdown();
     info!(grace_period_seconds = 30, "shutdown requested");
-    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 async fn ws_handler(
@@ -748,8 +809,9 @@ async fn ws_handler(
             return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
         }
     };
+    let shutdown = state.operations.subscribe_shutdown();
     upgrade
-        .on_upgrade(move |socket| ws::handle_socket(state.chat, principal, socket))
+        .on_upgrade(move |socket| ws::handle_socket(state.chat, principal, socket, shutdown))
         .into_response()
 }
 
@@ -1612,6 +1674,13 @@ mod mcp_tests {
     use chrono::Utc;
     use std::sync::Arc;
 
+    async fn response_json(response: axum::response::Response) -> serde_json::Value {
+        let body = axum::body::to_bytes(response.into_body(), 1_048_576)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
     #[tokio::test]
     async fn mcp_uses_agent_scope_idempotency_and_immediate_revocation() {
         let repository = Arc::new(
@@ -1682,17 +1751,26 @@ mod mcp_tests {
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", created.credential)).unwrap(),
         );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/event-stream"),
+        );
+        headers.insert(
+            HeaderName::from_static("mcp-protocol-version"),
+            HeaderValue::from_static(MCP_PROTOCOL_VERSION),
+        );
         let call = |id| McpRequest {
+            jsonrpc: "2.0".to_owned(),
             id: serde_json::json!(id),
             method: "tools/call".to_owned(),
             params: serde_json::json!({"name":"send_message","arguments":{"channel_id":channel.id.to_string(),"body":"from agent","request_id":"mcp-send-1","provenance":"delegated"}}),
         };
-        let first = mcp_handler(State(state.clone()), headers.clone(), Json(call(1)))
-            .await
-            .0;
-        let repeated = mcp_handler(State(state.clone()), headers.clone(), Json(call(2)))
-            .await
-            .0;
+        let first =
+            response_json(mcp_handler(State(state.clone()), headers.clone(), Json(call(1))).await)
+                .await;
+        let repeated =
+            response_json(mcp_handler(State(state.clone()), headers.clone(), Json(call(2))).await)
+                .await;
         assert!(first.get("result").is_some(), "{first}");
         assert_eq!(
             first["result"]["structuredContent"]["message"]["id"],
@@ -1723,7 +1801,45 @@ mod mcp_tests {
             crate::agent::ActivityProvenance::HumanApproved
         );
         agents.revoke(owner, grant_id).await.unwrap();
-        let revoked = mcp_handler(State(state), headers, Json(call(3))).await.0;
+        let revoked = response_json(mcp_handler(State(state), headers, Json(call(3))).await).await;
         assert!(revoked.get("error").is_some(), "{revoked}");
+    }
+
+    #[tokio::test]
+    async fn mcp_rejects_incompatible_transport_requests_before_dispatch() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let state = AppState {
+            auth: AuthService::development(),
+            chat: ChatEngine::start(repository.clone()),
+            operations: OperationalState::default(),
+            processes: ProcessService::start(repository.clone(), None),
+            agents: AgentService::new(repository),
+        };
+        let request = || McpRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(1),
+            method: "tools/list".to_owned(),
+            params: serde_json::json!({}),
+        };
+
+        let response = mcp_handler(State(state.clone()), HeaderMap::new(), Json(request())).await;
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_ACCEPTABLE);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/event-stream"),
+        );
+        headers.insert(
+            ORIGIN,
+            HeaderValue::from_static("https://untrusted.invalid"),
+        );
+        let response = mcp_handler(State(state), headers, Json(request())).await;
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
     }
 }
