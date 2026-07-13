@@ -1055,6 +1055,8 @@ mod tests {
             })
             .await
             .unwrap();
+        let replica = PostgresChatRepository::connect(&url).await.unwrap();
+        let mut replica_events = replica.subscribe_messages().unwrap();
         let message = repository
             .append_message(SendMessage {
                 actor: alice.clone(),
@@ -1063,7 +1065,13 @@ mod tests {
             })
             .await
             .unwrap();
-        let loaded = repository
+        let notified =
+            tokio::time::timeout(std::time::Duration::from_secs(2), replica_events.recv())
+                .await
+                .expect("second replica did not receive PostgreSQL notification")
+                .unwrap();
+        assert_eq!(notified, message.id);
+        let loaded = replica
             .load_recent_messages(LoadRecentMessages {
                 actor: alice.clone(),
                 channel_id: channel.id.clone(),
