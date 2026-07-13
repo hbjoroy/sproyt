@@ -240,16 +240,24 @@ impl OidcService {
             .map_err(AuthError::external)?;
         let subject = claims.subject().as_str().to_owned();
         let principal = principal(&self.issuer, &subject, &subject)?;
+        let now = now_seconds();
+        let token_expires_at =
+            u64::try_from(claims.expiration().timestamp()).map_err(|_| AuthError::Unauthorized)?;
+        let expires_at = token_expires_at.min(now.saturating_add(SESSION_TTL_SECONDS));
+        let max_age = expires_at
+            .checked_sub(now)
+            .filter(|max_age| *max_age > 0)
+            .ok_or(AuthError::Unauthorized)?;
         let session = SessionClaims {
             issuer: self.issuer.clone(),
             subject,
             display_name: principal.user.display_name.to_string(),
-            expires_at: now_seconds() + SESSION_TTL_SECONDS,
+            expires_at,
         };
         let value = self.codec.seal(&session)?;
         Ok(LoginComplete {
             principal,
-            set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", SESSION_TTL_SECONDS),
+            set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", max_age),
             clear_transaction_cookie: clear_cookie(LOGIN_COOKIE, "/auth/callback"),
         })
     }
@@ -260,9 +268,7 @@ impl OidcService {
     ) -> Result<AuthenticatedPrincipal, AuthError> {
         let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
         let claims: SessionClaims = self.codec.open(value)?;
-        if claims.expires_at < now_seconds() || claims.issuer != self.issuer {
-            return Err(AuthError::Unauthorized);
-        }
+        validate_session_claims(&claims, &self.issuer)?;
         principal(&claims.issuer, &claims.subject, &claims.display_name)
     }
 }
@@ -281,6 +287,13 @@ struct SessionClaims {
     subject: String,
     display_name: String,
     expires_at: u64,
+}
+
+fn validate_session_claims(claims: &SessionClaims, issuer: &str) -> Result<(), AuthError> {
+    if claims.expires_at <= now_seconds() || claims.issuer != issuer {
+        return Err(AuthError::Unauthorized);
+    }
+    Ok(())
 }
 
 struct CookieCodec {
@@ -604,6 +617,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn expired_session_is_rejected() {
+        let claims = SessionClaims {
+            issuer: "https://issuer.example".to_owned(),
+            subject: "alice".to_owned(),
+            display_name: "Alice".to_owned(),
+            expires_at: now_seconds().saturating_sub(1),
+        };
+
+        assert!(matches!(
+            validate_session_claims(&claims, "https://issuer.example"),
+            Err(AuthError::Unauthorized)
+        ));
+    }
+
     #[tokio::test]
     async fn oidc_discovery_callback_state_nonce_session_and_logout_contract() {
         let (config, provider, server) = test_oidc_provider().await;
@@ -641,6 +669,16 @@ mod tests {
         assert_eq!(complete.principal.subject, "authentik-user-1");
         assert_eq!(complete.principal.issuer, provider.issuer);
         assert!(complete.clear_transaction_cookie.contains("Max-Age=0"));
+        let max_age = complete
+            .set_cookie
+            .split(';')
+            .map(str::trim)
+            .find_map(|attribute| attribute.strip_prefix("Max-Age="))
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        assert!((1..=300).contains(&max_age));
+        assert_ne!(max_age, SESSION_TTL_SECONDS);
         let restored = auth
             .authenticate_session(Some(&complete.set_cookie))
             .unwrap();

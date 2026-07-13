@@ -489,7 +489,11 @@ impl HeartGateway {
                 let message = response.text().await.unwrap_or_default();
                 let error = ProcessError::status(status, message);
                 if error.retryable && attempt < self.retries {
-                    warn!(attempt, error_kind = error.kind.as_str(), "retrying Heart request");
+                    warn!(
+                        attempt,
+                        error_kind = error.kind.as_str(),
+                        "retrying Heart request"
+                    );
                     sleep(backoff(attempt)).await;
                     continue;
                 }
