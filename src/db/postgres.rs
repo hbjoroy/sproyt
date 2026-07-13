@@ -1182,6 +1182,26 @@ mod tests {
                 "{action} has no cause payload"
             );
         }
+        let membership_left = sqlx::query_as::<
+            _,
+            (Option<uuid::Uuid>, String, String, serde_json::Value),
+        >(
+            "select actor_id,target_kind,target_id,payload from audit_events where action='channel.membership_left'",
+        )
+        .fetch_all(&repository.pool)
+        .await
+        .unwrap();
+        assert!(!membership_left.is_empty());
+        assert!(
+            membership_left
+                .iter()
+                .all(|(actor, kind, target, payload)| {
+                    actor.is_some()
+                        && kind == "channel"
+                        && !target.is_empty()
+                        && payload != &serde_json::json!({})
+                })
+        );
         let process_events = sqlx::query_as::<_, (String, Option<uuid::Uuid>)>(
             "select event_type, actor_id from process_events",
         )

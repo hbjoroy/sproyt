@@ -85,8 +85,8 @@ where
     use crate::domain::{
         AcceptCircleInvitation, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
         CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName, JoinChannel,
-        LoadRecentMessages, MarkRead, MessageBody, MessageLimit, PrincipalKind, SendMessage, User,
-        UserId,
+        LeaveChannel, LoadRecentMessages, MarkRead, MessageBody, MessageLimit, PrincipalKind,
+        SendMessage, User, UserId,
     };
     use chrono::Utc;
 
@@ -272,18 +272,36 @@ where
     repository
         .join_channel(JoinChannel {
             actor: member.clone(),
-            channel: ChannelRef::Id(circle_channel.id),
+            channel: ChannelRef::Id(circle_channel.id.clone()),
         })
         .await
         .unwrap();
     assert_eq!(
         repository
             .accept_circle_invitation(AcceptCircleInvitation {
-                actor: member,
+                actor: member.clone(),
                 token: invite.token,
             })
             .await,
         Err(RepositoryError::NotFound)
+    );
+    repository
+        .leave_channel(LeaveChannel {
+            actor: member.clone(),
+            channel_id: circle_channel.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .load_recent_messages(LoadRecentMessages {
+                actor: member,
+                channel_id: circle_channel.id,
+                limit: MessageLimit::DEFAULT,
+                after: None,
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
     );
 }
 
