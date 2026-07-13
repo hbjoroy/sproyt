@@ -680,7 +680,11 @@ fn mcp_tools() -> serde_json::Value {
       {"name":"list_channels","description":"List channels granted to this agent","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
       {"name":"read_messages","description":"Read channel history","inputSchema":{"type":"object","required":["channel_id"],"properties":{"channel_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200},"after_sequence":{"type":"integer","minimum":0}},"additionalProperties":false}},
       {"name":"send_message","description":"Send an agent-authored message","inputSchema":{"type":"object","required":["channel_id","body","request_id"],"properties":{"channel_id":{"type":"string"},"body":{"type":"string"},"request_id":{"type":"string"},"provenance":{"type":"string","enum":["generated","delegated"],"default":"generated"}},"additionalProperties":false}},
-      {"name":"mark_read","description":"Advance the agent read marker","inputSchema":{"type":"object","required":["channel_id","sequence"],"properties":{"channel_id":{"type":"string"},"sequence":{"type":"integer","minimum":0}},"additionalProperties":false}}
+      {"name":"mark_read","description":"Advance the agent read marker","inputSchema":{"type":"object","required":["channel_id","sequence"],"properties":{"channel_id":{"type":"string"},"sequence":{"type":"integer","minimum":0}},"additionalProperties":false}},
+      {"name":"start_process","description":"Start an enabled Heart process from a channel","inputSchema":{"type":"object","required":["channel_id","request_id","namespace","definition_name"],"properties":{"channel_id":{"type":"string"},"request_id":{"type":"string"},"namespace":{"type":"string"},"definition_name":{"type":"string"},"definition_version":{"type":"string"},"metadata":{"type":"object"}},"additionalProperties":false}},
+      {"name":"get_process","description":"Read a process linked to an authorized channel","inputSchema":{"type":"object","required":["process_link_id"],"properties":{"process_link_id":{"type":"string"}},"additionalProperties":false}},
+      {"name":"inspect_process","description":"Request a fresh Heart process inspection","inputSchema":{"type":"object","required":["process_link_id","request_id"],"properties":{"process_link_id":{"type":"string"},"request_id":{"type":"string"}},"additionalProperties":false}},
+      {"name":"complete_process_work","description":"Correlate an authorized response to a Heart receive node","inputSchema":{"type":"object","required":["process_link_id","request_id","payload"],"properties":{"process_link_id":{"type":"string"},"request_id":{"type":"string"},"payload":{}},"additionalProperties":false}}
     ])
 }
 
@@ -830,6 +834,90 @@ async fn mcp_call(
             )
             .map_err(|e| (-32603, e.to_string()))?
         }
+        "start_process" => {
+            let channel = mcp_channel(&args)?;
+            state
+                .agents
+                .require_scope(
+                    principal,
+                    None,
+                    Some(channel.clone()),
+                    AgentScope::StartProcesses,
+                )
+                .await
+                .map_err(mcp_repository_error)?;
+            let request_id = mcp_required_string(&args, "request_id")?;
+            let namespace = mcp_required_string(&args, "namespace")?;
+            let definition_name = mcp_required_string(&args, "definition_name")?;
+            let definition_version = args
+                .get("definition_version")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            let metadata = args
+                .get("metadata")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            serde_json::to_value(
+                state
+                    .processes
+                    .enqueue_start(EnqueueProcessStart {
+                        channel_id: channel,
+                        actor: principal.agent_id.clone(),
+                        request_id,
+                        namespace,
+                        definition_name,
+                        definition_version,
+                        metadata,
+                    })
+                    .await
+                    .map_err(mcp_repository_error)?,
+            )
+            .map_err(|_| (-32603, "failed to encode tool result".to_owned()))?
+        }
+        "get_process" => {
+            let (_, view) =
+                mcp_process_with_scope(state, principal, &args, AgentScope::CompleteProcessWork)
+                    .await?;
+            serde_json::to_value(view)
+                .map_err(|_| (-32603, "failed to encode tool result".to_owned()))?
+        }
+        "inspect_process" => {
+            let (process_link_id, _) =
+                mcp_process_with_scope(state, principal, &args, AgentScope::CompleteProcessWork)
+                    .await?;
+            let request_id = mcp_required_string(&args, "request_id")?;
+            let outbox_id = state
+                .processes
+                .enqueue_inspection(EnqueueInspection {
+                    process_link_id,
+                    actor: principal.agent_id.clone(),
+                    request_id,
+                })
+                .await
+                .map_err(mcp_repository_error)?;
+            serde_json::json!({"outbox_id":outbox_id.as_uuid()})
+        }
+        "complete_process_work" => {
+            let (process_link_id, _) =
+                mcp_process_with_scope(state, principal, &args, AgentScope::CompleteProcessWork)
+                    .await?;
+            let request_id = mcp_required_string(&args, "request_id")?;
+            let payload = args
+                .get("payload")
+                .cloned()
+                .ok_or((-32602, "missing payload".to_owned()))?;
+            let outbox_id = state
+                .processes
+                .enqueue_correlation(EnqueueCorrelation {
+                    process_link_id,
+                    actor: principal.agent_id.clone(),
+                    request_id,
+                    payload,
+                })
+                .await
+                .map_err(mcp_repository_error)?;
+            serde_json::json!({"outbox_id":outbox_id.as_uuid()})
+        }
         _ => return Err((-32602, "unknown tool".to_owned())),
     };
     Ok(
@@ -844,6 +932,48 @@ fn mcp_channel(args: &serde_json::Value) -> Result<ChannelId, (i64, String)> {
             .ok_or((-32602, "missing channel_id".to_owned()))?,
     )
     .map_err(|e| (-32602, e.to_string()))
+}
+
+fn mcp_required_string(
+    args: &serde_json::Value,
+    name: &'static str,
+) -> Result<String, (i64, String)> {
+    args.get(name)
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or((-32602, format!("missing {name}")))
+}
+
+async fn mcp_process_with_scope(
+    state: &AppState,
+    principal: &AgentPrincipal,
+    args: &serde_json::Value,
+    scope: AgentScope,
+) -> Result<(ProcessLinkId, crate::process::ProcessView), (i64, String)> {
+    let process_link_id = args
+        .get("process_link_id")
+        .and_then(|value| value.as_str())
+        .ok_or((-32602, "missing process_link_id".to_owned()))
+        .and_then(|value| {
+            ProcessLinkId::parse(value).map_err(|_| (-32602, "invalid process_link_id".to_owned()))
+        })?;
+    let view = state
+        .processes
+        .get_process(principal.agent_id.clone(), process_link_id)
+        .await
+        .map_err(mcp_repository_error)?;
+    state
+        .agents
+        .require_scope(
+            principal,
+            None,
+            Some(view.process.channel_id.clone()),
+            scope,
+        )
+        .await
+        .map_err(mcp_repository_error)?;
+    Ok((process_link_id, view))
 }
 fn mcp_repository_error(error: crate::domain::RepositoryError) -> (i64, String) {
     (-32003, error.public_message().to_owned())
@@ -2307,6 +2437,291 @@ mod mcp_tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn mcp_process_tools_enforce_separate_scopes_and_idempotency() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let chat = ChatEngine::start(repository.clone());
+        let agents = AgentService::new(repository.clone());
+        let owner = UserId::named("mcp-process-owner");
+        chat.ensure_user(User {
+            id: owner.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("MCP process owner").unwrap(),
+            external_provider: Some("test".to_owned()),
+            external_subject: Some("mcp-process-owner".to_owned()),
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+        let circle = chat
+            .create_circle(
+                owner.clone(),
+                ChannelSlug::new("mcp-process-circle").unwrap(),
+                DisplayName::new("MCP process circle").unwrap(),
+            )
+            .await
+            .unwrap();
+        let channel = chat
+            .create_channel(
+                owner.clone(),
+                ChannelSlug::new("mcp-process-channel").unwrap(),
+                DisplayName::new("MCP process channel").unwrap(),
+                ChannelKind::Private,
+                Some(circle.id.clone()),
+            )
+            .await
+            .unwrap();
+        repository
+            .set_circle_feature(SetCircleFeature {
+                circle_id: circle.id,
+                actor: owner.clone(),
+                feature: "heart.event-planning".to_owned(),
+                enabled: true,
+            })
+            .await
+            .unwrap();
+        let created = agents
+            .create(CreateAgent {
+                actor: owner.clone(),
+                owner_id: owner.clone(),
+                display_name: "MCP process agent".to_owned(),
+                provider: "test".to_owned(),
+                service_identity: "mcp-process-agent".to_owned(),
+                purpose: "MCP process conformance".to_owned(),
+                rate_limit_per_minute: 60,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        let complete_grant = agents
+            .grant(GrantAgent {
+                actor: owner.clone(),
+                agent_id: created.agent_id.clone(),
+                circle_id: None,
+                channel_id: Some(channel.id.clone()),
+                scope: AgentScope::CompleteProcessWork,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        let state = AppState {
+            auth: AuthService::development(),
+            chat,
+            operations: OperationalState::default(),
+            processes: ProcessService::start(repository.clone(), None),
+            agents: agents.clone(),
+            websocket_idle_timeout: Duration::from_secs(60),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", created.credential)).unwrap(),
+        );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/event-stream"),
+        );
+        headers.insert(
+            HeaderName::from_static("mcp-protocol-version"),
+            HeaderValue::from_static(MCP_PROTOCOL_VERSION),
+        );
+        let tool_call = |id: &str, name: &str, arguments: serde_json::Value| McpRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(id),
+            method: "tools/call".to_owned(),
+            params: serde_json::json!({"name":name,"arguments":arguments}),
+        };
+        let start_args = serde_json::json!({
+            "channel_id": channel.id,
+            "request_id":"mcp-process-start",
+            "namespace":"friends",
+            "definition_name":"event-planning",
+            "metadata":{"title":"Dinner"}
+        });
+        let denied = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call(
+                    "start-denied",
+                    "start_process",
+                    start_args.clone(),
+                )),
+            )
+            .await,
+        )
+        .await;
+        assert!(denied.get("error").is_some(), "{denied}");
+        let start_grant = agents
+            .grant(GrantAgent {
+                actor: owner.clone(),
+                agent_id: created.agent_id.clone(),
+                circle_id: None,
+                channel_id: Some(channel.id.clone()),
+                scope: AgentScope::StartProcesses,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        let started = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call("start-1", "start_process", start_args.clone())),
+            )
+            .await,
+        )
+        .await;
+        let replay = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call("start-2", "start_process", start_args)),
+            )
+            .await,
+        )
+        .await;
+        let process_id = started["result"]["structuredContent"]["id"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            started["result"]["structuredContent"]["id"],
+            replay["result"]["structuredContent"]["id"]
+        );
+        let job = repository
+            .lease_next(Duration::from_secs(30))
+            .await
+            .unwrap()
+            .unwrap();
+        repository
+            .complete_start(
+                job,
+                crate::process::StartedProcess {
+                    instance_id: uuid::Uuid::now_v7(),
+                },
+            )
+            .await
+            .unwrap();
+        let process_args = serde_json::json!({"process_link_id":process_id});
+        let view = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call("get", "get_process", process_args.clone())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            view["result"]["structuredContent"]["process"]["status"],
+            "active"
+        );
+        let response_args = serde_json::json!({
+            "process_link_id":process_id,
+            "request_id":"mcp-process-response",
+            "payload":{"answer":"yes"}
+        });
+        let response = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call(
+                    "response-1",
+                    "complete_process_work",
+                    response_args.clone(),
+                )),
+            )
+            .await,
+        )
+        .await;
+        let response_replay = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call(
+                    "response-2",
+                    "complete_process_work",
+                    response_args,
+                )),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            response["result"]["structuredContent"]["outbox_id"],
+            response_replay["result"]["structuredContent"]["outbox_id"]
+        );
+        let inspect_args = serde_json::json!({
+            "process_link_id":process_id,
+            "request_id":"mcp-process-inspect"
+        });
+        let inspection = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call(
+                    "inspect-1",
+                    "inspect_process",
+                    inspect_args.clone(),
+                )),
+            )
+            .await,
+        )
+        .await;
+        let inspection_replay = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call("inspect-2", "inspect_process", inspect_args)),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            inspection["result"]["structuredContent"]["outbox_id"],
+            inspection_replay["result"]["structuredContent"]["outbox_id"]
+        );
+        agents.revoke(owner.clone(), complete_grant).await.unwrap();
+        let revoked_complete = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(tool_call("get-revoked", "get_process", process_args)),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            revoked_complete.get("error").is_some(),
+            "{revoked_complete}"
+        );
+        agents.revoke(owner, start_grant).await.unwrap();
+        let revoked_start = response_json(
+            mcp_handler(
+                State(state),
+                headers,
+                Json(tool_call(
+                    "start-revoked",
+                    "start_process",
+                    serde_json::json!({
+                        "channel_id":channel.id,
+                        "request_id":"mcp-process-start-after-revoke",
+                        "namespace":"friends",
+                        "definition_name":"event-planning"
+                    }),
+                )),
+            )
+            .await,
+        )
+        .await;
+        assert!(revoked_start.get("error").is_some(), "{revoked_start}");
     }
 
     #[tokio::test]
