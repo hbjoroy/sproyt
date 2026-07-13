@@ -301,7 +301,7 @@ where
         },
         process::{EnqueueProcessStart, StartedProcess},
     };
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     verify_chat_repository_contract(repository, &format!("{suffix}-shared-chat")).await;
     let actor = UserId::named(format!("contract-actor-{suffix}"));
     repository
@@ -433,6 +433,25 @@ where
             .agent_id,
         created_agent.agent_id
     );
+    let expired_agent = repository
+        .create_agent(CreateAgent {
+            actor: actor.clone(),
+            owner_id: actor.clone(),
+            display_name: "Expired contract agent".to_owned(),
+            provider: "contract".to_owned(),
+            service_identity: format!("expired-agent-{suffix}"),
+            purpose: "Expiry conformance".to_owned(),
+            rate_limit_per_minute: 10,
+            expires_at: Some(Utc::now() - Duration::seconds(1)),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        repository
+            .authenticate_agent(&expired_agent.credential)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    ));
     let grant = repository
         .grant_agent(GrantAgent {
             actor: actor.clone(),
@@ -468,6 +487,28 @@ where
             })
             .await,
         Err(RepositoryError::PermissionDenied)
+    );
+    repository
+        .grant_agent(GrantAgent {
+            actor: actor.clone(),
+            agent_id: created_agent.agent_id.clone(),
+            circle_id: None,
+            channel_id: Some(channel.id.clone()),
+            scope: AgentScope::StartProcesses,
+            expires_at: Some(Utc::now() - Duration::seconds(1)),
+        })
+        .await
+        .unwrap();
+    assert!(
+        !repository
+            .has_scope(
+                created_agent.agent_id.clone(),
+                None,
+                Some(channel.id.clone()),
+                AgentScope::StartProcesses,
+            )
+            .await
+            .unwrap()
     );
     repository.revoke_grant(actor.clone(), grant).await.unwrap();
     assert!(

@@ -162,6 +162,34 @@ impl AgentService {
             Err(RepositoryError::PermissionDenied)
         }
     }
+
+    pub async fn has_any_scope(
+        &self,
+        principal: &AgentPrincipal,
+        circle_id: Option<CircleId>,
+        channel_id: Option<ChannelId>,
+    ) -> Result<bool, RepositoryError> {
+        for scope in [
+            AgentScope::ReadHistory,
+            AgentScope::SendMessages,
+            AgentScope::StartProcesses,
+            AgentScope::CompleteProcessWork,
+        ] {
+            if self
+                .repository
+                .has_scope(
+                    principal.agent_id.clone(),
+                    circle_id.clone(),
+                    channel_id.clone(),
+                    scope,
+                )
+                .await?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
     pub async fn authenticate(&self, credential: &str) -> Result<AgentPrincipal, RepositoryError> {
         let principal = self.repository.authenticate_agent(credential).await?;
         let mut requests = self

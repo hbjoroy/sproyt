@@ -600,14 +600,29 @@ async fn mcp_call(
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
     let result = match name {
-        "list_channels" => serde_json::to_value(
-            state
+        "list_channels" => {
+            let channels = state
                 .chat
                 .list_channels(principal.agent_id.clone())
                 .await
-                .map_err(mcp_chat_error)?,
-        )
-        .map_err(|e| (-32603, e.to_string()))?,
+                .map_err(mcp_chat_error)?;
+            let mut granted = Vec::with_capacity(channels.len());
+            for channel in channels {
+                if state
+                    .agents
+                    .has_any_scope(
+                        principal,
+                        channel.circle_id.clone(),
+                        Some(channel.id.clone()),
+                    )
+                    .await
+                    .map_err(mcp_repository_error)?
+                {
+                    granted.push(channel);
+                }
+            }
+            serde_json::to_value(granted).map_err(|e| (-32603, e.to_string()))?
+        }
         "read_messages" => {
             let channel = mcp_channel(&args)?;
             state
@@ -1892,9 +1907,43 @@ mod mcp_tests {
                 .provenance,
             crate::agent::ActivityProvenance::HumanApproved
         );
+        let list_call = |id| McpRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(id),
+            method: "tools/call".to_owned(),
+            params: serde_json::json!({"name":"list_channels","arguments":{}}),
+        };
+        let listed = response_json(
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(list_call("list-before-revoke")),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            listed["result"]["structuredContent"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         agents.revoke(owner, grant_id).await.unwrap();
-        let revoked = response_json(mcp_handler(State(state), headers, Json(call(3))).await).await;
+        let revoked =
+            response_json(mcp_handler(State(state.clone()), headers.clone(), Json(call(3))).await)
+                .await;
         assert!(revoked.get("error").is_some(), "{revoked}");
+        let listed = response_json(
+            mcp_handler(State(state), headers, Json(list_call("list-after-revoke"))).await,
+        )
+        .await;
+        assert!(
+            listed["result"]["structuredContent"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

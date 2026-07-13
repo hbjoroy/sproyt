@@ -1047,6 +1047,44 @@ mod tests {
         let suffix = uuid::Uuid::now_v7().simple().to_string();
         super::super::verify_repository_contract(repository.as_ref(), &format!("pg-{suffix}"))
             .await;
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                Option<uuid::Uuid>,
+                String,
+                String,
+                serde_json::Value,
+            ),
+        >(
+            "select action, actor_id, target_kind, target_id, payload from audit_events \
+             where action in ('agent.created', 'agent.grant_created', \
+             'agent.grant_revoked', 'process.started')",
+        )
+        .fetch_all(&repository.pool)
+        .await
+        .unwrap();
+        for expected in [
+            "agent.created",
+            "agent.grant_created",
+            "agent.grant_revoked",
+            "process.started",
+        ] {
+            assert!(
+                rows.iter().any(|row| row.0 == expected),
+                "missing {expected}"
+            );
+        }
+        for (action, actor_id, target_kind, target_id, payload) in rows {
+            assert!(actor_id.is_some(), "{action} has no actor");
+            assert!(!target_kind.is_empty(), "{action} has no target kind");
+            assert!(!target_id.is_empty(), "{action} has no target id");
+            assert_ne!(
+                payload,
+                serde_json::json!({}),
+                "{action} has no cause payload"
+            );
+        }
         let alice = UserId::named(format!("postgres-alice-{suffix}"));
         repository
             .upsert_user(User {
