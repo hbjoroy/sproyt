@@ -9,6 +9,10 @@ Create the referenced Secret before installation. It must contain
 `DATABASE_URL`, `SPROYT_OIDC_CLIENT_SECRET`, and `SPROYT_SESSION_KEY`.
 During session-key rotation it may also contain the optional
 `SPROYT_SESSION_PREVIOUS_KEYS` value.
+Private registries can be configured with `imagePullSecrets`; each referenced
+Secret must exist in the release namespace. See
+[`docs/running.md`](../../docs/running.md) for the complete external PostgreSQL,
+`oci.bjoroy.me`, manual-Ingress installation path.
 
 ```sh
 helm upgrade --install sproyt ./helm/sproyt \

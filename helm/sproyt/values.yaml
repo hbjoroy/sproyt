@@ -8,6 +8,10 @@ image:
   digest: ""
   pullPolicy: IfNotPresent
 
+# Secrets must exist in the release namespace. Leave empty for public/local images.
+imagePullSecrets: []
+# - name: oci-pull-secret
+
 service:
   port: 80
   targetPort: 9010

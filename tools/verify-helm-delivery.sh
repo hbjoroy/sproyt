@@ -19,12 +19,16 @@ fi
 
 rendered=$(mktemp)
 trap 'rm -f "$rendered"' EXIT
-"$helm_command" template sproyt "$chart" "${common[@]}" --set "image.digest=$digest" >"$rendered"
+"$helm_command" template sproyt "$chart" "${common[@]}" \
+  --set "image.digest=$digest" \
+  --set imagePullSecrets[0].name=oci-pull-secret >"$rendered"
 
 image="oci.bjoroy.me/sproyt/sproyt@$digest"
 test "$(grep -F -c "image: \"$image\"" "$rendered")" -eq 2
 grep -F -q "checksum/config:" "$rendered"
 grep -F -q "kubernetes.io/metadata.name: kube-system" "$rendered"
 grep -F -q "podSelector: {}" "$rendered"
+test "$(grep -F -c -- "- name: oci-pull-secret" "$rendered")" -eq 2
+test "$(grep -F -c "serviceAccountName: default" "$rendered")" -eq 1
 
 echo "Helm delivery contract verified for $image"

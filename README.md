@@ -47,6 +47,10 @@ orchestration, and agent participation.
 See [docs/development.md](docs/development.md) for the local and CI quality
 gates used for contributions.
 
+For copy/paste startup instructions, including the existing cluster PostgreSQL,
+private `oci.bjoroy.me` images, namespaced pull secrets, Helm, and manual
+Ingress, see [docs/running.md](docs/running.md).
+
 ## Prerequisites
 
 - Rust 1.96.0, via rustup.
