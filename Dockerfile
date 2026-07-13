@@ -5,7 +5,7 @@ COPY src ./src
 COPY migrations ./migrations
 RUN cargo build --locked --release
 
-FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df AS runtime
+FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2 AS runtime
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/hbjoroy/sproyt" \
       org.opencontainers.image.revision="$VCS_REF"
