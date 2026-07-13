@@ -22,9 +22,9 @@ use crate::domain::{
     SendMessage, User, UserId,
 };
 use crate::process::{
-    EnqueueCorrelation, EnqueueProcessStart, OutboxId, OutboxJob, OutboxOperation, ProcessError,
-    ProcessLink, ProcessLinkId, ProcessRepository, ProcessRepositoryFuture, SetCircleFeature,
-    StartProcess, StartedProcess,
+    EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
+    OutboxOperation, ProcessError, ProcessEvent, ProcessLink, ProcessLinkId, ProcessRepository,
+    ProcessRepositoryFuture, ProcessView, SetCircleFeature, StartProcess, StartedProcess,
 };
 
 use super::{sql_error, storage};
@@ -634,6 +634,79 @@ impl ProcessRepository for PostgresChatRepository {
         })
     }
 
+    fn get_process<'a>(
+        &'a self,
+        actor: UserId,
+        process_link_id: ProcessLinkId,
+    ) -> ProcessRepositoryFuture<'a, ProcessView> {
+        Box::pin(async move {
+            let row = sqlx::query("select p.id,p.channel_id,p.heart_instance_id,p.namespace,p.definition_name,p.definition_version,p.initiated_by,p.status,m.role from process_links p join channel_memberships m on m.channel_id=p.channel_id and m.user_id=$1 where p.id=$2")
+                .bind(*actor.as_uuid()).bind(process_link_id.as_uuid())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?
+                .ok_or(RepositoryError::PermissionDenied)?;
+            let role: String = row.try_get("role").map_err(storage)?;
+            if !Policy::can_read_channel(MembershipRole::parse(&role).as_ref()) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let process = ProcessLink {
+                id: ProcessLinkId::from_uuid(row.try_get("id").map_err(storage)?),
+                channel_id: ChannelId::from_uuid(row.try_get("channel_id").map_err(storage)?),
+                heart_instance_id: row.try_get("heart_instance_id").map_err(storage)?,
+                namespace: row.try_get("namespace").map_err(storage)?,
+                definition_name: row.try_get("definition_name").map_err(storage)?,
+                definition_version: row.try_get("definition_version").map_err(storage)?,
+                initiated_by: UserId::from_uuid(row.try_get("initiated_by").map_err(storage)?),
+                status: row.try_get("status").map_err(storage)?,
+            };
+            let rows = sqlx::query("select id,event_type,payload,actor_id,occurred_at from process_events where process_link_id=$1 order by occurred_at,id")
+                .bind(process_link_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            let events = rows
+                .into_iter()
+                .map(|row| {
+                    Ok(ProcessEvent {
+                        id: row.try_get("id").map_err(storage)?,
+                        event_type: row.try_get("event_type").map_err(storage)?,
+                        payload: row.try_get("payload").map_err(storage)?,
+                        actor_id: UserId::from_uuid(row.try_get("actor_id").map_err(storage)?),
+                        occurred_at: row.try_get("occurred_at").map_err(storage)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, RepositoryError>>()?;
+            Ok(ProcessView { process, events })
+        })
+    }
+
+    fn enqueue_inspection<'a>(
+        &'a self,
+        command: EnqueueInspection,
+    ) -> ProcessRepositoryFuture<'a, OutboxId> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            if let Some(existing) = sqlx::query_scalar::<_, Uuid>("select outbox_id from process_command_receipts where actor_id=$1 and request_id=$2")
+                .bind(*command.actor.as_uuid()).bind(&command.request_id).fetch_optional(&mut *tx).await.map_err(sql_error)? {
+                tx.commit().await.map_err(sql_error)?;
+                return Ok(OutboxId::from_uuid(existing));
+            }
+            let access: Option<(Uuid, String)> = sqlx::query_as("select p.heart_instance_id,m.role from process_links p join channels c on c.id=p.channel_id join channel_memberships m on m.channel_id=c.id and m.user_id=$1 join circle_features f on f.circle_id=c.circle_id and f.feature='heart.event-planning' and f.enabled where p.id=$2")
+                .bind(*command.actor.as_uuid()).bind(command.process_link_id.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            let (instance_id, role) = access.ok_or(RepositoryError::PermissionDenied)?;
+            if !Policy::can_read_channel(MembershipRole::parse(&role).as_ref()) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let outbox_id = OutboxId::generate();
+            let now = Utc::now();
+            let operation = OutboxOperation::Inspect { instance_id };
+            sqlx::query("insert into process_outbox(id,process_link_id,operation,payload,available_at,created_at) values($1,$2,'inspect',$3,$4,$4)")
+                .bind(outbox_id.as_uuid()).bind(command.process_link_id.as_uuid()).bind(serde_json::to_value(&operation).map_err(storage)?)
+                .bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into process_command_receipts(actor_id,request_id,process_link_id,outbox_id,command_type,created_at) values($1,$2,$3,$4,'inspect',$5)")
+                .bind(*command.actor.as_uuid()).bind(command.request_id).bind(command.process_link_id.as_uuid())
+                .bind(outbox_id.as_uuid()).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(outbox_id)
+        })
+    }
+
     fn set_circle_feature<'a>(
         &'a self,
         command: SetCircleFeature,
@@ -727,11 +800,31 @@ impl ProcessRepository for PostgresChatRepository {
     ) -> ProcessRepositoryFuture<'a, ()> {
         Box::pin(async move {
             let terminal = !error.retryable || job.attempts >= 8;
-            let available = Utc::now() + chrono::Duration::from_std(delay).map_err(storage)?;
+            let now = Utc::now();
+            let available = now + chrono::Duration::from_std(delay).map_err(storage)?;
+            let error_text = error.to_string();
+            let payload = serde_json::json!({
+                "kind":error.kind,
+                "message":error.message,
+                "retryable":error.retryable,
+                "attempts":job.attempts
+            });
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
             sqlx::query("update process_outbox set status=$1,available_at=$2,lease_until=null,last_error=$3 where id=$4")
-                .bind(if terminal { "failed" } else { "pending" }).bind(available).bind(error.to_string())
-                .bind(job.id.as_uuid()).execute(&self.pool).await.map_err(sql_error)?;
-            Ok(())
+                .bind(if terminal { "failed" } else { "pending" }).bind(available).bind(error_text)
+                .bind(job.id.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            if terminal {
+                sqlx::query("update process_links set status='failed',updated_at=$1 where id=$2")
+                    .bind(now)
+                    .bind(job.process_link_id.as_uuid())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+                sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,actor_id,occurred_at) values($1,$2,$3,'process.failed',$4,coalesce((select actor_id from process_command_receipts where outbox_id=$5),(select initiated_by from process_links where id=$2)),$6) on conflict(process_link_id,event_key) do nothing")
+                    .bind(Uuid::now_v7()).bind(job.process_link_id.as_uuid()).bind(format!("failed:{}",job.id.as_uuid()))
+                    .bind(payload).bind(job.id.as_uuid()).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
+            }
+            tx.commit().await.map_err(sql_error)
         })
     }
 }

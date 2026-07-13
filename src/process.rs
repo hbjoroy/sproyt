@@ -1,5 +1,6 @@
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
+use chrono::{DateTime, Utc};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -71,6 +72,13 @@ pub struct EnqueueCorrelation {
 }
 
 #[derive(Clone, Debug)]
+pub struct EnqueueInspection {
+    pub process_link_id: ProcessLinkId,
+    pub actor: UserId,
+    pub request_id: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct SetCircleFeature {
     pub circle_id: crate::domain::CircleId,
     pub actor: UserId,
@@ -78,7 +86,7 @@ pub struct SetCircleFeature {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProcessLink {
     pub id: ProcessLinkId,
     pub channel_id: ChannelId,
@@ -88,6 +96,21 @@ pub struct ProcessLink {
     pub definition_version: Option<String>,
     pub initiated_by: UserId,
     pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProcessEvent {
+    pub id: Uuid,
+    pub event_type: String,
+    pub payload: Value,
+    pub actor_id: UserId,
+    pub occurred_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProcessView {
+    pub process: ProcessLink,
+    pub events: Vec<ProcessEvent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -114,6 +137,15 @@ pub trait ProcessRepository: Send + Sync + 'static {
     fn enqueue_correlation<'a>(
         &'a self,
         command: EnqueueCorrelation,
+    ) -> ProcessRepositoryFuture<'a, OutboxId>;
+    fn get_process<'a>(
+        &'a self,
+        actor: UserId,
+        process_link_id: ProcessLinkId,
+    ) -> ProcessRepositoryFuture<'a, ProcessView>;
+    fn enqueue_inspection<'a>(
+        &'a self,
+        command: EnqueueInspection,
     ) -> ProcessRepositoryFuture<'a, OutboxId>;
     fn set_circle_feature<'a>(
         &'a self,
@@ -174,6 +206,21 @@ impl ProcessService {
         self.repository.enqueue_correlation(command).await
     }
 
+    pub async fn get_process(
+        &self,
+        actor: UserId,
+        process_link_id: ProcessLinkId,
+    ) -> Result<ProcessView, RepositoryError> {
+        self.repository.get_process(actor, process_link_id).await
+    }
+
+    pub async fn enqueue_inspection(
+        &self,
+        command: EnqueueInspection,
+    ) -> Result<OutboxId, RepositoryError> {
+        self.repository.enqueue_inspection(command).await
+    }
+
     pub async fn set_circle_feature(
         &self,
         command: SetCircleFeature,
@@ -229,7 +276,8 @@ enum WorkerResult {
     Event(&'static str, Value),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProcessErrorKind {
     InvalidRequest,
     Unauthorized,

@@ -299,7 +299,10 @@ where
             CreateCircleInvitation, DisplayName, JoinChannel, LoadRecentMessages, MarkRead,
             MessageBody, MessageLimit, PrincipalKind, SendMessage, User, UserId,
         },
-        process::{EnqueueCorrelation, EnqueueProcessStart, SetCircleFeature, StartedProcess},
+        process::{
+            EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, ProcessError,
+            ProcessErrorKind, SetCircleFeature, StartedProcess,
+        },
     };
     use chrono::{Duration, Utc};
     verify_chat_repository_contract(repository, &format!("{suffix}-shared-chat")).await;
@@ -623,6 +626,98 @@ where
         )
         .await
         .unwrap();
+    let view = repository
+        .get_process(member.clone(), link.id)
+        .await
+        .unwrap();
+    assert_eq!(view.process.id, link.id);
+    assert_eq!(view.process.status, "active");
+    assert_eq!(
+        view.events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>(),
+        vec!["process.started", "process.correlated"]
+    );
+    assert!(
+        view.events
+            .iter()
+            .all(|event| !event.actor_id.to_string().is_empty())
+    );
+    assert_eq!(
+        repository
+            .get_process(UserId::named(format!("process-outsider-{suffix}")), link.id)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    let inspect = EnqueueInspection {
+        process_link_id: link.id,
+        actor: member.clone(),
+        request_id: "process-inspect-contract".to_owned(),
+    };
+    let inspect_job_id = repository
+        .enqueue_inspection(inspect.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.enqueue_inspection(inspect).await.unwrap(),
+        inspect_job_id,
+        "process inspection replay created a new outbox job"
+    );
+    let inspect_job = repository
+        .lease_next(std::time::Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(inspect_job.id, inspect_job_id);
+    assert!(matches!(
+        &inspect_job.operation,
+        crate::process::OutboxOperation::Inspect { .. }
+    ));
+    repository
+        .complete_operation(
+            inspect_job,
+            "process.inspected",
+            serde_json::json!({"status":"waiting","current_node":"collect-rsvp"}),
+        )
+        .await
+        .unwrap();
+    let failing_job_id = repository
+        .enqueue_correlation(EnqueueCorrelation {
+            process_link_id: link.id,
+            actor: member.clone(),
+            request_id: "process-failure-contract".to_owned(),
+            payload: serde_json::json!({"answer":"maybe"}),
+        })
+        .await
+        .unwrap();
+    let failing_job = repository
+        .lease_next(std::time::Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failing_job.id, failing_job_id);
+    repository
+        .reschedule(
+            failing_job,
+            ProcessError {
+                kind: ProcessErrorKind::Unauthorized,
+                message: "Heart rejected participant".to_owned(),
+                retryable: false,
+            },
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+    let failed = repository
+        .get_process(member.clone(), link.id)
+        .await
+        .unwrap();
+    assert_eq!(failed.process.status, "failed");
+    let failure = failed.events.last().unwrap();
+    assert_eq!(failure.event_type, "process.failed");
+    assert_eq!(failure.actor_id, member);
+    assert_eq!(failure.payload["kind"], "unauthorized");
     repository
         .set_circle_feature(SetCircleFeature {
             circle_id: circle.id,

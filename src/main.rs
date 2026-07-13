@@ -38,8 +38,8 @@ use crate::{
     domain::{ChannelId, ChannelSequence, MessageBody, MessageLimit, UserId},
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{
-        EnqueueCorrelation, EnqueueProcessStart, HeartGateway, ProcessLinkId, ProcessService,
-        SetCircleFeature, SharedProcessGateway,
+        EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, HeartGateway, ProcessLinkId,
+        ProcessService, SetCircleFeature, SharedProcessGateway,
     },
 };
 
@@ -121,6 +121,8 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/auth/logout", get(auth_logout))
         .route("/ws", get(ws_handler))
         .route("/api/v1/processes", post(start_process))
+        .route("/api/v1/processes/{id}", get(get_process))
+        .route("/api/v1/processes/{id}/inspect", post(inspect_process))
         .route("/api/v1/processes/{id}/messages", post(correlate_process))
         .route(
             "/api/v1/circles/{id}/features/heart-event-planning",
@@ -273,6 +275,84 @@ async fn correlate_process(
         Ok(outbox_id) => (
             axum::http::StatusCode::ACCEPTED,
             Json(serde_json::json!({"outbox_id": outbox_id.as_uuid()})),
+        )
+            .into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+async fn get_process(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers) {
+        Ok(principal) => principal,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    let process_link_id = match ProcessLinkId::parse(&id) {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                "invalid process link id",
+            )
+                .into_response();
+        }
+    };
+    match state
+        .processes
+        .get_process(principal.user.id, process_link_id)
+        .await
+    {
+        Ok(view) => Json(view).into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct InspectProcessRequest {
+    request_id: String,
+}
+
+async fn inspect_process(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(body): Json<InspectProcessRequest>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers) {
+        Ok(principal) => principal,
+        Err(error) => {
+            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
+        }
+    };
+    let process_link_id = match ProcessLinkId::parse(&id) {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                "invalid process link id",
+            )
+                .into_response();
+        }
+    };
+    match state
+        .processes
+        .enqueue_inspection(EnqueueInspection {
+            process_link_id,
+            actor: principal.user.id,
+            request_id: body.request_id,
+        })
+        .await
+    {
+        Ok(outbox_id) => (
+            axum::http::StatusCode::ACCEPTED,
+            Json(serde_json::json!({"outbox_id":outbox_id.as_uuid()})),
         )
             .into_response(),
         Err(error) => repository_response(error),
