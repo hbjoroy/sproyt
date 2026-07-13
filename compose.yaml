@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     environment:
       POSTGRES_DB: sproyt
       POSTGRES_USER: sproyt
@@ -14,7 +14,10 @@ services:
       - sproyt-postgres:/var/lib/postgresql/data
 
   migrate:
-    build: .
+    build:
+      context: .
+      args:
+        VCS_REF: ${SPROYT_VCS_REF:-development}
     command: ["migrate"]
     environment: &sproyt-environment
       DATABASE_URL: postgres://sproyt:sproyt-dev@postgres:5432/sproyt
@@ -24,9 +27,19 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
 
   sproyt:
-    build: .
+    build:
+      context: .
+      args:
+        VCS_REF: ${SPROYT_VCS_REF:-development}
     environment: *sproyt-environment
     ports:
       - "9010:9010"
@@ -36,6 +49,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
+    user: "65532:65532"
+    cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
