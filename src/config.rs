@@ -17,6 +17,18 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
+    pub fn database_from_env() -> Result<DatabaseConfig, ConfigError> {
+        DatabaseConfig::new(
+            env::var("DATABASE_URL").unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_owned()),
+        )
+    }
+
+    pub fn log_format_from_env() -> Result<LogFormat, ConfigError> {
+        LogFormat::parse(
+            &env::var("SPROYT_LOG_FORMAT").unwrap_or_else(|_| DEFAULT_LOG_FORMAT.to_owned()),
+        )
+    }
+
     pub fn from_env() -> Result<Self, ConfigError> {
         let bind_address =
             env::var("SPROYT_ADDR").unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.to_owned());

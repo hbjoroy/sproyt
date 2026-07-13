@@ -37,6 +37,10 @@ future Kubernetes migration Job:
 cargo run -- migrate
 ```
 
+The migration command reads only `DATABASE_URL` and `SPROYT_LOG_FORMAT`; it
+does not require server bind, environment, auth, OIDC, Heart, or session
+configuration.
+
 Application replicas do not apply schema changes implicitly when starting.
 
 ## Dependency audit

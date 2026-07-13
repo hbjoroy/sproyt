@@ -60,13 +60,15 @@ impl axum::extract::FromRef<AppState> for OperationalState {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let config = AppConfig::from_env()?;
-    init_tracing(config.log_format())?;
     if std::env::args().nth(1).as_deref() == Some("migrate") {
-        db::migrate(config.database()).await?;
-        info!(database = %config.database().kind(), "database migrations applied");
+        let database = AppConfig::database_from_env()?;
+        init_tracing(AppConfig::log_format_from_env()?)?;
+        db::migrate(&database).await?;
+        info!(database = %database.kind(), "database migrations applied");
         return Ok(());
     }
+    let config = AppConfig::from_env()?;
+    init_tracing(config.log_format())?;
     let address = config.bind_address();
     let operations = OperationalState::default();
     let repositories = db::connect_repositories(config.database()).await?;
