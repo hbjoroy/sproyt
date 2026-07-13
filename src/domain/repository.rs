@@ -546,6 +546,12 @@ fn persisted_now() -> chrono::DateTime<Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn in_memory_passes_shared_chat_repository_contract() {
+        crate::db::verify_chat_repository_contract(&InMemoryChatRepository::default(), "in-memory")
+            .await;
+    }
     use crate::domain::{ChannelKind, ChannelSlug, DisplayName, MessageBody, PrincipalKind};
     use chrono::Utc;
 

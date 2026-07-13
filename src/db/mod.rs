@@ -78,6 +78,134 @@ fn sql_error(error: sqlx::Error) -> RepositoryError {
 }
 
 #[cfg(test)]
+pub async fn verify_chat_repository_contract<R>(repository: &R, suffix: &str)
+where
+    R: ChatRepository,
+{
+    use crate::domain::{
+        AcceptCircleInvitation, ChannelKind, ChannelSlug, CreateChannel, CreateCircle,
+        CreateCircleInvitation, DisplayName, LoadRecentMessages, MarkRead, MessageBody,
+        MessageLimit, PrincipalKind, SendMessage, User, UserId,
+    };
+    use chrono::Utc;
+
+    repository.health_check().await.unwrap();
+    let actor = UserId::named(format!("chat-contract-actor-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: actor.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Chat contract actor").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("chat-contract-{suffix}")).unwrap(),
+            name: DisplayName::new("Chat contract channel").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: None,
+        })
+        .await
+        .unwrap();
+    let first = repository
+        .append_message_idempotent(
+            SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                body: MessageBody::new("first").unwrap(),
+            },
+            "same-request".to_owned(),
+        )
+        .await
+        .unwrap();
+    let replay = repository
+        .append_message_idempotent(
+            SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                body: MessageBody::new("different").unwrap(),
+            },
+            "same-request".to_owned(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first, replay);
+    assert_eq!(
+        repository
+            .load_recent_messages(LoadRecentMessages {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                limit: MessageLimit::DEFAULT,
+                after: None,
+            })
+            .await
+            .unwrap(),
+        vec![first.clone()]
+    );
+    assert_eq!(
+        repository
+            .mark_read(MarkRead {
+                actor: actor.clone(),
+                channel_id: channel.id,
+                sequence: first.sequence,
+            })
+            .await
+            .unwrap()
+            .last_read_sequence,
+        first.sequence
+    );
+
+    let circle = repository
+        .create_circle(CreateCircle {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("chat-circle-{suffix}")).unwrap(),
+            name: DisplayName::new("Chat contract circle").unwrap(),
+        })
+        .await
+        .unwrap();
+    let invite = repository
+        .create_circle_invitation(CreateCircleInvitation {
+            actor: actor.clone(),
+            circle_id: circle.id,
+        })
+        .await
+        .unwrap();
+    let member = UserId::named(format!("chat-contract-member-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: member.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Chat contract member").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    repository
+        .accept_circle_invitation(AcceptCircleInvitation {
+            actor: member.clone(),
+            token: invite.token.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: member,
+                token: invite.token,
+            })
+            .await,
+        Err(RepositoryError::NotFound)
+    );
+}
+
+#[cfg(test)]
 pub async fn verify_repository_contract<R>(repository: &R, suffix: &str)
 where
     R: ChatRepository + ProcessRepository + AgentRepository,
@@ -92,6 +220,7 @@ where
         process::{EnqueueProcessStart, StartedProcess},
     };
     use chrono::Utc;
+    verify_chat_repository_contract(repository, &format!("{suffix}-shared-chat")).await;
     let actor = UserId::named(format!("contract-actor-{suffix}"));
     repository
         .upsert_user(User {
