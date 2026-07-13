@@ -22,6 +22,7 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -883,8 +884,37 @@ async fn approve_agent_message(
     }
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+async fn index() -> axum::response::Response {
+    let mut random = [0_u8; 18];
+    if getrandom::fill(&mut random).is_err() {
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let nonce = URL_SAFE_NO_PAD.encode(random);
+    let html = INDEX_HTML.replace("{{NONCE}}", &nonce);
+    let policy = format!(
+        "default-src 'self'; script-src 'nonce-{nonce}' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    );
+    let mut response = Html(html).into_response();
+    let headers = response.headers_mut();
+    let security_headers = [
+        ("content-security-policy", policy.as_str()),
+        ("x-content-type-options", "nosniff"),
+        ("x-frame-options", "DENY"),
+        ("referrer-policy", "no-referrer"),
+        (
+            "permissions-policy",
+            "camera=(), microphone=(), geolocation=()",
+        ),
+        ("cross-origin-opener-policy", "same-origin"),
+        ("cache-control", "no-store"),
+    ];
+    for (name, value) in security_headers {
+        let Ok(value) = HeaderValue::from_str(value) else {
+            return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        headers.insert(HeaderName::from_static(name), value);
+    }
+    response
 }
 
 fn init_tracing(log_format: LogFormat) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -1060,7 +1090,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sproyt - Hello Chat</title>
-    <style>
+    <style nonce="{{NONCE}}">
       :root {
         color-scheme: light dark;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -1452,7 +1482,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       </form>
     </main>
 
-    <script type="module">
+    <script type="module" nonce="{{NONCE}}">
       import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
 
       mermaid.initialize({
@@ -2397,6 +2427,48 @@ mod protocol_capacity_tests {
     async fn connect_as(address: std::net::SocketAddr, participant: &str) -> TestSocket {
         let url = format!("ws://{address}/ws?participant={participant}");
         connect_async(url).await.unwrap().0
+    }
+
+    #[tokio::test]
+    async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+
+        let first = reqwest::get(format!("http://{address}/")).await.unwrap();
+        assert_eq!(first.status(), reqwest::StatusCode::OK);
+        let headers = first.headers().clone();
+        assert_eq!(headers["x-content-type-options"], "nosniff");
+        assert_eq!(headers["x-frame-options"], "DENY");
+        assert_eq!(headers["referrer-policy"], "no-referrer");
+        assert_eq!(headers["cross-origin-opener-policy"], "same-origin");
+        assert_eq!(headers["cache-control"], "no-store");
+        let policy = headers["content-security-policy"].to_str().unwrap();
+        assert!(policy.contains("object-src 'none'"));
+        assert!(policy.contains("frame-ancestors 'none'"));
+        let nonce = policy
+            .split("script-src 'nonce-")
+            .nth(1)
+            .unwrap()
+            .split('\'')
+            .next()
+            .unwrap()
+            .to_owned();
+        let body = first.text().await.unwrap();
+        assert!(body.contains(&format!("<script type=\"module\" nonce=\"{nonce}\">")));
+        assert!(body.contains(&format!("<style nonce=\"{nonce}\">")));
+        assert!(!body.contains("{{NONCE}}"));
+
+        let second = reqwest::get(format!("http://{address}/")).await.unwrap();
+        let second_policy = second.headers()["content-security-policy"]
+            .to_str()
+            .unwrap();
+        assert!(!second_policy.contains(&format!("'nonce-{nonce}'")));
+        server.abort();
     }
 
     async fn command(
