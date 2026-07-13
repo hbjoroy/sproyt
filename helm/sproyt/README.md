@@ -13,7 +13,7 @@ During session-key rotation it may also contain the optional
 ```sh
 helm upgrade --install sproyt ./helm/sproyt \
   --namespace sproyt --create-namespace \
-  --set image.tag=<immutable-version> \
+  --set image.digest=sha256:<registry-digest> \
   --set ingress.enabled=true \
   --set ingress.host=chat.example.com \
   --set config.oidcClientId=<client-id> \
@@ -23,7 +23,9 @@ helm upgrade --install sproyt ./helm/sproyt \
 
 The pre-install/pre-upgrade Job applies additive SQLx migrations before the
 Deployment rolls. Application pods never mutate schema at startup. Use an
-immutable image tag or digest in production. The Job intentionally receives
+registry digest in production; `image.tag` is retained for local and kind
+workflows. The same rendered digest is used by both the migration Job and the
+Deployment. The Job intentionally receives
 only `DATABASE_URL` and the log format: it does not initialize OIDC and remains
 available during provider outages, client-secret changes, and session-key
 rotation.

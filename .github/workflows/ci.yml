@@ -179,19 +179,6 @@ jobs:
           --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
           --set config.oidcClientId=ci-client
 
-      - name: Render production manifests
-        run: >-
-          helm template sproyt helm/sproyt
-          --namespace sproyt
-          --set ingress.enabled=true
-          --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
-          --set config.oidcClientId=ci-client
-          --set secret.existingSecret=sproyt-ci
-          --set monitoring.serviceMonitor.enabled=true
-          --set monitoring.prometheusRule.enabled=true
-          --set monitoring.grafanaDashboard.enabled=true
-          > rendered-manifests.yaml
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -202,8 +189,42 @@ jobs:
           load: true
           push: false
           tags: local/sproyt:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Record image-to-commit evidence
+        id: image-evidence
+        env:
+          SPROYT_IMAGE: local/sproyt:${{ github.sha }}
+        run: |
+          image_id=$(docker image inspect "$SPROYT_IMAGE" --format '{{.Id}}')
+          revision=$(docker image inspect "$SPROYT_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          test "$revision" = "$GITHUB_SHA"
+          test "${image_id#sha256:}" != "$image_id"
+          echo "digest=$image_id" >> "$GITHUB_OUTPUT"
+          jq --null-input \
+            --arg image "$SPROYT_IMAGE" \
+            --arg image_id "$image_id" \
+            --arg revision "$revision" \
+            '{image: $image, image_id: $image_id, revision: $revision}' \
+            > image-evidence.json
+
+      - name: Render digest-pinned production manifests
+        run: >-
+          helm template sproyt helm/sproyt
+          --namespace sproyt
+          --set ingress.enabled=true
+          --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
+          --set config.oidcClientId=ci-client
+          --set secret.existingSecret=sproyt-ci
+          --set image.digest=${{ steps.image-evidence.outputs.digest }}
+          --set monitoring.serviceMonitor.enabled=true
+          --set monitoring.prometheusRule.enabled=true
+          --set monitoring.grafanaDashboard.enabled=true
+          > rendered-manifests.yaml
 
       - name: Create ephemeral Kubernetes cluster
         uses: engineerd/setup-kind@v0.6.0
@@ -238,3 +259,4 @@ jobs:
           path: |
             rendered-manifests.yaml
             sproyt.spdx.json
+            image-evidence.json

@@ -31,7 +31,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: sproyt
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "sproyt.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           envFrom:
             - configMapRef:

@@ -4,6 +4,8 @@ terminationGracePeriodSeconds: 30
 image:
   repository: oci.bjoroy.me/sproyt/sproyt
   tag: "0.1.0"
+  # Production releases should set the registry digest, for example sha256:...
+  digest: ""
   pullPolicy: IfNotPresent
 
 service:
