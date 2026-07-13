@@ -542,7 +542,11 @@ impl ProcessRepository for PostgresChatRepository {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
             let role: Option<String> = sqlx::query_scalar(
-                "select role from channel_memberships where channel_id=$1 and user_id=$2",
+                "select m.role from channel_memberships m \
+                 join channels c on c.id=m.channel_id \
+                 join circle_features f on f.circle_id=c.circle_id \
+                 and f.feature='heart.event-planning' and f.enabled \
+                 where m.channel_id=$1 and m.user_id=$2",
             )
             .bind(*command.channel_id.as_uuid())
             .bind(*command.actor.as_uuid())
@@ -688,7 +692,7 @@ impl ProcessRepository for PostgresChatRepository {
             let now = Utc::now();
             sqlx::query("update process_links set heart_instance_id=$1,status='active',updated_at=$2 where id=$3 and (heart_instance_id is null or heart_instance_id=$1)")
                 .bind(result.instance_id).bind(now).bind(job.process_link_id.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
-            sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,occurred_at) values($1,$2,'started','process.started',$3,$4) on conflict(process_link_id,event_key) do nothing")
+            sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,actor_id,occurred_at) values($1,$2,'started','process.started',$3,(select initiated_by from process_links where id=$2),$4) on conflict(process_link_id,event_key) do nothing")
                 .bind(Uuid::now_v7()).bind(job.process_link_id.as_uuid()).bind(serde_json::json!({"instance_id": result.instance_id}))
                 .bind(now).execute(&mut *tx).await.map_err(sql_error)?;
             sqlx::query("update process_outbox set status='completed',completed_at=$1,lease_until=null where id=$2")
@@ -706,8 +710,8 @@ impl ProcessRepository for PostgresChatRepository {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
             let now = Utc::now();
-            sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,occurred_at) values($1,$2,$3,$4,$5,$6) on conflict(process_link_id,event_key) do nothing")
-                .bind(Uuid::now_v7()).bind(job.process_link_id.as_uuid()).bind(job.id.as_uuid().to_string())
+            sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,actor_id,occurred_at) values($1,$2,$3::text,$4,$5,coalesce((select actor_id from process_command_receipts where outbox_id=$3),(select initiated_by from process_links where id=$2)),$6) on conflict(process_link_id,event_key) do nothing")
+                .bind(Uuid::now_v7()).bind(job.process_link_id.as_uuid()).bind(job.id.as_uuid())
                 .bind(event_type).bind(payload).bind(now).execute(&mut *tx).await.map_err(sql_error)?;
             sqlx::query("update process_outbox set status='completed',completed_at=$1,lease_until=null where id=$2")
                 .bind(now).bind(job.id.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
@@ -1085,6 +1089,26 @@ mod tests {
                 "{action} has no cause payload"
             );
         }
+        let process_events = sqlx::query_as::<_, (String, Option<uuid::Uuid>)>(
+            "select event_type, actor_id from process_events",
+        )
+        .fetch_all(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            process_events
+                .iter()
+                .filter(|event| event.0 == "process.started")
+                .count(),
+            1,
+            "idempotent completion duplicated the start event"
+        );
+        assert!(
+            process_events
+                .iter()
+                .any(|event| event.0 == "process.correlated")
+        );
+        assert!(process_events.iter().all(|event| event.1.is_some()));
         let alice = UserId::named(format!("postgres-alice-{suffix}"));
         repository
             .upsert_user(User {

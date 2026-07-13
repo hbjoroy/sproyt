@@ -296,10 +296,10 @@ where
         agent::{AgentScope, CreateAgent, GrantAgent},
         domain::{
             AcceptCircleInvitation, ChannelKind, ChannelSlug, CreateChannel, CreateCircle,
-            CreateCircleInvitation, DisplayName, LoadRecentMessages, MarkRead, MessageBody,
-            MessageLimit, PrincipalKind, SendMessage, User, UserId,
+            CreateCircleInvitation, DisplayName, JoinChannel, LoadRecentMessages, MarkRead,
+            MessageBody, MessageLimit, PrincipalKind, SendMessage, User, UserId,
         },
-        process::{EnqueueProcessStart, StartedProcess},
+        process::{EnqueueCorrelation, EnqueueProcessStart, SetCircleFeature, StartedProcess},
     };
     use chrono::{Duration, Utc};
     verify_chat_repository_contract(repository, &format!("{suffix}-shared-chat")).await;
@@ -375,6 +375,39 @@ where
         })
         .await
         .unwrap();
+    let process_channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("process-{suffix}")).unwrap(),
+            name: DisplayName::new("Contract process channel").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: Some(circle.id.clone()),
+        })
+        .await
+        .unwrap();
+    let process_start = EnqueueProcessStart {
+        channel_id: process_channel.id.clone(),
+        actor: actor.clone(),
+        request_id: "process-contract".to_owned(),
+        namespace: "contract".to_owned(),
+        definition_name: "contract".to_owned(),
+        definition_version: None,
+        metadata: serde_json::json!({}),
+    };
+    assert_eq!(
+        repository.enqueue_start(process_start.clone()).await,
+        Err(RepositoryError::PermissionDenied),
+        "Heart process starts must be gated per circle"
+    );
+    repository
+        .set_circle_feature(SetCircleFeature {
+            circle_id: circle.id.clone(),
+            actor: actor.clone(),
+            feature: "heart.event-planning".to_owned(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
     let invite = repository
         .create_circle_invitation(CreateCircleInvitation {
             actor: actor.clone(),
@@ -404,12 +437,19 @@ where
     assert_eq!(
         repository
             .accept_circle_invitation(AcceptCircleInvitation {
-                actor: member,
+                actor: member.clone(),
                 token: invite.token
             })
             .await,
         Err(RepositoryError::NotFound)
     );
+    repository
+        .join_channel(JoinChannel {
+            actor: member.clone(),
+            channel: crate::domain::ChannelRef::Id(process_channel.id.clone()),
+        })
+        .await
+        .unwrap();
 
     let created_agent = repository
         .create_agent(CreateAgent {
@@ -524,30 +564,84 @@ where
     );
 
     let link = repository
-        .enqueue_start(EnqueueProcessStart {
-            channel_id: channel.id,
-            actor,
-            request_id: "process-contract".to_owned(),
-            namespace: "contract".to_owned(),
-            definition_name: "contract".to_owned(),
-            definition_version: None,
-            metadata: serde_json::json!({}),
-        })
+        .enqueue_start(process_start.clone())
         .await
+        .unwrap();
+    let replay = repository.enqueue_start(process_start).await.unwrap();
+    assert_eq!(
+        replay.id, link.id,
+        "process start replay created a new link"
+    );
+    let abandoned_job = repository
+        .lease_next(std::time::Duration::ZERO)
+        .await
+        .unwrap()
         .unwrap();
     let job = repository
         .lease_next(std::time::Duration::from_secs(30))
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(job.id, abandoned_job.id, "expired lease was not recovered");
     assert_eq!(job.process_link_id, link.id);
+    let completed_job = job.clone();
+    let instance_id = uuid::Uuid::now_v7();
     repository
-        .complete_start(
-            job,
-            StartedProcess {
-                instance_id: uuid::Uuid::now_v7(),
-            },
+        .complete_start(job, StartedProcess { instance_id })
+        .await
+        .unwrap();
+    repository
+        .complete_start(completed_job, StartedProcess { instance_id })
+        .await
+        .unwrap();
+    let response = EnqueueCorrelation {
+        process_link_id: link.id,
+        actor: member.clone(),
+        request_id: "process-response-contract".to_owned(),
+        payload: serde_json::json!({"answer":"yes"}),
+    };
+    let response_job_id = repository
+        .enqueue_correlation(response.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.enqueue_correlation(response).await.unwrap(),
+        response_job_id,
+        "process response replay created a new outbox job"
+    );
+    let response_job = repository
+        .lease_next(std::time::Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response_job.id, response_job_id);
+    repository
+        .complete_operation(
+            response_job,
+            "process.correlated",
+            serde_json::json!({"matched_instances":1}),
         )
         .await
         .unwrap();
+    repository
+        .set_circle_feature(SetCircleFeature {
+            circle_id: circle.id,
+            actor,
+            feature: "heart.event-planning".to_owned(),
+            enabled: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .enqueue_correlation(EnqueueCorrelation {
+                process_link_id: link.id,
+                actor: member,
+                request_id: "process-response-after-kill".to_owned(),
+                payload: serde_json::json!({"answer":"no"}),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied),
+        "disabled Heart feature accepted process work"
+    );
 }

@@ -515,7 +515,11 @@ impl ProcessRepository for SqliteChatRepository {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
             let role: Option<String> = sqlx::query_scalar(
-                "select role from channel_memberships where channel_id = ? and user_id = ?",
+                "select m.role from channel_memberships m \
+                 join channels c on c.id=m.channel_id \
+                 join circle_features f on f.circle_id=c.circle_id \
+                 and f.feature='heart.event-planning' and f.enabled=1 \
+                 where m.channel_id=? and m.user_id=?",
             )
             .bind(command.channel_id.to_string())
             .bind(command.actor.to_string())
@@ -679,9 +683,10 @@ impl ProcessRepository for SqliteChatRepository {
             sqlx::query("update process_links set heart_instance_id = ?, status = 'active', updated_at = ? where id = ? and (heart_instance_id is null or heart_instance_id = ?)")
                 .bind(result.instance_id.to_string()).bind(now).bind(job.process_link_id.as_uuid().to_string())
                 .bind(result.instance_id.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
-            sqlx::query("insert into process_events (id, process_link_id, event_key, event_type, payload, occurred_at) values (?, ?, 'started', 'process.started', ?, ?) on conflict(process_link_id, event_key) do nothing")
+            sqlx::query("insert into process_events (id, process_link_id, event_key, event_type, payload, actor_id, occurred_at) values (?, ?, 'started', 'process.started', ?, (select initiated_by from process_links where id=?), ?) on conflict(process_link_id, event_key) do nothing")
                 .bind(Uuid::now_v7().to_string()).bind(job.process_link_id.as_uuid().to_string())
-                .bind(serde_json::json!({"instance_id": result.instance_id}).to_string()).bind(now)
+                .bind(serde_json::json!({"instance_id": result.instance_id}).to_string())
+                .bind(job.process_link_id.as_uuid().to_string()).bind(now)
                 .execute(&mut *tx).await.map_err(sql_error)?;
             sqlx::query("update process_outbox set status = 'completed', completed_at = ?, lease_until = null where id = ?")
                 .bind(now).bind(job.id.as_uuid().to_string()).execute(&mut *tx).await.map_err(sql_error)?;
@@ -698,9 +703,10 @@ impl ProcessRepository for SqliteChatRepository {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
             let now = Utc::now();
-            sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,occurred_at) values(?,?,?,?,?,?) on conflict(process_link_id,event_key) do nothing")
+            sqlx::query("insert into process_events(id,process_link_id,event_key,event_type,payload,actor_id,occurred_at) values(?,?,?,?,?,coalesce((select actor_id from process_command_receipts where outbox_id=?),(select initiated_by from process_links where id=?)),?) on conflict(process_link_id,event_key) do nothing")
                 .bind(Uuid::now_v7().to_string()).bind(job.process_link_id.as_uuid().to_string())
-                .bind(job.id.as_uuid().to_string()).bind(event_type).bind(payload.to_string()).bind(now)
+                .bind(job.id.as_uuid().to_string()).bind(event_type).bind(payload.to_string())
+                .bind(job.id.as_uuid().to_string()).bind(job.process_link_id.as_uuid().to_string()).bind(now)
                 .execute(&mut *tx).await.map_err(sql_error)?;
             sqlx::query("update process_outbox set status='completed',completed_at=?,lease_until=null where id=?")
                 .bind(now).bind(job.id.as_uuid().to_string()).execute(&mut *tx).await.map_err(sql_error)?;
@@ -1107,6 +1113,26 @@ mod tests {
             assert!(!target_id.is_empty(), "{action} has no target id");
             assert_ne!(payload, "{}", "{action} has no cause payload");
         }
+        let process_events = sqlx::query_as::<_, (String, Option<String>)>(
+            "select event_type, actor_id from process_events",
+        )
+        .fetch_all(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            process_events
+                .iter()
+                .filter(|event| event.0 == "process.started")
+                .count(),
+            1,
+            "idempotent completion duplicated the start event"
+        );
+        assert!(
+            process_events
+                .iter()
+                .any(|event| event.0 == "process.correlated")
+        );
+        assert!(process_events.iter().all(|event| event.1.is_some()));
     }
 
     #[tokio::test]
@@ -1127,13 +1153,30 @@ mod tests {
             })
             .await
             .unwrap();
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: alice.clone(),
+                slug: ChannelSlug::new("sqlite-circle").unwrap(),
+                name: DisplayName::new("SQLite circle").unwrap(),
+            })
+            .await
+            .unwrap();
         let channel = repository
             .create_channel(CreateChannel {
                 actor: alice.clone(),
                 slug: ChannelSlug::new("sqlite").unwrap(),
                 name: DisplayName::new("SQLite").unwrap(),
                 kind: ChannelKind::Private,
-                circle_id: None,
+                circle_id: Some(circle.id.clone()),
+            })
+            .await
+            .unwrap();
+        repository
+            .set_circle_feature(SetCircleFeature {
+                circle_id: circle.id,
+                actor: alice.clone(),
+                feature: "heart.event-planning".to_owned(),
+                enabled: true,
             })
             .await
             .unwrap();
