@@ -33,7 +33,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::{
     agent::{AgentPrincipal, AgentScope, AgentService, CreateAgent, GrantAgent},
-    auth::AuthService,
+    auth::{AuthError, AuthService},
     chat::{ChatEngine, ChatError},
     config::{AppConfig, AuthMode, LogFormat},
     domain::{ChannelId, ChannelSequence, MessageBody, MessageLimit, UserId},
@@ -219,9 +219,7 @@ async fn start_process(
         .await
     {
         Ok(principal) => principal,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let channel_id = match ChannelId::new(body.channel_id) {
         Ok(id) => id,
@@ -247,7 +245,7 @@ async fn start_process(
             Json(serde_json::json!({"process_link_id": link.id.as_uuid(), "status": link.status})),
         )
             .into_response(),
-        Err(error) => (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => repository_response(error),
     }
 }
 
@@ -267,9 +265,7 @@ async fn correlate_process(
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(principal) => principal,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let process_link_id = match ProcessLinkId::parse(&id) {
         Ok(id) => id,
@@ -308,9 +304,7 @@ async fn get_process(
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(principal) => principal,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let process_link_id = match ProcessLinkId::parse(&id) {
         Ok(id) => id,
@@ -346,9 +340,7 @@ async fn inspect_process(
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(principal) => principal,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let process_link_id = match ProcessLinkId::parse(&id) {
         Ok(id) => id,
@@ -392,9 +384,7 @@ async fn set_heart_feature(
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(principal) => principal,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let circle_id = match uuid::Uuid::parse_str(&id) {
         Ok(id) => crate::domain::CircleId::from_uuid(id),
@@ -436,7 +426,19 @@ fn repository_response(error: crate::domain::RepositoryError) -> axum::response:
         crate::domain::RepositoryError::Conflict => axum::http::StatusCode::CONFLICT,
         crate::domain::RepositoryError::Storage(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
     };
-    (status, error.to_string()).into_response()
+    (status, error.public_message()).into_response()
+}
+
+fn auth_error_response(error: AuthError) -> axum::response::Response {
+    let status = match error {
+        AuthError::InvalidIdentity(_) | AuthError::Unsupported(_) => {
+            axum::http::StatusCode::BAD_REQUEST
+        }
+        AuthError::Unauthorized => axum::http::StatusCode::UNAUTHORIZED,
+        AuthError::External(_) => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        AuthError::InvalidSessionKey => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, error.public_message()).into_response()
 }
 
 #[derive(Deserialize)]
@@ -462,9 +464,7 @@ async fn create_agent(
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     match state
         .agents
@@ -502,9 +502,7 @@ async fn grant_agent(
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let agent_id = match UserId::new(id) {
         Ok(id) => id,
@@ -557,9 +555,7 @@ async fn revoke_agent_grant(
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let grant_id = match uuid::Uuid::parse_str(&id) {
         Ok(id) => id,
@@ -850,10 +846,10 @@ fn mcp_channel(args: &serde_json::Value) -> Result<ChannelId, (i64, String)> {
     .map_err(|e| (-32602, e.to_string()))
 }
 fn mcp_repository_error(error: crate::domain::RepositoryError) -> (i64, String) {
-    (-32003, error.to_string())
+    (-32003, error.public_message().to_owned())
 }
 fn mcp_chat_error(error: ChatError) -> (i64, String) {
-    (-32004, error.to_string())
+    (-32004, error.public_message())
 }
 
 async fn approve_agent_message(
@@ -864,9 +860,7 @@ async fn approve_agent_message(
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let message_id = match uuid::Uuid::parse_str(&id) {
         Ok(id) => crate::domain::MessageId::from_uuid(id),
@@ -978,9 +972,7 @@ async fn ws_handler(
         .await
     {
         Ok(principal) => principal,
-        Err(error) => {
-            return (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response();
-        }
+        Err(error) => return auth_error_response(error),
     };
     let shutdown = state.operations.subscribe_shutdown();
     upgrade
@@ -999,7 +991,7 @@ async fn ws_handler(
 async fn auth_login(State(state): State<AppState>) -> axum::response::Response {
     match state.auth.login() {
         Ok(login) => redirect_with_cookies(&login.authorization_url, &[login.set_cookie]),
-        Err(error) => (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => auth_error_response(error),
     }
 }
 
@@ -1020,13 +1012,13 @@ async fn auth_callback(
             if let Err(error) = state.chat.ensure_user(login.principal.user).await {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    error.to_string(),
+                    error.public_message(),
                 )
                     .into_response();
             }
             redirect_with_cookies("/", &[login.set_cookie, login.clear_transaction_cookie])
         }
-        Err(error) => (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response(),
+        Err(error) => auth_error_response(error),
     }
 }
 
@@ -1058,7 +1050,7 @@ async fn auth_refresh(
             "refresh_after_seconds": 300
         }))
         .into_response(),
-        Err(error) => (axum::http::StatusCode::UNAUTHORIZED, error.to_string()).into_response(),
+        Err(error) => auth_error_response(error),
     }
 }
 

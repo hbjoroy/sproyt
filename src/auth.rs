@@ -629,6 +629,16 @@ impl AuthError {
             Self::External(_) => "external",
         }
     }
+
+    pub fn public_message(&self) -> String {
+        match self {
+            Self::InvalidIdentity(error) => error.to_string(),
+            Self::InvalidSessionKey => "authentication configuration error".to_owned(),
+            Self::Unauthorized => "authentication required".to_owned(),
+            Self::Unsupported(_) => "authentication operation unsupported".to_owned(),
+            Self::External(_) => "authentication service unavailable".to_owned(),
+        }
+    }
 }
 
 impl fmt::Display for AuthError {

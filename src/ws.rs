@@ -115,10 +115,10 @@ pub async fn handle_socket(
                     Some(Ok(Message::Text(text))) => {
                         let envelope = match serde_json::from_str::<ClientEnvelope>(&text) {
                             Ok(envelope) => envelope,
-                            Err(error) => {
+                            Err(_) => {
                                 let message = ServerEnvelope::event(ServerEvent::Error {
                                     code: "invalid_envelope",
-                                    message: error.to_string(),
+                                    message: "invalid JSON command envelope".to_owned(),
                                 });
                                 if send(&mut socket, &message).await.is_err() {
                                     break;
@@ -415,7 +415,7 @@ fn error_event(error: ChatError) -> ServerEvent {
     };
     ServerEvent::Error {
         code,
-        message: error.to_string(),
+        message: error.public_message(),
     }
 }
 
@@ -434,5 +434,17 @@ mod tests {
             serde_json::from_str(r#"{"protocol":"old","request_id":"r1","type":"ping"}"#).unwrap();
         assert_eq!(envelope.protocol, "old");
         assert!(matches!(envelope.command, ClientCommand::Ping));
+    }
+
+    #[test]
+    fn storage_errors_are_redacted_from_websocket_events() {
+        let event = error_event(ChatError::Repository(RepositoryError::Storage(
+            "postgres://admin:provider-secret@database".to_owned(),
+        )));
+        let ServerEvent::Error { message, .. } = event else {
+            panic!("expected error event");
+        };
+        assert_eq!(message, "internal storage error");
+        assert!(!message.contains("provider-secret"));
     }
 }

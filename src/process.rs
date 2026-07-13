@@ -322,23 +322,39 @@ pub struct ProcessError {
 }
 
 impl ProcessError {
-    fn status(status: StatusCode, message: String) -> Self {
-        let (kind, retryable) = match status {
-            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => {
-                (ProcessErrorKind::InvalidRequest, false)
+    fn status(status: StatusCode) -> Self {
+        let (kind, message, retryable) = match status {
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => (
+                ProcessErrorKind::InvalidRequest,
+                "Heart rejected request",
+                false,
+            ),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => (
+                ProcessErrorKind::Unauthorized,
+                "Heart authorization failed",
+                false,
+            ),
+            StatusCode::NOT_FOUND => (
+                ProcessErrorKind::NotFound,
+                "Heart resource not found",
+                false,
+            ),
+            StatusCode::CONFLICT => (ProcessErrorKind::Conflict, "Heart conflict", false),
+            StatusCode::TOO_MANY_REQUESTS => {
+                (ProcessErrorKind::RateLimited, "Heart rate limited", true)
             }
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                (ProcessErrorKind::Unauthorized, false)
+            _ if status.is_server_error() => {
+                (ProcessErrorKind::Unavailable, "Heart unavailable", true)
             }
-            StatusCode::NOT_FOUND => (ProcessErrorKind::NotFound, false),
-            StatusCode::CONFLICT => (ProcessErrorKind::Conflict, false),
-            StatusCode::TOO_MANY_REQUESTS => (ProcessErrorKind::RateLimited, true),
-            _ if status.is_server_error() => (ProcessErrorKind::Unavailable, true),
-            _ => (ProcessErrorKind::InvalidResponse, false),
+            _ => (
+                ProcessErrorKind::InvalidResponse,
+                "Heart returned an invalid response",
+                false,
+            ),
         };
         Self {
             kind,
-            message,
+            message: message.to_owned(),
             retryable,
         }
     }
@@ -481,13 +497,12 @@ impl HeartGateway {
                     sleep(backoff(attempt)).await;
                     continue;
                 }
-                Ok(Err(error)) => return Err(ProcessError::unavailable(error.to_string())),
+                Ok(Err(_)) => return Err(ProcessError::unavailable("Heart transport failure")),
                 Ok(Ok(response)) => response,
             };
             let status = response.status();
             if !status.is_success() {
-                let message = response.text().await.unwrap_or_default();
-                let error = ProcessError::status(status, message);
+                let error = ProcessError::status(status);
                 if error.retryable && attempt < self.retries {
                     warn!(
                         attempt,
@@ -499,9 +514,9 @@ impl HeartGateway {
                 }
                 return Err(error);
             }
-            return response.json().await.map_err(|error| ProcessError {
+            return response.json().await.map_err(|_| ProcessError {
                 kind: ProcessErrorKind::InvalidResponse,
-                message: error.to_string(),
+                message: "Heart returned invalid JSON".to_owned(),
                 retryable: false,
             });
         }
@@ -704,10 +719,17 @@ mod tests {
 
     #[test]
     fn classifies_remote_failures_for_retry() {
-        assert!(ProcessError::status(StatusCode::SERVICE_UNAVAILABLE, "down".into()).retryable);
-        assert!(ProcessError::status(StatusCode::TOO_MANY_REQUESTS, "busy".into()).retryable);
-        assert!(!ProcessError::status(StatusCode::FORBIDDEN, "no".into()).retryable);
-        assert!(!ProcessError::status(StatusCode::CONFLICT, "duplicate".into()).retryable);
+        assert!(ProcessError::status(StatusCode::SERVICE_UNAVAILABLE).retryable);
+        assert!(ProcessError::status(StatusCode::TOO_MANY_REQUESTS).retryable);
+        assert!(!ProcessError::status(StatusCode::FORBIDDEN).retryable);
+        assert!(!ProcessError::status(StatusCode::CONFLICT).retryable);
+    }
+
+    #[test]
+    fn heart_status_errors_do_not_retain_provider_response_bodies() {
+        let error = ProcessError::status(StatusCode::BAD_REQUEST);
+        assert_eq!(error.message, "Heart rejected request");
+        assert!(!error.message.contains("provider-secret"));
     }
 
     #[test]

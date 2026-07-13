@@ -99,6 +99,15 @@ impl RepositoryError {
             Self::Storage(_) => "storage",
         }
     }
+
+    pub const fn public_message(&self) -> &'static str {
+        match self {
+            Self::Conflict => "resource conflict",
+            Self::NotFound => "resource not found",
+            Self::PermissionDenied => "permission denied",
+            Self::Storage(_) => "internal storage error",
+        }
+    }
 }
 
 impl std::error::Error for RepositoryError {}

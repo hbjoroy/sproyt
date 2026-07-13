@@ -395,6 +395,14 @@ impl ChatError {
             Self::Validation(_) => "validation",
         }
     }
+
+    pub fn public_message(&self) -> String {
+        match self {
+            Self::EngineStopped => "chat service unavailable".to_owned(),
+            Self::Repository(error) => error.public_message().to_owned(),
+            Self::Validation(error) => error.to_string(),
+        }
+    }
 }
 
 impl From<TextValidationError> for ChatError {
