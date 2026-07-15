@@ -89,7 +89,7 @@ BuildKit keeps the builder on its native `BUILDPLATFORM` and produces a static
 musl binary for the requested target, so an AMD64 CI runner can create the
 cluster's ARM64 image without QEMU. Delivery CI checks that the release image
 is `linux/arm64`; a separate native AMD64 image exercises the ephemeral kind
-cluster and is never published.
+cluster through the Dockerfile's `native` smoke stage and is never published.
 
 ```powershell
 $revision=git rev-parse HEAD

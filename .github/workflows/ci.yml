@@ -211,6 +211,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
+          build-args: BUILD_VARIANT=native
           load: true
           push: false
           tags: local/sproyt-smoke:${{ github.sha }}
