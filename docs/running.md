@@ -84,6 +84,13 @@ cargo test --locked --all-targets --all-features
 committed revision, use that revision as the immutable tag and OCI label, and
 record the registry digest printed by the push:
 
+The Dockerfile compiles through the pinned `cargo-zigbuild` and Zig toolchain.
+BuildKit keeps the builder on its native `BUILDPLATFORM` and produces a static
+musl binary for the requested target, so an AMD64 CI runner can create the
+cluster's ARM64 image without QEMU. Delivery CI checks that the release image
+is `linux/arm64`; a separate native AMD64 image exercises the ephemeral kind
+cluster and is never published.
+
 ```powershell
 $revision=git rev-parse HEAD
 $image="oci.bjoroy.me/sproyt/sproyt:$revision"

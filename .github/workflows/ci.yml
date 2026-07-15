@@ -192,34 +192,55 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build local container image
+      - name: Cross-build ARM64 release image
         uses: docker/build-push-action@v7
         with:
           context: .
+          platforms: linux/arm64
           load: true
           push: false
-          tags: local/sproyt:${{ github.sha }}
+          tags: local/sproyt-arm64:${{ github.sha }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+      - name: Build native AMD64 smoke image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: local/sproyt-smoke:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
 
       - name: Record image-to-commit evidence
         id: image-evidence
         env:
-          SPROYT_IMAGE: local/sproyt:${{ github.sha }}
+          SPROYT_IMAGE: local/sproyt-arm64:${{ github.sha }}
         run: |
           image_id=$(docker image inspect "$SPROYT_IMAGE" --format '{{.Id}}')
           revision=$(docker image inspect "$SPROYT_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          architecture=$(docker image inspect "$SPROYT_IMAGE" --format '{{.Architecture}}')
+          operating_system=$(docker image inspect "$SPROYT_IMAGE" --format '{{.Os}}')
           test "$revision" = "$GITHUB_SHA"
+          test "$architecture" = arm64
+          test "$operating_system" = linux
           test "${image_id#sha256:}" != "$image_id"
           echo "digest=$image_id" >> "$GITHUB_OUTPUT"
           jq --null-input \
             --arg image "$SPROYT_IMAGE" \
             --arg image_id "$image_id" \
             --arg revision "$revision" \
-            '{image: $image, image_id: $image_id, revision: $revision}' \
+            --arg architecture "$architecture" \
+            --arg operating_system "$operating_system" \
+            '{image: $image, image_id: $image_id, revision: $revision, architecture: $architecture, operating_system: $operating_system}' \
             > image-evidence.json
 
       - name: Render digest-pinned production manifests
@@ -254,7 +275,7 @@ jobs:
 
       - name: Load image and exercise install, scale, and rollback
         env:
-          SPROYT_IMAGE: local/sproyt:${{ github.sha }}
+          SPROYT_IMAGE: local/sproyt-smoke:${{ github.sha }}
         run: |
           kind load docker-image "$SPROYT_IMAGE"
           bash tools/kind-smoke.sh
@@ -262,14 +283,14 @@ jobs:
       - name: Generate image SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: local/sproyt:${{ github.sha }}
+          image: local/sproyt-arm64:${{ github.sha }}
           format: spdx-json
           output-file: sproyt.spdx.json
 
       - name: Scan image for vulnerabilities
         uses: anchore/scan-action@v7
         with:
-          image: local/sproyt:${{ github.sha }}
+          image: local/sproyt-arm64:${{ github.sha }}
           fail-build: true
           severity-cutoff: high
 
