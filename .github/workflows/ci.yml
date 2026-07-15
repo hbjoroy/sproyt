@@ -167,7 +167,7 @@ jobs:
           cargo run --locked -- migrate
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select max(sequence) from messages where channel_id='01900000-0000-7000-8000-000000000002'")" = "1"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: recovery-drill-backup
           path: sproyt.dump
@@ -274,7 +274,7 @@ jobs:
           severity-cutoff: high
 
       - name: Upload delivery evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: delivery-evidence
           path: |
