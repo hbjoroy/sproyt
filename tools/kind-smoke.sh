@@ -9,9 +9,32 @@ database_url='postgres://sproyt:sproyt-smoke@postgres:5432/sproyt'
 session_key='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 
 kubectl create namespace "$namespace"
-kubectl -n "$namespace" create deployment postgres --image=postgres:17-alpine
-kubectl -n "$namespace" set env deployment/postgres \
-  POSTGRES_USER=sproyt POSTGRES_PASSWORD=sproyt-smoke POSTGRES_DB=sproyt
+cat <<'YAML' | kubectl -n "$namespace" apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - name: POSTGRES_USER
+              value: sproyt
+            - name: POSTGRES_PASSWORD
+              value: sproyt-smoke
+            - name: POSTGRES_DB
+              value: sproyt
+YAML
 kubectl -n "$namespace" expose deployment postgres --port=5432 --target-port=5432
 kubectl -n "$namespace" rollout status deployment/postgres --timeout=120s
 for _ in {1..30}; do
