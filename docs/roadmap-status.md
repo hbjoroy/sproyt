@@ -23,8 +23,8 @@ gate has been signed off in the target environment.
 | S-14 | Implemented | Helm delivery verifier and kind install, migration, two-replica scale and rollback gate | Install in the ARM64 target cluster and provide manual Ingress |
 | S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, recovery CI and WebSocket capacity gate | Production-sized load, owners, privacy/retention and rollout sign-off |
 | S-16 | Integration implemented; client test gate open | Sproyt `ProcessGateway` contract, real Heart contract at `40f34837`, and `ea-heart-client` receive API at `2b55ae4` | Add the client-owned contract tests tracked by `hbjoroy/ea-heart-client#1`, then configure the deployed Heart endpoint |
-| S-17 | Implemented | Process-link/event/outbox migrations, idempotency and reconciliation tests | Observe retry/reconciliation during target rollout |
-| S-18 | Implemented, rollout pending | Event-planning definition, browser/MCP flow tests, kill switch and real Heart receive contract | Exercise restart/rolling update in the target cluster |
+| S-17 | Internal idempotency implemented; external reconciliation open | Process-link/event/outbox migrations, stable command receipts, bounded retry and idempotent visible events | Heart must reconcile a timed-out accepted start; tracked by `hbjoroy/heart#2` |
+| S-18 | Pilot implemented; dependency/rollout pending | Event-planning definition, browser/MCP flow tests, kill switch and real Heart receive contract | Complete S-17 reconciliation and exercise restart/rolling update in the target cluster |
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks and WebSocket/MCP adapter-conformance tests | Exercise through the production endpoint after S-19 activation |
 
