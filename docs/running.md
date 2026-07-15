@@ -80,9 +80,10 @@ cargo test --locked --all-targets --all-features
 
 ## Build and publish the cluster image
 
-`wslc` is already authenticated to `oci.bjoroy.me`. Build only from a reviewed,
-committed revision, use that revision as the immutable tag and OCI label, and
-record the registry digest printed by the push:
+Build only from a reviewed, committed revision, use that revision as the
+immutable tag and OCI label, and record the digest read back from the registry.
+Zot authentication currently works reliably through `regctl`; `wslc push` may
+return `unauthorized` even after a successful interactive `wslc login`.
 
 The Dockerfile compiles through the pinned `cargo-zigbuild` and Zig toolchain.
 BuildKit keeps the builder on its native `BUILDPLATFORM` and produces a static
@@ -95,8 +96,30 @@ cluster through the Dockerfile's `native` smoke stage and is never published.
 $revision=git rev-parse HEAD
 $image="oci.bjoroy.me/sproyt/sproyt:$revision"
 wslc build --build-arg "VCS_REF=$revision" -t $image .
-wslc push $image
-wslc image inspect $image
+wslc save --output ".local/sproyt-$revision.tar" $image
+wslc volume create sproyt-regctl-config
+
+# Run once per credential change. Enter the Zot password at the prompt.
+wslc run --rm -it --user 0:0 `
+  -e HOME=/config `
+  -v sproyt-regctl-config:/config `
+  regclient/regctl:v0.11.5 `
+  registry login --user hbjoroy oci.bjoroy.me
+
+$localDir=(Resolve-Path .local).Path
+wslc run --rm --user 0:0 `
+  -e HOME=/config `
+  -v sproyt-regctl-config:/config `
+  -v "${localDir}:/work:ro" `
+  regclient/regctl:v0.11.5 `
+  image import $image "/work/sproyt-$revision.tar"
+
+$digest=wslc run --rm --user 0:0 `
+  -e HOME=/config `
+  -v sproyt-regctl-config:/config `
+  regclient/regctl:v0.11.5 `
+  image digest $image
+$digest
 ```
 
 Use the registry digest (`sha256:...`), not the mutable tag, in Helm. The chart
@@ -222,7 +245,7 @@ replicaCount: 2
 
 image:
   repository: oci.bjoroy.me/sproyt/sproyt
-  digest: sha256:<digest-from-wslc-push>
+  digest: sha256:<digest-read-back-from-registry>
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
