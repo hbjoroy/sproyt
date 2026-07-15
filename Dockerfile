@@ -6,13 +6,17 @@ FROM --platform=$BUILDPLATFORM rust:1.96.0-alpine3.23@sha256:5dc2af9dd547c33f64d
 WORKDIR /src
 
 FROM build-base AS zig-builder
-RUN apk add --no-cache zig=0.15.2-r0 \
+RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
+    apk add --no-cache zig=0.15.2-r0 \
     && cargo install --locked --version 0.23.0 cargo-zigbuild
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
 ARG TARGETARCH
-RUN case "$TARGETARCH" in \
+RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=sproyt-zig-target,target=/src/target \
+    --mount=type=cache,id=sproyt-zig-cache,target=/root/.cache/zig \
+    case "$TARGETARCH" in \
       amd64) rust_target=x86_64-unknown-linux-musl ;; \
       arm64) rust_target=aarch64-unknown-linux-musl ;; \
       *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
@@ -25,7 +29,9 @@ FROM build-base AS native-builder
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
-RUN cargo build --locked --release \
+RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=sproyt-native-target,target=/src/target \
+    cargo build --locked --release \
     && install -D target/release/sproyt /out/sproyt
 
 FROM ${BUILD_VARIANT}-builder AS compiled
