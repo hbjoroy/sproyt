@@ -166,7 +166,8 @@ valid. Request the provider's `offline_access` scope so `/auth/refresh` can
 rotate refresh tokens and renew the encrypted HttpOnly session. The browser
 uses a cross-tab lock and schedules renewal from the access-token lifetime;
 tokens are never exposed to JavaScript. Session lifetime never exceeds the
-current ID/access-token lifetime.
+current ID/access-token lifetime, and an expired session cannot be revived
+through the refresh endpoint; the user must begin a new authorization flow.
 In production, startup requires an HTTPS issuer matching
 `https://identity.limani-parou.com/application/o/<provider-slug>/`, an HTTPS
 callback ending in `/auth/callback`, a post-logout URL on the same origin, and

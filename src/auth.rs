@@ -437,9 +437,7 @@ impl OidcService {
     ) -> Result<SessionRenewal, AuthError> {
         let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
         let claims: SessionClaims = self.codec.open(value)?;
-        if claims.issuer != self.issuer {
-            return Err(AuthError::Unauthorized);
-        }
+        validate_session_claims(&claims, &self.issuer)?;
         let refresh_token = claims.refresh_token.ok_or(AuthError::Unauthorized)?;
         let client = self.current_client()?;
         let token = client
@@ -973,6 +971,26 @@ mod tests {
         let (config, provider, server) = test_oidc_provider().await;
         let auth = AuthService::oidc(&config).await.unwrap();
 
+        let AuthService::Oidc(service) = &auth else {
+            panic!("expected OIDC service")
+        };
+        let expired_session = service
+            .codec
+            .seal(&SessionClaims {
+                issuer: provider.issuer.clone(),
+                subject: "authentik-user-1".to_owned(),
+                display_name: "Expired Authentik User".to_owned(),
+                access_token: Some("expired-access-token".to_owned()),
+                refresh_token: Some("refresh-a".to_owned()),
+                expires_at: now_seconds().saturating_sub(1),
+            })
+            .unwrap();
+        let expired_cookie = format!("{SESSION_COOKIE}={expired_session}");
+        assert!(matches!(
+            auth.renew_session(Some(&expired_cookie)).await,
+            Err(AuthError::Unauthorized)
+        ));
+
         let login = auth.login().unwrap();
         assert!(
             login
@@ -1037,9 +1055,6 @@ mod tests {
             .unwrap();
         assert_eq!(renewal.refresh_after_seconds, 150);
         let renewed_cookie = renewal.set_cookie;
-        let AuthService::Oidc(service) = &auth else {
-            panic!("expected OIDC service")
-        };
         let renewed: SessionClaims = service
             .codec
             .open(read_cookie(Some(&renewed_cookie), SESSION_COOKIE).unwrap())
