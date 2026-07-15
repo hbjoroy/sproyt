@@ -49,7 +49,8 @@ without Compose:
 $revision=git rev-parse HEAD
 wslc build --build-arg "VCS_REF=$revision" -t "sproyt:$revision" .
 wslc volume create sproyt-data
-wslc run --rm --user 0:0 -v sproyt-data:/data debian:trixie-slim `
+wslc run --rm --user 0:0 -v sproyt-data:/data `
+  alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 `
   chown 65532:65532 /data
 wslc run --rm `
   -e SPROYT_ENV=development `

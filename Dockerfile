@@ -1,11 +1,11 @@
-FROM rust:1.96.0-bookworm@sha256:5e2214abe154fe26e39f64488952e5c991eeed1d6d6da7cc8381ae83927f0cfc AS builder
+FROM rust:1.96.0-alpine3.23@sha256:5dc2af9dd547c33f64d5fc1d299ab93b51f39eaa16c426c476b990ce6caf5b3e AS builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
 RUN cargo build --locked --release
 
-FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2 AS runtime
+FROM scratch AS runtime
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/hbjoroy/sproyt" \
       org.opencontainers.image.revision="$VCS_REF"
