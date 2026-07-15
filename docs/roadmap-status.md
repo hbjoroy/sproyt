@@ -22,7 +22,7 @@ gate has been signed off in the target environment.
 | S-13 | Implemented and published | Pinned scratch ARM64 image, restricted runtime contract, SBOM and vulnerability CI; registry evidence below | Publish the final reviewed commit and retain its CI artifacts |
 | S-14 | Implemented | Helm delivery verifier and kind install, migration, two-replica scale and rollback gate | Install in the ARM64 target cluster and provide manual Ingress |
 | S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, recovery CI and WebSocket capacity gate | Production-sized load, owners, privacy/retention and rollout sign-off |
-| S-16 | Implemented | Sproyt `ProcessGateway` contract and `ea-heart-client` receive API at commit `2b55ae4` | Configure the deployed Heart endpoint |
+| S-16 | Integration implemented; client test gate open | Sproyt `ProcessGateway` contract, real Heart contract at `40f34837`, and `ea-heart-client` receive API at `2b55ae4` | Add the client-owned contract tests tracked by `hbjoroy/ea-heart-client#1`, then configure the deployed Heart endpoint |
 | S-17 | Implemented | Process-link/event/outbox migrations, idempotency and reconciliation tests | Observe retry/reconciliation during target rollout |
 | S-18 | Implemented, rollout pending | Event-planning definition, browser/MCP flow tests, kill switch and real Heart receive contract | Exercise restart/rolling update in the target cluster |
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
@@ -51,5 +51,12 @@ The remaining production gates are intentionally environment-owned:
 3. Manual Ingress/TLS and external callback reachability.
 4. Production-sized load, operational ownership, retention/privacy acceptance,
    rollout observation and rollback evidence.
+
+Heart is a private repository, so Sproyt's repository-scoped GitHub token
+cannot check it out in CI. The real cross-repository contract remains the
+explicit `tools/test-heart-contract.ps1` pre-release check. Heart revision
+`40f34837b4650eca5175811c7d0ad00c9b5f6280` passed that check on 2026-07-15.
+Do not add an implicit cross-repository token; if this check moves into CI,
+configure a narrowly scoped read-only credential explicitly.
 
 Track these as release evidence rather than weakening the automated contracts.
