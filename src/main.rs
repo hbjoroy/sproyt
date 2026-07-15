@@ -634,6 +634,9 @@ async fn mcp_handler(
     };
     let principal = match state.agents.authenticate(credential).await {
         Ok(value) => value,
+        Err(crate::domain::RepositoryError::Conflict) => {
+            return axum::http::StatusCode::TOO_MANY_REQUESTS.into_response();
+        }
         Err(_) => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
     };
     let notification = request.id.is_null() || request.method.starts_with("notifications/");
@@ -2292,7 +2295,7 @@ mod mcp_tests {
                 provider: "test".to_owned(),
                 service_identity: "mcp-agent".to_owned(),
                 purpose: "MCP conformance".to_owned(),
-                rate_limit_per_minute: 60,
+                rate_limit_per_minute: 7,
                 expires_at: None,
             })
             .await
@@ -2428,7 +2431,12 @@ mod mcp_tests {
                 .await;
         assert!(revoked.get("error").is_some(), "{revoked}");
         let listed = response_json(
-            mcp_handler(State(state), headers, Json(list_call("list-after-revoke"))).await,
+            mcp_handler(
+                State(state.clone()),
+                headers.clone(),
+                Json(list_call("list-after-revoke")),
+            )
+            .await,
         )
         .await;
         assert!(
@@ -2436,6 +2444,16 @@ mod mcp_tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+        let rate_limited = mcp_handler(
+            State(state),
+            headers,
+            Json(list_call("rate-limit-exceeded")),
+        )
+        .await;
+        assert_eq!(
+            rate_limited.status(),
+            axum::http::StatusCode::TOO_MANY_REQUESTS
         );
     }
 

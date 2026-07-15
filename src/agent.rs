@@ -1,10 +1,4 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    future::Future,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -105,6 +99,11 @@ pub trait AgentRepository: Send + Sync + 'static {
     fn grant_agent<'a>(&'a self, command: GrantAgent) -> AgentFuture<'a, Uuid>;
     fn revoke_grant<'a>(&'a self, actor: UserId, grant_id: Uuid) -> AgentFuture<'a, ()>;
     fn authenticate_agent<'a>(&'a self, credential: &'a str) -> AgentFuture<'a, AgentPrincipal>;
+    fn consume_rate_limit<'a>(
+        &'a self,
+        agent_id: UserId,
+        limit_per_minute: u16,
+    ) -> AgentFuture<'a, ()>;
     fn has_scope<'a>(
         &'a self,
         agent_id: UserId,
@@ -126,15 +125,11 @@ pub type SharedAgentRepository = Arc<dyn AgentRepository>;
 #[derive(Clone)]
 pub struct AgentService {
     repository: SharedAgentRepository,
-    requests: Arc<Mutex<HashMap<UserId, VecDeque<Instant>>>>,
 }
 
 impl AgentService {
     pub fn new(repository: SharedAgentRepository) -> Self {
-        Self {
-            repository,
-            requests: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { repository }
     }
     pub async fn create(&self, command: CreateAgent) -> Result<CreatedAgent, RepositoryError> {
         self.repository.create_agent(command).await
@@ -192,24 +187,9 @@ impl AgentService {
     }
     pub async fn authenticate(&self, credential: &str) -> Result<AgentPrincipal, RepositoryError> {
         let principal = self.repository.authenticate_agent(credential).await?;
-        let mut requests = self
-            .requests
-            .lock()
-            .map_err(|_| RepositoryError::Storage("agent rate limiter poisoned".into()))?;
-        let now = Instant::now();
-        let window = Duration::from_secs(60);
-        let bucket = requests.entry(principal.agent_id.clone()).or_default();
-        while bucket
-            .front()
-            .is_some_and(|at| now.duration_since(*at) >= window)
-        {
-            bucket.pop_front();
-        }
-        if bucket.len() >= usize::from(principal.rate_limit_per_minute) {
-            return Err(RepositoryError::Conflict);
-        }
-        bucket.push_back(now);
-        drop(requests);
+        self.repository
+            .consume_rate_limit(principal.agent_id.clone(), principal.rate_limit_per_minute)
+            .await?;
         tracing::debug!(agent_id=%principal.agent_id, owner_id=%principal.owner_id, purpose_declared=!principal.purpose.is_empty(), "authorized agent request");
         Ok(principal)
     }

@@ -494,6 +494,17 @@ where
             .agent_id,
         created_agent.agent_id
     );
+    repository
+        .consume_rate_limit(created_agent.agent_id.clone(), 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .consume_rate_limit(created_agent.agent_id.clone(), 1)
+            .await,
+        Err(RepositoryError::Conflict),
+        "agent rate limit was not shared by the repository"
+    );
     let expired_agent = repository
         .create_agent(CreateAgent {
             actor: actor.clone(),

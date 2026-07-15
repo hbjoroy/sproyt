@@ -25,7 +25,7 @@ gate has been signed off in the target environment.
 | S-16 | Integration implemented; client test gate open | Sproyt `ProcessGateway` contract, real Heart contract at `40f34837`, and `ea-heart-client` receive API at `2b55ae4` | Add the client-owned contract tests tracked by `hbjoroy/ea-heart-client#1`, then configure the deployed Heart endpoint |
 | S-17 | Implemented | Process-link/event/outbox migrations, idempotency and reconciliation tests | Observe retry/reconciliation during target rollout |
 | S-18 | Implemented, rollout pending | Event-planning definition, browser/MCP flow tests, kill switch and real Heart receive contract | Exercise restart/rolling update in the target cluster |
-| S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
+| S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks and WebSocket/MCP adapter-conformance tests | Exercise through the production endpoint after S-19 activation |
 
 ## Current immutable image evidence

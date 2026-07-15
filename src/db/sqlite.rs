@@ -991,6 +991,35 @@ impl AgentRepository for SqliteChatRepository {
         })
     }
 
+    fn consume_rate_limit<'a>(
+        &'a self,
+        agent_id: UserId,
+        limit_per_minute: u16,
+    ) -> AgentFuture<'a, ()> {
+        Box::pin(async move {
+            let now = Utc::now();
+            let cutoff = now - Duration::seconds(60);
+            let consumed: Option<i64> = sqlx::query_scalar(
+                "insert into agent_rate_limits(agent_id,window_started_at,request_count) values(?,?,1) \
+                 on conflict(agent_id) do update set \
+                 window_started_at=case when agent_rate_limits.window_started_at<=? then excluded.window_started_at else agent_rate_limits.window_started_at end, \
+                 request_count=case when agent_rate_limits.window_started_at<=? then 1 else agent_rate_limits.request_count+1 end \
+                 where agent_rate_limits.window_started_at<=? or agent_rate_limits.request_count<? \
+                 returning request_count",
+            )
+            .bind(agent_id.to_string())
+            .bind(now)
+            .bind(cutoff)
+            .bind(cutoff)
+            .bind(cutoff)
+            .bind(i64::from(limit_per_minute))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            consumed.map(|_| ()).ok_or(RepositoryError::Conflict)
+        })
+    }
+
     fn has_scope<'a>(
         &'a self,
         agent_id: UserId,
