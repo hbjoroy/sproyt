@@ -72,13 +72,13 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
-    /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
+    /// Persist the user resolved by the configured authentication provider.
     pub async fn ensure_user(&self, user: User) -> Result<(), ChatError> {
         self.repository.upsert_user(user).await?;
         Ok(())
     }
 
-    /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
+    /// Create a deterministic development principal for repository tests.
     #[cfg(test)]
     pub async fn prepare_development_user(
         &self,
@@ -98,7 +98,7 @@ impl ChatEngine {
         Ok(())
     }
 
-    /// Temporary adapter used until S-10 replaces query identities with AuthProvider.
+    /// Create a deterministic development session fixture.
     #[cfg(test)]
     pub async fn prepare_development_session(
         &self,

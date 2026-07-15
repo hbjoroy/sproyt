@@ -44,6 +44,10 @@ See [docs/roadmap.md](docs/roadmap.md) for the phased delivery plan from the
 current prototype through durable private chat, OIDC, Kubernetes, Heart process
 orchestration, and agent participation.
 
+See [docs/roadmap-status.md](docs/roadmap-status.md) for the requirement-by-
+requirement evidence index and the remaining environment-owned activation
+gates.
+
 See [docs/development.md](docs/development.md) for the local and CI quality
 gates used for contributions.
 
