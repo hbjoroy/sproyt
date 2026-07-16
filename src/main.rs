@@ -1608,7 +1608,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     </main>
 
     <script type="module" nonce="{{NONCE}}">
-      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs";
 
       mermaid.initialize({
         startOnLoad: false,
@@ -2886,6 +2886,10 @@ mod protocol_capacity_tests {
         let body = first.text().await.unwrap();
         assert!(body.contains(&format!("<script type=\"module\" nonce=\"{nonce}\">")));
         assert!(body.contains(&format!("<style nonce=\"{nonce}\">")));
+        assert!(
+            body.contains("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs")
+        );
+        assert!(!body.contains("npm/mermaid@11/dist/"));
         assert!(!body.contains("{{NONCE}}"));
 
         let second = reqwest::get(format!("http://{address}/")).await.unwrap();

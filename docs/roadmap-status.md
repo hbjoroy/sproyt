@@ -15,7 +15,7 @@ gate has been signed off in the target environment.
 | S-06 | Implemented | `ChatEngine` delegates authoritative state to `ChatRepository` and persists before publish | None |
 | S-07 | Implemented | Connection-ID presence test, lag recovery test, PostgreSQL notification adapter and two-replica Helm smoke | Observe cross-replica traffic in the target cluster |
 | S-08 | Implemented | `sproyt.chat.v1` envelopes plus WebSocket reconnect, idempotency, error and lag tests | None |
-| S-09 | Implemented | `two_users_complete_private_circle_slice_with_unread_reconnect` and safe Markdown/raw browser view | Human usability check |
+| S-09 | Implemented | `two_users_complete_private_circle_slice_with_unread_reconnect`; DOM-safe Markdown/raw view; strict, exact-version Mermaid rendering; CSP regression | Human usability check |
 | S-10 | Implemented | `AuthService`, deterministic development principals and production/dev rejection tests | None |
 | S-11 | Implemented, activation pending | OIDC discovery, PKCE, state, nonce, encrypted session, refresh, logout, key-rotation and revoked-user contracts in `auth.rs` | Create the Authentik client and run the contract against `identity.limani-parou.com` |
 | S-12 | Implemented | Central `Policy`, executable authorization matrix and mutation-audit migrations | Review target-environment audit retention/access |
