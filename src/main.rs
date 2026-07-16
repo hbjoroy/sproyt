@@ -121,6 +121,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/auth/callback", get(auth_callback))
         .route("/auth/refresh", post(auth_refresh))
         .route("/auth/logout", get(auth_logout))
+        .route("/api/v1/me/export", get(export_my_data))
         .route("/ws", get(ws_handler))
         .route("/api/v1/processes", post(start_process))
         .route("/api/v1/processes/{id}", get(get_process))
@@ -437,6 +438,72 @@ fn auth_error_response(error: AuthError) -> axum::response::Response {
         AuthError::Unauthorized => axum::http::StatusCode::UNAUTHORIZED,
         AuthError::External(_) => axum::http::StatusCode::SERVICE_UNAVAILABLE,
         AuthError::InvalidSessionKey => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, error.public_message()).into_response()
+}
+
+async fn export_my_data(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    if let Err(error) = state.chat.ensure_user(principal.user.clone()).await {
+        return chat_error_response(error);
+    }
+    let export = match state.chat.export_user_data(principal.user.id.clone()).await {
+        Ok(export) => export,
+        Err(error) => return chat_error_response(error),
+    };
+    let body = match serde_json::to_vec_pretty(&export) {
+        Ok(body) => body,
+        Err(_) => return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let filename = format!(
+        "attachment; filename=\"sproyt-export-{}.json\"",
+        principal.user.id
+    );
+    let Ok(disposition) = HeaderValue::from_str(&filename) else {
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let mut response = body.into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    response
+        .headers_mut()
+        .insert(axum::http::header::CONTENT_DISPOSITION, disposition);
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
+fn chat_error_response(error: ChatError) -> axum::response::Response {
+    let status = match &error {
+        ChatError::Repository(crate::domain::RepositoryError::PermissionDenied) => {
+            axum::http::StatusCode::FORBIDDEN
+        }
+        ChatError::Repository(crate::domain::RepositoryError::NotFound) => {
+            axum::http::StatusCode::NOT_FOUND
+        }
+        ChatError::Repository(crate::domain::RepositoryError::Conflict) => {
+            axum::http::StatusCode::CONFLICT
+        }
+        ChatError::Repository(crate::domain::RepositoryError::Storage(_)) => {
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        }
+        ChatError::Validation(_) => axum::http::StatusCode::BAD_REQUEST,
+        ChatError::EngineStopped => axum::http::StatusCode::SERVICE_UNAVAILABLE,
     };
     (status, error.public_message()).into_response()
 }
@@ -1582,6 +1649,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="create-circle-channel" type="button" disabled>Lag kanal</button>
           <button id="create-invitation" type="button" disabled>Lag invitasjon</button>
           <button id="delete-circle" type="button" disabled>Slett krets</button>
+          <button id="export-data" type="button" disabled>Eksporter mine data</button>
           <label>Invitasjonstoken<input id="invitation-token" placeholder="Lim inn token"></label>
           <button id="accept-invitation" type="button" disabled>Godta</button>
         </div>
@@ -1633,6 +1701,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const circleChannel = document.querySelector("#circle-channel");
       const invitationToken = document.querySelector("#invitation-token");
       const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation", "#delete-circle"].map((id) => document.querySelector(id));
+      const exportButton = document.querySelector("#export-data");
       const processTitle = document.querySelector("#process-title");
       const processId = document.querySelector("#process-id");
       const processView = document.querySelector("#process-view");
@@ -1724,6 +1793,25 @@ const INDEX_HTML: &str = r##"<!doctype html>
           sendCommand("delete_circle", { circle_id: circleSelect.value });
         }
       });
+      exportButton.addEventListener("click", async () => {
+        const participant = encodeURIComponent(participantInput.value.trim() || "guest");
+        try {
+          const response = await fetch(`/api/v1/me/export?participant=${participant}`, {
+            credentials: "same-origin"
+          });
+          if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "sproyt-export.json";
+          link.click();
+          URL.revokeObjectURL(url);
+          pushSystem("Dataeksporten er laga.");
+        } catch (error) {
+          pushSystem(`Kunne ikkje eksportere data: ${error.message}`);
+        }
+      });
       processButtons[0].addEventListener("click", () => setHeartFeature(true));
       processButtons[1].addEventListener("click", startEventPlanning);
       processButtons[2].addEventListener("click", refreshProcess);
@@ -1803,6 +1891,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bodyInput.disabled = !connected;
         sendButton.disabled = !connected;
         circleButtons.forEach((button) => { button.disabled = !connected; });
+        exportButton.disabled = !connected;
         processButtons.forEach((button) => { button.disabled = !connected; });
       }
 
@@ -2912,6 +3001,76 @@ mod protocol_capacity_tests {
             .to_str()
             .unwrap();
         assert!(!second_policy.contains(&format!("'nonce-{nonce}'")));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn portable_export_is_private_complete_and_not_cacheable() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server, _) =
+            start_test_server_with_state(repository, Duration::from_secs(60)).await;
+
+        let mut owner = connect_as(address, "export-owner").await;
+        let channel = command(
+            &mut owner,
+            "export-channel",
+            "create_channel",
+            serde_json::json!({"slug":"export-visible","name":"Export visible","kind":"private"}),
+        )
+        .await;
+        let channel_id = channel["payload"]["channel"]["id"].clone();
+        command(
+            &mut owner,
+            "export-message",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"portable visible body"}),
+        )
+        .await;
+
+        let mut outsider = connect_as(address, "export-outsider").await;
+        let hidden = command(
+            &mut outsider,
+            "hidden-channel",
+            "create_channel",
+            serde_json::json!({"slug":"export-hidden","name":"Export hidden","kind":"private"}),
+        )
+        .await;
+        command(
+            &mut outsider,
+            "hidden-message",
+            "send_message",
+            serde_json::json!({"channel_id":hidden["payload"]["channel"]["id"],"body":"must not leak"}),
+        )
+        .await;
+
+        let response = reqwest::get(format!(
+            "http://{address}/api/v1/me/export?participant=export-owner"
+        ))
+        .await
+        .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert!(
+            response.headers()["content-disposition"]
+                .to_str()
+                .unwrap()
+                .starts_with("attachment; filename=\"sproyt-export-")
+        );
+        let export: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(export["format"], crate::domain::PORTABLE_USER_EXPORT_FORMAT);
+        assert_eq!(export["channels"].as_array().unwrap().len(), 1);
+        assert_eq!(export["channels"][0]["channel"]["id"], channel_id);
+        assert_eq!(
+            export["channels"][0]["messages"][0]["body"],
+            "portable visible body"
+        );
+        assert!(!export.to_string().contains("must not leak"));
         server.abort();
     }
 

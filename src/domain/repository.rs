@@ -9,12 +9,12 @@ use super::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatMessage,
     Circle, CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation,
     DeleteCircle, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
-    Membership, MessageId, SendMessage, User, UserId,
+    Membership, MessageId, PortableUserExport, SendMessage, User, UserId,
 };
 #[cfg(test)]
 use super::{
-    ChannelRef, CircleId, CircleInvitation, InvitationId, MembershipRole, Policy,
-    RepositoryError::NotFound,
+    ChannelRef, CircleId, CircleInvitation, ExportedChannel, ExportedCircle, InvitationId,
+    MembershipRole, PORTABLE_USER_EXPORT_FORMAT, Policy, RepositoryError::NotFound,
 };
 #[cfg(test)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -30,6 +30,7 @@ pub type RepositoryFuture<'a, T> =
 pub trait ChatRepository: Send + Sync + 'static {
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
+    fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
     fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle>;
     fn list_circles_for_user<'a>(
         &'a self,
@@ -129,6 +130,66 @@ impl ChatRepository for InMemoryChatRepository {
             let mut state = self.lock_state()?;
             state.users.insert(user.id.clone(), user.clone());
             Ok(user)
+        })
+    }
+
+    fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let user = state
+                .users
+                .get(&actor)
+                .cloned()
+                .ok_or(RepositoryError::NotFound)?;
+            let mut circles = state
+                .circle_memberships
+                .values()
+                .filter(|membership| membership.user_id == actor)
+                .filter_map(|membership| {
+                    state
+                        .circles
+                        .get(&membership.circle_id)
+                        .cloned()
+                        .map(|circle| ExportedCircle {
+                            circle,
+                            role: membership.role.clone(),
+                        })
+                })
+                .collect::<Vec<_>>();
+            circles.sort_by(|left, right| left.circle.slug.cmp(&right.circle.slug));
+
+            let mut channels = state
+                .memberships
+                .values()
+                .filter(|membership| membership.user_id == actor)
+                .filter_map(|membership| {
+                    let channel = state.channels.get(&membership.channel_id)?;
+                    let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
+                    Some(ExportedChannel {
+                        channel: ChannelSummary {
+                            id: channel.id.clone(),
+                            slug: channel.slug.clone(),
+                            name: channel.name.clone(),
+                            kind: channel.kind.clone(),
+                            circle_id: channel.circle_id.clone(),
+                            role: membership.role.clone(),
+                            last_read_sequence: membership.last_read_sequence,
+                            latest_sequence: messages
+                                .last()
+                                .map_or(ChannelSequence::new(0), |message| message.sequence),
+                        },
+                        messages,
+                    })
+                })
+                .collect::<Vec<_>>();
+            channels.sort_by(|left, right| left.channel.slug.cmp(&right.channel.slug));
+            Ok(PortableUserExport {
+                format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
+                exported_at: Utc::now(),
+                user,
+                circles,
+                channels,
+            })
         })
     }
 

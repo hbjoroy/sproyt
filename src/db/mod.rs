@@ -86,7 +86,7 @@ where
         AcceptCircleInvitation, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
         CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName,
         JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MessageBody, MessageLimit,
-        PrincipalKind, SendMessage, User, UserId,
+        PORTABLE_USER_EXPORT_FORMAT, PrincipalKind, SendMessage, User, UserId,
     };
     use chrono::Utc;
 
@@ -276,6 +276,32 @@ where
         })
         .await
         .unwrap();
+    for sequence in 1..=205 {
+        repository
+            .append_message(SendMessage {
+                actor: actor.clone(),
+                channel_id: circle_channel.id.clone(),
+                body: MessageBody::new(format!("portable message {sequence}")).unwrap(),
+            })
+            .await
+            .unwrap();
+    }
+    let export = repository.export_user_data(member.clone()).await.unwrap();
+    assert_eq!(export.format, PORTABLE_USER_EXPORT_FORMAT);
+    assert_eq!(export.user.id, member);
+    assert_eq!(export.circles.len(), 1);
+    assert_eq!(export.circles[0].circle.id, circle.id);
+    assert_eq!(
+        export.channels.len(),
+        1,
+        "export must exclude hidden channels"
+    );
+    assert_eq!(export.channels[0].channel.id, circle_channel.id);
+    assert_eq!(
+        export.channels[0].messages.len(),
+        205,
+        "portable export must not apply the interactive history limit"
+    );
     assert_eq!(
         repository
             .accept_circle_invitation(AcceptCircleInvitation {

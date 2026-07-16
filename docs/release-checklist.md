@@ -27,6 +27,6 @@ production-ready based only on a successful build.
       `operations.md`.
 - [ ] Dashboard, alerts, on-call owner, and incident channel are recorded.
 - [ ] Capacity headroom covers at least twice the measured beta peak.
-- [ ] Retention, backup deletion lag, export limitation, and privacy owner are accepted.
+- [ ] Retention, backup deletion lag, export access policy, and privacy owner are accepted.
 - [ ] Release owner records image digest, chart version, migration set, rollout
       observation, and rollback target.

@@ -6,6 +6,8 @@ use super::{
     MessageId, UserId,
 };
 
+pub const PORTABLE_USER_EXPORT_FORMAT: &str = "sproyt.user-export.v1";
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrincipalKind {
@@ -18,6 +20,14 @@ impl PrincipalKind {
         match self {
             Self::Human => "human",
             Self::Agent => "agent",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "human" => Some(Self::Human),
+            "agent" => Some(Self::Agent),
+            _ => None,
         }
     }
 }
@@ -177,4 +187,25 @@ pub struct ChatMessage {
     pub body: MessageBody,
     pub sequence: ChannelSequence,
     pub sent_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PortableUserExport {
+    pub format: String,
+    pub exported_at: DateTime<Utc>,
+    pub user: User,
+    pub circles: Vec<ExportedCircle>,
+    pub channels: Vec<ExportedChannel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExportedCircle {
+    pub circle: Circle,
+    pub role: CircleRole,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExportedChannel {
+    pub channel: ChannelSummary,
+    pub messages: Vec<ChatMessage>,
 }

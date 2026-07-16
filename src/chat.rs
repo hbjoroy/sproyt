@@ -79,6 +79,16 @@ impl ChatEngine {
         Ok(())
     }
 
+    pub async fn export_user_data(
+        &self,
+        actor: UserId,
+    ) -> Result<crate::domain::PortableUserExport, ChatError> {
+        self.repository
+            .export_user_data(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
     /// Create a deterministic development principal for repository tests.
     #[cfg(test)]
     pub async fn prepare_development_user(

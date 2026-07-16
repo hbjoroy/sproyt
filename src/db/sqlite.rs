@@ -14,8 +14,9 @@ use crate::domain::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
     ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId, CircleInvitation,
     CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation,
-    DeleteCircle, DisplayName, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel,
-    LoadRecentMessages, MarkRead, Membership, MembershipRole, MessageBody, MessageId, Policy,
+    DeleteCircle, DisplayName, ExportedChannel, ExportedCircle, InvitationId, IssuedInvitation,
+    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MembershipRole,
+    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport,
     RepositoryError, RepositoryFuture, SendMessage, User, UserId,
 };
 use crate::process::{
@@ -73,6 +74,65 @@ impl ChatRepository for SqliteChatRepository {
             .await
             .map_err(sql_error)?;
             Ok(user)
+        })
+    }
+
+    fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let row = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at from users where id = ?")
+                .bind(actor.to_string())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::NotFound)?;
+            let kind: String = row.try_get("kind").map_err(storage)?;
+            let user = User {
+                id: UserId::new(row.try_get::<String, _>("id").map_err(storage)?)
+                    .map_err(storage)?,
+                kind: crate::domain::PrincipalKind::parse(&kind)
+                    .ok_or_else(|| storage("invalid principal kind"))?,
+                display_name: DisplayName::new(
+                    row.try_get::<String, _>("display_name").map_err(storage)?,
+                )
+                .map_err(storage)?,
+                external_provider: row.try_get("external_provider").map_err(storage)?,
+                external_subject: row.try_get("external_subject").map_err(storage)?,
+                created_at: row.try_get("created_at").map_err(storage)?,
+            };
+            let circle_rows = sqlx::query("select c.id, c.slug, c.name, c.created_by, c.created_at, m.role from circles c join circle_memberships m on m.circle_id = c.id where m.user_id = ? order by c.slug")
+                .bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
+            let circles = circle_rows
+                .into_iter()
+                .map(circle_with_role)
+                .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
+                .collect::<Result<Vec<_>, _>>()?;
+            let channel_rows = sqlx::query("select c.id, c.slug, c.name, c.kind, c.circle_id, m.role, m.last_read_sequence, coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id = c.id where m.user_id = ? order by c.slug")
+                .bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
+            let summaries = channel_rows
+                .into_iter()
+                .map(channel_summary)
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut channels = Vec::with_capacity(summaries.len());
+            for channel in summaries {
+                let rows = sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where channel_id = ? order by sequence")
+                    .bind(channel.id.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
+                channels.push(ExportedChannel {
+                    channel,
+                    messages: rows
+                        .into_iter()
+                        .map(chat_message)
+                        .collect::<Result<Vec<_>, _>>()?,
+                });
+            }
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(PortableUserExport {
+                format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
+                exported_at: Utc::now(),
+                user,
+                circles,
+                channels,
+            })
         })
     }
 

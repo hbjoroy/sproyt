@@ -15,7 +15,8 @@ pub use events::ChatEvent;
 pub use ids::{ChannelId, ChannelSequence, CircleId, InvitationId, MessageId, UserId};
 pub use models::{
     Channel, ChannelKind, ChannelSummary, ChatMessage, Circle, CircleInvitation, CircleMembership,
-    CircleRole, IssuedInvitation, Membership, MembershipRole, PrincipalKind, User,
+    CircleRole, ExportedChannel, ExportedCircle, IssuedInvitation, Membership, MembershipRole,
+    PORTABLE_USER_EXPORT_FORMAT, PortableUserExport, PrincipalKind, User,
 };
 pub use policy::Policy;
 #[cfg(test)]

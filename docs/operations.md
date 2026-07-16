@@ -101,9 +101,17 @@ that belong to it, including channels, messages, invitations, process state and
 agent grants. The durable `circle.deleted` audit event retains the actor, target
 and cause but not deleted message content. Backups age out deleted content on
 the backup schedule; operators must not restore an old backup over production
-without replaying deletion obligations. These defaults still require an
-explicit product/privacy decision before public production, and portable export
-remains a release limitation until its workflow is implemented.
+without replaying deletion obligations.
+
+An authenticated user can request `GET /api/v1/me/export` or use **Eksporter
+mine data** in the browser. The non-cacheable `sproyt.user-export.v1` JSON file
+contains their profile, circle memberships, channel metadata/read markers and
+complete ordered history for channels they are currently authorized to read.
+It deliberately excludes channels the user has not joined and other users'
+profile/identity-provider fields. Export is produced from one database snapshot
+so concurrent sends cannot create internally inconsistent cursors. These
+defaults still require an explicit product/privacy decision before public
+production.
 
 Before each material traffic increase, load-test at two replicas with a
 production-sized PostgreSQL tier. Exercise concurrent sends to one hot channel,
