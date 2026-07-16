@@ -10,6 +10,8 @@ use uuid::Uuid;
 
 use crate::domain::{ChannelId, RepositoryError, UserId};
 
+const HEART_CLIENT_ID: &str = "sproyt";
+
 pub type GatewayFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProcessError>> + Send + 'a>>;
 pub type ProcessRepositoryFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, RepositoryError>> + Send + 'a>>;
@@ -522,6 +524,34 @@ impl HeartGateway {
         }
         unreachable!("retry loop always returns")
     }
+
+    async fn resolve_start(
+        &self,
+        namespace: &str,
+        idempotency_key: Uuid,
+    ) -> Result<StartedProcess, ProcessError> {
+        let mut url = reqwest::Url::parse(&format!("{}/api/v1/instance-starts/", self.base_url))
+            .map_err(|_| ProcessError {
+                kind: ProcessErrorKind::InvalidRequest,
+                message: "Heart reconciliation URL is invalid".to_owned(),
+                retryable: false,
+            })?;
+        let mut segments = url.path_segments_mut().map_err(|_| ProcessError {
+            kind: ProcessErrorKind::InvalidRequest,
+            message: "Heart reconciliation URL cannot be extended".to_owned(),
+            retryable: false,
+        })?;
+        segments.pop_if_empty().push(&idempotency_key.to_string());
+        drop(segments);
+        url.query_pairs_mut().append_pair("namespace", namespace);
+        self.execute(|| {
+            self.client
+                .get(url.clone())
+                .header("x-correlation-id", idempotency_key.to_string())
+                .header("x-heart-client", HEART_CLIENT_ID)
+        })
+        .await
+    }
 }
 
 impl ProcessGateway for HeartGateway {
@@ -532,13 +562,26 @@ impl ProcessGateway for HeartGateway {
         correlation_id: Uuid,
     ) -> GatewayFuture<'a, StartedProcess> {
         Box::pin(async move {
-            self.execute(|| {
-                self.client
-                    .post(format!("{}/api/v1/instances", self.base_url))
-                    .header("x-correlation-id", correlation_id.to_string())
-                    .json(command)
-            })
-            .await
+            let outcome = self
+                .execute(|| {
+                    self.client
+                        .post(format!("{}/api/v1/instances", self.base_url))
+                        .header("x-correlation-id", correlation_id.to_string())
+                        .header("x-heart-client", HEART_CLIENT_ID)
+                        .header("idempotency-key", correlation_id.to_string())
+                        .json(command)
+                })
+                .await;
+            match outcome {
+                Ok(started) => Ok(started),
+                Err(start_error) if start_error.retryable => {
+                    match self.resolve_start(&command.namespace, correlation_id).await {
+                        Ok(started) => Ok(started),
+                        Err(_) => Err(start_error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
         })
     }
 
@@ -599,6 +642,7 @@ mod tests {
     #[derive(Clone)]
     struct HeartContractState {
         starts: Arc<AtomicUsize>,
+        resolves: Arc<AtomicUsize>,
         instance_id: Uuid,
         timeout_id: Uuid,
     }
@@ -644,8 +688,26 @@ mod tests {
         Json(command): Json<StartProcess>,
     ) -> impl IntoResponse {
         assert_correlation(&headers);
+        assert_eq!(
+            headers
+                .get("x-heart-client")
+                .and_then(|value| value.to_str().ok()),
+            Some(HEART_CLIENT_ID)
+        );
+        let idempotency_key = headers
+            .get("idempotency-key")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| Uuid::parse_str(value).ok());
+        assert!(idempotency_key.is_some(), "missing durable idempotency key");
         assert_eq!(command.namespace, "friends");
         assert_eq!(command.definition_name, "event-planning");
+        if command.metadata.get("simulate_uncertain") == Some(&Value::Bool(true)) {
+            sleep(Duration::from_millis(100)).await;
+            return (
+                StatusCode::CREATED,
+                Json(serde_json::json!({"instance_id":state.instance_id})),
+            );
+        }
         if state.starts.fetch_add(1, Ordering::SeqCst) == 0 {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -656,6 +718,23 @@ mod tests {
             StatusCode::CREATED,
             Json(serde_json::json!({"instance_id":state.instance_id})),
         )
+    }
+
+    async fn resolve_start_contract(
+        State(state): State<HeartContractState>,
+        Path(key): Path<Uuid>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        assert_correlation(&headers);
+        assert_eq!(
+            headers
+                .get("x-heart-client")
+                .and_then(|value| value.to_str().ok()),
+            Some(HEART_CLIENT_ID)
+        );
+        assert_ne!(key, Uuid::nil());
+        state.resolves.fetch_add(1, Ordering::SeqCst);
+        Json(serde_json::json!({"instance_id":state.instance_id}))
     }
 
     async fn inspect_contract(
@@ -700,11 +779,13 @@ mod tests {
     async fn heart_contract_server() -> (HeartGateway, HeartContractState) {
         let state = HeartContractState {
             starts: Arc::new(AtomicUsize::new(0)),
+            resolves: Arc::new(AtomicUsize::new(0)),
             instance_id: Uuid::now_v7(),
             timeout_id: Uuid::now_v7(),
         };
         let app = Router::new()
             .route("/api/v1/instances", post(start_contract))
+            .route("/api/v1/instance-starts/{key}", get(resolve_start_contract))
             .route("/api/v1/instances/{id}", get(inspect_contract))
             .route("/api/v1/messages", post(correlate_contract))
             .with_state(state.clone());
@@ -712,7 +793,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (
-            HeartGateway::new(format!("http://{address}"), Duration::from_millis(30), 1).unwrap(),
+            HeartGateway::new(format!("http://{address}"), Duration::from_millis(60), 1).unwrap(),
             state,
         )
     }
@@ -792,6 +873,25 @@ mod tests {
         let rendered_logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
         assert!(rendered_logs.contains("error_kind=\"unavailable\""));
         assert!(!rendered_logs.contains("DO_NOT_LOG_HEART_BODY"));
+
+        let reconciled = gateway
+            .start(
+                &StartProcess {
+                    namespace: "friends".to_owned(),
+                    definition_name: "event-planning".to_owned(),
+                    version: Some("1".to_owned()),
+                    metadata: serde_json::json!({"simulate_uncertain":true}),
+                },
+                Uuid::now_v7(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reconciled.instance_id, state.instance_id);
+        assert_eq!(
+            state.resolves.load(Ordering::SeqCst),
+            1,
+            "unknown start outcome was not reconciled"
+        );
 
         let inspected = gateway
             .inspect(state.instance_id, correlation_id)

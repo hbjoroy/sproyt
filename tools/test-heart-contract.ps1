@@ -25,8 +25,13 @@ try {
     Invoke-RestMethod -Method Post -Uri http://127.0.0.1:13000/api/v1/definitions `
         -ContentType text/plain -Body $yaml | Out-Null
     $link = [guid]::NewGuid().ToString()
+    $startKey = [guid]::NewGuid().ToString()
+    $startHeaders = @{ 'X-Heart-Client'='sproyt'; 'Idempotency-Key'=$startKey }
     $start = @{ namespace='sproyt'; definition_name='sproyt-event-planning'; version='1.0.0'; metadata=@{ process_link_id=$link; title='Contract test' } } | ConvertTo-Json -Depth 5
-    $instance = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:13000/api/v1/instances -ContentType application/json -Body $start
+    $instance = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:13000/api/v1/instances -Headers $startHeaders -ContentType application/json -Body $start
+    $replay = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:13000/api/v1/instances -Headers $startHeaders -ContentType application/json -Body $start
+    $resolved = Invoke-RestMethod -Uri "http://127.0.0.1:13000/api/v1/instance-starts/${startKey}?namespace=sproyt" -Headers @{ 'X-Heart-Client'='sproyt' }
+    if (-not $replay.replayed -or $replay.instance_id -ne $instance.instance_id -or $resolved.instance_id -ne $instance.instance_id) { throw "Heart idempotent start/reconciliation contract failed" }
     $before = Invoke-RestMethod -Uri "http://127.0.0.1:13000/api/v1/instances/$($instance.instance_id)"
     if ($before.status -ne 'waiting' -or $before.current_node -ne 'wait-for-decision') { throw "Heart did not enter receive wait state" }
     $message = @{ namespace='sproyt'; correlation_key='process_link_id'; correlation_value=$link; payload=@{ decision='yes' } } | ConvertTo-Json -Depth 5

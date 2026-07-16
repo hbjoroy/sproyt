@@ -355,6 +355,12 @@ networkPolicy:
   heartPort: 3000
 ```
 
+Use Heart revision `3f06424` or newer and apply all Heart migrations through
+`004_idempotent_instance_start.sql` before enabling the URL. Sproyt scopes
+starts with `X-Heart-Client: sproyt`, uses its durable outbox UUID as
+`Idempotency-Key`, and reconciles a timed-out accepted start through Heart's
+`/api/v1/instance-starts/{key}` endpoint.
+
 Without a matching Heart egress rule, the default-deny NetworkPolicy correctly
 blocks that internal connection. Ordinary chat remains available when
 `config.heartUrl` is empty.
