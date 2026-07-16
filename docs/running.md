@@ -339,6 +339,26 @@ The ingress controller namespace must match
 `networkPolicy.ingressNamespaceSelector`. Confirm external OIDC login, logout,
 WebSocket reconnect, and `/readyz` after applying the Ingress.
 
+If Heart is later installed in namespace `heart` with pods labelled
+`app: heart`, add these values before setting `config.heartUrl`:
+
+```yaml
+config:
+  heartUrl: http://heart.heart.svc.cluster.local:3000
+networkPolicy:
+  heartNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: heart
+  heartPodSelector:
+    matchLabels:
+      app: heart
+  heartPort: 3000
+```
+
+Without a matching Heart egress rule, the default-deny NetworkPolicy correctly
+blocks that internal connection. Ordinary chat remains available when
+`config.heartUrl` is empty.
+
 ## Upgrade and rollback
 
 Build and push a new commit-tagged image, replace only `image.digest`, and run

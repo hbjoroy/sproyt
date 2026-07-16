@@ -79,3 +79,10 @@ networkPolicy:
   databaseNamespaceSelector: {}
   databasePodSelector: {}
   databaseCidrs: []
+  # Required for an in-cluster Heart endpoint on a non-HTTPS port. HTTPS
+  # endpoints are already covered by the general OIDC/HTTPS egress rule.
+  heartSameNamespace: false
+  heartNamespaceSelector: {}
+  heartPodSelector: {}
+  heartCidrs: []
+  heartPort: 3000

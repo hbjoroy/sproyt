@@ -21,12 +21,19 @@ rendered=$(mktemp)
 trap 'rm -f "$rendered"' EXIT
 "$helm_command" template sproyt "$chart" "${common[@]}" \
   --set "image.digest=$digest" \
-  --set imagePullSecrets[0].name=oci-pull-secret >"$rendered"
+  --set imagePullSecrets[0].name=oci-pull-secret \
+  --set config.heartUrl=http://heart.heart.svc.cluster.local:3000 \
+  --set 'networkPolicy.heartNamespaceSelector.matchLabels.kubernetes\.io/metadata\.name=heart' \
+  --set networkPolicy.heartPodSelector.matchLabels.app=heart \
+  --set networkPolicy.heartPort=3000 >"$rendered"
 
 image="oci.bjoroy.me/sproyt/sproyt@$digest"
 test "$(grep -F -c "image: \"$image\"" "$rendered")" -eq 2
 grep -F -q "checksum/config:" "$rendered"
 grep -F -q "kubernetes.io/metadata.name: kube-system" "$rendered"
+grep -F -q "kubernetes.io/metadata.name: heart" "$rendered"
+grep -F -q "port: 3000" "$rendered"
+grep -F -q "app: heart" "$rendered"
 grep -F -q "podSelector: {}" "$rendered"
 test "$(grep -F -c -- "- name: oci-pull-secret" "$rendered")" -eq 2
 test "$(grep -F -c "serviceAccountName: default" "$rendered")" -eq 1

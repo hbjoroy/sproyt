@@ -40,6 +40,9 @@ pods in the release namespace. For a database in another namespace set
 `networkPolicy.databaseSameNamespace=false` and provide namespace/pod selectors;
 for an external database provide the narrow `databaseCidrs`. Set
 `networkPolicy.ingressNamespaceSelector` for an ingress controller outside the
-release namespace. ConfigMap changes automatically roll pods. When the contents
-of the externally managed Secret change, update `secret.rolloutChecksum` to an
-opaque new value so Kubernetes performs the same controlled rollout.
+release namespace. When `config.heartUrl` points to an in-cluster service on a
+non-HTTPS port, set `networkPolicy.heartSameNamespace` or the Heart
+namespace/pod selectors (or a narrow `heartCidrs` entry) and `heartPort`.
+ConfigMap changes automatically roll pods. When the contents of the externally
+managed Secret change, update `secret.rolloutChecksum` to an opaque new value
+so Kubernetes performs the same controlled rollout.

@@ -60,4 +60,34 @@ spec:
         - protocol: TCP
           port: 5432
     {{- end }}
+    {{- if and .Values.config.heartUrl .Values.networkPolicy.heartSameNamespace }}
+    - to:
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.heartPodSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.heartPort }}
+    {{- end }}
+    {{- if and .Values.config.heartUrl .Values.networkPolicy.heartNamespaceSelector }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.heartNamespaceSelector | nindent 12 }}
+          {{- with .Values.networkPolicy.heartPodSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.heartPort }}
+    {{- end }}
+    {{- if .Values.config.heartUrl }}
+    {{- range .Values.networkPolicy.heartCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.heartPort }}
+    {{- end }}
+    {{- end }}
 {{- end }}
