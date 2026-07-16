@@ -1581,6 +1581,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <label>Ny kanal<input id="circle-channel" placeholder="planlegging"></label>
           <button id="create-circle-channel" type="button" disabled>Lag kanal</button>
           <button id="create-invitation" type="button" disabled>Lag invitasjon</button>
+          <button id="delete-circle" type="button" disabled>Slett krets</button>
           <label>Invitasjonstoken<input id="invitation-token" placeholder="Lim inn token"></label>
           <button id="accept-invitation" type="button" disabled>Godta</button>
         </div>
@@ -1631,7 +1632,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const circleSlug = document.querySelector("#circle-slug");
       const circleChannel = document.querySelector("#circle-channel");
       const invitationToken = document.querySelector("#invitation-token");
-      const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation"].map((id) => document.querySelector(id));
+      const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation", "#delete-circle"].map((id) => document.querySelector(id));
       const processTitle = document.querySelector("#process-title");
       const processId = document.querySelector("#process-id");
       const processView = document.querySelector("#process-view");
@@ -1715,6 +1716,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
       });
       circleButtons[3].addEventListener("click", () => {
         if (invitationToken.value.trim()) sendCommand("accept_circle_invitation", { token: invitationToken.value.trim() });
+      });
+      circleButtons[4].addEventListener("click", () => {
+        if (!circleSelect.value) return;
+        const selected = circleSelect.options[circleSelect.selectedIndex]?.textContent || "denne vennekretsen";
+        if (window.confirm(`Slett ${selected} og all chat- og prosesshistorikk permanent?`)) {
+          sendCommand("delete_circle", { circle_id: circleSelect.value });
+        }
       });
       processButtons[0].addEventListener("click", () => setHeartFeature(true));
       processButtons[1].addEventListener("click", startEventPlanning);
@@ -1922,6 +1930,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
           circleSelect.add(new Option(`${payload.circle.name} (owner)`, payload.circle.id));
           circleSelect.value = payload.circle.id;
           pushSystem(`Vennekretsen ${payload.circle.name} er oppretta.`);
+          return;
+        }
+        if (event.type === "circle_deleted") {
+          activeChannelId = null;
+          sendCommand("list_my_circles");
+          sendCommand("list_my_channels");
+          pushSystem("Vennekretsen og den tilhøyrande historikken er sletta.");
           return;
         }
         if (event.type === "circle_invitation_created") {
@@ -3572,6 +3587,52 @@ mod protocol_capacity_tests {
             .unwrap();
         assert_eq!(summary["last_read_sequence"].as_u64(), Some(2));
         assert_eq!(summary["latest_sequence"].as_u64(), Some(2));
+
+        let denied = command_response(
+            &mut member,
+            "member-delete-circle",
+            "delete_circle",
+            serde_json::json!({"circle_id":circle_id}),
+        )
+        .await;
+        assert_eq!(denied["payload"]["code"], "permission_denied");
+        let deleted = command(
+            &mut owner,
+            "owner-delete-circle",
+            "delete_circle",
+            serde_json::json!({"circle_id":circle_id}),
+        )
+        .await;
+        assert_eq!(deleted["type"], "circle_deleted");
+
+        let channels = command(
+            &mut member,
+            "list-after-delete",
+            "list_my_channels",
+            serde_json::Value::Null,
+        )
+        .await;
+        assert!(
+            channels["payload"]["channels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|summary| summary["id"] != channel_id)
+        );
+        let circles = command(
+            &mut member,
+            "list-circles-after-delete",
+            "list_my_circles",
+            serde_json::Value::Null,
+        )
+        .await;
+        assert!(
+            circles["payload"]["circles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|entry| entry[0]["id"] != circle_id)
+        );
         server.abort();
     }
 }

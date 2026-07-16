@@ -84,9 +84,9 @@ where
 {
     use crate::domain::{
         AcceptCircleInvitation, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
-        CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName, JoinChannel,
-        LeaveChannel, LoadRecentMessages, MarkRead, MessageBody, MessageLimit, PrincipalKind,
-        SendMessage, User, UserId,
+        CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName,
+        JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MessageBody, MessageLimit,
+        PrincipalKind, SendMessage, User, UserId,
     };
     use chrono::Utc;
 
@@ -295,13 +295,54 @@ where
     assert_eq!(
         repository
             .load_recent_messages(LoadRecentMessages {
-                actor: member,
-                channel_id: circle_channel.id,
+                actor: member.clone(),
+                channel_id: circle_channel.id.clone(),
                 limit: MessageLimit::DEFAULT,
                 after: None,
             })
             .await,
         Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .delete_circle(DeleteCircle {
+                actor: member.clone(),
+                circle_id: circle.id.clone(),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    repository
+        .delete_circle(DeleteCircle {
+            actor: actor.clone(),
+            circle_id: circle.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .list_circles_for_user(actor.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .all(|(listed, _)| listed.id != circle.id)
+    );
+    assert!(
+        repository
+            .list_circles_for_user(member.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .all(|(listed, _)| listed.id != circle.id)
+    );
+    assert_eq!(
+        repository
+            .join_channel(JoinChannel {
+                actor,
+                channel: ChannelRef::Id(circle_channel.id),
+            })
+            .await,
+        Err(RepositoryError::NotFound)
     );
 }
 

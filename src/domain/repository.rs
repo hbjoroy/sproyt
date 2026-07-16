@@ -8,8 +8,8 @@ use std::{fmt, future::Future, pin::Pin};
 use super::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatMessage,
     Circle, CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation,
-    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership,
-    MessageId, SendMessage, User, UserId,
+    DeleteCircle, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
+    Membership, MessageId, SendMessage, User, UserId,
 };
 #[cfg(test)]
 use super::{
@@ -35,6 +35,7 @@ pub trait ChatRepository: Send + Sync + 'static {
         &'a self,
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<(Circle, CircleRole)>>;
+    fn delete_circle<'a>(&'a self, command: DeleteCircle) -> RepositoryFuture<'a, ()>;
     fn create_circle_invitation<'a>(
         &'a self,
         command: CreateCircleInvitation,
@@ -184,6 +185,56 @@ impl ChatRepository for InMemoryChatRepository {
                 .collect::<Vec<_>>();
             circles.sort_by(|left, right| left.0.slug.cmp(&right.0.slug));
             Ok(circles)
+        })
+    }
+
+    fn delete_circle<'a>(&'a self, command: DeleteCircle) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let role = state
+                .circle_memberships
+                .get(&(command.circle_id.clone(), command.actor))
+                .map(|membership| &membership.role);
+            if !Policy::can_delete_circle(role) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let circle = state
+                .circles
+                .remove(&command.circle_id)
+                .ok_or(RepositoryError::NotFound)?;
+            state.circles_by_slug.remove(&circle.slug);
+            state
+                .circle_memberships
+                .retain(|(circle_id, _), _| circle_id != &command.circle_id);
+            state
+                .circle_invitations
+                .retain(|_, invitation| invitation.circle_id != command.circle_id);
+
+            let channel_ids = state
+                .channels
+                .values()
+                .filter(|channel| channel.circle_id.as_ref() == Some(&command.circle_id))
+                .map(|channel| channel.id.clone())
+                .collect::<Vec<_>>();
+            let message_ids = channel_ids
+                .iter()
+                .flat_map(|channel_id| state.messages.get(channel_id).into_iter().flatten())
+                .map(|message| message.id)
+                .collect::<std::collections::HashSet<_>>();
+            for channel_id in &channel_ids {
+                if let Some(channel) = state.channels.remove(channel_id) {
+                    state.channels_by_slug.remove(&channel.slug);
+                }
+                state
+                    .memberships
+                    .retain(|(membership_channel_id, _), _| membership_channel_id != channel_id);
+                state.messages.remove(channel_id);
+                state.next_sequences.remove(channel_id);
+            }
+            state
+                .command_receipts
+                .retain(|_, message_id| !message_ids.contains(message_id));
+            Ok(())
         })
     }
 

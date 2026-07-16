@@ -7,6 +7,10 @@ impl Policy {
         matches!(role, Some(CircleRole::Owner))
     }
 
+    pub fn can_delete_circle(role: Option<&CircleRole>) -> bool {
+        matches!(role, Some(CircleRole::Owner))
+    }
+
     pub fn can_create_channel_in_circle(role: Option<&CircleRole>) -> bool {
         matches!(role, Some(CircleRole::Owner | CircleRole::Member))
     }
@@ -58,6 +62,8 @@ mod tests {
     fn authorization_matrix_is_explicit() {
         assert!(Policy::can_invite_to_circle(Some(&CircleRole::Owner)));
         assert!(!Policy::can_invite_to_circle(Some(&CircleRole::Member)));
+        assert!(Policy::can_delete_circle(Some(&CircleRole::Owner)));
+        assert!(!Policy::can_delete_circle(Some(&CircleRole::Member)));
         assert!(Policy::can_create_channel_in_circle(Some(
             &CircleRole::Member
         )));

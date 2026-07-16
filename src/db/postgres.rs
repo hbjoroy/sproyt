@@ -16,10 +16,10 @@ use crate::agent::{
 use crate::domain::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
     ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId, CircleInvitation,
-    CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName,
-    InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
-    Membership, MembershipRole, MessageBody, MessageId, Policy, RepositoryError, RepositoryFuture,
-    SendMessage, User, UserId,
+    CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation,
+    DeleteCircle, DisplayName, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel,
+    LoadRecentMessages, MarkRead, Membership, MembershipRole, MessageBody, MessageId, Policy,
+    RepositoryError, RepositoryFuture, SendMessage, User, UserId,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -134,6 +134,41 @@ impl ChatRepository for PostgresChatRepository {
             let rows = sqlx::query("select c.id,c.slug,c.name,c.created_by,c.created_at,m.role from circles c join circle_memberships m on m.circle_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(circle_with_role).collect()
+        })
+    }
+
+    fn delete_circle<'a>(&'a self, command: DeleteCircle) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let role: Option<String> = sqlx::query_scalar(
+                "select m.role from circles c join circle_memberships m on m.circle_id=c.id where c.id=$1 and m.user_id=$2 for update of c",
+            )
+            .bind(*command.circle_id.as_uuid())
+            .bind(*command.actor.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let role = role.as_deref().and_then(CircleRole::parse);
+            if !Policy::can_delete_circle(role.as_ref()) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query(
+                "insert into audit_events(actor_id,action,target_kind,target_id,payload) values ($1,'circle.deleted','circle',$2,jsonb_build_object('deletion','owner_requested'))",
+            )
+            .bind(*command.actor.as_uuid())
+            .bind(command.circle_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let result = sqlx::query("delete from circles where id=$1")
+                .bind(*command.circle_id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            if result.rows_affected() != 1 {
+                return Err(RepositoryError::NotFound);
+            }
+            tx.commit().await.map_err(sql_error)
         })
     }
 
@@ -266,6 +301,14 @@ impl ChatRepository for PostgresChatRepository {
                     ChannelId::from_uuid(value.ok_or(RepositoryError::NotFound)?)
                 }
             };
+            let exists: Option<i32> = sqlx::query_scalar("select 1 from channels where id=$1")
+                .bind(*channel_id.as_uuid())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            if exists.is_none() {
+                return Err(RepositoryError::NotFound);
+            }
             let allowed: Option<i32> = sqlx::query_scalar("select 1 from channels c where c.id=$1 and (c.circle_id is null or exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=$2))")
                 .bind(*channel_id.as_uuid()).bind(*command.actor.as_uuid())
                 .fetch_optional(&self.pool).await.map_err(sql_error)?;
@@ -1192,7 +1235,7 @@ mod tests {
              where action in ('agent.created', 'agent.grant_created', \
              'agent.grant_changed', 'agent.grant_revoked', 'process.started', \
              'process.correlation_requested', 'process.inspection_requested', \
-             'circle.feature_changed')",
+             'circle.feature_changed', 'circle.deleted')",
         )
         .fetch_all(&repository.pool)
         .await
@@ -1206,6 +1249,7 @@ mod tests {
             "process.correlation_requested",
             "process.inspection_requested",
             "circle.feature_changed",
+            "circle.deleted",
         ] {
             assert!(
                 rows.iter().any(|row| row.0 == expected),

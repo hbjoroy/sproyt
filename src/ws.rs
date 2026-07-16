@@ -325,6 +325,10 @@ async fn execute_command(
             .list_circles(participant_id.clone())
             .await
             .map(|circles| ServerEvent::CirclesListed { circles }),
+        ClientCommand::DeleteCircle { circle_id } => chat
+            .delete_circle(participant_id.clone(), circle_id.clone())
+            .await
+            .map(|()| ServerEvent::CircleDeleted { circle_id }),
         ClientCommand::CreateCircleInvitation { circle_id } => chat
             .create_circle_invitation(participant_id.clone(), circle_id)
             .await

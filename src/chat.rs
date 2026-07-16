@@ -12,9 +12,10 @@ use crate::domain::PrincipalKind;
 use crate::domain::{
     AcceptCircleInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
     ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
-    CreateChannel, CreateCircle, CreateCircleInvitation, DisplayName, IssuedInvitation,
-    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MessageBody, MessageId,
-    MessageLimit, RepositoryError, SendMessage, TextValidationError, User, UserId,
+    CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName,
+    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership,
+    MessageBody, MessageId, MessageLimit, RepositoryError, SendMessage, TextValidationError, User,
+    UserId,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -173,6 +174,17 @@ impl ChatEngine {
     ) -> Result<Vec<(Circle, CircleRole)>, ChatError> {
         self.repository
             .list_circles_for_user(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn delete_circle(
+        &self,
+        actor: UserId,
+        circle_id: crate::domain::CircleId,
+    ) -> Result<(), ChatError> {
+        self.repository
+            .delete_circle(DeleteCircle { actor, circle_id })
             .await
             .map_err(ChatError::from)
     }

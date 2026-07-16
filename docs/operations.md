@@ -95,8 +95,15 @@ and determine the affected retention window.
 
 Chat history is retained until a circle owner deletes it; audit events are
 retained for at least 365 days for the beta. Database backups default to 35
-days. These defaults require an explicit product/privacy decision before public
-production because deletion and export workflows are not implemented yet.
+days. A circle owner can use the `delete_circle` protocol command (or **Slett
+krets** in the browser) to atomically delete the circle and all database rows
+that belong to it, including channels, messages, invitations, process state and
+agent grants. The durable `circle.deleted` audit event retains the actor, target
+and cause but not deleted message content. Backups age out deleted content on
+the backup schedule; operators must not restore an old backup over production
+without replaying deletion obligations. These defaults still require an
+explicit product/privacy decision before public production, and portable export
+remains a release limitation until its workflow is implemented.
 
 Before each material traffic increase, load-test at two replicas with a
 production-sized PostgreSQL tier. Exercise concurrent sends to one hot channel,
