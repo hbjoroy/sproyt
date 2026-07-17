@@ -1764,6 +1764,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       let socket = null;
       let heartbeatTimer = null;
+      let reconnectTimer = null;
+      let reconnectAttempt = 0;
       let sessionRefreshTimer = null;
       let renderMode = "view";
       let requestNumber = 0;
@@ -1879,55 +1881,66 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function connect() {
+        if (reconnectTimer !== null) {
+          window.clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
         if (heartbeatTimer !== null) {
           window.clearInterval(heartbeatTimer);
           heartbeatTimer = null;
         }
-        if (socket) {
-          socket.close();
+        if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+          return;
         }
 
-        timeline.length = 0;
-        seenMessageIds.clear();
         catchUpTargets.clear();
-        activeChannelId = null;
-        processId.value = "";
-        processView.hidden = true;
-        processView.replaceChildren();
-        messagesEl.replaceChildren();
         requestedChannelSlug = (channelInput.value.trim() || "")
           .toLowerCase()
           .replace(/[^a-z0-9_-]+/g, "-");
         const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-        socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+        const nextSocket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+        socket = nextSocket;
         setConnected(false, "Koplar til ...");
 
-        socket.addEventListener("open", () => {
+        nextSocket.addEventListener("open", () => {
+          if (socket !== nextSocket) return;
+          reconnectAttempt = 0;
           setConnected(true, "Tilkopla");
           sendCommand("hello");
           sendCommand("list_my_channels");
           sendCommand("list_my_circles");
+          if (activeChannelId) sendCommand("subscribe_channel", { channel_id: activeChannelId });
           heartbeatTimer = window.setInterval(() => sendCommand("ping"), 20_000);
         });
 
-        socket.addEventListener("message", (event) => {
+        nextSocket.addEventListener("message", (event) => {
+          if (socket !== nextSocket) return;
           renderServerEvent(JSON.parse(event.data));
         });
 
-        socket.addEventListener("close", () => {
+        nextSocket.addEventListener("close", () => {
+          if (socket !== nextSocket) return;
           if (heartbeatTimer !== null) {
             window.clearInterval(heartbeatTimer);
             heartbeatTimer = null;
           }
-          setConnected(false, "Fråkopla");
+          scheduleReconnect();
         });
 
-        socket.addEventListener("error", () => {
-          setConnected(false, "WebSocket-feil");
+        nextSocket.addEventListener("error", () => {
+          if (socket === nextSocket) setConnected(false, "Mista sambandet");
         });
       }
 
+      function scheduleReconnect() {
+        reconnectAttempt += 1;
+        const delay = Math.min(15_000, 500 * (2 ** Math.min(reconnectAttempt - 1, 5)));
+        setConnected(false, `Fråkopla – prøver igjen om ${Math.ceil(delay / 1000)} sekund`);
+        reconnectTimer = window.setTimeout(connect, delay);
+      }
+
       function sendCommand(type, payload) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return false;
         requestNumber += 1;
         const command = {
           protocol: "sproyt.chat.v1",
@@ -1938,6 +1951,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           command.payload = payload;
         }
         socket.send(JSON.stringify(command));
+        return true;
       }
 
       function setConnected(connected, status) {
@@ -2117,6 +2131,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const channel = knownChannels.find((item) => item.id === activeChannelId);
           conversationTitle.textContent = channel?.name || "Samtale";
           payload.history.forEach(appendTimelineMessage);
+          acknowledgeLatest(payload.channel_id, payload.history);
           bodyInput.disabled = false;
           sendButton.disabled = false;
           renderChannels();
@@ -2127,8 +2142,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "chat") {
           const chatEvent = payload.event;
           if (chatEvent.type === "message_accepted") {
-            appendTimelineMessage(chatEvent.message);
-            renderTimeline();
+            updateLatestSequence(chatEvent.message.channel_id, chatEvent.message.sequence);
+            if (chatEvent.message.channel_id === activeChannelId) {
+              appendTimelineMessage(chatEvent.message);
+              acknowledgeLatest(activeChannelId, [chatEvent.message]);
+              renderTimeline();
+            } else {
+              renderChannels();
+            }
           } else if (chatEvent.type === "participant_joined") {
             pushSystem(`${chatEvent.participant_id} kom inn i ${chatEvent.channel_id}`);
           } else if (chatEvent.type === "participant_left") {
@@ -2150,6 +2171,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         if (event.type === "messages_loaded") {
           payload.messages.forEach(appendTimelineMessage);
+          acknowledgeLatest(payload.channel_id, payload.messages);
           renderTimeline();
           const target = catchUpTargets.get(payload.channel_id);
           const last = payload.messages.at(-1);
@@ -2162,6 +2184,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
           } else if (target !== undefined) {
             catchUpTargets.delete(payload.channel_id);
           }
+          return;
+        }
+
+        if (event.type === "read_marker_updated") {
+          const channel = knownChannels.find((item) => item.id === payload.membership.channel_id);
+          if (channel) channel.last_read_sequence = payload.membership.last_read_sequence;
+          renderChannels();
           return;
         }
 
@@ -2188,7 +2217,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           name.textContent = `# ${channel.name}`;
           button.append(name);
           const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
-          if (unreadCount > 0) {
+          if (unreadCount > 0 && channel.id !== activeChannelId) {
             const unread = document.createElement("span");
             unread.className = "unread";
             unread.textContent = String(unreadCount);
@@ -2202,6 +2231,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function selectChannel(channel) {
         if (!channel || channel.id === activeChannelId) return;
+        const previousChannelId = activeChannelId;
+        if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
         timeline.length = 0;
         seenMessageIds.clear();
         messagesEl.replaceChildren();
@@ -2211,6 +2242,26 @@ const INDEX_HTML: &str = r##"<!doctype html>
         renderChannels();
         sendCommand("subscribe_channel", { channel_id: channel.id });
       }
+
+      function updateLatestSequence(channelId, sequence) {
+        const channel = knownChannels.find((item) => item.id === channelId);
+        if (channel) channel.latest_sequence = Math.max(channel.latest_sequence || 0, sequence);
+      }
+
+      function acknowledgeLatest(channelId, messages) {
+        if (channelId !== activeChannelId || messages.length === 0 || document.visibilityState === "hidden") return;
+        const sequence = messages.at(-1).sequence;
+        updateLatestSequence(channelId, sequence);
+        sendCommand("mark_read", { channel_id: channelId, sequence });
+      }
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible" || !activeChannelId) return;
+        const visibleMessages = timeline
+          .filter((item) => item.type === "message" && item.message.channel_id === activeChannelId)
+          .map((item) => item.message);
+        acknowledgeLatest(activeChannelId, visibleMessages);
+      });
 
       function pushSystem(text) {
         timeline.push({ type: "system", text });
@@ -3099,6 +3150,9 @@ mod protocol_capacity_tests {
         assert!(body.contains("new WebSocket(`${protocol}://${window.location.host}/ws`)"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
         assert!(body.contains("connect();"));
+        assert!(body.contains("function scheduleReconnect()"));
+        assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
+        assert!(body.contains("document.addEventListener(\"visibilitychange\""));
 
         let second = reqwest::get(format!("http://{address}/")).await.unwrap();
         let second_policy = second.headers()["content-security-policy"]
