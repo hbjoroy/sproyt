@@ -34,6 +34,8 @@ config:
   heartUrl: ""
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60
+  # Keep Heart/process diagnostics out of the ordinary private-beta journey.
+  uiAdvancedEnabled: false
 
 secret:
   existingSecret: sproyt

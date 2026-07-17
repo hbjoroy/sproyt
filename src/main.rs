@@ -52,6 +52,7 @@ struct AppState {
     processes: ProcessService,
     agents: AgentService,
     websocket_idle_timeout: Duration,
+    advanced_ui_enabled: bool,
 }
 
 impl axum::extract::FromRef<AppState> for OperationalState {
@@ -92,6 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),
         websocket_idle_timeout: config.websocket_idle_timeout(),
+        advanced_ui_enabled: std::env::var("SPROYT_UI_ADVANCED_ENABLED").as_deref() == Ok("true"),
     };
     let app = build_router(state, operations.clone());
 
@@ -1110,10 +1112,20 @@ async fn index(
         return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let nonce = URL_SAFE_NO_PAD.encode(random);
-    let html = INDEX_HTML.replace("{{NONCE}}", &nonce).replace(
-        "{{DISPLAY_NAME}}",
-        &escape_html(&principal.user.display_name.to_string()),
-    );
+    let html = INDEX_HTML
+        .replace("{{NONCE}}", &nonce)
+        .replace(
+            "{{DISPLAY_NAME}}",
+            &escape_html(&principal.user.display_name.to_string()),
+        )
+        .replace(
+            "{{ADVANCED_HIDDEN}}",
+            if state.advanced_ui_enabled {
+                ""
+            } else {
+                "hidden"
+            },
+        );
     let policy = format!(
         "default-src 'self'; script-src 'nonce-{nonce}' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     );
@@ -1752,7 +1764,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="raw-mode" type="button" aria-pressed="false">Kjelde</button>
         </div>
         <form id="connect-form" hidden><input id="channel" value="general"><button id="connect" type="submit">Kople til</button></form>
-        <div class="advanced-tools" hidden>
+        <div class="advanced-tools" {{ADVANCED_HIDDEN}}>
           <button id="enable-heart" type="button" disabled>Slå på event-planlegging</button>
           <label>Tittel<input id="process-title" placeholder="Middag på laurdag"></label>
           <button id="start-process" type="button" disabled>Start planlegging</button>
@@ -2710,6 +2722,7 @@ mod mcp_tests {
             processes: ProcessService::start(process_repository, None),
             agents: agents.clone(),
             websocket_idle_timeout: Duration::from_secs(60),
+            advanced_ui_enabled: false,
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -2928,6 +2941,7 @@ mod mcp_tests {
             processes: ProcessService::start(repository.clone(), None),
             agents: agents.clone(),
             websocket_idle_timeout: Duration::from_secs(60),
+            advanced_ui_enabled: false,
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -3149,6 +3163,7 @@ mod mcp_tests {
             processes: ProcessService::start(repository.clone(), None),
             agents: AgentService::new(repository),
             websocket_idle_timeout: Duration::from_secs(60),
+            advanced_ui_enabled: false,
         };
         let request = || McpRequest {
             jsonrpc: "2.0".to_owned(),
@@ -3229,6 +3244,7 @@ mod protocol_capacity_tests {
             processes: ProcessService::start(process_repository, None),
             agents: AgentService::new(agent_repository),
             websocket_idle_timeout,
+            advanced_ui_enabled: false,
         };
         let app = build_router(state.clone(), operations);
         let server = tokio::spawn(async move {

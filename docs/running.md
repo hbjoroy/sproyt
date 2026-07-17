@@ -24,6 +24,11 @@ simple and uses the deterministic local `guest` identity. Production never
 accepts a selectable or query-string identity; it redirects anonymous users to
 OIDC. The database is `.local/sproyt.sqlite` unless `DATABASE_URL` is set.
 
+Heart/process diagnostics are excluded from the ordinary UI by default. Set
+`SPROYT_UI_ADVANCED_ENABLED=true` only in an explicitly approved pilot
+environment; the Helm value is `config.uiAdvancedEnabled` and remains `false`
+for the private beta.
+
 Verify the running service:
 
 ```powershell
