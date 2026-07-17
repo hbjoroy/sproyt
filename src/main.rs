@@ -1784,14 +1784,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
     </main>
 
     <script type="module" nonce="{{NONCE}}">
-      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs";
-
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default"
-      });
-
       const connectForm = document.querySelector("#connect-form");
       const sendForm = document.querySelector("#send-form");
       const channelInput = document.querySelector("#channel");
@@ -1831,6 +1823,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
       const pendingCommands = new Map();
+      let mermaidPromise = null;
       let knownChannels = [];
       const knownCircles = new Map();
 
@@ -2621,6 +2614,25 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         const diagrams = [...messagesEl.querySelectorAll(".mermaid")];
+        if (diagrams.length === 0) return;
+        if (mermaidPromise === null) {
+          mermaidPromise = import("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs")
+            .then(({ default: mermaid }) => {
+              mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default"
+              });
+              return mermaid;
+            });
+        }
+        let mermaid;
+        try {
+          mermaid = await mermaidPromise;
+        } catch (_) {
+          diagrams.forEach((diagram) => { diagram.textContent = "Diagrammet kunne ikkje lastast."; });
+          return;
+        }
         for (const diagram of diagrams) {
           if (diagram.dataset.rendered) {
             continue;
@@ -3297,6 +3309,8 @@ mod protocol_capacity_tests {
         assert!(
             body.contains("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs")
         );
+        assert!(!body.contains("import mermaid from"));
+        assert!(body.contains("mermaidPromise = import("));
         assert!(!body.contains("npm/mermaid@11/dist/"));
         assert!(!body.contains("{{NONCE}}"));
         assert!(!body.contains("{{DISPLAY_NAME}}"));
