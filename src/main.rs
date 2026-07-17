@@ -1076,14 +1076,30 @@ async fn approve_agent_message(
     }
 }
 
-async fn index(State(state): State<AppState>, headers: HeaderMap) -> axum::response::Response {
+#[derive(Debug, Default, Deserialize)]
+struct InviteQuery {
+    invite: Option<String>,
+}
+
+async fn index(
+    State(state): State<AppState>,
+    Query(query): Query<InviteQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
     let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
     let principal = match state.auth.authenticate_request(None, cookie).await {
         Ok(principal) => principal,
         Err(AuthError::Unauthorized) => {
+            let login_location = query
+                .invite
+                .filter(|token| is_safe_invitation_token(token))
+                .map_or_else(
+                    || "/auth/login".to_owned(),
+                    |token| format!("/auth/login?invite={token}"),
+                );
             return (
                 axum::http::StatusCode::SEE_OTHER,
-                [(LOCATION, "/auth/login")],
+                [(LOCATION, login_location)],
             )
                 .into_response();
         }
@@ -1122,6 +1138,13 @@ async fn index(State(state): State<AppState>, headers: HeaderMap) -> axum::respo
         headers.insert(HeaderName::from_static(name), value);
     }
     response
+}
+
+fn is_safe_invitation_token(token: &str) -> bool {
+    (16..=512).contains(&token.len())
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 fn escape_html(value: &str) -> String {
@@ -1210,8 +1233,15 @@ async fn ws_handler(
         .into_response()
 }
 
-async fn auth_login(State(state): State<AppState>) -> axum::response::Response {
-    match state.auth.login() {
+async fn auth_login(
+    State(state): State<AppState>,
+    Query(query): Query<InviteQuery>,
+) -> axum::response::Response {
+    let return_to = query
+        .invite
+        .filter(|token| is_safe_invitation_token(token))
+        .map(|token| format!("/?invite={token}"));
+    match state.auth.login(return_to) {
         Ok(login) => redirect_with_cookies(&login.authorization_url, &[login.set_cookie]),
         Err(error) => auth_error_response(error),
     }
@@ -1238,7 +1268,10 @@ async fn auth_callback(
                 )
                     .into_response();
             }
-            redirect_with_cookies("/", &[login.set_cookie, login.clear_transaction_cookie])
+            redirect_with_cookies(
+                &login.return_to,
+                &[login.set_cookie, login.clear_transaction_cookie],
+            )
         }
         Err(error) => auth_error_response(error),
     }
@@ -1375,6 +1408,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .empty-state h2 { margin-top: 0; }
       .onboarding { display: grid; gap: 10px; }
       .onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .onboarding-notice { margin: 0; color: #506057; font-size: .85rem; line-height: 1.4; }
       .advanced-tools[hidden] { display: none; }
 
       h1 {
@@ -1702,8 +1736,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <label>Namn<input id="circle-name" placeholder="Turvenner"></label>
           <input id="circle-slug" type="hidden">
           <div class="onboarding-actions"><button id="create-circle" type="button" disabled>Lag ny</button><button id="create-invitation" type="button" disabled>Inviter</button></div>
-          <label>Invitasjonskode<input id="invitation-token" placeholder="Lim inn kode"></label>
-          <button id="accept-invitation" type="button" disabled>Bli med</button>
+          <label>Invitasjonslenkje<input id="invitation-token" placeholder="Lim inn lenkja du fekk"></label>
+          <div class="onboarding-actions"><button id="accept-invitation" type="button" disabled>Bli med</button><button id="copy-invitation" type="button" hidden>Kopier lenkje</button></div>
+          <p class="onboarding-notice" id="onboarding-notice" role="status" aria-live="polite">Lag ein ny vennekrets, eller lim inn ei invitasjonslenkje.</p>
           <input id="circle-channel" type="hidden" value="prat">
           <button id="create-circle-channel" type="button" hidden disabled>Lag kanal</button>
           <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
@@ -1761,6 +1796,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const circleSlug = document.querySelector("#circle-slug");
       const circleChannel = document.querySelector("#circle-channel");
       const invitationToken = document.querySelector("#invitation-token");
+      const copyInvitation = document.querySelector("#copy-invitation");
+      const onboardingNotice = document.querySelector("#onboarding-notice");
       const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation", "#delete-circle"].map((id) => document.querySelector(id));
       const exportButton = document.querySelector("#export-data");
       const processTitle = document.querySelector("#process-title");
@@ -1781,6 +1818,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const timeline = [];
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
+      const pendingCommands = new Map();
       let knownChannels = [];
       const knownCircles = new Map();
 
@@ -1841,6 +1879,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       circleButtons[0].addEventListener("click", () => sendCommand("create_circle", {
         name: circleName.value.trim(), slug: slugify(circleSlug.value || circleName.value)
       }));
+      circleName.addEventListener("input", updateOnboardingButtons);
+      invitationToken.addEventListener("input", updateOnboardingButtons);
+      circleSelect.addEventListener("change", updateOnboardingButtons);
       circleButtons[1].addEventListener("click", () => {
         if (!circleSelect.value) return;
         const slug = slugify(circleChannel.value);
@@ -1850,7 +1891,21 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (circleSelect.value) sendCommand("create_circle_invitation", { circle_id: circleSelect.value });
       });
       circleButtons[3].addEventListener("click", () => {
-        if (invitationToken.value.trim()) sendCommand("accept_circle_invitation", { token: invitationToken.value.trim() });
+        const token = invitationValueToToken(invitationToken.value);
+        if (token) {
+          onboardingNotice.textContent = "Kontrollerer invitasjonen …";
+          sendCommand("accept_circle_invitation", { token });
+        }
+      });
+      copyInvitation.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(invitationToken.value);
+          onboardingNotice.textContent = "Invitasjonslenkja er kopiert. Send henne til venen du vil invitere.";
+        } catch (_) {
+          invitationToken.focus();
+          invitationToken.select();
+          onboardingNotice.textContent = "Kopier den markerte lenkja og send henne til venen din.";
+        }
       });
       circleButtons[4].addEventListener("click", () => {
         if (!circleSelect.value) return;
@@ -1886,6 +1941,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function slugify(value) {
         return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+      }
+
+      function invitationValueToToken(value) {
+        const candidate = value.trim();
+        if (!candidate) return "";
+        try {
+          const url = new URL(candidate, window.location.origin);
+          return url.searchParams.get("invite") || candidate;
+        } catch (_) {
+          return candidate;
+        }
       }
 
       function connect() {
@@ -1959,6 +2025,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           command.payload = payload;
         }
         socket.send(JSON.stringify(command));
+        pendingCommands.set(command.request_id, type);
         return true;
       }
 
@@ -1969,6 +2036,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         circleButtons.forEach((button) => { button.disabled = !connected; });
         exportButton.disabled = !connected;
         processButtons.forEach((button) => { button.disabled = !connected; });
+        updateOnboardingButtons();
+      }
+
+      function updateOnboardingButtons() {
+        const connected = socket?.readyState === WebSocket.OPEN;
+        circleButtons[0].disabled = !connected || circleName.value.trim().length < 2;
+        circleButtons[2].disabled = !connected || !circleSelect.value;
+        circleButtons[3].disabled = !connected || !invitationValueToToken(invitationToken.value);
       }
 
       async function processApi(path, method = "GET", body = undefined) {
@@ -2083,6 +2158,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         const payload = event.payload || {};
+        const requestedCommand = event.request_id ? pendingCommands.get(event.request_id) : undefined;
+        if (event.request_id) pendingCommands.delete(event.request_id);
 
         if (event.type === "hello") {
           currentParticipantId = payload.participant_id;
@@ -2096,6 +2173,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
             knownCircles.set(circle.id, { ...circle, role });
             circleSelect.add(new Option(`${circle.name} (${role})`, circle.id));
           });
+          if (!circleSelect.value && payload.circles.length > 0) {
+            circleSelect.value = payload.circles[0][0].id;
+          }
+          updateOnboardingButtons();
           renderChannels();
           return;
         }
@@ -2103,6 +2184,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           circleSelect.add(new Option(`${payload.circle.name} (owner)`, payload.circle.id));
           circleSelect.value = payload.circle.id;
           pushSystem(`Vennekretsen ${payload.circle.name} er oppretta.`);
+          onboardingNotice.textContent = `${payload.circle.name} er klar. No kan du invitere vener.`;
+          circleName.value = "";
           sendCommand("create_channel", {
             slug: "prat", name: "Prat", kind: "private", circle_id: payload.circle.id
           });
@@ -2116,12 +2199,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         if (event.type === "circle_invitation_created") {
-          invitationToken.value = payload.invitation.token;
-          pushSystem("Invitasjonstoken er laga og lagt i tokenfeltet.");
+          invitationToken.value = `${window.location.origin}/?invite=${encodeURIComponent(payload.invitation.token)}`;
+          copyInvitation.hidden = false;
+          onboardingNotice.textContent = "Invitasjonslenkja er klar. Kopier og send henne til venen din.";
+          updateOnboardingButtons();
           return;
         }
         if (event.type === "circle_invitation_accepted") {
-          pushSystem("Invitasjonen er godteken.");
+          onboardingNotice.textContent = "Du er med i vennekretsen. Samtalane blir lasta inn no.";
+          invitationToken.value = "";
+          copyInvitation.hidden = true;
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.searchParams.delete("invite");
+          window.history.replaceState({}, "", cleanUrl);
           sendCommand("list_my_circles");
           sendCommand("list_my_channels");
           return;
@@ -2213,6 +2303,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "error") {
+          if (requestedCommand === "accept_circle_invitation") {
+            onboardingNotice.textContent = payload.code === "not_found"
+              ? "Invitasjonen finst ikkje eller er ikkje gyldig lenger. Be venen din lage ei ny lenkje."
+              : "Du kunne ikkje bli med med denne invitasjonen. Kontroller lenkja eller be om ei ny.";
+            return;
+          }
+          if (requestedCommand === "create_circle") {
+            onboardingNotice.textContent = "Vennekretsen kunne ikkje opprettast. Prøv eit anna namn.";
+            return;
+          }
           pushSystem(payload.message || payload.code);
         }
       }
@@ -2360,6 +2460,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       connect();
+      const invitationFromUrl = new URL(window.location.href).searchParams.get("invite");
+      if (invitationFromUrl) {
+        invitationToken.value = window.location.href;
+        onboardingNotice.textContent = "Du er invitert til ein vennekrets. Trykk «Bli med» for å godta.";
+        updateOnboardingButtons();
+      }
 
       function renderMarkdown(source, target) {
         const lines = source.replace(/\r\n/g, "\n").split("\n");
@@ -3187,6 +3293,8 @@ mod protocol_capacity_tests {
         assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
         assert!(body.contains("document.addEventListener(\"visibilitychange\""));
         assert!(body.contains(":focus-visible"));
+        assert!(body.contains("Invitasjonslenkje"));
+        assert!(body.contains("Invitasjonen finst ikkje eller er ikkje gyldig lenger"));
 
         let second = reqwest::get(format!("http://{address}/")).await.unwrap();
         let second_policy = second.headers()["content-security-policy"]
@@ -3194,6 +3302,18 @@ mod protocol_capacity_tests {
             .unwrap();
         assert!(!second_policy.contains(&format!("'nonce-{nonce}'")));
         server.abort();
+    }
+
+    #[test]
+    fn invitation_return_path_accepts_only_bounded_url_safe_tokens() {
+        assert!(is_safe_invitation_token(
+            "WGp_FxqwngrypwMMIvAh1CMLGC0OTkIY-FIwjPElISU"
+        ));
+        assert!(!is_safe_invitation_token("short"));
+        assert!(!is_safe_invitation_token(
+            "valid-length-but-has-a-query&next=https://evil.invalid"
+        ));
+        assert!(!is_safe_invitation_token(&"a".repeat(513)));
     }
 
     #[tokio::test]

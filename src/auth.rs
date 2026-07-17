@@ -108,10 +108,10 @@ impl AuthService {
         }
     }
 
-    pub fn login(&self) -> Result<LoginStart, AuthError> {
+    pub fn login(&self, return_to: Option<String>) -> Result<LoginStart, AuthError> {
         match self {
             Self::Development => Err(AuthError::Unsupported("OIDC is disabled".to_owned())),
-            Self::Oidc(service) => service.login(),
+            Self::Oidc(service) => service.login(return_to),
         }
     }
 
@@ -160,6 +160,7 @@ pub struct LoginComplete {
     pub principal: AuthenticatedPrincipal,
     pub set_cookie: String,
     pub clear_transaction_cookie: String,
+    pub return_to: String,
 }
 
 pub struct SessionRenewal {
@@ -280,7 +281,7 @@ impl OidcService {
         }
     }
 
-    fn login(&self) -> Result<LoginStart, AuthError> {
+    fn login(&self, return_to: Option<String>) -> Result<LoginStart, AuthError> {
         let client = self.current_client()?;
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         let (url, state, nonce) = client
@@ -299,6 +300,7 @@ impl OidcService {
             nonce: nonce.secret().to_owned(),
             pkce_verifier: verifier.secret().to_owned(),
             expires_at: now_seconds() + LOGIN_TTL_SECONDS,
+            return_to,
         };
         let value = self.codec.seal(&transaction)?;
         Ok(LoginStart {
@@ -378,6 +380,7 @@ impl OidcService {
             principal,
             set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", max_age),
             clear_transaction_cookie: clear_cookie(LOGIN_COOKIE, "/auth/callback"),
+            return_to: transaction.return_to.unwrap_or_else(|| "/".to_owned()),
         })
     }
 
@@ -485,6 +488,8 @@ struct LoginTransaction {
     nonce: String,
     pkce_verifier: String,
     expires_at: u64,
+    #[serde(default)]
+    return_to: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -976,7 +981,7 @@ mod tests {
             Err(AuthError::Unauthorized)
         ));
 
-        let login = auth.login().unwrap();
+        let login = auth.login(Some("/?invite=safe-token".to_owned())).unwrap();
         assert!(
             login
                 .authorization_url
@@ -1008,6 +1013,7 @@ mod tests {
             .callback("valid-code".to_owned(), state, Some(&login.set_cookie))
             .await
             .unwrap();
+        assert_eq!(complete.return_to, "/?invite=safe-token");
         assert_eq!(complete.principal.subject, "authentik-user-1");
         assert_eq!(complete.principal.issuer, provider.issuer);
         assert_eq!(
@@ -1069,7 +1075,7 @@ mod tests {
             Err(AuthError::Unauthorized)
         ));
 
-        let nonce_login = auth.login().unwrap();
+        let nonce_login = auth.login(None).unwrap();
         let nonce_state = authorization_parameter(&nonce_login.authorization_url, "state");
         *provider.nonce.lock().unwrap() = "wrong-nonce".to_owned();
         assert!(
