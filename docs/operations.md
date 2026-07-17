@@ -126,3 +126,77 @@ application service, and requires an exact cursor-based catch-up within five
 seconds. This deterministic single-process gate catches protocol and recovery
 regressions early; it does not replace the two-replica, production-sized
 PostgreSQL exercise required before a material traffic increase.
+
+For the write portion of the target MCP/agent exercise, create a dedicated
+empty channel. In an authenticated owner browser, open the developer console
+and run the following with that channel ID. This uses the browser session
+without exposing its HttpOnly cookie, creates a 30-minute agent and copies the
+one-time agent credential to the clipboard:
+
+```js
+const channelId = "dedicated-load-channel-id";
+const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+const agent = await fetch("/api/v1/agents", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    display_name: "Release load probe",
+    provider: "sproyt-operations",
+    service_identity: `release-load-${crypto.randomUUID()}`,
+    purpose: "Bounded pre-release MCP latency and idempotency evidence",
+    rate_limit_per_minute: 60,
+    expires_at: expiresAt,
+  }),
+}).then(async response => {
+  if (!response.ok) throw new Error(`agent creation failed: ${response.status}`);
+  return response.json();
+});
+const grant = await fetch(`/api/v1/agents/${agent.agent_id}/grants`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    circle_id: null,
+    channel_id: channelId,
+    scope: "send_messages",
+    expires_at: expiresAt,
+  }),
+}).then(async response => {
+  if (!response.ok) throw new Error(`grant creation failed: ${response.status}`);
+  return response.json();
+});
+await navigator.clipboard.writeText(agent.credential);
+console.info({ agent_id: agent.agent_id, grant_id: grant.grant_id, expires_at: expiresAt });
+```
+
+Record the non-secret `agent_id` and `grant_id`, but not the credential. Then
+run Node.js 24 or newer and paste the clipboard value only into the silent
+prompt:
+
+```sh
+export SPROYT_MCP_URL=https://sproyt.bjoroy.me/mcp
+export SPROYT_CHANNEL_ID='dedicated-load-channel-id'
+read -r -s -p 'Agent credential: ' SPROYT_AGENT_CREDENTIAL
+export SPROYT_AGENT_CREDENTIAL
+node tools/mcp-load.mjs --confirm-write --messages 40 --concurrency 4
+unset SPROYT_AGENT_CREDENTIAL
+```
+
+The tool refuses to write without `--confirm-write`, never prints the
+credential or message bodies, verifies that the grant includes the channel,
+uses stable idempotency keys, replays one request, requires unique contiguous
+sequences and enforces the 750 ms p99 objective. It emits
+`sproyt.mcp-load-evidence.v1` JSON for the release record. Use an otherwise
+empty channel because unrelated concurrent sends intentionally make the
+contiguity check fail. Revoke the grant immediately after the run from the
+same authenticated browser:
+
+```js
+await fetch(`/api/v1/agent-grants/${grant.grant_id}/revoke`, { method: "POST" });
+```
+
+Confirm HTTP 204. Expiry independently bounds both the credential and grant
+if the explicit revocation step is interrupted.
+
+This MCP exercise proves the auditable agent write path and database latency;
+it does not substitute for the authenticated browser WebSocket reconnect and
+rolling-restart journey.
