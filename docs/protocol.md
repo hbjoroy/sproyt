@@ -43,7 +43,7 @@ Server response or event:
   "request_id": "request-123",
   "type": "message_accepted",
   "payload": {
-    "message_id": 1,
+    "message_id": "019c1e71-4f6a-7000-8000-000000000001",
     "channel_id": "channel-1",
     "sequence": 42,
     "sender_id": "alice",
@@ -70,15 +70,32 @@ First stable command set:
 - `mark_read`
 - `ping`
 
-Current prototype note: the running WebSocket endpoint still accepts a simpler message:
+Clients should send `ping` more frequently than the configured
+`SPROYT_WS_IDLE_TIMEOUT_SECONDS` value. The browser sends one every 20 seconds.
+Any inbound WebSocket frame renews the idle deadline; an expired connection is
+closed with WebSocket code 1001 and reason `idle timeout`, after which clients
+reconnect and catch up by sequence.
 
-```json
-{ "type": "send", "body": "Hei" }
-```
-
-That is a temporary browser adapter shape. It should be replaced by the envelope above when the persistent command surface lands.
+The running WebSocket endpoint accepts only the versioned `sproyt.chat.v1`
+envelope. Unknown protocol versions and command types return stable structured
+errors; there is no parallel legacy command path.
 
 ## Events
+
+Sequence `0` is reserved for an unread/catch-up cursor before the first
+message. Persisted messages always start at `1`. Allocation is checked and an
+exhausted sequence fails the command rather than wrapping.
+
+`load_recent_messages` without `after` returns the most recent page in
+ascending sequence order. With `after`, it returns the next ascending page
+immediately after that cursor. Clients repeat the latter until the last loaded
+sequence reaches `latest_known_sequence`; the browser deduplicates message IDs
+while live delivery and durable catch-up overlap.
+
+Channel summaries carry both `last_read_sequence` and `latest_sequence`, so
+clients can compute unread count after reconnect without loading message
+bodies. Joining a channel owned by a circle requires current circle membership;
+knowing a private channel ID or slug is not authorization.
 
 First event set:
 

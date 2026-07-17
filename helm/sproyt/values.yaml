@@ -1,0 +1,88 @@
+replicaCount: 2
+terminationGracePeriodSeconds: 30
+
+image:
+  repository: oci.bjoroy.me/sproyt/sproyt
+  tag: "0.1.0"
+  # Production releases should set the registry digest, for example sha256:...
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Secrets must exist in the release namespace. Leave empty for public/local images.
+imagePullSecrets: []
+# - name: oci-pull-secret
+
+service:
+  port: 80
+  targetPort: 9010
+
+ingress:
+  enabled: false
+  className: ""
+  host: sproyt.example.com
+  tlsSecretName: ""
+
+config:
+  environment: production
+  logFormat: json
+  authMode: oidc
+  # Required: https://identity.limani-parou.com/application/o/<provider-slug>/
+  oidcIssuer: ""
+  oidcClientId: ""
+  oidcRedirectUrl: https://sproyt.example.com/auth/callback
+  oidcPostLogoutRedirectUrl: https://sproyt.example.com/
+  heartUrl: ""
+  mcpAllowedOrigins: ""
+  websocketIdleTimeoutSeconds: 60
+
+secret:
+  existingSecret: sproyt
+  databaseUrlKey: DATABASE_URL
+  oidcClientSecretKey: SPROYT_OIDC_CLIENT_SECRET
+  sessionKeyKey: SPROYT_SESSION_KEY
+  sessionPreviousKeysKey: SPROYT_SESSION_PREVIOUS_KEYS
+  # Change this opaque value when externally managed secret contents change.
+  rolloutChecksum: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+podDisruptionBudget:
+  minAvailable: 1
+
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    additionalLabels: {}
+  prometheusRule:
+    enabled: false
+    additionalLabels: {}
+  grafanaDashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"
+
+networkPolicy:
+  enabled: true
+  # Empty means ingress is limited to pods in the release namespace.
+  ingressNamespaceSelector: {}
+  dnsNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: kube-system
+  databaseSameNamespace: true
+  databaseNamespaceSelector: {}
+  databasePodSelector: {}
+  databaseCidrs: []
+  # Required for an in-cluster Heart endpoint on a non-HTTPS port. HTTPS
+  # endpoints are already covered by the general OIDC/HTTPS egress rule.
+  heartSameNamespace: false
+  heartNamespaceSelector: {}
+  heartPodSelector: {}
+  heartCidrs: []
+  heartPort: 3000

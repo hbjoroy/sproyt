@@ -16,4 +16,6 @@ Important rules:
 - Message sequence is per channel and allocated through `channel_sequences`.
 - Read state uses `last_read_sequence`, not `last_read_message_id`.
 - SQLite connections must enable foreign keys with `PRAGMA foreign_keys = ON`.
-- Repository tests should eventually run against both dialects.
+- The shared repository contract runs against both dialects in CI.
+- Agent rate limits are database-authoritative so all application replicas
+  consume one fixed 60-second window per agent.

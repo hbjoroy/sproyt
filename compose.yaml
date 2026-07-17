@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_DB: sproyt
+      POSTGRES_USER: sproyt
+      POSTGRES_PASSWORD: sproyt-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sproyt -d sproyt"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - sproyt-postgres:/var/lib/postgresql/data
+
+  migrate:
+    build:
+      context: .
+      args:
+        VCS_REF: ${SPROYT_VCS_REF:-development}
+    command: ["migrate"]
+    environment: &sproyt-environment
+      DATABASE_URL: postgres://sproyt:sproyt-dev@postgres:5432/sproyt
+      SPROYT_ENV: development
+      SPROYT_AUTH_MODE: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  sproyt:
+    build:
+      context: .
+      args:
+        VCS_REF: ${SPROYT_VCS_REF:-development}
+    environment: *sproyt-environment
+    ports:
+      - "9010:9010"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  sproyt-postgres:

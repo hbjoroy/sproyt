@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sproyt.fullname" . }}
+  labels:
+    {{- include "sproyt.labels" . | nindent 4 }}
+data:
+  SPROYT_ADDR: 0.0.0.0:9010
+  SPROYT_ENV: {{ .Values.config.environment | quote }}
+  SPROYT_LOG_FORMAT: {{ .Values.config.logFormat | quote }}
+  SPROYT_AUTH_MODE: {{ .Values.config.authMode | quote }}
+  SPROYT_WS_IDLE_TIMEOUT_SECONDS: {{ .Values.config.websocketIdleTimeoutSeconds | quote }}
+  SPROYT_OIDC_ISSUER: {{ required "config.oidcIssuer must be the Authentik provider issuer" .Values.config.oidcIssuer | quote }}
+  SPROYT_OIDC_CLIENT_ID: {{ required "config.oidcClientId must be set" .Values.config.oidcClientId | quote }}
+  SPROYT_OIDC_REDIRECT_URL: {{ .Values.config.oidcRedirectUrl | quote }}
+  SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL: {{ .Values.config.oidcPostLogoutRedirectUrl | quote }}
+  {{- with .Values.config.heartUrl }}
+  SPROYT_HEART_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.mcpAllowedOrigins }}
+  SPROYT_MCP_ALLOWED_ORIGINS: {{ . | quote }}
+  {{- end }}

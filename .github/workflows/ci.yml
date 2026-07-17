@@ -1,0 +1,308 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  quality:
+    name: Format, lint, and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache Cargo data
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint all targets and features
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-targets --all-features --locked
+
+      - name: Validate local Compose profile
+        run: docker compose config --quiet
+
+      - name: Validate Authentik discovery contract
+        run: bash tools/test-oidc-provider-verifier.sh
+
+  postgres-schema:
+    name: PostgreSQL repository contract
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_USER: sproyt
+          POSTGRES_PASSWORD: sproyt-ci
+          POSTGRES_DB: sproyt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sproyt -d sproyt"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: sproyt-ci
+      SPROYT_POSTGRES_TEST_URL: postgres://sproyt:sproyt-ci@127.0.0.1:5432/sproyt
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache Cargo data
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-postgres-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-postgres-cargo-
+
+      - name: Run PostgreSQL repository contract
+        run: cargo test db::postgres::tests --locked
+
+      - name: Verify expected tables
+        run: |
+          test "$(psql --host 127.0.0.1 --username sproyt --dbname sproyt --tuples-only --no-align --command "select count(*) from information_schema.tables where table_schema = 'public' and table_name in ('users', 'channels', 'channel_memberships', 'channel_sequences', 'messages');")" = "5"
+
+  security-audit:
+    name: Dependency security audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Cache Cargo tools and registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-audit-v1
+
+      - name: Install cargo-audit
+        run: command -v cargo-audit || cargo install cargo-audit --locked
+
+      - name: Audit locked dependencies
+        # No fixed release exists. Sproyt performs public-key verification only;
+        # see docs/security-exceptions.md for the bounded acceptance.
+        run: cargo audit --ignore RUSTSEC-2023-0071
+
+  recovery-drill:
+    name: PostgreSQL backup and restore drill
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_USER: sproyt
+          POSTGRES_PASSWORD: sproyt-recovery
+          POSTGRES_DB: sproyt
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sproyt -d sproyt"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: sproyt-recovery
+      DATABASE_URL: postgres://sproyt:sproyt-recovery@127.0.0.1:5432/sproyt
+      SPROYT_ENV: test
+      SPROYT_AUTH_MODE: development
+    steps:
+      - uses: actions/checkout@v6
+      - name: Migrate source database
+        run: cargo run --locked -- migrate
+      - name: Seed durable chat evidence
+        run: |
+          psql "$DATABASE_URL" --set ON_ERROR_STOP=1 <<'SQL'
+          insert into users(id,kind,display_name,created_at) values('01900000-0000-7000-8000-000000000001','human','Recovery user',now());
+          insert into channels(id,slug,name,kind,created_by) values('01900000-0000-7000-8000-000000000002','recovery','Recovery','private','01900000-0000-7000-8000-000000000001');
+          insert into channel_memberships(channel_id,user_id,role) values('01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001','owner');
+          insert into channel_sequences(channel_id,next_sequence) values('01900000-0000-7000-8000-000000000002',2);
+          insert into messages(id,channel_id,sender_id,sequence,body) values('01900000-0000-7000-8000-000000000003','01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001',1,'restore-evidence');
+          SQL
+      - name: Backup and restore into isolated database
+        run: |
+          client_image='postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193'
+          docker run --rm --network host -e PGPASSWORD -v "$PWD:/backup" "$client_image" \
+            pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL" --file /backup/sproyt.dump
+          docker run --rm --network host -e PGPASSWORD "$client_image" \
+            createdb --host 127.0.0.1 --username sproyt sproyt_restore
+          docker run --rm --network host -e PGPASSWORD -v "$PWD:/backup" "$client_image" \
+            pg_restore --exit-on-error --no-owner --no-acl --host 127.0.0.1 \
+              --username sproyt --dbname sproyt_restore /backup/sproyt.dump
+      - name: Apply forward migrations and verify integrity
+        env:
+          DATABASE_URL: postgres://sproyt:sproyt-recovery@127.0.0.1:5432/sproyt_restore
+        run: |
+          cargo run --locked -- migrate
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select max(sequence) from messages where channel_id='01900000-0000-7000-8000-000000000002'")" = "1"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: recovery-drill-backup
+          path: sproyt.dump
+          retention-days: 7
+
+  delivery:
+    name: Container and Kubernetes delivery
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Lint Helm chart
+        run: >-
+          helm lint helm/sproyt --strict
+          --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
+          --set config.oidcClientId=ci-client
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Cross-build ARM64 release image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/arm64
+          load: true
+          push: false
+          tags: local/sproyt-arm64:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+      - name: Build native AMD64 smoke image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: BUILD_VARIANT=native
+          load: true
+          push: false
+          tags: local/sproyt-smoke:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+      - name: Record image-to-commit evidence
+        id: image-evidence
+        env:
+          SPROYT_IMAGE: local/sproyt-arm64:${{ github.sha }}
+        run: |
+          image_id=$(docker image inspect "$SPROYT_IMAGE" --format '{{.Id}}')
+          revision=$(docker image inspect "$SPROYT_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          architecture=$(docker image inspect "$SPROYT_IMAGE" --format '{{.Architecture}}')
+          operating_system=$(docker image inspect "$SPROYT_IMAGE" --format '{{.Os}}')
+          test "$revision" = "$GITHUB_SHA"
+          test "$architecture" = arm64
+          test "$operating_system" = linux
+          test "${image_id#sha256:}" != "$image_id"
+          echo "digest=$image_id" >> "$GITHUB_OUTPUT"
+          jq --null-input \
+            --arg image "$SPROYT_IMAGE" \
+            --arg image_id "$image_id" \
+            --arg revision "$revision" \
+            --arg architecture "$architecture" \
+            --arg operating_system "$operating_system" \
+            '{image: $image, image_id: $image_id, revision: $revision, architecture: $architecture, operating_system: $operating_system}' \
+            > image-evidence.json
+
+      - name: Render digest-pinned production manifests
+        run: >-
+          helm template sproyt helm/sproyt
+          --namespace sproyt
+          --set ingress.enabled=true
+          --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
+          --set config.oidcClientId=ci-client
+          --set secret.existingSecret=sproyt-ci
+          --set image.digest=${{ steps.image-evidence.outputs.digest }}
+          --set monitoring.serviceMonitor.enabled=true
+          --set monitoring.prometheusRule.enabled=true
+          --set monitoring.grafanaDashboard.enabled=true
+          > rendered-manifests.yaml
+
+      - name: Verify Helm production delivery contract
+        run: bash tools/verify-helm-delivery.sh helm/sproyt ${{ steps.image-evidence.outputs.digest }}
+
+      - name: Install pinned kind
+        run: |
+          curl --fail --location --silent --show-error \
+            --output /tmp/kind \
+            https://github.com/kubernetes-sigs/kind/releases/download/v0.24.0/kind-linux-amd64
+          echo 'b89aada5a39d620da3fcd16435b7f28d858927dd53f92cbac77686b0588b600d  /tmp/kind' \
+            | sha256sum --check
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Create ephemeral Kubernetes cluster
+        run: kind create cluster --wait 120s
+
+      - name: Load image and exercise install, scale, and rollback
+        env:
+          SPROYT_IMAGE: local/sproyt-smoke:${{ github.sha }}
+        run: |
+          kind load docker-image "$SPROYT_IMAGE"
+          bash tools/kind-smoke.sh
+
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/sproyt-arm64:${{ github.sha }}
+          format: spdx-json
+          output-file: sproyt.spdx.json
+
+      - name: Scan image for vulnerabilities
+        uses: anchore/scan-action@v7
+        with:
+          image: local/sproyt-arm64:${{ github.sha }}
+          fail-build: true
+          severity-cutoff: high
+
+      - name: Upload delivery evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: delivery-evidence
+          path: |
+            rendered-manifests.yaml
+            sproyt.spdx.json
+            image-evidence.json

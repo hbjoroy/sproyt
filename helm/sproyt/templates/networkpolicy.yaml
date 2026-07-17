@@ -1,0 +1,93 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sproyt.fullname" . }}
+  labels:
+    {{- include "sproyt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "sproyt.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+        {{- with .Values.networkPolicy.ingressNamespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 9010
+  egress:
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.dnsNamespaceSelector | nindent 12 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 443
+    {{- if .Values.networkPolicy.databaseSameNamespace }}
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
+    {{- with .Values.networkPolicy.databaseNamespaceSelector }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- with $.Values.networkPolicy.databasePodSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
+    {{- range .Values.networkPolicy.databaseCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
+    {{- if and .Values.config.heartUrl .Values.networkPolicy.heartSameNamespace }}
+    - to:
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.heartPodSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.heartPort }}
+    {{- end }}
+    {{- if and .Values.config.heartUrl .Values.networkPolicy.heartNamespaceSelector }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.heartNamespaceSelector | nindent 12 }}
+          {{- with .Values.networkPolicy.heartPodSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.heartPort }}
+    {{- end }}
+    {{- if .Values.config.heartUrl }}
+    {{- range .Values.networkPolicy.heartCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.heartPort }}
+    {{- end }}
+    {{- end }}
+{{- end }}

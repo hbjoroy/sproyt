@@ -1,21 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ChannelId, ChannelKind, ChannelSequence, ChannelSlug, DisplayName, MembershipRole, MessageBody,
-    MessageId, UserId,
+    ChannelId, ChannelKind, ChannelSequence, ChannelSlug, CircleId, DisplayName, MembershipRole,
+    MessageBody, UserId,
 };
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ChatCommand {
-    CreateChannel(CreateChannel),
-    JoinChannel(JoinChannel),
-    LeaveChannel(LeaveChannel),
-    ListMyChannels(ListMyChannels),
-    LoadRecentMessages(LoadRecentMessages),
-    SendMessage(SendMessage),
-    MarkRead(MarkRead),
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CreateChannel {
@@ -23,6 +11,32 @@ pub struct CreateChannel {
     pub slug: ChannelSlug,
     pub name: DisplayName,
     pub kind: ChannelKind,
+    pub circle_id: Option<CircleId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CreateCircle {
+    pub actor: UserId,
+    pub slug: ChannelSlug,
+    pub name: DisplayName,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeleteCircle {
+    pub actor: UserId,
+    pub circle_id: CircleId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CreateCircleInvitation {
+    pub actor: UserId,
+    pub circle_id: CircleId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AcceptCircleInvitation {
+    pub actor: UserId,
+    pub token: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -35,11 +49,6 @@ pub struct JoinChannel {
 pub struct LeaveChannel {
     pub actor: UserId,
     pub channel_id: ChannelId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ListMyChannels {
-    pub actor: UserId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -61,7 +70,7 @@ pub struct SendMessage {
 pub struct MarkRead {
     pub actor: UserId,
     pub channel_id: ChannelId,
-    pub message_id: MessageId,
+    pub sequence: ChannelSequence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
