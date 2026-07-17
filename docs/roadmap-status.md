@@ -28,7 +28,7 @@ gate has been signed off in the target environment.
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks and WebSocket/MCP adapter-conformance tests | Exercise through the production endpoint after S-19 activation |
 | S-21 | Implemented; rollout pending | Production session boundary; local encrypted-session validation; periodic provider revalidation; profile/logout shell; no simulated browser identity; 2026-07-17 desktop/mobile browser journey | Review OIDC redirect and logout against Authentik after deployment |
-| S-22 | In progress | Responsive navigation/timeline/composer; automatic connection; bounded exponential reconnect; draft preservation; active-channel read markers and unread badges; 2026-07-17 real server-restart browser pass | Replace opaque sender IDs, refine channel grouping and add automated browser coverage |
+| S-22 | Implemented; rollout pending | Responsive navigation/timeline/composer; circle-grouped channels; human-readable sender labels; visible keyboard focus; bounded exponential reconnect; draft preservation; active-channel read markers/unread badges; 2026-07-17 desktop/mobile and real server-restart browser passes | Validate the same journey through production OIDC after deployment |
 | S-23 | Planned | Circle/channel/invitation commands and authorization already exist | Deliver guided first-run and membership flows |
 | S-24 | Planned | Feature contracts, GitOps delivery and browser-capacity tests exist | Hide advanced controls, add browser E2E/mobile/a11y and sign off private beta |
 
