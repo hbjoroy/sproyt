@@ -19,7 +19,7 @@ gate has been signed off in the target environment.
 | S-10 | Implemented | `AuthService`, deterministic development principals and production/dev rejection tests | None |
 | S-11 | Implemented, activation pending | OIDC discovery, PKCE, state, nonce, encrypted session, refresh, logout, key-rotation and revoked-user contracts in `auth.rs` | Create the Authentik client and run the contract against `identity.limani-parou.com` |
 | S-12 | Implemented | Central `Policy`, executable authorization matrix and mutation-audit migrations | Review target-environment audit retention/access |
-| S-13 | Implemented and published | Pinned scratch ARM64 image, restricted runtime contract, SBOM and vulnerability CI; registry evidence below | Publish the final reviewed commit and retain its CI artifacts |
+| S-13 | Implemented and published | Pinned scratch ARM64 image, restricted runtime contract, SBOM and vulnerability CI; registry evidence below | Retain CI and registry evidence with the release record |
 | S-14 | Implemented | Helm delivery verifier and kind install, migration, two-replica scale and rollback gate | Install in the ARM64 target cluster and provide manual Ingress |
 | S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, recovery CI, WebSocket capacity gate, owner-authorized audited circle deletion, and snapshot-consistent `sproyt.user-export.v1` self-export | Production-sized load, owners, privacy/retention and rollout sign-off |
 | S-16 | Implemented | Sproyt `ProcessGateway` contract, real Heart contract at `3f06424`, and the green `ea-heart-client` receive-message contract/CI at `9510cc4` | Configure the deployed Heart endpoint |
@@ -30,17 +30,22 @@ gate has been signed off in the target environment.
 
 ## Current immutable image evidence
 
-On 2026-07-15, the reviewed application commit
-`f599dc110a56f55797a21f7145210297e297062f` was imported into Zot as:
+On 2026-07-17, the reviewed application commit
+`0fcd6fc0a87e536ed02857f4ba69576eaa6b3966` was imported into Zot as:
 
 ```text
-oci.bjoroy.me/sproyt/sproyt:f599dc110a56f55797a21f7145210297e297062f
-sha256:50501369801c7612f7d95e3c7f1957f84aa87c9553fe8ff50967c9d00d471ed7
+oci.bjoroy.me/sproyt/sproyt:0fcd6fc0a87e536ed02857f4ba69576eaa6b3966
+sha256:42beccf9200b9f121660474eb7af204984ddf85cfffdb75ed1f082075687dafe
 ```
 
-The registry manifest reports `linux/arm64`. This is deployment evidence for
-the reviewed application code, not the final production release designation;
-publish and pin a new digest if application code changes before deployment.
+The registry config reports `linux/arm64`, non-root user `65532:65532`, and OCI
+revision label `0fcd6fc0a87e536ed02857f4ba69576eaa6b3966`. GitHub Actions run
+`29509852915` passed format/lint/test, PostgreSQL contract, backup/restore,
+dependency audit, ARM64 build, Helm rendering, kind install/scale/rollback,
+SBOM generation and vulnerability scanning for the same application commit.
+This is deployment evidence for the reviewed application code, not the final
+production release designation; publish and pin a new digest if application
+code changes before deployment.
 
 ## Gates that cannot be completed from this checkout
 
