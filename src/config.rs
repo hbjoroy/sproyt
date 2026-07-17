@@ -8,6 +8,9 @@ const DEFAULT_ENVIRONMENT: &str = "development";
 const DEFAULT_LOG_FORMAT: &str = "pretty";
 const DEFAULT_AUTH_MODE: &str = "development";
 const DEFAULT_WS_IDLE_TIMEOUT_SECONDS: u64 = 60;
+const PRODUCTION_OIDC_ISSUER: &str = "https://sproyt-security.bjoroy.me/application/o/sproyt/";
+const PRODUCTION_OIDC_REDIRECT_URL: &str = "https://sproyt.bjoroy.me/auth/callback";
+const PRODUCTION_POST_LOGOUT_REDIRECT_URL: &str = "https://sproyt.bjoroy.me/";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppConfig {
@@ -166,13 +169,11 @@ impl OidcConfig {
     fn validate(&self, environment: DeploymentEnvironment) -> Result<(), ConfigError> {
         let issuer = validate_oidc_url("SPROYT_OIDC_ISSUER", &self.issuer, environment)?;
         if environment == DeploymentEnvironment::Production
-            && (issuer.host_str() != Some("identity.limani-parou.com")
-                || !issuer.path().starts_with("/application/o/")
-                || !issuer.path().ends_with('/'))
+            && issuer.as_str() != PRODUCTION_OIDC_ISSUER
         {
             return Err(ConfigError::InvalidOidcConfig(
                 "SPROYT_OIDC_ISSUER",
-                "expected https://identity.limani-parou.com/application/o/<provider-slug>/",
+                "expected https://sproyt-security.bjoroy.me/application/o/sproyt/",
             ));
         }
         let redirect =
@@ -181,6 +182,14 @@ impl OidcConfig {
             return Err(ConfigError::InvalidOidcConfig(
                 "SPROYT_OIDC_REDIRECT_URL",
                 "path must end with /auth/callback",
+            ));
+        }
+        if environment == DeploymentEnvironment::Production
+            && redirect.as_str() != PRODUCTION_OIDC_REDIRECT_URL
+        {
+            return Err(ConfigError::InvalidOidcConfig(
+                "SPROYT_OIDC_REDIRECT_URL",
+                "expected https://sproyt.bjoroy.me/auth/callback",
             ));
         }
         let post_logout = validate_oidc_url(
@@ -195,6 +204,14 @@ impl OidcConfig {
             return Err(ConfigError::InvalidOidcConfig(
                 "SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL",
                 "must use the same origin as SPROYT_OIDC_REDIRECT_URL",
+            ));
+        }
+        if environment == DeploymentEnvironment::Production
+            && post_logout.as_str() != PRODUCTION_POST_LOGOUT_REDIRECT_URL
+        {
+            return Err(ConfigError::InvalidOidcConfig(
+                "SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL",
+                "expected https://sproyt.bjoroy.me/",
             ));
         }
         validate_session_key("SPROYT_SESSION_KEY", &self.session_key)?;
@@ -617,9 +634,9 @@ mod tests {
             session_key: session_key.to_owned(),
             session_previous_keys: vec![URL_SAFE_NO_PAD.encode([41_u8; 32])],
         };
-        let issuer = "https://identity.limani-parou.com/application/o/sproyt/";
-        let redirect = "https://chat.limani-parou.com/auth/callback";
-        let logout = "https://chat.limani-parou.com/";
+        let issuer = PRODUCTION_OIDC_ISSUER;
+        let redirect = "https://sproyt.bjoroy.me/auth/callback";
+        let logout = "https://sproyt.bjoroy.me/";
 
         assert!(
             config(issuer, redirect, logout, &key)
@@ -638,7 +655,7 @@ mod tests {
         );
         assert!(
             config(
-                "http://identity.limani-parou.com/application/o/sproyt/",
+                "https://identity.limani-parou.com/application/o/sproyt/",
                 redirect,
                 logout,
                 &key
@@ -649,7 +666,7 @@ mod tests {
         assert!(
             config(
                 issuer,
-                "https://user:secret@chat.limani-parou.com/auth/callback",
+                "https://user:secret@sproyt.bjoroy.me/auth/callback",
                 logout,
                 &key
             )
@@ -660,6 +677,16 @@ mod tests {
             config(issuer, redirect, "https://other.example/", &key)
                 .validate(DeploymentEnvironment::Production)
                 .is_err()
+        );
+        assert!(
+            config(
+                issuer,
+                "https://other.example/auth/callback",
+                "https://other.example/",
+                &key
+            )
+            .validate(DeploymentEnvironment::Production)
+            .is_err()
         );
         assert!(
             config(issuer, redirect, logout, "not-a-key")

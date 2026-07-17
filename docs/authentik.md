@@ -10,21 +10,21 @@ client secret.
 
 ## Create the application and provider
 
-In the Authentik admin interface at `identity.limani-parou.com`:
+In the Authentik admin interface for the `sproyt` provider:
 
 1. Create an application/provider pair under **Applications** using provider
    type **OAuth2/OpenID Connect**.
-2. Give it a stable provider slug, for example `sproyt`. Changing the slug
-   changes the issuer and therefore the identity namespace.
+2. Use the stable provider slug `sproyt`. Changing the slug changes the issuer
+   and therefore the identity namespace.
 3. Select a signing key and client type **Confidential**.
 4. Enable Authorization Code and refresh-token grants if the installed
    Authentik version exposes grant selection. Do not enable the implicit or
    password grant for Sproyt.
 5. Add one **Strict** authorization redirect URI:
-   `https://<chat-hostname>/auth/callback`. Never leave redirect URIs empty and
+   `https://sproyt.bjoroy.me/auth/callback`. Never leave redirect URIs empty and
    do not use a wildcard or regular expression.
 6. If the installed version distinguishes logout redirect URIs, add
-   `https://<chat-hostname>/` as a strict logout URI. Otherwise configure it as
+   `https://sproyt.bjoroy.me/` as a strict logout URI. Otherwise configure it as
    the provider's permitted post-logout redirect.
 7. Include the standard `openid`, `profile`, `email` and `offline_access`
    scopes/property mappings. Sproyt uses `sub` as the stable external identity
@@ -35,7 +35,7 @@ Record the provider slug, client ID and client secret in the deployment secret
 store. The expected issuer is:
 
 ```text
-https://identity.limani-parou.com/application/o/<provider-slug>/
+https://sproyt-security.bjoroy.me/application/o/sproyt/
 ```
 
 Authentik recommends Authorization Code with PKCE and strict redirect URIs.
@@ -55,7 +55,7 @@ case; actual refresh-token issuance remains a mandatory live acceptance check.
 From this checkout or the cluster SSH host (requires `bash`, `curl` and `jq`):
 
 ```sh
-OIDC_ISSUER='https://identity.limani-parou.com/application/o/<provider-slug>/'
+OIDC_ISSUER='https://sproyt-security.bjoroy.me/application/o/sproyt/'
 bash tools/verify-oidc-provider.sh "$OIDC_ISSUER"
 ```
 
@@ -63,7 +63,8 @@ Do not deploy if the command fails. Compare Authentik's displayed issuer with
 the discovery document rather than guessing the slug or removing the trailing
 slash.
 
-On 2026-07-17, the live provider slug `sproyt` passed this contract for the
+On 2026-07-17, the Cloudflare-exposed provider slug `sproyt` passed this
+contract for the
 exact issuer, trusted endpoints, Authorization Code, refresh-token grant, PKCE
 S256, core scopes, confidential-client authentication, userinfo, JWKS and
 RP-initiated logout. It did not advertise `offline_access`; refresh-token
@@ -91,8 +92,8 @@ post-logout URL belong in Helm values. A Secret rotation must also change
 Record timestamps, the application commit/image digest, Helm revision,
 provider slug (not its secret), test-user identity and results for each check:
 
-1. Open a private browser window at `https://<chat-hostname>/auth/login`.
-   Confirm the redirect stays on `identity.limani-parou.com`, uses
+1. Open a private browser window at `https://sproyt.bjoroy.me/auth/login`.
+   Confirm the redirect stays on `sproyt-security.bjoroy.me`, uses
    `response_type=code`, requests `openid profile email offline_access`, and
    contains `state`, `nonce`, `code_challenge` and
    `code_challenge_method=S256`.

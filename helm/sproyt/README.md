@@ -1,9 +1,8 @@
 # Sproyt Helm chart
 
-`config.oidcIssuer` and `config.oidcClientId` are required. The issuer must be
-the exact discovery-capable Authentik provider URL under
-`https://identity.limani-parou.com/application/o/<provider-slug>/`; the chart
-deliberately has no guessed production slug.
+`config.oidcIssuer` and `config.oidcClientId` are required. The production
+issuer is pinned to the discovery-capable Authentik provider URL
+`https://sproyt-security.bjoroy.me/application/o/sproyt/`.
 
 Create the referenced Secret before installation. It must contain
 `DATABASE_URL`, `SPROYT_OIDC_CLIENT_SECRET`, and `SPROYT_SESSION_KEY`.
@@ -19,10 +18,10 @@ helm upgrade --install sproyt ./helm/sproyt \
   --namespace sproyt --create-namespace \
   --set image.digest=sha256:<registry-digest> \
   --set ingress.enabled=true \
-  --set ingress.host=chat.example.com \
+  --set ingress.host=sproyt.bjoroy.me \
   --set config.oidcClientId=<client-id> \
-  --set config.oidcRedirectUrl=https://chat.example.com/auth/callback \
-  --set config.oidcPostLogoutRedirectUrl=https://chat.example.com/
+  --set config.oidcRedirectUrl=https://sproyt.bjoroy.me/auth/callback \
+  --set config.oidcPostLogoutRedirectUrl=https://sproyt.bjoroy.me/
 ```
 
 The pre-install/pre-upgrade Job applies additive SQLx migrations before the

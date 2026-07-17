@@ -19,20 +19,20 @@ service:
 ingress:
   enabled: false
   className: ""
-  host: sproyt.example.com
+  host: sproyt.bjoroy.me
   tlsSecretName: ""
 
 config:
   environment: production
   logFormat: json
   authMode: oidc
-  # Required: https://identity.limani-parou.com/application/o/<provider-slug>/
-  oidcIssuer: ""
+  # Pinned production issuer exposed through Cloudflare.
+  oidcIssuer: https://sproyt-security.bjoroy.me/application/o/sproyt/
   oidcClientId: ""
-  oidcRedirectUrl: https://sproyt.example.com/auth/callback
-  oidcPostLogoutRedirectUrl: https://sproyt.example.com/
+  oidcRedirectUrl: https://sproyt.bjoroy.me/auth/callback
+  oidcPostLogoutRedirectUrl: https://sproyt.bjoroy.me/
   heartUrl: ""
-  mcpAllowedOrigins: ""
+  mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60
 
 secret:

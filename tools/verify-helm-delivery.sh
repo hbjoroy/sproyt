@@ -3,7 +3,7 @@ set -euo pipefail
 
 chart=${1:-helm/sproyt}
 digest=${2:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
-issuer=https://identity.limani-parou.com/application/o/ci-only/
+issuer=https://sproyt-security.bjoroy.me/application/o/sproyt/
 helm_command=${HELM:-helm}
 
 common=(

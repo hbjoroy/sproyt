@@ -191,10 +191,10 @@ Acceptance: application handlers never trust participant IDs from query
 parameters; tests can authenticate without an external provider; production
 mode rejects dev auth.
 
-### S-11: Integrate OIDC with `identity.limani-parou.com`
+### S-11: Integrate the Cloudflare-exposed Authentik issuer
 
-- Configure an Authentik OIDC provider for Sproyt. Use its issuer in the form
-  `https://identity.limani-parou.com/application/o/<provider-slug>/` and load
+- Configure an Authentik OIDC provider for Sproyt. Use the pinned issuer
+  `https://sproyt-security.bjoroy.me/application/o/sproyt/` and load
   discovery metadata from that issuer rather than hard-coding endpoints.
 - Implement Authorization Code flow with PKCE, state, nonce, secure cookies,
   callback validation, logout, and key rotation.

@@ -4,14 +4,11 @@ set -euo pipefail
 issuer=${1:?usage: verify-oidc-provider.sh <issuer> [discovery-json]}
 discovery_file=${2:-}
 
-case "$issuer" in
-  https://identity.limani-parou.com/application/o/*/)
-    ;;
-  *)
-    echo "issuer must match https://identity.limani-parou.com/application/o/<provider-slug>/" >&2
-    exit 1
-    ;;
-esac
+expected_issuer=https://sproyt-security.bjoroy.me/application/o/sproyt/
+if [[ "$issuer" != "$expected_issuer" ]]; then
+  echo "issuer must be $expected_issuer" >&2
+  exit 1
+fi
 
 if [[ -n "$discovery_file" ]]; then
   discovery=$(cat "$discovery_file")
@@ -26,7 +23,7 @@ fi
 jq --exit-status --arg issuer "$issuer" '
   def has_value($array; $value): ($array // []) | index($value) != null;
   def trusted_endpoint:
-    type == "string" and startswith("https://identity.limani-parou.com/");
+    type == "string" and startswith("https://sproyt-security.bjoroy.me/");
 
   .issuer == $issuer and
   (.authorization_endpoint | trusted_endpoint) and

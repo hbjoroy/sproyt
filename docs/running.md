@@ -218,10 +218,10 @@ values for Sproyt. The issuer must be the exact discovery-capable provider URL,
 including the provider slug and trailing slash:
 
 ```sh
-OIDC_ISSUER='https://identity.limani-parou.com/application/o/<provider-slug>/'
+OIDC_ISSUER='https://sproyt-security.bjoroy.me/application/o/sproyt/'
 OIDC_CLIENT_ID='<client-id>'
 OIDC_CLIENT_SECRET='<client-secret>'
-PUBLIC_ORIGIN='https://<chat-hostname>'
+PUBLIC_ORIGIN='https://sproyt.bjoroy.me'
 SPROYT_SESSION_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
 
 kubectl -n sproyt create secret generic sproyt \
@@ -322,10 +322,10 @@ metadata:
 spec:
   ingressClassName: <class-name>
   tls:
-    - hosts: [<chat-hostname>]
+    - hosts: [sproyt.bjoroy.me]
       secretName: <tls-secret>
   rules:
-    - host: <chat-hostname>
+    - host: sproyt.bjoroy.me
       http:
         paths:
           - path: /

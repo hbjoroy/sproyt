@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-issuer=https://identity.limani-parou.com/application/o/sproyt-ci/
+issuer=https://sproyt-security.bjoroy.me/application/o/sproyt/
 fixture="$root/tools/fixtures/authentik-discovery.json"
 verifier="$root/tools/verify-oidc-provider.sh"
 
