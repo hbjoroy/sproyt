@@ -30,7 +30,7 @@ gate has been signed off in the target environment.
 | S-21 | Implemented; rollout pending | Production session boundary; local encrypted-session validation; periodic provider revalidation; profile/logout shell; no simulated browser identity; 2026-07-17 desktop/mobile browser journey | Review OIDC redirect and logout against Authentik after deployment |
 | S-22 | Implemented; rollout pending | Responsive navigation/timeline/composer; circle-grouped channels; human-readable sender labels; visible keyboard focus; bounded exponential reconnect; draft preservation; active-channel read markers/unread badges; 2026-07-17 desktop/mobile and real server-restart browser passes | Validate the same journey through production OIDC after deployment |
 | S-23 | Implemented; rollout pending | Guided circle creation with automatic `Prat` channel; selected-circle invite action; shareable invite links; OIDC-signed return path; copy/fallback UX; link recognition and actionable invalid/expired feedback; existing two-user authorization contract plus 2026-07-17 browser journey | Exercise owner-to-fresh-user invite through production Authentik after deployment |
-| S-24 | In progress | Advanced Heart/process controls are omitted from the normal UI by a server/Helm flag that defaults off; existing CSP, focus, mobile, reconnect and browser-capacity gates; read-only production rollout verifier | Run the production verifier and authenticated OIDC/two-user/mobile acceptance |
+| S-24 | In progress | Advanced Heart/process controls are omitted from the normal UI by a server/Helm flag that defaults off; existing CSP, focus, mobile, reconnect and browser-capacity gates; immutable ARM64/GitOps rollout; 20/20 public readiness and global security-header pass | Complete authenticated OIDC/two-user/mobile/reconnect/logout acceptance |
 
 ## Current immutable image evidence
 
@@ -52,18 +52,21 @@ production release designation; publish and pin a new digest if application
 code changes before deployment.
 
 The current chat release revision
-`6355c13720c9bce94d3a55b9c485876c10b915d7` was subsequently imported as:
+`eec2d792780622fac50caabe62e213106cb547e4` was imported as:
 
 ```text
-oci.bjoroy.me/sproyt/sproyt:6355c13720c9bce94d3a55b9c485876c10b915d7
-sha256:e8a6a49cbe85c7b2b9578261b8ec565742601b5288fe81d8d57046adf0c858ce
+oci.bjoroy.me/sproyt/sproyt:eec2d792780622fac50caabe62e213106cb547e4
+sha256:08ca736359ed085ff0ba5ed103a48f76ea35ac39d7a03a8166507ce59e8a0ae2
 ```
 
 Registry inspection reports `linux/arm64`, non-root user `65532:65532`, port
 9010 and the matching OCI revision label. GitOps commit
-`9cb3db8ce5545c69026b5cf39c239ad286879dbf` pins this exact revision and
-digest. Production rollout and authenticated browser acceptance remain to be
-recorded; publication alone is not deployment evidence.
+`62bcdee990d3350611253e33db77f6f015be91ba` pins this exact revision and
+digest. Argo reconciled it automatically on 2026-07-17. The real public
+Cloudflare route then passed 20/20 readiness samples with zero failures and a
+maximum response time of 1.884 seconds; the new global CSP, no-sniff, referrer
+and permissions headers proved the new application active. Authenticated
+browser acceptance remains to be recorded.
 
 The Heart cluster image from merged Heart PR 3 revision
 `6d8a3b50952e866e6500b5d325afeb03d3f3c7d7` was imported into Zot as:

@@ -8,9 +8,9 @@ checkout and pass the deployed application and GitOps revisions explicitly:
 
 ```bash
 bash tools/verify-production-rollout.sh \
-  6355c13720c9bce94d3a55b9c485876c10b915d7 \
-  sha256:e8a6a49cbe85c7b2b9578261b8ec565742601b5288fe81d8d57046adf0c858ce \
-  9cb3db8ce5545c69026b5cf39c239ad286879dbf
+  eec2d792780622fac50caabe62e213106cb547e4 \
+  sha256:08ca736359ed085ff0ba5ed103a48f76ea35ac39d7a03a8166507ce59e8a0ae2 \
+  62bcdee990d3350611253e33db77f6f015be91ba
 ```
 
 The verifier does not read Secrets or mutate the cluster. It verifies internal
