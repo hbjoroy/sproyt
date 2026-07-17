@@ -245,7 +245,8 @@ replicaCount: 2
 
 image:
   repository: oci.bjoroy.me/sproyt/sproyt
-  digest: sha256:<digest-read-back-from-registry>
+  # Reviewed application commit 0fcd6fc0a87e536ed02857f4ba69576eaa6b3966
+  digest: sha256:42beccf9200b9f121660474eb7af204984ddf85cfffdb75ed1f082075687dafe
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
@@ -339,8 +340,10 @@ The ingress controller namespace must match
 `networkPolicy.ingressNamespaceSelector`. Confirm external OIDC login, logout,
 WebSocket reconnect, and `/readyz` after applying the Ingress.
 
-If Heart is later installed in namespace `heart` with pods labelled
-`app: heart`, add these values before setting `config.heartUrl`:
+Deploy Heart first with the private, digest-pinned procedure in
+[`heart-cluster.md`](heart-cluster.md). For pods labelled
+`app.kubernetes.io/name: heart`, add these values before setting
+`config.heartUrl`:
 
 ```yaml
 config:
@@ -351,12 +354,13 @@ networkPolicy:
       kubernetes.io/metadata.name: heart
   heartPodSelector:
     matchLabels:
-      app: heart
+      app.kubernetes.io/name: heart
   heartPort: 3000
 ```
 
-Use Heart revision `3f06424` or newer and apply all Heart migrations through
-`004_idempotent_instance_start.sql` before enabling the URL. Sproyt scopes
+Use the reviewed Heart revision and digest from
+[`heart-cluster.md`](heart-cluster.md), and complete its migration Job before
+enabling the URL. Sproyt scopes
 starts with `X-Heart-Client: sproyt`, uses its durable outbox UUID as
 `Idempotency-Key`, and reconciles a timed-out accepted start through Heart's
 `/api/v1/instance-starts/{key}` endpoint.

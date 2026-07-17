@@ -22,9 +22,9 @@ gate has been signed off in the target environment.
 | S-13 | Implemented and published | Pinned scratch ARM64 image, restricted runtime contract, SBOM and vulnerability CI; registry evidence below | Retain CI and registry evidence with the release record |
 | S-14 | Implemented | Helm delivery verifier and kind install, migration, two-replica scale and rollback gate | Install in the ARM64 target cluster and provide manual Ingress |
 | S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, recovery CI, WebSocket capacity gate, owner-authorized audited circle deletion, and snapshot-consistent `sproyt.user-export.v1` self-export | Production-sized load, owners, privacy/retention and rollout sign-off |
-| S-16 | Implemented | Sproyt `ProcessGateway` contract, real Heart contract at `3f06424`, and the green `ea-heart-client` receive-message contract/CI at `9510cc4` | Configure the deployed Heart endpoint |
-| S-17 | Implemented | Durable process link/event/outbox state, stable command receipts, Heart `Idempotency-Key`/`X-Heart-Client`, exact replay, bounded retry and unknown-outcome lookup at Heart `3f06424` | Exercise restart/rolling update in the target cluster |
-| S-18 | Pilot implemented; rollout pending | Event-planning definition, browser/MCP flow tests, kill switch and real Heart receive/idempotent-start contract | Exercise restart/rolling update in the target cluster |
+| S-16 | Implemented | Sproyt `ProcessGateway` contract, real Heart contract at `6d8a3b5`, and the green `ea-heart-client` receive-message contract/CI at `9510cc4` | Configure the deployed Heart endpoint |
+| S-17 | Implemented | Durable process link/event/outbox state, stable command receipts, Heart `Idempotency-Key`/`X-Heart-Client`, exact replay, bounded retry and unknown-outcome lookup at Heart `6d8a3b5` | Exercise restart/rolling update in the target cluster |
+| S-18 | Pilot implemented; rollout pending | Event-planning definition, browser/MCP flow tests, kill switch, real Heart receive/idempotent-start contract, and private Heart cluster guide | Approve Heart PR 3 and exercise restart/rolling update in the target cluster |
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks and WebSocket/MCP adapter-conformance tests | Exercise through the production endpoint after S-19 activation |
 
@@ -47,6 +47,22 @@ This is deployment evidence for the reviewed application code, not the final
 production release designation; publish and pin a new digest if application
 code changes before deployment.
 
+The Heart cluster candidate from private Heart PR 3 revision
+`6d8a3b50952e866e6500b5d325afeb03d3f3c7d7` was imported into Zot as:
+
+```text
+oci.bjoroy.me/sproyt/heart:6d8a3b50952e866e6500b5d325afeb03d3f3c7d7
+sha256:2d244cf57cdaff1c18b21737d4d05b1a7b935ecf1d60cb3cdd337435bc3142cb
+```
+
+Registry inspection reports `linux/arm64`, non-root user `65532:65532`, port
+3000, and the matching OCI revision label. Heart Actions run `29570890958`
+passed migrations (including repeat execution), format, clippy, workspace
+tests, API readiness/container smoke, SBOM generation and the high/critical
+vulnerability gate. The static scratch runtime is approximately 11 MB and the
+matching local Grype 0.110.0 scan reported no vulnerabilities. This remains a
+release candidate until Heart PR 3 is approved and merged.
+
 ## Gates that cannot be completed from this checkout
 
 The remaining production gates are intentionally environment-owned:
@@ -60,8 +76,9 @@ The remaining production gates are intentionally environment-owned:
 Heart is a private repository, so Sproyt's repository-scoped GitHub token
 cannot check it out in CI. The real cross-repository contract remains the
 explicit `tools/test-heart-contract.ps1` pre-release check. Heart revision
-`3f06424673c0ceeca6e40a528e6b94b225ce2984` passed the idempotent-start,
-reconciliation and receive checks on 2026-07-16.
+`6d8a3b50952e866e6500b5d325afeb03d3f3c7d7` passed the idempotent-start,
+reconciliation, receive, migration, readiness and hardened ARM64 container
+checks in PR run `29570890958` on 2026-07-17.
 Do not add an implicit cross-repository token; if this check moves into CI,
 configure a narrowly scoped read-only credential explicitly.
 

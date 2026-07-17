@@ -16,8 +16,8 @@ is currently a dependency-light inline view adapter; a later Leptos split must
 continue to use the same HTTP/WebSocket application contracts.
 
 Production activation still requires environment-owned evidence: the actual
-Authentik provider slug/client registration, registry-pushed image digest,
-cluster-specific secrets/TLS, and the operational sign-offs listed in
+Authentik provider slug/client registration, cluster-specific secrets/TLS,
+and the operational sign-offs listed in
 [`docs/release-checklist.md`](docs/release-checklist.md).
 
 ## Direction
@@ -54,6 +54,10 @@ gates used for contributions.
 For copy/paste startup instructions, including the existing cluster PostgreSQL,
 private `oci.bjoroy.me` images, namespaced pull secrets, Helm, and manual
 Ingress, see [docs/running.md](docs/running.md).
+
+For the optional private Heart API, its dedicated PostgreSQL identity,
+digest-pinned deployment, NetworkPolicy and rolling-update acceptance, see
+[docs/heart-cluster.md](docs/heart-cluster.md).
 
 ## Prerequisites
 
