@@ -157,6 +157,12 @@ async fn add_security_headers(
     next: middleware::Next,
 ) -> axum::response::Response {
     let mut response = next.run(request).await;
+    // A WebSocket 101 is not a document response. Extra document policy
+    // headers are unnecessary there and some proxies treat decorated upgrade
+    // responses inconsistently.
+    if response.status() == axum::http::StatusCode::SWITCHING_PROTOCOLS {
+        return response;
+    }
     let headers = response.headers_mut();
     let defaults = [
         (
@@ -1846,6 +1852,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let heartbeatTimer = null;
       let reconnectTimer = null;
       let reconnectAttempt = 0;
+      let stableConnectionTimer = null;
       let sessionRefreshTimer = null;
       let renderMode = "view";
       let requestNumber = 0;
@@ -2001,6 +2008,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           window.clearInterval(heartbeatTimer);
           heartbeatTimer = null;
         }
+        if (stableConnectionTimer !== null) {
+          window.clearTimeout(stableConnectionTimer);
+          stableConnectionTimer = null;
+        }
         if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
           return;
         }
@@ -2016,8 +2027,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         nextSocket.addEventListener("open", () => {
           if (socket !== nextSocket) return;
-          reconnectAttempt = 0;
           setConnected(true, "Tilkopla");
+          stableConnectionTimer = window.setTimeout(() => {
+            if (socket === nextSocket && nextSocket.readyState === WebSocket.OPEN) {
+              reconnectAttempt = 0;
+            }
+          }, 10_000);
           sendCommand("hello");
           sendCommand("list_my_channels");
           sendCommand("list_my_circles");
@@ -2030,13 +2045,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
           renderServerEvent(JSON.parse(event.data));
         });
 
-        nextSocket.addEventListener("close", () => {
+        nextSocket.addEventListener("close", (event) => {
           if (socket !== nextSocket) return;
           if (heartbeatTimer !== null) {
             window.clearInterval(heartbeatTimer);
             heartbeatTimer = null;
           }
-          scheduleReconnect();
+          if (stableConnectionTimer !== null) {
+            window.clearTimeout(stableConnectionTimer);
+            stableConnectionTimer = null;
+          }
+          if (event.code === 1008) {
+            setConnected(false, "Økta er utløpt – opnar innlogging");
+            window.location.assign("/auth/login");
+            return;
+          }
+          scheduleReconnect(event.code, event.reason);
         });
 
         nextSocket.addEventListener("error", () => {
@@ -2044,10 +2068,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         });
       }
 
-      function scheduleReconnect() {
+      function scheduleReconnect(closeCode = 1006, closeReason = "") {
         reconnectAttempt += 1;
         const delay = Math.min(15_000, 500 * (2 ** Math.min(reconnectAttempt - 1, 5)));
-        setConnected(false, `Fråkopla – prøver igjen om ${Math.ceil(delay / 1000)} sekund`);
+        const detail = closeReason ? `kode ${closeCode}: ${closeReason}` : `kode ${closeCode}`;
+        setConnected(false, `Fråkopla (${detail}) – prøver igjen om ${Math.ceil(delay / 1000)} sekund`);
         reconnectTimer = window.setTimeout(connect, delay);
       }
 
@@ -3352,7 +3377,10 @@ mod protocol_capacity_tests {
         assert!(body.contains("new WebSocket(`${protocol}://${window.location.host}/ws`)"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
         assert!(body.contains("connect();"));
-        assert!(body.contains("function scheduleReconnect()"));
+        assert!(body.contains("function scheduleReconnect(closeCode"));
+        assert!(body.contains("stableConnectionTimer = window.setTimeout"));
+        assert!(body.contains("event.code === 1008"));
+        assert!(body.contains("Fråkopla (${detail})"));
         assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
         assert!(body.contains("document.addEventListener(\"visibilitychange\""));
         assert!(body.contains(":focus-visible"));
@@ -3364,6 +3392,51 @@ mod protocol_capacity_tests {
             .to_str()
             .unwrap();
         assert!(!second_policy.contains(&format!("'nonce-{nonce}'")));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_is_not_decorated_as_a_document_response() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+
+        let url = format!("ws://{address}/ws?participant=upgrade-policy-user");
+        let (mut socket, response) = connect_async(url).await.unwrap();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SWITCHING_PROTOCOLS
+        );
+        assert!(!response.headers().contains_key("content-security-policy"));
+        assert!(
+            !response
+                .headers()
+                .contains_key("cross-origin-opener-policy")
+        );
+
+        socket
+            .send(ClientMessage::Text(
+                serde_json::json!({
+                    "protocol":"sproyt.chat.v1",
+                    "request_id":"upgrade-hello",
+                    "type":"hello"
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let response = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("hello response timed out")
+            .expect("socket closed after upgrade")
+            .unwrap();
+        assert!(response.into_text().unwrap().contains("\"type\":\"hello\""));
+        socket.close(None).await.unwrap();
         server.abort();
     }
 
