@@ -79,6 +79,9 @@ spec:
             httpGet:
               path: /readyz
               port: http
+            # The handler has a bounded two-second dependency timeout. Give it
+            # time to return a meaningful 503 instead of aborting the request.
+            timeoutSeconds: 3
             periodSeconds: 5
           startupProbe:
             httpGet:

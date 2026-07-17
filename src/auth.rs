@@ -1,8 +1,11 @@
 use std::{
     fmt,
-    sync::{Arc, Mutex, RwLock},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::{Arc, RwLock},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(test)]
+use std::sync::Mutex;
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -26,7 +29,6 @@ use crate::{
 
 const LOGIN_TTL_SECONDS: u64 = 600;
 const SESSION_TTL_SECONDS: u64 = 8 * 60 * 60;
-const DISCOVERY_HEALTH_TTL: Duration = Duration::from_secs(30);
 pub const LOGIN_COOKIE: &str = "sproyt_oidc_tx";
 pub const SESSION_COOKIE: &str = "sproyt_session";
 
@@ -136,13 +138,6 @@ impl AuthService {
             },
         }
     }
-
-    pub async fn health_check(&self) -> Result<(), AuthError> {
-        match self {
-            Self::Development => Ok(()),
-            Self::Oidc(service) => service.health_check().await,
-        }
-    }
 }
 
 pub struct LoginStart {
@@ -172,7 +167,6 @@ pub struct OidcService {
     http_client: reqwest::Client,
     codec: CookieCodec,
     config: OidcConfig,
-    last_discovery_check: Mutex<Option<Instant>>,
     issuer: String,
     post_logout_redirect_url: String,
 }
@@ -227,7 +221,6 @@ impl OidcService {
             http_client,
             codec: CookieCodec::new(config.session_key(), config.session_previous_keys())?,
             config: config.clone(),
-            last_discovery_check: Mutex::new(Some(Instant::now())),
             issuer: config.issuer().to_owned(),
             post_logout_redirect_url: config.post_logout_redirect_url().to_owned(),
         })
@@ -235,25 +228,6 @@ impl OidcService {
 
     async fn refreshed_client(&self) -> Result<DiscoveredOidc, AuthError> {
         discover_client(&self.config, &self.http_client).await
-    }
-
-    async fn health_check(&self) -> Result<(), AuthError> {
-        let recently_checked = self
-            .last_discovery_check
-            .lock()
-            .map_err(|_| AuthError::External("OIDC health lock poisoned".to_owned()))?
-            .is_some_and(|checked| checked.elapsed() < DISCOVERY_HEALTH_TTL);
-        if recently_checked {
-            return Ok(());
-        }
-        let refreshed = self.refreshed_client().await?;
-        self.replace_client(refreshed)?;
-        *self
-            .last_discovery_check
-            .lock()
-            .map_err(|_| AuthError::External("OIDC health lock poisoned".to_owned()))? =
-            Some(Instant::now());
-        Ok(())
     }
 
     fn current_client(&self) -> Result<DiscoveredCoreClient, AuthError> {
@@ -616,16 +590,6 @@ pub enum AuthError {
 impl AuthError {
     fn external(error: impl fmt::Display) -> Self {
         Self::External(error.to_string())
-    }
-
-    pub const fn kind(&self) -> &'static str {
-        match self {
-            Self::InvalidIdentity(_) => "invalid_identity",
-            Self::InvalidSessionKey => "invalid_session_key",
-            Self::Unauthorized => "unauthorized",
-            Self::Unsupported(_) => "unsupported",
-            Self::External(_) => "external",
-        }
     }
 
     pub fn public_message(&self) -> String {
