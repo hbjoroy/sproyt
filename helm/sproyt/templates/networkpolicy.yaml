@@ -13,7 +13,13 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
-        - podSelector: {}
+        # Use the standard immutable namespace label explicitly. Although a
+        # bare podSelector is equivalent by specification, some lightweight
+        # CNI policy engines have treated it inconsistently for cross-pod
+        # traffic. The namespace selector is portable and testable.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
         {{- with .Values.networkPolicy.ingressNamespaceSelector }}
         - namespaceSelector:
             {{- toYaml . | nindent 12 }}

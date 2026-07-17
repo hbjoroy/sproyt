@@ -13,9 +13,12 @@ bash tools/verify-production-rollout.sh \
   9cb3db8ce5545c69026b5cf39c239ad286879dbf
 ```
 
-The verifier does not read Secrets or mutate the cluster. Retain its JSON
-output with the release evidence. It deliberately does not replace the
-authenticated two-user browser journey below.
+The verifier does not read Secrets or mutate the cluster. It verifies internal
+Kubernetes state and uses the real public Cloudflare path for health and
+readiness; Kubernetes API-server service proxy traffic may correctly be denied
+by NetworkPolicy and is not a production client path. Retain the JSON output
+with the release evidence. It deliberately does not replace the authenticated
+two-user browser journey below.
 
 ## Build and security
 
