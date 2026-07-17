@@ -30,17 +30,17 @@ gate has been signed off in the target environment.
 
 ## Current immutable image evidence
 
-On 2026-07-17, the reviewed application commit
-`0fcd6fc0a87e536ed02857f4ba69576eaa6b3966` was imported into Zot as:
+On 2026-07-17, the reviewed application merge commit
+`b28dea405b725e798ceb2a2fc32445dde272b6d6` was imported into Zot as:
 
 ```text
-oci.bjoroy.me/sproyt/sproyt:0fcd6fc0a87e536ed02857f4ba69576eaa6b3966
-sha256:42beccf9200b9f121660474eb7af204984ddf85cfffdb75ed1f082075687dafe
+oci.bjoroy.me/sproyt/sproyt:b28dea405b725e798ceb2a2fc32445dde272b6d6
+sha256:c4bf3bfd80566777c7abaa63f17a3d9a066158a04d9c2b6e5763b0b020b7150f
 ```
 
 The registry config reports `linux/arm64`, non-root user `65532:65532`, and OCI
-revision label `0fcd6fc0a87e536ed02857f4ba69576eaa6b3966`. GitHub Actions run
-`29509852915` passed format/lint/test, PostgreSQL contract, backup/restore,
+revision label `b28dea405b725e798ceb2a2fc32445dde272b6d6`. GitHub Actions run
+`29574475877` passed format/lint/test, PostgreSQL contract, backup/restore,
 dependency audit, ARM64 build, Helm rendering, kind install/scale/rollback,
 SBOM generation and vulnerability scanning for the same application commit.
 This is deployment evidence for the reviewed application code, not the final

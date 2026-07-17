@@ -246,8 +246,8 @@ replicaCount: 2
 
 image:
   repository: oci.bjoroy.me/sproyt/sproyt
-  # Reviewed application commit 0fcd6fc0a87e536ed02857f4ba69576eaa6b3966
-  digest: sha256:42beccf9200b9f121660474eb7af204984ddf85cfffdb75ed1f082075687dafe
+  # Reviewed application commit b28dea405b725e798ceb2a2fc32445dde272b6d6
+  digest: sha256:c4bf3bfd80566777c7abaa63f17a3d9a066158a04d9c2b6e5763b0b020b7150f
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
