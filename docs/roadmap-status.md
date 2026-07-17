@@ -24,13 +24,13 @@ gate has been signed off in the target environment.
 | S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, recovery CI, WebSocket capacity gate, owner-authorized audited circle deletion, and snapshot-consistent `sproyt.user-export.v1` self-export | Production-sized load, owners, privacy/retention and rollout sign-off |
 | S-16 | Implemented | Sproyt `ProcessGateway` contract, real Heart contract at `6d8a3b5`, and the green `ea-heart-client` receive-message contract/CI at `9510cc4` | Configure the deployed Heart endpoint |
 | S-17 | Implemented | Durable process link/event/outbox state, stable command receipts, Heart `Idempotency-Key`/`X-Heart-Client`, exact replay, bounded retry and unknown-outcome lookup at Heart `6d8a3b5` | Exercise restart/rolling update in the target cluster |
-| S-18 | Pilot implemented; rollout pending | Event-planning definition, browser/MCP flow tests, kill switch, real Heart receive/idempotent-start contract, and private Heart cluster guide | Approve Heart PR 3 and exercise restart/rolling update in the target cluster |
+| S-18 | Pilot implemented; rollout pending | Event-planning definition, browser/MCP flow tests, kill switch, merged Heart PR 3 at `6d8a3b5`, real Heart receive/idempotent-start contract, and private Heart cluster guide | Exercise restart/rolling update in the target cluster |
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks and WebSocket/MCP adapter-conformance tests | Exercise through the production endpoint after S-19 activation |
 | S-21 | Implemented; rollout pending | Production session boundary; local encrypted-session validation; periodic provider revalidation; profile/logout shell; no simulated browser identity; 2026-07-17 desktop/mobile browser journey | Review OIDC redirect and logout against Authentik after deployment |
 | S-22 | Implemented; rollout pending | Responsive navigation/timeline/composer; circle-grouped channels; human-readable sender labels; visible keyboard focus; bounded exponential reconnect; draft preservation; active-channel read markers/unread badges; 2026-07-17 desktop/mobile and real server-restart browser passes | Validate the same journey through production OIDC after deployment |
 | S-23 | Implemented; rollout pending | Guided circle creation with automatic `Prat` channel; selected-circle invite action; shareable invite links; OIDC-signed return path; copy/fallback UX; link recognition and actionable invalid/expired feedback; existing two-user authorization contract plus 2026-07-17 browser journey | Exercise owner-to-fresh-user invite through production Authentik after deployment |
-| S-24 | In progress | Advanced Heart/process controls are omitted from the normal UI by a server/Helm flag that defaults off; existing CSP, focus, mobile, reconnect and browser-capacity gates | Complete release evidence, publish immutable ARM64 image and run production OIDC/mobile acceptance |
+| S-24 | In progress | Advanced Heart/process controls are omitted from the normal UI by a server/Helm flag that defaults off; existing CSP, focus, mobile, reconnect and browser-capacity gates; read-only production rollout verifier | Run the production verifier and authenticated OIDC/two-user/mobile acceptance |
 
 ## Current immutable image evidence
 
@@ -51,7 +51,21 @@ This is deployment evidence for the reviewed application code, not the final
 production release designation; publish and pin a new digest if application
 code changes before deployment.
 
-The Heart cluster candidate from private Heart PR 3 revision
+The current chat release revision
+`6355c13720c9bce94d3a55b9c485876c10b915d7` was subsequently imported as:
+
+```text
+oci.bjoroy.me/sproyt/sproyt:6355c13720c9bce94d3a55b9c485876c10b915d7
+sha256:e8a6a49cbe85c7b2b9578261b8ec565742601b5288fe81d8d57046adf0c858ce
+```
+
+Registry inspection reports `linux/arm64`, non-root user `65532:65532`, port
+9010 and the matching OCI revision label. GitOps commit
+`9cb3db8ce5545c69026b5cf39c239ad286879dbf` pins this exact revision and
+digest. Production rollout and authenticated browser acceptance remain to be
+recorded; publication alone is not deployment evidence.
+
+The Heart cluster image from merged Heart PR 3 revision
 `6d8a3b50952e866e6500b5d325afeb03d3f3c7d7` was imported into Zot as:
 
 ```text
@@ -64,8 +78,8 @@ Registry inspection reports `linux/arm64`, non-root user `65532:65532`, port
 passed migrations (including repeat execution), format, clippy, workspace
 tests, API readiness/container smoke, SBOM generation and the high/critical
 vulnerability gate. The static scratch runtime is approximately 11 MB and the
-matching local Grype 0.110.0 scan reported no vulnerabilities. This remains a
-release candidate until Heart PR 3 is approved and merged.
+matching local Grype 0.110.0 scan reported no vulnerabilities. Target-cluster
+activation and rolling-update acceptance remain.
 
 ## Gates that cannot be completed from this checkout
 

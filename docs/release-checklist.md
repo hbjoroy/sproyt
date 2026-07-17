@@ -3,6 +3,20 @@
 Attach durable links or artifacts for every checked item. A release is not
 production-ready based only on a successful build.
 
+For the read-only cluster and public-boundary portion, run from a current
+checkout and pass the deployed application and GitOps revisions explicitly:
+
+```bash
+bash tools/verify-production-rollout.sh \
+  6355c13720c9bce94d3a55b9c485876c10b915d7 \
+  sha256:e8a6a49cbe85c7b2b9578261b8ec565742601b5288fe81d8d57046adf0c858ce \
+  9cb3db8ce5545c69026b5cf39c239ad286879dbf
+```
+
+The verifier does not read Secrets or mutate the cluster. Retain its JSON
+output with the release evidence. It deliberately does not replace the
+authenticated two-user browser journey below.
+
 ## Build and security
 
 - [ ] Format, Clippy, unit, SQLite, and PostgreSQL contract tests pass.
