@@ -56,6 +56,9 @@ jobs:
       - name: Validate production rollout verifier
         run: bash tools/test-production-rollout-verifier.sh
 
+      - name: Validate MCP load evidence tool
+        run: node tools/test-mcp-load.mjs
+
   postgres-schema:
     name: PostgreSQL repository contract
     runs-on: ubuntu-latest
