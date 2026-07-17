@@ -59,6 +59,10 @@ For the optional private Heart API, its dedicated PostgreSQL identity,
 digest-pinned deployment, NetworkPolicy and rolling-update acceptance, see
 [docs/heart-cluster.md](docs/heart-cluster.md).
 
+For Authentik provider creation, discovery verification, secret handling and
+the live S-11 login/renewal/logout acceptance, see
+[docs/authentik.md](docs/authentik.md).
+
 ## Prerequisites
 
 - Rust 1.96.0, via rustup.

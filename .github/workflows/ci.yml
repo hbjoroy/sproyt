@@ -49,6 +49,9 @@ jobs:
       - name: Validate local Compose profile
         run: docker compose config --quiet
 
+      - name: Validate Authentik discovery contract
+        run: bash tools/test-oidc-provider-verifier.sh
+
   postgres-schema:
     name: PostgreSQL repository contract
     runs-on: ubuntu-latest

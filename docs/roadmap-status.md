@@ -17,7 +17,7 @@ gate has been signed off in the target environment.
 | S-08 | Implemented | `sproyt.chat.v1` envelopes plus WebSocket reconnect, idempotency, error and lag tests | None |
 | S-09 | Implemented | `two_users_complete_private_circle_slice_with_unread_reconnect`; DOM-safe Markdown/raw view; strict, exact-version Mermaid rendering; CSP regression | Human usability check |
 | S-10 | Implemented | `AuthService`, deterministic development principals and production/dev rejection tests | None |
-| S-11 | Implemented, activation pending | OIDC discovery, PKCE, state, nonce, encrypted session, refresh, logout, key-rotation and revoked-user contracts in `auth.rs` | Create the Authentik client and run the contract against `identity.limani-parou.com` |
+| S-11 | Implemented, activation pending | OIDC discovery, PKCE, state, nonce, encrypted session, refresh, logout, key-rotation and revoked-user contracts in `auth.rs`; CI-tested provider verifier and `authentik.md` live-acceptance runbook | Create the Authentik client and run the discovery plus browser contract against `identity.limani-parou.com` |
 | S-12 | Implemented | Central `Policy`, executable authorization matrix and mutation-audit migrations | Review target-environment audit retention/access |
 | S-13 | Implemented and published | Pinned scratch ARM64 image, restricted runtime contract, SBOM and vulnerability CI; registry evidence below | Retain CI and registry evidence with the release record |
 | S-14 | Implemented | Helm delivery verifier and kind install, migration, two-replica scale and rollback gate | Install in the ARM64 target cluster and provide manual Ingress |

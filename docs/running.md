@@ -213,8 +213,9 @@ kubectl -n database get secret oci-pull-secret -o json \
   | kubectl apply -f -
 ```
 
-Set the Authentik values created for Sproyt. The issuer must be the exact
-discovery-capable provider URL, including the provider slug and trailing slash:
+Create and verify the provider with [authentik.md](authentik.md), then set its
+values for Sproyt. The issuer must be the exact discovery-capable provider URL,
+including the provider slug and trailing slash:
 
 ```sh
 OIDC_ISSUER='https://identity.limani-parou.com/application/o/<provider-slug>/'

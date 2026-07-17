@@ -9,7 +9,8 @@ production-ready based only on a successful build.
 - [ ] OCI image is addressed by digest and built from the reviewed commit.
 - [ ] SBOM is retained and no unaccepted high/critical finding remains.
 - [ ] OIDC discovery, callback, logout, invalid state/nonce, and key rotation
-      are tested against the configured Authentik provider.
+      are tested against the configured Authentik provider using the evidence
+      procedure in `authentik.md`.
 - [ ] Kubernetes secrets are external to source and rendered CI artifacts.
 - [ ] Log/trace sample contains no private content, credentials, or tokens.
 
