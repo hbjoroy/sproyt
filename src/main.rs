@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State, ws::WebSocketUpgrade},
+    extract::{Path, Query, Request, State, ws::WebSocketUpgrade},
     http::{
         HeaderMap, HeaderName, HeaderValue,
         header::{ACCEPT, AUTHORIZATION, COOKIE, LOCATION, ORIGIN, SET_COOKIE},
@@ -149,6 +149,39 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(TraceLayer::new_for_http())
         .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
+        .layer(middleware::from_fn(add_security_headers))
+}
+
+async fn add_security_headers(
+    request: Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    let defaults = [
+        (
+            "content-security-policy",
+            "default-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+        ),
+        ("x-content-type-options", "nosniff"),
+        ("x-frame-options", "DENY"),
+        ("referrer-policy", "no-referrer"),
+        (
+            "permissions-policy",
+            "camera=(), microphone=(), geolocation=()",
+        ),
+        ("cross-origin-opener-policy", "same-origin"),
+        ("cache-control", "no-store"),
+    ];
+    for (name, value) in defaults {
+        if !headers.contains_key(name) {
+            headers.insert(
+                HeaderName::from_static(name),
+                HeaderValue::from_static(value),
+            );
+        }
+    }
+    response
 }
 
 fn process_gateway_from_env() -> Result<Option<SharedProcessGateway>, crate::process::ProcessError>
@@ -3331,6 +3364,46 @@ mod protocol_capacity_tests {
             .to_str()
             .unwrap();
         assert!(!second_policy.contains(&format!("'nonce-{nonce}'")));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn security_headers_cover_operational_oidc_and_not_found_responses() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        for path in ["/healthz", "/auth/login", "/does-not-exist"] {
+            let response = client
+                .get(format!("http://{address}{path}"))
+                .send()
+                .await
+                .unwrap();
+            let headers = response.headers();
+            assert_eq!(headers["x-content-type-options"], "nosniff", "{path}");
+            assert_eq!(headers["x-frame-options"], "DENY", "{path}");
+            assert_eq!(headers["referrer-policy"], "no-referrer", "{path}");
+            assert_eq!(
+                headers["cross-origin-opener-policy"], "same-origin",
+                "{path}"
+            );
+            assert_eq!(headers["cache-control"], "no-store", "{path}");
+            assert!(
+                headers["content-security-policy"]
+                    .to_str()
+                    .unwrap()
+                    .contains("default-src 'none'"),
+                "{path}"
+            );
+        }
         server.abort();
     }
 
