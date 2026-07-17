@@ -20,8 +20,9 @@ cargo run --locked
 ```
 
 Open <http://127.0.0.1:9010/>. Development authentication is intentionally
-simple: choose different participant names in separate browser sessions. The
-database is `.local/sproyt.sqlite` unless `DATABASE_URL` is set.
+simple and uses the deterministic local `guest` identity. Production never
+accepts a selectable or query-string identity; it redirects anonymous users to
+OIDC. The database is `.local/sproyt.sqlite` unless `DATABASE_URL` is set.
 
 Verify the running service:
 

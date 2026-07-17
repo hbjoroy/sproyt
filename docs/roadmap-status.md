@@ -15,7 +15,7 @@ gate has been signed off in the target environment.
 | S-06 | Implemented | `ChatEngine` delegates authoritative state to `ChatRepository` and persists before publish | None |
 | S-07 | Implemented | Connection-ID presence test, lag recovery test, PostgreSQL notification adapter and two-replica Helm smoke | Observe cross-replica traffic in the target cluster |
 | S-08 | Implemented | `sproyt.chat.v1` envelopes plus WebSocket reconnect, idempotency, error and lag tests | None |
-| S-09 | Implemented | `two_users_complete_private_circle_slice_with_unread_reconnect`; DOM-safe Markdown/raw view; strict, exact-version Mermaid rendering; CSP regression | Human usability check |
+| S-09 | Backend slice implemented; UI replacement required | `two_users_complete_private_circle_slice_with_unread_reconnect`; DOM-safe Markdown/raw view; strict, exact-version Mermaid rendering; CSP regression | Superseded technical demonstration UI must be replaced by S-21 through S-24 |
 | S-10 | Implemented | `AuthService`, deterministic development principals and production/dev rejection tests | None |
 | S-11 | Implemented, activation pending | OIDC discovery, PKCE, state, nonce, encrypted session, refresh, logout, key-rotation and revoked-user contracts in `auth.rs`; CI-tested provider verifier; live Cloudflare issuer `https://sproyt-security.bjoroy.me/application/o/sproyt/` verified 2026-07-17; production callback pinned to `https://sproyt.bjoroy.me/auth/callback` | Confirm client ID/strict redirects in Authentik and run the browser login, refresh, logout, revocation and key-rotation contract |
 | S-12 | Implemented | Central `Policy`, executable authorization matrix and mutation-audit migrations | Review target-environment audit retention/access |
@@ -27,6 +27,10 @@ gate has been signed off in the target environment.
 | S-18 | Pilot implemented; rollout pending | Event-planning definition, browser/MCP flow tests, kill switch, real Heart receive/idempotent-start contract, and private Heart cluster guide | Approve Heart PR 3 and exercise restart/rolling update in the target cluster |
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks and WebSocket/MCP adapter-conformance tests | Exercise through the production endpoint after S-19 activation |
+| S-21 | Implemented; rollout pending | Production session boundary; local encrypted-session validation; periodic provider revalidation; profile/logout shell; no simulated browser identity; 2026-07-17 desktop/mobile browser journey | Review OIDC redirect and logout against Authentik after deployment |
+| S-22 | In progress | Responsive conversation navigation, timeline, composer, automatic connection and empty states; desktop/mobile browser smoke | Complete reconnect backoff, friendly sender identity and unread/read UX |
+| S-23 | Planned | Circle/channel/invitation commands and authorization already exist | Deliver guided first-run and membership flows |
+| S-24 | Planned | Feature contracts, GitOps delivery and browser-capacity tests exist | Hide advanced controls, add browser E2E/mobile/a11y and sign off private beta |
 
 ## Current immutable image evidence
 
