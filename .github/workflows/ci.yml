@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -98,6 +99,9 @@ jobs:
 
   security-audit:
     name: Dependency security audit
+    # Keep pull-request feedback fast. The complete security and delivery gate
+    # runs for every accepted main revision and can also be started manually.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -121,6 +125,7 @@ jobs:
 
   recovery-drill:
     name: PostgreSQL backup and restore drill
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -178,6 +183,7 @@ jobs:
 
   delivery:
     name: Container and Kubernetes delivery
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
