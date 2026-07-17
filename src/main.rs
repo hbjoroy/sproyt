@@ -1076,13 +1076,28 @@ async fn approve_agent_message(
     }
 }
 
-async fn index() -> axum::response::Response {
+async fn index(State(state): State<AppState>, headers: HeaderMap) -> axum::response::Response {
+    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    let principal = match state.auth.authenticate_request(None, cookie).await {
+        Ok(principal) => principal,
+        Err(AuthError::Unauthorized) => {
+            return (
+                axum::http::StatusCode::SEE_OTHER,
+                [(LOCATION, "/auth/login")],
+            )
+                .into_response();
+        }
+        Err(error) => return auth_error_response(error),
+    };
     let mut random = [0_u8; 18];
     if getrandom::fill(&mut random).is_err() {
         return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let nonce = URL_SAFE_NO_PAD.encode(random);
-    let html = INDEX_HTML.replace("{{NONCE}}", &nonce);
+    let html = INDEX_HTML.replace("{{NONCE}}", &nonce).replace(
+        "{{DISPLAY_NAME}}",
+        &escape_html(&principal.user.display_name.to_string()),
+    );
     let policy = format!(
         "default-src 'self'; script-src 'nonce-{nonce}' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     );
@@ -1107,6 +1122,15 @@ async fn index() -> axum::response::Response {
         headers.insert(HeaderName::from_static(name), value);
     }
     response
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn init_tracing(log_format: LogFormat) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -1279,7 +1303,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sproyt - Hello Chat</title>
+    <title>Sprøyt</title>
     <style nonce="{{NONCE}}">
       :root {
         color-scheme: light dark;
@@ -1301,8 +1325,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       main {
-        width: min(860px, 100%);
+        width: min(1120px, 100%);
         display: grid;
+        grid-template-columns: 280px minmax(0, 1fr);
         grid-template-rows: auto 1fr auto;
         min-height: min(760px, calc(100vh - 48px));
         border: 1px solid #d7d8d0;
@@ -1323,6 +1348,33 @@ const INDEX_HTML: &str = r##"<!doctype html>
         gap: 12px;
         border-bottom: 1px solid #e4e5de;
       }
+
+      .sidebar {
+        grid-row: 1 / -1;
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        gap: 18px;
+        padding: 20px 16px;
+        border-right: 1px solid #e4e5de;
+        background: #f4f6f2;
+      }
+
+      .brand { display: flex; align-items: center; gap: 10px; }
+      .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: #245b45; color: white; font-weight: 800; }
+      .identity { display: grid; gap: 4px; font-size: .9rem; }
+      .identity a { color: #245b45; }
+      .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .channel-list { display: grid; gap: 4px; align-content: start; }
+      .channel-button { display: flex; justify-content: space-between; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
+      .channel-button:hover, .channel-button[aria-current="page"] { background: #dfe8e1; color: #183d2e; }
+      .unread { min-width: 1.6em; padding: 2px 6px; border-radius: 999px; background: #245b45; color: white; font-size: .75rem; text-align: center; }
+      .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      .conversation-header p { margin: 4px 0 0; color: #647269; }
+      .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
+      .empty-state h2 { margin-top: 0; }
+      .onboarding { display: grid; gap: 10px; }
+      .onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .advanced-tools[hidden] { display: none; }
 
       h1 {
         margin: 0;
@@ -1553,7 +1605,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         main {
           min-height: calc(100vh - 24px);
+          grid-template-columns: 1fr;
         }
+
+        .sidebar { grid-row: auto; grid-template-rows: auto auto; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .sidebar nav, .sidebar .onboarding { display: none; }
 
         .connect,
         .circle-tools,
@@ -1624,34 +1680,38 @@ const INDEX_HTML: &str = r##"<!doctype html>
   </head>
   <body>
     <main>
-      <header>
-        <h1>Hello Chat</h1>
-        <form class="connect" id="connect-form">
-          <label>
-            Kanal
-            <input id="channel" name="channel" value="general" autocomplete="off">
-          </label>
-          <label>
-            Namn
-            <input id="participant" name="participant" value="alice" autocomplete="off">
-          </label>
-          <button id="connect" type="submit">Kople til</button>
-        </form>
-        <div class="status" id="status">Ikkje tilkopla</div>
-        <div class="circle-tools" aria-label="Vennekretsar">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">S</span><h1>Sprøyt</h1></div>
+        <div class="identity">
+          <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
+          <a href="/auth/logout">Logg ut</a>
+        </div>
+        <nav aria-label="Samtalar">
+          <p class="navigation-heading">Samtalar</p>
+          <div class="channel-list" id="channel-list"><span class="status">Lastar …</span></div>
+        </nav>
+        <section class="onboarding" aria-label="Ny vennekrets">
+          <p class="navigation-heading">Vennekrets</p>
           <label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label>
           <label>Namn<input id="circle-name" placeholder="Turvenner"></label>
-          <label>Slug<input id="circle-slug" placeholder="turvenner"></label>
-          <button id="create-circle" type="button" disabled>Lag krets</button>
-          <label>Ny kanal<input id="circle-channel" placeholder="planlegging"></label>
-          <button id="create-circle-channel" type="button" disabled>Lag kanal</button>
-          <button id="create-invitation" type="button" disabled>Lag invitasjon</button>
-          <button id="delete-circle" type="button" disabled>Slett krets</button>
-          <button id="export-data" type="button" disabled>Eksporter mine data</button>
-          <label>Invitasjonstoken<input id="invitation-token" placeholder="Lim inn token"></label>
-          <button id="accept-invitation" type="button" disabled>Godta</button>
+          <input id="circle-slug" type="hidden">
+          <div class="onboarding-actions"><button id="create-circle" type="button" disabled>Lag ny</button><button id="create-invitation" type="button" disabled>Inviter</button></div>
+          <label>Invitasjonskode<input id="invitation-token" placeholder="Lim inn kode"></label>
+          <button id="accept-invitation" type="button" disabled>Bli med</button>
+          <input id="circle-channel" type="hidden" value="prat">
+          <button id="create-circle-channel" type="button" hidden disabled>Lag kanal</button>
+          <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
+          <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
+        </section>
+      </aside>
+      <header class="conversation-header">
+        <div><h2 id="conversation-title">Samtalar</h2><p class="status" id="status" role="status" aria-live="polite">Koplar til …</p></div>
+        <div class="view-controls" aria-label="Meldingsvising">
+          <button id="view-mode" type="button" aria-pressed="true">Les</button>
+          <button id="raw-mode" type="button" aria-pressed="false">Kjelde</button>
         </div>
-        <div class="process-tools" aria-label="Event-planlegging">
+        <form id="connect-form" hidden><input id="channel" value="general"><button id="connect" type="submit">Kople til</button></form>
+        <div class="advanced-tools" hidden>
           <button id="enable-heart" type="button" disabled>Slå på event-planlegging</button>
           <label>Tittel<input id="process-title" placeholder="Middag på laurdag"></label>
           <button id="start-process" type="button" disabled>Start planlegging</button>
@@ -1662,14 +1722,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="process-no" type="button" disabled>Svar nei</button>
         </div>
         <section class="process-view" id="process-view" aria-live="polite" hidden></section>
-        <div class="view-controls" aria-label="Meldingsvising">
-          <button id="view-mode" type="button" aria-pressed="true">View</button>
-          <button id="raw-mode" type="button" aria-pressed="false">Raw</button>
-        </div>
       </header>
-      <section class="messages" id="messages" aria-live="polite"></section>
+      <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
       <form class="send" id="send-form">
-        <textarea id="body" name="body" placeholder="Skriv Markdown, kode eller Mermaid" autocomplete="off" disabled></textarea>
+        <textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" disabled></textarea>
         <button id="send" type="submit" disabled>Send</button>
       </form>
     </main>
@@ -1686,13 +1742,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const connectForm = document.querySelector("#connect-form");
       const sendForm = document.querySelector("#send-form");
       const channelInput = document.querySelector("#channel");
-      const participantInput = document.querySelector("#participant");
       const bodyInput = document.querySelector("#body");
       const sendButton = document.querySelector("#send");
       const viewModeButton = document.querySelector("#view-mode");
       const rawModeButton = document.querySelector("#raw-mode");
       const statusEl = document.querySelector("#status");
       const messagesEl = document.querySelector("#messages");
+      const channelList = document.querySelector("#channel-list");
+      const conversationTitle = document.querySelector("#conversation-title");
       const circleSelect = document.querySelector("#circle-select");
       const circleName = document.querySelector("#circle-name");
       const circleSlug = document.querySelector("#circle-slug");
@@ -1715,6 +1772,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const timeline = [];
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
+      let knownChannels = [];
 
       function scheduleSessionRefresh(seconds) {
         if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
@@ -1792,9 +1850,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       });
       exportButton.addEventListener("click", async () => {
-        const participant = encodeURIComponent(participantInput.value.trim() || "guest");
         try {
-          const response = await fetch(`/api/v1/me/export?participant=${participant}`, {
+          const response = await fetch("/api/v1/me/export", {
             credentials: "same-origin"
           });
           if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
@@ -1838,16 +1895,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         processView.hidden = true;
         processView.replaceChildren();
         messagesEl.replaceChildren();
-        requestedChannelSlug = (channelInput.value.trim() || "general")
+        requestedChannelSlug = (channelInput.value.trim() || "")
           .toLowerCase()
           .replace(/[^a-z0-9_-]+/g, "-");
-        const participant = encodeURIComponent(participantInput.value.trim() || "guest");
         const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-        socket = new WebSocket(`${protocol}://${window.location.host}/ws?participant=${participant}`);
+        socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
         setConnected(false, "Koplar til ...");
 
         socket.addEventListener("open", () => {
-          setConnected(true, `Tilkopla ${requestedChannelSlug} som ${decodeURIComponent(participant)}`);
+          setConnected(true, "Tilkopla");
           sendCommand("hello");
           sendCommand("list_my_channels");
           sendCommand("list_my_circles");
@@ -1886,17 +1942,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function setConnected(connected, status) {
         statusEl.textContent = status;
-        bodyInput.disabled = !connected;
-        sendButton.disabled = !connected;
+        bodyInput.disabled = !connected || !activeChannelId;
+        sendButton.disabled = !connected || !activeChannelId;
         circleButtons.forEach((button) => { button.disabled = !connected; });
         exportButton.disabled = !connected;
         processButtons.forEach((button) => { button.disabled = !connected; });
       }
 
       async function processApi(path, method = "GET", body = undefined) {
-        const participant = encodeURIComponent(participantInput.value.trim() || "guest");
-        const separator = path.includes("?") ? "&" : "?";
-        const response = await fetch(`${path}${separator}participant=${participant}`, {
+        const response = await fetch(path, {
           method,
           credentials: "same-origin",
           headers: body === undefined ? {} : { "content-type": "application/json" },
@@ -2017,6 +2071,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           circleSelect.add(new Option(`${payload.circle.name} (owner)`, payload.circle.id));
           circleSelect.value = payload.circle.id;
           pushSystem(`Vennekretsen ${payload.circle.name} er oppretta.`);
+          sendCommand("create_channel", {
+            slug: "prat", name: "Prat", kind: "private", circle_id: payload.circle.id
+          });
           return;
         }
         if (event.type === "circle_deleted") {
@@ -2039,31 +2096,30 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "channels_listed") {
-          const existing = payload.channels.find((channel) => channel.slug === requestedChannelSlug);
-          if (existing) {
-            activeChannelId = existing.id;
-            const unread = Math.max(0, existing.latest_sequence - existing.last_read_sequence);
-            if (unread > 0) pushSystem(`${unread} uleste meldingar i ${existing.name}.`);
-            sendCommand("subscribe_channel", { channel_id: activeChannelId });
-          } else {
-            sendCommand("create_channel", {
-              slug: requestedChannelSlug,
-              name: requestedChannelSlug,
-              kind: "private"
-            });
-          }
+          knownChannels = payload.channels;
+          renderChannels();
+          const requested = knownChannels.find((channel) => channel.slug === requestedChannelSlug);
+          const current = knownChannels.find((channel) => channel.id === activeChannelId);
+          const next = requested || current || knownChannels[0];
+          if (next && next.id !== activeChannelId) selectChannel(next);
           return;
         }
 
         if (event.type === "channel_created") {
-          activeChannelId = payload.channel.id;
-          sendCommand("subscribe_channel", { channel_id: activeChannelId });
+          knownChannels.push({ ...payload.channel, latest_sequence: 0, last_read_sequence: 0 });
+          renderChannels();
+          selectChannel(payload.channel);
           return;
         }
 
         if (event.type === "subscription_started") {
           activeChannelId = payload.channel_id;
+          const channel = knownChannels.find((item) => item.id === activeChannelId);
+          conversationTitle.textContent = channel?.name || "Samtale";
           payload.history.forEach(appendTimelineMessage);
+          bodyInput.disabled = false;
+          sendButton.disabled = false;
+          renderChannels();
           renderTimeline();
           return;
         }
@@ -2112,6 +2168,48 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "error") {
           pushSystem(payload.message || payload.code);
         }
+      }
+
+      function renderChannels() {
+        channelList.replaceChildren();
+        if (knownChannels.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "status";
+          empty.textContent = "Ingen samtalar enno";
+          channelList.append(empty);
+          return;
+        }
+        for (const channel of knownChannels) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "channel-button";
+          button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
+          const name = document.createElement("span");
+          name.textContent = `# ${channel.name}`;
+          button.append(name);
+          const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
+          if (unreadCount > 0) {
+            const unread = document.createElement("span");
+            unread.className = "unread";
+            unread.textContent = String(unreadCount);
+            unread.setAttribute("aria-label", `${unreadCount} uleste`);
+            button.append(unread);
+          }
+          button.addEventListener("click", () => selectChannel(channel));
+          channelList.append(button);
+        }
+      }
+
+      function selectChannel(channel) {
+        if (!channel || channel.id === activeChannelId) return;
+        timeline.length = 0;
+        seenMessageIds.clear();
+        messagesEl.replaceChildren();
+        activeChannelId = channel.id;
+        requestedChannelSlug = channel.slug;
+        conversationTitle.textContent = channel.name;
+        renderChannels();
+        sendCommand("subscribe_channel", { channel_id: channel.id });
       }
 
       function pushSystem(text) {
@@ -2176,6 +2274,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         line.textContent = text;
         messagesEl.append(line);
       }
+
+      connect();
 
       function renderMarkdown(source, target) {
         const lines = source.replace(/\r\n/g, "\n").split("\n");
@@ -2993,6 +3093,12 @@ mod protocol_capacity_tests {
         );
         assert!(!body.contains("npm/mermaid@11/dist/"));
         assert!(!body.contains("{{NONCE}}"));
+        assert!(!body.contains("{{DISPLAY_NAME}}"));
+        assert!(body.contains("Innlogga som <strong>guest</strong>"));
+        assert!(!body.contains("id=\"participant\""));
+        assert!(body.contains("new WebSocket(`${protocol}://${window.location.host}/ws`)"));
+        assert!(body.contains("class=\"advanced-tools\" hidden"));
+        assert!(body.contains("connect();"));
 
         let second = reqwest::get(format!("http://{address}/")).await.unwrap();
         let second_policy = second.headers()["content-security-policy"]

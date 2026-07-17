@@ -77,7 +77,7 @@ pub async fn handle_socket(
         tokio::select! {
             _ = reauthentication.tick() => {
                 if auth
-                    .authenticate_request(requested_name.clone(), session_cookie.as_deref())
+                    .revalidate_request(requested_name.clone(), session_cookie.as_deref())
                     .await
                     .is_err()
                 {

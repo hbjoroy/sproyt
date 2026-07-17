@@ -327,6 +327,59 @@ answers who or what caused every agent/process mutation.
 Acceptance: adapter conformance tests demonstrate identical domain outcomes
 for WebSocket/HTTP and agent/MCP calls.
 
+## Phase 7: Turn the technical client into a private chat product
+
+Goal: replace the protocol demonstration screen with a small, understandable
+chat experience before exposing process and agent capabilities to beta users.
+
+### S-21: Ship an authenticated application shell
+
+- Require an OIDC session for the production application route and redirect
+  anonymous browsers to login.
+- Derive browser and WebSocket identity only from the authenticated session;
+  keep selectable identities exclusively in development/E2E adapters.
+- Show the signed-in profile, logout, loading, disconnected and actionable
+  error states without exposing protocol controls.
+
+Acceptance: an anonymous production browser cannot reach the chat shell; an
+authenticated user sees their own identity and cannot impersonate another
+participant through URL, form or WebSocket parameters.
+
+### S-22: Build the responsive conversation experience
+
+- Add circle/channel navigation, message history, unread indicators, a message
+  composer, reconnect/catch-up and useful empty states.
+- Make the primary path usable on phone and desktop with keyboard navigation,
+  focus management, semantic labels and accessible status announcements.
+- Keep rendering safe and preserve raw/source view as a secondary action.
+
+Acceptance: a signed-in user can select a conversation, exchange durable
+messages, reconnect and recover unread state without seeing test controls.
+
+### S-23: Add understandable circle onboarding
+
+- Present circle creation, channel creation, invitations and membership as
+  guided dialogs with role-aware actions and confirmations.
+- Provide a useful first-run state for a user with no circles and a clear flow
+  for accepting an invitation.
+- Keep destructive and owner-only operations explicit and audited.
+
+Acceptance: two fresh beta users can create/join a circle and exchange messages
+without knowledge of slugs, UUIDs, tokens beyond the invitation link, or the
+wire protocol.
+
+### S-24: Gate advanced capabilities and sign off the beta UX
+
+- Hide Heart, agent, MCP and diagnostic controls behind server-authoritative
+  feature flags; ordinary chat remains useful when every advanced flag is off.
+- Add browser E2E coverage for OIDC/session, WebSocket, mobile layout,
+  reconnect, logout and failure recovery.
+- Deploy immutable ARM64 increments through GitOps and record a human usability
+  pass in the target cluster.
+
+Acceptance: the private beta passes its browser journey on mobile and desktop;
+advanced failures cannot prevent login, navigation or ordinary chat.
+
 ## Recommended GitHub structure
 
 Use milestones rather than one large project phase branch:
@@ -336,6 +389,7 @@ Use milestones rather than one large project phase branch:
 3. `M2 Cluster beta` — S-13 through S-15
 4. `M3 Heart pilot` — S-16 through S-18
 5. `M4 Agent pilot` — S-19 through S-20
+6. `M5 Private beta UX` — S-21 through S-24
 
 Recommended labels:
 

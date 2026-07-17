@@ -97,6 +97,17 @@ impl AuthService {
         }
     }
 
+    pub async fn revalidate_request(
+        &self,
+        requested_name: Option<String>,
+        cookie_header: Option<&str>,
+    ) -> Result<AuthenticatedPrincipal, AuthError> {
+        match self {
+            Self::Development => self.authenticate_development(requested_name),
+            Self::Oidc(service) => service.revalidate_session(cookie_header).await,
+        }
+    }
+
     pub fn login(&self) -> Result<LoginStart, AuthError> {
         match self {
             Self::Development => Err(AuthError::Unsupported("OIDC is disabled".to_owned())),
@@ -212,6 +223,7 @@ impl OidcService {
     async fn discover(config: &OidcConfig) -> Result<Self, AuthError> {
         let http_client = reqwest::ClientBuilder::new()
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
             .build()
             .map_err(AuthError::external)?;
         let discovered = discover_client(config, &http_client).await?;
@@ -277,7 +289,6 @@ impl OidcService {
                 CsrfToken::new_random,
                 OidcNonce::new_random,
             )
-            .add_scope(Scope::new("openid".to_owned()))
             .add_scope(Scope::new("profile".to_owned()))
             .add_scope(Scope::new("email".to_owned()))
             .add_scope(Scope::new("offline_access".to_owned()))
@@ -371,6 +382,16 @@ impl OidcService {
     }
 
     async fn authenticate_session(
+        &self,
+        cookie_header: Option<&str>,
+    ) -> Result<AuthenticatedPrincipal, AuthError> {
+        let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
+        let claims: SessionClaims = self.codec.open(value)?;
+        validate_session_claims(&claims, &self.issuer)?;
+        principal(&claims.issuer, &claims.subject, &claims.display_name)
+    }
+
+    async fn revalidate_session(
         &self,
         cookie_header: Option<&str>,
     ) -> Result<AuthenticatedPrincipal, AuthError> {
@@ -1011,6 +1032,14 @@ mod tests {
         assert_eq!(restored.user.id, complete.principal.user.id);
         assert_eq!(
             restored.user.display_name.to_string(),
+            "Authentik Test User"
+        );
+        let revalidated = auth
+            .revalidate_request(None, Some(&complete.set_cookie))
+            .await
+            .unwrap();
+        assert_eq!(
+            revalidated.user.display_name.to_string(),
             "Current Authentik User"
         );
         let renewal = auth
@@ -1030,8 +1059,13 @@ mod tests {
                 .is_ok()
         );
         provider.active.store(false, Ordering::SeqCst);
+        assert!(
+            auth.authenticate_session(Some(&renewed_cookie))
+                .await
+                .is_ok()
+        );
         assert!(matches!(
-            auth.authenticate_session(Some(&renewed_cookie)).await,
+            auth.revalidate_request(None, Some(&renewed_cookie)).await,
             Err(AuthError::Unauthorized)
         ));
 
