@@ -162,20 +162,18 @@ async fn app_readyz(State(state): State<AppState>) -> axum::response::Response {
     if !state.operations.is_ready() {
         return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "not ready\n").into_response();
     }
-    let dependencies = async {
+    // Readiness protects traffic that needs this replica's durable store. OIDC
+    // discovery is verified at startup and refreshed during authentication;
+    // putting an internet request here makes kubelet probes remove otherwise
+    // healthy replicas whenever the identity provider is merely slow.
+    let database = async {
         state
             .chat
             .health_check()
             .await
-            .map_err(|error| error.kind())?;
-        state
-            .auth
-            .health_check()
-            .await
-            .map_err(|error| error.kind())?;
-        Ok::<(), &'static str>(())
+            .map_err(|error| error.kind())
     };
-    match tokio::time::timeout(Duration::from_secs(2), dependencies).await {
+    match tokio::time::timeout(Duration::from_secs(2), database).await {
         Ok(Ok(())) => (axum::http::StatusCode::OK, "ready\n").into_response(),
         Ok(Err(error_kind)) => {
             warn!(error_kind, "readiness dependency probe failed");
