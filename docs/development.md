@@ -18,6 +18,13 @@ isolated. Chat-domain conformance runs against the in-memory adapter, the full
 chat/process/agent contract runs against SQLite locally, and CI also executes
 that full contract against PostgreSQL 17.
 
+Pull requests run the fast quality gate plus the PostgreSQL repository
+contract. After merge, every accepted `main` revision runs the dependency
+audit, backup/restore drill, ARM64 and native image builds, Helm verification,
+kind install/scale/rollback, SBOM generation, and vulnerability scan. The full
+gate can also be started manually from the CI workflow. A newer `main` revision
+cancels an obsolete full run so delivery evidence follows the latest code.
+
 ## PostgreSQL schema check
 
 Start a PostgreSQL 17 instance, then apply the dialect-specific migrations in
