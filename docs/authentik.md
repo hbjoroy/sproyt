@@ -44,9 +44,13 @@ See its [OAuth2/OpenID provider documentation](https://docs.goauthentik.io/add-s
 ## Verify discovery before deployment
 
 The verifier checks the exact issuer, trusted HTTPS endpoints, authorization
-code, refresh tokens, PKCE S256, required scopes, userinfo, JWKS, a supported
+code, refresh tokens, PKCE S256, core scopes, userinfo, JWKS, a supported
 confidential-client token authentication method and RP-initiated logout. It
 does not accept or transmit the client secret.
+
+Authentik can support the requested `offline_access` behaviour without listing
+that value in `scopes_supported`. The verifier warns rather than fails in that
+case; actual refresh-token issuance remains a mandatory live acceptance check.
 
 From this checkout or the cluster SSH host (requires `bash`, `curl` and `jq`):
 
@@ -58,6 +62,12 @@ bash tools/verify-oidc-provider.sh "$OIDC_ISSUER"
 Do not deploy if the command fails. Compare Authentik's displayed issuer with
 the discovery document rather than guessing the slug or removing the trailing
 slash.
+
+On 2026-07-17, the live provider slug `sproyt` passed this contract for the
+exact issuer, trusted endpoints, Authorization Code, refresh-token grant, PKCE
+S256, core scopes, confidential-client authentication, userinfo, JWKS and
+RP-initiated logout. It did not advertise `offline_access`; refresh-token
+issuance must therefore be demonstrated during the browser acceptance below.
 
 ## Supply secrets and deploy
 

@@ -39,13 +39,17 @@ jq --exit-status --arg issuer "$issuer" '
   has_value(.scopes_supported; "openid") and
   has_value(.scopes_supported; "profile") and
   has_value(.scopes_supported; "email") and
-  has_value(.scopes_supported; "offline_access") and
   has_value((.grant_types_supported // ["authorization_code", "refresh_token"]); "authorization_code") and
   has_value((.grant_types_supported // ["authorization_code", "refresh_token"]); "refresh_token") and
   ((.token_endpoint_auth_methods_supported // ["client_secret_basic"]) |
     (index("client_secret_basic") != null or index("client_secret_post") != null)) and
   ((.id_token_signing_alg_values_supported // []) | length > 0)
 ' >/dev/null <<<"$discovery"
+
+if ! jq --exit-status '(.scopes_supported // []) | index("offline_access") != null' \
+  >/dev/null <<<"$discovery"; then
+  echo "warning: provider does not advertise offline_access; verify refresh-token issuance in the live acceptance" >&2
+fi
 
 echo "OIDC provider contract verified for $issuer"
 jq --raw-output '

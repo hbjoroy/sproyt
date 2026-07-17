@@ -23,4 +23,7 @@ if bash "$verifier" "$issuer" "$invalid" >/dev/null 2>&1; then
   exit 1
 fi
 
+jq '.scopes_supported -= ["offline_access"]' "$fixture" >"$invalid"
+bash "$verifier" "$issuer" "$invalid" >/dev/null 2>&1
+
 echo "OIDC provider verifier contract passed"
