@@ -53,8 +53,8 @@ jobs:
       - name: Validate Authentik discovery contract
         run: bash tools/test-oidc-provider-verifier.sh
 
-      - name: Validate production rollout verifier syntax
-        run: bash -n tools/verify-production-rollout.sh
+      - name: Validate production rollout verifier
+        run: bash tools/test-production-rollout-verifier.sh
 
   postgres-schema:
     name: PostgreSQL repository contract
