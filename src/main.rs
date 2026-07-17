@@ -1365,6 +1365,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .identity a { color: #245b45; }
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
+      .channel-group { margin: 12px 8px 2px; color: #647269; font-size: .78rem; font-weight: 700; }
       .channel-button { display: flex; justify-content: space-between; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
       .channel-button:hover, .channel-button[aria-current="page"] { background: #dfe8e1; color: #183d2e; }
       .unread { min-width: 1.6em; padding: 2px 6px; border-radius: 999px; background: #245b45; color: white; font-size: .75rem; text-align: center; }
@@ -1421,6 +1422,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       button:disabled {
         cursor: default;
         opacity: 0.55;
+      }
+
+      :focus-visible {
+        outline: 3px solid #d17a22;
+        outline-offset: 2px;
       }
 
       .connect {
@@ -1770,11 +1776,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let renderMode = "view";
       let requestNumber = 0;
       let activeChannelId = null;
+      let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
       let knownChannels = [];
+      const knownCircles = new Map();
 
       function scheduleSessionRefresh(seconds) {
         if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
@@ -2076,9 +2084,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         const payload = event.payload || {};
 
+        if (event.type === "hello") {
+          currentParticipantId = payload.participant_id;
+          return;
+        }
+
         if (event.type === "circles_listed") {
+          knownCircles.clear();
           circleSelect.replaceChildren(new Option("Ingen", ""));
-          payload.circles.forEach(([circle, role]) => circleSelect.add(new Option(`${circle.name} (${role})`, circle.id)));
+          payload.circles.forEach(([circle, role]) => {
+            knownCircles.set(circle.id, { ...circle, role });
+            circleSelect.add(new Option(`${circle.name} (${role})`, circle.id));
+          });
+          renderChannels();
           return;
         }
         if (event.type === "circle_created") {
@@ -2151,9 +2169,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
               renderChannels();
             }
           } else if (chatEvent.type === "participant_joined") {
-            pushSystem(`${chatEvent.participant_id} kom inn i ${chatEvent.channel_id}`);
+            if (chatEvent.participant_id !== currentParticipantId) pushSystem("Ein ven kom inn i samtalen.");
           } else if (chatEvent.type === "participant_left") {
-            pushSystem(`${chatEvent.participant_id} gjekk ut av ${chatEvent.channel_id}`);
+            if (chatEvent.participant_id !== currentParticipantId) pushSystem("Ein ven gjekk ut av samtalen.");
           }
           return;
         }
@@ -2208,7 +2226,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
           channelList.append(empty);
           return;
         }
+        const groupedChannels = new Map();
         for (const channel of knownChannels) {
+          const groupId = channel.circle_id || "direct";
+          if (!groupedChannels.has(groupId)) groupedChannels.set(groupId, []);
+          groupedChannels.get(groupId).push(channel);
+        }
+        for (const [groupId, channels] of groupedChannels) {
+          const heading = document.createElement("p");
+          heading.className = "channel-group";
+          heading.textContent = groupId === "direct" ? "Andre samtalar" : (knownCircles.get(groupId)?.name || "Vennekrets");
+          channelList.append(heading);
+          for (const channel of channels) {
           const button = document.createElement("button");
           button.type = "button";
           button.className = "channel-button";
@@ -2226,6 +2255,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           button.addEventListener("click", () => selectChannel(channel));
           channelList.append(button);
+          }
         }
       }
 
@@ -2298,7 +2328,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         const meta = document.createElement("div");
         meta.className = "meta";
-        meta.textContent = `${message.sender_id} #${message.sequence}`;
+        const sender = message.sender_id === currentParticipantId ? "Du" : "Ein ven";
+        const sentAt = new Date(message.sent_at);
+        const time = Number.isNaN(sentAt.valueOf()) ? "" : ` · ${sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+        meta.textContent = `${sender}${time}`;
 
         const body = document.createElement("div");
         if (renderMode === "raw") {
@@ -3153,6 +3186,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("function scheduleReconnect()"));
         assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
         assert!(body.contains("document.addEventListener(\"visibilitychange\""));
+        assert!(body.contains(":focus-visible"));
 
         let second = reqwest::get(format!("http://{address}/")).await.unwrap();
         let second_policy = second.headers()["content-security-policy"]
