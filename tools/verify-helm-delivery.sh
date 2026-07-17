@@ -34,7 +34,7 @@ grep -F -q "kubernetes.io/metadata.name: kube-system" "$rendered"
 grep -F -q "kubernetes.io/metadata.name: heart" "$rendered"
 grep -F -q "port: 3000" "$rendered"
 grep -F -q "app: heart" "$rendered"
-grep -F -q "podSelector: {}" "$rendered"
+grep -F -q 'kubernetes.io/metadata.name: "sproyt"' "$rendered"
 test "$(grep -F -c -- "- name: oci-pull-secret" "$rendered")" -eq 2
 test "$(grep -F -c "serviceAccountName: default" "$rendered")" -eq 1
 

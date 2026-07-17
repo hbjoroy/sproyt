@@ -72,7 +72,8 @@ monitoring:
 
 networkPolicy:
   enabled: true
-  # Empty means ingress is limited to pods in the release namespace.
+  # Empty means ingress is limited to the explicitly selected release
+  # namespace. Set this to admit an additional namespace such as cloudflare.
   ingressNamespaceSelector: {}
   dnsNamespaceSelector:
     matchLabels:

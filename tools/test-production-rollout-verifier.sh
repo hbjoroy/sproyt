@@ -22,8 +22,6 @@ case "$*" in
   *"get endpointslice"*)
     printf '%s\n' '{"items":[{"endpoints":[{"conditions":{"ready":true}},{"conditions":{"ready":true}}]}]}'
     ;;
-  *"services/http:sproyt-sproyt:80/proxy/healthz") printf 'ok' ;;
-  *"services/http:sproyt-sproyt:80/proxy/readyz") printf 'ready' ;;
   *) echo "unexpected kubectl call: $*" >&2; exit 1 ;;
 esac
 EOF
@@ -33,6 +31,8 @@ cat >"$mock_dir/curl" <<'EOF'
 set -euo pipefail
 url=${!#}
 case "$url" in
+  https://sproyt.bjoroy.me/healthz) printf 'ok\n' ;;
+  https://sproyt.bjoroy.me/readyz) printf 'ready\n' ;;
   https://sproyt.bjoroy.me/)
     printf '%s\n' '303 https://sproyt.bjoroy.me/auth/login'
     ;;

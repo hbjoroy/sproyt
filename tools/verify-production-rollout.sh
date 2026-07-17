@@ -87,10 +87,10 @@ ready_endpoints=$(kubectl -n "$namespace" get endpointslice \
   exit 1
 }
 
-health=$(kubectl get --raw \
-  "/api/v1/namespaces/$namespace/services/http:$service:80/proxy/healthz")
-readiness=$(kubectl get --raw \
-  "/api/v1/namespaces/$namespace/services/http:$service:80/proxy/readyz")
+health=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+  "$public_url/healthz")
+readiness=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+  "$public_url/readyz")
 [[ "$health" == "ok" ]] || { echo "unexpected health response: $health" >&2; exit 1; }
 [[ "$readiness" == "ready" ]] || {
   echo "unexpected readiness response: $readiness" >&2
