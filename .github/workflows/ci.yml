@@ -189,7 +189,7 @@ jobs:
       - name: Lint Helm chart
         run: >-
           helm lint helm/sproyt --strict
-          --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
+          --set config.oidcIssuer=https://sproyt-security.bjoroy.me/application/o/sproyt/
           --set config.oidcClientId=ci-client
 
       - name: Set up Docker Buildx
@@ -252,7 +252,7 @@ jobs:
           helm template sproyt helm/sproyt
           --namespace sproyt
           --set ingress.enabled=true
-          --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
+          --set config.oidcIssuer=https://sproyt-security.bjoroy.me/application/o/sproyt/
           --set config.oidcClientId=ci-client
           --set secret.existingSecret=sproyt-ci
           --set image.digest=${{ steps.image-evidence.outputs.digest }}

@@ -151,7 +151,7 @@ Runtime configuration is read from environment variables:
 | `SPROYT_LOG_FORMAT` | `pretty` | Structured log output: `pretty` or `json`. |
 | `RUST_LOG` | `sproyt=info` | Tracing filter. |
 | `SPROYT_AUTH_MODE` | `development` | `development` or `oidc`; development auth is rejected in production. |
-| `SPROYT_OIDC_ISSUER` | required for OIDC | Authentik issuer, normally `https://identity.limani-parou.com/application/o/<provider-slug>/`. |
+| `SPROYT_OIDC_ISSUER` | required for OIDC | Pinned Authentik issuer: `https://sproyt-security.bjoroy.me/application/o/sproyt/`. |
 | `SPROYT_OIDC_CLIENT_ID` | required for OIDC | Authentik OAuth2/OIDC client ID. |
 | `SPROYT_OIDC_CLIENT_SECRET` | required for OIDC | Confidential client secret; supply through a secret store. |
 | `SPROYT_OIDC_REDIRECT_URL` | required for OIDC | Absolute callback URL ending in `/auth/callback`. |
@@ -177,8 +177,8 @@ tokens are never exposed to JavaScript. Session lifetime never exceeds the
 current ID/access-token lifetime, and an expired session cannot be revived
 through the refresh endpoint; the user must begin a new authorization flow.
 In production, startup requires an HTTPS issuer matching
-`https://identity.limani-parou.com/application/o/<provider-slug>/`, an HTTPS
-callback ending in `/auth/callback`, a post-logout URL on the same origin, and
+`https://sproyt-security.bjoroy.me/application/o/sproyt/`, the HTTPS callback
+`https://sproyt.bjoroy.me/auth/callback`, a post-logout URL on that origin, and
 unpadded URL-safe base64 session keys decoding to exactly 32 bytes. Invalid
 values fail before provider discovery or socket binding.
 Logout uses the discovered `end_session_endpoint` with the registered client

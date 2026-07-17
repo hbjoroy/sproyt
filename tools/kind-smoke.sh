@@ -60,7 +60,7 @@ common_values=(
   --set secret.existingSecret=sproyt-ci
   --set config.environment=test
   --set config.authMode=development
-  --set config.oidcIssuer=https://identity.limani-parou.com/application/o/ci-only/
+  --set config.oidcIssuer=https://sproyt-security.bjoroy.me/application/o/sproyt/
   --set config.oidcClientId=ci-only
   --set networkPolicy.enabled=true
 )
