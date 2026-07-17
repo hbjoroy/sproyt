@@ -98,7 +98,7 @@ readiness=$(kubectl get --raw \
 }
 
 read -r root_status root_redirect < <(curl --silent --show-error --output /dev/null \
-  --connect-timeout 10 --max-time 30 --write-out '%{http_code} %{redirect_url}' \
+  --connect-timeout 10 --max-time 30 --write-out '%{http_code} %{redirect_url}\n' \
   "$public_url/")
 [[ "$root_status" == "303" && "$root_redirect" == "$public_url/auth/login" ]] || {
   echo "anonymous root did not redirect to login: $root_status $root_redirect" >&2
@@ -106,7 +106,7 @@ read -r root_status root_redirect < <(curl --silent --show-error --output /dev/n
 }
 
 read -r login_status login_redirect < <(curl --silent --show-error --output /dev/null \
-  --connect-timeout 10 --max-time 30 --write-out '%{http_code} %{redirect_url}' \
+  --connect-timeout 10 --max-time 30 --write-out '%{http_code} %{redirect_url}\n' \
   "$public_url/auth/login")
 [[ "$login_status" == "303" && "$login_redirect" == "${authorization_prefix}"* ]] || {
   echo "login did not redirect to the configured issuer: $login_status $login_redirect" >&2
