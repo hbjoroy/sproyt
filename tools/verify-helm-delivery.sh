@@ -54,12 +54,17 @@ heart_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   --set "heart.image.digest=$heart_digest" >"$heart_rendered"
 
 heart_image="oci.bjoroy.me/sproyt/heart@$heart_digest"
-test "$(grep -F -c "image: \"$heart_image\"" "$heart_rendered")" -eq 2
+test "$(grep -F -c "image: \"$heart_image\"" "$heart_rendered")" -eq 3
 grep -F -q 'SPROYT_HEART_URL: "http://sproyt-sproyt-heart:3000"' "$heart_rendered"
 grep -F -q "name: sproyt-sproyt-heart" "$heart_rendered"
 grep -F -q "app.kubernetes.io/part-of: sproyt" "$heart_rendered"
 grep -F -q "key: HEART_DATABASE_URL" "$heart_rendered"
 grep -F -q 'helm.sh/hook-weight: "-4"' "$heart_rendered"
-test "$(grep -F -c -- "- name: oci-pull-secret" "$heart_rendered")" -eq 4
+grep -F -q 'helm.sh/hook-weight: "-3"' "$heart_rendered"
+grep -F -q 'helm.sh/hook-weight: "-2"' "$heart_rendered"
+grep -F -q 'args: ["bootstrap-definition", "/definitions/event-planning.yaml"]' "$heart_rendered"
+grep -F -q 'name: sproyt-sproyt-heart-definitions' "$heart_rendered"
+test "$(grep -F -c -- "- name: oci-pull-secret" "$heart_rendered")" -eq 5
+cmp processes/event-planning.yaml "$chart/definitions/event-planning.yaml"
 
 echo "Helm delivery contract verified for $image with optional internal $heart_image"

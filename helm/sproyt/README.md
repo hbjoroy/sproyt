@@ -37,7 +37,9 @@ rotation.
 Heart is an optional internal component of this same Helm release, not a
 separate ArgoCD application. Enabling `heart.enabled` creates a private
 ClusterIP Service, Deployment, migration Job, PDB, and NetworkPolicy in the
-Sprøyt namespace. It creates no Ingress. Pin `heart.image.digest` and add
+Sprøyt namespace. A second ordered hook idempotently bootstraps the immutable
+`sproyt/sproyt-event-planning/1.0.0` definition after migrations and before the
+Deployment rolls. It creates no Ingress. Pin `heart.image.digest` and add
 `HEART_DATABASE_URL` to the existing Secret before enabling it:
 
 ```yaml

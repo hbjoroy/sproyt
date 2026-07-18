@@ -22,9 +22,9 @@ gate has been signed off in the target environment.
 | S-13 | Implemented and published | Pinned scratch ARM64 image, restricted runtime contract, SBOM and vulnerability CI; registry evidence below | Retain CI and registry evidence with the release record |
 | S-14 | Implemented | Helm delivery verifier and kind install, migration, two-replica scale and rollback gate | Install in the ARM64 target cluster and provide manual Ingress |
 | S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, recovery CI, WebSocket capacity gate, safe MCP latency/idempotency evidence tool, owner-authorized audited circle deletion, and snapshot-consistent `sproyt.user-export.v1` self-export | Run target-sized MCP/browser load, name owners, accept privacy/retention and sign off rollout |
-| S-16 | Implemented; bundled activation pending | Sproyt `ProcessGateway` contract, real Heart contract at `6d8a3b5`, green `ea-heart-client` receive-message contract/CI at `9510cc4`, and optional private Heart component in the same Sprøyt Helm/Argo release at `71f20bf` | Add `HEART_DATABASE_URL` to the existing Sprøyt Secret and flip the single GitOps enable flag |
-| S-17 | Implemented | Durable process link/event/outbox state, stable command receipts, Heart `Idempotency-Key`/`X-Heart-Client`, exact replay, bounded retry and unknown-outcome lookup at Heart `6d8a3b5` | Exercise restart/rolling update in the target cluster |
-| S-18 | Pilot implemented; bundled rollout pending | Event-planning definition, browser/MCP flow tests, kill switch, merged Heart PR 3 at `6d8a3b5`, real Heart receive/idempotent-start contract, same-release private Service/Deployment/migration/PDB/NetworkPolicy, and updated cluster guide | Provision the Heart database key, enable it in the existing Sprøyt Application, then exercise restart/rolling update |
+| S-16 | Implemented; bundled activation pending | Sproyt `ProcessGateway` contract, Heart contract and idempotent definition bootstrap at `dc8b2b1`, green `ea-heart-client` receive-message contract/CI at `9510cc4`, and optional private Heart component in the same Sprøyt Helm/Argo release | Add `HEART_DATABASE_URL` to the existing Sprøyt Secret and flip the single GitOps enable flag |
+| S-17 | Implemented | Durable process link/event/outbox state, stable command receipts, Heart `Idempotency-Key`/`X-Heart-Client`, exact replay, bounded retry and unknown-outcome lookup at Heart `dc8b2b1` | Exercise restart/rolling update in the target cluster |
+| S-18 | Pilot implemented; bundled rollout pending | Event-planning definition, browser/MCP flow tests, kill switch, Heart receive/idempotent-start contract, ordered migration plus immutable definition bootstrap, same-release private Service/Deployment/PDB/NetworkPolicy, and updated cluster guide | Provision the Heart database key, enable it in the existing Sprøyt Application, then exercise restart/rolling update |
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks, WebSocket/MCP adapter-conformance tests, and bounded production MCP load-evidence tool | Issue a short-lived scoped credential and exercise the production endpoint |
 | S-21 | Implemented and active | Production session boundary; encrypted session; periodic provider revalidation; profile/logout shell; no simulated production identity; live Authentik identity and stable production session verified 2026-07-18 | Retain logout/revocation in the scheduled security drill |
@@ -83,17 +83,17 @@ maximum response time of 1.884 seconds; the new global CSP, no-sniff, referrer
 and permissions headers proved the new application active. Authenticated
 browser acceptance remains to be recorded.
 
-The Heart cluster image from merged Heart PR 3 revision
-`6d8a3b50952e866e6500b5d325afeb03d3f3c7d7` was imported into Zot as:
+The current Heart cluster image from merged Heart PR 4 revision
+`dc8b2b139088fa982d4c559097ea4b4e05a6469e` was imported into Zot as:
 
 ```text
-oci.bjoroy.me/sproyt/heart:6d8a3b50952e866e6500b5d325afeb03d3f3c7d7
-sha256:2d244cf57cdaff1c18b21737d4d05b1a7b935ecf1d60cb3cdd337435bc3142cb
+oci.bjoroy.me/sproyt/heart:dc8b2b139088fa982d4c559097ea4b4e05a6469e
+sha256:6361420a90a18b07f7e4a14a135a0f527a006ccfb503f6ccb44e36ce45b27bc2
 ```
 
 Registry inspection reports `linux/arm64`, non-root user `65532:65532`, port
-3000, and the matching OCI revision label. Heart Actions run `29570890958`
-passed migrations (including repeat execution), format, clippy, workspace
+3000, and the matching OCI revision label. Heart Actions run `29635618696`
+passed migrations, idempotent immutable definition deployment, format, clippy, workspace
 tests, API readiness/container smoke, SBOM generation and the high/critical
 vulnerability gate. The static scratch runtime is approximately 11 MB and the
 matching local Grype 0.110.0 scan reported no vulnerabilities. Target-cluster
@@ -112,9 +112,9 @@ The remaining production gates are intentionally environment-owned:
 Heart is a private repository, so Sproyt's repository-scoped GitHub token
 cannot check it out in CI. The real cross-repository contract remains the
 explicit `tools/test-heart-contract.ps1` pre-release check. Heart revision
-`6d8a3b50952e866e6500b5d325afeb03d3f3c7d7` passed the idempotent-start,
+`dc8b2b139088fa982d4c559097ea4b4e05a6469e` passed the idempotent-start,
 reconciliation, receive, migration, readiness and hardened ARM64 container
-checks in PR run `29570890958` on 2026-07-17.
+checks in PR run `29635618696` on 2026-07-18.
 Do not add an implicit cross-repository token; if this check moves into CI,
 configure a narrowly scoped read-only credential explicitly.
 
