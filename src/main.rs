@@ -2538,7 +2538,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         const meta = document.createElement("div");
         meta.className = "meta";
-        const sender = message.sender_id === currentParticipantId ? "Du" : "Ein ven";
+        const sender = message.sender_id === currentParticipantId
+          ? "Du"
+          : (message.sender_display_name || "Ein ven");
         const sentAt = new Date(message.sent_at);
         const time = Number.isNaN(sentAt.valueOf()) ? "" : ` · ${sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
         meta.textContent = `${sender}${time}`;
@@ -3515,6 +3517,7 @@ mod protocol_capacity_tests {
             body.contains("mobileNavigationToggle.setAttribute(\"aria-expanded\", String(open))")
         );
         assert!(body.contains("event.key === \"Escape\""));
+        assert!(body.contains("message.sender_display_name || \"Ein ven\""));
         assert!(body.contains("Invitasjonslenkje"));
         assert!(body.contains("Invitasjonen finst ikkje eller er ikkje gyldig lenger"));
 
@@ -4340,7 +4343,13 @@ mod protocol_capacity_tests {
             serde_json::json!({"channel_id":channel_id,"limit":50,"after":0}),
         )
         .await;
-        assert_eq!(loaded["payload"]["messages"].as_array().unwrap().len(), 2);
+        let loaded_messages = loaded["payload"]["messages"].as_array().unwrap();
+        assert_eq!(loaded_messages.len(), 2);
+        assert!(
+            loaded_messages
+                .iter()
+                .all(|message| message["sender_display_name"] == "circle-owner")
+        );
         command(
             &mut member,
             "mark-all-read",

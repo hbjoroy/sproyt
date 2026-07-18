@@ -184,6 +184,7 @@ pub struct ChatMessage {
     pub id: MessageId,
     pub channel_id: ChannelId,
     pub sender_id: UserId,
+    pub sender_display_name: DisplayName,
     pub body: MessageBody,
     pub sequence: ChannelSequence,
     pub sent_at: DateTime<Utc>,
