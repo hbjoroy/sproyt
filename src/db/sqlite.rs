@@ -115,7 +115,7 @@ impl ChatRepository for SqliteChatRepository {
                 .collect::<Result<Vec<_>, _>>()?;
             let mut channels = Vec::with_capacity(summaries.len());
             for channel in summaries {
-                let rows = sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where channel_id = ? order by sequence")
+                let rows = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? order by sequence")
                     .bind(channel.id.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
                 channels.push(ExportedChannel {
                     channel,
@@ -422,11 +422,11 @@ impl ChatRepository for SqliteChatRepository {
             let limit = i64::try_from(usize::from(query.limit)).map_err(storage)?;
             let (rows, reverse) = if let Some(after) = query.after {
                 let after = i64::try_from(u64::from(after)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where channel_id = ? and sequence > ? order by sequence asc limit ?")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? and sequence > ? order by sequence asc limit ?")
                     .bind(query.channel_id.to_string()).bind(after).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, false)
             } else {
-                (sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where channel_id = ? order by sequence desc limit ?")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? order by sequence desc limit ?")
                     .bind(query.channel_id.to_string()).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             };
@@ -462,18 +462,28 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?
                 .ok_or(RepositoryError::NotFound)?;
+            let sender_display_name = DisplayName::new(
+                sqlx::query_scalar::<_, String>("select display_name from users where id = ?")
+                    .bind(command.actor.to_string())
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?,
+            )
+            .map_err(storage)?;
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id,
                 sender_id: command.actor,
+                sender_display_name,
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
                 sent_at: persisted_now(),
             };
-            sqlx::query("insert into messages (id, channel_id, sender_id, sequence, body, created_at) values (?, ?, ?, ?, ?, ?)")
+            sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values (?, ?, ?, ?, ?, ?, ?)")
                 .bind(message.id.as_uuid().to_string())
                 .bind(message.channel_id.to_string())
                 .bind(message.sender_id.to_string())
+                .bind(message.sender_display_name.as_str())
                 .bind(sequence)
                 .bind(message.body.as_str())
                 .bind(message.sent_at)
@@ -499,7 +509,7 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             if reservation.rows_affected() == 0 {
-                let row = sqlx::query("select m.id, m.channel_id, m.sender_id, m.sequence, m.body, m.created_at from command_receipts r join messages m on m.id = r.message_id where r.principal_id = ? and r.request_id = ?")
+                let row = sqlx::query("select m.id, m.channel_id, m.sender_id, m.sender_display_name, m.sequence, m.body, m.created_at from command_receipts r join messages m on m.id = r.message_id where r.principal_id = ? and r.request_id = ?")
                     .bind(command.actor.to_string())
                     .bind(&request_id)
                     .fetch_optional(&mut *transaction)
@@ -526,18 +536,28 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?
                 .ok_or(RepositoryError::NotFound)?;
+            let sender_display_name = DisplayName::new(
+                sqlx::query_scalar::<_, String>("select display_name from users where id = ?")
+                    .bind(command.actor.to_string())
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?,
+            )
+            .map_err(storage)?;
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id,
                 sender_id: command.actor,
+                sender_display_name,
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
                 sent_at: persisted_now(),
             };
-            sqlx::query("insert into messages (id, channel_id, sender_id, sequence, body, created_at) values (?, ?, ?, ?, ?, ?)")
+            sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values (?, ?, ?, ?, ?, ?, ?)")
                 .bind(message.id.as_uuid().to_string())
                 .bind(message.channel_id.to_string())
                 .bind(message.sender_id.to_string())
+                .bind(message.sender_display_name.as_str())
                 .bind(sequence)
                 .bind(message.body.as_str())
                 .bind(message.sent_at)
@@ -558,7 +578,7 @@ impl ChatRepository for SqliteChatRepository {
 
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
-            let row = sqlx::query("select id, channel_id, sender_id, sequence, body, created_at from messages where id = ?")
+            let row = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where id = ?")
                 .bind(id.as_uuid().to_string())
                 .fetch_optional(&self.pool)
                 .await
@@ -1335,6 +1355,7 @@ fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryE
     let id: String = row.try_get("id").map_err(storage)?;
     let channel_id: String = row.try_get("channel_id").map_err(storage)?;
     let sender_id: String = row.try_get("sender_id").map_err(storage)?;
+    let sender_display_name: String = row.try_get("sender_display_name").map_err(storage)?;
     let sequence: i64 = row.try_get("sequence").map_err(storage)?;
     let body: String = row.try_get("body").map_err(storage)?;
     let sent_at: DateTime<Utc> = row.try_get("created_at").map_err(storage)?;
@@ -1343,6 +1364,7 @@ fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryE
         id: MessageId::from_uuid(id),
         channel_id: ChannelId::new(channel_id).map_err(storage)?,
         sender_id: UserId::new(sender_id).map_err(storage)?,
+        sender_display_name: DisplayName::new(sender_display_name).map_err(storage)?,
         body: MessageBody::new(body).map_err(storage)?,
         sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
         sent_at,

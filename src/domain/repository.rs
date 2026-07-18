@@ -533,10 +533,16 @@ impl ChatRepository for InMemoryChatRepository {
             }
 
             let next_sequence = state.next_sequence(&command.channel_id)?;
+            let sender_display_name = state
+                .users
+                .get(&command.actor)
+                .map(|user| user.display_name.clone())
+                .ok_or(RepositoryError::NotFound)?;
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id.clone(),
                 sender_id: command.actor,
+                sender_display_name,
                 body: command.body,
                 sequence: next_sequence,
                 sent_at: persisted_now(),
@@ -576,10 +582,16 @@ impl ChatRepository for InMemoryChatRepository {
                 return Err(RepositoryError::PermissionDenied);
             }
             let next_sequence = state.next_sequence(&command.channel_id)?;
+            let sender_display_name = state
+                .users
+                .get(&command.actor)
+                .map(|user| user.display_name.clone())
+                .ok_or(RepositoryError::NotFound)?;
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id.clone(),
                 sender_id: command.actor,
+                sender_display_name,
                 body: command.body,
                 sequence: next_sequence,
                 sent_at: persisted_now(),

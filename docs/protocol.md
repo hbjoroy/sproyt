@@ -43,16 +43,22 @@ Server response or event:
   "request_id": "request-123",
   "type": "message_accepted",
   "payload": {
-    "message_id": "019c1e71-4f6a-7000-8000-000000000001",
-    "channel_id": "channel-1",
-    "sequence": 42,
-    "sender_id": "alice",
-    "body": "Hei"
+    "message": {
+      "id": "019c1e71-4f6a-7000-8000-000000000001",
+      "channel_id": "019c1e71-4f6a-7000-8000-000000000002",
+      "sender_id": "019c1e71-4f6a-7000-8000-000000000003",
+      "sender_display_name": "Alice",
+      "body": "Hei",
+      "sequence": 42,
+      "sent_at": "2026-07-18T08:30:00Z"
+    }
   }
 }
 ```
 
 `request_id` is important for agents because they may issue several commands concurrently and need deterministic correlation.
+`sender_display_name` is persisted with the message as an audit-safe historical
+snapshot. A later profile rename affects new messages, not existing history.
 
 ## Commands
 

@@ -124,6 +124,18 @@ where
         )
         .await
         .unwrap();
+    assert_eq!(first.sender_display_name.as_str(), "Chat contract actor");
+    repository
+        .upsert_user(User {
+            id: actor.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Renamed chat contract actor").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
     let replay = repository
         .append_message_idempotent(
             SendMessage {
@@ -171,6 +183,10 @@ where
         )
         .await
         .unwrap();
+    assert_eq!(
+        second.sender_display_name.as_str(),
+        "Renamed chat contract actor"
+    );
     let third = repository
         .append_message_idempotent(
             SendMessage {
