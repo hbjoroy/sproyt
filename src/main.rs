@@ -4302,13 +4302,21 @@ mod protocol_capacity_tests {
             serde_json::json!({"token":token}),
         )
         .await;
-        command(
+        let inherited_channels = command(
             &mut member,
-            "join-after-invite",
-            "join_channel",
-            serde_json::json!({"channel":{"type":"id","value":channel_id}}),
+            "channels-after-invite",
+            "list_my_channels",
+            serde_json::Value::Null,
         )
         .await;
+        assert!(
+            inherited_channels["payload"]["channels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|channel| channel["id"] == channel_id),
+            "accepted circle channels must appear without a separate join command"
+        );
 
         for sequence in 1..=2 {
             command(

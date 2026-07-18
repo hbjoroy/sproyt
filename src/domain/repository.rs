@@ -129,6 +129,22 @@ impl ChatRepository for InMemoryChatRepository {
         Box::pin(async move {
             let mut state = self.lock_state()?;
             state.users.insert(user.id.clone(), user.clone());
+            let general_channel = state
+                .channels
+                .values()
+                .find(|channel| channel.slug.as_str() == "general")
+                .map(|channel| channel.id.clone());
+            if let Some(channel_id) = general_channel {
+                state
+                    .memberships
+                    .entry((channel_id.clone(), user.id.clone()))
+                    .or_insert(Membership {
+                        channel_id,
+                        user_id: user.id.clone(),
+                        role: MembershipRole::Member,
+                        last_read_sequence: ChannelSequence::new(0),
+                    });
+            }
             Ok(user)
         })
     }
@@ -353,9 +369,27 @@ impl ChatRepository for InMemoryChatRepository {
                 role: CircleRole::Member,
                 joined_at: Utc::now(),
             };
-            state
-                .circle_memberships
-                .insert((invitation.circle_id, command.actor), membership.clone());
+            state.circle_memberships.insert(
+                (invitation.circle_id.clone(), command.actor.clone()),
+                membership.clone(),
+            );
+            let channel_ids = state
+                .channels
+                .values()
+                .filter(|channel| channel.circle_id.as_ref() == Some(&invitation.circle_id))
+                .map(|channel| channel.id.clone())
+                .collect::<Vec<_>>();
+            for channel_id in channel_ids {
+                state
+                    .memberships
+                    .entry((channel_id.clone(), command.actor.clone()))
+                    .or_insert(Membership {
+                        channel_id,
+                        user_id: command.actor.clone(),
+                        role: MembershipRole::Member,
+                        last_read_sequence: ChannelSequence::new(0),
+                    });
+            }
             Ok(membership)
         })
     }
@@ -379,6 +413,32 @@ impl ChatRepository for InMemoryChatRepository {
                 }
             }
 
+            let circle_members = command
+                .circle_id
+                .as_ref()
+                .map_or_else(Vec::new, |circle_id| {
+                    state
+                        .circle_memberships
+                        .values()
+                        .filter(|membership| &membership.circle_id == circle_id)
+                        .map(|membership| {
+                            (
+                                membership.user_id.clone(),
+                                if membership.role == CircleRole::Owner {
+                                    MembershipRole::Owner
+                                } else {
+                                    MembershipRole::Member
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                });
+            let is_general = command.slug.as_str() == "general" && command.circle_id.is_none();
+            let general_users = if is_general {
+                state.users.keys().cloned().collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
             let channel = Channel {
                 id: ChannelId::generate(),
                 slug: command.slug,
@@ -392,15 +452,33 @@ impl ChatRepository for InMemoryChatRepository {
                 .channels_by_slug
                 .insert(channel.slug.clone(), channel.id.clone());
             state.channels.insert(channel.id.clone(), channel.clone());
-            state.memberships.insert(
-                (channel.id.clone(), command.actor.clone()),
-                Membership {
-                    channel_id: channel.id.clone(),
-                    user_id: command.actor,
-                    role: MembershipRole::Owner,
-                    last_read_sequence: ChannelSequence::new(0),
-                },
+            let mut members = circle_members;
+            members.extend(
+                general_users
+                    .into_iter()
+                    .map(|user_id| (user_id, MembershipRole::Member)),
             );
+            members.push((command.actor.clone(), MembershipRole::Owner));
+            for (user_id, role) in members {
+                let key = (channel.id.clone(), user_id.clone());
+                let membership = Membership {
+                    channel_id: channel.id.clone(),
+                    user_id,
+                    role,
+                    last_read_sequence: ChannelSequence::new(0),
+                };
+                match state.memberships.entry(key) {
+                    std::collections::hash_map::Entry::Occupied(mut entry)
+                        if membership.role == MembershipRole::Owner =>
+                    {
+                        entry.insert(membership);
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => {}
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(membership);
+                    }
+                }
+            }
 
             Ok(channel)
         })

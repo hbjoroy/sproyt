@@ -103,6 +103,12 @@ clients can compute unread count after reconnect without loading message
 bodies. Joining a channel owned by a circle requires current circle membership;
 knowing a private channel ID or slug is not authorization.
 
+Circle membership is the source of truth for access to circle channels.
+Accepting an invitation grants membership in every existing channel in that
+circle, and channels created later inherit all current circle members. The
+global `general` channel is inherited by every authenticated user. These rules
+are enforced and backfilled by the repository rather than delegated to clients.
+
 First event set:
 
 - `channel_created`

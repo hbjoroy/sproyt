@@ -113,6 +113,37 @@ where
         })
         .await
         .unwrap();
+    let general = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new("general").unwrap(),
+            name: DisplayName::new("General").unwrap(),
+            kind: ChannelKind::Public,
+            circle_id: None,
+        })
+        .await
+        .unwrap();
+    let general_member = UserId::named(format!("chat-general-member-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: general_member.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("General member").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .list_channels_for_user(general_member)
+            .await
+            .unwrap()
+            .iter()
+            .any(|summary| summary.id == general.id),
+        "new authenticated users must inherit general"
+    );
     let first = repository
         .append_message_idempotent(
             SendMessage {
@@ -285,13 +316,34 @@ where
         })
         .await
         .unwrap();
-    repository
-        .join_channel(JoinChannel {
-            actor: member.clone(),
-            channel: ChannelRef::Id(circle_channel.id.clone()),
+    assert!(
+        repository
+            .list_channels_for_user(member.clone())
+            .await
+            .unwrap()
+            .iter()
+            .any(|summary| summary.id == circle_channel.id),
+        "accepting a circle invitation must expose existing circle channels"
+    );
+    let later_circle_channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("chat-circle-later-{suffix}")).unwrap(),
+            name: DisplayName::new("Later circle channel").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: Some(circle.id.clone()),
         })
         .await
         .unwrap();
+    assert!(
+        repository
+            .list_channels_for_user(member.clone())
+            .await
+            .unwrap()
+            .iter()
+            .any(|summary| summary.id == later_circle_channel.id),
+        "existing circle members must inherit channels created later"
+    );
     for sequence in 1..=205 {
         repository
             .append_message(SendMessage {
@@ -307,14 +359,20 @@ where
     assert_eq!(export.user.id, member);
     assert_eq!(export.circles.len(), 1);
     assert_eq!(export.circles[0].circle.id, circle.id);
-    assert_eq!(
-        export.channels.len(),
-        1,
-        "export must exclude hidden channels"
+    assert!(
+        export
+            .channels
+            .iter()
+            .any(|channel| channel.channel.id == general.id),
+        "general must be included in the member export"
     );
-    assert_eq!(export.channels[0].channel.id, circle_channel.id);
+    let exported_circle_channel = export
+        .channels
+        .iter()
+        .find(|channel| channel.channel.id == circle_channel.id)
+        .expect("accepted circle channel must be exported");
     assert_eq!(
-        export.channels[0].messages.len(),
+        exported_circle_channel.messages.len(),
         205,
         "portable export must not apply the interactive history limit"
     );
