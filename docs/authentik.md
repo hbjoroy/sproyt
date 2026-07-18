@@ -102,7 +102,9 @@ provider slug (not its secret), test-user identity and results for each check:
    `HttpOnly` and `SameSite=Lax`. Never copy the cookie value into evidence.
 3. Leave the page open through a renewal or invoke `POST /auth/refresh` from
    the same authenticated browser session. Confirm success, continued chat and
-   a rotated session cookie without a second login.
+   a rotated session cookie without a second login. The browser schedules the
+   renewal about 60 seconds before token expiry and silently replaces the
+   WebSocket so it uses the rotated cookie without showing a reconnect state.
 4. Visit `/auth/logout`. Confirm the local cookie is cleared, Authentik accepts
    the registered post-logout URL, and protected HTTP/WebSocket access now
    requires login.
