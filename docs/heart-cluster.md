@@ -76,7 +76,7 @@ existing `values/sproyt/values.yaml` file in `rocket-applications`:
 heart:
   enabled: true
   image:
-    digest: sha256:2d244cf57cdaff1c18b21737d4d05b1a7b935ecf1d60cb3cdd337435bc3142cb
+    digest: sha256:6361420a90a18b07f7e4a14a135a0f527a006ccfb503f6ccb44e36ce45b27bc2
 ```
 
 Do not set `config.heartUrl`: the chart derives

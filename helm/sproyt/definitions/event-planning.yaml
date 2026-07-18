@@ -1,0 +1,41 @@
+name: sproyt-event-planning
+namespace: sproyt
+version: "1.0.0"
+description: A small circle proposes an event and records one correlated decision.
+
+nodes:
+  start:
+    type: start
+    next: prepare
+
+  prepare:
+    type: task
+    mode: lua
+    description: Validate the stable Sproyt process-link correlation value.
+    script: |
+      if not metadata.process_link_id or metadata.process_link_id == "" then
+        error("process_link_id is required")
+      end
+      metadata.state = "waiting_for_decision"
+    next: wait-for-decision
+
+  wait-for-decision:
+    type: receive
+    description: Wait for an authorized circle member to answer in Sproyt.
+    correlation_key: process_link_id
+    correlation_value: |
+      return tostring(metadata.process_link_id)
+    next: record-decision
+
+  record-decision:
+    type: task
+    mode: lua
+    description: Normalize the decision delivered by Sproyt.
+    script: |
+      metadata.decision = metadata.decision or "undecided"
+      metadata.state = "completed"
+    next: completed
+
+  completed:
+    type: end
+    description: The group decision has been recorded.
