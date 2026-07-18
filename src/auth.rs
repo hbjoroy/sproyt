@@ -436,7 +436,12 @@ impl OidcService {
         let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
         let claims: SessionClaims = self.codec.open(value)?;
         validate_session_claims(&claims, &self.issuer)?;
-        let refresh_token = claims.refresh_token.ok_or(AuthError::Unauthorized)?;
+        // A provider may legitimately omit a refresh token even when
+        // `offline_access` was requested. The sealed session remains valid
+        // until its bounded expiry, so this is not an authentication failure.
+        let refresh_token = claims
+            .refresh_token
+            .ok_or_else(|| AuthError::Unsupported("session has no refresh token".to_owned()))?;
         let client = self.current_client()?;
         let token = client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.clone()))
@@ -964,6 +969,22 @@ mod tests {
         let AuthService::Oidc(service) = &auth else {
             panic!("expected OIDC service")
         };
+        let session_without_refresh = service
+            .codec
+            .seal(&SessionClaims {
+                issuer: provider.issuer.clone(),
+                subject: "authentik-user-without-refresh".to_owned(),
+                display_name: "Authentik User".to_owned(),
+                access_token: Some("valid-access-token".to_owned()),
+                refresh_token: None,
+                expires_at: now_seconds() + 60,
+            })
+            .unwrap();
+        assert!(matches!(
+            auth.renew_session(Some(&format!("{SESSION_COOKIE}={session_without_refresh}")))
+                .await,
+            Err(AuthError::Unsupported(_))
+        ));
         let expired_session = service
             .codec
             .seal(&SessionClaims {

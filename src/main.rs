@@ -1879,7 +1879,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           headers: { "accept": "application/json" }
         });
         if (response.status === 401) {
-          window.location.assign("/auth/login");
+          // The active WebSocket revalidates the session and redirects on a
+          // real authentication expiry. A refresh token is optional at some
+          // OIDC providers, so a failed proactive refresh must not create an
+          // Authentik callback/reload loop while the session is still valid.
+          scheduleSessionRefresh(300);
           return;
         }
         if (!response.ok) {
@@ -3380,6 +3384,8 @@ mod protocol_capacity_tests {
         assert!(body.contains("function scheduleReconnect(closeCode"));
         assert!(body.contains("stableConnectionTimer = window.setTimeout"));
         assert!(body.contains("event.code === 1008"));
+        assert!(body.contains("scheduleSessionRefresh(300)"));
+        assert!(!body.contains("if (response.status === 401) {\n          window.location.assign"));
         assert!(body.contains("Fråkopla (${detail})"));
         assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
         assert!(body.contains("document.addEventListener(\"visibilitychange\""));
