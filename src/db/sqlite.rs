@@ -61,6 +61,7 @@ impl ChatRepository for SqliteChatRepository {
     }
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             sqlx::query(
                 "insert into users (id, kind, display_name, external_provider, external_subject, created_at) values (?, ?, ?, ?, ?, ?) on conflict(id) do update set kind = excluded.kind, display_name = excluded.display_name, external_provider = excluded.external_provider, external_subject = excluded.external_subject",
             )
@@ -70,9 +71,15 @@ impl ChatRepository for SqliteChatRepository {
             .bind(&user.external_provider)
             .bind(&user.external_subject)
             .bind(user.created_at)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(sql_error)?;
+            sqlx::query("insert into channel_memberships (channel_id, user_id, role) select id, ?, 'member' from channels where slug = 'general' and circle_id is null on conflict(channel_id, user_id) do nothing")
+                .bind(user.id.to_string())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
             Ok(user)
         })
     }
@@ -270,6 +277,12 @@ impl ChatRepository for SqliteChatRepository {
             sqlx::query("insert into circle_memberships (circle_id, user_id, role, joined_at) values (?, ?, 'member', ?) on conflict(circle_id, user_id) do nothing")
                 .bind(circle_id.to_string()).bind(command.actor.to_string()).bind(joined_at)
                 .execute(&mut *transaction).await.map_err(sql_error)?;
+            sqlx::query("insert into channel_memberships (channel_id, user_id, role) select id, ?, 'member' from channels where circle_id = ? on conflict(channel_id, user_id) do nothing")
+                .bind(command.actor.to_string())
+                .bind(circle_id.to_string())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(CircleMembership {
                 circle_id,
@@ -322,7 +335,22 @@ impl ChatRepository for SqliteChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
-            sqlx::query("insert into channel_memberships (channel_id, user_id, role) values (?, ?, 'owner')")
+            if let Some(circle_id) = &channel.circle_id {
+                sqlx::query("insert into channel_memberships (channel_id, user_id, role) select ?, user_id, case role when 'owner' then 'owner' else 'member' end from circle_memberships where circle_id = ? on conflict(channel_id, user_id) do nothing")
+                    .bind(channel.id.to_string())
+                    .bind(circle_id.to_string())
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+            } else if channel.slug.as_str() == "general" {
+                sqlx::query("insert into channel_memberships (channel_id, user_id, role) select ?, id, case when id = ? then 'owner' else 'member' end from users where true on conflict(channel_id, user_id) do nothing")
+                    .bind(channel.id.to_string())
+                    .bind(channel.created_by.to_string())
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+            }
+            sqlx::query("insert into channel_memberships (channel_id, user_id, role) values (?, ?, 'owner') on conflict(channel_id, user_id) do update set role = 'owner'")
                 .bind(channel.id.to_string())
                 .bind(channel.created_by.to_string())
                 .execute(&mut *transaction)

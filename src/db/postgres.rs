@@ -92,6 +92,7 @@ impl ChatRepository for PostgresChatRepository {
     }
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             sqlx::query("insert into users (id, kind, display_name, external_provider, external_subject, created_at) values ($1, $2, $3, $4, $5, $6) on conflict(id) do update set kind = excluded.kind, display_name = excluded.display_name, external_provider = excluded.external_provider, external_subject = excluded.external_subject")
                 .bind(*user.id.as_uuid())
                 .bind(user.kind.as_str())
@@ -99,9 +100,15 @@ impl ChatRepository for PostgresChatRepository {
                 .bind(&user.external_provider)
                 .bind(&user.external_subject)
                 .bind(user.created_at)
-                .execute(&self.pool)
+                .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
+            sqlx::query("insert into channel_memberships (channel_id, user_id, role) select id, $1, 'member' from channels where slug = 'general' and circle_id is null on conflict(channel_id, user_id) do nothing")
+                .bind(*user.id.as_uuid())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
             Ok(user)
         })
     }
@@ -286,6 +293,12 @@ impl ChatRepository for PostgresChatRepository {
                 .bind(*command.actor.as_uuid()).bind(joined_at).bind(id).execute(&mut *tx).await.map_err(sql_error)?;
             sqlx::query("insert into circle_memberships (circle_id,user_id,role,joined_at) values ($1,$2,'member',$3) on conflict(circle_id,user_id) do nothing")
                 .bind(circle_uuid).bind(*command.actor.as_uuid()).bind(joined_at).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into channel_memberships (channel_id,user_id,role) select id,$1,'member' from channels where circle_id=$2 on conflict(channel_id,user_id) do nothing")
+                .bind(*command.actor.as_uuid())
+                .bind(circle_uuid)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
             tx.commit().await.map_err(sql_error)?;
             Ok(CircleMembership {
                 circle_id: CircleId::from_uuid(circle_uuid),
@@ -336,7 +349,22 @@ impl ChatRepository for PostgresChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
-            sqlx::query("insert into channel_memberships (channel_id, user_id, role) values ($1, $2, 'owner')")
+            if let Some(circle_id) = &channel.circle_id {
+                sqlx::query("insert into channel_memberships (channel_id,user_id,role) select $1,user_id,case role when 'owner' then 'owner' else 'member' end from circle_memberships where circle_id=$2 on conflict(channel_id,user_id) do nothing")
+                    .bind(*channel.id.as_uuid())
+                    .bind(*circle_id.as_uuid())
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+            } else if channel.slug.as_str() == "general" {
+                sqlx::query("insert into channel_memberships (channel_id,user_id,role) select $1,id,case when id=$2 then 'owner' else 'member' end from users on conflict(channel_id,user_id) do nothing")
+                    .bind(*channel.id.as_uuid())
+                    .bind(*channel.created_by.as_uuid())
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+            }
+            sqlx::query("insert into channel_memberships (channel_id, user_id, role) values ($1, $2, 'owner') on conflict(channel_id,user_id) do update set role='owner'")
                 .bind(*channel.id.as_uuid())
                 .bind(*channel.created_by.as_uuid())
                 .execute(&mut *transaction)
