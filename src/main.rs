@@ -1470,6 +1470,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: #245b45; color: white; font-weight: 800; }
       .identity { display: grid; gap: 4px; font-size: .9rem; }
       .identity a { color: #245b45; }
+      .mobile-navigation-toggle { display: none; }
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
       .channel-group { margin: 12px 8px 2px; color: #647269; font-size: .78rem; font-weight: 700; }
@@ -1722,8 +1723,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           grid-template-columns: 1fr;
         }
 
-        .sidebar { grid-row: auto; grid-template-rows: auto auto; border-right: 0; border-bottom: 1px solid #e4e5de; }
-        .sidebar nav, .sidebar .onboarding { display: none; }
+        .sidebar { grid-row: auto; grid-template-columns: 1fr auto; grid-template-rows: auto auto; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .identity { grid-column: 1 / -1; }
+        .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; }
+        .sidebar nav, .sidebar .onboarding { display: none; grid-column: 1 / -1; }
+        .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding { display: grid; }
 
         .connect,
         .circle-tools,
@@ -1794,17 +1798,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
   </head>
   <body>
     <main>
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar-panel">
         <div class="brand"><span class="brand-mark" aria-hidden="true">S</span><h1>Sprøyt</h1></div>
+        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Samtalar og vennekretsar</button>
         <div class="identity">
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
           <a href="/auth/logout">Logg ut</a>
         </div>
-        <nav aria-label="Samtalar">
+        <nav aria-label="Samtalar" id="mobile-navigation">
           <p class="navigation-heading">Samtalar</p>
           <div class="channel-list" id="channel-list"><span class="status">Lastar …</span></div>
         </nav>
-        <section class="onboarding" aria-label="Ny vennekrets">
+        <section class="onboarding" id="mobile-onboarding" aria-label="Ny vennekrets">
           <p class="navigation-heading">Vennekrets</p>
           <label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label>
           <label>Namn<input id="circle-name" placeholder="Turvenner"></label>
@@ -1870,6 +1875,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const processId = document.querySelector("#process-id");
       const processView = document.querySelector("#process-view");
       const processButtons = ["#enable-heart", "#start-process", "#refresh-process", "#inspect-process", "#process-yes", "#process-no"].map((id) => document.querySelector(id));
+      const sidebar = document.querySelector("#sidebar-panel");
+      const mobileNavigationToggle = document.querySelector("#mobile-navigation-toggle");
 
       let socket = null;
       let heartbeatTimer = null;
@@ -1948,6 +1955,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       viewModeButton.addEventListener("click", () => setRenderMode("view"));
       rawModeButton.addEventListener("click", () => setRenderMode("raw"));
+      mobileNavigationToggle.addEventListener("click", () => {
+        const open = sidebar.classList.toggle("mobile-open");
+        mobileNavigationToggle.setAttribute("aria-expanded", String(open));
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && sidebar.classList.contains("mobile-open")) {
+          sidebar.classList.remove("mobile-open");
+          mobileNavigationToggle.setAttribute("aria-expanded", "false");
+          mobileNavigationToggle.focus();
+        }
+      });
       circleButtons[0].addEventListener("click", () => sendCommand("create_circle", {
         name: circleName.value.trim(), slug: slugify(circleSlug.value || circleName.value)
       }));
@@ -2451,6 +2469,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function selectChannel(channel) {
         if (!channel || channel.id === activeChannelId) return;
+        sidebar.classList.remove("mobile-open");
+        mobileNavigationToggle.setAttribute("aria-expanded", "false");
         const previousChannelId = activeChannelId;
         if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
         timeline.length = 0;
@@ -3488,6 +3508,13 @@ mod protocol_capacity_tests {
         assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
         assert!(body.contains("document.addEventListener(\"visibilitychange\""));
         assert!(body.contains(":focus-visible"));
+        assert!(body.contains("id=\"mobile-navigation-toggle\""));
+        assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
+        assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
+        assert!(
+            body.contains("mobileNavigationToggle.setAttribute(\"aria-expanded\", String(open))")
+        );
+        assert!(body.contains("event.key === \"Escape\""));
         assert!(body.contains("Invitasjonslenkje"));
         assert!(body.contains("Invitasjonen finst ikkje eller er ikkje gyldig lenger"));
 
