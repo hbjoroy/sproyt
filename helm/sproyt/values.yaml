@@ -37,6 +37,38 @@ config:
   # Keep Heart/process diagnostics out of the ordinary private-beta journey.
   uiAdvancedEnabled: false
 
+# Heart is an optional internal component of the Sproyt release. It has no
+# Ingress and is reachable only through its ClusterIP service. Enabling it
+# makes SPROYT_HEART_URL point at that service unless config.heartUrl overrides
+# the address for development or an externally managed Heart instance.
+heart:
+  enabled: false
+  replicaCount: 2
+  image:
+    repository: oci.bjoroy.me/sproyt/heart
+    tag: "0.1.0"
+    digest: ""
+    pullPolicy: IfNotPresent
+  secret:
+    existingSecret: sproyt
+    databaseUrlKey: HEART_DATABASE_URL
+  service:
+    port: 3000
+  resources:
+    requests:
+      cpu: 25m
+      memory: 48Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  podDisruptionBudget:
+    minAvailable: 1
+  databaseSameNamespace: false
+  databaseNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: database
+  databasePodSelector: {}
+
 secret:
   existingSecret: sproyt
   databaseUrlKey: DATABASE_URL

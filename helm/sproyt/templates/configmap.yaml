@@ -15,8 +15,10 @@ data:
   SPROYT_OIDC_CLIENT_ID: {{ required "config.oidcClientId must be set" .Values.config.oidcClientId | quote }}
   SPROYT_OIDC_REDIRECT_URL: {{ .Values.config.oidcRedirectUrl | quote }}
   SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL: {{ .Values.config.oidcPostLogoutRedirectUrl | quote }}
-  {{- with .Values.config.heartUrl }}
-  SPROYT_HEART_URL: {{ . | quote }}
+  {{- if .Values.config.heartUrl }}
+  SPROYT_HEART_URL: {{ .Values.config.heartUrl | quote }}
+  {{- else if .Values.heart.enabled }}
+  SPROYT_HEART_URL: {{ printf "http://%s:%v" (include "sproyt.heart.fullname" .) .Values.heart.service.port | quote }}
   {{- end }}
   {{- with .Values.config.mcpAllowedOrigins }}
   SPROYT_MCP_ALLOWED_ORIGINS: {{ . | quote }}

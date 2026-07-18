@@ -347,34 +347,27 @@ The ingress controller namespace must match
 `networkPolicy.ingressNamespaceSelector`. Confirm external OIDC login, logout,
 WebSocket reconnect, and `/readyz` after applying the Ingress.
 
-Deploy Heart first with the private, digest-pinned procedure in
-[`heart-cluster.md`](heart-cluster.md). For pods labelled
-`app.kubernetes.io/name: heart`, add these values before setting
-`config.heartUrl`:
+Heart is an optional internal component of the same Sprøyt Helm release and
+ArgoCD Application. After creating `HEART_DATABASE_URL` as described in
+[`heart-cluster.md`](heart-cluster.md), enable the reviewed digest:
 
 ```yaml
-config:
-  heartUrl: http://heart.heart.svc.cluster.local:3000
-networkPolicy:
-  heartNamespaceSelector:
-    matchLabels:
-      kubernetes.io/metadata.name: heart
-  heartPodSelector:
-    matchLabels:
-      app.kubernetes.io/name: heart
-  heartPort: 3000
+heart:
+  enabled: true
+  image:
+    digest: sha256:<reviewed-heart-digest>
 ```
 
-Use the reviewed Heart revision and digest from
-[`heart-cluster.md`](heart-cluster.md), and complete its migration Job before
-enabling the URL. Sproyt scopes
+The chart creates no Heart Ingress and automatically sets the internal service
+URL. Its pre-upgrade hook completes Heart migrations before the bundled
+Deployment rolls. Sprøyt scopes
 starts with `X-Heart-Client: sproyt`, uses its durable outbox UUID as
 `Idempotency-Key`, and reconciles a timed-out accepted start through Heart's
 `/api/v1/instance-starts/{key}` endpoint.
 
-Without a matching Heart egress rule, the default-deny NetworkPolicy correctly
-blocks that internal connection. Ordinary chat remains available when
-`config.heartUrl` is empty.
+The chart generates matching least-privilege policies between the Sprøyt and
+Heart pods. Ordinary chat remains available when `heart.enabled` is false or
+Heart is temporarily unavailable.
 
 ## Upgrade and rollback
 

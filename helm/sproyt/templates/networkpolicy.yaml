@@ -74,6 +74,16 @@ spec:
         - protocol: TCP
           port: {{ .Values.networkPolicy.heartPort }}
     {{- end }}
+    {{- if and .Values.heart.enabled (not .Values.config.heartUrl) }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: heart
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.heart.service.port }}
+    {{- end }}
     {{- if and .Values.config.heartUrl .Values.networkPolicy.heartNamespaceSelector }}
     - to:
         - namespaceSelector:
