@@ -135,6 +135,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         )
         .route("/api/v1/agents", post(create_agent))
         .route("/api/v1/agents/{id}/grants", post(grant_agent))
+        .route("/api/v1/agents/{id}/revoke", post(revoke_agent))
         .route("/api/v1/agent-grants/{id}/revoke", post(revoke_agent_grant))
         .route(
             "/api/v1/messages/{id}/approve-agent",
@@ -668,6 +669,28 @@ async fn revoke_agent_grant(
         Err(_) => return (axum::http::StatusCode::BAD_REQUEST, "invalid grant id").into_response(),
     };
     match state.agents.revoke(principal.user.id, grant_id).await {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+async fn revoke_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return auth_error_response(error),
+    };
+    let agent_id = match UserId::new(id) {
+        Ok(id) => id,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    match state.agents.revoke_agent(principal.user.id, agent_id).await {
         Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
         Err(error) => repository_response(error),
     }
@@ -3334,6 +3357,81 @@ mod protocol_capacity_tests {
     async fn connect_as(address: std::net::SocketAddr, participant: &str) -> TestSocket {
         let url = format!("ws://{address}/ws?participant={participant}");
         connect_async(url).await.unwrap().0
+    }
+
+    #[tokio::test]
+    async fn owner_revokes_agent_and_existing_mcp_credential_immediately_fails() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server, state) =
+            start_test_server_with_state(repository, Duration::from_secs(60)).await;
+        let owner_principal = state
+            .auth
+            .authenticate_request(Some("agent-owner".to_owned()), None)
+            .await
+            .unwrap();
+        state.chat.ensure_user(owner_principal.user).await.unwrap();
+
+        let client = reqwest::Client::new();
+        let created = client
+            .post(format!(
+                "http://{address}/api/v1/agents?participant=agent-owner"
+            ))
+            .json(&serde_json::json!({
+                "display_name":"Revocable agent",
+                "provider":"contract",
+                "service_identity":"revocable-agent",
+                "purpose":"revocation route contract",
+                "rate_limit_per_minute":60,
+                "expires_at":null
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(created.status(), axum::http::StatusCode::CREATED);
+        let created: serde_json::Value = created.json().await.unwrap();
+        let agent_id = created["agent_id"].as_str().unwrap();
+        let credential = created["credential"].as_str().unwrap();
+        let mcp_request = serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":"initialize",
+            "method":"initialize",
+            "params":{"protocolVersion":MCP_PROTOCOL_VERSION,"capabilities":{},"clientInfo":{"name":"revocation-test","version":"1"}}
+        });
+        let before = client
+            .post(format!("http://{address}/mcp"))
+            .bearer_auth(credential)
+            .header("mcp-protocol-version", MCP_PROTOCOL_VERSION)
+            .header("accept", "application/json, text/event-stream")
+            .json(&mcp_request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(before.status(), axum::http::StatusCode::OK);
+
+        let revoked = client
+            .post(format!(
+                "http://{address}/api/v1/agents/{agent_id}/revoke?participant=agent-owner"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), axum::http::StatusCode::NO_CONTENT);
+        let after = client
+            .post(format!("http://{address}/mcp"))
+            .bearer_auth(credential)
+            .header("mcp-protocol-version", MCP_PROTOCOL_VERSION)
+            .header("accept", "application/json, text/event-stream")
+            .json(&mcp_request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(after.status(), axum::http::StatusCode::UNAUTHORIZED);
+        server.abort();
     }
 
     #[tokio::test]
