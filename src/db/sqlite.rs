@@ -1066,6 +1066,46 @@ impl AgentRepository for SqliteChatRepository {
         })
     }
 
+    fn revoke_agent<'a>(&'a self, actor: UserId, agent_id: UserId) -> AgentFuture<'a, ()> {
+        Box::pin(async move {
+            let now = Utc::now();
+            let actor = actor.to_string();
+            let agent_id = agent_id.to_string();
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let changed = sqlx::query(
+                "update agent_profiles set revoked_at=? where agent_id=? and owner_id=? and revoked_at is null",
+            )
+            .bind(now)
+            .bind(&agent_id)
+            .bind(&actor)
+            .execute(&mut *transaction)
+            .await
+            .map_err(sql_error)?
+            .rows_affected();
+            if changed == 0 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query(
+                "update agent_credentials set revoked_at=? where agent_id=? and revoked_at is null",
+            )
+            .bind(now)
+            .bind(&agent_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(sql_error)?;
+            sqlx::query(
+                "update agent_grants set revoked_at=?,revoked_by=? where agent_id=? and revoked_at is null",
+            )
+            .bind(now)
+            .bind(&actor)
+            .bind(&agent_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)
+        })
+    }
+
     fn authenticate_agent<'a>(&'a self, credential: &'a str) -> AgentFuture<'a, AgentPrincipal> {
         Box::pin(async move {
             let hash = Sha256::digest(credential.as_bytes()).to_vec();
@@ -1350,7 +1390,7 @@ mod tests {
         let rows = sqlx::query_as::<_, (String, Option<String>, String, String, String)>(
             "select action, actor_id, target_kind, target_id, payload from audit_events \
              where action in ('agent.created', 'agent.grant_created', \
-             'agent.grant_changed', 'agent.grant_revoked', 'process.started', \
+             'agent.grant_changed', 'agent.grant_revoked', 'agent.revoked', 'process.started', \
              'process.correlation_requested', 'process.inspection_requested', \
              'circle.feature_changed', 'circle.deleted')",
         )
@@ -1362,6 +1402,7 @@ mod tests {
             "agent.grant_created",
             "agent.grant_changed",
             "agent.grant_revoked",
+            "agent.revoked",
             "process.started",
             "process.correlation_requested",
             "process.inspection_requested",

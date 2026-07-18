@@ -197,6 +197,21 @@ await fetch(`/api/v1/agent-grants/${grant.grant_id}/revoke`, { method: "POST" })
 Confirm HTTP 204. Expiry independently bounds both the credential and grant
 if the explicit revocation step is interrupted.
 
+Then revoke the whole evidence agent as defence in depth. This atomically
+revokes its profile, every credential and every remaining grant, and writes an
+`agent.revoked` audit event:
+
+```js
+const response = await fetch(`/api/v1/agents/${agent.agent_id}/revoke`, {
+  method: "POST",
+  credentials: "same-origin"
+});
+if (response.status !== 204) throw new Error(`agent revocation failed: ${response.status}`);
+```
+
+The previously issued bearer credential must receive HTTP 401 immediately;
+do not retain it for a later run.
+
 This MCP exercise proves the auditable agent write path and database latency;
 it does not substitute for the authenticated browser WebSocket reconnect and
 rolling-restart journey.

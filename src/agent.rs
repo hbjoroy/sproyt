@@ -98,6 +98,7 @@ pub trait AgentRepository: Send + Sync + 'static {
     fn create_agent<'a>(&'a self, command: CreateAgent) -> AgentFuture<'a, CreatedAgent>;
     fn grant_agent<'a>(&'a self, command: GrantAgent) -> AgentFuture<'a, Uuid>;
     fn revoke_grant<'a>(&'a self, actor: UserId, grant_id: Uuid) -> AgentFuture<'a, ()>;
+    fn revoke_agent<'a>(&'a self, actor: UserId, agent_id: UserId) -> AgentFuture<'a, ()>;
     fn authenticate_agent<'a>(&'a self, credential: &'a str) -> AgentFuture<'a, AgentPrincipal>;
     fn consume_rate_limit<'a>(
         &'a self,
@@ -139,6 +140,13 @@ impl AgentService {
     }
     pub async fn revoke(&self, actor: UserId, id: Uuid) -> Result<(), RepositoryError> {
         self.repository.revoke_grant(actor, id).await
+    }
+    pub async fn revoke_agent(
+        &self,
+        actor: UserId,
+        agent_id: UserId,
+    ) -> Result<(), RepositoryError> {
+        self.repository.revoke_agent(actor, agent_id).await
     }
     pub async fn require_scope(
         &self,

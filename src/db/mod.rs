@@ -688,6 +688,33 @@ where
         .revoke_grant(actor.clone(), reactivated_grant)
         .await
         .unwrap();
+    repository
+        .revoke_agent(actor.clone(), created_agent.agent_id.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        repository
+            .authenticate_agent(&created_agent.credential)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    ));
+    assert!(
+        !repository
+            .has_scope(
+                created_agent.agent_id.clone(),
+                None,
+                Some(channel.id.clone()),
+                AgentScope::ReadHistory
+            )
+            .await
+            .unwrap()
+    );
+    assert!(matches!(
+        repository
+            .revoke_agent(UserId::named("not-the-owner"), created_agent.agent_id)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    ));
 
     let link = repository
         .enqueue_start(process_start.clone())

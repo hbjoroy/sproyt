@@ -146,3 +146,8 @@ Later candidates:
 - `sproyt_get_channel_state`
 
 MCP tools should return the same domain concepts as WebSocket and HTTP, but shaped as tool-friendly JSON.
+
+Agent provisioning and revocation remain owner-authenticated HTTP control-plane
+operations. `POST /api/v1/agents/{id}/revoke` atomically revokes the profile,
+all bearer credentials and all grants; existing MCP credentials stop working
+immediately and the mutation is audited as `agent.revoked`.
