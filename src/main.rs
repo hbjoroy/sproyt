@@ -1884,6 +1884,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let reconnectAttempt = 0;
       let stableConnectionTimer = null;
       let sessionRefreshTimer = null;
+      let sessionRefreshReconnect = false;
       let renderMode = "view";
       let requestNumber = 0;
       let activeChannelId = null;
@@ -1899,7 +1900,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function scheduleSessionRefresh(seconds) {
         if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
-        sessionRefreshTimer = window.setTimeout(refreshSession, Math.max(30, seconds) * 1000);
+        sessionRefreshTimer = window.setTimeout(refreshSession, Math.max(1, seconds) * 1000);
+      }
+
+      function reconnectAfterSessionRefresh() {
+        if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+          connect(true);
+          return;
+        }
+        sessionRefreshReconnect = true;
+        if (socket.readyState === WebSocket.OPEN) socket.close(4000, "session refreshed");
       }
 
       async function performSessionRefresh() {
@@ -1922,6 +1932,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         const result = await response.json();
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
+        reconnectAfterSessionRefresh();
       }
 
       async function refreshSession() {
@@ -2044,7 +2055,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
 
-      function connect() {
+      function connect(silent = false) {
         if (reconnectTimer !== null) {
           window.clearTimeout(reconnectTimer);
           reconnectTimer = null;
@@ -2068,10 +2079,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const protocol = window.location.protocol === "https:" ? "wss" : "ws";
         const nextSocket = new WebSocket(`${protocol}://${window.location.host}/ws`);
         socket = nextSocket;
-        setConnected(false, "Koplar til ...");
+        if (!silent) setConnected(false, "Koplar til ...");
 
         nextSocket.addEventListener("open", () => {
           if (socket !== nextSocket) return;
+          if (sessionRefreshReconnect) {
+            nextSocket.close(4000, "session refreshed");
+            return;
+          }
           setConnected(true, "Tilkopla");
           stableConnectionTimer = window.setTimeout(() => {
             if (socket === nextSocket && nextSocket.readyState === WebSocket.OPEN) {
@@ -2100,6 +2115,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
             window.clearTimeout(stableConnectionTimer);
             stableConnectionTimer = null;
           }
+          if (event.code === 4000 && sessionRefreshReconnect) {
+            sessionRefreshReconnect = false;
+            socket = null;
+            connect(true);
+            return;
+          }
           if (event.code === 1008) {
             setConnected(false, "Økta er utløpt – opnar innlogging");
             window.location.assign("/auth/login");
@@ -2109,7 +2130,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         });
 
         nextSocket.addEventListener("error", () => {
-          if (socket === nextSocket) setConnected(false, "Mista sambandet");
+          if (socket === nextSocket && !sessionRefreshReconnect) setConnected(false, "Mista sambandet");
         });
       }
 
@@ -3505,6 +3526,9 @@ mod protocol_capacity_tests {
         assert!(body.contains("stableConnectionTimer = window.setTimeout"));
         assert!(body.contains("event.code === 1008"));
         assert!(body.contains("scheduleSessionRefresh(300)"));
+        assert!(body.contains("reconnectAfterSessionRefresh()"));
+        assert!(body.contains("connect(true)"));
+        assert!(body.contains("event.code === 4000 && sessionRefreshReconnect"));
         assert!(!body.contains("if (response.status === 401) {\n          window.location.assign"));
         assert!(body.contains("Fråkopla (${detail})"));
         assert!(body.contains("function acknowledgeLatest(channelId, messages)"));

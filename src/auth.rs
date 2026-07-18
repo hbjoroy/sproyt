@@ -29,6 +29,7 @@ use crate::{
 
 const LOGIN_TTL_SECONDS: u64 = 600;
 const SESSION_TTL_SECONDS: u64 = 8 * 60 * 60;
+const SESSION_REFRESH_LEAD_SECONDS: u64 = 60;
 pub const LOGIN_COOKIE: &str = "sproyt_oidc_tx";
 pub const SESSION_COOKIE: &str = "sproyt_session";
 
@@ -166,6 +167,14 @@ pub struct LoginComplete {
 pub struct SessionRenewal {
     pub set_cookie: String,
     pub refresh_after_seconds: u64,
+}
+
+fn refresh_after_seconds(max_age: u64) -> u64 {
+    if max_age > SESSION_REFRESH_LEAD_SECONDS {
+        max_age - SESSION_REFRESH_LEAD_SECONDS
+    } else {
+        (max_age / 2).max(1)
+    }
 }
 
 pub struct Logout {
@@ -482,7 +491,7 @@ impl OidcService {
         let value = self.codec.seal(&renewed)?;
         Ok(SessionRenewal {
             set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", max_age),
-            refresh_after_seconds: (max_age / 2).clamp(30, 300),
+            refresh_after_seconds: refresh_after_seconds(max_age),
         })
     }
 }
@@ -1073,7 +1082,7 @@ mod tests {
             .renew_session(Some(&complete.set_cookie))
             .await
             .unwrap();
-        assert_eq!(renewal.refresh_after_seconds, 150);
+        assert_eq!(renewal.refresh_after_seconds, 240);
         let renewed_cookie = renewal.set_cookie;
         let renewed: SessionClaims = service
             .codec
