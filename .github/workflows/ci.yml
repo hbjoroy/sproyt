@@ -162,7 +162,7 @@ jobs:
           insert into channels(id,slug,name,kind,created_by) values('01900000-0000-7000-8000-000000000002','recovery','Recovery','private','01900000-0000-7000-8000-000000000001');
           insert into channel_memberships(channel_id,user_id,role) values('01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001','owner');
           insert into channel_sequences(channel_id,next_sequence) values('01900000-0000-7000-8000-000000000002',2);
-          insert into messages(id,channel_id,sender_id,sequence,body) values('01900000-0000-7000-8000-000000000003','01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001',1,'restore-evidence');
+          insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values('01900000-0000-7000-8000-000000000003','01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001','Recovery user',1,'restore-evidence');
           SQL
       - name: Backup and restore into isolated database
         run: |
@@ -181,6 +181,7 @@ jobs:
           cargo run --locked -- migrate
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select max(sequence) from messages where channel_id='01900000-0000-7000-8000-000000000002'")" = "1"
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select sender_display_name from messages where id='01900000-0000-7000-8000-000000000003'")" = "Recovery user"
       - uses: actions/upload-artifact@v6
         with:
           name: recovery-drill-backup
