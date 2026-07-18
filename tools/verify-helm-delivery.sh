@@ -18,7 +18,8 @@ if "$helm_command" template sproyt "$chart" "${common[@]}" >/dev/null 2>&1; then
 fi
 
 rendered=$(mktemp)
-trap 'rm -f "$rendered"' EXIT
+heart_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$heart_rendered"' EXIT
 "$helm_command" template sproyt "$chart" "${common[@]}" \
   --set "image.digest=$digest" \
   --set imagePullSecrets[0].name=oci-pull-secret \
@@ -38,4 +39,27 @@ grep -F -q 'kubernetes.io/metadata.name: "sproyt"' "$rendered"
 test "$(grep -F -c -- "- name: oci-pull-secret" "$rendered")" -eq 2
 test "$(grep -F -c "serviceAccountName: default" "$rendered")" -eq 1
 
-echo "Helm delivery contract verified for $image"
+if "$helm_command" template sproyt "$chart" "${common[@]}" \
+  --set "image.digest=$digest" \
+  --set heart.enabled=true >/dev/null 2>&1; then
+  echo "production Heart rendering unexpectedly accepted an empty Heart digest" >&2
+  exit 1
+fi
+
+heart_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"$helm_command" template sproyt "$chart" "${common[@]}" \
+  --set "image.digest=$digest" \
+  --set imagePullSecrets[0].name=oci-pull-secret \
+  --set heart.enabled=true \
+  --set "heart.image.digest=$heart_digest" >"$heart_rendered"
+
+heart_image="oci.bjoroy.me/sproyt/heart@$heart_digest"
+test "$(grep -F -c "image: \"$heart_image\"" "$heart_rendered")" -eq 2
+grep -F -q 'SPROYT_HEART_URL: "http://sproyt-sproyt-heart:3000"' "$heart_rendered"
+grep -F -q "name: sproyt-sproyt-heart" "$heart_rendered"
+grep -F -q "app.kubernetes.io/part-of: sproyt" "$heart_rendered"
+grep -F -q "key: HEART_DATABASE_URL" "$heart_rendered"
+grep -F -q 'helm.sh/hook-weight: "-4"' "$heart_rendered"
+test "$(grep -F -c -- "- name: oci-pull-secret" "$heart_rendered")" -eq 4
+
+echo "Helm delivery contract verified for $image with optional internal $heart_image"

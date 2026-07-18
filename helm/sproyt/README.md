@@ -34,12 +34,30 @@ only `DATABASE_URL` and the log format: it does not initialize OIDC and remains
 available during provider outages, client-secret changes, and session-key
 rotation.
 
+Heart is an optional internal component of this same Helm release, not a
+separate ArgoCD application. Enabling `heart.enabled` creates a private
+ClusterIP Service, Deployment, migration Job, PDB, and NetworkPolicy in the
+Sprøyt namespace. It creates no Ingress. Pin `heart.image.digest` and add
+`HEART_DATABASE_URL` to the existing Secret before enabling it:
+
+```yaml
+heart:
+  enabled: true
+  image:
+    digest: sha256:<reviewed-heart-digest>
+```
+
+Unless `config.heartUrl` is explicitly overridden, Sprøyt is configured with
+the release-local service URL automatically. Disabling Heart removes only the
+process component; ordinary chat remains available.
+
 The default NetworkPolicy permits HTTPS egress, DNS, and PostgreSQL only to
 pods in the release namespace. For a database in another namespace set
 `networkPolicy.databaseSameNamespace=false` and provide namespace/pod selectors;
 for an external database provide the narrow `databaseCidrs`. Set
 `networkPolicy.ingressNamespaceSelector` for an ingress controller outside the
-release namespace. When `config.heartUrl` points to an in-cluster service on a
+release namespace. The bundled Heart component is admitted automatically only
+from the matching Sprøyt pods. When `config.heartUrl` instead points to an in-cluster service on a
 non-HTTPS port, set `networkPolicy.heartSameNamespace` or the Heart
 namespace/pod selectors (or a narrow `heartCidrs` entry) and `heartPort`.
 ConfigMap changes automatically roll pods. When the contents of the externally

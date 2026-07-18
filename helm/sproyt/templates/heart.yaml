@@ -1,0 +1,105 @@
+{{- if .Values.heart.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sproyt.heart.fullname" . }}
+  labels:
+    {{- include "sproyt.heart.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: heart
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.heart.service.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sproyt.heart.fullname" . }}
+  labels:
+    {{- include "sproyt.heart.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.heart.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: heart
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "sproyt.heart.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: heart
+          image: {{ include "sproyt.heart.image" . | quote }}
+          imagePullPolicy: {{ .Values.heart.image.pullPolicy }}
+          env:
+            - name: BIND_ADDR
+              value: 0.0.0.0:3000
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.heart.secret.existingSecret }}
+                  key: {{ .Values.heart.secret.databaseUrlKey }}
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            timeoutSeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.heart.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: heart
+              app.kubernetes.io/instance: {{ .Release.Name }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "sproyt.heart.fullname" . }}
+  labels:
+    {{- include "sproyt.heart.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.heart.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: heart
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
