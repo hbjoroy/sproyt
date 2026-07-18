@@ -17,22 +17,37 @@ gate has been signed off in the target environment.
 | S-08 | Implemented | `sproyt.chat.v1` envelopes plus WebSocket reconnect, idempotency, error and lag tests | None |
 | S-09 | Backend slice implemented; UI replacement required | `two_users_complete_private_circle_slice_with_unread_reconnect`; DOM-safe Markdown/raw view; strict, exact-version Mermaid rendering; CSP regression | Superseded technical demonstration UI must be replaced by S-21 through S-24 |
 | S-10 | Implemented | `AuthService`, deterministic development principals and production/dev rejection tests | None |
-| S-11 | Implemented, activation pending | OIDC discovery, PKCE, state, nonce, encrypted session, refresh, logout, key-rotation and revoked-user contracts in `auth.rs`; CI-tested provider verifier; live Cloudflare issuer `https://sproyt-security.bjoroy.me/application/o/sproyt/` verified 2026-07-17; production callback pinned to `https://sproyt.bjoroy.me/auth/callback` | Confirm client ID/strict redirects in Authentik and run the browser login, refresh, logout, revocation and key-rotation contract |
+| S-11 | Implemented and active | OIDC discovery, PKCE, state, nonce, encrypted session, optional refresh-token handling, logout, key-rotation and revoked-user contracts in `auth.rs`; live Authentik login and identity verified through Cloudflare; production callback and issuer pinned; 2026-07-18 browser session remained connected through periodic provider revalidation after the no-refresh-token loop fix | Complete destructive logout/revocation and key-rotation operations as a scheduled production security drill |
 | S-12 | Implemented | Central `Policy`, executable authorization matrix and mutation-audit migrations | Review target-environment audit retention/access |
 | S-13 | Implemented and published | Pinned scratch ARM64 image, restricted runtime contract, SBOM and vulnerability CI; registry evidence below | Retain CI and registry evidence with the release record |
 | S-14 | Implemented | Helm delivery verifier and kind install, migration, two-replica scale and rollback gate | Install in the ARM64 target cluster and provide manual Ingress |
 | S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, recovery CI, WebSocket capacity gate, safe MCP latency/idempotency evidence tool, owner-authorized audited circle deletion, and snapshot-consistent `sproyt.user-export.v1` self-export | Run target-sized MCP/browser load, name owners, accept privacy/retention and sign off rollout |
-| S-16 | Implemented | Sproyt `ProcessGateway` contract, real Heart contract at `6d8a3b5`, and the green `ea-heart-client` receive-message contract/CI at `9510cc4` | Configure the deployed Heart endpoint |
+| S-16 | Implemented; bundled activation pending | Sproyt `ProcessGateway` contract, real Heart contract at `6d8a3b5`, green `ea-heart-client` receive-message contract/CI at `9510cc4`, and optional private Heart component in the same Sprøyt Helm/Argo release at `71f20bf` | Add `HEART_DATABASE_URL` to the existing Sprøyt Secret and flip the single GitOps enable flag |
 | S-17 | Implemented | Durable process link/event/outbox state, stable command receipts, Heart `Idempotency-Key`/`X-Heart-Client`, exact replay, bounded retry and unknown-outcome lookup at Heart `6d8a3b5` | Exercise restart/rolling update in the target cluster |
-| S-18 | Pilot implemented; rollout pending | Event-planning definition, browser/MCP flow tests, kill switch, merged Heart PR 3 at `6d8a3b5`, real Heart receive/idempotent-start contract, and private Heart cluster guide | Exercise restart/rolling update in the target cluster |
+| S-18 | Pilot implemented; bundled rollout pending | Event-planning definition, browser/MCP flow tests, kill switch, merged Heart PR 3 at `6d8a3b5`, real Heart receive/idempotent-start contract, same-release private Service/Deployment/migration/PDB/NetworkPolicy, and updated cluster guide | Provision the Heart database key, enable it in the existing Sprøyt Application, then exercise restart/rolling update |
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks, WebSocket/MCP adapter-conformance tests, and bounded production MCP load-evidence tool | Issue a short-lived scoped credential and exercise the production endpoint |
-| S-21 | Implemented; rollout pending | Production session boundary; local encrypted-session validation; periodic provider revalidation; profile/logout shell; no simulated browser identity; 2026-07-17 desktop/mobile browser journey | Review OIDC redirect and logout against Authentik after deployment |
-| S-22 | Implemented; rollout pending | Responsive navigation/timeline/composer; circle-grouped channels; human-readable sender labels; visible keyboard focus; bounded exponential reconnect; draft preservation; active-channel read markers/unread badges; 2026-07-17 desktop/mobile and real server-restart browser passes | Validate the same journey through production OIDC after deployment |
+| S-21 | Implemented and active | Production session boundary; encrypted session; periodic provider revalidation; profile/logout shell; no simulated production identity; live Authentik identity and stable production session verified 2026-07-18 | Retain logout/revocation in the scheduled security drill |
+| S-22 | Implemented and active | Responsive navigation/timeline/composer; circle-grouped channels; human-readable sender labels; visible keyboard focus; bounded exponential reconnect; draft preservation; read markers/unread badges; production `# general` loaded with active composer and remained connected beyond reauthentication 2026-07-18 | Complete two-user/mobile usability sign-off |
 | S-23 | Implemented; rollout pending | Guided circle creation with automatic `Prat` channel; selected-circle invite action; shareable invite links; OIDC-signed return path; copy/fallback UX; link recognition and actionable invalid/expired feedback; existing two-user authorization contract plus 2026-07-17 browser journey | Exercise owner-to-fresh-user invite through production Authentik after deployment |
-| S-24 | In progress | Advanced Heart/process controls are omitted from the normal UI by a server/Helm flag that defaults off; existing CSP, focus, mobile, reconnect and browser-capacity gates; immutable ARM64/GitOps rollout; 20/20 public readiness and global security-header pass | Complete authenticated OIDC/two-user/mobile/reconnect/logout acceptance |
+| S-24 | In progress | Advanced controls default off; Heart is now an optional private component of the same Sprøyt release; CSP, focus, mobile, reconnect and capacity gates; immutable ARM64/GitOps rollout; 20/20 readiness; live OIDC identity and stable reconnect/reauth acceptance | Complete two-user/mobile/logout acceptance and Heart failure-isolation pass |
 
 ## Current immutable image evidence
+
+The current production chat revision
+`2c84c16c7a9bc40d61903b19f96d655168f4f578` is published as:
+
+```text
+oci.bjoroy.me/sproyt/sproyt:2c84c16c7a9bc40d61903b19f96d655168f4f578
+sha256:5ecc4ad52ed8c033dbf4d19d7055b3f0cf470f673e8dfea8b2a67c816151a26e
+```
+
+GitOps pins the binary digest and chart revision
+`71f20bfe9f03fe54bc3338a1c029dc65b2423dbb`. On 2026-07-18 the authenticated
+production client loaded the correct Authentik identity and `# general`, kept
+the composer enabled, and remained `Tilkopla` through the 30-second provider
+reauthentication boundary. The browser source proved the previous proactive
+refresh redirect loop absent.
 
 On 2026-07-17, the reviewed application merge commit
 `b28dea405b725e798ceb2a2fc32445dde272b6d6` was imported into Zot as:
