@@ -53,9 +53,14 @@ where not exists (select from pg_roles where rolname = 'heart') \gexec
 select format('alter role heart password %L', :'app_password') \gexec
 select 'create database heart owner heart'
 where not exists (select from pg_database where datname = 'heart') \gexec
+alter database heart owner to heart;
+grant connect, create, temporary on database heart to heart;
 \connect heart
 alter schema public owner to heart;
 grant usage, create on schema public to heart;
+create schema if not exists heart authorization heart;
+alter schema heart owner to heart;
+grant usage, create on schema heart to heart;
 SQL
 
 HEART_DATABASE_URL="postgresql://heart:${HEART_DB_PASSWORD}@postgres-postgresql.database.svc.cluster.local:5432/heart"
