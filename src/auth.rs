@@ -138,6 +138,13 @@ impl AuthService {
         }
     }
 
+    pub fn session_refresh_after(&self, cookie_header: Option<&str>) -> Result<u64, AuthError> {
+        match self {
+            Self::Development => Ok(300),
+            Self::Oidc(service) => service.session_refresh_after(cookie_header),
+        }
+    }
+
     pub fn logout(&self) -> Logout {
         match self {
             Self::Development => Logout {
@@ -401,6 +408,15 @@ impl OidcService {
         let claims: SessionClaims = self.codec.open(value)?;
         validate_session_claims(&claims, &self.issuer)?;
         principal(&claims.issuer, &claims.subject, &claims.display_name)
+    }
+
+    fn session_refresh_after(&self, cookie_header: Option<&str>) -> Result<u64, AuthError> {
+        let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
+        let claims: SessionClaims = self.codec.open(value)?;
+        validate_session_claims(&claims, &self.issuer)?;
+        Ok(refresh_after_seconds(
+            claims.expires_at.saturating_sub(now_seconds()),
+        ))
     }
 
     async fn revalidate_session(

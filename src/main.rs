@@ -121,6 +121,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/metrics", get(metrics))
         .route("/auth/login", get(auth_login))
         .route("/auth/callback", get(auth_callback))
+        .route("/auth/session", get(auth_session))
         .route("/auth/refresh", post(auth_refresh))
         .route("/auth/logout", get(auth_logout))
         .route("/api/v1/me/export", get(export_my_data))
@@ -1383,6 +1384,20 @@ async fn auth_refresh(
     }
 }
 
+async fn auth_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    match state.auth.session_refresh_after(cookie) {
+        Ok(refresh_after_seconds) => Json(serde_json::json!({
+            "refresh_after_seconds": refresh_after_seconds
+        }))
+        .into_response(),
+        Err(error) => auth_error_response(error),
+    }
+}
+
 fn redirect_with_cookies(location: &str, cookies: &[String]) -> axum::response::Response {
     let mut response = axum::http::StatusCode::SEE_OTHER.into_response();
     let headers = response.headers_mut();
@@ -1946,7 +1961,20 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
 
-      refreshSession().catch(() => scheduleSessionRefresh(30));
+      async function scheduleInitialSessionRefresh() {
+        const response = await fetch("/auth/session", {
+          credentials: "same-origin",
+          headers: { "accept": "application/json" }
+        });
+        if (!response.ok) {
+          scheduleSessionRefresh(30);
+          return;
+        }
+        const result = await response.json();
+        scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
+      }
+
+      scheduleInitialSessionRefresh().catch(() => scheduleSessionRefresh(30));
 
       connectForm.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -3526,6 +3554,9 @@ mod protocol_capacity_tests {
         assert!(body.contains("stableConnectionTimer = window.setTimeout"));
         assert!(body.contains("event.code === 1008"));
         assert!(body.contains("scheduleSessionRefresh(300)"));
+        assert!(body.contains("fetch(\"/auth/session\""));
+        assert!(body.contains("scheduleInitialSessionRefresh()"));
+        assert!(!body.contains("refreshSession().catch"));
         assert!(body.contains("reconnectAfterSessionRefresh()"));
         assert!(body.contains("connect(true)"));
         assert!(body.contains("event.code === 4000 && sessionRefreshReconnect"));
