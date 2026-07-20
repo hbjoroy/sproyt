@@ -34,21 +34,26 @@ gate has been signed off in the target environment.
 
 ## Current immutable image evidence
 
-The current production chat revision
-`42ee56b734c876506ed3b7a1138e1326df56a3fb` is published as:
+The current GitOps-targeted chat revision
+`f7c44b135f4e551a9c84ea56c49bd678b93e9c46` is published as:
 
 ```text
-oci.bjoroy.me/sproyt/sproyt:42ee56b734c876506ed3b7a1138e1326df56a3fb
-sha256:9bd3a8d524adbb4a82ae60335fd7f6487ebcc28a3ec15d7f1cadc0402cdbffb7
+oci.bjoroy.me/sproyt/sproyt:f7c44b135f4e551a9c84ea56c49bd678b93e9c46
+sha256:d9b4785ccbf48da195438a2078c3b6bd0e854eace3ff8551600dc239cc612c0b
 ```
 
-GitOps commit `e3a26d3` pins this binary digest and chart revision. Main CI run
-`29681494619` passed format/lint/test, PostgreSQL contract, backup/restore,
+GitOps commit `d82fa39` pins this binary digest and chart revision. Main CI run
+`29732445335` passed format/lint/test, PostgreSQL contract including the atomic
+two-replica presence handoff, backup/restore,
 dependency audit, ARM64/native image delivery, Helm/kind rollout, SBOM and
-vulnerability gates. The release overlaps old and refreshed WebSockets so the
-new connection can restore subscriptions before the old connection retires.
-Two-user production acceptance through a complete refresh interval remains
-open and is not inferred from CI.
+vulnerability gates. The registry digest was read back after authenticated Zot
+import, and the GitOps Helm render pins it for both the migration Job and the
+application pods. The release overlaps old and refreshed WebSockets and keeps
+both connections in one PostgreSQL-backed presence lease set, so the new
+connection can restore subscriptions before the old connection retires without
+a false leave transition. Target-cluster Argo state and two-user production
+acceptance through a complete refresh interval remain open and are not inferred
+from CI or public readiness.
 
 On 2026-07-20, the public production boundary returned `ok` from `/healthz`,
 `ready` from `/readyz`, redirected anonymous traffic to `/auth/login`, and
