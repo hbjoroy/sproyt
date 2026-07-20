@@ -60,8 +60,9 @@ operator in the release evidence.
 
 1. Run CI and retain its rendered manifest, SBOM, and vulnerability report.
 2. Back up PostgreSQL and run the pre-upgrade migration Job once.
-3. Deploy by immutable image digest. Confirm migration Job success and both
-   probes before admitting traffic.
+3. Deploy by immutable image digest. Confirm migration Job success, both
+   probes, and that public `/versionz` reports the GitOps application revision
+   before admitting traffic.
 4. Smoke-test login, create/list channel, send, reconnect/catch-up, and logout.
 5. Watch readiness, errors, latency, restarts, PostgreSQL connections, and
    storage for at least 15 minutes.
