@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Duration;
 use chrono::Utc;
@@ -15,12 +17,13 @@ use crate::agent::{
 };
 use crate::domain::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
-    ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId, CircleInvitation,
-    CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation,
-    DeleteCircle, DisplayName, ExportedChannel, ExportedCircle, InvitationId, IssuedInvitation,
-    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MembershipRole,
-    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport,
-    RepositoryError, RepositoryFuture, SendMessage, User, UserId,
+    ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleId,
+    CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
+    CreateCircleInvitation, DeleteCircle, DisplayName, ExportedChannel, ExportedCircle,
+    InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
+    Membership, MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
+    PortableUserExport, PresenceLease, RepositoryError, RepositoryFuture, SendMessage, User,
+    UserId,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -36,6 +39,7 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres
 pub struct PostgresChatRepository {
     pool: PgPool,
     messages: broadcast::Sender<MessageId>,
+    presence: broadcast::Sender<ChatEvent>,
 }
 
 impl PostgresChatRepository {
@@ -46,22 +50,41 @@ impl PostgresChatRepository {
             .listen("sproyt_messages")
             .await
             .map_err(sql_error)?;
+        listener
+            .listen("sproyt_presence")
+            .await
+            .map_err(sql_error)?;
         let (messages, _) = broadcast::channel(1024);
-        let publisher = messages.clone();
+        let (presence, _) = broadcast::channel(1024);
+        let message_publisher = messages.clone();
+        let presence_publisher = presence.clone();
         tokio::spawn(async move {
             loop {
                 match listener.recv().await {
-                    Ok(notification) => match uuid::Uuid::parse_str(notification.payload()) {
-                        Ok(id) => {
-                            let _ = publisher.send(MessageId::from_uuid(id));
-                        }
-                        Err(_) => {
-                            tracing::warn!(
+                    Ok(notification) if notification.channel() == "sproyt_messages" => {
+                        match uuid::Uuid::parse_str(notification.payload()) {
+                            Ok(id) => {
+                                let _ = message_publisher.send(MessageId::from_uuid(id));
+                            }
+                            Err(_) => tracing::warn!(
                                 error_kind = "invalid_uuid",
                                 "ignored invalid sproyt_messages notification"
-                            )
+                            ),
                         }
-                    },
+                    }
+                    Ok(notification) if notification.channel() == "sproyt_presence" => {
+                        match serde_json::from_str::<ChatEvent>(notification.payload()) {
+                            Ok(event @ ChatEvent::ParticipantJoined { .. })
+                            | Ok(event @ ChatEvent::ParticipantLeft { .. }) => {
+                                let _ = presence_publisher.send(event);
+                            }
+                            _ => tracing::warn!(
+                                error_kind = "invalid_presence",
+                                "ignored invalid sproyt_presence notification"
+                            ),
+                        }
+                    }
+                    Ok(_) => {}
                     Err(_) => {
                         tracing::error!(
                             error_kind = "database_listener",
@@ -72,7 +95,11 @@ impl PostgresChatRepository {
                 }
             }
         });
-        Ok(Self { pool, messages })
+        Ok(Self {
+            pool,
+            messages,
+            presence,
+        })
     }
 
     pub async fn migrate(&self) -> Result<(), RepositoryError> {
@@ -691,6 +718,147 @@ impl ChatRepository for PostgresChatRepository {
     fn subscribe_messages(&self) -> Option<broadcast::Receiver<MessageId>> {
         Some(self.messages.subscribe())
     }
+
+    fn subscribe_presence(&self) -> Option<broadcast::Receiver<ChatEvent>> {
+        Some(self.presence.subscribe())
+    }
+
+    fn register_presence<'a>(
+        &'a self,
+        lease: PresenceLease,
+        ttl: std::time::Duration,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let expires_at = Utc::now() + Duration::from_std(ttl).map_err(storage)?;
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            lock_presence(&mut tx, &lease.channel_id, &lease.participant_id).await?;
+            sqlx::query("delete from presence_leases where channel_id=$1 and user_id=$2 and expires_at <= now()")
+                .bind(*lease.channel_id.as_uuid()).bind(*lease.participant_id.as_uuid())
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            let was_present: bool = sqlx::query_scalar("select exists(select 1 from presence_leases where channel_id=$1 and user_id=$2 and expires_at > now())")
+                .bind(*lease.channel_id.as_uuid()).bind(*lease.participant_id.as_uuid())
+                .fetch_one(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into presence_leases(channel_id,user_id,connection_id,expires_at) values($1,$2,$3,$4) on conflict(connection_id) do update set expires_at=excluded.expires_at")
+                .bind(*lease.channel_id.as_uuid()).bind(*lease.participant_id.as_uuid())
+                .bind(lease.connection_id).bind(expires_at)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            if !was_present {
+                notify_presence(
+                    &mut tx,
+                    ChatEvent::ParticipantJoined {
+                        channel_id: lease.channel_id,
+                        participant_id: lease.participant_id,
+                    },
+                )
+                .await?;
+            }
+            tx.commit().await.map_err(sql_error)
+        })
+    }
+
+    fn renew_presence<'a>(
+        &'a self,
+        leases: Vec<PresenceLease>,
+        ttl: std::time::Duration,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let expires_at = Utc::now() + Duration::from_std(ttl).map_err(storage)?;
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            for lease in leases {
+                sqlx::query("update presence_leases set expires_at=$1 where connection_id=$2 and channel_id=$3 and user_id=$4")
+                    .bind(expires_at).bind(lease.connection_id)
+                    .bind(*lease.channel_id.as_uuid()).bind(*lease.participant_id.as_uuid())
+                    .execute(&mut *tx).await.map_err(sql_error)?;
+            }
+            tx.commit().await.map_err(sql_error)
+        })
+    }
+
+    fn unregister_presence<'a>(&'a self, lease: PresenceLease) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            lock_presence(&mut tx, &lease.channel_id, &lease.participant_id).await?;
+            let removed = sqlx::query("delete from presence_leases where connection_id=$1 and channel_id=$2 and user_id=$3")
+                .bind(lease.connection_id).bind(*lease.channel_id.as_uuid())
+                .bind(*lease.participant_id.as_uuid())
+                .execute(&mut *tx).await.map_err(sql_error)?.rows_affected() > 0;
+            let remains: bool = sqlx::query_scalar("select exists(select 1 from presence_leases where channel_id=$1 and user_id=$2 and expires_at > now())")
+                .bind(*lease.channel_id.as_uuid()).bind(*lease.participant_id.as_uuid())
+                .fetch_one(&mut *tx).await.map_err(sql_error)?;
+            if removed && !remains {
+                notify_presence(
+                    &mut tx,
+                    ChatEvent::ParticipantLeft {
+                        channel_id: lease.channel_id,
+                        participant_id: lease.participant_id,
+                    },
+                )
+                .await?;
+            }
+            tx.commit().await.map_err(sql_error)
+        })
+    }
+
+    fn expire_presence(&self) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            let expired: Vec<(Uuid, Uuid)> = sqlx::query_as(
+                "select distinct channel_id,user_id from presence_leases where expires_at <= now() limit 1000"
+            ).fetch_all(&self.pool).await.map_err(sql_error)?;
+            let mut seen = HashSet::new();
+            for (channel_uuid, user_uuid) in expired {
+                if !seen.insert((channel_uuid, user_uuid)) {
+                    continue;
+                }
+                let channel_id = ChannelId::from_uuid(channel_uuid);
+                let participant_id = UserId::from_uuid(user_uuid);
+                let mut tx = self.pool.begin().await.map_err(sql_error)?;
+                lock_presence(&mut tx, &channel_id, &participant_id).await?;
+                let removed = sqlx::query("delete from presence_leases where channel_id=$1 and user_id=$2 and expires_at <= now()")
+                    .bind(channel_uuid).bind(user_uuid).execute(&mut *tx).await.map_err(sql_error)?.rows_affected() > 0;
+                let remains: bool = sqlx::query_scalar("select exists(select 1 from presence_leases where channel_id=$1 and user_id=$2 and expires_at > now())")
+                    .bind(channel_uuid).bind(user_uuid).fetch_one(&mut *tx).await.map_err(sql_error)?;
+                if removed && !remains {
+                    notify_presence(
+                        &mut tx,
+                        ChatEvent::ParticipantLeft {
+                            channel_id,
+                            participant_id,
+                        },
+                    )
+                    .await?;
+                }
+                tx.commit().await.map_err(sql_error)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+async fn lock_presence(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    channel_id: &ChannelId,
+    participant_id: &UserId,
+) -> Result<(), RepositoryError> {
+    sqlx::query("select pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text, 0))")
+        .bind(*channel_id.as_uuid())
+        .bind(*participant_id.as_uuid())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    Ok(())
+}
+
+async fn notify_presence(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    event: ChatEvent,
+) -> Result<(), RepositoryError> {
+    let payload = serde_json::to_string(&event).map_err(storage)?;
+    sqlx::query("select pg_notify('sproyt_presence', $1)")
+        .bind(payload)
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    Ok(())
 }
 
 impl ProcessRepository for PostgresChatRepository {
@@ -1359,6 +1527,95 @@ fn circle_with_role(row: PgRow) -> Result<(Circle, CircleRole), RepositoryError>
 mod tests {
     use super::*;
     use crate::domain::{PrincipalKind, User};
+
+    #[tokio::test]
+    async fn presence_handoff_is_atomic_across_postgres_replicas() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let first = PostgresChatRepository::connect(&url).await.unwrap();
+        first.migrate().await.unwrap();
+        let second = PostgresChatRepository::connect(&url).await.unwrap();
+        let mut first_events = first.subscribe_presence().unwrap();
+        let mut second_events = second.subscribe_presence().unwrap();
+        let suffix = Uuid::now_v7().simple().to_string();
+        let user = UserId::named(format!("presence-{suffix}"));
+        first
+            .upsert_user(User {
+                id: user.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Presence user").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        let channel = first
+            .create_channel(CreateChannel {
+                actor: user.clone(),
+                slug: ChannelSlug::new(format!("presence-{suffix}")).unwrap(),
+                name: DisplayName::new("Presence").unwrap(),
+                kind: ChannelKind::Private,
+                circle_id: None,
+            })
+            .await
+            .unwrap();
+        let lease_one = PresenceLease {
+            channel_id: channel.id.clone(),
+            participant_id: user.clone(),
+            connection_id: Uuid::now_v7(),
+        };
+        let lease_two = PresenceLease {
+            connection_id: Uuid::now_v7(),
+            ..lease_one.clone()
+        };
+
+        first
+            .register_presence(lease_one.clone(), std::time::Duration::from_secs(75))
+            .await
+            .unwrap();
+        for events in [&mut first_events, &mut second_events] {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .expect("replica missed participant_joined")
+                .unwrap();
+            assert_eq!(
+                event,
+                ChatEvent::ParticipantJoined {
+                    channel_id: channel.id.clone(),
+                    participant_id: user.clone()
+                }
+            );
+        }
+
+        second
+            .register_presence(lease_two.clone(), std::time::Duration::from_secs(75))
+            .await
+            .unwrap();
+        first.unregister_presence(lease_one).await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), first_events.recv())
+                .await
+                .is_err(),
+            "overlapping handoff emitted a false presence transition"
+        );
+
+        second.unregister_presence(lease_two).await.unwrap();
+        for events in [&mut first_events, &mut second_events] {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .expect("replica missed participant_left")
+                .unwrap();
+            assert_eq!(
+                event,
+                ChatEvent::ParticipantLeft {
+                    channel_id: channel.id.clone(),
+                    participant_id: user.clone()
+                }
+            );
+        }
+    }
 
     #[tokio::test]
     async fn postgres_repository_persists_and_reads_messages() {

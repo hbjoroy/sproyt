@@ -337,7 +337,15 @@ async fn execute_command(
             .accept_circle_invitation(participant_id.clone(), token)
             .await
             .map(|membership| ServerEvent::CircleInvitationAccepted { membership }),
-        ClientCommand::Ping => Ok(ServerEvent::Pong),
+        ClientCommand::Ping => {
+            let active = subscriptions
+                .iter()
+                .map(|(channel_id, subscription)| (channel_id.clone(), subscription.connection_id))
+                .collect();
+            chat.renew_presence(participant_id.clone(), active)
+                .await
+                .map(|()| ServerEvent::Pong)
+        }
     };
 
     match result {

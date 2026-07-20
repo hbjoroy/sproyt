@@ -3,13 +3,14 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
-use std::{fmt, future::Future, pin::Pin};
+use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
 
 use super::{
-    AcceptCircleInvitation, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatMessage,
-    Circle, CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation,
-    DeleteCircle, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
-    Membership, MessageId, PortableUserExport, SendMessage, User, UserId,
+    AcceptCircleInvitation, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatEvent,
+    ChatMessage, Circle, CircleMembership, CircleRole, CreateChannel, CreateCircle,
+    CreateCircleInvitation, DeleteCircle, IssuedInvitation, JoinChannel, LeaveChannel,
+    LoadRecentMessages, MarkRead, Membership, MessageId, PortableUserExport, SendMessage, User,
+    UserId,
 };
 #[cfg(test)]
 use super::{
@@ -23,6 +24,14 @@ use chrono::{Duration, Utc};
 #[cfg(test)]
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PresenceLease {
+    pub channel_id: ChannelId,
+    pub participant_id: UserId,
+    pub connection_id: Uuid,
+}
 
 pub type RepositoryFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, RepositoryError>> + Send + 'a>>;
@@ -70,6 +79,29 @@ pub trait ChatRepository: Send + Sync + 'static {
     fn mark_read<'a>(&'a self, command: MarkRead) -> RepositoryFuture<'a, Membership>;
     fn subscribe_messages(&self) -> Option<broadcast::Receiver<MessageId>> {
         None
+    }
+    fn subscribe_presence(&self) -> Option<broadcast::Receiver<ChatEvent>> {
+        None
+    }
+    fn register_presence<'a>(
+        &'a self,
+        _lease: PresenceLease,
+        _ttl: StdDuration,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn renew_presence<'a>(
+        &'a self,
+        _leases: Vec<PresenceLease>,
+        _ttl: StdDuration,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn unregister_presence<'a>(&'a self, _lease: PresenceLease) -> RepositoryFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn expire_presence(&self) -> RepositoryFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
     }
 }
 

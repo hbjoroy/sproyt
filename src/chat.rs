@@ -14,13 +14,14 @@ use crate::domain::{
     ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
     CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName,
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership,
-    MessageBody, MessageId, MessageLimit, RepositoryError, SendMessage, TextValidationError, User,
-    UserId,
+    MessageBody, MessageId, MessageLimit, PresenceLease, RepositoryError, SendMessage,
+    TextValidationError, User, UserId,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
 const CHANNEL_EVENT_CAPACITY: usize = 256;
 const PUBLISHED_MESSAGE_CACHE: usize = 4096;
+const PRESENCE_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(75);
 
 #[derive(Clone)]
 pub struct ChatEngine {
@@ -59,7 +60,45 @@ impl ChatEngine {
                 }
             });
         }
-        tokio::spawn(ChatActor::new(repository.clone()).run(receiver));
+        let distributed_presence = if let Some(mut notifications) = repository.subscribe_presence()
+        {
+            let notification_mailbox = mailbox.clone();
+            tokio::spawn(async move {
+                loop {
+                    match notifications.recv().await {
+                        Ok(event) => {
+                            if notification_mailbox
+                                .send(Command::ExternalPresence { event })
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(skipped, "database presence listener lagged");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+            true
+        } else {
+            false
+        };
+        let sweep_mailbox = mailbox.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                if sweep_mailbox.send(Command::ExpirePresence).await.is_err() {
+                    break;
+                }
+            }
+        });
+        tokio::spawn(ChatActor::new(repository.clone(), distributed_presence).run(receiver));
         Self {
             mailbox,
             repository,
@@ -320,6 +359,25 @@ impl ChatEngine {
         response.await.map_err(|_| ChatError::EngineStopped)?
     }
 
+    pub async fn renew_presence(
+        &self,
+        participant_id: UserId,
+        subscriptions: Vec<(ChannelId, ConnectionId)>,
+    ) -> Result<(), ChatError> {
+        let leases = subscriptions
+            .into_iter()
+            .map(|(channel_id, connection_id)| PresenceLease {
+                channel_id,
+                participant_id: participant_id.clone(),
+                connection_id: connection_id.0,
+            })
+            .collect();
+        self.repository
+            .renew_presence(leases, PRESENCE_LEASE_TTL)
+            .await
+            .map_err(ChatError::from)
+    }
+
     #[cfg(test)]
     pub async fn send_message(
         &self,
@@ -461,6 +519,10 @@ enum Command {
     ExternalMessage {
         message_id: MessageId,
     },
+    ExternalPresence {
+        event: ChatEvent,
+    },
+    ExpirePresence,
 }
 
 struct ChatActor {
@@ -468,15 +530,17 @@ struct ChatActor {
     published_messages: HashSet<MessageId>,
     published_order: VecDeque<MessageId>,
     repository: Arc<dyn ChatRepository>,
+    distributed_presence: bool,
 }
 
 impl ChatActor {
-    fn new(repository: Arc<dyn ChatRepository>) -> Self {
+    fn new(repository: Arc<dyn ChatRepository>, distributed_presence: bool) -> Self {
         Self {
             channels: HashMap::new(),
             published_messages: HashSet::new(),
             published_order: VecDeque::with_capacity(PUBLISHED_MESSAGE_CACHE),
             repository,
+            distributed_presence,
         }
     }
 
@@ -497,7 +561,7 @@ impl ChatActor {
                     connection_id,
                     reply,
                 } => {
-                    self.leave(channel_id, participant_id, connection_id);
+                    self.leave(channel_id, participant_id, connection_id).await;
                     let _ = reply.send(Ok(()));
                 }
                 Command::SendMessage {
@@ -521,6 +585,15 @@ impl ChatActor {
                         ),
                     }
                 }
+                Command::ExternalPresence { event } => self.publish_presence(event),
+                Command::ExpirePresence => {
+                    if let Err(error) = self.repository.expire_presence().await {
+                        tracing::warn!(
+                            error_kind = error.kind(),
+                            "failed to expire presence leases"
+                        );
+                    }
+                }
             }
         }
     }
@@ -539,21 +612,47 @@ impl ChatActor {
                 after: None,
             })
             .await?;
-        let channel = self.channel_mut(channel_id.clone());
         let connection_id = ConnectionId::generate();
-        let connections = channel
-            .participants
-            .entry(participant_id.clone())
-            .or_default();
-        let is_new_participant = connections.is_empty();
-        connections.insert(connection_id);
-        let receiver = channel.events.subscribe();
+        let (is_new_participant, receiver) = {
+            let channel = self.channel_mut(channel_id.clone());
+            let connections = channel
+                .participants
+                .entry(participant_id.clone())
+                .or_default();
+            let is_new_participant = connections.is_empty();
+            connections.insert(connection_id);
+            (is_new_participant, channel.events.subscribe())
+        };
 
-        if is_new_participant {
-            channel.publish(ChatEvent::ParticipantJoined {
-                channel_id,
-                participant_id,
-            });
+        if self.distributed_presence {
+            if let Err(error) = self
+                .repository
+                .register_presence(
+                    PresenceLease {
+                        channel_id: channel_id.clone(),
+                        participant_id: participant_id.clone(),
+                        connection_id: connection_id.0,
+                    },
+                    PRESENCE_LEASE_TTL,
+                )
+                .await
+            {
+                if let Some(channel) = self.channels.get_mut(&channel_id)
+                    && let Some(connections) = channel.participants.get_mut(&participant_id)
+                {
+                    connections.remove(&connection_id);
+                    if connections.is_empty() {
+                        channel.participants.remove(&participant_id);
+                    }
+                }
+                return Err(error.into());
+            }
+        } else if is_new_participant {
+            self.channel_mut(channel_id.clone())
+                .publish(ChatEvent::ParticipantJoined {
+                    channel_id,
+                    participant_id,
+                });
         }
         Ok(ChannelSubscription {
             connection_id,
@@ -562,7 +661,7 @@ impl ChatActor {
         })
     }
 
-    fn leave(
+    async fn leave(
         &mut self,
         channel_id: ChannelId,
         participant_id: UserId,
@@ -579,13 +678,31 @@ impl ChatActor {
                     connections.remove(&connection_id);
                     connections.is_empty()
                 });
-        if should_publish_left {
+        if self.distributed_presence {
+            let _ = self
+                .repository
+                .unregister_presence(PresenceLease {
+                    channel_id,
+                    participant_id,
+                    connection_id: connection_id.0,
+                })
+                .await;
+        } else if should_publish_left {
             channel.participants.remove(&participant_id);
             channel.publish(ChatEvent::ParticipantLeft {
                 channel_id,
                 participant_id,
             });
         }
+    }
+
+    fn publish_presence(&mut self, event: ChatEvent) {
+        let channel_id = match &event {
+            ChatEvent::ParticipantJoined { channel_id, .. }
+            | ChatEvent::ParticipantLeft { channel_id, .. } => channel_id.clone(),
+            _ => return,
+        };
+        self.channel_mut(channel_id).publish(event);
     }
 
     async fn send_message(
