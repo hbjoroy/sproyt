@@ -120,13 +120,18 @@ many quiet channels, reconnect/catch-up, rolling restart, and a temporarily
 unavailable database. Pass only when the objectives above hold, sequences stay
 unique and contiguous, and recovery creates no duplicate acknowledged message.
 
-CI also runs `websocket_capacity_reconnect_and_service_restart_gate` as a fast
-regression baseline. It uses the real `sproyt.chat.v1` WebSocket adapter, sends
-40 durable messages, enforces the 750 ms p99 send objective, restarts the
-application service, and requires an exact cursor-based catch-up within five
-seconds. This deterministic single-process gate catches protocol and recovery
-regressions early; it does not replace the two-replica, production-sized
-PostgreSQL exercise required before a material traffic increase.
+CI runs two fast `sproyt.chat.v1` recovery baselines. The SQLite
+`websocket_capacity_reconnect_and_service_restart_gate` sends 40 durable
+messages, enforces the 750 ms p99 send objective, restarts the application
+service, and requires exact cursor catch-up within five seconds. The PostgreSQL
+`postgres_two_replica_realtime_and_restart_catch_up_gate` starts two independent
+application processes with separate LISTEN connections, proves live delivery
+between them, stops one process, accepts a message on the surviving replica,
+and requires the restarted replica to catch up within five seconds. It also
+proves that a freshly migrated database exposes the global `general` channel to
+every authenticated user. These deterministic gates catch protocol,
+cross-replica and recovery regressions early; they do not replace the
+production-sized exercise required before a material traffic increase.
 
 For the write portion of the target MCP/agent exercise, create a dedicated
 empty channel. In an authenticated owner browser, open the developer console
