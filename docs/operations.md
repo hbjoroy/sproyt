@@ -133,6 +133,18 @@ every authenticated user. These deterministic gates catch protocol,
 cross-replica and recovery regressions early; they do not replace the
 production-sized exercise required before a material traffic increase.
 
+## Heart failure isolation
+
+Heart is an optional internal dependency, not part of the ordinary chat write
+path. Process commands are committed to the durable outbox before delivery;
+retryable Heart failures leave the command queued with bounded backoff. The
+`heart_unavailable_does_not_interrupt_chat_and_recovers_once` regression runs
+the real HTTP gateway against a controllable 503 endpoint, proves that a chat
+message can still be sent and read during the outage, restores Heart, and
+requires exactly one durable `process.started` event. A release still needs the
+target-cluster rolling-update and end-to-end pilot observations in the release
+checklist.
+
 For the write portion of the target MCP/agent exercise, create a dedicated
 empty channel. In an authenticated owner browser, open the developer console
 and run the following with that channel ID. This uses the browser session

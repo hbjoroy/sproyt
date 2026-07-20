@@ -3405,7 +3405,13 @@ mod protocol_capacity_tests {
         process::{ProcessRepository, ProcessService, StartedProcess},
     };
     use futures_util::{SinkExt, StreamExt};
-    use std::{sync::Arc, time::Instant};
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        time::Instant,
+    };
     use tokio_tungstenite::{
         MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message as ClientMessage,
     };
@@ -3473,6 +3479,73 @@ mod protocol_capacity_tests {
             axum::serve(listener, app).await.unwrap();
         });
         (address, server)
+    }
+
+    async fn start_test_server_with_gateway(
+        repository: Arc<SqliteChatRepository>,
+        gateway: SharedProcessGateway,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
+        let process_repository: Arc<dyn ProcessRepository> = repository.clone();
+        let agent_repository: Arc<dyn AgentRepository> = repository;
+        let operations = OperationalState::default();
+        operations.set_ready(true);
+        let state = AppState {
+            auth: AuthService::development(),
+            chat: ChatEngine::start(chat_repository),
+            operations: operations.clone(),
+            processes: ProcessService::start(process_repository, Some(gateway)),
+            agents: AgentService::new(agent_repository),
+            websocket_idle_timeout: Duration::from_secs(60),
+            advanced_ui_enabled: false,
+        };
+        let app = build_router(state, operations);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (address, server)
+    }
+
+    #[derive(Clone)]
+    struct RecoverableHeartState {
+        available: Arc<AtomicBool>,
+        starts: Arc<AtomicUsize>,
+        instance_id: uuid::Uuid,
+    }
+
+    async fn recoverable_heart_start(
+        State(state): State<RecoverableHeartState>,
+    ) -> impl IntoResponse {
+        state.starts.fetch_add(1, Ordering::SeqCst);
+        if !state.available.load(Ordering::SeqCst) {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error":"temporarily unavailable"})),
+            );
+        }
+        (
+            axum::http::StatusCode::CREATED,
+            Json(serde_json::json!({"instance_id":state.instance_id})),
+        )
+    }
+
+    async fn recoverable_heart_gateway() -> (SharedProcessGateway, RecoverableHeartState) {
+        let state = RecoverableHeartState {
+            available: Arc::new(AtomicBool::new(false)),
+            starts: Arc::new(AtomicUsize::new(0)),
+            instance_id: uuid::Uuid::now_v7(),
+        };
+        let app = Router::new()
+            .route("/api/v1/instances", post(recoverable_heart_start))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let gateway =
+            HeartGateway::new(format!("http://{address}"), Duration::from_secs(1), 0).unwrap();
+        (Arc::new(gateway), state)
     }
 
     async fn connect(address: std::net::SocketAddr) -> TestSocket {
@@ -4198,6 +4271,133 @@ mod protocol_capacity_tests {
             .await
             .unwrap();
         assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
+        owner.close(None).await.unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn heart_unavailable_does_not_interrupt_chat_and_recovers_once() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (gateway, heart) = recoverable_heart_gateway().await;
+        let (address, server) = start_test_server_with_gateway(repository, gateway).await;
+        let mut owner = connect_as(address, "heart-isolation-owner").await;
+        let circle = command(
+            &mut owner,
+            "isolation-circle",
+            "create_circle",
+            serde_json::json!({"slug":"heart-isolation","name":"Heart isolation"}),
+        )
+        .await;
+        let circle_id = circle["payload"]["circle"]["id"].as_str().unwrap();
+        let channel = command(
+            &mut owner,
+            "isolation-channel",
+            "create_channel",
+            serde_json::json!({"slug":"heart-isolation-chat","name":"Heart isolation chat","kind":"private","circle_id":circle_id}),
+        )
+        .await;
+        let channel_id = channel["payload"]["channel"]["id"].as_str().unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{address}");
+        let feature = client
+            .post(format!(
+                "{base}/api/v1/circles/{circle_id}/features/heart-event-planning?participant=heart-isolation-owner"
+            ))
+            .json(&serde_json::json!({"enabled":true}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(feature.status(), reqwest::StatusCode::NO_CONTENT);
+        let started = client
+            .post(format!(
+                "{base}/api/v1/processes?participant=heart-isolation-owner"
+            ))
+            .json(&serde_json::json!({
+                "channel_id":channel_id,
+                "request_id":"heart-isolation-start",
+                "namespace":"sproyt",
+                "definition_name":"event-planning",
+                "definition_version":"1",
+                "metadata":{"title":"Resilient dinner"}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(started.status(), reqwest::StatusCode::ACCEPTED);
+        let process_id = started.json::<serde_json::Value>().await.unwrap()["process_link_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while heart.starts.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("outbox did not attempt Heart while it was unavailable");
+
+        let chat_body = "ordinary chat remains available without Heart";
+        command(
+            &mut owner,
+            "chat-during-heart-outage",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":chat_body}),
+        )
+        .await;
+        let loaded = command(
+            &mut owner,
+            "chat-during-heart-outage-read",
+            "load_recent_messages",
+            serde_json::json!({"channel_id":channel_id,"limit":20,"after":0}),
+        )
+        .await;
+        assert!(
+            loaded["payload"]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| message["body"] == chat_body),
+            "ordinary chat must persist and read while Heart is unavailable"
+        );
+
+        heart.available.store(true, Ordering::SeqCst);
+        let recovered_view = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let response = client
+                    .get(format!(
+                        "{base}/api/v1/processes/{process_id}?participant=heart-isolation-owner"
+                    ))
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), reqwest::StatusCode::OK);
+                let view = response.json::<serde_json::Value>().await.unwrap();
+                if view["process"]["status"] == "active" {
+                    break view;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("queued process did not recover after Heart returned");
+        assert!(heart.starts.load(Ordering::SeqCst) >= 2);
+        assert_eq!(
+            recovered_view["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|event| event["event_type"] == "process.started")
+                .count(),
+            1,
+            "Heart recovery must complete the durable start exactly once"
+        );
+
         owner.close(None).await.unwrap();
         server.abort();
     }
