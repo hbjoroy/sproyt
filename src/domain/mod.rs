@@ -21,5 +21,5 @@ pub use models::{
 pub use policy::Policy;
 #[cfg(test)]
 pub use repository::InMemoryChatRepository;
-pub use repository::{ChatRepository, RepositoryError, RepositoryFuture};
+pub use repository::{ChatRepository, PresenceLease, RepositoryError, RepositoryFuture};
 pub use text::{ChannelSlug, DisplayName, MessageBody, TextValidationError};

@@ -13,7 +13,7 @@ gate has been signed off in the target environment.
 | S-04 | Implemented | Shared repository contract in `db/mod.rs`, run by in-memory, SQLite and PostgreSQL adapters | None |
 | S-05 | Implemented | SQLx adapters, explicit `sproyt migrate`, concurrency/restart and migration CI | Run migration Job against the target database |
 | S-06 | Implemented | `ChatEngine` delegates authoritative state to `ChatRepository` and persists before publish | None |
-| S-07 | Implemented | Connection-ID presence test, lag recovery test, PostgreSQL notification adapter and two-replica Helm smoke | Observe cross-replica traffic in the target cluster |
+| S-07 | Implemented; rollout pending | Stable connection IDs, PostgreSQL presence leases with heartbeat/expiry, advisory-lock protected handoff, cluster-wide `LISTEN/NOTIFY`, an atomic two-replica handoff regression, lag recovery and two-replica Helm smoke | Deploy migration 0016 and verify two-user presence through a session refresh in the target cluster |
 | S-08 | Implemented | `sproyt.chat.v1` envelopes plus WebSocket reconnect, idempotency, error and lag tests | None |
 | S-09 | Backend slice implemented; UI replacement required | `two_users_complete_private_circle_slice_with_unread_reconnect`; DOM-safe Markdown/raw view; strict, exact-version Mermaid rendering; CSP regression | Superseded technical demonstration UI must be replaced by S-21 through S-24 |
 | S-10 | Implemented | `AuthService`, deterministic development principals and production/dev rejection tests | None |
@@ -27,7 +27,7 @@ gate has been signed off in the target environment.
 | S-18 | Pilot active; environment acceptance pending | Event-planning definition, browser/MCP flow tests, kill switch, Heart receive/idempotent-start contract, ordered migration plus immutable definition bootstrap, same-release private Service/Deployment/PDB/NetworkPolicy, and successful target-cluster activation after database/schema ownership repair on 2026-07-19 | Exercise the pilot end to end, then verify restart/rolling-update and failure isolation |
 | S-19 | Implemented | Agent profiles, scoped grants, expiry/revocation, database-authoritative cross-replica rate limits, provenance and audit tests | Issue and revoke a target-environment agent credential |
 | S-20 | Implemented | MCP transport checks, WebSocket/MCP adapter-conformance tests, and bounded production MCP load-evidence tool | Issue a short-lived scoped credential and exercise the production endpoint |
-| S-21 | Implemented; renewed-session acceptance pending | Production session boundary; encrypted session; refresh about 60 seconds before expiry; overlapping WebSocket handoff after cookie rotation; periodic provider revalidation; profile/logout shell; no simulated production identity; live Authentik identity verified | Verify two-user message flow through a complete refresh interval, then retain logout/revocation in the scheduled security drill |
+| S-21 | Implemented; renewed-session acceptance pending | Production session boundary; encrypted session; refresh about 60 seconds before expiry; overlapping WebSocket handoff after cookie rotation; PostgreSQL-backed presence keeps the old and replacement connection in one atomic global lease set; periodic provider revalidation; profile/logout shell; no simulated production identity; live Authentik identity verified | Deploy migration 0016 and verify two-user message/presence flow through a complete refresh interval, then retain logout/revocation in the scheduled security drill |
 | S-22 | Implemented and active | Responsive navigation/timeline/composer; durable human-readable sender snapshots; circle-grouped channels; visible keyboard focus; bounded exponential reconnect; draft preservation; read markers/unread badges; accessible mobile drawer | Complete two-user usability and presence sign-off after the overlapping session-handoff rollout |
 | S-23 | Implemented; rollout pending | Guided circle creation with automatic `Prat` channel; selected-circle invite action; shareable invite links; OIDC-signed return path; copy/fallback UX; link recognition and actionable invalid/expired feedback; repository-enforced inheritance of existing and future circle channels; global `general` membership; existing two-user authorization contract plus 2026-07-17 browser journey | Deploy membership backfill and exercise owner-to-fresh-user invite through production Authentik |
 | S-24 | In progress | Advanced controls default off; Heart is an active private component of the same Sprøyt release; CSP, focus, mobile drawer, reconnect and capacity gates; immutable ARM64/GitOps rollout; live OIDC identity | Complete two-user/session acceptance, Heart end-to-end and failure-isolation passes, then sign off private beta |
@@ -49,6 +49,13 @@ vulnerability gates. The release overlaps old and refreshed WebSockets so the
 new connection can restore subscriptions before the old connection retires.
 Two-user production acceptance through a complete refresh interval remains
 open and is not inferred from CI.
+
+On 2026-07-20, the public production boundary returned `ok` from `/healthz`,
+`ready` from `/readyz`, redirected anonymous traffic to `/auth/login`, and
+redirected login to the configured Authentik authorization endpoint with PKCE.
+OIDC discovery reported the exact configured issuer plus authorization-code
+and refresh-token support. This proves the public/OIDC boundary, not the
+pending immutable rollout or two-user presence acceptance.
 
 On 2026-07-17, the reviewed application merge commit
 `b28dea405b725e798ceb2a2fc32445dde272b6d6` was imported into Zot as:
