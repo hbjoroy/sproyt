@@ -1553,6 +1553,30 @@ mod tests {
     use super::*;
     use crate::domain::{PrincipalKind, User};
 
+    async fn receive_presence_for(
+        events: &mut broadcast::Receiver<ChatEvent>,
+        channel_id: &ChannelId,
+        participant_id: &UserId,
+    ) -> ChatEvent {
+        loop {
+            let event = events.recv().await.unwrap();
+            let matches = match &event {
+                ChatEvent::ParticipantJoined {
+                    channel_id: event_channel,
+                    participant_id: event_participant,
+                }
+                | ChatEvent::ParticipantLeft {
+                    channel_id: event_channel,
+                    participant_id: event_participant,
+                } => event_channel == channel_id && event_participant == participant_id,
+                _ => false,
+            };
+            if matches {
+                return event;
+            }
+        }
+    }
+
     #[tokio::test]
     async fn presence_handoff_is_atomic_across_postgres_replicas() {
         let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
@@ -1601,10 +1625,12 @@ mod tests {
             .await
             .unwrap();
         for events in [&mut first_events, &mut second_events] {
-            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
-                .await
-                .expect("replica missed participant_joined")
-                .unwrap();
+            let event = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                receive_presence_for(events, &channel.id, &user),
+            )
+            .await
+            .expect("replica missed participant_joined");
             assert_eq!(
                 event,
                 ChatEvent::ParticipantJoined {
@@ -1620,18 +1646,23 @@ mod tests {
             .unwrap();
         first.unregister_presence(lease_one).await.unwrap();
         assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(200), first_events.recv())
-                .await
-                .is_err(),
+            tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                receive_presence_for(&mut first_events, &channel.id, &user),
+            )
+            .await
+            .is_err(),
             "overlapping handoff emitted a false presence transition"
         );
 
         second.unregister_presence(lease_two).await.unwrap();
         for events in [&mut first_events, &mut second_events] {
-            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
-                .await
-                .expect("replica missed participant_left")
-                .unwrap();
+            let event = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                receive_presence_for(events, &channel.id, &user),
+            )
+            .await
+            .expect("replica missed participant_left");
             assert_eq!(
                 event,
                 ChatEvent::ParticipantLeft {

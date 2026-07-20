@@ -3401,7 +3401,7 @@ mod protocol_capacity_tests {
     use super::*;
     use crate::{
         agent::{AgentRepository, AgentService},
-        db::SqliteChatRepository,
+        db::{PostgresChatRepository, SqliteChatRepository},
         process::{ProcessRepository, ProcessService, StartedProcess},
     };
     use futures_util::{SinkExt, StreamExt};
@@ -3446,6 +3446,33 @@ mod protocol_capacity_tests {
             axum::serve(listener, app).await.unwrap();
         });
         (address, server, state)
+    }
+
+    async fn start_postgres_test_server(
+        repository: Arc<PostgresChatRepository>,
+        websocket_idle_timeout: Duration,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
+        let process_repository: Arc<dyn ProcessRepository> = repository.clone();
+        let agent_repository: Arc<dyn AgentRepository> = repository;
+        let operations = OperationalState::default();
+        operations.set_ready(true);
+        let state = AppState {
+            auth: AuthService::development(),
+            chat: ChatEngine::start(chat_repository),
+            operations: operations.clone(),
+            processes: ProcessService::start(process_repository, None),
+            agents: AgentService::new(agent_repository),
+            websocket_idle_timeout,
+            advanced_ui_enabled: false,
+        };
+        let app = build_router(state, operations);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (address, server)
     }
 
     async fn connect(address: std::net::SocketAddr) -> TestSocket {
@@ -3781,10 +3808,14 @@ mod protocol_capacity_tests {
         );
         let export: serde_json::Value = response.json().await.unwrap();
         assert_eq!(export["format"], crate::domain::PORTABLE_USER_EXPORT_FORMAT);
-        assert_eq!(export["channels"].as_array().unwrap().len(), 1);
-        assert_eq!(export["channels"][0]["channel"]["id"], channel_id);
+        let exported_channel = export["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["channel"]["id"] == channel_id)
+            .expect("the user's private channel must be exported alongside general");
         assert_eq!(
-            export["channels"][0]["messages"][0]["body"],
+            exported_channel["messages"][0]["body"],
             "portable visible body"
         );
         assert!(!export.to_string().contains("must not leak"));
@@ -3837,6 +3868,29 @@ mod protocol_capacity_tests {
                 }
             }
         }
+    }
+
+    async fn wait_for_chat_body(socket: &mut TestSocket, expected_body: &str) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let frame = socket
+                    .next()
+                    .await
+                    .expect("server closed before cross-replica chat event")
+                    .unwrap();
+                if let ClientMessage::Text(text) = frame {
+                    let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if event["type"] == "chat"
+                        && event["payload"]["event"]["type"] == "message_accepted"
+                        && event["payload"]["event"]["message"]["body"] == expected_body
+                    {
+                        return;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("cross-replica message {expected_body:?} was not delivered"));
     }
 
     async fn mcp_tool(
@@ -4248,6 +4302,105 @@ mod protocol_capacity_tests {
 
         reconnected.close(None).await.unwrap();
         restarted_server.abort();
+    }
+
+    #[tokio::test]
+    async fn postgres_two_replica_realtime_and_restart_catch_up_gate() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let suffix = uuid::Uuid::now_v7().simple().to_string();
+        let alice_name = format!("replica-alice-{suffix}");
+        let bob_name = format!("replica-bob-{suffix}");
+        let first_repository = Arc::new(PostgresChatRepository::connect(&url).await.unwrap());
+        first_repository.migrate().await.unwrap();
+        let second_repository = Arc::new(PostgresChatRepository::connect(&url).await.unwrap());
+        let (first_address, first_server) =
+            start_postgres_test_server(first_repository, Duration::from_secs(60)).await;
+        let (second_address, second_server) =
+            start_postgres_test_server(second_repository, Duration::from_secs(60)).await;
+        let mut alice = connect_as(first_address, &alice_name).await;
+        let mut bob = connect_as(second_address, &bob_name).await;
+
+        let alice_channels = command(
+            &mut alice,
+            "alice-channels",
+            "list_my_channels",
+            serde_json::Value::Null,
+        )
+        .await;
+        let channel_id = alice_channels["payload"]["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|channel| channel["slug"] == "general")
+            .expect("global general channel must be available to every authenticated user")["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        command(
+            &mut alice,
+            "alice-subscribe",
+            "subscribe_channel",
+            serde_json::json!({"channel_id":channel_id}),
+        )
+        .await;
+        command(
+            &mut bob,
+            "bob-subscribe",
+            "subscribe_channel",
+            serde_json::json!({"channel_id":channel_id}),
+        )
+        .await;
+
+        let first_body = format!("cross-replica-a-{suffix}");
+        let accepted = command(
+            &mut alice,
+            "alice-send",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":first_body}),
+        )
+        .await;
+        let first_sequence = accepted["payload"]["message"]["sequence"].as_u64().unwrap();
+        wait_for_chat_body(&mut bob, &first_body).await;
+
+        alice.close(None).await.unwrap();
+        first_server.abort();
+        let missed_body = format!("restart-catch-up-{suffix}");
+        command(
+            &mut bob,
+            "bob-send",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":missed_body}),
+        )
+        .await;
+
+        let replacement_repository = Arc::new(PostgresChatRepository::connect(&url).await.unwrap());
+        let (replacement_address, replacement_server) =
+            start_postgres_test_server(replacement_repository, Duration::from_secs(60)).await;
+        let reconnect_started = Instant::now();
+        let mut reconnected = connect_as(replacement_address, &alice_name).await;
+        let loaded = command(
+            &mut reconnected,
+            "alice-catch-up",
+            "load_recent_messages",
+            serde_json::json!({"channel_id":channel_id,"limit":20,"after":first_sequence}),
+        )
+        .await;
+        assert!(reconnect_started.elapsed() < Duration::from_secs(5));
+        assert!(
+            loaded["payload"]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| message["body"] == missed_body),
+            "a restarted replica must catch up messages accepted while it was unavailable"
+        );
+
+        reconnected.close(None).await.unwrap();
+        bob.close(None).await.unwrap();
+        second_server.abort();
+        replacement_server.abort();
     }
 
     #[tokio::test]

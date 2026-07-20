@@ -113,7 +113,7 @@ where
         })
         .await
         .unwrap();
-    let general = repository
+    let general_id = match repository
         .create_channel(CreateChannel {
             actor: actor.clone(),
             slug: ChannelSlug::new("general").unwrap(),
@@ -122,7 +122,20 @@ where
             circle_id: None,
         })
         .await
-        .unwrap();
+    {
+        Ok(channel) => channel.id,
+        Err(RepositoryError::Conflict) => {
+            repository
+                .list_channels_for_user(actor.clone())
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|channel| channel.slug.as_str() == "general")
+                .expect("bootstrapped general must be visible to authenticated users")
+                .id
+        }
+        Err(error) => panic!("could not create or load general: {error}"),
+    };
     let general_member = UserId::named(format!("chat-general-member-{suffix}"));
     repository
         .upsert_user(User {
@@ -141,7 +154,7 @@ where
             .await
             .unwrap()
             .iter()
-            .any(|summary| summary.id == general.id),
+            .any(|summary| summary.id == general_id),
         "new authenticated users must inherit general"
     );
     let first = repository
@@ -363,7 +376,7 @@ where
         export
             .channels
             .iter()
-            .any(|channel| channel.channel.id == general.id),
+            .any(|channel| channel.channel.id == general_id),
         "general must be included in the member export"
     );
     let exported_circle_channel = export
