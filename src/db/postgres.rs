@@ -58,6 +58,7 @@ impl PostgresChatRepository {
         let (presence, _) = broadcast::channel(1024);
         let message_publisher = messages.clone();
         let presence_publisher = presence.clone();
+        let listener_url = url.to_owned();
         tokio::spawn(async move {
             loop {
                 match listener.recv().await {
@@ -85,12 +86,36 @@ impl PostgresChatRepository {
                         }
                     }
                     Ok(_) => {}
-                    Err(_) => {
-                        tracing::error!(
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
                             error_kind = "database_listener",
-                            "PostgreSQL message listener stopped"
+                            "PostgreSQL realtime listener disconnected; reconnecting"
                         );
-                        break;
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            match PgListener::connect(&listener_url).await {
+                                Ok(mut replacement) => {
+                                    let messages_ready =
+                                        replacement.listen("sproyt_messages").await;
+                                    let presence_ready =
+                                        replacement.listen("sproyt_presence").await;
+                                    if messages_ready.is_ok() && presence_ready.is_ok() {
+                                        listener = replacement;
+                                        tracing::info!(
+                                            error_kind = "database_listener_recovered",
+                                            "PostgreSQL realtime listener reconnected"
+                                        );
+                                        break;
+                                    }
+                                }
+                                Err(error) => tracing::warn!(
+                                    error = %error,
+                                    error_kind = "database_listener_reconnect",
+                                    "PostgreSQL realtime listener reconnect failed"
+                                ),
+                            }
+                        }
                     }
                 }
             }
