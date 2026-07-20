@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+    # Pull requests still get the fast quality/PostgreSQL checks. Avoid
+    # rebuilding two images and a kind cluster when the accepted change only
+    # updates prose; any code, manifest, workflow, dependency or migration
+    # change continues through the complete main delivery gate.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
