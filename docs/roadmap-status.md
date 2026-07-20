@@ -34,33 +34,36 @@ gate has been signed off in the target environment.
 
 ## Current immutable image evidence
 
-The current GitOps-targeted chat revision
-`f7c44b135f4e551a9c84ea56c49bd678b93e9c46` is published as:
+The current publicly observed chat revision
+`d945e62c9eee3b9470383bc416e301b878e5c836` is published as:
 
 ```text
-oci.bjoroy.me/sproyt/sproyt:f7c44b135f4e551a9c84ea56c49bd678b93e9c46
-sha256:d9b4785ccbf48da195438a2078c3b6bd0e854eace3ff8551600dc239cc612c0b
+oci.bjoroy.me/sproyt/sproyt:d945e62c9eee3b9470383bc416e301b878e5c836
+sha256:7a3cbef9264ee7e0818cb99fdf820e7dc7abdaca771807494ae45d392435a1c0
 ```
 
-GitOps commit `d82fa39` pins this binary digest and chart revision. Main CI run
-`29732445335` passed format/lint/test, PostgreSQL contract including the atomic
+GitOps commit `148e1ab` pins this binary digest and chart revision. Main CI run
+`29765526172` passed format/lint/test, PostgreSQL contract including the atomic
 two-replica presence handoff, backup/restore,
 dependency audit, ARM64/native image delivery, Helm/kind rollout, SBOM and
 vulnerability gates. The registry digest was read back after authenticated Zot
 import, and the GitOps Helm render pins it for both the migration Job and the
-application pods. The release overlaps old and refreshed WebSockets and keeps
+application pods. Public `/versionz` reported the exact application revision
+after Argo autosync. Following the rollout transition, 12 consecutive public
+`/versionz` and `/healthz` pairs returned HTTP 200 in 0.18–0.46 seconds. The
+release overlaps old and refreshed WebSockets and keeps
 both connections in one PostgreSQL-backed presence lease set, so the new
 connection can restore subscriptions before the old connection retires without
-a false leave transition. Target-cluster Argo state and two-user production
-acceptance through a complete refresh interval remain open and are not inferred
-from CI or public readiness.
+a false leave transition. Direct target-cluster Argo health and two-user
+production acceptance through a complete refresh interval remain open and are
+not inferred from CI or single-client public readiness.
 
 On 2026-07-20, the public production boundary returned `ok` from `/healthz`,
 `ready` from `/readyz`, redirected anonymous traffic to `/auth/login`, and
 redirected login to the configured Authentik authorization endpoint with PKCE.
 OIDC discovery reported the exact configured issuer plus authorization-code
-and refresh-token support. This proves the public/OIDC boundary, not the
-pending immutable rollout or two-user presence acceptance.
+and refresh-token support. This proves the public/OIDC boundary, but does not
+replace direct Argo health or two-user presence acceptance.
 
 On 2026-07-17, the reviewed application merge commit
 `b28dea405b725e798ceb2a2fc32445dde272b6d6` was imported into Zot as:
