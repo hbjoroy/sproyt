@@ -58,7 +58,10 @@ operator in the release evidence.
 
 ## Deployment, rollback, and incident response
 
-1. Run CI and retain its rendered manifest, SBOM, and vulnerability report.
+1. Manually run the full CI workflow for the exact release revision (or create
+   its `v*` release tag), then retain the rendered manifest, SBOM, and
+   vulnerability report. Ordinary `main` CI is intentionally only the fast
+   quality and PostgreSQL gate.
 2. Back up PostgreSQL and run the pre-upgrade migration Job once.
 3. Deploy by immutable image digest. Confirm migration Job success, both
    probes, and that public `/versionz` reports the GitOps application revision
