@@ -609,7 +609,14 @@ async fn create_agent(
         })
         .await
     {
-        Ok(created) => (axum::http::StatusCode::CREATED, Json(created)).into_response(),
+        Ok(created) => {
+            let mut response = (axum::http::StatusCode::CREATED, Json(created)).into_response();
+            response.headers_mut().insert(
+                axum::http::header::CACHE_CONTROL,
+                HeaderValue::from_static("no-store"),
+            );
+            response
+        }
         Err(error) => repository_response(error),
     }
 }
@@ -1520,6 +1527,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .onboarding { display: grid; gap: 10px; }
       .onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       .onboarding-notice { margin: 0; color: #506057; font-size: .85rem; line-height: 1.4; }
+      .agent-access { border-top: 1px solid var(--border); padding-top: 12px; }
+      .agent-access[open] { display: grid; gap: 10px; }
+      .agent-access summary { cursor: pointer; font-weight: 700; }
+      .agent-access p { margin: 0; }
+      #agent-credential { min-height: 92px; font-family: ui-monospace, monospace; font-size: .75rem; }
       .advanced-tools[hidden] { display: none; }
 
       h1 {
@@ -1762,8 +1774,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .sidebar { grid-row: auto; grid-template-columns: 1fr auto; grid-template-rows: auto auto; border-right: 0; border-bottom: 1px solid #e4e5de; }
         .identity { grid-column: 1 / -1; }
         .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; }
-        .sidebar nav, .sidebar .onboarding { display: none; grid-column: 1 / -1; }
-        .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding { display: grid; }
+        .sidebar nav, .sidebar .onboarding, .sidebar .agent-access { display: none; grid-column: 1 / -1; }
+        .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding, .sidebar.mobile-open .agent-access { display: grid; }
 
         .connect,
         .circle-tools,
@@ -1859,6 +1871,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
           <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
         </section>
+        <details class="agent-access">
+          <summary>Agenttilgang</summary>
+          <p>Lag ein kortliva MCP-agent for den opne samtalen. Tilgangen varer i 30 minutt og kan lesast og skrive meldingar.</p>
+          <button id="create-agent-access" type="button" disabled>Lag kortliva tilgang</button>
+          <label for="agent-credential">Credential (blir berre vist no)</label>
+          <textarea id="agent-credential" readonly hidden></textarea>
+          <div class="onboarding-actions">
+            <button id="copy-agent-credential" type="button" hidden>Kopier credential</button>
+            <button id="revoke-agent-access" type="button" hidden>Trekk tilbake</button>
+          </div>
+          <p class="onboarding-notice" id="agent-access-notice" role="status" aria-live="polite">Vel ei samtale for å lage tilgang.</p>
+        </details>
       </aside>
       <header class="conversation-header">
         <div><h2 id="conversation-title">Samtalar</h2><p class="status" id="status" role="status" aria-live="polite">Koplar til …</p></div>
@@ -1904,6 +1928,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const circleChannel = document.querySelector("#circle-channel");
       const invitationToken = document.querySelector("#invitation-token");
       const copyInvitation = document.querySelector("#copy-invitation");
+      const createAgentAccessButton = document.querySelector("#create-agent-access");
+      const copyAgentCredentialButton = document.querySelector("#copy-agent-credential");
+      const revokeAgentAccessButton = document.querySelector("#revoke-agent-access");
+      const agentCredential = document.querySelector("#agent-credential");
+      const agentAccessNotice = document.querySelector("#agent-access-notice");
       const onboardingNotice = document.querySelector("#onboarding-notice");
       const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation", "#delete-circle"].map((id) => document.querySelector(id));
       const exportButton = document.querySelector("#export-data");
@@ -1932,6 +1961,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let mermaidPromise = null;
       let knownChannels = [];
       const knownCircles = new Map();
+      let temporaryAgentId = null;
 
       function scheduleSessionRefresh(seconds) {
         if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
@@ -2055,6 +2085,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
           onboardingNotice.textContent = "Kopier den markerte lenkja og send henne til venen din.";
         }
       });
+      createAgentAccessButton.addEventListener("click", createTemporaryAgentAccess);
+      copyAgentCredentialButton.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(agentCredential.value);
+          agentAccessNotice.textContent = "Credential er kopiert. Handsam han som eit passord.";
+        } catch (_) {
+          agentCredential.hidden = false;
+          agentCredential.focus();
+          agentCredential.select();
+          agentAccessNotice.textContent = "Kopier den markerte credentialen manuelt.";
+        }
+      });
+      revokeAgentAccessButton.addEventListener("click", revokeTemporaryAgentAccess);
       circleButtons[4].addEventListener("click", () => {
         if (!circleSelect.value) return;
         const selected = circleSelect.options[circleSelect.selectedIndex]?.textContent || "denne vennekretsen";
@@ -2404,6 +2447,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "channels_listed") {
           knownChannels = payload.channels;
           renderChannels();
+          updateAgentAccessControls();
           const requested = knownChannels.find((channel) => channel.slug === requestedChannelSlug);
           const current = knownChannels.find((channel) => channel.id === activeChannelId);
           const next = requested || current || knownChannels[0];
@@ -2428,6 +2472,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           sendButton.disabled = false;
           renderChannels();
           renderTimeline();
+          updateAgentAccessControls();
           return;
         }
 
@@ -2556,7 +2601,88 @@ const INDEX_HTML: &str = r##"<!doctype html>
         requestedChannelSlug = channel.slug;
         conversationTitle.textContent = channel.name;
         renderChannels();
+        updateAgentAccessControls();
         sendCommand("subscribe_channel", { channel_id: channel.id });
+      }
+
+      function updateAgentAccessControls() {
+        const channel = knownChannels.find((item) => item.id === activeChannelId);
+        const canDelegate = channel?.role === "owner" || channel?.role === "moderator";
+        createAgentAccessButton.disabled = !canDelegate || temporaryAgentId !== null;
+        if (!activeChannelId && temporaryAgentId === null) {
+          agentAccessNotice.textContent = "Vel ei samtale for å lage tilgang.";
+        } else if (!canDelegate && temporaryAgentId === null) {
+          agentAccessNotice.textContent = "Berre eigarar og moderatorar kan gi agenttilgang til denne samtalen.";
+        }
+      }
+
+      async function agentApi(path, body) {
+        const response = await fetch(path, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "accept": "application/json", "content-type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+        if (response.status === 204) return null;
+        return response.json();
+      }
+
+      async function createTemporaryAgentAccess() {
+        if (!activeChannelId || temporaryAgentId !== null) return;
+        createAgentAccessButton.disabled = true;
+        agentAccessNotice.textContent = "Lagar kortliva agenttilgang …";
+        const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+        let created = null;
+        try {
+          created = await agentApi("/api/v1/agents", {
+            display_name: "Kortliva MCP-agent",
+            provider: "sproyt-owner-ui",
+            service_identity: crypto.randomUUID(),
+            purpose: `Kortliva MCP-tilgang til kanal ${activeChannelId}`,
+            rate_limit_per_minute: 30,
+            expires_at: expiresAt
+          });
+          for (const scope of ["read_history", "send_messages"]) {
+            await agentApi(`/api/v1/agents/${created.agent_id}/grants`, {
+              circle_id: null,
+              channel_id: activeChannelId,
+              scope,
+              expires_at: expiresAt
+            });
+          }
+          temporaryAgentId = created.agent_id;
+          agentCredential.value = created.credential;
+          agentCredential.hidden = false;
+          copyAgentCredentialButton.hidden = false;
+          revokeAgentAccessButton.hidden = false;
+          agentAccessNotice.textContent = `Tilgangen ${created.agent_id} er klar i 30 minutt. Kopier credentialen no, og trekk han tilbake når testen er ferdig.`;
+        } catch (error) {
+          if (created?.agent_id) {
+            await agentApi(`/api/v1/agents/${created.agent_id}/revoke`).catch(() => {});
+          }
+          agentAccessNotice.textContent = `Kunne ikkje lage agenttilgang: ${error.message}`;
+          updateAgentAccessControls();
+        }
+      }
+
+      async function revokeTemporaryAgentAccess() {
+        if (!temporaryAgentId) return;
+        revokeAgentAccessButton.disabled = true;
+        try {
+          await agentApi(`/api/v1/agents/${temporaryAgentId}/revoke`);
+          temporaryAgentId = null;
+          agentCredential.value = "";
+          agentCredential.hidden = true;
+          copyAgentCredentialButton.hidden = true;
+          revokeAgentAccessButton.hidden = true;
+          revokeAgentAccessButton.disabled = false;
+          agentAccessNotice.textContent = "Agenttilgangen er trekt tilbake.";
+          updateAgentAccessControls();
+        } catch (error) {
+          revokeAgentAccessButton.disabled = false;
+          agentAccessNotice.textContent = `Kunne ikkje trekkje tilbake agenttilgangen: ${error.message}`;
+        }
       }
 
       function updateLatestSequence(channelId, sequence) {
@@ -3591,6 +3717,7 @@ mod protocol_capacity_tests {
             .await
             .unwrap();
         assert_eq!(created.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(created.headers()["cache-control"], "no-store");
         let created: serde_json::Value = created.json().await.unwrap();
         let agent_id = created["agent_id"].as_str().unwrap();
         let credential = created["credential"].as_str().unwrap();
@@ -3676,6 +3803,12 @@ mod protocol_capacity_tests {
         assert!(!body.contains("id=\"participant\""));
         assert!(body.contains("new WebSocket(`${protocol}://${window.location.host}/ws`)"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
+        assert!(body.contains("<summary>Agenttilgang</summary>"));
+        assert!(body.contains("id=\"create-agent-access\""));
+        assert!(body.contains("function createTemporaryAgentAccess()"));
+        assert!(body.contains("[\"read_history\", \"send_messages\"]"));
+        assert!(body.contains("function revokeTemporaryAgentAccess()"));
+        assert!(body.contains("channel?.role === \"owner\" || channel?.role === \"moderator\""));
         assert!(body.contains("connect();"));
         assert!(body.contains("function scheduleReconnect(closeCode"));
         assert!(body.contains("stableConnectionTimer = window.setTimeout"));

@@ -148,50 +148,14 @@ requires exactly one durable `process.started` event. A release still needs the
 target-cluster rolling-update and end-to-end pilot observations in the release
 checklist.
 
-For the write portion of the target MCP/agent exercise, create a dedicated
-empty channel. In an authenticated owner browser, open the developer console
-and run the following with that channel ID. This uses the browser session
-without exposing its HttpOnly cookie, creates a 30-minute agent and copies the
-one-time agent credential to the clipboard:
-
-```js
-const channelId = "dedicated-load-channel-id";
-const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
-const agent = await fetch("/api/v1/agents", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    display_name: "Release load probe",
-    provider: "sproyt-operations",
-    service_identity: `release-load-${crypto.randomUUID()}`,
-    purpose: "Bounded pre-release MCP latency and idempotency evidence",
-    rate_limit_per_minute: 60,
-    expires_at: expiresAt,
-  }),
-}).then(async response => {
-  if (!response.ok) throw new Error(`agent creation failed: ${response.status}`);
-  return response.json();
-});
-const grant = await fetch(`/api/v1/agents/${agent.agent_id}/grants`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    circle_id: null,
-    channel_id: channelId,
-    scope: "send_messages",
-    expires_at: expiresAt,
-  }),
-}).then(async response => {
-  if (!response.ok) throw new Error(`grant creation failed: ${response.status}`);
-  return response.json();
-});
-await navigator.clipboard.writeText(agent.credential);
-console.info({ agent_id: agent.agent_id, grant_id: grant.grant_id, expires_at: expiresAt });
-```
-
-Record the non-secret `agent_id` and `grant_id`, but not the credential. Then
-run Node.js 24 or newer and paste the clipboard value only into the silent
-prompt:
+For the write portion of the target MCP/agent exercise, use a quiet channel
+where the authenticated user is owner or moderator. Open that channel, expand
+**Agenttilgang**, and choose **Lag kortliva tilgang**. Sproyt creates a
+30-minute, channel-bounded agent with only `read_history` and `send_messages`,
+shows the credential once, and marks the credential response `Cache-Control:
+no-store`. Record the non-secret agent ID shown in the status, choose **Kopier
+credential**, then run Node.js 24 or newer and paste the clipboard value only
+into the silent prompt:
 
 ```sh
 export SPROYT_MCP_URL=https://sproyt.bjoroy.me/mcp
@@ -207,28 +171,12 @@ credential or message bodies, verifies that the grant includes the channel,
 uses stable idempotency keys, replays one request, requires unique contiguous
 sequences and enforces the 750 ms p99 objective. It emits
 `sproyt.mcp-load-evidence.v1` JSON for the release record. Use an otherwise
-empty channel because unrelated concurrent sends intentionally make the
-contiguity check fail. Revoke the grant immediately after the run from the
-same authenticated browser:
-
-```js
-await fetch(`/api/v1/agent-grants/${grant.grant_id}/revoke`, { method: "POST" });
-```
-
-Confirm HTTP 204. Expiry independently bounds both the credential and grant
-if the explicit revocation step is interrupted.
-
-Then revoke the whole evidence agent as defence in depth. This atomically
-revokes its profile, every credential and every remaining grant, and writes an
-`agent.revoked` audit event:
-
-```js
-const response = await fetch(`/api/v1/agents/${agent.agent_id}/revoke`, {
-  method: "POST",
-  credentials: "same-origin"
-});
-if (response.status !== 204) throw new Error(`agent revocation failed: ${response.status}`);
-```
+quiet channel because unrelated concurrent sends intentionally make the
+contiguity check fail. Immediately choose **Trekk tilbake** in the same browser
+after the run. This atomically revokes the profile, credential and both grants,
+and writes an `agent.revoked` audit event. The 30-minute expiry independently
+bounds all three if explicit revocation is interrupted. Never retain the
+credential in release evidence.
 
 The previously issued bearer credential must receive HTTP 401 immediately;
 do not retain it for a later run.
