@@ -220,6 +220,7 @@ jobs:
         with:
           context: .
           platforms: linux/arm64
+          build-args: VCS_REF=${{ github.sha }}
           load: true
           push: false
           tags: local/sproyt-arm64:${{ github.sha }}
@@ -234,7 +235,9 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          build-args: BUILD_VARIANT=native
+          build-args: |
+            BUILD_VARIANT=native
+            VCS_REF=${{ github.sha }}
           load: true
           push: false
           tags: local/sproyt-smoke:${{ github.sha }}

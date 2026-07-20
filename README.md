@@ -97,6 +97,7 @@ Readiness and Prometheus-compatible operational metrics:
 
 ```text
 http://127.0.0.1:9010/readyz
+http://127.0.0.1:9010/versionz
 http://127.0.0.1:9010/metrics
 ```
 

@@ -23,7 +23,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
@@ -43,6 +43,18 @@ use crate::{
         ProcessService, SetCircleFeature, SharedProcessGateway,
     },
 };
+
+const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION") {
+    Some(revision) => revision,
+    None => "unknown",
+};
+
+#[derive(Serialize)]
+struct VersionInfo {
+    service: &'static str,
+    version: &'static str,
+    revision: &'static str,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -118,6 +130,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/", get(index))
         .route("/healthz", get(healthz))
         .route("/readyz", get(app_readyz))
+        .route("/versionz", get(versionz))
         .route("/metrics", get(metrics))
         .route("/auth/login", get(auth_login))
         .route("/auth/callback", get(auth_callback))
@@ -152,6 +165,14 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .layer(TraceLayer::new_for_http())
         .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
         .layer(middleware::from_fn(add_security_headers))
+}
+
+async fn versionz() -> Json<VersionInfo> {
+    Json(VersionInfo {
+        service: "sproyt",
+        version: env!("CARGO_PKG_VERSION"),
+        revision: BUILD_REVISION,
+    })
 }
 
 async fn add_security_headers(
@@ -3651,7 +3672,7 @@ mod protocol_capacity_tests {
             .build()
             .unwrap();
 
-        for path in ["/healthz", "/auth/login", "/does-not-exist"] {
+        for path in ["/healthz", "/versionz", "/auth/login", "/does-not-exist"] {
             let response = client
                 .get(format!("http://{address}{path}"))
                 .send()
@@ -3674,6 +3695,17 @@ mod protocol_capacity_tests {
                 "{path}"
             );
         }
+        let version: serde_json::Value = client
+            .get(format!("http://{address}/versionz"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(version["service"], "sproyt");
+        assert_eq!(version["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(version["revision"], BUILD_REVISION);
         server.abort();
     }
 

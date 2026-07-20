@@ -91,9 +91,17 @@ health=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
   "$public_url/healthz")
 readiness=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
   "$public_url/readyz")
+version=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+  "$public_url/versionz")
 [[ "$health" == "ok" ]] || { echo "unexpected health response: $health" >&2; exit 1; }
 [[ "$readiness" == "ready" ]] || {
   echo "unexpected readiness response: $readiness" >&2
+  exit 1
+}
+jq -e --arg revision "$app_revision" \
+  '.service == "sproyt" and .revision == $revision and (.version | type == "string")' \
+  >/dev/null <<<"$version" || {
+  echo "public revision mismatch: expected $app_revision, got $version" >&2
   exit 1
 }
 
@@ -123,5 +131,7 @@ jq -n \
   --argjson readyEndpoints "$ready_endpoints" \
   --arg publicUrl "$public_url" \
   --arg issuer "$issuer" \
+  --arg publicRevision "$(jq -r '.revision' <<<"$version")" \
   '{status:"verified", appRevision:$appRevision, image:$image, replicas:$replicas,
-    readyEndpoints:$readyEndpoints, publicUrl:$publicUrl, issuer:$issuer}'
+    readyEndpoints:$readyEndpoints, publicUrl:$publicUrl, issuer:$issuer,
+    publicRevision:$publicRevision}'

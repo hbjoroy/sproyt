@@ -34,6 +34,7 @@ Verify the running service:
 ```powershell
 Invoke-RestMethod http://127.0.0.1:9010/healthz
 Invoke-RestMethod http://127.0.0.1:9010/readyz
+Invoke-RestMethod http://127.0.0.1:9010/versionz
 Invoke-RestMethod http://127.0.0.1:9010/metrics
 ```
 
@@ -312,6 +313,7 @@ In another shell:
 ```sh
 curl --fail http://127.0.0.1:9010/healthz
 curl --fail http://127.0.0.1:9010/readyz
+curl --fail http://127.0.0.1:9010/versionz
 ```
 
 ## Add ingress manually

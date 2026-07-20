@@ -33,6 +33,10 @@ url=${!#}
 case "$url" in
   https://sproyt.bjoroy.me/healthz) printf 'ok\n' ;;
   https://sproyt.bjoroy.me/readyz) printf 'ready\n' ;;
+  https://sproyt.bjoroy.me/versionz)
+    revision=${MOCK_PUBLIC_REVISION:-6355c13720c9bce94d3a55b9c485876c10b915d7}
+    printf '{"service":"sproyt","version":"0.1.0","revision":"%s"}\n' "$revision"
+    ;;
   https://sproyt.bjoroy.me/)
     printf '%s\n' '303 https://sproyt.bjoroy.me/auth/login'
     ;;
@@ -56,13 +60,22 @@ digest=sha256:e8a6a49cbe85c7b2b9578261b8ec565742601b5288fe81d8d57046adf0c858ce
 gitops=9cb3db8ce5545c69026b5cf39c239ad286879dbf
 
 result=$(bash "$repo_root/tools/verify-production-rollout.sh" "$revision" "$digest" "$gitops")
-jq -e '.status == "verified" and .replicas == 2 and .readyEndpoints == 2' \
+jq -e '.status == "verified" and .replicas == 2 and .readyEndpoints == 2 and .publicRevision == $revision' \
+  --arg revision "$revision" \
   >/dev/null <<<"$result"
 
 export MOCK_IMAGE=oci.bjoroy.me/sproyt/sproyt@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 if bash "$repo_root/tools/verify-production-rollout.sh" "$revision" "$digest" "$gitops" \
   >/dev/null 2>&1; then
   echo "verifier accepted an unexpected deployment image" >&2
+  exit 1
+fi
+
+unset MOCK_IMAGE
+export MOCK_PUBLIC_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if bash "$repo_root/tools/verify-production-rollout.sh" "$revision" "$digest" "$gitops" \
+  >/dev/null 2>&1; then
+  echo "verifier accepted an unexpected public application revision" >&2
   exit 1
 fi
 

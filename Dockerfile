@@ -13,6 +13,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
 ARG TARGETARCH
+ARG VCS_REF=unknown
 RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=sproyt-zig-target,target=/src/target \
     --mount=type=cache,id=sproyt-zig-cache,target=/root/.cache/zig \
@@ -22,16 +23,17 @@ RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry
       *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
     && rustup target add "$rust_target" \
-    && cargo zigbuild --locked --release --target "$rust_target" \
+    && SPROYT_BUILD_REVISION="$VCS_REF" cargo zigbuild --locked --release --target "$rust_target" \
     && install -D "target/$rust_target/release/sproyt" /out/sproyt
 
 FROM build-base AS native-builder
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
+ARG VCS_REF=unknown
 RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=sproyt-native-target,target=/src/target \
-    cargo build --locked --release \
+    SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release \
     && install -D target/release/sproyt /out/sproyt
 
 FROM ${BUILD_VARIANT}-builder AS compiled
