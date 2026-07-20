@@ -4,20 +4,22 @@ on:
   pull_request:
   push:
     branches: [main]
-    # Pull requests still get the fast quality/PostgreSQL checks. Avoid
-    # rebuilding two images and a kind cluster when the accepted change only
-    # updates prose; any code, manifest, workflow, dependency or migration
-    # change continues through the complete main delivery gate.
+    tags: ["v*"]
+    # Pull requests and non-documentation main pushes get the fast
+    # quality/PostgreSQL checks. The complete release gate is scheduled,
+    # manually dispatched, or selected by a version tag below.
     paths-ignore:
       - "**/*.md"
       - "docs/**"
+  schedule:
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -112,9 +114,9 @@ jobs:
 
   security-audit:
     name: Dependency security audit
-    # Keep pull-request feedback fast. The complete security and delivery gate
-    # runs for every accepted main revision and can also be started manually.
-    if: github.event_name != 'pull_request'
+    # Ordinary PRs and main pushes stay fast. Run the expensive release gate
+    # weekly, explicitly, or for a version tag.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -138,7 +140,7 @@ jobs:
 
   recovery-drill:
     name: PostgreSQL backup and restore drill
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -197,7 +199,7 @@ jobs:
 
   delivery:
     name: Container and Kubernetes delivery
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Check out source

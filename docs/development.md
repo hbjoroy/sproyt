@@ -19,11 +19,15 @@ chat/process/agent contract runs against SQLite locally, and CI also executes
 that full contract against PostgreSQL 17.
 
 Pull requests run the fast quality gate plus the PostgreSQL repository
-contract. After merge, every accepted `main` revision runs the dependency
-audit, backup/restore drill, ARM64 and native image builds, Helm verification,
-kind install/scale/rollback, SBOM generation, and vulnerability scan. The full
-gate can also be started manually from the CI workflow. A newer `main` revision
-cancels an obsolete full run so delivery evidence follows the latest code.
+contract. Non-documentation pushes to `main` run the same fast gates, so an
+ordinary merge does not wait for two image builds and an ephemeral cluster.
+The dependency audit, backup/restore drill, ARM64 and native image builds, Helm
+verification, kind install/scale/rollback, SBOM generation, and vulnerability
+scan form the full release gate. It runs every Monday at 03:17 UTC, for `v*`
+release tags, and when an operator starts the CI workflow manually. Run it
+explicitly for the exact revision being considered for a production release;
+scheduled evidence is a regression sentinel, not authorization to deploy a
+different commit.
 
 ## PostgreSQL schema check
 

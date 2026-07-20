@@ -3,6 +3,11 @@
 Attach durable links or artifacts for every checked item. A release is not
 production-ready based only on a successful build.
 
+Before release, manually dispatch `CI` for the exact commit or push its `v*`
+release tag. Normal pull requests and `main` pushes deliberately run only the
+fast quality and PostgreSQL gates; the full ARM64/kind/SBOM/recovery gate also
+runs weekly as a regression sentinel.
+
 For the read-only cluster and public-boundary portion, run from a current
 checkout and pass the deployed application and GitOps revisions explicitly:
 
