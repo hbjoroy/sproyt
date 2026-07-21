@@ -2613,6 +2613,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           agentAccessNotice.textContent = "Vel ei samtale for å lage tilgang.";
         } else if (!canDelegate && temporaryAgentId === null) {
           agentAccessNotice.textContent = "Berre eigarar og moderatorar kan gi agenttilgang til denne samtalen.";
+        } else if (temporaryAgentId === null) {
+          agentAccessNotice.textContent = "Klar til å lage kortliva agenttilgang for denne samtalen.";
         }
       }
 
@@ -2677,8 +2679,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           copyAgentCredentialButton.hidden = true;
           revokeAgentAccessButton.hidden = true;
           revokeAgentAccessButton.disabled = false;
-          agentAccessNotice.textContent = "Agenttilgangen er trekt tilbake.";
           updateAgentAccessControls();
+          agentAccessNotice.textContent = "Agenttilgangen er trekt tilbake.";
         } catch (error) {
           revokeAgentAccessButton.disabled = false;
           agentAccessNotice.textContent = `Kunne ikkje trekkje tilbake agenttilgangen: ${error.message}`;
@@ -3809,6 +3811,12 @@ mod protocol_capacity_tests {
         assert!(body.contains("[\"read_history\", \"send_messages\"]"));
         assert!(body.contains("function revokeTemporaryAgentAccess()"));
         assert!(body.contains("channel?.role === \"owner\" || channel?.role === \"moderator\""));
+        assert!(body.contains(
+            "agentAccessNotice.textContent = \"Klar til å lage kortliva agenttilgang for denne samtalen.\""
+        ));
+        assert!(body.contains(
+            "updateAgentAccessControls();\n          agentAccessNotice.textContent = \"Agenttilgangen er trekt tilbake.\";"
+        ));
         assert!(body.contains("connect();"));
         assert!(body.contains("function scheduleReconnect(closeCode"));
         assert!(body.contains("stableConnectionTimer = window.setTimeout"));
