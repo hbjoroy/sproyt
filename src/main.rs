@@ -65,6 +65,7 @@ struct AppState {
     agents: AgentService,
     websocket_idle_timeout: Duration,
     advanced_ui_enabled: bool,
+    agent_ui_enabled: bool,
 }
 
 impl axum::extract::FromRef<AppState> for OperationalState {
@@ -106,6 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         agents: AgentService::new(repositories.agent),
         websocket_idle_timeout: config.websocket_idle_timeout(),
         advanced_ui_enabled: std::env::var("SPROYT_UI_ADVANCED_ENABLED").as_deref() == Ok("true"),
+        agent_ui_enabled: std::env::var("SPROYT_UI_AGENT_ENABLED").as_deref() == Ok("true"),
     };
     let app = build_router(state, operations.clone());
 
@@ -1216,6 +1218,10 @@ async fn index(
             } else {
                 "hidden"
             },
+        )
+        .replace(
+            "{{AGENT_HIDDEN}}",
+            if state.agent_ui_enabled { "" } else { "hidden" },
         );
     let policy = format!(
         "default-src 'self'; script-src 'nonce-{nonce}' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
@@ -1871,7 +1877,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
           <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
         </section>
-        <details class="agent-access">
+        <details class="agent-access" {{AGENT_HIDDEN}}>
           <summary>Agenttilgang</summary>
           <p>Lag ein kortliva MCP-agent for den opne samtalen. Tilgangen varer i 30 minutt og kan lesast og skrive meldingar.</p>
           <button id="create-agent-access" type="button" disabled>Lag kortliva tilgang</button>
@@ -3046,6 +3052,7 @@ mod mcp_tests {
             agents: agents.clone(),
             websocket_idle_timeout: Duration::from_secs(60),
             advanced_ui_enabled: false,
+            agent_ui_enabled: false,
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -3265,6 +3272,7 @@ mod mcp_tests {
             agents: agents.clone(),
             websocket_idle_timeout: Duration::from_secs(60),
             advanced_ui_enabled: false,
+            agent_ui_enabled: false,
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -3487,6 +3495,7 @@ mod mcp_tests {
             agents: AgentService::new(repository),
             websocket_idle_timeout: Duration::from_secs(60),
             advanced_ui_enabled: false,
+            agent_ui_enabled: false,
         };
         let request = || McpRequest {
             jsonrpc: "2.0".to_owned(),
@@ -3574,6 +3583,7 @@ mod protocol_capacity_tests {
             agents: AgentService::new(agent_repository),
             websocket_idle_timeout,
             advanced_ui_enabled: false,
+            agent_ui_enabled: false,
         };
         let app = build_router(state.clone(), operations);
         let server = tokio::spawn(async move {
@@ -3601,6 +3611,7 @@ mod protocol_capacity_tests {
             agents: AgentService::new(agent_repository),
             websocket_idle_timeout,
             advanced_ui_enabled: false,
+            agent_ui_enabled: false,
         };
         let app = build_router(state, operations);
         let server = tokio::spawn(async move {
@@ -3628,6 +3639,7 @@ mod protocol_capacity_tests {
             agents: AgentService::new(agent_repository),
             websocket_idle_timeout: Duration::from_secs(60),
             advanced_ui_enabled: false,
+            agent_ui_enabled: false,
         };
         let app = build_router(state, operations);
         let server = tokio::spawn(async move {
@@ -3801,10 +3813,12 @@ mod protocol_capacity_tests {
         assert!(!body.contains("npm/mermaid@11/dist/"));
         assert!(!body.contains("{{NONCE}}"));
         assert!(!body.contains("{{DISPLAY_NAME}}"));
+        assert!(!body.contains("{{AGENT_HIDDEN}}"));
         assert!(body.contains("Innlogga som <strong>guest</strong>"));
         assert!(!body.contains("id=\"participant\""));
         assert!(body.contains("new WebSocket(`${protocol}://${window.location.host}/ws`)"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
+        assert!(body.contains("<details class=\"agent-access\" hidden>"));
         assert!(body.contains("<summary>Agenttilgang</summary>"));
         assert!(body.contains("id=\"create-agent-access\""));
         assert!(body.contains("function createTemporaryAgentAccess()"));
