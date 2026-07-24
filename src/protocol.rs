@@ -19,6 +19,10 @@ pub struct ClientEnvelope {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ClientCommand {
     Hello,
+    ListUsers,
+    OpenDirectChannel {
+        user_id: crate::domain::UserId,
+    },
     CreateChannel {
         slug: String,
         name: String,
@@ -50,6 +54,21 @@ pub enum ClientCommand {
     MarkRead {
         channel_id: ChannelId,
         sequence: ChannelSequence,
+    },
+    ListMentions,
+    MarkMentionRead {
+        message_id: crate::domain::MessageId,
+    },
+    CreateTask {
+        source_message_id: crate::domain::MessageId,
+        assignee_id: crate::domain::UserId,
+        title: String,
+        process_link_id: Option<uuid::Uuid>,
+    },
+    ListTasks,
+    SetTaskDone {
+        task_id: uuid::Uuid,
+        done: bool,
     },
     Ping,
     CreateCircle {
@@ -101,6 +120,12 @@ pub enum ServerEvent {
     Hello {
         participant_id: crate::domain::UserId,
     },
+    UsersListed {
+        users: Vec<crate::domain::User>,
+    },
+    DirectChannelOpened {
+        channel: Channel,
+    },
     ChannelCreated {
         channel: Channel,
     },
@@ -129,6 +154,21 @@ pub enum ServerEvent {
     },
     ReadMarkerUpdated {
         membership: Membership,
+    },
+    MentionsListed {
+        mentions: Vec<crate::domain::InboxMention>,
+    },
+    MentionRead {
+        message_id: crate::domain::MessageId,
+    },
+    TaskCreated {
+        task: crate::domain::UserTask,
+    },
+    TasksListed {
+        tasks: Vec<crate::domain::UserTask>,
+    },
+    TaskUpdated {
+        task: crate::domain::UserTask,
     },
     Chat {
         event: ChatEvent,

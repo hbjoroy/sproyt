@@ -191,6 +191,28 @@ pub struct ChatMessage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct InboxMention {
+    pub message: ChatMessage,
+    pub channel_name: DisplayName,
+    pub read: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UserTask {
+    pub id: uuid::Uuid,
+    pub source_message_id: MessageId,
+    pub channel_id: ChannelId,
+    pub channel_name: DisplayName,
+    pub assignee_id: UserId,
+    pub created_by: UserId,
+    pub process_link_id: Option<uuid::Uuid>,
+    pub title: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PortableUserExport {
     pub format: String,
     pub exported_at: DateTime<Utc>,

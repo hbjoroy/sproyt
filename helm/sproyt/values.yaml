@@ -36,6 +36,7 @@ config:
   websocketIdleTimeoutSeconds: 60
   # Keep Heart/process diagnostics out of the ordinary private-beta journey.
   uiAdvancedEnabled: false
+  uiAgentEnabled: false
 
 # Heart is an optional internal component of the Sproyt release. It has no
 # Ingress and is reachable only through its ClusterIP service. Enabling it

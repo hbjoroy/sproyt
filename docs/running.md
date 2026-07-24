@@ -29,6 +29,11 @@ Heart/process diagnostics are excluded from the ordinary UI by default. Set
 environment; the Helm value is `config.uiAdvancedEnabled` and remains `false`
 for the private beta.
 
+Agent credential controls are gated independently. Set
+`SPROYT_UI_AGENT_ENABLED=true` only for an approved owner-agent pilot; the
+matching Helm value is `config.uiAgentEnabled`. Keeping both UI flags off
+leaves the ordinary login, circle, channel and chat journey unchanged.
+
 Verify the running service:
 
 ```powershell

@@ -20,10 +20,10 @@ use crate::domain::{
     ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleId,
     CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
     CreateCircleInvitation, DeleteCircle, DisplayName, ExportedChannel, ExportedCircle,
-    InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
-    Membership, MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
-    PortableUserExport, PresenceLease, RepositoryError, RepositoryFuture, SendMessage, User,
-    UserId,
+    InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
+    MarkRead, Membership, MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT,
+    Policy, PortableUserExport, PresenceLease, RepositoryError, RepositoryFuture, SendMessage,
+    User, UserId, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -162,6 +162,106 @@ impl ChatRepository for PostgresChatRepository {
                 .map_err(sql_error)?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(user)
+        })
+    }
+
+    fn list_human_users<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<User>> {
+        Box::pin(async move {
+            let exists = sqlx::query_scalar::<_, i32>("select 1 from users where id=$1")
+                .bind(*actor.as_uuid())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            if exists.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at from users where kind = 'human' order by lower(display_name), id")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            rows.into_iter().map(user_from_row).collect()
+        })
+    }
+
+    fn open_direct_channel<'a>(
+        &'a self,
+        actor: UserId,
+        other: UserId,
+    ) -> RepositoryFuture<'a, Channel> {
+        Box::pin(async move {
+            if actor == other {
+                return Err(RepositoryError::Conflict);
+            }
+            let (user_a, user_b) = if actor < other {
+                (actor.clone(), other.clone())
+            } else {
+                (other.clone(), actor.clone())
+            };
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            if let Some(channel_id) = sqlx::query_scalar::<_, uuid::Uuid>(
+                "select channel_id from direct_conversations where user_a_id=$1 and user_b_id=$2",
+            )
+            .bind(*user_a.as_uuid())
+            .bind(*user_b.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?
+            {
+                let row = sqlx::query(
+                    "select id,slug,name,kind,circle_id,created_by from channels where id=$1",
+                )
+                .bind(channel_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                return channel_from_row(row);
+            }
+            let names = sqlx::query("select display_name from users where id=any($1) and kind='human' order by lower(display_name)")
+                .bind(vec![*actor.as_uuid(), *other.as_uuid()])
+                .fetch_all(&mut *tx).await.map_err(sql_error)?;
+            if names.len() != 2 {
+                return Err(RepositoryError::NotFound);
+            }
+            let channel = Channel {
+                id: ChannelId::generate(),
+                slug: ChannelSlug::new(format!("dm-{}", uuid::Uuid::new_v4().simple()))
+                    .map_err(storage)?,
+                name: DisplayName::new(format!(
+                    "{} ↔ {}",
+                    names[0]
+                        .try_get::<String, _>("display_name")
+                        .map_err(storage)?,
+                    names[1]
+                        .try_get::<String, _>("display_name")
+                        .map_err(storage)?
+                ))
+                .map_err(storage)?,
+                kind: ChannelKind::Private,
+                circle_id: None,
+                created_by: actor.clone(),
+            };
+            sqlx::query("insert into channels(id,slug,name,kind,circle_id,created_by) values($1,$2,$3,'private',null,$4)")
+                .bind(*channel.id.as_uuid()).bind(channel.slug.as_str()).bind(channel.name.as_str()).bind(*actor.as_uuid())
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into channel_sequences(channel_id) values($1)")
+                .bind(*channel.id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query(
+                "insert into direct_conversations(channel_id,user_a_id,user_b_id) values($1,$2,$3)",
+            )
+            .bind(*channel.id.as_uuid())
+            .bind(*user_a.as_uuid())
+            .bind(*user_b.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            sqlx::query("insert into channel_memberships(channel_id,user_id,role) values($1,$2,'member'),($1,$3,'member')")
+                .bind(*channel.id.as_uuid()).bind(*actor.as_uuid()).bind(*other.as_uuid())
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(channel)
         })
     }
 
@@ -585,6 +685,7 @@ impl ChatRepository for PostgresChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
+            persist_mentions_postgres(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())
@@ -667,6 +768,7 @@ impl ChatRepository for PostgresChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
+            persist_mentions_postgres(&mut transaction, &message).await?;
             sqlx::query("update command_receipts set message_id = $1 where principal_id = $2 and request_id = $3")
                 .bind(*message.id.as_uuid())
                 .bind(*message.sender_id.as_uuid())
@@ -737,6 +839,91 @@ impl ChatRepository for PostgresChatRepository {
                 return Err(RepositoryError::PermissionDenied);
             }
             load_membership(&self.pool, command.channel_id, command.actor).await
+        })
+    }
+
+    fn list_mentions<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<InboxMention>> {
+        Box::pin(async move {
+            let rows = sqlx::query("select m.id,m.channel_id,m.sender_id,m.sender_display_name,m.sequence,m.body,m.created_at,c.name as channel_name,mm.read_at from message_mentions mm join messages m on m.id=mm.message_id join channels c on c.id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=mm.mentioned_user_id where mm.mentioned_user_id=$1 order by m.created_at desc limit 200")
+                .bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(inbox_mention).collect()
+        })
+    }
+
+    fn mark_mention_read<'a>(
+        &'a self,
+        actor: UserId,
+        message_id: MessageId,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let result = sqlx::query("update message_mentions set read_at=coalesce(read_at,now()) where message_id=$1 and mentioned_user_id=$2")
+                .bind(*message_id.as_uuid()).bind(*actor.as_uuid())
+                .execute(&self.pool).await.map_err(sql_error)?;
+            if result.rows_affected() == 0 {
+                return Err(RepositoryError::NotFound);
+            }
+            Ok(())
+        })
+    }
+
+    fn create_task<'a>(
+        &'a self,
+        actor: UserId,
+        source_message_id: MessageId,
+        assignee_id: UserId,
+        title: String,
+        process_link_id: Option<uuid::Uuid>,
+    ) -> RepositoryFuture<'a, UserTask> {
+        Box::pin(async move {
+            let id = uuid::Uuid::now_v7();
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let allowed: Option<i32> = sqlx::query_scalar("select 1 from messages m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 join message_mentions mm on mm.message_id=m.id and mm.mentioned_user_id=$2 where m.id=$3")
+                .bind(*actor.as_uuid()).bind(*assignee_id.as_uuid()).bind(*source_message_id.as_uuid())
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if let Some(process_id) = process_link_id {
+                let linked: Option<i32> = sqlx::query_scalar("select 1 from process_links p join messages m on m.channel_id=p.channel_id where p.id=$1 and m.id=$2")
+                    .bind(process_id).bind(*source_message_id.as_uuid())
+                    .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+                if linked.is_none() {
+                    return Err(RepositoryError::PermissionDenied);
+                }
+            }
+            sqlx::query("insert into user_tasks(id,source_message_id,assignee_id,created_by,process_link_id,title) values($1,$2,$3,$4,$5,$6)")
+                .bind(id).bind(*source_message_id.as_uuid()).bind(*assignee_id.as_uuid())
+                .bind(*actor.as_uuid()).bind(process_link_id).bind(title)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            let row = sqlx::query("select t.*,m.channel_id,c.name as channel_name from user_tasks t join messages m on m.id=t.source_message_id join channels c on c.id=m.channel_id where t.id=$1")
+                .bind(id).fetch_one(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            user_task(row)
+        })
+    }
+
+    fn list_tasks<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserTask>> {
+        Box::pin(async move {
+            let rows = sqlx::query("select t.*,m.channel_id,c.name as channel_name from user_tasks t join messages m on m.id=t.source_message_id join channels c on c.id=m.channel_id where t.assignee_id=$1 order by case t.status when 'open' then 0 else 1 end,t.created_at desc")
+                .bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(user_task).collect()
+        })
+    }
+
+    fn set_task_done<'a>(
+        &'a self,
+        actor: UserId,
+        task_id: uuid::Uuid,
+        done: bool,
+    ) -> RepositoryFuture<'a, UserTask> {
+        Box::pin(async move {
+            let row = sqlx::query("update user_tasks set status=$1,completed_at=case when $2 then now() else null end where id=$3 and assignee_id=$4 returning id")
+                .bind(if done { "done" } else { "open" }).bind(done).bind(task_id).bind(*actor.as_uuid())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?
+                .ok_or(RepositoryError::NotFound)?;
+            let row = sqlx::query("select t.*,m.channel_id,c.name as channel_name from user_tasks t join messages m on m.id=t.source_message_id join channels c on c.id=m.channel_id where t.id=$1")
+                .bind(row.try_get::<uuid::Uuid,_>("id").map_err(storage)?).fetch_one(&self.pool).await.map_err(sql_error)?;
+            user_task(row)
         })
     }
 
@@ -1505,6 +1692,113 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,
         latest_sequence: ChannelSequence::try_from(latest_sequence).map_err(storage)?,
+    })
+}
+
+fn user_from_row(row: PgRow) -> Result<User, RepositoryError> {
+    let kind: String = row.try_get("kind").map_err(storage)?;
+    Ok(User {
+        id: UserId::from_uuid(row.try_get("id").map_err(storage)?),
+        kind: crate::domain::PrincipalKind::parse(&kind)
+            .ok_or_else(|| storage("invalid principal kind"))?,
+        display_name: DisplayName::new(row.try_get::<String, _>("display_name").map_err(storage)?)
+            .map_err(storage)?,
+        external_provider: row.try_get("external_provider").map_err(storage)?,
+        external_subject: row.try_get("external_subject").map_err(storage)?,
+        created_at: row.try_get("created_at").map_err(storage)?,
+    })
+}
+
+fn channel_from_row(row: PgRow) -> Result<Channel, RepositoryError> {
+    let kind: String = row.try_get("kind").map_err(storage)?;
+    Ok(Channel {
+        id: ChannelId::from_uuid(row.try_get("id").map_err(storage)?),
+        slug: ChannelSlug::new(row.try_get::<String, _>("slug").map_err(storage)?)
+            .map_err(storage)?,
+        name: DisplayName::new(row.try_get::<String, _>("name").map_err(storage)?)
+            .map_err(storage)?,
+        kind: ChannelKind::parse(&kind).ok_or_else(|| storage("invalid channel kind"))?,
+        circle_id: row
+            .try_get::<Option<uuid::Uuid>, _>("circle_id")
+            .map_err(storage)?
+            .map(CircleId::from_uuid),
+        created_by: UserId::from_uuid(row.try_get("created_by").map_err(storage)?),
+    })
+}
+
+async fn persist_mentions_postgres(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    message: &ChatMessage,
+) -> Result<(), RepositoryError> {
+    let requested = mention_handles(message.body.as_str());
+    if requested.is_empty() {
+        return Ok(());
+    }
+    let rows = sqlx::query(
+        "select u.id,u.display_name from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human'",
+    )
+    .bind(*message.channel_id.as_uuid())
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(sql_error)?;
+    for row in rows {
+        let display_name: String = row.try_get("display_name").map_err(storage)?;
+        if requested.contains(&mention_handle(&display_name)) {
+            sqlx::query("insert into message_mentions(message_id,mentioned_user_id) values($1,$2) on conflict(message_id,mentioned_user_id) do nothing")
+                .bind(*message.id.as_uuid())
+                .bind(row.try_get::<uuid::Uuid, _>("id").map_err(storage)?)
+                .execute(&mut **transaction)
+                .await
+                .map_err(sql_error)?;
+        }
+    }
+    Ok(())
+}
+
+fn mention_handles(body: &str) -> std::collections::HashSet<String> {
+    body.split_whitespace()
+        .filter_map(|word| word.strip_prefix('@'))
+        .map(mention_handle)
+        .filter(|handle| !handle.is_empty())
+        .collect()
+}
+
+fn mention_handle(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric() || *character == '_' || *character == '-')
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn inbox_mention(row: PgRow) -> Result<InboxMention, RepositoryError> {
+    let read = row
+        .try_get::<Option<chrono::DateTime<Utc>>, _>("read_at")
+        .map_err(storage)?
+        .is_some();
+    let channel_name = DisplayName::new(row.try_get::<String, _>("channel_name").map_err(storage)?)
+        .map_err(storage)?;
+    Ok(InboxMention {
+        message: chat_message(row)?,
+        channel_name,
+        read,
+    })
+}
+
+fn user_task(row: PgRow) -> Result<UserTask, RepositoryError> {
+    Ok(UserTask {
+        id: row.try_get("id").map_err(storage)?,
+        source_message_id: MessageId::from_uuid(row.try_get("source_message_id").map_err(storage)?),
+        channel_id: ChannelId::from_uuid(row.try_get("channel_id").map_err(storage)?),
+        channel_name: DisplayName::new(row.try_get::<String, _>("channel_name").map_err(storage)?)
+            .map_err(storage)?,
+        assignee_id: UserId::from_uuid(row.try_get("assignee_id").map_err(storage)?),
+        created_by: UserId::from_uuid(row.try_get("created_by").map_err(storage)?),
+        process_link_id: row.try_get("process_link_id").map_err(storage)?,
+        title: row.try_get("title").map_err(storage)?,
+        status: row.try_get("status").map_err(storage)?,
+        created_at: row.try_get("created_at").map_err(storage)?,
+        completed_at: row.try_get("completed_at").map_err(storage)?,
     })
 }
 

@@ -14,10 +14,10 @@ use crate::domain::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
     ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId, CircleInvitation,
     CircleMembership, CircleRole, CreateChannel, CreateCircle, CreateCircleInvitation,
-    DeleteCircle, DisplayName, ExportedChannel, ExportedCircle, InvitationId, IssuedInvitation,
-    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MembershipRole,
-    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport,
-    RepositoryError, RepositoryFuture, SendMessage, User, UserId,
+    DeleteCircle, DisplayName, ExportedChannel, ExportedCircle, InboxMention, InvitationId,
+    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership,
+    MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
+    PortableUserExport, RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -81,6 +81,109 @@ impl ChatRepository for SqliteChatRepository {
                 .map_err(sql_error)?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(user)
+        })
+    }
+
+    fn list_human_users<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<User>> {
+        Box::pin(async move {
+            let exists = sqlx::query_scalar::<_, i64>("select 1 from users where id = ?")
+                .bind(actor.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            if exists.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at from users where kind = 'human' order by display_name collate nocase, id")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            rows.into_iter().map(user_from_row).collect()
+        })
+    }
+
+    fn open_direct_channel<'a>(
+        &'a self,
+        actor: UserId,
+        other: UserId,
+    ) -> RepositoryFuture<'a, Channel> {
+        Box::pin(async move {
+            if actor == other {
+                return Err(RepositoryError::Conflict);
+            }
+            let (user_a, user_b) = if actor < other {
+                (actor.clone(), other.clone())
+            } else {
+                (other.clone(), actor.clone())
+            };
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            if let Some(channel_id) = sqlx::query_scalar::<_, String>(
+                "select channel_id from direct_conversations where user_a_id = ? and user_b_id = ?",
+            )
+            .bind(user_a.to_string())
+            .bind(user_b.to_string())
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(sql_error)?
+            {
+                let row = sqlx::query(
+                    "select id, slug, name, kind, circle_id, created_by from channels where id = ?",
+                )
+                .bind(channel_id)
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                return channel_from_row(row);
+            }
+            let names = sqlx::query(
+                "select id, display_name from users where id in (?, ?) and kind = 'human' order by display_name collate nocase",
+            )
+            .bind(actor.to_string())
+            .bind(other.to_string())
+            .fetch_all(&mut *transaction)
+            .await
+            .map_err(sql_error)?;
+            if names.len() != 2 {
+                return Err(RepositoryError::NotFound);
+            }
+            let channel = Channel {
+                id: ChannelId::generate(),
+                slug: ChannelSlug::new(format!("dm-{}", uuid::Uuid::new_v4().simple()))
+                    .map_err(storage)?,
+                name: DisplayName::new(format!(
+                    "{} ↔ {}",
+                    names[0]
+                        .try_get::<String, _>("display_name")
+                        .map_err(storage)?,
+                    names[1]
+                        .try_get::<String, _>("display_name")
+                        .map_err(storage)?
+                ))
+                .map_err(storage)?,
+                kind: ChannelKind::Private,
+                circle_id: None,
+                created_by: actor.clone(),
+            };
+            sqlx::query("insert into channels (id, slug, name, kind, circle_id, created_by) values (?, ?, ?, 'private', null, ?)")
+                .bind(channel.id.to_string())
+                .bind(channel.slug.as_str())
+                .bind(channel.name.as_str())
+                .bind(actor.to_string())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            sqlx::query("insert into channel_sequences (channel_id) values (?)")
+                .bind(channel.id.to_string())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("insert into direct_conversations (channel_id, user_a_id, user_b_id) values (?, ?, ?)")
+                .bind(channel.id.to_string()).bind(user_a.to_string()).bind(user_b.to_string())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            sqlx::query("insert into channel_memberships (channel_id, user_id, role) values (?, ?, 'member'), (?, ?, 'member')")
+                .bind(channel.id.to_string()).bind(actor.to_string())
+                .bind(channel.id.to_string()).bind(other.to_string())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(channel)
         })
     }
 
@@ -518,6 +621,7 @@ impl ChatRepository for SqliteChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
+            persist_mentions_sqlite(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(message)
         })
@@ -592,6 +696,7 @@ impl ChatRepository for SqliteChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
+            persist_mentions_sqlite(&mut transaction, &message).await?;
             sqlx::query("update command_receipts set message_id = ? where principal_id = ? and request_id = ?")
                 .bind(message.id.as_uuid().to_string())
                 .bind(message.sender_id.to_string())
@@ -654,6 +759,93 @@ impl ChatRepository for SqliteChatRepository {
                 return Err(RepositoryError::PermissionDenied);
             }
             load_membership(&self.pool, command.channel_id, command.actor).await
+        })
+    }
+
+    fn list_mentions<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<InboxMention>> {
+        Box::pin(async move {
+            let rows = sqlx::query("select m.id,m.channel_id,m.sender_id,m.sender_display_name,m.sequence,m.body,m.created_at,c.name as channel_name,mm.read_at from message_mentions mm join messages m on m.id=mm.message_id join channels c on c.id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=mm.mentioned_user_id where mm.mentioned_user_id=? order by m.created_at desc limit 200")
+                .bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(inbox_mention).collect()
+        })
+    }
+
+    fn mark_mention_read<'a>(
+        &'a self,
+        actor: UserId,
+        message_id: MessageId,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let result = sqlx::query("update message_mentions set read_at=coalesce(read_at, ?) where message_id=? and mentioned_user_id=?")
+                .bind(persisted_now()).bind(message_id.as_uuid().to_string()).bind(actor.to_string())
+                .execute(&self.pool).await.map_err(sql_error)?;
+            if result.rows_affected() == 0 {
+                return Err(RepositoryError::NotFound);
+            }
+            Ok(())
+        })
+    }
+
+    fn create_task<'a>(
+        &'a self,
+        actor: UserId,
+        source_message_id: MessageId,
+        assignee_id: UserId,
+        title: String,
+        process_link_id: Option<uuid::Uuid>,
+    ) -> RepositoryFuture<'a, UserTask> {
+        Box::pin(async move {
+            let id = uuid::Uuid::now_v7();
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let allowed: Option<i64> = sqlx::query_scalar("select 1 from messages m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=? join message_mentions mm on mm.message_id=m.id and mm.mentioned_user_id=? where m.id=?")
+                .bind(actor.to_string()).bind(assignee_id.to_string()).bind(source_message_id.as_uuid().to_string())
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if let Some(process_id) = process_link_id {
+                let linked: Option<i64> = sqlx::query_scalar("select 1 from process_links p join messages m on m.channel_id=p.channel_id where p.id=? and m.id=?")
+                    .bind(process_id.to_string()).bind(source_message_id.as_uuid().to_string())
+                    .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+                if linked.is_none() {
+                    return Err(RepositoryError::PermissionDenied);
+                }
+            }
+            sqlx::query("insert into user_tasks(id,source_message_id,assignee_id,created_by,process_link_id,title) values(?,?,?,?,?,?)")
+                .bind(id.to_string()).bind(source_message_id.as_uuid().to_string()).bind(assignee_id.to_string())
+                .bind(actor.to_string()).bind(process_link_id.map(|id| id.to_string())).bind(title)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            let row = sqlx::query("select t.*,m.channel_id,c.name as channel_name from user_tasks t join messages m on m.id=t.source_message_id join channels c on c.id=m.channel_id where t.id=?")
+                .bind(id.to_string()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            user_task(row)
+        })
+    }
+
+    fn list_tasks<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserTask>> {
+        Box::pin(async move {
+            let rows = sqlx::query("select t.*,m.channel_id,c.name as channel_name from user_tasks t join messages m on m.id=t.source_message_id join channels c on c.id=m.channel_id where t.assignee_id=? order by case t.status when 'open' then 0 else 1 end,t.created_at desc")
+                .bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(user_task).collect()
+        })
+    }
+
+    fn set_task_done<'a>(
+        &'a self,
+        actor: UserId,
+        task_id: uuid::Uuid,
+        done: bool,
+    ) -> RepositoryFuture<'a, UserTask> {
+        Box::pin(async move {
+            let status = if done { "done" } else { "open" };
+            let completed_at = done.then(persisted_now);
+            let row = sqlx::query("update user_tasks set status=?,completed_at=? where id=? and assignee_id=? returning *")
+                .bind(status).bind(completed_at).bind(task_id.to_string()).bind(actor.to_string())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?
+                .ok_or(RepositoryError::NotFound)?;
+            let channel_row = sqlx::query("select t.*,m.channel_id,c.name as channel_name from user_tasks t join messages m on m.id=t.source_message_id join channels c on c.id=m.channel_id where t.id=?")
+                .bind(row.try_get::<String,_>("id").map_err(storage)?).fetch_one(&self.pool).await.map_err(sql_error)?;
+            user_task(channel_row)
         })
     }
 }
@@ -1379,6 +1571,130 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
     })
 }
 
+fn user_from_row(row: sqlx::sqlite::SqliteRow) -> Result<User, RepositoryError> {
+    let kind: String = row.try_get("kind").map_err(storage)?;
+    Ok(User {
+        id: UserId::new(row.try_get::<String, _>("id").map_err(storage)?).map_err(storage)?,
+        kind: crate::domain::PrincipalKind::parse(&kind)
+            .ok_or_else(|| storage("invalid principal kind"))?,
+        display_name: DisplayName::new(row.try_get::<String, _>("display_name").map_err(storage)?)
+            .map_err(storage)?,
+        external_provider: row.try_get("external_provider").map_err(storage)?,
+        external_subject: row.try_get("external_subject").map_err(storage)?,
+        created_at: row.try_get("created_at").map_err(storage)?,
+    })
+}
+
+fn channel_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Channel, RepositoryError> {
+    let kind: String = row.try_get("kind").map_err(storage)?;
+    Ok(Channel {
+        id: ChannelId::new(row.try_get::<String, _>("id").map_err(storage)?).map_err(storage)?,
+        slug: ChannelSlug::new(row.try_get::<String, _>("slug").map_err(storage)?)
+            .map_err(storage)?,
+        name: DisplayName::new(row.try_get::<String, _>("name").map_err(storage)?)
+            .map_err(storage)?,
+        kind: ChannelKind::parse(&kind).ok_or_else(|| storage("invalid channel kind"))?,
+        circle_id: row
+            .try_get::<Option<String>, _>("circle_id")
+            .map_err(storage)?
+            .map(|value| Uuid::parse_str(&value).map(CircleId::from_uuid))
+            .transpose()
+            .map_err(storage)?,
+        created_by: UserId::new(row.try_get::<String, _>("created_by").map_err(storage)?)
+            .map_err(storage)?,
+    })
+}
+
+async fn persist_mentions_sqlite(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    message: &ChatMessage,
+) -> Result<(), RepositoryError> {
+    let requested = mention_handles(message.body.as_str());
+    if requested.is_empty() {
+        return Ok(());
+    }
+    let rows = sqlx::query(
+        "select u.id, u.display_name from users u join channel_memberships m on m.user_id=u.id where m.channel_id=? and u.kind='human'",
+    )
+    .bind(message.channel_id.to_string())
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(sql_error)?;
+    for row in rows {
+        let display_name: String = row.try_get("display_name").map_err(storage)?;
+        if requested.contains(&mention_handle(&display_name)) {
+            sqlx::query("insert into message_mentions(message_id, mentioned_user_id) values(?, ?) on conflict(message_id, mentioned_user_id) do nothing")
+                .bind(message.id.as_uuid().to_string())
+                .bind(row.try_get::<String, _>("id").map_err(storage)?)
+                .execute(&mut **transaction)
+                .await
+                .map_err(sql_error)?;
+        }
+    }
+    Ok(())
+}
+
+fn mention_handles(body: &str) -> std::collections::HashSet<String> {
+    body.split_whitespace()
+        .filter_map(|word| word.strip_prefix('@'))
+        .map(mention_handle)
+        .filter(|handle| !handle.is_empty())
+        .collect()
+}
+
+fn mention_handle(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric() || *character == '_' || *character == '-')
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn inbox_mention(row: sqlx::sqlite::SqliteRow) -> Result<InboxMention, RepositoryError> {
+    let read = row
+        .try_get::<Option<DateTime<Utc>>, _>("read_at")
+        .map_err(storage)?
+        .is_some();
+    let channel_name = DisplayName::new(row.try_get::<String, _>("channel_name").map_err(storage)?)
+        .map_err(storage)?;
+    Ok(InboxMention {
+        message: chat_message(row)?,
+        channel_name,
+        read,
+    })
+}
+
+fn user_task(row: sqlx::sqlite::SqliteRow) -> Result<UserTask, RepositoryError> {
+    Ok(UserTask {
+        id: Uuid::parse_str(&row.try_get::<String, _>("id").map_err(storage)?).map_err(storage)?,
+        source_message_id: MessageId::from_uuid(
+            Uuid::parse_str(
+                &row.try_get::<String, _>("source_message_id")
+                    .map_err(storage)?,
+            )
+            .map_err(storage)?,
+        ),
+        channel_id: ChannelId::new(row.try_get::<String, _>("channel_id").map_err(storage)?)
+            .map_err(storage)?,
+        channel_name: DisplayName::new(row.try_get::<String, _>("channel_name").map_err(storage)?)
+            .map_err(storage)?,
+        assignee_id: UserId::new(row.try_get::<String, _>("assignee_id").map_err(storage)?)
+            .map_err(storage)?,
+        created_by: UserId::new(row.try_get::<String, _>("created_by").map_err(storage)?)
+            .map_err(storage)?,
+        process_link_id: row
+            .try_get::<Option<String>, _>("process_link_id")
+            .map_err(storage)?
+            .map(|value| Uuid::parse_str(&value))
+            .transpose()
+            .map_err(storage)?,
+        title: row.try_get("title").map_err(storage)?,
+        status: row.try_get("status").map_err(storage)?,
+        created_at: row.try_get("created_at").map_err(storage)?,
+        completed_at: row.try_get("completed_at").map_err(storage)?,
+    })
+}
+
 fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryError> {
     let id: String = row.try_get("id").map_err(storage)?;
     let channel_id: String = row.try_get("channel_id").map_err(storage)?;
@@ -1798,5 +2114,74 @@ mod tests {
             .await
             .unwrap();
         assert!(audit_count >= 6);
+    }
+
+    #[tokio::test]
+    async fn mentions_and_tasks_are_durable_and_scoped_to_the_recipient() {
+        let repository = SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        repository.migrate().await.unwrap();
+        let alice = UserId::named("mention-alice");
+        let bob = UserId::named("mention-bob");
+        for (id, name) in [(alice.clone(), "Alice"), (bob.clone(), "Bob Builder")] {
+            repository
+                .upsert_user(User {
+                    id,
+                    kind: PrincipalKind::Human,
+                    display_name: DisplayName::new(name).unwrap(),
+                    external_provider: None,
+                    external_subject: None,
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+        let general = repository
+            .list_channels_for_user(alice.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|channel| channel.slug.as_str() == "general")
+            .unwrap();
+        let message = repository
+            .append_message(SendMessage {
+                actor: alice.clone(),
+                channel_id: general.id,
+                body: MessageBody::new("@BobBuilder kan du ordne dette?").unwrap(),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            repository
+                .list_mentions(alice.clone())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let mentions = repository.list_mentions(bob.clone()).await.unwrap();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].message, message);
+        assert!(!mentions[0].read);
+
+        let task = repository
+            .create_task(
+                bob.clone(),
+                message.id,
+                bob.clone(),
+                "Ordne dette".to_owned(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.list_tasks(bob.clone()).await.unwrap(),
+            vec![task.clone()]
+        );
+        assert!(repository.list_tasks(alice).await.unwrap().is_empty());
+        let completed = repository.set_task_done(bob, task.id, true).await.unwrap();
+        assert_eq!(completed.status, "done");
+        assert!(completed.completed_at.is_some());
     }
 }
