@@ -118,6 +118,24 @@ impl ChatEngine {
         Ok(())
     }
 
+    pub async fn list_users(&self, actor: UserId) -> Result<Vec<User>, ChatError> {
+        self.repository
+            .list_human_users(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn open_direct_channel(
+        &self,
+        actor: UserId,
+        other: UserId,
+    ) -> Result<crate::domain::Channel, ChatError> {
+        self.repository
+            .open_direct_channel(actor, other)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn export_user_data(
         &self,
         actor: UserId,
@@ -319,6 +337,80 @@ impl ChatEngine {
                 channel_id,
                 sequence,
             })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn list_mentions(
+        &self,
+        actor: UserId,
+    ) -> Result<Vec<crate::domain::InboxMention>, ChatError> {
+        self.repository
+            .list_mentions(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn mark_mention_read(
+        &self,
+        actor: UserId,
+        message_id: MessageId,
+    ) -> Result<(), ChatError> {
+        self.repository
+            .mark_mention_read(actor, message_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn create_task(
+        &self,
+        actor: UserId,
+        source_message_id: MessageId,
+        assignee_id: UserId,
+        title: String,
+        process_link_id: Option<uuid::Uuid>,
+    ) -> Result<crate::domain::UserTask, ChatError> {
+        if title.trim().is_empty() {
+            return Err(ChatError::Validation(TextValidationError::Empty {
+                field: "task title",
+            }));
+        }
+        if title.len() > 240 {
+            return Err(ChatError::Validation(TextValidationError::TooLarge {
+                field: "task title",
+                max: 240,
+            }));
+        }
+        self.repository
+            .create_task(
+                actor,
+                source_message_id,
+                assignee_id,
+                title.trim().to_owned(),
+                process_link_id,
+            )
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn list_tasks(
+        &self,
+        actor: UserId,
+    ) -> Result<Vec<crate::domain::UserTask>, ChatError> {
+        self.repository
+            .list_tasks(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn set_task_done(
+        &self,
+        actor: UserId,
+        task_id: uuid::Uuid,
+        done: bool,
+    ) -> Result<crate::domain::UserTask, ChatError> {
+        self.repository
+            .set_task_done(actor, task_id, done)
             .await
             .map_err(ChatError::from)
     }

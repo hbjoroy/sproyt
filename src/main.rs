@@ -1522,6 +1522,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .mobile-navigation-toggle { display: none; }
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
+      .task-editor { display: grid; gap: 8px; margin-top: 12px; }
       .channel-group { margin: 12px 8px 2px; color: #647269; font-size: .78rem; font-weight: 700; }
       .channel-button { display: flex; justify-content: space-between; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
       .channel-button:hover, .channel-button[aria-current="page"] { background: #dfe8e1; color: #183d2e; }
@@ -1861,7 +1862,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         </div>
         <nav aria-label="Samtalar" id="mobile-navigation">
           <p class="navigation-heading">Samtalar</p>
+          <div class="onboarding-actions" role="group" aria-label="Personleg innboks">
+            <button id="show-unread" type="button">Ulest</button>
+            <button id="show-mentions" type="button">Omtalar</button>
+            <button id="show-tasks" type="button">Oppgåver</button>
+          </div>
           <div class="channel-list" id="channel-list"><span class="status">Lastar …</span></div>
+          <p class="navigation-heading">Direktemelding</p>
+          <label>Brukar<select id="direct-user"><option value="">Vel brukar</option></select></label>
+          <button id="open-direct" type="button" disabled>Start samtale</button>
         </nav>
         <section class="onboarding" id="mobile-onboarding" aria-label="Ny vennekrets">
           <p class="navigation-heading">Vennekrets</p>
@@ -1927,6 +1936,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const statusEl = document.querySelector("#status");
       const messagesEl = document.querySelector("#messages");
       const channelList = document.querySelector("#channel-list");
+      const directUser = document.querySelector("#direct-user");
+      const openDirect = document.querySelector("#open-direct");
       const conversationTitle = document.querySelector("#conversation-title");
       const circleSelect = document.querySelector("#circle-select");
       const circleName = document.querySelector("#circle-name");
@@ -1966,6 +1977,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const pendingCommands = new Map();
       let mermaidPromise = null;
       let knownChannels = [];
+      let knownUsers = [];
+      let knownMentions = [];
+      let knownTasks = [];
       const knownCircles = new Map();
       let temporaryAgentId = null;
 
@@ -2046,6 +2060,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bodyInput.value = "";
         bodyInput.focus();
       });
+
+      directUser.addEventListener("change", () => {
+        openDirect.disabled = !directUser.value;
+      });
+      openDirect.addEventListener("click", () => {
+        if (directUser.value) sendCommand("open_direct_channel", { user_id: directUser.value });
+      });
+      document.querySelector("#show-unread").addEventListener("click", () => showInbox("unread"));
+      document.querySelector("#show-mentions").addEventListener("click", () => showInbox("mentions"));
+      document.querySelector("#show-tasks").addEventListener("click", () => showInbox("tasks"));
 
       viewModeButton.addEventListener("click", () => setRenderMode("view"));
       rawModeButton.addEventListener("click", () => setRenderMode("raw"));
@@ -2173,7 +2197,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           .toLowerCase()
           .replace(/[^a-z0-9_-]+/g, "-");
         const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-        const nextSocket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+        const websocketUrl = new URL(`${protocol}://${window.location.host}/ws`);
+        const developmentParticipant = new URLSearchParams(window.location.search).get("participant");
+        if (developmentParticipant) websocketUrl.searchParams.set("participant", developmentParticipant);
+        const nextSocket = new WebSocket(websocketUrl);
         if (!previousSocket) socket = nextSocket;
         if (!silent) setConnected(false, "Koplar til ...");
 
@@ -2192,6 +2219,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             }
           }, 10_000);
           sendCommand("hello");
+          sendCommand("list_users");
           sendCommand("list_my_channels");
           sendCommand("list_my_circles");
           if (activeChannelId) sendCommand("subscribe_channel", { channel_id: activeChannelId });
@@ -2399,6 +2427,50 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
 
+        if (event.type === "users_listed") {
+          knownUsers = payload.users;
+          directUser.replaceChildren(new Option("Vel brukar", ""));
+          knownUsers
+            .filter((user) => user.id !== currentParticipantId)
+            .forEach((user) => {
+              const handle = user.display_name.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "");
+              directUser.add(new Option(`${user.display_name} (@${handle})`, user.id));
+            });
+          openDirect.disabled = !directUser.value;
+          return;
+        }
+
+        if (event.type === "mentions_listed") {
+          knownMentions = payload.mentions;
+          renderMentionInbox();
+          return;
+        }
+
+        if (event.type === "mention_read") {
+          const mention = knownMentions.find((item) => item.message.id === payload.message_id);
+          if (mention) mention.read = true;
+          renderMentionInbox();
+          return;
+        }
+
+        if (event.type === "tasks_listed") {
+          knownTasks = payload.tasks;
+          renderTaskInbox();
+          return;
+        }
+
+        if (event.type === "task_created") {
+          knownTasks = [payload.task, ...knownTasks.filter((task) => task.id !== payload.task.id)];
+          showInbox("tasks");
+          return;
+        }
+
+        if (event.type === "task_updated") {
+          knownTasks = knownTasks.map((task) => task.id === payload.task.id ? payload.task : task);
+          renderTaskInbox();
+          return;
+        }
+
         if (event.type === "circles_listed") {
           knownCircles.clear();
           circleSelect.replaceChildren(new Option("Ingen", ""));
@@ -2465,6 +2537,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
           knownChannels.push({ ...payload.channel, latest_sequence: 0, last_read_sequence: 0 });
           renderChannels();
           selectChannel(payload.channel);
+          return;
+        }
+
+        if (event.type === "direct_channel_opened") {
+          let channel = knownChannels.find((item) => item.id === payload.channel.id);
+          if (!channel) {
+            channel = { ...payload.channel, latest_sequence: 0, last_read_sequence: 0, role: "member" };
+            knownChannels.push(channel);
+          }
+          renderChannels();
+          selectChannel(channel);
+          sendCommand("list_my_channels");
           return;
         }
 
@@ -2591,6 +2675,139 @@ const INDEX_HTML: &str = r##"<!doctype html>
           button.addEventListener("click", () => selectChannel(channel));
           channelList.append(button);
           }
+        }
+      }
+
+      function showInbox(kind) {
+        if (activeChannelId) sendCommand("unsubscribe_channel", { channel_id: activeChannelId });
+        activeChannelId = null;
+        timeline.length = 0;
+        seenMessageIds.clear();
+        bodyInput.disabled = true;
+        sendButton.disabled = true;
+        messagesEl.replaceChildren();
+        if (kind === "unread") {
+          conversationTitle.textContent = "Uleste meldingar";
+          const unread = knownChannels.filter((channel) => channel.latest_sequence > channel.last_read_sequence);
+          if (unread.length === 0) {
+            messagesEl.innerHTML = '<div class="empty-state"><h2>Alt er lese</h2><p>Du har ingen uleste meldingar akkurat no.</p></div>';
+          } else {
+            for (const channel of unread) {
+              const button = document.createElement("button");
+              button.type = "button";
+              button.className = "channel-button";
+              button.textContent = `${channel.name} · ${channel.latest_sequence - channel.last_read_sequence} uleste`;
+              button.addEventListener("click", () => selectChannel(channel));
+              messagesEl.append(button);
+            }
+          }
+        } else if (kind === "mentions") {
+          conversationTitle.textContent = "Omtalar";
+          messagesEl.innerHTML = '<div class="empty-state"><h2>Lastar omtalar …</h2></div>';
+          sendCommand("list_mentions");
+        } else {
+          conversationTitle.textContent = "Oppgåver";
+          messagesEl.innerHTML = '<div class="empty-state"><h2>Lastar oppgåver …</h2></div>';
+          sendCommand("list_tasks");
+        }
+        renderChannels();
+      }
+
+      function renderMentionInbox() {
+        if (conversationTitle.textContent !== "Omtalar") return;
+        messagesEl.replaceChildren();
+        if (knownMentions.length === 0) {
+          messagesEl.innerHTML = '<div class="empty-state"><h2>Ingen omtalar</h2><p>Når nokon skriv @namnet-ditt, kjem meldinga hit.</p></div>';
+          return;
+        }
+        for (const mention of knownMentions) {
+          const card = document.createElement("article");
+          card.className = "message";
+          const heading = document.createElement("strong");
+          heading.textContent = `${mention.message.sender_display_name} i ${mention.channel_name}`;
+          const body = document.createElement("p");
+          body.textContent = mention.message.body;
+          const actions = document.createElement("div");
+          actions.className = "onboarding-actions";
+          const open = document.createElement("button");
+          open.type = "button";
+          open.textContent = "Opne samtalen";
+          open.addEventListener("click", () => {
+            const channel = knownChannels.find((item) => item.id === mention.message.channel_id);
+            if (channel) selectChannel(channel);
+          });
+          actions.append(open);
+          if (!mention.read) {
+            const read = document.createElement("button");
+            read.type = "button";
+            read.textContent = "Marker lesen";
+            read.addEventListener("click", () => sendCommand("mark_mention_read", { message_id: mention.message.id }));
+            actions.append(read);
+          }
+          const task = document.createElement("button");
+          task.type = "button";
+          task.textContent = "Lag oppgåve";
+          task.addEventListener("click", () => createTaskFromMention(mention, card));
+          actions.append(task);
+          card.append(heading, body, actions);
+          if (!mention.read) card.dataset.unread = "true";
+          messagesEl.append(card);
+        }
+      }
+
+      function createTaskFromMention(mention, card) {
+        if (card.querySelector(".task-editor")) return;
+        const editor = document.createElement("form");
+        editor.className = "task-editor";
+        const title = document.createElement("input");
+        title.required = true;
+        title.maxLength = 240;
+        title.setAttribute("aria-label", "Oppgåvetittel");
+        title.value = mention.message.body.replace(/@\S+/g, "").trim();
+        const process = document.createElement("input");
+        process.setAttribute("aria-label", "Heart-prosess-ID");
+        process.placeholder = "Heart-prosess-ID (valfritt)";
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.textContent = "Lagre oppgåve";
+        editor.append(title, process, save);
+        editor.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (!title.value.trim()) return;
+          sendCommand("create_task", {
+            source_message_id: mention.message.id,
+            assignee_id: currentParticipantId,
+            title: title.value.trim(),
+            process_link_id: process.value.trim() || null
+          });
+        });
+        card.append(editor);
+        title.focus();
+      }
+
+      function renderTaskInbox() {
+        if (conversationTitle.textContent !== "Oppgåver") return;
+        messagesEl.replaceChildren();
+        if (knownTasks.length === 0) {
+          messagesEl.innerHTML = '<div class="empty-state"><h2>Ingen oppgåver</h2><p>Du kan gjere ei @omtale om til ei oppgåve.</p></div>';
+          return;
+        }
+        for (const task of knownTasks) {
+          const card = document.createElement("article");
+          card.className = "message";
+          const heading = document.createElement("strong");
+          heading.textContent = task.title;
+          const details = document.createElement("p");
+          details.textContent = `${task.channel_name}${task.process_link_id ? ` · Heart ${task.process_link_id}` : ""}`;
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.textContent = task.status === "done" ? "Opne igjen" : "Ferdig";
+          toggle.addEventListener("click", () => sendCommand("set_task_done", {
+            task_id: task.id, done: task.status !== "done"
+          }));
+          card.append(heading, details, toggle);
+          if (task.status === "done") card.dataset.done = "true";
+          messagesEl.append(card);
         }
       }
 
@@ -3816,7 +4033,12 @@ mod protocol_capacity_tests {
         assert!(!body.contains("{{AGENT_HIDDEN}}"));
         assert!(body.contains("Innlogga som <strong>guest</strong>"));
         assert!(!body.contains("id=\"participant\""));
-        assert!(body.contains("new WebSocket(`${protocol}://${window.location.host}/ws`)"));
+        assert!(
+            body.contains(
+                "const websocketUrl = new URL(`${protocol}://${window.location.host}/ws`)"
+            )
+        );
+        assert!(body.contains("const nextSocket = new WebSocket(websocketUrl)"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
         assert!(body.contains("<details class=\"agent-access\" hidden>"));
         assert!(body.contains("<summary>Agenttilgang</summary>"));

@@ -196,6 +196,14 @@ async fn execute_command(
         ClientCommand::Hello => Ok(ServerEvent::Hello {
             participant_id: participant_id.clone(),
         }),
+        ClientCommand::ListUsers => chat
+            .list_users(participant_id.clone())
+            .await
+            .map(|users| ServerEvent::UsersListed { users }),
+        ClientCommand::OpenDirectChannel { user_id } => chat
+            .open_direct_channel(participant_id.clone(), user_id)
+            .await
+            .map(|channel| ServerEvent::DirectChannelOpened { channel }),
         ClientCommand::CreateChannel {
             slug,
             name,
@@ -308,6 +316,37 @@ async fn execute_command(
             .mark_read(participant_id.clone(), channel_id, sequence)
             .await
             .map(|membership| ServerEvent::ReadMarkerUpdated { membership }),
+        ClientCommand::ListMentions => chat
+            .list_mentions(participant_id.clone())
+            .await
+            .map(|mentions| ServerEvent::MentionsListed { mentions }),
+        ClientCommand::MarkMentionRead { message_id } => chat
+            .mark_mention_read(participant_id.clone(), message_id)
+            .await
+            .map(|()| ServerEvent::MentionRead { message_id }),
+        ClientCommand::CreateTask {
+            source_message_id,
+            assignee_id,
+            title,
+            process_link_id,
+        } => chat
+            .create_task(
+                participant_id.clone(),
+                source_message_id,
+                assignee_id,
+                title,
+                process_link_id,
+            )
+            .await
+            .map(|task| ServerEvent::TaskCreated { task }),
+        ClientCommand::ListTasks => chat
+            .list_tasks(participant_id.clone())
+            .await
+            .map(|tasks| ServerEvent::TasksListed { tasks }),
+        ClientCommand::SetTaskDone { task_id, done } => chat
+            .set_task_done(participant_id.clone(), task_id, done)
+            .await
+            .map(|task| ServerEvent::TaskUpdated { task }),
         ClientCommand::CreateCircle { slug, name } => {
             async {
                 let circle = chat

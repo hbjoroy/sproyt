@@ -8,14 +8,14 @@ use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
 use super::{
     AcceptCircleInvitation, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatEvent,
     ChatMessage, Circle, CircleMembership, CircleRole, CreateChannel, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, IssuedInvitation, JoinChannel, LeaveChannel,
-    LoadRecentMessages, MarkRead, Membership, MessageId, PortableUserExport, SendMessage, User,
-    UserId,
+    CreateCircleInvitation, DeleteCircle, InboxMention, IssuedInvitation, JoinChannel,
+    LeaveChannel, LoadRecentMessages, MarkRead, Membership, MessageId, PortableUserExport,
+    SendMessage, User, UserId, UserTask,
 };
 #[cfg(test)]
 use super::{
-    ChannelRef, CircleId, CircleInvitation, ExportedChannel, ExportedCircle, InvitationId,
-    MembershipRole, PORTABLE_USER_EXPORT_FORMAT, Policy, RepositoryError::NotFound,
+    ChannelRef, ChannelSlug, CircleId, CircleInvitation, ExportedChannel, ExportedCircle,
+    InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT, Policy, RepositoryError::NotFound,
 };
 #[cfg(test)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -39,6 +39,12 @@ pub type RepositoryFuture<'a, T> =
 pub trait ChatRepository: Send + Sync + 'static {
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
+    fn list_human_users<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<User>>;
+    fn open_direct_channel<'a>(
+        &'a self,
+        actor: UserId,
+        other: UserId,
+    ) -> RepositoryFuture<'a, Channel>;
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
     fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle>;
     fn list_circles_for_user<'a>(
@@ -77,6 +83,37 @@ pub trait ChatRepository: Send + Sync + 'static {
         channel_id: ChannelId,
     ) -> RepositoryFuture<'a, ChannelSequence>;
     fn mark_read<'a>(&'a self, command: MarkRead) -> RepositoryFuture<'a, Membership>;
+    fn list_mentions<'a>(&'a self, _actor: UserId) -> RepositoryFuture<'a, Vec<InboxMention>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn mark_mention_read<'a>(
+        &'a self,
+        _actor: UserId,
+        _message_id: MessageId,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async { Err(RepositoryError::NotFound) })
+    }
+    fn create_task<'a>(
+        &'a self,
+        _actor: UserId,
+        _source_message_id: MessageId,
+        _assignee_id: UserId,
+        _title: String,
+        _process_link_id: Option<uuid::Uuid>,
+    ) -> RepositoryFuture<'a, UserTask> {
+        Box::pin(async { Err(RepositoryError::NotFound) })
+    }
+    fn list_tasks<'a>(&'a self, _actor: UserId) -> RepositoryFuture<'a, Vec<UserTask>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn set_task_done<'a>(
+        &'a self,
+        _actor: UserId,
+        _task_id: uuid::Uuid,
+        _done: bool,
+    ) -> RepositoryFuture<'a, UserTask> {
+        Box::pin(async { Err(RepositoryError::NotFound) })
+    }
     fn subscribe_messages(&self) -> Option<broadcast::Receiver<MessageId>> {
         None
     }
@@ -178,6 +215,86 @@ impl ChatRepository for InMemoryChatRepository {
                     });
             }
             Ok(user)
+        })
+    }
+
+    fn list_human_users<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<User>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            if !state.users.contains_key(&actor) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut users = state
+                .users
+                .values()
+                .filter(|user| user.kind == crate::domain::PrincipalKind::Human)
+                .cloned()
+                .collect::<Vec<_>>();
+            users
+                .sort_by(|left, right| left.display_name.as_str().cmp(right.display_name.as_str()));
+            Ok(users)
+        })
+    }
+
+    fn open_direct_channel<'a>(
+        &'a self,
+        actor: UserId,
+        other: UserId,
+    ) -> RepositoryFuture<'a, Channel> {
+        Box::pin(async move {
+            if actor == other {
+                return Err(RepositoryError::Conflict);
+            }
+            let mut state = self.lock_state()?;
+            let other_user = state
+                .users
+                .get(&other)
+                .cloned()
+                .ok_or(RepositoryError::NotFound)?;
+            if !state.users.contains_key(&actor) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let pair = if actor < other {
+                (actor.clone(), other.clone())
+            } else {
+                (other.clone(), actor.clone())
+            };
+            if let Some(channel_id) = state.direct_conversations.get(&pair) {
+                return state
+                    .channels
+                    .get(channel_id)
+                    .cloned()
+                    .ok_or_else(|| RepositoryError::Storage("direct channel is missing".into()));
+            }
+            let channel = Channel {
+                id: ChannelId::generate(),
+                slug: ChannelSlug::new(format!("dm-{}", uuid::Uuid::new_v4().simple()))
+                    .map_err(|error| RepositoryError::Storage(error.to_string()))?,
+                name: other_user.display_name,
+                kind: crate::domain::ChannelKind::Private,
+                circle_id: None,
+                created_by: actor.clone(),
+            };
+            state
+                .channels_by_slug
+                .insert(channel.slug.clone(), channel.id.clone());
+            state.channels.insert(channel.id.clone(), channel.clone());
+            state.direct_conversations.insert(pair, channel.id.clone());
+            for (user_id, role) in [
+                (actor, MembershipRole::Owner),
+                (other, MembershipRole::Member),
+            ] {
+                state.memberships.insert(
+                    (channel.id.clone(), user_id.clone()),
+                    Membership {
+                        channel_id: channel.id.clone(),
+                        user_id,
+                        role,
+                        last_read_sequence: ChannelSequence::new(0),
+                    },
+                );
+            }
+            Ok(channel)
         })
     }
 
@@ -785,6 +902,7 @@ struct RepositoryState {
     circle_invitations: HashMap<Vec<u8>, CircleInvitation>,
     channels: HashMap<ChannelId, Channel>,
     channels_by_slug: HashMap<super::ChannelSlug, ChannelId>,
+    direct_conversations: HashMap<(UserId, UserId), ChannelId>,
     memberships: HashMap<(ChannelId, UserId), Membership>,
     messages: HashMap<ChannelId, Vec<ChatMessage>>,
     next_sequences: HashMap<ChannelId, ChannelSequence>,
