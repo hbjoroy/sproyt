@@ -1969,6 +1969,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let renderMode = "view";
       let requestNumber = 0;
       let activeChannelId = null;
+      let subscribedChannelId = null;
       let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
@@ -2056,6 +2057,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (!socket || socket.readyState !== WebSocket.OPEN || !activeChannelId || body.length === 0) {
           return;
         }
+        if (subscribedChannelId !== activeChannelId) return;
         sendCommand("send_message", { channel_id: activeChannelId, body });
         bodyInput.value = "";
         bodyInput.focus();
@@ -2201,7 +2203,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const developmentParticipant = new URLSearchParams(window.location.search).get("participant");
         if (developmentParticipant) websocketUrl.searchParams.set("participant", developmentParticipant);
         const nextSocket = new WebSocket(websocketUrl);
-        if (!previousSocket) socket = nextSocket;
+        if (!previousSocket) {
+          socket = nextSocket;
+          subscribedChannelId = null;
+        }
         if (!silent) setConnected(false, "Koplar til ...");
 
         nextSocket.addEventListener("open", () => {
@@ -2244,6 +2249,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             return;
           }
           if (socket !== nextSocket) return;
+          subscribedChannelId = null;
           if (heartbeatTimer !== null) {
             window.clearInterval(heartbeatTimer);
             heartbeatTimer = null;
@@ -2292,8 +2298,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function setConnected(connected, status) {
         statusEl.textContent = status;
-        bodyInput.disabled = !connected || !activeChannelId;
-        sendButton.disabled = !connected || !activeChannelId;
+        const writableChannel = connected
+          && activeChannelId !== null
+          && subscribedChannelId === activeChannelId;
+        bodyInput.disabled = !writableChannel;
+        sendButton.disabled = !writableChannel;
         circleButtons.forEach((button) => { button.disabled = !connected; });
         exportButton.disabled = !connected;
         processButtons.forEach((button) => { button.disabled = !connected; });
@@ -2553,7 +2562,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "subscription_started") {
-          activeChannelId = payload.channel_id;
+          if (payload.channel_id !== activeChannelId) {
+            sendCommand("unsubscribe_channel", { channel_id: payload.channel_id });
+            return;
+          }
+          subscribedChannelId = payload.channel_id;
+          statusEl.textContent = "Tilkopla";
           const channel = knownChannels.find((item) => item.id === activeChannelId);
           conversationTitle.textContent = channel?.name || "Samtale";
           payload.history.forEach(appendTimelineMessage);
@@ -2563,6 +2577,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           renderChannels();
           renderTimeline();
           updateAgentAccessControls();
+          return;
+        }
+
+        if (event.type === "subscription_ended") {
+          if (payload.channel_id === subscribedChannelId) {
+            subscribedChannelId = null;
+            setConnected(socket?.readyState === WebSocket.OPEN, "Koplar til samtalen …");
+          }
           return;
         }
 
@@ -2679,7 +2701,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function showInbox(kind) {
-        if (activeChannelId) sendCommand("unsubscribe_channel", { channel_id: activeChannelId });
+        if (subscribedChannelId) {
+          sendCommand("unsubscribe_channel", { channel_id: subscribedChannelId });
+        }
+        subscribedChannelId = null;
         activeChannelId = null;
         timeline.length = 0;
         seenMessageIds.clear();
@@ -2812,11 +2837,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function selectChannel(channel) {
-        if (!channel || channel.id === activeChannelId) return;
+        if (!channel) return;
+        if (channel.id === activeChannelId && channel.id === subscribedChannelId) return;
         sidebar.classList.remove("mobile-open");
         mobileNavigationToggle.setAttribute("aria-expanded", "false");
-        const previousChannelId = activeChannelId;
+        const previousChannelId = subscribedChannelId;
         if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
+        subscribedChannelId = null;
         timeline.length = 0;
         seenMessageIds.clear();
         messagesEl.replaceChildren();
@@ -2825,7 +2852,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
         conversationTitle.textContent = channel.name;
         renderChannels();
         updateAgentAccessControls();
-        sendCommand("subscribe_channel", { channel_id: channel.id });
+        bodyInput.disabled = true;
+        sendButton.disabled = true;
+        statusEl.textContent = "Koplar til samtalen …";
+        if (!sendCommand("subscribe_channel", { channel_id: channel.id })) {
+          statusEl.textContent = "Vent på samband – trykk på samtalen for å prøve igjen";
+        }
       }
 
       function updateAgentAccessControls() {
@@ -4039,6 +4071,12 @@ mod protocol_capacity_tests {
             )
         );
         assert!(body.contains("const nextSocket = new WebSocket(websocketUrl)"));
+        assert!(body.contains("let subscribedChannelId = null"));
+        assert!(body.contains("subscribedChannelId === activeChannelId"));
+        assert!(
+            body.contains("channel.id === activeChannelId && channel.id === subscribedChannelId")
+        );
+        assert!(body.contains("payload.channel_id !== activeChannelId"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
         assert!(body.contains("<details class=\"agent-access\" hidden>"));
         assert!(body.contains("<summary>Agenttilgang</summary>"));
