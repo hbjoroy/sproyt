@@ -1881,8 +1881,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <label>Invitasjonslenkje<input id="invitation-token" placeholder="Lim inn lenkja du fekk"></label>
           <div class="onboarding-actions"><button id="accept-invitation" type="button" disabled>Bli med</button><button id="copy-invitation" type="button" hidden>Kopier lenkje</button></div>
           <p class="onboarding-notice" id="onboarding-notice" role="status" aria-live="polite">Lag ein ny vennekrets, eller lim inn ei invitasjonslenkje.</p>
-          <input id="circle-channel" type="hidden" value="prat">
-          <button id="create-circle-channel" type="button" hidden disabled>Lag kanal</button>
+          <p class="navigation-heading">Kanalar</p>
+          <label>Kanalnamn<input id="circle-channel" placeholder="Turprat"></label>
+          <label>Tilgang<select id="channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label>
+          <button id="create-circle-channel" type="button" disabled>Lag kanal</button>
+          <label>Tilgjengelege kanalar<select id="joinable-channel"><option value="">Ingen</option></select></label>
+          <button id="join-circle-channel" type="button" disabled>Bli med i kanal</button>
+          <label>Inviter brukar<select id="channel-member"><option value="">Vel brukar</option></select></label>
+          <button id="add-channel-member" type="button" disabled>Legg til i vald kanal</button>
           <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
           <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
         </section>
@@ -1943,6 +1949,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const circleName = document.querySelector("#circle-name");
       const circleSlug = document.querySelector("#circle-slug");
       const circleChannel = document.querySelector("#circle-channel");
+      const channelKind = document.querySelector("#channel-kind");
+      const joinableChannel = document.querySelector("#joinable-channel");
+      const joinCircleChannel = document.querySelector("#join-circle-channel");
+      const channelMember = document.querySelector("#channel-member");
+      const addChannelMember = document.querySelector("#add-channel-member");
       const invitationToken = document.querySelector("#invitation-token");
       const copyInvitation = document.querySelector("#copy-invitation");
       const createAgentAccessButton = document.querySelector("#create-agent-access");
@@ -2096,10 +2107,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
       circleName.addEventListener("input", updateOnboardingButtons);
       invitationToken.addEventListener("input", updateOnboardingButtons);
       circleSelect.addEventListener("change", updateOnboardingButtons);
+      circleSelect.addEventListener("change", () => {
+        if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+      });
+      circleChannel.addEventListener("input", updateOnboardingButtons);
       circleButtons[1].addEventListener("click", () => {
         if (!circleSelect.value) return;
         const slug = slugify(circleChannel.value);
-        sendCommand("create_channel", { slug, name: circleChannel.value.trim(), kind: "private", circle_id: circleSelect.value });
+        sendCommand("create_channel", { slug, name: circleChannel.value.trim(), kind: channelKind.value, circle_id: circleSelect.value });
+      });
+      joinableChannel.addEventListener("change", updateOnboardingButtons);
+      joinCircleChannel.addEventListener("click", () => {
+        if (joinableChannel.value) sendCommand("join_channel", { channel: { type: "id", value: joinableChannel.value } });
+      });
+      channelMember.addEventListener("change", updateOnboardingButtons);
+      addChannelMember.addEventListener("click", () => {
+        if (activeChannelId && channelMember.value) sendCommand("add_channel_member", { channel_id: activeChannelId, user_id: channelMember.value });
       });
       circleButtons[2].addEventListener("click", () => {
         if (circleSelect.value) sendCommand("create_circle_invitation", { circle_id: circleSelect.value });
@@ -2232,7 +2255,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           sendCommand("list_my_channels");
           sendCommand("list_my_circles");
           if (activeChannelId) sendCommand("subscribe_channel", { channel_id: activeChannelId });
-          heartbeatTimer = window.setInterval(() => sendCommand("ping"), 20_000);
+          heartbeatTimer = window.setInterval(() => {
+            sendCommand("ping");
+            sendCommand("list_my_channels");
+            if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+          }, 20_000);
           if (previousSocket) {
             window.setTimeout(() => {
               if (socket === nextSocket && nextSocket.readyState === WebSocket.OPEN) {
@@ -2351,6 +2378,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         circleButtons[0].disabled = !connected || circleName.value.trim().length < 2;
         circleButtons[2].disabled = !connected || !circleSelect.value;
         circleButtons[3].disabled = !connected || !invitationValueToToken(invitationToken.value);
+        circleButtons[1].disabled = !connected || !circleSelect.value || circleChannel.value.trim().length < 2;
+        joinCircleChannel.disabled = !connected || !joinableChannel.value;
+        const active = knownChannels.find((channel) => channel.id === activeChannelId);
+        addChannelMember.disabled = !connected || !channelMember.value || !active || !["owner", "moderator"].includes(active.role);
       }
 
       async function processApi(path, method = "GET", body = undefined) {
@@ -2476,11 +2507,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "users_listed") {
           knownUsers = payload.users;
           directUser.replaceChildren(new Option("Vel brukar", ""));
+          channelMember.replaceChildren(new Option("Vel brukar", ""));
           knownUsers
             .filter((user) => user.id !== currentParticipantId)
             .forEach((user) => {
               const handle = user.display_name.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "");
               directUser.add(new Option(`${user.display_name} (@${handle})`, user.id));
+              channelMember.add(new Option(user.display_name, user.id));
             });
           openDirect.disabled = !directUser.value;
           return;
@@ -2527,6 +2560,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (!circleSelect.value && payload.circles.length > 0) {
             circleSelect.value = payload.circles[0][0].id;
           }
+          if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
           updateOnboardingButtons();
           renderChannels();
           return;
@@ -2580,9 +2614,29 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "channel_created") {
-          knownChannels.push({ ...payload.channel, latest_sequence: 0, last_read_sequence: 0 });
+          knownChannels.push({ ...payload.channel, role: "owner", latest_sequence: 0, last_read_sequence: 0 });
           renderChannels();
           selectChannel(payload.channel);
+          circleChannel.value = "";
+          if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+          return;
+        }
+
+        if (event.type === "joinable_channels_listed") {
+          joinableChannel.replaceChildren(new Option(payload.channels.length ? "Vel kanal" : "Ingen", ""));
+          payload.channels.forEach((channel) => joinableChannel.add(new Option(`# ${channel.name}`, channel.id)));
+          updateOnboardingButtons();
+          return;
+        }
+
+        if (event.type === "membership_joined") {
+          sendCommand("list_my_channels");
+          if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+          return;
+        }
+
+        if (event.type === "channel_member_added") {
+          onboardingNotice.textContent = "Brukaren er lagd til i kanalen.";
           return;
         }
 
@@ -4133,6 +4187,11 @@ mod protocol_capacity_tests {
         );
         assert!(body.contains("payload.channel_id !== activeChannelId"));
         assert!(body.contains("const pendingMessages = new Map()"));
+        assert!(body.contains("id=\"channel-kind\""));
+        assert!(body.contains("id=\"joinable-channel\""));
+        assert!(body.contains("id=\"add-channel-member\""));
+        assert!(body.contains("sendCommand(\"list_joinable_channels\""));
+        assert!(body.contains("sendCommand(\"add_channel_member\""));
         assert!(body.contains("const browserSessionId = `browser-${crypto.randomUUID()}`"));
         assert!(body.contains("request_id: `${browserSessionId}-${requestNumber}`"));
         assert!(!body.contains("request_id: `browser-${requestNumber}`"));
@@ -5226,6 +5285,14 @@ mod protocol_capacity_tests {
         let channel_id = channel["payload"]["channel"]["id"].clone();
 
         let mut member = connect_as(address, "circle-member").await;
+        let member_hello = command(
+            &mut member,
+            "member-hello",
+            "hello",
+            serde_json::Value::Null,
+        )
+        .await;
+        let member_id = member_hello["payload"]["participant_id"].clone();
         let denied = command_response(
             &mut member,
             "join-before-invite",
@@ -5241,7 +5308,7 @@ mod protocol_capacity_tests {
             serde_json::json!({"token":token}),
         )
         .await;
-        let inherited_channels = command(
+        let not_inherited = command(
             &mut member,
             "channels-after-invite",
             "list_my_channels",
@@ -5249,13 +5316,28 @@ mod protocol_capacity_tests {
         )
         .await;
         assert!(
-            inherited_channels["payload"]["channels"]
+            !not_inherited["payload"]["channels"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .any(|channel| channel["id"] == channel_id),
-            "accepted circle channels must appear without a separate join command"
+            "private channels must not be inherited with circle membership"
         );
+        let denied = command_response(
+            &mut member,
+            "private-self-join",
+            "join_channel",
+            serde_json::json!({"channel":{"type":"id","value":channel_id}}),
+        )
+        .await;
+        assert_eq!(denied["payload"]["code"], "permission_denied");
+        command(
+            &mut owner,
+            "invite-private-member",
+            "add_channel_member",
+            serde_json::json!({"channel_id":channel_id,"user_id":member_id}),
+        )
+        .await;
 
         for sequence in 1..=2 {
             command(

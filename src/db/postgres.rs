@@ -16,9 +16,9 @@ use crate::agent::{
     CreatedAgent, GrantAgent, MessageProvenance,
 };
 use crate::domain::{
-    AcceptCircleInvitation, Channel, ChannelId, ChannelKind, ChannelRef, ChannelSequence,
-    ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleId,
-    CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
+    AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelKind, ChannelRef,
+    ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle,
+    CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
     CreateCircleInvitation, DeleteCircle, DisplayName, ExportedChannel, ExportedCircle,
     InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
     MarkRead, Membership, MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT,
@@ -445,12 +445,6 @@ impl ChatRepository for PostgresChatRepository {
                 .bind(*command.actor.as_uuid()).bind(joined_at).bind(id).execute(&mut *tx).await.map_err(sql_error)?;
             sqlx::query("insert into circle_memberships (circle_id,user_id,role,joined_at) values ($1,$2,'member',$3) on conflict(circle_id,user_id) do nothing")
                 .bind(circle_uuid).bind(*command.actor.as_uuid()).bind(joined_at).execute(&mut *tx).await.map_err(sql_error)?;
-            sqlx::query("insert into channel_memberships (channel_id,user_id,role) select id,$1,'member' from channels where circle_id=$2 on conflict(channel_id,user_id) do nothing")
-                .bind(*command.actor.as_uuid())
-                .bind(circle_uuid)
-                .execute(&mut *tx)
-                .await
-                .map_err(sql_error)?;
             tx.commit().await.map_err(sql_error)?;
             Ok(CircleMembership {
                 circle_id: CircleId::from_uuid(circle_uuid),
@@ -501,14 +495,7 @@ impl ChatRepository for PostgresChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
-            if let Some(circle_id) = &channel.circle_id {
-                sqlx::query("insert into channel_memberships (channel_id,user_id,role) select $1,user_id,case role when 'owner' then 'owner' else 'member' end from circle_memberships where circle_id=$2 on conflict(channel_id,user_id) do nothing")
-                    .bind(*channel.id.as_uuid())
-                    .bind(*circle_id.as_uuid())
-                    .execute(&mut *transaction)
-                    .await
-                    .map_err(sql_error)?;
-            } else if channel.slug.as_str() == "general" {
+            if channel.circle_id.is_none() && channel.slug.as_str() == "general" {
                 sqlx::query("insert into channel_memberships (channel_id,user_id,role) select $1,id,case when id=$2 then 'owner' else 'member' end from users on conflict(channel_id,user_id) do nothing")
                     .bind(*channel.id.as_uuid())
                     .bind(*channel.created_by.as_uuid())
@@ -549,7 +536,7 @@ impl ChatRepository for PostgresChatRepository {
             if exists.is_none() {
                 return Err(RepositoryError::NotFound);
             }
-            let allowed: Option<i32> = sqlx::query_scalar("select 1 from channels c where c.id=$1 and (c.circle_id is null or exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=$2))")
+            let allowed: Option<i32> = sqlx::query_scalar("select 1 from channels c where c.id=$1 and (c.kind!='private' or (c.slug='general' and c.circle_id is null)) and (c.circle_id is null or exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=$2))")
                 .bind(*channel_id.as_uuid()).bind(*command.actor.as_uuid())
                 .fetch_optional(&self.pool).await.map_err(sql_error)?;
             if allowed.is_none() {
@@ -562,6 +549,45 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             load_membership(&self.pool, channel_id, command.actor).await
+        })
+    }
+
+    fn list_joinable_channels<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<Channel>> {
+        Box::pin(async move {
+            let member: Option<i32> = sqlx::query_scalar(
+                "select 1 from circle_memberships where circle_id=$1 and user_id=$2",
+            )
+            .bind(*circle_id.as_uuid())
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if member.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by from channels c join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=$1 left join channel_memberships m on m.channel_id=c.id and m.user_id=$1 where c.circle_id=$2 and c.kind!='private' and m.user_id is null order by c.slug")
+                .bind(*actor.as_uuid()).bind(*circle_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(channel_from_row).collect()
+        })
+    }
+
+    fn add_channel_member<'a>(
+        &'a self,
+        command: AddChannelMember,
+    ) -> RepositoryFuture<'a, Membership> {
+        Box::pin(async move {
+            let allowed: Option<i32> = sqlx::query_scalar("select 1 from channels c join channel_memberships owner on owner.channel_id=c.id and owner.user_id=$1 and owner.role in ('owner','moderator') join circle_memberships target on target.circle_id=c.circle_id and target.user_id=$2 where c.id=$3")
+                .bind(*command.actor.as_uuid()).bind(*command.user_id.as_uuid()).bind(*command.channel_id.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("insert into channel_memberships(channel_id,user_id,role) values($1,$2,'member') on conflict(channel_id,user_id) do nothing")
+                .bind(*command.channel_id.as_uuid()).bind(*command.user_id.as_uuid()).execute(&self.pool).await.map_err(sql_error)?;
+            load_membership(&self.pool, command.channel_id, command.user_id).await
         })
     }
 

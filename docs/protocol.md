@@ -66,7 +66,9 @@ First stable command set:
 
 - `hello`
 - `create_channel`
+- `list_joinable_channels`
 - `join_channel`
+- `add_channel_member`
 - `leave_channel`
 - `list_my_channels`
 - `load_recent_messages`
@@ -103,11 +105,13 @@ clients can compute unread count after reconnect without loading message
 bodies. Joining a channel owned by a circle requires current circle membership;
 knowing a private channel ID or slug is not authorization.
 
-Circle membership is the source of truth for access to circle channels.
-Accepting an invitation grants membership in every existing channel in that
-circle, and channels created later inherit all current circle members. The
-global `general` channel is inherited by every authenticated user. These rules
-are enforced and backfilled by the repository rather than delegated to clients.
+Circle membership bounds who may access circle channels, but does not grant
+channel membership automatically. A new channel initially contains only its
+creator. Open circle channels are discoverable and may be joined by other
+members of the same circle. Private channels cannot be joined directly; an
+owner or moderator must add an existing circle member. The global `general`
+channel remains available to every authenticated user. These rules are enforced
+in the repository rather than delegated to clients.
 
 First event set:
 

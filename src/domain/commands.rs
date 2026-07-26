@@ -46,6 +46,13 @@ pub struct JoinChannel {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AddChannelMember {
+    pub actor: UserId,
+    pub channel_id: ChannelId,
+    pub user_id: UserId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LeaveChannel {
     pub actor: UserId,
     pub channel_id: ChannelId,
