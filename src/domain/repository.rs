@@ -6,15 +6,15 @@ use std::{
 use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
 
 use super::{
-    AcceptCircleInvitation, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatEvent,
-    ChatMessage, Circle, CircleMembership, CircleRole, CreateChannel, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, InboxMention, IssuedInvitation, JoinChannel,
-    LeaveChannel, LoadRecentMessages, MarkRead, Membership, MessageId, PortableUserExport,
-    SendMessage, User, UserId, UserTask,
+    AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary,
+    ChatEvent, ChatMessage, Circle, CircleId, CircleMembership, CircleRole, CreateChannel,
+    CreateCircle, CreateCircleInvitation, DeleteCircle, InboxMention, IssuedInvitation,
+    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MessageId,
+    PortableUserExport, SendMessage, User, UserId, UserTask,
 };
 #[cfg(test)]
 use super::{
-    ChannelRef, ChannelSlug, CircleId, CircleInvitation, ExportedChannel, ExportedCircle,
+    ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, ExportedChannel, ExportedCircle,
     InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT, Policy, RepositoryError::NotFound,
 };
 #[cfg(test)]
@@ -62,6 +62,15 @@ pub trait ChatRepository: Send + Sync + 'static {
     ) -> RepositoryFuture<'a, CircleMembership>;
     fn create_channel<'a>(&'a self, command: CreateChannel) -> RepositoryFuture<'a, Channel>;
     fn join_channel<'a>(&'a self, command: JoinChannel) -> RepositoryFuture<'a, Membership>;
+    fn list_joinable_channels<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<Channel>>;
+    fn add_channel_member<'a>(
+        &'a self,
+        command: AddChannelMember,
+    ) -> RepositoryFuture<'a, Membership>;
     fn leave_channel<'a>(&'a self, command: LeaveChannel) -> RepositoryFuture<'a, ()>;
     fn list_channels_for_user<'a>(
         &'a self,
@@ -522,23 +531,6 @@ impl ChatRepository for InMemoryChatRepository {
                 (invitation.circle_id.clone(), command.actor.clone()),
                 membership.clone(),
             );
-            let channel_ids = state
-                .channels
-                .values()
-                .filter(|channel| channel.circle_id.as_ref() == Some(&invitation.circle_id))
-                .map(|channel| channel.id.clone())
-                .collect::<Vec<_>>();
-            for channel_id in channel_ids {
-                state
-                    .memberships
-                    .entry((channel_id.clone(), command.actor.clone()))
-                    .or_insert(Membership {
-                        channel_id,
-                        user_id: command.actor.clone(),
-                        role: MembershipRole::Member,
-                        last_read_sequence: ChannelSequence::new(0),
-                    });
-            }
             Ok(membership)
         })
     }
@@ -562,26 +554,6 @@ impl ChatRepository for InMemoryChatRepository {
                 }
             }
 
-            let circle_members = command
-                .circle_id
-                .as_ref()
-                .map_or_else(Vec::new, |circle_id| {
-                    state
-                        .circle_memberships
-                        .values()
-                        .filter(|membership| &membership.circle_id == circle_id)
-                        .map(|membership| {
-                            (
-                                membership.user_id.clone(),
-                                if membership.role == CircleRole::Owner {
-                                    MembershipRole::Owner
-                                } else {
-                                    MembershipRole::Member
-                                },
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                });
             let is_general = command.slug.as_str() == "general" && command.circle_id.is_none();
             let general_users = if is_general {
                 state.users.keys().cloned().collect::<Vec<_>>()
@@ -601,7 +573,7 @@ impl ChatRepository for InMemoryChatRepository {
                 .channels_by_slug
                 .insert(channel.slug.clone(), channel.id.clone());
             state.channels.insert(channel.id.clone(), channel.clone());
-            let mut members = circle_members;
+            let mut members = Vec::new();
             members.extend(
                 general_users
                     .into_iter()
@@ -651,6 +623,9 @@ impl ChatRepository for InMemoryChatRepository {
             }) {
                 return Err(RepositoryError::PermissionDenied);
             }
+            if channel.kind == ChannelKind::Private && channel.slug.as_str() != "general" {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let membership = Membership {
                 channel_id: channel_id.clone(),
                 user_id: command.actor.clone(),
@@ -660,6 +635,72 @@ impl ChatRepository for InMemoryChatRepository {
             state
                 .memberships
                 .insert((channel_id, command.actor), membership.clone());
+            Ok(membership)
+        })
+    }
+
+    fn list_joinable_channels<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<Channel>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            if !state
+                .circle_memberships
+                .contains_key(&(circle_id.clone(), actor.clone()))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(state
+                .channels
+                .values()
+                .filter(|channel| {
+                    channel.circle_id.as_ref() == Some(&circle_id)
+                        && channel.kind != ChannelKind::Private
+                        && !state
+                            .memberships
+                            .contains_key(&(channel.id.clone(), actor.clone()))
+                })
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn add_channel_member<'a>(
+        &'a self,
+        command: AddChannelMember,
+    ) -> RepositoryFuture<'a, Membership> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let channel = state
+                .channels
+                .get(&command.channel_id)
+                .cloned()
+                .ok_or(RepositoryError::NotFound)?;
+            let actor_role = state
+                .memberships
+                .get(&(command.channel_id.clone(), command.actor))
+                .map(|m| &m.role);
+            if !Policy::can_moderate_channel(actor_role)
+                || !channel.circle_id.as_ref().is_some_and(|circle_id| {
+                    state
+                        .circle_memberships
+                        .contains_key(&(circle_id.clone(), command.user_id.clone()))
+                })
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let membership = Membership {
+                channel_id: command.channel_id.clone(),
+                user_id: command.user_id.clone(),
+                role: MembershipRole::Member,
+                last_read_sequence: ChannelSequence::new(0),
+            };
+            state
+                .memberships
+                .entry((command.channel_id, command.user_id))
+                .or_insert(membership.clone());
             Ok(membership)
         })
     }

@@ -83,10 +83,10 @@ where
     R: ChatRepository,
 {
     use crate::domain::{
-        AcceptCircleInvitation, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
-        CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName,
-        JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MessageBody, MessageLimit,
-        PORTABLE_USER_EXPORT_FORMAT, PrincipalKind, SendMessage, User, UserId,
+        AcceptCircleInvitation, AddChannelMember, ChannelKind, ChannelRef, ChannelSequence,
+        ChannelSlug, CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle,
+        DisplayName, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MessageBody,
+        MessageLimit, PORTABLE_USER_EXPORT_FORMAT, PrincipalKind, SendMessage, User, UserId,
     };
     use chrono::Utc;
 
@@ -108,7 +108,7 @@ where
             actor: actor.clone(),
             slug: ChannelSlug::new(format!("chat-contract-{suffix}")).unwrap(),
             name: DisplayName::new("Chat contract channel").unwrap(),
-            kind: ChannelKind::Private,
+            kind: ChannelKind::Local,
             circle_id: None,
         })
         .await
@@ -307,7 +307,7 @@ where
             actor: actor.clone(),
             slug: ChannelSlug::new(format!("chat-circle-channel-{suffix}")).unwrap(),
             name: DisplayName::new("Circle channel").unwrap(),
-            kind: ChannelKind::Private,
+            kind: ChannelKind::Local,
             circle_id: Some(circle.id.clone()),
         })
         .await
@@ -341,14 +341,28 @@ where
         .await
         .unwrap();
     assert!(
-        repository
+        !repository
             .list_channels_for_user(member.clone())
             .await
             .unwrap()
             .iter()
-            .any(|summary| summary.id == circle_channel.id),
-        "accepting a circle invitation must expose existing circle channels"
+            .any(|summary| summary.id == circle_channel.id)
     );
+    assert!(
+        repository
+            .list_joinable_channels(member.clone(), circle.id.clone())
+            .await
+            .unwrap()
+            .iter()
+            .any(|channel| channel.id == circle_channel.id)
+    );
+    repository
+        .join_channel(JoinChannel {
+            actor: member.clone(),
+            channel: ChannelRef::Id(circle_channel.id.clone()),
+        })
+        .await
+        .unwrap();
     let later_circle_channel = repository
         .create_channel(CreateChannel {
             actor: actor.clone(),
@@ -360,14 +374,30 @@ where
         .await
         .unwrap();
     assert!(
-        repository
+        !repository
             .list_channels_for_user(member.clone())
             .await
             .unwrap()
             .iter()
-            .any(|summary| summary.id == later_circle_channel.id),
-        "existing circle members must inherit channels created later"
+            .any(|summary| summary.id == later_circle_channel.id)
     );
+    assert_eq!(
+        repository
+            .join_channel(JoinChannel {
+                actor: member.clone(),
+                channel: ChannelRef::Id(later_circle_channel.id.clone())
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    repository
+        .add_channel_member(AddChannelMember {
+            actor: actor.clone(),
+            channel_id: later_circle_channel.id.clone(),
+            user_id: member.clone(),
+        })
+        .await
+        .unwrap();
     for sequence in 1..=205 {
         repository
             .append_message(SendMessage {
@@ -478,8 +508,8 @@ where
     use crate::{
         agent::{AgentScope, CreateAgent, GrantAgent},
         domain::{
-            AcceptCircleInvitation, ChannelKind, ChannelSlug, CreateChannel, CreateCircle,
-            CreateCircleInvitation, DisplayName, JoinChannel, LoadRecentMessages, MarkRead,
+            AcceptCircleInvitation, AddChannelMember, ChannelKind, ChannelSlug, CreateChannel,
+            CreateCircle, CreateCircleInvitation, DisplayName, LoadRecentMessages, MarkRead,
             MessageBody, MessageLimit, PrincipalKind, SendMessage, User, UserId,
         },
         process::{
@@ -630,9 +660,10 @@ where
         Err(RepositoryError::NotFound)
     );
     repository
-        .join_channel(JoinChannel {
-            actor: member.clone(),
-            channel: crate::domain::ChannelRef::Id(process_channel.id.clone()),
+        .add_channel_member(AddChannelMember {
+            actor: actor.clone(),
+            channel_id: process_channel.id.clone(),
+            user_id: member.clone(),
         })
         .await
         .unwrap();

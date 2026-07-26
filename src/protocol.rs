@@ -36,6 +36,13 @@ pub enum ClientCommand {
         channel_id: ChannelId,
     },
     ListMyChannels,
+    ListJoinableChannels {
+        circle_id: crate::domain::CircleId,
+    },
+    AddChannelMember {
+        channel_id: ChannelId,
+        user_id: crate::domain::UserId,
+    },
     LoadRecentMessages {
         channel_id: ChannelId,
         limit: Option<u16>,
@@ -137,6 +144,12 @@ pub enum ServerEvent {
     },
     ChannelsListed {
         channels: Vec<ChannelSummary>,
+    },
+    JoinableChannelsListed {
+        channels: Vec<Channel>,
+    },
+    ChannelMemberAdded {
+        membership: Membership,
     },
     MessagesLoaded {
         channel_id: ChannelId,

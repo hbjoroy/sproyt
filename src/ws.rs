@@ -241,6 +241,17 @@ async fn execute_command(
             .list_channels(participant_id.clone())
             .await
             .map(|channels| ServerEvent::ChannelsListed { channels }),
+        ClientCommand::ListJoinableChannels { circle_id } => chat
+            .list_joinable_channels(participant_id.clone(), circle_id)
+            .await
+            .map(|channels| ServerEvent::JoinableChannelsListed { channels }),
+        ClientCommand::AddChannelMember {
+            channel_id,
+            user_id,
+        } => chat
+            .add_channel_member(participant_id.clone(), channel_id, user_id)
+            .await
+            .map(|membership| ServerEvent::ChannelMemberAdded { membership }),
         ClientCommand::LoadRecentMessages {
             channel_id,
             limit,

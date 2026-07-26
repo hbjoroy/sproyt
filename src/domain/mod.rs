@@ -7,9 +7,9 @@ mod repository;
 mod text;
 
 pub use commands::{
-    AcceptCircleInvitation, ChannelRef, CreateChannel, CreateCircle, CreateCircleInvitation,
-    DeleteCircle, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MessageLimit,
-    SendMessage,
+    AcceptCircleInvitation, AddChannelMember, ChannelRef, CreateChannel, CreateCircle,
+    CreateCircleInvitation, DeleteCircle, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
+    MessageLimit, SendMessage,
 };
 pub use events::ChatEvent;
 pub use ids::{ChannelId, ChannelSequence, CircleId, InvitationId, MessageId, UserId};

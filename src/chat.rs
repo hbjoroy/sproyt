@@ -307,6 +307,33 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn list_joinable_channels(
+        &self,
+        actor: UserId,
+        circle_id: crate::domain::CircleId,
+    ) -> Result<Vec<crate::domain::Channel>, ChatError> {
+        self.repository
+            .list_joinable_channels(actor, circle_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn add_channel_member(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+        user_id: UserId,
+    ) -> Result<Membership, ChatError> {
+        self.repository
+            .add_channel_member(crate::domain::AddChannelMember {
+                actor,
+                channel_id,
+                user_id,
+            })
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn load_messages(
         &self,
         actor: UserId,
