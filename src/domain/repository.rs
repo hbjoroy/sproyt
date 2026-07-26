@@ -793,13 +793,17 @@ impl ChatRepository for InMemoryChatRepository {
             let mut state = self.lock_state()?;
             let key = (command.actor.clone(), request_id);
             if let Some(message_id) = state.command_receipts.get(&key) {
-                return state
+                let message = state
                     .messages
                     .values()
                     .flatten()
                     .find(|message| &message.id == message_id)
                     .cloned()
-                    .ok_or(RepositoryError::NotFound);
+                    .ok_or(RepositoryError::NotFound)?;
+                if message.channel_id != command.channel_id || message.body != command.body {
+                    return Err(RepositoryError::Conflict);
+                }
+                return Ok(message);
             }
             let role = state
                 .memberships
@@ -1131,15 +1135,26 @@ mod tests {
         let repeated = repository
             .append_message_idempotent(
                 SendMessage {
-                    actor: alice,
+                    actor: alice.clone(),
                     channel_id: channel.id.clone(),
-                    body: MessageBody::new("must not replace").unwrap(),
+                    body: MessageBody::new("first").unwrap(),
                 },
                 "request-1".to_owned(),
             )
             .await
             .unwrap();
         assert_eq!(first, repeated);
+        let mismatch = repository
+            .append_message_idempotent(
+                SendMessage {
+                    actor: alice,
+                    channel_id: channel.id.clone(),
+                    body: MessageBody::new("must not replace").unwrap(),
+                },
+                "request-1".to_owned(),
+            )
+            .await;
+        assert_eq!(mismatch, Err(RepositoryError::Conflict));
         assert_eq!(
             repository.latest_sequence(channel.id).await.unwrap(),
             ChannelSequence::first()

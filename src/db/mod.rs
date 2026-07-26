@@ -185,13 +185,24 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
-                body: MessageBody::new("different").unwrap(),
+                body: MessageBody::new("first").unwrap(),
             },
             "same-request".to_owned(),
         )
         .await
         .unwrap();
     assert_eq!(first, replay);
+    let mismatched_replay = repository
+        .append_message_idempotent(
+            SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                body: MessageBody::new("different").unwrap(),
+            },
+            "same-request".to_owned(),
+        )
+        .await;
+    assert_eq!(mismatched_replay, Err(RepositoryError::Conflict));
     assert_eq!(
         repository
             .load_recent_messages(LoadRecentMessages {
@@ -516,7 +527,7 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
-                body: MessageBody::new("different").unwrap(),
+                body: MessageBody::new("first").unwrap(),
             },
             "same-request".to_owned(),
         )
