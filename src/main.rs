@@ -917,6 +917,7 @@ async fn mcp_call(
                         channel,
                         MessageLimit::new(limit),
                         after,
+                        None,
                     )
                     .await
                     .map_err(mcp_chat_error)?,
@@ -1523,10 +1524,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
       .task-editor { display: grid; gap: 8px; margin-top: 12px; }
-      .channel-group { margin: 12px 8px 2px; color: #647269; font-size: .78rem; font-weight: 700; }
+      .channel-group { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 8px 2px; color: #647269; font-size: .78rem; font-weight: 700; }
       .channel-button { display: flex; justify-content: space-between; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
       .channel-button:hover, .channel-button[aria-current="page"] { background: #dfe8e1; color: #183d2e; }
+      .channel-button.has-unread, .channel-group.has-unread { color: #183d2e; font-weight: 800; }
       .unread { min-width: 1.6em; padding: 2px 6px; border-radius: 999px; background: #245b45; color: white; font-size: .75rem; text-align: center; }
+      .channel-group .unread { min-width: 0; padding: 1px 6px; font-size: .7rem; }
       .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
       .conversation-header p { margin: 4px 0 0; color: #647269; }
       .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
@@ -1989,6 +1992,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const catchUpTargets = new Map();
       const pendingCommands = new Map();
       const pendingMessages = new Map();
+      const historyRequestIds = new Set();
+      const historyPageSize = 50;
+      let historyHasMore = false;
+      let historyLoading = false;
       let mermaidPromise = null;
       let knownChannels = [];
       let knownUsers = [];
@@ -2164,6 +2171,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           sendCommand("delete_circle", { circle_id: circleSelect.value });
         }
       });
+      messagesEl.addEventListener("scroll", () => {
+        if (messagesEl.scrollTop <= 80) loadOlderHistory();
+      }, { passive: true });
       exportButton.addEventListener("click", async () => {
         try {
           const response = await fetch("/api/v1/me/export", {
@@ -2662,11 +2672,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const channel = knownChannels.find((item) => item.id === activeChannelId);
           conversationTitle.textContent = channel?.name || "Samtale";
           payload.history.forEach(appendTimelineMessage);
+          historyHasMore = payload.history.length === historyPageSize;
+          historyLoading = false;
           acknowledgeLatest(payload.channel_id, payload.history);
           bodyInput.disabled = false;
           sendButton.disabled = false;
           renderChannels();
-          renderTimeline();
+          renderTimeline({ forceBottom: true });
           updateAgentAccessControls();
           return;
         }
@@ -2723,6 +2735,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "messages_loaded") {
+          const olderHistory = historyRequestIds.delete(event.request_id);
+          if (olderHistory) {
+            historyLoading = false;
+            if (payload.channel_id !== activeChannelId) return;
+            historyHasMore = payload.messages.length === historyPageSize;
+            prependTimelineMessages(payload.messages);
+            renderTimeline({ preserveScroll: true });
+            return;
+          }
           payload.messages.forEach(appendTimelineMessage);
           acknowledgeLatest(payload.channel_id, payload.messages);
           renderTimeline();
@@ -2748,6 +2769,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "error") {
+          if (historyRequestIds.delete(event.request_id)) historyLoading = false;
           if (requestedCommand === "send_message") {
             failPendingMessage(event.request_id, payload.message || payload.code || "ukjend feil");
             pushSystem(payload.message || payload.code);
@@ -2785,7 +2807,21 @@ const INDEX_HTML: &str = r##"<!doctype html>
         for (const [groupId, channels] of groupedChannels) {
           const heading = document.createElement("p");
           heading.className = "channel-group";
-          heading.textContent = groupId === "direct" ? "Andre samtalar" : (knownCircles.get(groupId)?.name || "Vennekrets");
+          const headingLabel = document.createElement("span");
+          headingLabel.textContent = groupId === "direct" ? "Andre samtalar" : (knownCircles.get(groupId)?.name || "Vennekrets");
+          heading.append(headingLabel);
+          const groupUnreadCount = channels.reduce(
+            (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
+            0
+          );
+          if (groupUnreadCount > 0) {
+            heading.classList.add("has-unread");
+            const unread = document.createElement("span");
+            unread.className = "unread";
+            unread.textContent = approximateUnreadCount(groupUnreadCount);
+            unread.setAttribute("aria-label", `${groupUnreadCount} uleste meldingar i gruppa`);
+            heading.append(unread);
+          }
           channelList.append(heading);
           for (const channel of channels) {
           const button = document.createElement("button");
@@ -2797,16 +2833,24 @@ const INDEX_HTML: &str = r##"<!doctype html>
           button.append(name);
           const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
           if (unreadCount > 0 && channel.id !== activeChannelId) {
+            button.classList.add("has-unread");
             const unread = document.createElement("span");
             unread.className = "unread";
-            unread.textContent = String(unreadCount);
-            unread.setAttribute("aria-label", `${unreadCount} uleste`);
+            unread.textContent = approximateUnreadCount(unreadCount);
+            unread.setAttribute("aria-label", `${unreadCount} uleste meldingar`);
             button.append(unread);
           }
           button.addEventListener("click", () => selectChannel(channel));
           channelList.append(button);
           }
         }
+      }
+
+      function approximateUnreadCount(count) {
+        if (count < 25) return String(count);
+        if (count < 50) return "25+";
+        if (count < 100) return "50+";
+        return "100+";
       }
 
       function showInbox(kind) {
@@ -2817,6 +2861,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         activeChannelId = null;
         timeline.length = 0;
         seenMessageIds.clear();
+        historyRequestIds.clear();
+        historyHasMore = false;
+        historyLoading = false;
         bodyInput.disabled = true;
         sendButton.disabled = true;
         messagesEl.replaceChildren();
@@ -2955,6 +3002,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         subscribedChannelId = null;
         timeline.length = 0;
         seenMessageIds.clear();
+        historyRequestIds.clear();
+        historyHasMore = false;
+        historyLoading = false;
         messagesEl.replaceChildren();
         activeChannelId = channel.id;
         requestedChannelSlug = channel.slug;
@@ -3076,7 +3126,24 @@ const INDEX_HTML: &str = r##"<!doctype html>
         renderTimeline();
       }
 
-      function renderTimeline() {
+      function loadOlderHistory() {
+        if (!activeChannelId || !historyHasMore || historyLoading || subscribedChannelId !== activeChannelId) return;
+        const oldest = timeline.find((item) => item.type === "message")?.message;
+        if (!oldest) return;
+        historyLoading = true;
+        const requestId = sendCommand("load_recent_messages", {
+          channel_id: activeChannelId,
+          before: oldest.sequence,
+          limit: historyPageSize
+        });
+        if (requestId) historyRequestIds.add(requestId);
+        else historyLoading = false;
+      }
+
+      function renderTimeline({ preserveScroll = false, forceBottom = false } = {}) {
+        const previousHeight = messagesEl.scrollHeight;
+        const previousTop = messagesEl.scrollTop;
+        const wasNearBottom = previousHeight - previousTop - messagesEl.clientHeight < 80;
         messagesEl.replaceChildren();
         for (const item of timeline) {
           if (item.type === "message") {
@@ -3086,7 +3153,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
         }
         renderMermaidDiagrams();
-        messagesEl.scrollTop = messagesEl.scrollHeight;
+        if (preserveScroll) {
+          messagesEl.scrollTop = messagesEl.scrollHeight - previousHeight + previousTop;
+        } else if (forceBottom || wasNearBottom) {
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
       }
 
       function renderMessage(message) {
@@ -3098,6 +3169,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (seenMessageIds.has(message.id)) return;
         seenMessageIds.add(message.id);
         timeline.push({ type: "message", message });
+      }
+
+      function prependTimelineMessages(messages) {
+        const older = [];
+        for (const message of messages) {
+          if (seenMessageIds.has(message.id)) continue;
+          seenMessageIds.add(message.id);
+          older.push({ type: "message", message });
+        }
+        timeline.unshift(...older);
       }
 
       function appendMessage(message) {
@@ -4233,6 +4314,16 @@ mod protocol_capacity_tests {
         assert!(!body.contains("if (response.status === 401) {\n          window.location.assign"));
         assert!(body.contains("Fråkopla (${detail})"));
         assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
+        assert!(body.contains("function loadOlderHistory()"));
+        assert!(body.contains("before: oldest.sequence"));
+        assert!(body.contains("renderTimeline({ preserveScroll: true })"));
+        assert!(body.contains("renderTimeline({ forceBottom: true })"));
+        assert!(body.contains("function approximateUnreadCount(count)"));
+        assert!(body.contains("if (count < 50) return \"25+\""));
+        assert!(body.contains("if (count < 100) return \"50+\""));
+        assert!(body.contains("groupUnreadCount = channels.reduce"));
+        assert!(body.contains("heading.classList.add(\"has-unread\")"));
+        assert!(body.contains("button.classList.add(\"has-unread\")"));
         assert!(body.contains("document.addEventListener(\"visibilitychange\""));
         assert!(body.contains(":focus-visible"));
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
@@ -5379,6 +5470,16 @@ mod protocol_capacity_tests {
                 .iter()
                 .all(|message| message["sender_display_name"] == "circle-owner")
         );
+        let older_page = command(
+            &mut member,
+            "load-older-page",
+            "load_recent_messages",
+            serde_json::json!({"channel_id":channel_id,"limit":50,"before":2}),
+        )
+        .await;
+        let older_messages = older_page["payload"]["messages"].as_array().unwrap();
+        assert_eq!(older_messages.len(), 1);
+        assert_eq!(older_messages[0]["sequence"].as_u64(), Some(1));
         command(
             &mut member,
             "mark-all-read",

@@ -771,6 +771,9 @@ impl ChatRepository for InMemoryChatRepository {
             }
 
             let limit = usize::from(query.limit);
+            if query.after.is_some() && query.before.is_some() {
+                return Err(RepositoryError::Conflict);
+            }
             let mut messages = state
                 .messages
                 .get(&query.channel_id)
@@ -778,6 +781,7 @@ impl ChatRepository for InMemoryChatRepository {
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|message| query.after.is_none_or(|after| message.sequence > after))
+                .filter(|message| query.before.is_none_or(|before| message.sequence < before))
                 .collect::<Vec<_>>();
             if query.after.is_some() {
                 messages.truncate(limit);
@@ -1056,6 +1060,7 @@ mod tests {
                 channel_id: channel.id,
                 limit: super::super::MessageLimit::DEFAULT,
                 after: None,
+                before: None,
             })
             .await
             .unwrap();
