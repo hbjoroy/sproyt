@@ -340,6 +340,7 @@ impl ChatEngine {
         channel_id: ChannelId,
         limit: MessageLimit,
         after: Option<ChannelSequence>,
+        before: Option<ChannelSequence>,
     ) -> Result<Vec<ChatMessage>, ChatError> {
         self.repository
             .load_recent_messages(LoadRecentMessages {
@@ -347,6 +348,7 @@ impl ChatEngine {
                 channel_id,
                 limit,
                 after,
+                before,
             })
             .await
             .map_err(ChatError::from)
@@ -727,8 +729,9 @@ impl ChatActor {
             .load_recent_messages(LoadRecentMessages {
                 actor: participant_id.clone(),
                 channel_id: channel_id.clone(),
-                limit: MessageLimit::new(100),
+                limit: MessageLimit::new(50),
                 after: None,
+                before: None,
             })
             .await?;
         let connection_id = ConnectionId::generate();
@@ -1015,6 +1018,7 @@ mod tests {
                     channel.clone(),
                     MessageLimit::new(200),
                     Some(cursor),
+                    None,
                 )
                 .await
                 .unwrap();

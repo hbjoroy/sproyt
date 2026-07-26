@@ -94,11 +94,12 @@ Sequence `0` is reserved for an unread/catch-up cursor before the first
 message. Persisted messages always start at `1`. Allocation is checked and an
 exhausted sequence fails the command rather than wrapping.
 
-`load_recent_messages` without `after` returns the most recent page in
+`load_recent_messages` without a cursor returns the most recent page in
 ascending sequence order. With `after`, it returns the next ascending page
-immediately after that cursor. Clients repeat the latter until the last loaded
-sequence reaches `latest_known_sequence`; the browser deduplicates message IDs
-while live delivery and durable catch-up overlap.
+immediately after that cursor. With `before`, it returns the preceding page,
+still in ascending order. `after` and `before` are mutually exclusive. Clients
+use `after` for durable catch-up and `before` for upward infinite scrolling; the
+browser deduplicates message IDs while live delivery and durable pages overlap.
 
 Channel summaries carry both `last_read_sequence` and `latest_sequence`, so
 clients can compute unread count after reconnect without loading message

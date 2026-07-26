@@ -64,6 +64,7 @@ pub struct LoadRecentMessages {
     pub channel_id: ChannelId,
     pub limit: MessageLimit,
     pub after: Option<ChannelSequence>,
+    pub before: Option<ChannelSequence>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

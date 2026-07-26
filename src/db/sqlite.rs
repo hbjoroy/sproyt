@@ -577,12 +577,20 @@ impl ChatRepository for SqliteChatRepository {
     ) -> RepositoryFuture<'a, Vec<ChatMessage>> {
         Box::pin(async move {
             ensure_membership(&self.pool, &query.channel_id, &query.actor).await?;
+            if query.after.is_some() && query.before.is_some() {
+                return Err(RepositoryError::Conflict);
+            }
             let limit = i64::try_from(usize::from(query.limit)).map_err(storage)?;
             let (rows, reverse) = if let Some(after) = query.after {
                 let after = i64::try_from(u64::from(after)).map_err(storage)?;
                 (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? and sequence > ? order by sequence asc limit ?")
                     .bind(query.channel_id.to_string()).bind(after).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, false)
+            } else if let Some(before) = query.before {
+                let before = i64::try_from(u64::from(before)).map_err(storage)?;
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? and sequence < ? order by sequence desc limit ?")
+                    .bind(query.channel_id.to_string()).bind(before).bind(limit)
+                    .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             } else {
                 (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? order by sequence desc limit ?")
                     .bind(query.channel_id.to_string()).bind(limit)
@@ -1993,6 +2001,7 @@ mod tests {
                 channel_id: channel.id.clone(),
                 limit: crate::domain::MessageLimit::DEFAULT,
                 after: None,
+                before: None,
             })
             .await
             .unwrap();

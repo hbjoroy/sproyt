@@ -256,12 +256,14 @@ async fn execute_command(
             channel_id,
             limit,
             after,
+            before,
         } => chat
             .load_messages(
                 participant_id.clone(),
                 channel_id.clone(),
                 MessageLimit::new(limit.unwrap_or(50)),
                 after,
+                before,
             )
             .await
             .map(|messages| ServerEvent::MessagesLoaded {

@@ -210,6 +210,7 @@ where
                 channel_id: channel.id.clone(),
                 limit: MessageLimit::DEFAULT,
                 after: None,
+                before: None,
             })
             .await
             .unwrap(),
@@ -260,6 +261,33 @@ where
                 channel_id: channel.id.clone(),
                 limit: MessageLimit::new(2),
                 after: Some(ChannelSequence::new(0)),
+                before: None,
+            })
+            .await
+            .unwrap(),
+        vec![first.clone(), second.clone()]
+    );
+    assert_eq!(
+        repository
+            .load_recent_messages(LoadRecentMessages {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                limit: MessageLimit::new(2),
+                after: Some(second.sequence),
+                before: None,
+            })
+            .await
+            .unwrap(),
+        vec![third]
+    );
+    assert_eq!(
+        repository
+            .load_recent_messages(LoadRecentMessages {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                limit: MessageLimit::new(2),
+                after: None,
+                before: Some(ChannelSequence::new(3)),
             })
             .await
             .unwrap(),
@@ -271,11 +299,11 @@ where
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
                 limit: MessageLimit::new(2),
-                after: Some(second.sequence),
+                after: Some(ChannelSequence::new(0)),
+                before: Some(ChannelSequence::new(3)),
             })
-            .await
-            .unwrap(),
-        vec![third]
+            .await,
+        Err(RepositoryError::Conflict)
     );
     let summary = repository
         .list_channels_for_user(actor.clone())
@@ -453,6 +481,7 @@ where
                 channel_id: circle_channel.id.clone(),
                 limit: MessageLimit::DEFAULT,
                 after: None,
+                before: None,
             })
             .await,
         Err(RepositoryError::PermissionDenied)
@@ -570,6 +599,7 @@ where
             channel_id: channel.id.clone(),
             limit: MessageLimit::DEFAULT,
             after: None,
+            before: None,
         })
         .await
         .unwrap();

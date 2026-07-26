@@ -47,6 +47,7 @@ pub enum ClientCommand {
         channel_id: ChannelId,
         limit: Option<u16>,
         after: Option<ChannelSequence>,
+        before: Option<ChannelSequence>,
     },
     SubscribeChannel {
         channel_id: ChannelId,
