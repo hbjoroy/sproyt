@@ -1968,6 +1968,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let sessionRefreshTimer = null;
       let renderMode = "view";
       let requestNumber = 0;
+      const browserSessionId = `browser-${crypto.randomUUID()}`;
       let activeChannelId = null;
       let subscribedChannelId = null;
       let currentParticipantId = null;
@@ -2291,7 +2292,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         requestNumber += 1;
         const command = {
           protocol: "sproyt.chat.v1",
-          request_id: `browser-${requestNumber}`,
+          request_id: `${browserSessionId}-${requestNumber}`,
           type
         };
         if (payload !== undefined) {
@@ -2305,6 +2306,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function finishPendingMessage(requestId, message) {
         const pending = requestId ? pendingMessages.get(requestId) : undefined;
         if (!pending) return;
+        if (message?.channel_id !== pending.channelId || message?.body !== pending.body) {
+          console.warn("Sendekvitteringa samsvarar ikkje med kommandoen", {
+            requestId,
+            requestedChannelId: pending.channelId,
+            acceptedChannelId: message?.channel_id,
+            acceptedMessageId: message?.id
+          });
+          failPendingMessage(requestId, "tenaren svarte med ei eldre meldingskvittering; utkastet er bevart");
+          return;
+        }
         pendingMessages.delete(requestId);
         bodyInput.readOnly = false;
         if (bodyInput.value.trim() === pending.body) bodyInput.value = "";
@@ -4122,8 +4133,13 @@ mod protocol_capacity_tests {
         );
         assert!(body.contains("payload.channel_id !== activeChannelId"));
         assert!(body.contains("const pendingMessages = new Map()"));
+        assert!(body.contains("const browserSessionId = `browser-${crypto.randomUUID()}`"));
+        assert!(body.contains("request_id: `${browserSessionId}-${requestNumber}`"));
+        assert!(!body.contains("request_id: `browser-${requestNumber}`"));
         assert!(body.contains("if (event.type === \"message_accepted\")"));
         assert!(body.contains("finishPendingMessage(event.request_id, payload.message)"));
+        assert!(body.contains("message?.channel_id !== pending.channelId"));
+        assert!(body.contains("message?.body !== pending.body"));
         assert!(body.contains("failPendingMessage(event.request_id"));
         assert!(!body.contains(
             "sendCommand(\"send_message\", { channel_id: activeChannelId, body });\n        bodyInput.value = \"\";"
@@ -4557,7 +4573,7 @@ mod protocol_capacity_tests {
             &mut browser,
             "browser-send",
             "send_message",
-            serde_json::json!({"channel_id":channel_id,"body":"ignored browser replay"}),
+            serde_json::json!({"channel_id":channel_id,"body":"from browser"}),
         )
         .await;
         assert_eq!(
@@ -4577,7 +4593,7 @@ mod protocol_capacity_tests {
             &headers,
             "agent-send-replay",
             "send_message",
-            serde_json::json!({"channel_id":channel_id,"body":"ignored agent replay","request_id":"agent-domain-send"}),
+            serde_json::json!({"channel_id":channel_id,"body":"from agent","request_id":"agent-domain-send"}),
         )
         .await;
         assert_eq!(
@@ -4915,11 +4931,20 @@ mod protocol_capacity_tests {
                     .map(str::to_owned);
             }
         }
-        let replay = command(
+        let mismatch = command_response(
             &mut socket,
             "send-1",
             "send_message",
             serde_json::json!({"channel_id":channel_id,"body":"must not replace the accepted body"}),
+        )
+        .await;
+        assert_eq!(mismatch["type"], "error");
+        assert_eq!(mismatch["payload"]["code"], "conflict");
+        let replay = command(
+            &mut socket,
+            "send-1",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"capacity-1"}),
         )
         .await;
         assert_eq!(

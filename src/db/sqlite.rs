@@ -648,7 +648,29 @@ impl ChatRepository for SqliteChatRepository {
                     .await
                     .map_err(sql_error)?
                     .ok_or_else(|| storage("idempotency receipt has no message"))?;
-                return chat_message(row);
+                let message = chat_message(row)?;
+                let payload_matches =
+                    message.channel_id == command.channel_id && message.body == command.body;
+                if payload_matches {
+                    tracing::debug!(
+                        principal_id = %command.actor,
+                        request_id,
+                        message_id = %message.id.as_uuid(),
+                        "replayed idempotent chat command"
+                    );
+                } else {
+                    tracing::warn!(
+                        principal_id = %command.actor,
+                        request_id,
+                        message_id = %message.id.as_uuid(),
+                        requested_channel_id = %command.channel_id,
+                        persisted_channel_id = %message.channel_id,
+                        payload_matches,
+                        "idempotency key was reused for a different chat command"
+                    );
+                    return Err(RepositoryError::Conflict);
+                }
+                return Ok(message);
             }
             let membership: Option<String> = sqlx::query_scalar(
                 "select role from channel_memberships where channel_id = ? and user_id = ?",
@@ -1965,13 +1987,24 @@ mod tests {
                 SendMessage {
                     actor: UserId::named("sqlite-alice"),
                     channel_id: channel.id.clone(),
-                    body: MessageBody::new("twice").unwrap(),
+                    body: MessageBody::new("once").unwrap(),
                 },
                 "request-1".to_owned(),
             )
             .await
             .unwrap();
         assert_eq!(first, repeated);
+        let mismatch = repository
+            .append_message_idempotent(
+                SendMessage {
+                    actor: UserId::named("sqlite-alice"),
+                    channel_id: channel.id.clone(),
+                    body: MessageBody::new("twice").unwrap(),
+                },
+                "request-1".to_owned(),
+            )
+            .await;
+        assert_eq!(mismatch, Err(RepositoryError::Conflict));
 
         let process = repository
             .enqueue_start(EnqueueProcessStart {
