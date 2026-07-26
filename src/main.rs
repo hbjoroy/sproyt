@@ -1976,6 +1976,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
       const pendingCommands = new Map();
+      const pendingMessages = new Map();
       let mermaidPromise = null;
       let knownChannels = [];
       let knownUsers = [];
@@ -2058,9 +2059,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         if (subscribedChannelId !== activeChannelId) return;
-        sendCommand("send_message", { channel_id: activeChannelId, body });
-        bodyInput.value = "";
-        bodyInput.focus();
+        const requestId = sendCommand("send_message", { channel_id: activeChannelId, body });
+        if (!requestId) return;
+        pendingMessages.set(requestId, { body, channelId: activeChannelId });
+        bodyInput.readOnly = true;
+        setConnected(true, "Sender meldinga …");
       });
 
       directUser.addEventListener("change", () => {
@@ -2250,6 +2253,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           if (socket !== nextSocket) return;
           subscribedChannelId = null;
+          for (const requestId of pendingMessages.keys()) {
+            failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
+          }
           if (heartbeatTimer !== null) {
             window.clearInterval(heartbeatTimer);
             heartbeatTimer = null;
@@ -2281,7 +2287,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function sendCommand(type, payload) {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+        if (!socket || socket.readyState !== WebSocket.OPEN) return null;
         requestNumber += 1;
         const command = {
           protocol: "sproyt.chat.v1",
@@ -2293,7 +2299,27 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         socket.send(JSON.stringify(command));
         pendingCommands.set(command.request_id, type);
-        return true;
+        return command.request_id;
+      }
+
+      function finishPendingMessage(requestId, message) {
+        const pending = requestId ? pendingMessages.get(requestId) : undefined;
+        if (!pending) return;
+        pendingMessages.delete(requestId);
+        bodyInput.readOnly = false;
+        if (bodyInput.value.trim() === pending.body) bodyInput.value = "";
+        if (message?.channel_id === activeChannelId) bodyInput.focus();
+        setConnected(socket?.readyState === WebSocket.OPEN, "Tilkopla");
+      }
+
+      function failPendingMessage(requestId, message) {
+        const pending = requestId ? pendingMessages.get(requestId) : undefined;
+        if (!pending) return;
+        pendingMessages.delete(requestId);
+        bodyInput.readOnly = false;
+        if (bodyInput.value.trim().length === 0) bodyInput.value = pending.body;
+        setConnected(socket?.readyState === WebSocket.OPEN, `Meldinga vart ikkje sendt: ${message}`);
+        bodyInput.focus();
       }
 
       function setConnected(connected, status) {
@@ -2302,7 +2328,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           && activeChannelId !== null
           && subscribedChannelId === activeChannelId;
         bodyInput.disabled = !writableChannel;
-        sendButton.disabled = !writableChannel;
+        sendButton.disabled = !writableChannel || pendingMessages.size > 0;
         circleButtons.forEach((button) => { button.disabled = !connected; });
         exportButton.disabled = !connected;
         processButtons.forEach((button) => { button.disabled = !connected; });
@@ -2607,6 +2633,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
 
+        if (event.type === "message_accepted") {
+          updateLatestSequence(payload.message.channel_id, payload.message.sequence);
+          if (payload.message.channel_id === activeChannelId) {
+            appendTimelineMessage(payload.message);
+            acknowledgeLatest(activeChannelId, [payload.message]);
+            renderTimeline();
+          } else {
+            renderChannels();
+          }
+          finishPendingMessage(event.request_id, payload.message);
+          return;
+        }
+
         if (event.type === "lagged") {
           pushSystem(`Klienten låg etter og hoppa over ${payload.skipped} event; lastar inn att.`);
           catchUpTargets.set(payload.channel_id, payload.latest_known_sequence);
@@ -2644,6 +2683,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "error") {
+          if (requestedCommand === "send_message") {
+            failPendingMessage(event.request_id, payload.message || payload.code || "ukjend feil");
+            pushSystem(payload.message || payload.code);
+            return;
+          }
           if (requestedCommand === "accept_circle_invitation") {
             onboardingNotice.textContent = payload.code === "not_found"
               ? "Invitasjonen finst ikkje eller er ikkje gyldig lenger. Be venen din lage ei ny lenkje."
@@ -4077,6 +4121,13 @@ mod protocol_capacity_tests {
             body.contains("channel.id === activeChannelId && channel.id === subscribedChannelId")
         );
         assert!(body.contains("payload.channel_id !== activeChannelId"));
+        assert!(body.contains("const pendingMessages = new Map()"));
+        assert!(body.contains("if (event.type === \"message_accepted\")"));
+        assert!(body.contains("finishPendingMessage(event.request_id, payload.message)"));
+        assert!(body.contains("failPendingMessage(event.request_id"));
+        assert!(!body.contains(
+            "sendCommand(\"send_message\", { channel_id: activeChannelId, body });\n        bodyInput.value = \"\";"
+        ));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
         assert!(body.contains("<details class=\"agent-access\" hidden>"));
         assert!(body.contains("<summary>Agenttilgang</summary>"));
