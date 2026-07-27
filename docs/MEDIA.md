@@ -16,7 +16,7 @@ embedded in the WebSocket payload.
 - The browser message format includes a stable compatibility token. The server parses it only to
   obtain media IDs; ownership and MIME metadata always come from the database.
 - Downloads require authentication and current membership in the media object's channel.
-- Uploads are limited to 25 MiB and accepted types are determined from file signatures, not only
+- Uploads are limited to 35 MiB and accepted types are determined from file signatures, not only
   the browser-provided content type.
 
 ## Planned storage evolution

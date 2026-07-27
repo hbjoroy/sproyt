@@ -161,7 +161,8 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         )
         .route("/mcp", post(mcp_handler))
         .with_state(state.clone())
-        .layer(DefaultBodyLimit::max(26 * 1024 * 1024))
+        // Leave room for multipart headers around the 35 MiB media payload.
+        .layer(DefaultBodyLimit::max(36 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(
             operations.clone(),
             record_metrics,
@@ -555,7 +556,7 @@ async fn export_my_data(
     response
 }
 
-const MAX_MEDIA_BYTES: usize = 25 * 1024 * 1024;
+const MAX_MEDIA_BYTES: usize = 35 * 1024 * 1024;
 
 async fn upload_media(
     State(state): State<AppState>,
@@ -603,7 +604,7 @@ async fn upload_media(
         Ok(_) => {
             return (
                 axum::http::StatusCode::PAYLOAD_TOO_LARGE,
-                "media must contain 1 to 25 MiB",
+                "media must contain 1 to 35 MiB",
             )
                 .into_response();
         }
@@ -691,8 +692,13 @@ fn detected_media_type(content: &[u8], declared: &str) -> Option<String> {
         Some("image/gif")
     } else if content.starts_with(b"RIFF") && content.get(8..12) == Some(b"WEBP") {
         Some("image/webp")
-    } else if content.get(4..12).is_some_and(|v| v.starts_with(b"ftyp")) {
-        Some("video/mp4")
+    } else if content.get(4..8) == Some(b"ftyp") {
+        match content.get(8..12) {
+            Some(b"heic" | b"heix" | b"hevc" | b"hevx" | b"mif1" | b"msf1") => Some("image/heic"),
+            Some(b"avif" | b"avis") => Some("image/avif"),
+            Some(b"qt  ") => Some("video/quicktime"),
+            _ => Some("video/mp4"),
+        }
     } else if content.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
         Some(if declared == "video/webm" {
             "video/webm"
@@ -2102,7 +2108,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
       <form class="send" id="send-form">
         <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
-        <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm" multiple hidden><div id="media-previews" aria-live="polite"></div>
+        <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews" aria-live="polite"></div>
         <textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" disabled></textarea>
         <button id="send" type="submit" disabled>Send</button>
       </form>
@@ -2209,26 +2215,28 @@ const INDEX_HTML: &str = r##"<!doctype html>
           // OIDC providers, so a failed proactive refresh must not create an
           // Authentik callback/reload loop while the session is still valid.
           scheduleSessionRefresh(300);
-          return;
+          return false;
         }
         if (!response.ok) {
           scheduleSessionRefresh(30);
-          return;
+          return false;
         }
         const result = await response.json();
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
         reconnectAfterSessionRefresh();
+        return true;
       }
 
-      async function refreshSession() {
+      async function refreshSession(waitForLock = false) {
         if (navigator.locks) {
-          await navigator.locks.request("sproyt-session-refresh", { ifAvailable: true }, async (lock) => {
-            if (lock) await performSessionRefresh();
-            else scheduleSessionRefresh(30);
+          const options = waitForLock ? {} : { ifAvailable: true };
+          return navigator.locks.request("sproyt-session-refresh", options, async (lock) => {
+            if (lock) return performSessionRefresh();
+            scheduleSessionRefresh(30);
+            return false;
           });
-        } else {
-          await performSessionRefresh();
         }
+        return performSessionRefresh();
       }
 
       async function scheduleInitialSessionRefresh() {
@@ -2257,13 +2265,31 @@ const INDEX_HTML: &str = r##"<!doctype html>
       async function uploadMediaFiles(files) {
         if (!activeChannelId) return;
         for (const file of files) {
+          if (!file.size || file.size > 35 * 1024 * 1024) {
+            pushSystem(`${file.name || "Fila"} må vere mellom 1 byte og 35 MiB.`);
+            continue;
+          }
           const form = new FormData();
           form.append("file", file, file.name || "clipboard-image.png");
           setConnected(true, `Lastar opp ${file.name || "bilete"} …`);
           const participant = new URL(window.location.href).searchParams.get("participant");
           const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
-          const response = await fetch(`/api/v1/channels/${activeChannelId}/media${authQuery}`, { method: "POST", body: form, credentials: "same-origin" });
-          if (!response.ok) { pushSystem(`Opplasting feila: ${await response.text()}`); continue; }
+          const url = `/api/v1/channels/${activeChannelId}/media${authQuery}`;
+          let response;
+          try {
+            response = await fetch(url, { method: "POST", body: form, credentials: "same-origin" });
+            if (response.status === 401 && await refreshSession(true)) {
+              response = await fetch(url, { method: "POST", body: form, credentials: "same-origin" });
+            }
+          } catch (_) {
+            pushSystem(`Opplasting av ${file.name || "fila"} feila. Kontroller nettet og prøv igjen.`);
+            continue;
+          }
+          if (response.status === 401) {
+            pushSystem("Økta er utgått. Logg inn på nytt før du lastar opp.");
+            continue;
+          }
+          if (!response.ok) { pushSystem(`Opplasting feila (${response.status}): ${await response.text()}`); continue; }
           const result = await response.json();
           pendingMedia.push(result.media);
           renderMediaPreviews();
@@ -4286,12 +4312,22 @@ mod protocol_capacity_tests {
             Some("image/png")
         );
         assert_eq!(detected_media_type(b"not media", "image/png"), None);
+        assert_eq!(
+            detected_media_type(b"\0\0\0\x18ftypheicrest", "application/octet-stream").as_deref(),
+            Some("image/heic")
+        );
+        assert_eq!(
+            detected_media_type(b"\0\0\0\x14ftypqt  rest", "video/quicktime").as_deref(),
+            Some("video/quicktime")
+        );
     }
 
     #[test]
     fn browser_exposes_paste_upload_and_safe_media_rendering() {
         assert!(INDEX_HTML.contains("bodyInput.addEventListener(\"paste\""));
+        assert!(INDEX_HTML.contains("accept=\"image/*,video/*,.heic,.heif,.mov\""));
         assert!(INDEX_HTML.contains("/api/v1/channels/${activeChannelId}/media"));
+        assert!(INDEX_HTML.contains("response.status === 401 && await refreshSession(true)"));
         assert!(INDEX_HTML.contains("element.loading = \"lazy\""));
         assert!(INDEX_HTML.contains("element.controls = true"));
     }
