@@ -16,9 +16,9 @@ use crate::domain::{
     CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
     CreateCircleInvitation, DeleteCircle, DisplayName, ExportedChannel, ExportedCircle,
     InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
-    MarkRead, Membership, MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT,
-    Policy, PortableUserExport, RepositoryError, RepositoryFuture, SendMessage, User, UserId,
-    UserTask,
+    MarkRead, MediaId, MediaObject, Membership, MembershipRole, MessageBody, MessageId,
+    PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, RepositoryError, RepositoryFuture,
+    SendMessage, User, UserId, UserProfile, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -26,7 +26,7 @@ use crate::process::{
     ProcessRepositoryFuture, ProcessView, SetCircleFeature, StartProcess, StartedProcess,
 };
 
-use super::{sql_error, storage};
+use super::{media_ids_from_body, sql_error, storage};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/sqlite");
 
@@ -100,6 +100,105 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             rows.into_iter().map(user_from_row).collect()
+        })
+    }
+
+    fn list_user_profiles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserProfile>> {
+        Box::pin(async move {
+            let exists = sqlx::query_scalar::<_, i64>("select 1 from users where id = ?")
+                .bind(actor.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            if exists.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at from users where kind = 'human' order by display_name collate nocase, id")
+                .fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(user_profile_from_row).collect()
+        })
+    }
+
+    fn set_user_status<'a>(
+        &'a self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> RepositoryFuture<'a, UserProfile> {
+        Box::pin(async move {
+            let result = sqlx::query("update users set status_text = ?, status_emoji = ?, status_expires_at = ? where id = ? and kind = 'human'")
+                .bind(text).bind(emoji).bind(expires_at).bind(actor.to_string())
+                .execute(&self.pool).await.map_err(sql_error)?;
+            if result.rows_affected() == 0 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let row = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at from users where id = ?")
+                .bind(actor.to_string()).fetch_one(&self.pool).await.map_err(sql_error)?;
+            user_profile_from_row(row)
+        })
+    }
+
+    fn store_media<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        filename: String,
+        content_type: String,
+        sha256: String,
+        content: Vec<u8>,
+    ) -> RepositoryFuture<'a, MediaObject> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i64>(
+                "select 1 from channel_memberships where channel_id=? and user_id=?",
+            )
+            .bind(channel_id.to_string())
+            .bind(actor.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let media = MediaObject {
+                id: MediaId::generate(),
+                owner_id: actor,
+                channel_id,
+                original_filename: filename,
+                content_type,
+                size_bytes: content.len() as u64,
+                sha256,
+                width: None,
+                height: None,
+                duration_ms: None,
+                alt_text: String::new(),
+                analysis_status: "pending".into(),
+                analysis_metadata: serde_json::json!({}),
+                created_at: Utc::now(),
+            };
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            sqlx::query("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,analysis_status,analysis_metadata,created_at) values(?,?,?,?,?,?,?,?,?,?,?)")
+                .bind(media.id.to_string()).bind(media.owner_id.to_string()).bind(media.channel_id.to_string()).bind(format!("db:{}", media.id)).bind(&media.original_filename).bind(&media.content_type).bind(media.size_bytes as i64).bind(&media.sha256).bind(&media.analysis_status).bind(media.analysis_metadata.to_string()).bind(media.created_at).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into media_blobs(media_id,content) values(?,?)")
+                .bind(media.id.to_string())
+                .bind(content)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(media)
+        })
+    }
+
+    fn load_media<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)> {
+        Box::pin(async move {
+            let row = sqlx::query("select m.id,m.owner_id,m.channel_id,m.original_filename,m.content_type,m.size_bytes,m.sha256,m.width,m.height,m.duration_ms,m.alt_text,m.analysis_status,m.analysis_metadata,m.created_at,b.content from media_objects m join media_blobs b on b.media_id=m.id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=? where m.id=?")
+                .bind(actor.to_string()).bind(media_id.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
+            media_blob_from_sqlite(row)
         })
     }
 
@@ -657,6 +756,7 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_sqlite(&mut transaction, &message).await?;
+            persist_attachments_sqlite(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(message)
         })
@@ -754,6 +854,7 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_sqlite(&mut transaction, &message).await?;
+            persist_attachments_sqlite(&mut transaction, &message).await?;
             sqlx::query("update command_receipts set message_id = ? where principal_id = ? and request_id = ?")
                 .bind(message.id.as_uuid().to_string())
                 .bind(message.sender_id.to_string())
@@ -1628,6 +1729,7 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
     })
 }
 
+#[allow(dead_code)] // Used by compatibility repository methods during the profile rollout.
 fn user_from_row(row: sqlx::sqlite::SqliteRow) -> Result<User, RepositoryError> {
     let kind: String = row.try_get("kind").map_err(storage)?;
     Ok(User {
@@ -1640,6 +1742,81 @@ fn user_from_row(row: sqlx::sqlite::SqliteRow) -> Result<User, RepositoryError> 
         external_subject: row.try_get("external_subject").map_err(storage)?,
         created_at: row.try_get("created_at").map_err(storage)?,
     })
+}
+
+fn user_profile_from_row(row: sqlx::sqlite::SqliteRow) -> Result<UserProfile, RepositoryError> {
+    let expires_at: Option<DateTime<Utc>> = row.try_get("status_expires_at").map_err(sql_error)?;
+    let expired = expires_at.is_some_and(|expiry| expiry <= Utc::now());
+    Ok(UserProfile {
+        user: User {
+            id: UserId::new(row.try_get::<String, _>("id").map_err(storage)?).map_err(storage)?,
+            kind: crate::domain::PrincipalKind::parse(row.try_get("kind").map_err(sql_error)?)
+                .ok_or_else(|| RepositoryError::Storage("invalid principal kind".into()))?,
+            display_name: DisplayName::new(
+                row.try_get::<String, _>("display_name")
+                    .map_err(sql_error)?,
+            )
+            .map_err(storage)?,
+            external_provider: row.try_get("external_provider").map_err(sql_error)?,
+            external_subject: row.try_get("external_subject").map_err(sql_error)?,
+            created_at: row.try_get("created_at").map_err(sql_error)?,
+        },
+        status_text: if expired {
+            String::new()
+        } else {
+            row.try_get("status_text").map_err(sql_error)?
+        },
+        status_emoji: if expired {
+            String::new()
+        } else {
+            row.try_get("status_emoji").map_err(sql_error)?
+        },
+        status_expires_at: if expired { None } else { expires_at },
+    })
+}
+
+fn media_blob_from_sqlite(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<(MediaObject, Vec<u8>), RepositoryError> {
+    let media = MediaObject {
+        id: MediaId::new(row.try_get::<String, _>("id").map_err(storage)?).map_err(storage)?,
+        owner_id: UserId::new(row.try_get::<String, _>("owner_id").map_err(storage)?)
+            .map_err(storage)?,
+        channel_id: ChannelId::new(row.try_get::<String, _>("channel_id").map_err(storage)?)
+            .map_err(storage)?,
+        original_filename: row.try_get("original_filename").map_err(sql_error)?,
+        content_type: row.try_get("content_type").map_err(sql_error)?,
+        size_bytes: u64::try_from(row.try_get::<i64, _>("size_bytes").map_err(sql_error)?)
+            .map_err(storage)?,
+        sha256: row.try_get("sha256").map_err(sql_error)?,
+        width: row
+            .try_get::<Option<i64>, _>("width")
+            .map_err(sql_error)?
+            .map(u32::try_from)
+            .transpose()
+            .map_err(storage)?,
+        height: row
+            .try_get::<Option<i64>, _>("height")
+            .map_err(sql_error)?
+            .map(u32::try_from)
+            .transpose()
+            .map_err(storage)?,
+        duration_ms: row
+            .try_get::<Option<i64>, _>("duration_ms")
+            .map_err(sql_error)?
+            .map(u64::try_from)
+            .transpose()
+            .map_err(storage)?,
+        alt_text: row.try_get("alt_text").map_err(sql_error)?,
+        analysis_status: row.try_get("analysis_status").map_err(sql_error)?,
+        analysis_metadata: serde_json::from_str(
+            &row.try_get::<String, _>("analysis_metadata")
+                .map_err(sql_error)?,
+        )
+        .map_err(storage)?,
+        created_at: row.try_get("created_at").map_err(sql_error)?,
+    };
+    Ok((media, row.try_get("content").map_err(sql_error)?))
 }
 
 fn channel_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Channel, RepositoryError> {
@@ -1660,6 +1837,21 @@ fn channel_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Channel, RepositoryE
         created_by: UserId::new(row.try_get::<String, _>("created_by").map_err(storage)?)
             .map_err(storage)?,
     })
+}
+
+async fn persist_attachments_sqlite(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    message: &ChatMessage,
+) -> Result<(), RepositoryError> {
+    for (position, media_id) in media_ids_from_body(&message.body)?.into_iter().enumerate() {
+        let inserted = sqlx::query("insert into message_attachments(message_id,media_id,position) select ?,m.id,? from media_objects m where m.id=? and m.owner_id=? and m.channel_id=? and not exists(select 1 from message_attachments a where a.media_id=m.id)")
+            .bind(message.id.as_uuid().to_string()).bind(position as i64).bind(media_id.to_string()).bind(message.sender_id.to_string()).bind(message.channel_id.to_string())
+            .execute(&mut **transaction).await.map_err(sql_error)?;
+        if inserted.rows_affected() != 1 {
+            return Err(RepositoryError::PermissionDenied);
+        }
+    }
+    Ok(())
 }
 
 async fn persist_mentions_sqlite(
@@ -2041,6 +2233,39 @@ mod tests {
             )
             .await;
         assert_eq!(mismatch, Err(RepositoryError::Conflict));
+
+        let media = repository
+            .store_media(
+                alice.clone(),
+                channel.id.clone(),
+                "photo.png".into(),
+                "image/png".into(),
+                "checksum".into(),
+                b"\x89PNG\r\n\x1a\nmedia".to_vec(),
+            )
+            .await
+            .unwrap();
+        let media_body = MessageBody::new(format!(
+            "Bilete\n[[media:{}|image/png|photo.png]]",
+            media.id
+        ))
+        .unwrap();
+        repository
+            .append_message(SendMessage {
+                actor: alice.clone(),
+                channel_id: channel.id.clone(),
+                body: media_body.clone(),
+            })
+            .await
+            .unwrap();
+        let reused = repository
+            .append_message(SendMessage {
+                actor: alice.clone(),
+                channel_id: channel.id.clone(),
+                body: media_body,
+            })
+            .await;
+        assert_eq!(reused, Err(RepositoryError::PermissionDenied));
 
         let process = repository
             .enqueue_start(EnqueueProcessStart {

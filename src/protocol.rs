@@ -20,6 +20,11 @@ pub struct ClientEnvelope {
 pub enum ClientCommand {
     Hello,
     ListUsers,
+    SetStatus {
+        text: String,
+        emoji: String,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
     OpenDirectChannel {
         user_id: crate::domain::UserId,
     },
@@ -129,7 +134,10 @@ pub enum ServerEvent {
         participant_id: crate::domain::UserId,
     },
     UsersListed {
-        users: Vec<crate::domain::User>,
+        users: Vec<crate::domain::UserProfile>,
+    },
+    StatusUpdated {
+        profile: crate::domain::UserProfile,
     },
     DirectChannelOpened {
         channel: Channel,

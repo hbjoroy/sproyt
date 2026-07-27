@@ -200,6 +200,14 @@ async fn execute_command(
             .list_users(participant_id.clone())
             .await
             .map(|users| ServerEvent::UsersListed { users }),
+        ClientCommand::SetStatus {
+            text,
+            emoji,
+            expires_at,
+        } => chat
+            .set_status(participant_id.clone(), text, emoji, expires_at)
+            .await
+            .map(|profile| ServerEvent::StatusUpdated { profile }),
         ClientCommand::OpenDirectChannel { user_id } => chat
             .open_direct_channel(participant_id.clone(), user_id)
             .await

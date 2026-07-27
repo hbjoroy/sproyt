@@ -43,6 +43,15 @@ pub struct User {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UserProfile {
+    #[serde(flatten)]
+    pub user: User,
+    pub status_text: String,
+    pub status_emoji: String,
+    pub status_expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelKind {
     Public,
@@ -188,6 +197,24 @@ pub struct ChatMessage {
     pub body: MessageBody,
     pub sequence: ChannelSequence,
     pub sent_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MediaObject {
+    pub id: crate::domain::MediaId,
+    pub owner_id: UserId,
+    pub channel_id: ChannelId,
+    pub original_filename: String,
+    pub content_type: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_ms: Option<u64>,
+    pub alt_text: String,
+    pub analysis_status: String,
+    pub analysis_metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

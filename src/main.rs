@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, Request, State, ws::WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State, ws::WebSocketUpgrade},
     http::{
         HeaderMap, HeaderName, HeaderValue,
         header::{ACCEPT, AUTHORIZATION, COOKIE, LOCATION, ORIGIN, SET_COOKIE},
@@ -36,7 +36,7 @@ use crate::{
     auth::{AuthError, AuthService},
     chat::{ChatEngine, ChatError},
     config::{AppConfig, AuthMode, LogFormat},
-    domain::{ChannelId, ChannelSequence, MessageBody, MessageLimit, UserId},
+    domain::{ChannelId, ChannelSequence, MediaId, MessageBody, MessageLimit, UserId},
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{
         EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, HeartGateway, ProcessLinkId,
@@ -140,6 +140,8 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/auth/refresh", post(auth_refresh))
         .route("/auth/logout", get(auth_logout))
         .route("/api/v1/me/export", get(export_my_data))
+        .route("/api/v1/channels/{id}/media", post(upload_media))
+        .route("/api/v1/media/{id}", get(download_media))
         .route("/ws", get(ws_handler))
         .route("/api/v1/processes", post(start_process))
         .route("/api/v1/processes/{id}", get(get_process))
@@ -159,6 +161,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         )
         .route("/mcp", post(mcp_handler))
         .with_state(state.clone())
+        .layer(DefaultBodyLimit::max(26 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(
             operations.clone(),
             record_metrics,
@@ -550,6 +553,156 @@ async fn export_my_data(
         HeaderValue::from_static("nosniff"),
     );
     response
+}
+
+const MAX_MEDIA_BYTES: usize = 25 * 1024 * 1024;
+
+async fn upload_media(
+    State(state): State<AppState>,
+    Path(channel): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    let channel_id = match ChannelId::new(channel) {
+        Ok(id) => id,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    let field = match multipart.next_field().await {
+        Ok(Some(field)) => field,
+        Ok(None) => {
+            return (axum::http::StatusCode::BAD_REQUEST, "missing media file").into_response();
+        }
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                "invalid multipart upload",
+            )
+                .into_response();
+        }
+    };
+    let filename = field
+        .file_name()
+        .unwrap_or("upload")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(255)
+        .collect::<String>();
+    let declared_type = field
+        .content_type()
+        .unwrap_or("application/octet-stream")
+        .to_owned();
+    let content = match field.bytes().await {
+        Ok(bytes) if !bytes.is_empty() && bytes.len() <= MAX_MEDIA_BYTES => bytes.to_vec(),
+        Ok(_) => {
+            return (
+                axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                "media must contain 1 to 25 MiB",
+            )
+                .into_response();
+        }
+        Err(_) => {
+            return (axum::http::StatusCode::BAD_REQUEST, "could not read media").into_response();
+        }
+    };
+    let content_type = match detected_media_type(&content, &declared_type) {
+        Some(value) => value,
+        None => {
+            return (
+                axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "only supported images and videos can be uploaded",
+            )
+                .into_response();
+        }
+    };
+    match state
+        .chat
+        .store_media(
+            principal.user.id,
+            channel_id,
+            if filename.is_empty() {
+                "upload".into()
+            } else {
+                filename
+            },
+            content_type,
+            content,
+        )
+        .await
+    {
+        Ok(media) => (
+            axum::http::StatusCode::CREATED,
+            Json(serde_json::json!({"media": media, "url": format!("/api/v1/media/{}", media.id)})),
+        )
+            .into_response(),
+        Err(error) => chat_error_response(error),
+    }
+}
+
+async fn download_media(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return auth_error_response(error),
+    };
+    let media_id = match MediaId::new(id) {
+        Ok(value) => value,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    let (media, content) = match state.chat.load_media(principal.user.id, media_id).await {
+        Ok(value) => value,
+        Err(error) => return chat_error_response(error),
+    };
+    let mut response = content.into_response();
+    if let Ok(value) = HeaderValue::from_str(&media.content_type) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, value);
+    }
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=3600"),
+    );
+    response.headers_mut().insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
+fn detected_media_type(content: &[u8], declared: &str) -> Option<String> {
+    let detected = if content.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if content.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if content.starts_with(b"GIF87a") || content.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if content.starts_with(b"RIFF") && content.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else if content.get(4..12).is_some_and(|v| v.starts_with(b"ftyp")) {
+        Some("video/mp4")
+    } else if content.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
+        Some(if declared == "video/webm" {
+            "video/webm"
+        } else {
+            "video/x-matroska"
+        })
+    } else {
+        None
+    };
+    detected.map(str::to_owned)
 }
 
 fn chat_error_response(error: ChatError) -> axum::response::Response {
@@ -1520,6 +1673,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: #245b45; color: white; font-weight: 800; }
       .identity { display: grid; gap: 4px; font-size: .9rem; }
       .identity a { color: #245b45; }
+      #status-editor { padding: 6px 0; }
+      #status-editor label span { display: flex; gap: 6px; }
+      #status-emoji { width: 3.2rem; text-align: center; }
+      #status-text { min-width: 0; }
+      .emoji-picker { position: relative; align-self: center; }
+      .emoji-picker summary { cursor: pointer; font-size: 1.35rem; list-style: none; }
+      .emoji-picker div { position: absolute; bottom: 2.5rem; left: 0; z-index: 5; display: grid; grid-template-columns: repeat(4, auto); gap: 4px; padding: 8px; border: 1px solid #cdd3ca; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
+      #media-previews { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+      #media-previews:empty { display: none; }
+      #media-previews span { padding: 5px 8px; border-radius: 999px; background: #e7eee8; font-size: .8rem; }
+      .message-media { margin: 10px 0 0; }
+      .message-media img, .message-media video { display: block; max-width: min(100%, 720px); max-height: 70vh; border-radius: 10px; background: #111; }
+      .message-media figcaption { margin-top: 4px; color: #647269; font-size: .78rem; }
       .mobile-navigation-toggle { display: none; }
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
@@ -1766,7 +1932,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       form.send {
         display: grid;
-        grid-template-columns: 1fr auto;
+        grid-template-columns: auto auto 1fr auto;
         gap: 12px;
         border-top: 1px solid #e4e5de;
       }
@@ -1861,6 +2027,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Samtalar og vennekretsar</button>
         <div class="identity">
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
+          <details id="status-editor">
+            <summary id="current-status">Set status</summary>
+            <label>Status <span><input id="status-emoji" aria-label="Status-emoji" maxlength="32" placeholder="🙂"><input id="status-text" maxlength="100" placeholder="Kva skjer?"></span></label>
+            <div class="onboarding-actions" id="status-emoji-options" aria-label="Vel status-emoji"><button type="button" data-emoji="🙂">🙂</button><button type="button" data-emoji="💻">💻</button><button type="button" data-emoji="🏠">🏠</button><button type="button" data-emoji="🚶">🚶</button><button type="button" data-emoji="🍽️">🍽️</button><button type="button" data-emoji="🌴">🌴</button></div>
+            <div class="onboarding-actions"><button id="save-status" type="button">Lagre</button><button id="clear-status" type="button">Fjern</button></div>
+          </details>
           <a href="/auth/logout">Logg ut</a>
         </div>
         <nav aria-label="Samtalar" id="mobile-navigation">
@@ -1929,6 +2101,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       </header>
       <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
       <form class="send" id="send-form">
+        <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
+        <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm" multiple hidden><div id="media-previews" aria-live="polite"></div>
         <textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" disabled></textarea>
         <button id="send" type="submit" disabled>Send</button>
       </form>
@@ -1940,6 +2114,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const channelInput = document.querySelector("#channel");
       const bodyInput = document.querySelector("#body");
       const sendButton = document.querySelector("#send");
+      const statusText = document.querySelector("#status-text");
+      const statusEmoji = document.querySelector("#status-emoji");
+      const currentStatus = document.querySelector("#current-status");
+      const mediaInput = document.querySelector("#media-input");
+      const mediaPreviews = document.querySelector("#media-previews");
       const viewModeButton = document.querySelector("#view-mode");
       const rawModeButton = document.querySelector("#raw-mode");
       const statusEl = document.querySelector("#status");
@@ -2003,6 +2182,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let knownTasks = [];
       const knownCircles = new Map();
       let temporaryAgentId = null;
+      let pendingMedia = [];
 
       function scheduleSessionRefresh(seconds) {
         if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
@@ -2066,6 +2246,38 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       scheduleInitialSessionRefresh().catch(() => scheduleSessionRefresh(30));
 
+      function renderMediaPreviews() {
+        mediaPreviews.replaceChildren(...pendingMedia.filter((media) => media.channel_id === activeChannelId).map((media) => {
+          const item = document.createElement("span");
+          item.textContent = `${media.content_type.startsWith("video/") ? "🎬" : "🖼️"} ${media.original_filename}`;
+          return item;
+        }));
+      }
+
+      async function uploadMediaFiles(files) {
+        if (!activeChannelId) return;
+        for (const file of files) {
+          const form = new FormData();
+          form.append("file", file, file.name || "clipboard-image.png");
+          setConnected(true, `Lastar opp ${file.name || "bilete"} …`);
+          const participant = new URL(window.location.href).searchParams.get("participant");
+          const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
+          const response = await fetch(`/api/v1/channels/${activeChannelId}/media${authQuery}`, { method: "POST", body: form, credentials: "same-origin" });
+          if (!response.ok) { pushSystem(`Opplasting feila: ${await response.text()}`); continue; }
+          const result = await response.json();
+          pendingMedia.push(result.media);
+          renderMediaPreviews();
+        }
+        setConnected(socket?.readyState === WebSocket.OPEN, "Tilkopla");
+      }
+
+      document.querySelector("#attach-media").addEventListener("click", () => mediaInput.click());
+      mediaInput.addEventListener("change", () => { uploadMediaFiles([...mediaInput.files]); mediaInput.value = ""; });
+      bodyInput.addEventListener("paste", (event) => {
+        const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
+        if (files.length) { event.preventDefault(); uploadMediaFiles(files); }
+      });
+
       connectForm.addEventListener("submit", (event) => {
         event.preventDefault();
         connect();
@@ -2073,16 +2285,41 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       sendForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        const body = bodyInput.value.trim();
+        const draft = bodyInput.value.trim();
+        const channelMedia = pendingMedia.filter((media) => media.channel_id === activeChannelId);
+        const mediaTokens = channelMedia.map((media) => `[[media:${media.id}|${media.content_type}|${encodeURIComponent(media.original_filename)}]]`).join("\n");
+        const body = [draft, mediaTokens].filter(Boolean).join("\n");
         if (!socket || socket.readyState !== WebSocket.OPEN || !activeChannelId || body.length === 0) {
           return;
         }
         if (subscribedChannelId !== activeChannelId) return;
         const requestId = sendCommand("send_message", { channel_id: activeChannelId, body });
         if (!requestId) return;
-        pendingMessages.set(requestId, { body, channelId: activeChannelId });
+        pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });
         bodyInput.readOnly = true;
         setConnected(true, "Sender meldinga …");
+      });
+
+      function insertEmoji(input, emoji) {
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? start;
+        input.setRangeText(emoji, start, end, "end");
+        input.focus();
+      }
+
+      document.querySelectorAll("#message-emoji-options [data-emoji]").forEach((button) => {
+        button.addEventListener("click", () => insertEmoji(bodyInput, button.dataset.emoji));
+      });
+      document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((button) => {
+        button.addEventListener("click", () => { statusEmoji.value = button.dataset.emoji; statusText.focus(); });
+      });
+      document.querySelector("#save-status").addEventListener("click", () => {
+        sendCommand("set_status", { text: statusText.value, emoji: statusEmoji.value, expires_at: null });
+      });
+      document.querySelector("#clear-status").addEventListener("click", () => {
+        statusText.value = "";
+        statusEmoji.value = "";
+        sendCommand("set_status", { text: "", emoji: "", expires_at: null });
       });
 
       directUser.addEventListener("change", () => {
@@ -2267,6 +2504,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (activeChannelId) sendCommand("subscribe_channel", { channel_id: activeChannelId });
           heartbeatTimer = window.setInterval(() => {
             sendCommand("ping");
+            sendCommand("list_users");
             sendCommand("list_my_channels");
             if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
           }, 20_000);
@@ -2355,7 +2593,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         pendingMessages.delete(requestId);
         bodyInput.readOnly = false;
-        if (bodyInput.value.trim() === pending.body) bodyInput.value = "";
+        if (bodyInput.value.trim() === pending.draft) bodyInput.value = "";
+        pendingMedia = pendingMedia.filter((media) => !pending.mediaIds.includes(media.id));
+        renderMediaPreviews();
         if (message?.channel_id === activeChannelId) bodyInput.focus();
         setConnected(socket?.readyState === WebSocket.OPEN, "Tilkopla");
       }
@@ -2500,6 +2740,27 @@ const INDEX_HTML: &str = r##"<!doctype html>
         renderTimeline();
       }
 
+      function renderKnownUsers() {
+        directUser.replaceChildren(new Option("Vel brukar", ""));
+        channelMember.replaceChildren(new Option("Vel brukar", ""));
+        knownUsers.filter((user) => user.id !== currentParticipantId).forEach((user) => {
+          const handle = user.display_name.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "");
+          const status = [user.status_emoji, user.status_text].filter(Boolean).join(" ");
+          const label = `${user.display_name} (@${handle})${status ? ` · ${status}` : ""}`;
+          directUser.add(new Option(label, user.id));
+          channelMember.add(new Option(`${user.display_name}${status ? ` · ${status}` : ""}`, user.id));
+        });
+        const own = knownUsers.find((user) => user.id === currentParticipantId);
+        if (own) {
+          statusEmoji.value = own.status_emoji || "";
+          statusText.value = own.status_text || "";
+          currentStatus.textContent = own.status_text || own.status_emoji
+            ? `${own.status_emoji || ""} ${own.status_text || ""}`.trim()
+            : "Set status";
+        }
+        openDirect.disabled = !directUser.value;
+      }
+
       function renderServerEvent(event) {
         if (event.protocol !== "sproyt.chat.v1") {
           pushSystem("Serveren svarte med ein ukjend protokoll.");
@@ -2516,16 +2777,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         if (event.type === "users_listed") {
           knownUsers = payload.users;
-          directUser.replaceChildren(new Option("Vel brukar", ""));
-          channelMember.replaceChildren(new Option("Vel brukar", ""));
-          knownUsers
-            .filter((user) => user.id !== currentParticipantId)
-            .forEach((user) => {
-              const handle = user.display_name.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "");
-              directUser.add(new Option(`${user.display_name} (@${handle})`, user.id));
-              channelMember.add(new Option(user.display_name, user.id));
-            });
-          openDirect.disabled = !directUser.value;
+          renderKnownUsers();
+          return;
+        }
+
+        if (event.type === "status_updated") {
+          knownUsers = [payload.profile, ...knownUsers.filter((user) => user.id !== payload.profile.id)];
+          renderKnownUsers();
+          document.querySelector("#status-editor").open = false;
           return;
         }
 
@@ -3007,6 +3266,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         historyLoading = false;
         messagesEl.replaceChildren();
         activeChannelId = channel.id;
+        renderMediaPreviews();
         requestedChannelSlug = channel.slug;
         conversationTitle.textContent = channel.name;
         renderChannels();
@@ -3202,7 +3462,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           body.append(pre);
         } else {
           body.className = "rendered";
-          renderMarkdown(message.body, body);
+          renderMessageBody(message.body, body);
         }
 
         wrapper.append(meta, body);
@@ -3226,6 +3486,31 @@ const INDEX_HTML: &str = r##"<!doctype html>
         invitationToken.value = window.location.href;
         onboardingNotice.textContent = "Du er invitert til ein vennekrets. Trykk «Bli med» for å godta.";
         updateOnboardingButtons();
+      }
+
+      function renderMessageBody(source, target) {
+        const token = /\[\[media:([0-9a-f-]{36})\|([^|\]]+)\|([^\]]*)\]\]/gi;
+        const attachments = [];
+        const text = source.replace(token, (_, id, contentType, encodedName) => {
+          let name = "media";
+          try { name = decodeURIComponent(encodedName || "media"); } catch (_) {}
+          attachments.push({ id, contentType, name });
+          return "";
+        }).trim();
+        if (text) renderMarkdown(text, target);
+        attachments.forEach((media) => {
+          const figure = document.createElement("figure");
+          figure.className = "message-media";
+          const element = media.contentType.startsWith("video/") ? document.createElement("video") : document.createElement("img");
+          const participant = new URL(window.location.href).searchParams.get("participant");
+          element.src = `/api/v1/media/${media.id}${participant ? `?participant=${encodeURIComponent(participant)}` : ""}`;
+          if (element instanceof HTMLVideoElement) { element.controls = true; element.preload = "metadata"; }
+          else { element.alt = media.name; element.loading = "lazy"; }
+          const caption = document.createElement("figcaption");
+          caption.textContent = media.name;
+          figure.append(element, caption);
+          target.append(figure);
+        });
       }
 
       function renderMarkdown(source, target) {
@@ -3993,6 +4278,23 @@ mod protocol_capacity_tests {
     };
 
     type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+    #[test]
+    fn media_signatures_override_untrusted_declared_types() {
+        assert_eq!(
+            detected_media_type(b"\x89PNG\r\n\x1a\nrest", "text/html").as_deref(),
+            Some("image/png")
+        );
+        assert_eq!(detected_media_type(b"not media", "image/png"), None);
+    }
+
+    #[test]
+    fn browser_exposes_paste_upload_and_safe_media_rendering() {
+        assert!(INDEX_HTML.contains("bodyInput.addEventListener(\"paste\""));
+        assert!(INDEX_HTML.contains("/api/v1/channels/${activeChannelId}/media"));
+        assert!(INDEX_HTML.contains("element.loading = \"lazy\""));
+        assert!(INDEX_HTML.contains("element.controls = true"));
+    }
 
     async fn start_test_server(
         repository: Arc<SqliteChatRepository>,

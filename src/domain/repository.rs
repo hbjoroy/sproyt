@@ -9,8 +9,8 @@ use super::{
     AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary,
     ChatEvent, ChatMessage, Circle, CircleId, CircleMembership, CircleRole, CreateChannel,
     CreateCircle, CreateCircleInvitation, DeleteCircle, InboxMention, IssuedInvitation,
-    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership, MessageId,
-    PortableUserExport, SendMessage, User, UserId, UserTask,
+    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, Membership,
+    MessageId, PortableUserExport, SendMessage, User, UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -39,7 +39,30 @@ pub type RepositoryFuture<'a, T> =
 pub trait ChatRepository: Send + Sync + 'static {
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
+    #[allow(dead_code)] // Kept during the profile-protocol rollout for repository compatibility.
     fn list_human_users<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<User>>;
+    fn list_user_profiles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserProfile>>;
+    fn set_user_status<'a>(
+        &'a self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> RepositoryFuture<'a, UserProfile>;
+    fn store_media<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        filename: String,
+        content_type: String,
+        sha256: String,
+        content: Vec<u8>,
+    ) -> RepositoryFuture<'a, MediaObject>;
+    fn load_media<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)>;
     fn open_direct_channel<'a>(
         &'a self,
         actor: UserId,
@@ -95,6 +118,7 @@ pub trait ChatRepository: Send + Sync + 'static {
     fn list_mentions<'a>(&'a self, _actor: UserId) -> RepositoryFuture<'a, Vec<InboxMention>> {
         Box::pin(async { Ok(Vec::new()) })
     }
+
     fn mark_mention_read<'a>(
         &'a self,
         _actor: UserId,
@@ -242,6 +266,129 @@ impl ChatRepository for InMemoryChatRepository {
             users
                 .sort_by(|left, right| left.display_name.as_str().cmp(right.display_name.as_str()));
             Ok(users)
+        })
+    }
+
+    fn list_user_profiles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserProfile>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            if !state.users.contains_key(&actor) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let now = chrono::Utc::now();
+            let mut profiles = state
+                .users
+                .values()
+                .filter(|user| user.kind == crate::domain::PrincipalKind::Human)
+                .cloned()
+                .map(|user| {
+                    let (text, emoji, expires_at) = state
+                        .user_statuses
+                        .get(&user.id)
+                        .cloned()
+                        .unwrap_or_default();
+                    let active = expires_at.is_none_or(|expiry| expiry > now);
+                    UserProfile {
+                        user,
+                        status_text: if active { text } else { String::new() },
+                        status_emoji: if active { emoji } else { String::new() },
+                        status_expires_at: if active { expires_at } else { None },
+                    }
+                })
+                .collect::<Vec<_>>();
+            profiles.sort_by(|left, right| {
+                left.user
+                    .display_name
+                    .as_str()
+                    .cmp(right.user.display_name.as_str())
+            });
+            Ok(profiles)
+        })
+    }
+
+    fn set_user_status<'a>(
+        &'a self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> RepositoryFuture<'a, UserProfile> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let user = state
+                .users
+                .get(&actor)
+                .cloned()
+                .ok_or(RepositoryError::PermissionDenied)?;
+            state
+                .user_statuses
+                .insert(actor, (text.clone(), emoji.clone(), expires_at));
+            Ok(UserProfile {
+                user,
+                status_text: text,
+                status_emoji: emoji,
+                status_expires_at: expires_at,
+            })
+        })
+    }
+
+    fn store_media<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        filename: String,
+        content_type: String,
+        sha256: String,
+        content: Vec<u8>,
+    ) -> RepositoryFuture<'a, MediaObject> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            if !state
+                .memberships
+                .contains_key(&(channel_id.clone(), actor.clone()))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let media = MediaObject {
+                id: MediaId::generate(),
+                owner_id: actor,
+                channel_id,
+                original_filename: filename,
+                content_type,
+                size_bytes: content.len() as u64,
+                sha256,
+                width: None,
+                height: None,
+                duration_ms: None,
+                alt_text: String::new(),
+                analysis_status: "pending".into(),
+                analysis_metadata: serde_json::json!({}),
+                created_at: chrono::Utc::now(),
+            };
+            state.media.insert(media.id, (media.clone(), content));
+            Ok(media)
+        })
+    }
+
+    fn load_media<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let item = state
+                .media
+                .get(&media_id)
+                .cloned()
+                .ok_or(RepositoryError::NotFound)?;
+            if !state
+                .memberships
+                .contains_key(&(item.0.channel_id.clone(), actor))
+            {
+                return Err(RepositoryError::NotFound);
+            }
+            Ok(item)
         })
     }
 
@@ -956,6 +1103,8 @@ struct RepositoryState {
     messages: HashMap<ChannelId, Vec<ChatMessage>>,
     next_sequences: HashMap<ChannelId, ChannelSequence>,
     users: HashMap<UserId, User>,
+    user_statuses: HashMap<UserId, (String, String, Option<chrono::DateTime<chrono::Utc>>)>,
+    media: HashMap<MediaId, (MediaObject, Vec<u8>)>,
     command_receipts: HashMap<(UserId, String), MessageId>,
 }
 
