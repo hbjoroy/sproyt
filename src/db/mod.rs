@@ -10,13 +10,33 @@ use std::sync::Arc;
 
 use crate::agent::{AgentRepository, SharedAgentRepository};
 use crate::config::{DatabaseConfig, DatabaseKind};
-use crate::domain::{ChatRepository, RepositoryError};
+use crate::domain::{ChatRepository, MediaId, MessageBody, RepositoryError};
 use crate::process::{ProcessRepository, SharedProcessRepository};
 
 pub struct Repositories {
     pub chat: Arc<dyn ChatRepository>,
     pub process: SharedProcessRepository,
     pub agent: SharedAgentRepository,
+}
+
+fn media_ids_from_body(body: &MessageBody) -> Result<Vec<MediaId>, RepositoryError> {
+    let mut ids = Vec::new();
+    let mut rest = body.as_str();
+    while let Some(start) = rest.find("[[media:") {
+        rest = &rest[start + 8..];
+        let end = rest.find('|').ok_or(RepositoryError::Conflict)?;
+        let id = MediaId::new(&rest[..end])
+            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        if ids.contains(&id) {
+            return Err(RepositoryError::Conflict);
+        }
+        ids.push(id);
+        rest = &rest[end + 1..];
+    }
+    if ids.len() > 10 {
+        return Err(RepositoryError::Conflict);
+    }
+    Ok(ids)
 }
 
 pub async fn migrate(config: &DatabaseConfig) -> Result<(), RepositoryError> {

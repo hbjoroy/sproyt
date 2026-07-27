@@ -122,6 +122,31 @@ impl MessageId {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
+pub struct MediaId(Uuid);
+
+impl MediaId {
+    pub fn generate() -> Self {
+        Self(Uuid::now_v7())
+    }
+    pub fn new(value: impl Into<String>) -> Result<Self, TextValidationError> {
+        parse_uuid(value, "media id").map(Self)
+    }
+    pub const fn as_uuid(&self) -> &Uuid {
+        &self.0
+    }
+    pub const fn from_uuid(value: Uuid) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for MediaId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct ChannelSequence(u64);
 
 impl Default for ChannelSequence {

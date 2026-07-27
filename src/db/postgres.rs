@@ -21,9 +21,9 @@ use crate::domain::{
     CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
     CreateCircleInvitation, DeleteCircle, DisplayName, ExportedChannel, ExportedCircle,
     InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
-    MarkRead, Membership, MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT,
-    Policy, PortableUserExport, PresenceLease, RepositoryError, RepositoryFuture, SendMessage,
-    User, UserId, UserTask,
+    MarkRead, MediaId, MediaObject, Membership, MembershipRole, MessageBody, MessageId,
+    PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PresenceLease, RepositoryError,
+    RepositoryFuture, SendMessage, User, UserId, UserProfile, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -31,7 +31,7 @@ use crate::process::{
     ProcessRepositoryFuture, ProcessView, SetCircleFeature, StartProcess, StartedProcess,
 };
 
-use super::{sql_error, storage};
+use super::{media_ids_from_body, sql_error, storage};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
 
@@ -180,6 +180,99 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             rows.into_iter().map(user_from_row).collect()
+        })
+    }
+
+    fn list_user_profiles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserProfile>> {
+        Box::pin(async move {
+            let exists = sqlx::query_scalar::<_, i32>("select 1 from users where id=$1")
+                .bind(*actor.as_uuid())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            if exists.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at from users where kind = 'human' order by lower(display_name), id")
+                .fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(user_profile_from_row).collect()
+        })
+    }
+
+    fn set_user_status<'a>(
+        &'a self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+        expires_at: Option<chrono::DateTime<Utc>>,
+    ) -> RepositoryFuture<'a, UserProfile> {
+        Box::pin(async move {
+            let row = sqlx::query("update users set status_text=$1, status_emoji=$2, status_expires_at=$3 where id=$4 and kind='human' returning id, kind, display_name, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at")
+                .bind(text).bind(emoji).bind(expires_at).bind(*actor.as_uuid())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?
+                .ok_or(RepositoryError::PermissionDenied)?;
+            user_profile_from_row(row)
+        })
+    }
+
+    fn store_media<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        filename: String,
+        content_type: String,
+        sha256: String,
+        content: Vec<u8>,
+    ) -> RepositoryFuture<'a, MediaObject> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i32>(
+                "select 1 from channel_memberships where channel_id=$1 and user_id=$2",
+            )
+            .bind(*channel_id.as_uuid())
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let media = MediaObject {
+                id: MediaId::generate(),
+                owner_id: actor,
+                channel_id,
+                original_filename: filename,
+                content_type,
+                size_bytes: content.len() as u64,
+                sha256,
+                width: None,
+                height: None,
+                duration_ms: None,
+                alt_text: String::new(),
+                analysis_status: "pending".into(),
+                analysis_metadata: serde_json::json!({}),
+                created_at: Utc::now(),
+            };
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            sqlx::query("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,analysis_status,analysis_metadata,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)").bind(*media.id.as_uuid()).bind(*media.owner_id.as_uuid()).bind(*media.channel_id.as_uuid()).bind(format!("db:{}", media.id)).bind(&media.original_filename).bind(&media.content_type).bind(media.size_bytes as i64).bind(&media.sha256).bind(&media.analysis_status).bind(&media.analysis_metadata).bind(media.created_at).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into media_blobs(media_id,content) values($1,$2)")
+                .bind(*media.id.as_uuid())
+                .bind(content)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(media)
+        })
+    }
+
+    fn load_media<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)> {
+        Box::pin(async move {
+            let row = sqlx::query("select m.id,m.owner_id,m.channel_id,m.original_filename,m.content_type,m.size_bytes,m.sha256,m.width,m.height,m.duration_ms,m.alt_text,m.analysis_status,m.analysis_metadata,m.created_at,b.content from media_objects m join media_blobs b on b.media_id=m.id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2").bind(*actor.as_uuid()).bind(*media_id.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
+            media_blob_from_postgres(row)
         })
     }
 
@@ -720,6 +813,7 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_postgres(&mut transaction, &message).await?;
+            persist_attachments_postgres(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())
@@ -825,6 +919,7 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_postgres(&mut transaction, &message).await?;
+            persist_attachments_postgres(&mut transaction, &message).await?;
             sqlx::query("update command_receipts set message_id = $1 where principal_id = $2 and request_id = $3")
                 .bind(*message.id.as_uuid())
                 .bind(*message.sender_id.as_uuid())
@@ -1751,6 +1846,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     })
 }
 
+#[allow(dead_code)] // Used by compatibility repository methods during the profile rollout.
 fn user_from_row(row: PgRow) -> Result<User, RepositoryError> {
     let kind: String = row.try_get("kind").map_err(storage)?;
     Ok(User {
@@ -1763,6 +1859,74 @@ fn user_from_row(row: PgRow) -> Result<User, RepositoryError> {
         external_subject: row.try_get("external_subject").map_err(storage)?,
         created_at: row.try_get("created_at").map_err(storage)?,
     })
+}
+
+fn user_profile_from_row(row: PgRow) -> Result<UserProfile, RepositoryError> {
+    let expires_at: Option<chrono::DateTime<Utc>> =
+        row.try_get("status_expires_at").map_err(sql_error)?;
+    let expired = expires_at.is_some_and(|expiry| expiry <= Utc::now());
+    Ok(UserProfile {
+        user: User {
+            id: UserId::from_uuid(row.try_get("id").map_err(sql_error)?),
+            kind: crate::domain::PrincipalKind::parse(row.try_get("kind").map_err(sql_error)?)
+                .ok_or_else(|| RepositoryError::Storage("invalid principal kind".into()))?,
+            display_name: DisplayName::new(
+                row.try_get::<String, _>("display_name")
+                    .map_err(sql_error)?,
+            )
+            .map_err(storage)?,
+            external_provider: row.try_get("external_provider").map_err(sql_error)?,
+            external_subject: row.try_get("external_subject").map_err(sql_error)?,
+            created_at: row.try_get("created_at").map_err(sql_error)?,
+        },
+        status_text: if expired {
+            String::new()
+        } else {
+            row.try_get("status_text").map_err(sql_error)?
+        },
+        status_emoji: if expired {
+            String::new()
+        } else {
+            row.try_get("status_emoji").map_err(sql_error)?
+        },
+        status_expires_at: if expired { None } else { expires_at },
+    })
+}
+
+fn media_blob_from_postgres(row: PgRow) -> Result<(MediaObject, Vec<u8>), RepositoryError> {
+    let media = MediaObject {
+        id: MediaId::from_uuid(row.try_get("id").map_err(sql_error)?),
+        owner_id: UserId::from_uuid(row.try_get("owner_id").map_err(sql_error)?),
+        channel_id: ChannelId::from_uuid(row.try_get("channel_id").map_err(sql_error)?),
+        original_filename: row.try_get("original_filename").map_err(sql_error)?,
+        content_type: row.try_get("content_type").map_err(sql_error)?,
+        size_bytes: u64::try_from(row.try_get::<i64, _>("size_bytes").map_err(sql_error)?)
+            .map_err(storage)?,
+        sha256: row.try_get("sha256").map_err(sql_error)?,
+        width: row
+            .try_get::<Option<i32>, _>("width")
+            .map_err(sql_error)?
+            .map(u32::try_from)
+            .transpose()
+            .map_err(storage)?,
+        height: row
+            .try_get::<Option<i32>, _>("height")
+            .map_err(sql_error)?
+            .map(u32::try_from)
+            .transpose()
+            .map_err(storage)?,
+        duration_ms: row
+            .try_get::<Option<i64>, _>("duration_ms")
+            .map_err(sql_error)?
+            .map(u64::try_from)
+            .transpose()
+            .map_err(storage)?,
+        alt_text: row.try_get("alt_text").map_err(sql_error)?,
+        analysis_status: row.try_get("analysis_status").map_err(sql_error)?,
+        analysis_metadata: row.try_get("analysis_metadata").map_err(sql_error)?,
+        created_at: row.try_get("created_at").map_err(sql_error)?,
+    };
+    Ok((media, row.try_get("content").map_err(sql_error)?))
 }
 
 fn channel_from_row(row: PgRow) -> Result<Channel, RepositoryError> {
@@ -1780,6 +1944,21 @@ fn channel_from_row(row: PgRow) -> Result<Channel, RepositoryError> {
             .map(CircleId::from_uuid),
         created_by: UserId::from_uuid(row.try_get("created_by").map_err(storage)?),
     })
+}
+
+async fn persist_attachments_postgres(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    message: &ChatMessage,
+) -> Result<(), RepositoryError> {
+    for (position, media_id) in media_ids_from_body(&message.body)?.into_iter().enumerate() {
+        let inserted = sqlx::query("insert into message_attachments(message_id,media_id,position) select $1,m.id,$2 from media_objects m where m.id=$3 and m.owner_id=$4 and m.channel_id=$5 and not exists(select 1 from message_attachments a where a.media_id=m.id)")
+            .bind(*message.id.as_uuid()).bind(position as i16).bind(*media_id.as_uuid()).bind(*message.sender_id.as_uuid()).bind(*message.channel_id.as_uuid())
+            .execute(&mut **transaction).await.map_err(sql_error)?;
+        if inserted.rows_affected() != 1 {
+            return Err(RepositoryError::PermissionDenied);
+        }
+    }
+    Ok(())
 }
 
 async fn persist_mentions_postgres(

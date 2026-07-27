@@ -12,11 +12,12 @@ pub use commands::{
     MessageLimit, SendMessage,
 };
 pub use events::ChatEvent;
-pub use ids::{ChannelId, ChannelSequence, CircleId, InvitationId, MessageId, UserId};
+pub use ids::{ChannelId, ChannelSequence, CircleId, InvitationId, MediaId, MessageId, UserId};
 pub use models::{
     Channel, ChannelKind, ChannelSummary, ChatMessage, Circle, CircleInvitation, CircleMembership,
-    CircleRole, ExportedChannel, ExportedCircle, InboxMention, IssuedInvitation, Membership,
-    MembershipRole, PORTABLE_USER_EXPORT_FORMAT, PortableUserExport, PrincipalKind, User, UserTask,
+    CircleRole, ExportedChannel, ExportedCircle, InboxMention, IssuedInvitation, MediaObject,
+    Membership, MembershipRole, PORTABLE_USER_EXPORT_FORMAT, PortableUserExport, PrincipalKind,
+    User, UserProfile, UserTask,
 };
 pub use policy::Policy;
 #[cfg(test)]

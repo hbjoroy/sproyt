@@ -13,9 +13,9 @@ use crate::domain::{
     AcceptCircleInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
     ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
     CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName,
-    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, Membership,
-    MessageBody, MessageId, MessageLimit, PresenceLease, RepositoryError, SendMessage,
-    TextValidationError, User, UserId,
+    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
+    MediaObject, Membership, MessageBody, MessageId, MessageLimit, PresenceLease, RepositoryError,
+    SendMessage, TextValidationError, User, UserId, UserProfile,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -118,9 +118,61 @@ impl ChatEngine {
         Ok(())
     }
 
-    pub async fn list_users(&self, actor: UserId) -> Result<Vec<User>, ChatError> {
+    pub async fn list_users(&self, actor: UserId) -> Result<Vec<UserProfile>, ChatError> {
         self.repository
-            .list_human_users(actor)
+            .list_user_profiles(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn set_status(
+        &self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<UserProfile, ChatError> {
+        let text = text.trim().to_owned();
+        let emoji = emoji.trim().to_owned();
+        if text.chars().count() > 100
+            || emoji.chars().count() > 16
+            || text.chars().any(char::is_control)
+            || emoji.chars().any(char::is_control)
+        {
+            return Err(ChatError::Validation(TextValidationError::TooLarge {
+                field: "status",
+                max: 100,
+            }));
+        }
+        self.repository
+            .set_user_status(actor, text, emoji, expires_at)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn store_media(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+        filename: String,
+        content_type: String,
+        content: Vec<u8>,
+    ) -> Result<MediaObject, ChatError> {
+        use sha2::{Digest, Sha256};
+        let sha256 = format!("{:x}", Sha256::digest(&content));
+        self.repository
+            .store_media(actor, channel_id, filename, content_type, sha256, content)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn load_media(
+        &self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> Result<(MediaObject, Vec<u8>), ChatError> {
+        self.repository
+            .load_media(actor, media_id)
             .await
             .map_err(ChatError::from)
     }
