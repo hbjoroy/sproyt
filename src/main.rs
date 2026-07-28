@@ -16,7 +16,10 @@ use axum::{
     extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State, ws::WebSocketUpgrade},
     http::{
         HeaderMap, HeaderName, HeaderValue,
-        header::{ACCEPT, AUTHORIZATION, COOKIE, LOCATION, ORIGIN, SET_COOKIE},
+        header::{
+            ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, LOCATION, ORIGIN,
+            SET_COOKIE,
+        },
     },
     middleware,
     response::{Html, IntoResponse},
@@ -51,6 +54,12 @@ const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION") {
     Some(revision) => revision,
     None => "unknown",
 };
+const PWA_MANIFEST: &str = include_str!("../assets/manifest.webmanifest");
+const SERVICE_WORKER: &str = include_str!("../assets/service-worker.js");
+const OFFLINE_HTML: &str = include_str!("../assets/offline.html");
+const WAVE_LOGO_SVG: &str = include_str!("../assets/sproyt-wave.svg");
+const WAVE_LOGO_192: &[u8] = include_bytes!("../assets/sproyt-wave-192.png");
+const WAVE_LOGO_512: &[u8] = include_bytes!("../assets/sproyt-wave-512.png");
 
 #[derive(Serialize)]
 struct VersionInfo {
@@ -136,6 +145,12 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/healthz", get(healthz))
         .route("/readyz", get(app_readyz))
         .route("/versionz", get(versionz))
+        .route("/manifest.webmanifest", get(pwa_manifest))
+        .route("/service-worker.js", get(service_worker))
+        .route("/offline", get(offline_page))
+        .route("/assets/sproyt-wave.svg", get(wave_logo_svg))
+        .route("/assets/sproyt-wave-192.png", get(wave_logo_192))
+        .route("/assets/sproyt-wave-512.png", get(wave_logo_512))
         .route("/metrics", get(metrics))
         .route("/auth/login", get(auth_login))
         .route("/auth/callback", get(auth_callback))
@@ -183,6 +198,61 @@ async fn versionz() -> Json<VersionInfo> {
         version: env!("CARGO_PKG_VERSION"),
         revision: BUILD_REVISION,
     })
+}
+
+async fn pwa_manifest() -> axum::response::Response {
+    (
+        [
+            (CONTENT_TYPE, "application/manifest+json"),
+            (CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        PWA_MANIFEST,
+    )
+        .into_response()
+}
+
+async fn service_worker() -> axum::response::Response {
+    (
+        [
+            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "no-cache"),
+            (HeaderName::from_static("service-worker-allowed"), "/"),
+        ],
+        SERVICE_WORKER,
+    )
+        .into_response()
+}
+
+async fn offline_page() -> axum::response::Response {
+    let mut response = Html(OFFLINE_HTML).into_response();
+    response.headers_mut().insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("default-src 'self'; img-src 'self'; style-src 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
+    );
+    response
+}
+
+async fn wave_logo_svg() -> axum::response::Response {
+    static_asset("image/svg+xml", WAVE_LOGO_SVG.as_bytes())
+}
+
+async fn wave_logo_192() -> axum::response::Response {
+    static_asset("image/png", WAVE_LOGO_192)
+}
+
+async fn wave_logo_512() -> axum::response::Response {
+    static_asset("image/png", WAVE_LOGO_512)
+}
+
+fn static_asset(content_type: &'static str, content: &'static [u8]) -> axum::response::Response {
+    (
+        [
+            (CONTENT_TYPE, content_type),
+            (CACHE_CONTROL, "public, max-age=604800, immutable"),
+        ],
+        content,
+    )
+        .into_response()
 }
 
 async fn add_security_headers(
@@ -1792,6 +1862,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#27604a">
+    <meta name="application-name" content="Sprøyt">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/assets/sproyt-wave.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/assets/sproyt-wave-192.png">
     <title>Sprøyt</title>
     <style nonce="{{NONCE}}">
       :root {
@@ -1850,7 +1927,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       .brand { display: flex; align-items: center; gap: 10px; }
-      .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: #245b45; color: white; font-weight: 800; }
+      .brand-mark { display: block; width: 42px; height: 42px; border-radius: 12px; }
       .identity { display: grid; gap: 4px; font-size: .9rem; }
       .identity a { color: #245b45; }
       #status-editor { padding: 6px 0; }
@@ -2248,7 +2325,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
   <body>
     <main>
       <aside class="sidebar" id="sidebar-panel">
-        <div class="brand"><span class="brand-mark" aria-hidden="true">S</span><h1>Sprøyt</h1></div>
+        <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave.svg" alt=""><h1>Sprøyt</h1></div>
         <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Samtalar og vennekretsar</button>
         <div class="identity">
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
@@ -2335,6 +2412,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
 
     <script type="module" nonce="{{NONCE}}">
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).catch(() => {}));
+      }
       const connectForm = document.querySelector("#connect-form");
       const sendForm = document.querySelector("#send-form");
       const channelInput = document.querySelector("#channel");
@@ -5070,6 +5150,27 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("id=\"upload-status\""));
         assert!(INDEX_HTML.contains("request.upload.addEventListener(\"progress\""));
         assert!(INDEX_HTML.contains("Behandlar fila"));
+    }
+
+    #[test]
+    fn browser_is_an_installable_pwa_with_bounded_offline_caching() {
+        let manifest: serde_json::Value = serde_json::from_str(PWA_MANIFEST).unwrap();
+        assert_eq!(manifest["name"], "Sprøyt");
+        assert_eq!(manifest["display"], "standalone");
+        assert_eq!(manifest["start_url"], "/");
+        assert!(
+            manifest["icons"]
+                .as_array()
+                .is_some_and(|icons| icons.len() >= 3)
+        );
+        assert!(INDEX_HTML.contains("rel=\"manifest\" href=\"/manifest.webmanifest\""));
+        assert!(INDEX_HTML.contains("navigator.serviceWorker.register"));
+        assert!(INDEX_HTML.contains("/assets/sproyt-wave.svg"));
+        assert!(SERVICE_WORKER.contains("request.mode === \"navigate\""));
+        assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/api/\")"));
+        assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/auth/\")"));
+        assert_eq!(&WAVE_LOGO_192[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(&WAVE_LOGO_512[..8], b"\x89PNG\r\n\x1a\n");
     }
 
     #[tokio::test]

@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "Sprøyt",
+  "short_name": "Sprøyt",
+  "description": "Chat for vennekretsar.",
+  "lang": "nn",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#e8f2ec",
+  "theme_color": "#27604a",
+  "icons": [
+    {
+      "src": "/assets/sproyt-wave.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/sproyt-wave-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/sproyt-wave-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
