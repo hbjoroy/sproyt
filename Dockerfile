@@ -12,6 +12,7 @@ RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
+COPY assets ./assets
 ARG TARGETARCH
 ARG VCS_REF=unknown
 RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
@@ -30,6 +31,7 @@ FROM build-base AS native-builder
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
+COPY assets ./assets
 ARG VCS_REF=unknown
 RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=sproyt-native-target,target=/src/target \

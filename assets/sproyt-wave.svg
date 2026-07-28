@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Sprøyt</title>
+  <desc id="description">Ei stilisert havbølgje med tre dropar sjøsprøyt.</desc>
+  <rect width="512" height="512" rx="104" fill="#e8f2ec"/>
+  <path fill="#27604a" d="M92 292c0-116 83-205 190-205 92 0 151 59 151 130 0 53-34 91-79 104 20-23 28-45 22-66-9-34-41-54-80-47-49 8-83 52-73 102 10 53 59 91 123 91 43 0 77-10 105-31-34 56-94 91-166 91-111 0-193-71-193-169Z"/>
+  <path fill="#59a99c" d="M393 137c23-4 41 12 39 34-2 19-18 34-49 47-3-35-1-76 10-81ZM434 230c20 10 25 33 11 49-13 14-35 13-65-5 15-31 34-53 54-44ZM371 307c15 9 17 27 5 38-12 10-30 5-50-16 16-22 31-31 45-22Z"/>
+</svg>
