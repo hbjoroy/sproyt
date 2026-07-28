@@ -2125,6 +2125,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           height: calc(100dvh - 24px);
           min-height: 0;
           grid-template-columns: 1fr;
+          grid-template-rows: auto auto minmax(0, 1fr) auto;
         }
 
         .sidebar { grid-row: auto; grid-template-columns: 1fr auto; grid-template-rows: auto; gap: 8px; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
@@ -5270,6 +5271,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
         assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
         assert!(body.contains(".sidebar.mobile-open .identity { display: grid; }"));
+        assert!(body.contains("grid-template-rows: auto auto minmax(0, 1fr) auto;"));
         assert!(body.contains("form.send { grid-template-columns: auto auto minmax(0, 1fr) auto"));
         assert!(body.contains(".conversation-header .status[data-routine=\"true\"]"));
         assert!(body.contains("setConnectionStatus(\"Tilkopla\")"));
