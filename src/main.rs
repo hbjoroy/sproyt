@@ -1863,6 +1863,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       #media-previews { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
       #media-previews:empty { display: none; }
       #media-previews span { padding: 5px 8px; border-radius: 999px; background: #e7eee8; font-size: .8rem; }
+      #upload-status { grid-column: 1 / -1; margin: 0; color: #506057; font-size: .85rem; }
+      #upload-status:empty { display: none; }
+      #upload-status[data-kind="error"] { color: #9f2929; font-weight: 650; }
       .composer-input { position: relative; min-width: 0; }
       .mention-suggestions { position: absolute; right: 0; bottom: calc(100% + 6px); left: 0; z-index: 10; max-height: min(42vh, 280px); overflow-y: auto; padding: 5px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 10px 28px #0003; }
       .mention-suggestions[hidden] { display: none; }
@@ -2324,7 +2327,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
       <form class="send" id="send-form">
         <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
-        <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews" aria-live="polite"></div>
+        <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="assertive"></p>
         <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
         <button id="send" type="submit" disabled>Send</button>
       </form>
@@ -2343,6 +2346,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const currentStatus = document.querySelector("#current-status");
       const mediaInput = document.querySelector("#media-input");
       const mediaPreviews = document.querySelector("#media-previews");
+      const uploadStatus = document.querySelector("#upload-status");
       const mediaLightbox = document.querySelector("#media-lightbox");
       const mediaLightboxImage = document.querySelector("#media-lightbox-image");
       const mediaLightboxCaption = document.querySelector("#media-lightbox-caption");
@@ -2604,37 +2608,80 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }));
       }
 
+      function setUploadStatus(message, kind = "progress") {
+        uploadStatus.textContent = message;
+        uploadStatus.dataset.kind = kind;
+      }
+
+      async function uploadFailureMessage(response, filename) {
+        let detail = "";
+        try { detail = (await response.text()).trim(); } catch (_) {}
+        const trace = response.headers.get("cf-ray") || response.headers.get("x-request-id");
+        const reason = detail && !detail.startsWith("<") ? `: ${detail}` : "";
+        const reference = trace ? ` Referanse: ${trace}.` : "";
+        return `Opplasting av ${filename} feila (HTTP ${response.status})${reason}.${reference}`;
+      }
+
+      function postMedia(url, form, filename) {
+        return new Promise((resolve, reject) => {
+          const request = new XMLHttpRequest();
+          request.open("POST", url);
+          request.withCredentials = true;
+          request.setRequestHeader("accept", "application/json");
+          request.upload.addEventListener("progress", (event) => {
+            const progress = event.lengthComputable ? ` ${Math.min(100, Math.round(event.loaded * 100 / event.total))} %` : "";
+            setUploadStatus(`Lastar opp ${filename}${progress} …`);
+          });
+          request.upload.addEventListener("load", () => {
+            setUploadStatus(`Opplasting av ${filename} er ferdig. Behandlar fila …`);
+          });
+          request.addEventListener("load", () => resolve({
+            status: request.status,
+            ok: request.status >= 200 && request.status < 300,
+            headers: { get: (name) => request.getResponseHeader(name) },
+            text: async () => request.responseText,
+            json: async () => JSON.parse(request.responseText)
+          }));
+          request.addEventListener("error", () => reject(new Error("Nettverkssambandet vart brote")));
+          request.addEventListener("abort", () => reject(new Error("Opplastinga vart avbroten")));
+          request.send(form);
+        });
+      }
+
       async function uploadMediaFiles(files) {
         if (!activeChannelId) return;
         for (const file of files) {
           if (!file.size || file.size > 35 * 1024 * 1024) {
-            pushSystem(`${file.name || "Fila"} må vere mellom 1 byte og 35 MiB.`);
+            setUploadStatus(`${file.name || "Fila"} må vere mellom 1 byte og 35 MiB.`, "error");
             continue;
           }
           const form = new FormData();
           form.append("file", file, file.name || "clipboard-image.png");
-          setConnected(true, `Lastar opp ${file.name || "bilete"} …`);
+          const filename = file.name || "bilete";
+          setUploadStatus(`Gjer klar ${filename} (${(file.size / 1024 / 1024).toFixed(1)} MiB) …`);
           const participant = new URL(window.location.href).searchParams.get("participant");
           const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
           const url = `/api/v1/channels/${activeChannelId}/media${authQuery}`;
           let response;
           try {
-            response = await fetch(url, { method: "POST", body: form, credentials: "same-origin" });
+            response = await postMedia(url, form, filename);
             if (response.status === 401 && await refreshSession(true)) {
-              response = await fetch(url, { method: "POST", body: form, credentials: "same-origin" });
+              response = await postMedia(url, form, filename);
             }
-          } catch (_) {
-            pushSystem(`Opplasting av ${file.name || "fila"} feila. Kontroller nettet og prøv igjen.`);
+          } catch (error) {
+            const online = navigator.onLine ? "Nettlesaren fekk ikkje noko HTTP-svar frå tenesta" : "Eininga er fråkopla nettet";
+            setUploadStatus(`Opplasting av ${file.name || "fila"} feila: ${online}. ${error?.message || "Ukjend nettverksfeil"}.`, "error");
             continue;
           }
           if (response.status === 401) {
-            pushSystem("Økta er utgått. Logg inn på nytt før du lastar opp.");
+            setUploadStatus("Opplasting feila (HTTP 401): Økta kunne ikkje fornyast. Logg inn på nytt.", "error");
             continue;
           }
-          if (!response.ok) { pushSystem(`Opplasting feila (${response.status}): ${await response.text()}`); continue; }
+          if (!response.ok) { setUploadStatus(await uploadFailureMessage(response, file.name || "fila"), "error"); continue; }
           const result = await response.json();
           pendingMedia.push(result.media);
           renderMediaPreviews();
+          setUploadStatus(`${file.name || "Fila"} er behandla og klar til å sendast.`, "success");
         }
         setConnected(socket?.readyState === WebSocket.OPEN, "Tilkopla");
       }
@@ -5020,6 +5067,9 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("/api/v1/media/${media.id}/preview"));
         assert!(INDEX_HTML.contains("function openMediaLightbox(url, name)"));
         assert!(INDEX_HTML.contains("mediaLightbox.showModal()"));
+        assert!(INDEX_HTML.contains("id=\"upload-status\""));
+        assert!(INDEX_HTML.contains("request.upload.addEventListener(\"progress\""));
+        assert!(INDEX_HTML.contains("Behandlar fila"));
     }
 
     #[tokio::test]
