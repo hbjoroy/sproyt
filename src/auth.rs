@@ -32,6 +32,7 @@ const SESSION_TTL_SECONDS: u64 = 8 * 60 * 60;
 const SESSION_REFRESH_LEAD_SECONDS: u64 = 60;
 pub const LOGIN_COOKIE: &str = "sproyt_oidc_tx";
 pub const SESSION_COOKIE: &str = "sproyt_session";
+pub const REFRESH_COOKIE: &str = "sproyt_refresh";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthenticatedPrincipal {
@@ -150,10 +151,12 @@ impl AuthService {
             Self::Development => Logout {
                 redirect_url: "/".to_owned(),
                 clear_cookie: clear_cookie(SESSION_COOKIE, "/"),
+                clear_refresh_cookie: clear_cookie(REFRESH_COOKIE, "/auth/refresh"),
             },
             Self::Oidc(service) => Logout {
                 redirect_url: service.logout_redirect_url(),
                 clear_cookie: clear_cookie(SESSION_COOKIE, "/"),
+                clear_refresh_cookie: clear_cookie(REFRESH_COOKIE, "/auth/refresh"),
             },
         }
     }
@@ -167,12 +170,14 @@ pub struct LoginStart {
 pub struct LoginComplete {
     pub principal: AuthenticatedPrincipal,
     pub set_cookie: String,
+    pub set_refresh_cookie: Option<String>,
     pub clear_transaction_cookie: String,
     pub return_to: String,
 }
 
 pub struct SessionRenewal {
     pub set_cookie: String,
+    pub set_refresh_cookie: String,
     pub refresh_after_seconds: u64,
 }
 
@@ -187,6 +192,7 @@ fn refresh_after_seconds(max_age: u64) -> u64 {
 pub struct Logout {
     pub redirect_url: String,
     pub clear_cookie: String,
+    pub clear_refresh_cookie: String,
 }
 
 pub struct OidcService {
@@ -382,21 +388,39 @@ impl OidcService {
         if expires_at <= now {
             return Err(AuthError::Unauthorized);
         }
+        let refresh_expires_at = now.saturating_add(SESSION_TTL_SECONDS);
+        let refresh_cookie = token
+            .refresh_token()
+            .map(|refresh_token| {
+                self.codec
+                    .seal(&RefreshClaims {
+                        issuer: self.issuer.clone(),
+                        subject: subject.clone(),
+                        display_name: principal.user.display_name.to_string(),
+                        refresh_token: refresh_token.secret().to_owned(),
+                        expires_at: refresh_expires_at,
+                    })
+                    .map(|value| {
+                        secure_cookie(REFRESH_COOKIE, &value, "/auth/refresh", SESSION_TTL_SECONDS)
+                    })
+            })
+            .transpose()?;
         let session = SessionClaims {
             issuer: self.issuer.clone(),
             subject,
             display_name: principal.user.display_name.to_string(),
             access_token: Some(token.access_token().secret().to_owned()),
-            refresh_token: token.refresh_token().map(|token| token.secret().to_owned()),
+            refresh_token: None,
             expires_at,
-            refresh_expires_at: Some(now.saturating_add(SESSION_TTL_SECONDS)),
+            refresh_expires_at: Some(refresh_expires_at),
         };
         let value = self.codec.seal(&session)?;
         Ok(LoginComplete {
             principal,
             // Keep the encrypted refresh credential beyond the shorter access
             // token lifetime so a suspended mobile browser can renew on wake.
-            set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", SESSION_TTL_SECONDS),
+            set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", expires_at - now),
+            set_refresh_cookie: refresh_cookie,
             clear_transaction_cookie: clear_cookie(LOGIN_COOKIE, "/auth/callback"),
             return_to: transaction.return_to.unwrap_or_else(|| "/".to_owned()),
         })
@@ -460,15 +484,37 @@ impl OidcService {
         &self,
         cookie_header: Option<&str>,
     ) -> Result<SessionRenewal, AuthError> {
-        let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
-        let claims: SessionClaims = self.codec.open(value)?;
-        validate_refresh_claims(&claims, &self.issuer)?;
+        let (issuer, subject, display_name, refresh_token, refresh_expires_at) =
+            if let Some(value) = read_cookie(cookie_header, REFRESH_COOKIE) {
+                let claims: RefreshClaims = self.codec.open(value)?;
+                validate_refresh_claims(&claims.issuer, claims.expires_at, &self.issuer)?;
+                (
+                    claims.issuer,
+                    claims.subject,
+                    claims.display_name,
+                    claims.refresh_token,
+                    claims.expires_at,
+                )
+            } else {
+                let value =
+                    read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
+                let claims: SessionClaims = self.codec.open(value)?;
+                let refresh_expires_at = claims.refresh_expires_at.unwrap_or(claims.expires_at);
+                validate_refresh_claims(&claims.issuer, refresh_expires_at, &self.issuer)?;
+                let refresh_token = claims.refresh_token.ok_or_else(|| {
+                    AuthError::Unsupported("session has no refresh token".to_owned())
+                })?;
+                (
+                    claims.issuer,
+                    claims.subject,
+                    claims.display_name,
+                    refresh_token,
+                    refresh_expires_at,
+                )
+            };
         // A provider may legitimately omit a refresh token even when
         // `offline_access` was requested. The sealed session remains valid
         // until its bounded expiry, so this is not an authentication failure.
-        let refresh_token = claims
-            .refresh_token
-            .ok_or_else(|| AuthError::Unsupported("session has no refresh token".to_owned()))?;
         let client = self.current_client()?;
         let token = client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.clone()))
@@ -480,7 +526,7 @@ impl OidcService {
         let user_info: CoreUserInfoClaims = client
             .user_info(
                 AccessToken::new(access_token.clone()),
-                Some(SubjectIdentifier::new(claims.subject.clone())),
+                Some(SubjectIdentifier::new(subject.clone())),
             )
             .map_err(AuthError::external)?
             .request_async(&self.http_client)
@@ -489,8 +535,7 @@ impl OidcService {
         let display_name = user_info
             .name()
             .and_then(|name| name.get(None))
-            .map_or(claims.display_name, |name| name.to_string());
-        let refresh_expires_at = claims.refresh_expires_at.unwrap_or(claims.expires_at);
+            .map_or(display_name, |name| name.to_string());
         let refresh_max_age = refresh_expires_at.saturating_sub(now_seconds()).max(1);
         let access_max_age = token
             .expires_in()
@@ -499,19 +544,32 @@ impl OidcService {
             .as_secs()
             .max(1);
         let renewed = SessionClaims {
-            issuer: claims.issuer,
-            subject: claims.subject,
+            issuer: issuer.clone(),
+            subject: subject.clone(),
             display_name,
             access_token: Some(access_token),
-            refresh_token: token
-                .refresh_token()
-                .map_or(Some(refresh_token), |token| Some(token.secret().to_owned())),
+            refresh_token: None,
             expires_at: now_seconds().saturating_add(access_max_age),
             refresh_expires_at: Some(refresh_expires_at),
         };
         let value = self.codec.seal(&renewed)?;
+        let refresh_value = self.codec.seal(&RefreshClaims {
+            issuer,
+            subject,
+            display_name: renewed.display_name.clone(),
+            refresh_token: token
+                .refresh_token()
+                .map_or(refresh_token, |token| token.secret().to_owned()),
+            expires_at: refresh_expires_at,
+        })?;
         Ok(SessionRenewal {
-            set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", refresh_max_age),
+            set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", access_max_age),
+            set_refresh_cookie: secure_cookie(
+                REFRESH_COOKIE,
+                &refresh_value,
+                "/auth/refresh",
+                refresh_max_age,
+            ),
             refresh_after_seconds: refresh_after_seconds(access_max_age),
         })
     }
@@ -541,6 +599,15 @@ struct SessionClaims {
     refresh_expires_at: Option<u64>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct RefreshClaims {
+    issuer: String,
+    subject: String,
+    display_name: String,
+    refresh_token: String,
+    expires_at: u64,
+}
+
 fn validate_session_claims(claims: &SessionClaims, issuer: &str) -> Result<(), AuthError> {
     if claims.expires_at <= now_seconds() || claims.issuer != issuer {
         return Err(AuthError::Unauthorized);
@@ -548,9 +615,12 @@ fn validate_session_claims(claims: &SessionClaims, issuer: &str) -> Result<(), A
     Ok(())
 }
 
-fn validate_refresh_claims(claims: &SessionClaims, issuer: &str) -> Result<(), AuthError> {
-    let refresh_expires_at = claims.refresh_expires_at.unwrap_or(claims.expires_at);
-    if refresh_expires_at <= now_seconds() || claims.issuer != issuer {
+fn validate_refresh_claims(
+    claims_issuer: &str,
+    refresh_expires_at: u64,
+    issuer: &str,
+) -> Result<(), AuthError> {
+    if refresh_expires_at <= now_seconds() || claims_issuer != issuer {
         return Err(AuthError::Unauthorized);
     }
     Ok(())
@@ -1112,7 +1182,11 @@ mod tests {
             .unwrap()
             .parse::<u64>()
             .unwrap();
-        assert_eq!(max_age, SESSION_TTL_SECONDS);
+        assert!((1..=300).contains(&max_age));
+        let refresh_cookie = complete.set_refresh_cookie.as_ref().unwrap();
+        assert!(refresh_cookie.contains("sproyt_refresh="));
+        assert!(refresh_cookie.contains("Path=/auth/refresh"));
+        assert!(refresh_cookie.contains(&format!("Max-Age={SESSION_TTL_SECONDS}")));
         let restored = auth
             .authenticate_session(Some(&complete.set_cookie))
             .await
@@ -1130,17 +1204,20 @@ mod tests {
             revalidated.user.display_name.to_string(),
             "Current Authentik User"
         );
-        let renewal = auth
-            .renew_session(Some(&complete.set_cookie))
-            .await
-            .unwrap();
+        let cookie_header = format!("{}; {}", complete.set_cookie, refresh_cookie);
+        let renewal = auth.renew_session(Some(&cookie_header)).await.unwrap();
         assert_eq!(renewal.refresh_after_seconds, 240);
         let renewed_cookie = renewal.set_cookie;
         let renewed: SessionClaims = service
             .codec
             .open(read_cookie(Some(&renewed_cookie), SESSION_COOKIE).unwrap())
             .unwrap();
-        assert_eq!(renewed.refresh_token.as_deref(), Some("refresh-b"));
+        assert!(renewed.refresh_token.is_none());
+        let renewed_refresh: RefreshClaims = service
+            .codec
+            .open(read_cookie(Some(&renewal.set_refresh_cookie), REFRESH_COOKIE).unwrap())
+            .unwrap();
+        assert_eq!(renewed_refresh.refresh_token, "refresh-b");
         assert!(
             auth.authenticate_session(Some(&renewed_cookie))
                 .await
@@ -1193,6 +1270,8 @@ mod tests {
         );
         assert!(logout.clear_cookie.contains("sproyt_session="));
         assert!(logout.clear_cookie.contains("Max-Age=0"));
+        assert!(logout.clear_refresh_cookie.contains("sproyt_refresh="));
+        assert!(logout.clear_refresh_cookie.contains("Path=/auth/refresh"));
         server.abort();
     }
 }
