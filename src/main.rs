@@ -1693,10 +1693,11 @@ async fn auth_callback(
                 )
                     .into_response();
             }
-            redirect_with_cookies(
-                &login.return_to,
-                &[login.set_cookie, login.clear_transaction_cookie],
-            )
+            let mut cookies = vec![login.set_cookie, login.clear_transaction_cookie];
+            if let Some(refresh_cookie) = login.set_refresh_cookie {
+                cookies.push(refresh_cookie);
+            }
+            redirect_with_cookies(&login.return_to, &cookies)
         }
         Err(error) => auth_error_response(error),
     }
@@ -1704,7 +1705,10 @@ async fn auth_callback(
 
 async fn auth_logout(State(state): State<AppState>) -> axum::response::Response {
     let logout = state.auth.logout();
-    redirect_with_cookies(&logout.redirect_url, &[logout.clear_cookie])
+    redirect_with_cookies(
+        &logout.redirect_url,
+        &[logout.clear_cookie, logout.clear_refresh_cookie],
+    )
 }
 
 async fn auth_refresh(
@@ -1721,15 +1725,21 @@ async fn auth_refresh(
             match HeaderValue::from_str(&renewal.set_cookie) {
                 Ok(cookie) => {
                     response.headers_mut().append(SET_COOKIE, cookie);
+                    if let Ok(refresh_cookie) = HeaderValue::from_str(&renewal.set_refresh_cookie) {
+                        response.headers_mut().append(SET_COOKIE, refresh_cookie);
+                    }
+                    response.headers_mut().insert(
+                        axum::http::header::CACHE_CONTROL,
+                        HeaderValue::from_static("no-store"),
+                    );
                     response
                 }
                 Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
         }
-        Err(crate::auth::AuthError::Unsupported(_)) => Json(serde_json::json!({
-            "refresh_after_seconds": 300
-        }))
-        .into_response(),
+        Err(crate::auth::AuthError::Unsupported(_)) => {
+            auth_error_response(crate::auth::AuthError::Unauthorized)
+        }
         Err(error) => auth_error_response(error),
     }
 }
@@ -1740,10 +1750,17 @@ async fn auth_session(
 ) -> axum::response::Response {
     let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
     match state.auth.session_refresh_after(cookie) {
-        Ok(refresh_after_seconds) => Json(serde_json::json!({
-            "refresh_after_seconds": refresh_after_seconds
-        }))
-        .into_response(),
+        Ok(refresh_after_seconds) => {
+            let mut response = Json(serde_json::json!({
+                "refresh_after_seconds": refresh_after_seconds
+            }))
+            .into_response();
+            response.headers_mut().insert(
+                axum::http::header::CACHE_CONTROL,
+                HeaderValue::from_static("no-store"),
+            );
+            response
+        }
         Err(error) => auth_error_response(error),
     }
 }
@@ -2455,6 +2472,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         sessionRefreshRejected = false;
         const result = await response.json();
+        const verification = await fetch("/auth/session", {
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { "accept": "application/json" }
+        });
+        if (!verification.ok) {
+          sessionRefreshRejected = verification.status === 401;
+          scheduleSessionRefresh(30);
+          return false;
+        }
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
         reconnectAfterSessionRefresh();
         return true;
@@ -2483,6 +2510,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       async function scheduleInitialSessionRefresh() {
         const response = await fetch("/auth/session", {
           credentials: "same-origin",
+          cache: "no-store",
           headers: { "accept": "application/json" }
         });
         if (!response.ok) {
@@ -2526,6 +2554,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           try {
             response = await fetch("/auth/session", {
               credentials: "same-origin",
+              cache: "no-store",
               headers: { "accept": "application/json" }
             });
           } catch (_) {
