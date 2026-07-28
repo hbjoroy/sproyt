@@ -2370,12 +2370,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let reconnectAttempt = 0;
       let stableConnectionTimer = null;
       let sessionRefreshTimer = null;
+      let sessionRefreshDueAt = 0;
+      let sessionRefreshPromise = null;
+      let sessionRefreshRejected = false;
+      let authenticationRecoveryPromise = null;
       let renderMode = "view";
       let requestNumber = 0;
       const browserSessionId = `browser-${crypto.randomUUID()}`;
       let activeChannelId = null;
       let subscribedChannelId = null;
       let reconnectScrollOffset = null;
+      const activeConversationKey = "sproyt.active-channel.v1";
+      let restoredChannelId = null;
+      try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
       let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
@@ -2404,7 +2411,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function scheduleSessionRefresh(seconds) {
         if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
-        sessionRefreshTimer = window.setTimeout(refreshSession, Math.max(1, seconds) * 1000);
+        const delay = Math.max(1, Number(seconds) || 1) * 1000;
+        sessionRefreshDueAt = Date.now() + delay;
+        sessionRefreshTimer = window.setTimeout(() => refreshSession().catch(() => scheduleSessionRefresh(30)), delay);
       }
 
       function reconnectAfterSessionRefresh() {
@@ -2416,23 +2425,33 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       async function performSessionRefresh() {
-        const response = await fetch("/auth/refresh", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "accept": "application/json" }
-        });
+        let response;
+        try {
+          response = await fetch("/auth/refresh", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "accept": "application/json" }
+          });
+        } catch (_) {
+          sessionRefreshRejected = false;
+          scheduleSessionRefresh(30);
+          return false;
+        }
         if (response.status === 401) {
           // The active WebSocket revalidates the session and redirects on a
           // real authentication expiry. A refresh token is optional at some
           // OIDC providers, so a failed proactive refresh must not create an
           // Authentik callback/reload loop while the session is still valid.
-          scheduleSessionRefresh(300);
-          return false;
-        }
-        if (!response.ok) {
+          sessionRefreshRejected = true;
           scheduleSessionRefresh(30);
           return false;
         }
+        if (!response.ok) {
+          sessionRefreshRejected = false;
+          scheduleSessionRefresh(30);
+          return false;
+        }
+        sessionRefreshRejected = false;
         const result = await response.json();
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
         reconnectAfterSessionRefresh();
@@ -2440,15 +2459,23 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       async function refreshSession(waitForLock = false) {
-        if (navigator.locks) {
-          const options = waitForLock ? {} : { ifAvailable: true };
-          return navigator.locks.request("sproyt-session-refresh", options, async (lock) => {
-            if (lock) return performSessionRefresh();
-            scheduleSessionRefresh(30);
-            return false;
-          });
+        if (sessionRefreshPromise) return sessionRefreshPromise;
+        sessionRefreshPromise = (async () => {
+          if (navigator.locks) {
+            const options = waitForLock ? {} : { ifAvailable: true };
+            return navigator.locks.request("sproyt-session-refresh", options, async (lock) => {
+              if (lock) return performSessionRefresh();
+              scheduleSessionRefresh(30);
+              return false;
+            });
+          }
+          return performSessionRefresh();
+        })();
+        try {
+          return await sessionRefreshPromise;
+        } finally {
+          sessionRefreshPromise = null;
         }
-        return performSessionRefresh();
       }
 
       async function scheduleInitialSessionRefresh() {
@@ -2457,6 +2484,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           headers: { "accept": "application/json" }
         });
         if (!response.ok) {
+          if (response.status === 401 && await refreshSession(true)) return;
           scheduleSessionRefresh(30);
           return;
         }
@@ -2465,6 +2493,40 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       scheduleInitialSessionRefresh().catch(() => scheduleSessionRefresh(30));
+
+      async function recoverAuthentication() {
+        if (authenticationRecoveryPromise) return authenticationRecoveryPromise;
+        authenticationRecoveryPromise = (async () => {
+          setConnectionStatus("Fornyar økta …");
+          const refreshed = await refreshSession(true);
+          if (refreshed) {
+            if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) connect(true);
+            return;
+          }
+          if (sessionRefreshRejected) {
+            setConnectionStatus("Økta må stadfestast på nytt …");
+            window.location.assign("/auth/login");
+            return;
+          }
+          scheduleReconnect(1006, "ventar på nett for å fornye økta");
+        })();
+        try {
+          return await authenticationRecoveryPromise;
+        } finally {
+          authenticationRecoveryPromise = null;
+        }
+      }
+
+      function resumeAfterBackground() {
+        if (document.visibilityState === "hidden") return;
+        const socketUnavailable = !socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING;
+        const refreshDueSoon = sessionRefreshDueAt === 0 || Date.now() >= sessionRefreshDueAt - 60_000;
+        if (socketUnavailable || refreshDueSoon) recoverAuthentication().catch(() => scheduleSessionRefresh(30));
+      }
+
+      window.addEventListener("pageshow", resumeAfterBackground);
+      window.addEventListener("focus", resumeAfterBackground);
+      window.addEventListener("online", resumeAfterBackground);
 
       function renderMediaPreviews() {
         mediaPreviews.replaceChildren(...pendingMedia.filter((media) => media.channel_id === activeChannelId).map((media) => {
@@ -2882,8 +2944,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             stableConnectionTimer = null;
           }
           if (event.code === 1008) {
-            setConnected(false, "Økta er utløpt – opnar innlogging");
-            window.location.assign("/auth/login");
+            recoverAuthentication().catch(() => scheduleReconnect(event.code, event.reason));
             return;
           }
           scheduleReconnect(event.code, event.reason);
@@ -3282,9 +3343,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           updateAgentAccessControls();
           const requested = knownChannels.find((channel) => channel.slug === requestedChannelSlug);
           const current = knownChannels.find((channel) => channel.id === activeChannelId);
+          const restored = knownChannels.find((channel) => channel.id === restoredChannelId);
           // Reconnects (including silent OIDC refresh) must keep the active
           // conversation. The requested slug is only a startup fallback.
-          const next = current || requested || knownChannels[0];
+          const next = current || restored || requested || knownChannels[0];
           if (next && next.id !== activeChannelId) selectChannel(next);
           return;
         }
@@ -3699,6 +3761,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         historyLoading = false;
         messagesEl.replaceChildren();
         activeChannelId = channel.id;
+        restoredChannelId = channel.id;
+        try { window.localStorage.setItem(activeConversationKey, channel.id); } catch (_) {}
         reconnectScrollOffset = null;
         closeMentionSuggestions();
         if (channel.circle_id) sendCommand("list_circle_users", { circle_id: channel.circle_id });
@@ -3811,7 +3875,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState !== "visible" || !activeChannelId) return;
+        if (document.visibilityState !== "visible") return;
+        resumeAfterBackground();
+        if (!activeChannelId) return;
         const visibleMessages = timeline
           .filter((item) => item.type === "message" && item.message.channel_id === activeChannelId)
           .map((item) => item.message);
@@ -5251,14 +5317,17 @@ mod protocol_capacity_tests {
         assert!(body.contains("function scheduleReconnect(closeCode"));
         assert!(body.contains("stableConnectionTimer = window.setTimeout"));
         assert!(body.contains("event.code === 1008"));
-        assert!(body.contains("scheduleSessionRefresh(300)"));
+        assert!(body.contains("recoverAuthentication().catch"));
         assert!(body.contains("fetch(\"/auth/session\""));
         assert!(body.contains("scheduleInitialSessionRefresh()"));
-        assert!(!body.contains("refreshSession().catch"));
+        assert!(body.contains("sessionRefreshDueAt = Date.now() + delay"));
+        assert!(body.contains("window.addEventListener(\"pageshow\", resumeAfterBackground)"));
+        assert!(body.contains("window.addEventListener(\"online\", resumeAfterBackground)"));
         assert!(body.contains("reconnectAfterSessionRefresh()"));
         assert!(body.contains("connect(true)"));
         assert!(body.contains("connect(true, socket)"));
-        assert!(body.contains("const next = current || requested || knownChannels[0]"));
+        assert!(body.contains("const next = current || restored || requested || knownChannels[0]"));
+        assert!(body.contains("window.localStorage.setItem(activeConversationKey, channel.id)"));
         assert!(body.contains("let reconnectScrollOffset = null"));
         assert!(body.contains("restoreConversationScrollOffset(scrollOffset)"));
         assert!(body.contains("previousSocket.close(4000, \"session refreshed\")"));
