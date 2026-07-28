@@ -67,6 +67,24 @@ spec:
                   name: {{ .Values.secret.existingSecret }}
                   key: {{ .Values.secret.sessionPreviousKeysKey }}
                   optional: true
+            - name: SPROYT_VAPID_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret }}
+                  key: {{ .Values.secret.vapidPublicKeyKey }}
+                  optional: true
+            - name: SPROYT_VAPID_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret }}
+                  key: {{ .Values.secret.vapidPrivateKeyKey }}
+                  optional: true
+            - name: SPROYT_VAPID_SUBJECT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret }}
+                  key: {{ .Values.secret.vapidSubjectKey }}
+                  optional: true
           ports:
             - name: http
               containerPort: 9010

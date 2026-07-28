@@ -247,6 +247,35 @@ Do not reuse the PostgreSQL root credential in `DATABASE_URL`. Sproyt needs only
 its dedicated `sproyt` role. Register `${PUBLIC_ORIGIN}/auth/callback` and
 `${PUBLIC_ORIGIN}/` as the callback and post-logout URLs in Authentik.
 
+### Enable push notifications
+
+Push is optional: Sprøyt starts normally when these values are absent. Generate
+one VAPID key pair for the installation and keep it across releases. The
+private key is a secret; do not commit it or paste it into logs or issues.
+
+```sh
+npx --yes web-push generate-vapid-keys --json > /tmp/sproyt-vapid.json
+VAPID_PUBLIC_KEY="$(jq -r .publicKey /tmp/sproyt-vapid.json)"
+VAPID_PRIVATE_KEY="$(jq -r .privateKey /tmp/sproyt-vapid.json)"
+VAPID_SUBJECT='mailto:<operator-email>'
+
+kubectl -n sproyt patch secret sproyt --type merge -p "$(
+  jq -n \
+    --arg public "$VAPID_PUBLIC_KEY" \
+    --arg private "$VAPID_PRIVATE_KEY" \
+    --arg subject "$VAPID_SUBJECT" \
+    '{stringData:{SPROYT_VAPID_PUBLIC_KEY:$public,SPROYT_VAPID_PRIVATE_KEY:$private,SPROYT_VAPID_SUBJECT:$subject}}'
+)"
+rm -f /tmp/sproyt-vapid.json
+unset VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY VAPID_SUBJECT
+```
+
+Change `secret.rolloutChecksum` in the GitOps values after adding or rotating
+the keys so that the Deployment receives them. Browsers ask for permission
+only after the user presses the enable button. On iPhone/iPad, Web Push is
+available for an HTTPS PWA installed on the Home Screen; an ordinary browser
+tab is not sufficient.
+
 ## Install with Helm
 
 Create a values file on the SSH host. Replace all angle-bracket placeholders.

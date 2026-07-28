@@ -4,6 +4,7 @@ mod chat;
 mod config;
 mod db;
 mod domain;
+mod notification;
 mod operations;
 mod process;
 mod protocol;
@@ -43,6 +44,7 @@ use crate::{
         ChannelId, ChannelSequence, MediaId, MediaUpload, MediaVariant, MessageBody, MessageLimit,
         UserId,
     },
+    notification::{NotificationPreferences, NotificationService, PushSubscriptionInput},
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{
         EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, HeartGateway, ProcessLinkId,
@@ -75,6 +77,7 @@ struct AppState {
     operations: OperationalState,
     processes: ProcessService,
     agents: AgentService,
+    notifications: NotificationService,
     websocket_idle_timeout: Duration,
     advanced_ui_enabled: bool,
     agent_ui_enabled: bool,
@@ -100,6 +103,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let address = config.bind_address();
     let operations = OperationalState::default();
     let repositories = db::connect_repositories(config.database()).await?;
+    let notifications = NotificationService::connect(config.database()).await?;
+    notifications.start_worker(operations.subscribe_shutdown());
     let auth = match config.auth_mode() {
         AuthMode::Development => AuthService::development(),
         AuthMode::Oidc => {
@@ -117,6 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         operations: operations.clone(),
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),
+        notifications,
         websocket_idle_timeout: config.websocket_idle_timeout(),
         advanced_ui_enabled: std::env::var("SPROYT_UI_ADVANCED_ENABLED").as_deref() == Ok("true"),
         agent_ui_enabled: std::env::var("SPROYT_UI_AGENT_ENABLED").as_deref() == Ok("true"),
@@ -158,6 +164,14 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/auth/refresh", post(auth_refresh))
         .route("/auth/logout", get(auth_logout))
         .route("/api/v1/me/export", get(export_my_data))
+        .route(
+            "/api/v1/me/notifications",
+            get(notification_settings).put(save_notification_preferences),
+        )
+        .route(
+            "/api/v1/me/push-subscriptions",
+            post(subscribe_push).delete(unsubscribe_push),
+        )
         .route("/api/v1/channels/{id}/media", post(upload_media))
         .route("/api/v1/media/{id}", get(download_media))
         .route("/api/v1/media/{id}/preview", get(download_media_preview))
@@ -628,6 +642,90 @@ async fn export_my_data(
         HeaderValue::from_static("nosniff"),
     );
     response
+}
+
+async fn notification_settings(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    match state.notifications.settings(principal.user.id).await {
+        Ok(settings) => Json(settings).into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+async fn save_notification_preferences(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(preferences): Json<NotificationPreferences>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    match state
+        .notifications
+        .save_preferences(principal.user.id, preferences)
+        .await
+    {
+        Ok(preferences) => Json(preferences).into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+async fn subscribe_push(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(subscription): Json<PushSubscriptionInput>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    let user_agent = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.chars().take(300).collect());
+    match state
+        .notifications
+        .subscribe(principal.user.id, subscription, user_agent)
+        .await
+    {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct PushUnsubscribe {
+    endpoint: String,
+}
+
+async fn unsubscribe_push(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(subscription): Json<PushUnsubscribe>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    match state
+        .notifications
+        .unsubscribe(principal.user.id, subscription.endpoint)
+        .await
+    {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => repository_response(error),
+    }
 }
 
 const MAX_MEDIA_BYTES: usize = 35 * 1024 * 1024;
@@ -1934,6 +2032,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       #status-editor label span { display: flex; gap: 6px; }
       #status-emoji { width: 3.2rem; text-align: center; }
       #status-text { min-width: 0; }
+      #notification-editor { padding: 6px 0; }
+      .notification-settings { display: grid; gap: 8px; padding-top: 6px; }
+      .notification-settings label { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .notification-settings select { min-width: 9rem; }
       .emoji-picker { position: relative; align-self: center; }
       .emoji-picker summary { cursor: pointer; font-size: 1.35rem; list-style: none; }
       .emoji-picker div { position: absolute; bottom: 2.5rem; left: 0; z-index: 5; display: grid; grid-template-columns: repeat(4, auto); gap: 4px; padding: 8px; border: 1px solid #cdd3ca; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
@@ -2335,6 +2437,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
             <div class="onboarding-actions" id="status-emoji-options" aria-label="Vel status-emoji"><button type="button" data-emoji="🙂">🙂</button><button type="button" data-emoji="💻">💻</button><button type="button" data-emoji="🏠">🏠</button><button type="button" data-emoji="🚶">🚶</button><button type="button" data-emoji="🍽️">🍽️</button><button type="button" data-emoji="🌴">🌴</button></div>
             <div class="onboarding-actions"><button id="save-status" type="button">Lagre</button><button id="clear-status" type="button">Fjern</button></div>
           </details>
+          <details id="notification-editor">
+            <summary id="notification-summary">Varsel</summary>
+            <div class="notification-settings">
+              <label>Levering<select id="notification-mode"><option value="instant">Direkte</option><option value="weekly">Vekesoppsummering (snart)</option><option value="muted">Ingen</option></select></label>
+              <label><span>Direktemeldingar</span><input id="notification-direct" type="checkbox" checked></label>
+              <label><span>@omtalar</span><input id="notification-mentions" type="checkbox" checked></label>
+              <div class="onboarding-actions"><button id="enable-notifications" type="button">Slå på på denne eininga</button><button id="save-notifications" type="button">Lagre</button></div>
+              <small id="notification-notice" aria-live="polite">Hentar varselinnstillingar …</small>
+            </div>
+          </details>
           <a href="/auth/logout">Logg ut</a>
         </div>
         <nav aria-label="Samtalar" id="mobile-navigation">
@@ -2412,9 +2524,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
 
     <script type="module" nonce="{{NONCE}}">
-      if ("serviceWorker" in navigator) {
-        window.addEventListener("load", () => navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).catch(() => {}));
-      }
+      const serviceWorkerReady = "serviceWorker" in navigator
+        ? navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(() => navigator.serviceWorker.ready)
+        : Promise.resolve(null);
       const connectForm = document.querySelector("#connect-form");
       const sendForm = document.querySelector("#send-form");
       const channelInput = document.querySelector("#channel");
@@ -2424,6 +2536,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const statusText = document.querySelector("#status-text");
       const statusEmoji = document.querySelector("#status-emoji");
       const currentStatus = document.querySelector("#current-status");
+      const notificationSummary = document.querySelector("#notification-summary");
+      const notificationMode = document.querySelector("#notification-mode");
+      const notificationDirect = document.querySelector("#notification-direct");
+      const notificationMentions = document.querySelector("#notification-mentions");
+      const notificationNotice = document.querySelector("#notification-notice");
+      const enableNotifications = document.querySelector("#enable-notifications");
       const mediaInput = document.querySelector("#media-input");
       const mediaPreviews = document.querySelector("#media-previews");
       const uploadStatus = document.querySelector("#upload-status");
@@ -2484,8 +2602,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let subscribedChannelId = null;
       let reconnectScrollOffset = null;
       const activeConversationKey = "sproyt.active-channel.v1";
-      let restoredChannelId = null;
-      try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
+      const linkedChannelId = new URL(window.location.href).searchParams.get("channel");
+      let restoredChannelId = linkedChannelId;
+      if (!restoredChannelId) try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
       let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
@@ -2914,6 +3033,75 @@ const INDEX_HTML: &str = r##"<!doctype html>
         statusEmoji.value = "";
         sendCommand("set_status", { text: "", emoji: "", expires_at: null });
       });
+
+      function vapidKeyBytes(value) {
+        const padding = "=".repeat((4 - value.length % 4) % 4);
+        const raw = atob((value + padding).replace(/-/g, "+").replace(/_/g, "/"));
+        return Uint8Array.from(raw, (character) => character.charCodeAt(0));
+      }
+
+      async function notificationRequest(path, options = {}) {
+        const participant = new URL(window.location.href).searchParams.get("participant");
+        const separator = path.includes("?") ? "&" : "?";
+        const url = participant ? `${path}${separator}participant=${encodeURIComponent(participant)}` : path;
+        let response = await fetch(url, { credentials: "same-origin", cache: "no-store", ...options });
+        if (response.status === 401 && await refreshSession(true)) {
+          response = await fetch(url, { credentials: "same-origin", cache: "no-store", ...options });
+        }
+        return response;
+      }
+
+      async function loadNotificationSettings() {
+        try {
+          const response = await notificationRequest("/api/v1/me/notifications", { headers: { accept: "application/json" } });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const settings = await response.json();
+          notificationMode.value = settings.preferences.mode;
+          notificationDirect.checked = settings.preferences.direct_messages;
+          notificationMentions.checked = settings.preferences.mentions;
+          notificationSummary.textContent = settings.preferences.mode === "muted" ? "Varsel: ingen" : settings.preferences.mode === "weekly" ? "Varsel: kvar veke" : "Varsel: direkte";
+          enableNotifications.disabled = !settings.enabled || !("PushManager" in window) || !("Notification" in window) || Notification.permission === "denied";
+          enableNotifications.dataset.publicKey = settings.public_key || "";
+          notificationNotice.textContent = !settings.enabled ? "Push er ikkje konfigurert på serveren enno." : settings.subscriptions ? `${settings.subscriptions} eining(ar) tek imot varsel.` : "Varsel er ikkje slått på på denne eininga.";
+        } catch (error) {
+          notificationNotice.textContent = `Kunne ikkje hente varselinnstillingar: ${error.message}`;
+        }
+      }
+
+      document.querySelector("#save-notifications").addEventListener("click", async () => {
+        const response = await notificationRequest("/api/v1/me/notifications", {
+          method: "PUT",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ mode: notificationMode.value, direct_messages: notificationDirect.checked, mentions: notificationMentions.checked, weekly_weekday: 1 })
+        });
+        notificationNotice.textContent = response.ok ? "Varselinnstillingane er lagra." : `Kunne ikkje lagre (HTTP ${response.status}).`;
+        if (response.ok) loadNotificationSettings();
+      });
+
+      enableNotifications.addEventListener("click", async () => {
+        try {
+          const registration = await serviceWorkerReady;
+          if (!registration) throw new Error("Service worker er ikkje tilgjengeleg");
+          const permission = await Notification.requestPermission();
+          if (permission !== "granted") throw new Error("Varsel vart ikkje tillate");
+          let subscription = await registration.pushManager.getSubscription();
+          if (!subscription) {
+            subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyBytes(enableNotifications.dataset.publicKey) });
+          }
+          const response = await notificationRequest("/api/v1/me/push-subscriptions", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(subscription.toJSON())
+          });
+          if (!response.ok) throw new Error(`serveren svarte HTTP ${response.status}`);
+          notificationNotice.textContent = "Varsel er slått på på denne eininga.";
+          loadNotificationSettings();
+        } catch (error) {
+          notificationNotice.textContent = `Kunne ikkje slå på varsel: ${error.message}`;
+        }
+      });
+
+      loadNotificationSettings();
 
       directUser.addEventListener("change", () => {
         openDirect.disabled = !directUser.value;
@@ -4614,6 +4802,7 @@ mod mcp_tests {
             operations: OperationalState::default(),
             processes: ProcessService::start(process_repository, None),
             agents: agents.clone(),
+            notifications: NotificationService::test(),
             websocket_idle_timeout: Duration::from_secs(60),
             advanced_ui_enabled: false,
             agent_ui_enabled: false,
@@ -4834,6 +5023,7 @@ mod mcp_tests {
             operations: OperationalState::default(),
             processes: ProcessService::start(repository.clone(), None),
             agents: agents.clone(),
+            notifications: NotificationService::test(),
             websocket_idle_timeout: Duration::from_secs(60),
             advanced_ui_enabled: false,
             agent_ui_enabled: false,
@@ -5057,6 +5247,7 @@ mod mcp_tests {
             operations: OperationalState::default(),
             processes: ProcessService::start(repository.clone(), None),
             agents: AgentService::new(repository),
+            notifications: NotificationService::test(),
             websocket_idle_timeout: Duration::from_secs(60),
             advanced_ui_enabled: false,
             agent_ui_enabled: false,
@@ -5257,6 +5448,7 @@ mod protocol_capacity_tests {
             operations: operations.clone(),
             processes: ProcessService::start(process_repository, None),
             agents: AgentService::new(agent_repository),
+            notifications: NotificationService::test(),
             websocket_idle_timeout,
             advanced_ui_enabled: false,
             agent_ui_enabled: false,
@@ -5285,6 +5477,7 @@ mod protocol_capacity_tests {
             operations: operations.clone(),
             processes: ProcessService::start(process_repository, None),
             agents: AgentService::new(agent_repository),
+            notifications: NotificationService::test(),
             websocket_idle_timeout,
             advanced_ui_enabled: false,
             agent_ui_enabled: false,
@@ -5313,6 +5506,7 @@ mod protocol_capacity_tests {
             operations: operations.clone(),
             processes: ProcessService::start(process_repository, Some(gateway)),
             agents: AgentService::new(agent_repository),
+            notifications: NotificationService::test(),
             websocket_idle_timeout: Duration::from_secs(60),
             advanced_ui_enabled: false,
             agent_ui_enabled: false,
