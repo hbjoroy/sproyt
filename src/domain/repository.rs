@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
@@ -9,8 +9,9 @@ use super::{
     AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary,
     ChatEvent, ChatMessage, Circle, CircleId, CircleMembership, CircleRole, CreateChannel,
     CreateCircle, CreateCircleInvitation, DeleteCircle, InboxMention, IssuedInvitation,
-    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, Membership,
-    MessageId, PortableUserExport, SendMessage, User, UserId, UserProfile, UserTask,
+    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
+    MediaVariant, Membership, MessageId, PortableUserExport, SendMessage, User, UserId,
+    UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -42,6 +43,11 @@ pub trait ChatRepository: Send + Sync + 'static {
     #[allow(dead_code)] // Kept during the profile-protocol rollout for repository compatibility.
     fn list_human_users<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<User>>;
     fn list_user_profiles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserProfile>>;
+    fn list_circle_user_profiles<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<UserProfile>>;
     fn set_user_status<'a>(
         &'a self,
         actor: UserId,
@@ -51,18 +57,19 @@ pub trait ChatRepository: Send + Sync + 'static {
     ) -> RepositoryFuture<'a, UserProfile>;
     fn store_media<'a>(
         &'a self,
-        actor: UserId,
-        channel_id: ChannelId,
-        filename: String,
-        content_type: String,
+        upload: MediaUpload,
         sha256: String,
-        content: Vec<u8>,
     ) -> RepositoryFuture<'a, MediaObject>;
     fn load_media<'a>(
         &'a self,
         actor: UserId,
         media_id: MediaId,
     ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)>;
+    fn load_media_preview<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, Option<MediaVariant>>;
     fn open_direct_channel<'a>(
         &'a self,
         actor: UserId,
@@ -110,6 +117,17 @@ pub trait ChatRepository: Send + Sync + 'static {
         request_id: String,
     ) -> RepositoryFuture<'a, ChatMessage>;
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage>;
+    fn list_channel_reactions<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<crate::domain::MessageReactionSummary>>;
+    fn toggle_message_reaction<'a>(
+        &'a self,
+        actor: UserId,
+        message_id: MessageId,
+        emoji: String,
+    ) -> RepositoryFuture<'a, crate::domain::MessageReactionChange>;
     fn latest_sequence<'a>(
         &'a self,
         channel_id: ChannelId,
@@ -148,6 +166,9 @@ pub trait ChatRepository: Send + Sync + 'static {
         Box::pin(async { Err(RepositoryError::NotFound) })
     }
     fn subscribe_messages(&self) -> Option<broadcast::Receiver<MessageId>> {
+        None
+    }
+    fn subscribe_reactions(&self) -> Option<broadcast::Receiver<ChatEvent>> {
         None
     }
     fn subscribe_presence(&self) -> Option<broadcast::Receiver<ChatEvent>> {
@@ -306,6 +327,33 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn list_circle_user_profiles<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<UserProfile>> {
+        Box::pin(async move {
+            let member_ids = {
+                let state = self.lock_state()?;
+                if !state
+                    .circle_memberships
+                    .contains_key(&(circle_id.clone(), actor.clone()))
+                {
+                    return Err(RepositoryError::PermissionDenied);
+                }
+                state
+                    .circle_memberships
+                    .keys()
+                    .filter(|(member_circle_id, _)| member_circle_id == &circle_id)
+                    .map(|(_, user_id)| user_id.clone())
+                    .collect::<std::collections::HashSet<_>>()
+            };
+            let mut profiles = self.list_user_profiles(actor).await?;
+            profiles.retain(|profile| member_ids.contains(&profile.user.id));
+            Ok(profiles)
+        })
+    }
+
     fn set_user_status<'a>(
         &'a self,
         actor: UserId,
@@ -334,38 +382,39 @@ impl ChatRepository for InMemoryChatRepository {
 
     fn store_media<'a>(
         &'a self,
-        actor: UserId,
-        channel_id: ChannelId,
-        filename: String,
-        content_type: String,
+        upload: MediaUpload,
         sha256: String,
-        content: Vec<u8>,
     ) -> RepositoryFuture<'a, MediaObject> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
             if !state
                 .memberships
-                .contains_key(&(channel_id.clone(), actor.clone()))
+                .contains_key(&(upload.channel_id.clone(), upload.actor.clone()))
             {
                 return Err(RepositoryError::PermissionDenied);
             }
             let media = MediaObject {
                 id: MediaId::generate(),
-                owner_id: actor,
-                channel_id,
-                original_filename: filename,
-                content_type,
-                size_bytes: content.len() as u64,
+                owner_id: upload.actor,
+                channel_id: upload.channel_id,
+                original_filename: upload.filename,
+                content_type: upload.content_type,
+                size_bytes: upload.content.len() as u64,
                 sha256,
-                width: None,
-                height: None,
+                width: upload.dimensions.map(|value| value.0),
+                height: upload.dimensions.map(|value| value.1),
                 duration_ms: None,
                 alt_text: String::new(),
                 analysis_status: "pending".into(),
                 analysis_metadata: serde_json::json!({}),
                 created_at: chrono::Utc::now(),
             };
-            state.media.insert(media.id, (media.clone(), content));
+            if let Some(preview) = upload.preview {
+                state.media_previews.insert(media.id, preview);
+            }
+            state
+                .media
+                .insert(media.id, (media.clone(), upload.content));
             Ok(media)
         })
     }
@@ -389,6 +438,27 @@ impl ChatRepository for InMemoryChatRepository {
                 return Err(RepositoryError::NotFound);
             }
             Ok(item)
+        })
+    }
+
+    fn load_media_preview<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, Option<MediaVariant>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let (media, _) = state
+                .media
+                .get(&media_id)
+                .ok_or(RepositoryError::NotFound)?;
+            if !state
+                .memberships
+                .contains_key(&(media.channel_id.clone(), actor))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(state.media_previews.get(&media_id).cloned())
         })
     }
 
@@ -493,6 +563,17 @@ impl ChatRepository for InMemoryChatRepository {
                             name: channel.name.clone(),
                             kind: channel.kind.clone(),
                             circle_id: channel.circle_id.clone(),
+                            direct_user_id: state.direct_conversations.iter().find_map(
+                                |((left, right), direct_channel_id)| {
+                                    (direct_channel_id == &channel.id).then(|| {
+                                        if left == &actor {
+                                            right.clone()
+                                        } else {
+                                            left.clone()
+                                        }
+                                    })
+                                },
+                            ),
                             role: membership.role.clone(),
                             last_read_sequence: membership.last_read_sequence,
                             latest_sequence: messages
@@ -888,6 +969,17 @@ impl ChatRepository for InMemoryChatRepository {
                         name: channel.name.clone(),
                         kind: channel.kind.clone(),
                         circle_id: channel.circle_id.clone(),
+                        direct_user_id: state.direct_conversations.iter().find_map(
+                            |((left, right), direct_channel_id)| {
+                                (direct_channel_id == &channel.id).then(|| {
+                                    if left == &actor {
+                                        right.clone()
+                                    } else {
+                                        left.clone()
+                                    }
+                                })
+                            },
+                        ),
                         role: membership.role.clone(),
                         last_read_sequence: membership.last_read_sequence,
                         latest_sequence: state
@@ -1042,6 +1134,106 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn list_channel_reactions<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<crate::domain::MessageReactionSummary>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            if !state
+                .memberships
+                .contains_key(&(channel_id.clone(), actor.clone()))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let message_ids = state
+                .messages
+                .get(&channel_id)
+                .into_iter()
+                .flatten()
+                .map(|message| message.id)
+                .collect::<HashSet<_>>();
+            let mut grouped = HashMap::<(MessageId, String), (u32, bool)>::new();
+            for (message_id, user_id, emoji) in &state.message_reactions {
+                if message_ids.contains(message_id) {
+                    let summary = grouped
+                        .entry((*message_id, emoji.clone()))
+                        .or_insert((0, false));
+                    summary.0 += 1;
+                    summary.1 |= user_id == &actor;
+                }
+            }
+            let mut summaries = grouped
+                .into_iter()
+                .map(|((message_id, emoji), (count, reacted_by_me))| {
+                    crate::domain::MessageReactionSummary {
+                        message_id,
+                        emoji,
+                        count,
+                        reacted_by_me,
+                    }
+                })
+                .collect::<Vec<_>>();
+            summaries.sort_by(|left, right| {
+                left.message_id
+                    .as_uuid()
+                    .cmp(right.message_id.as_uuid())
+                    .then_with(|| left.emoji.cmp(&right.emoji))
+            });
+            Ok(summaries)
+        })
+    }
+
+    fn toggle_message_reaction<'a>(
+        &'a self,
+        actor: UserId,
+        message_id: MessageId,
+        emoji: String,
+    ) -> RepositoryFuture<'a, crate::domain::MessageReactionChange> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let channel_id = state
+                .messages
+                .iter()
+                .find_map(|(channel_id, messages)| {
+                    messages
+                        .iter()
+                        .any(|message| message.id == message_id)
+                        .then(|| channel_id.clone())
+                })
+                .ok_or(RepositoryError::NotFound)?;
+            if !state
+                .memberships
+                .contains_key(&(channel_id.clone(), actor.clone()))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let key = (message_id, actor.clone(), emoji.clone());
+            let added = if state.message_reactions.remove(&key) {
+                false
+            } else {
+                state.message_reactions.insert(key);
+                true
+            };
+            let count = state
+                .message_reactions
+                .iter()
+                .filter(|(candidate_message, _, candidate_emoji)| {
+                    candidate_message == &message_id && candidate_emoji == &emoji
+                })
+                .count() as u32;
+            Ok(crate::domain::MessageReactionChange {
+                message_id,
+                channel_id,
+                user_id: actor,
+                emoji,
+                added,
+                count,
+            })
+        })
+    }
+
     fn latest_sequence<'a>(
         &'a self,
         channel_id: ChannelId,
@@ -1105,7 +1297,9 @@ struct RepositoryState {
     users: HashMap<UserId, User>,
     user_statuses: HashMap<UserId, (String, String, Option<chrono::DateTime<chrono::Utc>>)>,
     media: HashMap<MediaId, (MediaObject, Vec<u8>)>,
+    media_previews: HashMap<MediaId, MediaVariant>,
     command_receipts: HashMap<(UserId, String), MessageId>,
+    message_reactions: HashSet<(MessageId, UserId, String)>,
 }
 
 #[cfg(test)]

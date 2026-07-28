@@ -75,6 +75,8 @@ First stable command set:
 - `subscribe_channel`
 - `unsubscribe_channel`
 - `send_message`
+- `list_channel_reactions`
+- `toggle_message_reaction`
 - `mark_read`
 - `ping`
 
@@ -114,12 +116,22 @@ owner or moderator must add an existing circle member. The global `general`
 channel remains available to every authenticated user. These rules are enforced
 in the repository rather than delegated to clients.
 
+Message reactions are durable and scoped by channel membership. A user toggles
+one of the supported emoji values for a message; the unique
+`(message_id, user_id, emoji)` row prevents duplicate reactions. Initial channel
+state returns aggregated counts plus `reacted_by_me`. Changes carry the
+authoritative aggregate count and are broadcast through PostgreSQL
+`LISTEN/NOTIFY`, so clients connected to different replicas converge without
+polling.
+
 First event set:
 
 - `channel_created`
 - `participant_joined`
 - `participant_left`
 - `message_accepted`
+- `channel_reactions_listed`
+- `message_reaction_changed`
 - `read_marker_updated`
 - `subscription_started`
 - `subscription_ended`

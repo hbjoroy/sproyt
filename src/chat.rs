@@ -14,14 +14,16 @@ use crate::domain::{
     ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
     CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName,
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
-    MediaObject, Membership, MessageBody, MessageId, MessageLimit, PresenceLease, RepositoryError,
-    SendMessage, TextValidationError, User, UserId, UserProfile,
+    MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId, MessageLimit,
+    MessageReactionChange, MessageReactionSummary, PresenceLease, RepositoryError, SendMessage,
+    TextValidationError, User, UserId, UserProfile,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
 const CHANNEL_EVENT_CAPACITY: usize = 256;
 const PUBLISHED_MESSAGE_CACHE: usize = 4096;
 const PRESENCE_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(75);
+pub const REACTION_EMOJIS: &[&str] = &["😀", "😂", "❤️", "👍", "🎉", "🤔", "🙏", "🔥"];
 
 #[derive(Clone)]
 pub struct ChatEngine {
@@ -54,6 +56,28 @@ impl ChatEngine {
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             tracing::warn!(skipped, "database notification listener lagged");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
+        if let Some(mut notifications) = repository.subscribe_reactions() {
+            let notification_mailbox = mailbox.clone();
+            tokio::spawn(async move {
+                loop {
+                    match notifications.recv().await {
+                        Ok(event) => {
+                            if notification_mailbox
+                                .send(Command::ExternalReaction { event })
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(skipped, "reaction notification listener lagged");
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
                     }
@@ -125,6 +149,17 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn list_circle_users(
+        &self,
+        actor: UserId,
+        circle_id: crate::domain::CircleId,
+    ) -> Result<Vec<UserProfile>, ChatError> {
+        self.repository
+            .list_circle_user_profiles(actor, circle_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn set_status(
         &self,
         actor: UserId,
@@ -150,18 +185,11 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
-    pub async fn store_media(
-        &self,
-        actor: UserId,
-        channel_id: ChannelId,
-        filename: String,
-        content_type: String,
-        content: Vec<u8>,
-    ) -> Result<MediaObject, ChatError> {
+    pub async fn store_media(&self, upload: MediaUpload) -> Result<MediaObject, ChatError> {
         use sha2::{Digest, Sha256};
-        let sha256 = format!("{:x}", Sha256::digest(&content));
+        let sha256 = format!("{:x}", Sha256::digest(&upload.content));
         self.repository
-            .store_media(actor, channel_id, filename, content_type, sha256, content)
+            .store_media(upload, sha256)
             .await
             .map_err(ChatError::from)
     }
@@ -173,6 +201,17 @@ impl ChatEngine {
     ) -> Result<(MediaObject, Vec<u8>), ChatError> {
         self.repository
             .load_media(actor, media_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn load_media_preview(
+        &self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> Result<Option<MediaVariant>, ChatError> {
+        self.repository
+            .load_media_preview(actor, media_id)
             .await
             .map_err(ChatError::from)
     }
@@ -603,6 +642,39 @@ impl ChatEngine {
             .await
             .map_err(ChatError::from)
     }
+
+    pub async fn list_channel_reactions(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> Result<Vec<MessageReactionSummary>, ChatError> {
+        self.repository
+            .list_channel_reactions(actor, channel_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn toggle_reaction(
+        &self,
+        actor: UserId,
+        message_id: MessageId,
+        emoji: String,
+    ) -> Result<MessageReactionChange, ChatError> {
+        if !REACTION_EMOJIS.contains(&emoji.as_str()) {
+            return Err(TextValidationError::InvalidReaction.into());
+        }
+        let (reply, response) = oneshot::channel();
+        self.mailbox
+            .send(Command::ToggleReaction {
+                actor,
+                message_id,
+                emoji,
+                reply,
+            })
+            .await
+            .map_err(|_| ChatError::EngineStopped)?;
+        response.await.map_err(|_| ChatError::EngineStopped)?
+    }
 }
 
 #[derive(Debug)]
@@ -689,8 +761,17 @@ enum Command {
         request_id: Option<String>,
         reply: oneshot::Sender<Result<ChatMessage, ChatError>>,
     },
+    ToggleReaction {
+        actor: UserId,
+        message_id: MessageId,
+        emoji: String,
+        reply: oneshot::Sender<Result<MessageReactionChange, ChatError>>,
+    },
     ExternalMessage {
         message_id: MessageId,
+    },
+    ExternalReaction {
+        event: ChatEvent,
     },
     ExternalPresence {
         event: ChatEvent,
@@ -749,6 +830,26 @@ impl ChatActor {
                         .await;
                     let _ = reply.send(response);
                 }
+                Command::ToggleReaction {
+                    actor,
+                    message_id,
+                    emoji,
+                    reply,
+                } => {
+                    let response = self
+                        .repository
+                        .toggle_message_reaction(actor, message_id, emoji)
+                        .await
+                        .map_err(ChatError::from);
+                    if let Ok(change) = &response {
+                        self.channel_mut(change.channel_id.clone()).publish(
+                            ChatEvent::MessageReactionChanged {
+                                change: change.clone(),
+                            },
+                        );
+                    }
+                    let _ = reply.send(response);
+                }
                 Command::ExternalMessage { message_id } => {
                     match self.repository.load_message(message_id).await {
                         Ok(message) => self.publish_message(message),
@@ -756,6 +857,11 @@ impl ChatActor {
                             error_kind = error.kind(),
                             "failed to load notified message"
                         ),
+                    }
+                }
+                Command::ExternalReaction { event } => {
+                    if let ChatEvent::MessageReactionChanged { change } = &event {
+                        self.channel_mut(change.channel_id.clone()).publish(event);
                     }
                 }
                 Command::ExternalPresence { event } => self.publish_presence(event),
@@ -1093,6 +1199,7 @@ mod tests {
                 ChatEvent::ChannelCreated { .. }
                 | ChatEvent::ParticipantJoined { .. }
                 | ChatEvent::ParticipantLeft { .. }
+                | ChatEvent::MessageReactionChanged { .. }
                 | ChatEvent::ReadMarkerUpdated { .. } => {}
             }
         }

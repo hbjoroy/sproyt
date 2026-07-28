@@ -21,9 +21,9 @@ use crate::domain::{
     CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
     CreateCircleInvitation, DeleteCircle, DisplayName, ExportedChannel, ExportedCircle,
     InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
-    MarkRead, MediaId, MediaObject, Membership, MembershipRole, MessageBody, MessageId,
-    PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PresenceLease, RepositoryError,
-    RepositoryFuture, SendMessage, User, UserId, UserProfile, UserTask,
+    MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole,
+    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PresenceLease,
+    RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserProfile, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -40,6 +40,7 @@ pub struct PostgresChatRepository {
     pool: PgPool,
     messages: broadcast::Sender<MessageId>,
     presence: broadcast::Sender<ChatEvent>,
+    reactions: broadcast::Sender<ChatEvent>,
 }
 
 impl PostgresChatRepository {
@@ -54,10 +55,16 @@ impl PostgresChatRepository {
             .listen("sproyt_presence")
             .await
             .map_err(sql_error)?;
+        listener
+            .listen("sproyt_reactions")
+            .await
+            .map_err(sql_error)?;
         let (messages, _) = broadcast::channel(1024);
         let (presence, _) = broadcast::channel(1024);
+        let (reactions, _) = broadcast::channel(1024);
         let message_publisher = messages.clone();
         let presence_publisher = presence.clone();
+        let reaction_publisher = reactions.clone();
         let listener_url = url.to_owned();
         tokio::spawn(async move {
             loop {
@@ -85,6 +92,17 @@ impl PostgresChatRepository {
                             ),
                         }
                     }
+                    Ok(notification) if notification.channel() == "sproyt_reactions" => {
+                        match serde_json::from_str::<ChatEvent>(notification.payload()) {
+                            Ok(event @ ChatEvent::MessageReactionChanged { .. }) => {
+                                let _ = reaction_publisher.send(event);
+                            }
+                            _ => tracing::warn!(
+                                error_kind = "invalid_reaction",
+                                "ignored invalid sproyt_reactions notification"
+                            ),
+                        }
+                    }
                     Ok(_) => {}
                     Err(error) => {
                         tracing::warn!(
@@ -100,7 +118,12 @@ impl PostgresChatRepository {
                                         replacement.listen("sproyt_messages").await;
                                     let presence_ready =
                                         replacement.listen("sproyt_presence").await;
-                                    if messages_ready.is_ok() && presence_ready.is_ok() {
+                                    let reactions_ready =
+                                        replacement.listen("sproyt_reactions").await;
+                                    if messages_ready.is_ok()
+                                        && presence_ready.is_ok()
+                                        && reactions_ready.is_ok()
+                                    {
                                         listener = replacement;
                                         tracing::info!(
                                             error_kind = "database_listener_recovered",
@@ -124,6 +147,7 @@ impl PostgresChatRepository {
             pool,
             messages,
             presence,
+            reactions,
         })
     }
 
@@ -199,6 +223,29 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn list_circle_user_profiles<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<UserProfile>> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i32>(
+                "select 1 from circle_memberships where circle_id=$1 and user_id=$2",
+            )
+            .bind(*circle_id.as_uuid())
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join circle_memberships m on m.user_id=u.id where m.circle_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
+                .bind(*circle_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(user_profile_from_row).collect()
+        })
+    }
+
     fn set_user_status<'a>(
         &'a self,
         actor: UserId,
@@ -217,19 +264,15 @@ impl ChatRepository for PostgresChatRepository {
 
     fn store_media<'a>(
         &'a self,
-        actor: UserId,
-        channel_id: ChannelId,
-        filename: String,
-        content_type: String,
+        upload: MediaUpload,
         sha256: String,
-        content: Vec<u8>,
     ) -> RepositoryFuture<'a, MediaObject> {
         Box::pin(async move {
             let allowed = sqlx::query_scalar::<_, i32>(
                 "select 1 from channel_memberships where channel_id=$1 and user_id=$2",
             )
-            .bind(*channel_id.as_uuid())
-            .bind(*actor.as_uuid())
+            .bind(*upload.channel_id.as_uuid())
+            .bind(*upload.actor.as_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?;
@@ -238,14 +281,14 @@ impl ChatRepository for PostgresChatRepository {
             }
             let media = MediaObject {
                 id: MediaId::generate(),
-                owner_id: actor,
-                channel_id,
-                original_filename: filename,
-                content_type,
-                size_bytes: content.len() as u64,
+                owner_id: upload.actor,
+                channel_id: upload.channel_id,
+                original_filename: upload.filename,
+                content_type: upload.content_type,
+                size_bytes: upload.content.len() as u64,
                 sha256,
-                width: None,
-                height: None,
+                width: upload.dimensions.map(|value| value.0),
+                height: upload.dimensions.map(|value| value.1),
                 duration_ms: None,
                 alt_text: String::new(),
                 analysis_status: "pending".into(),
@@ -253,13 +296,17 @@ impl ChatRepository for PostgresChatRepository {
                 created_at: Utc::now(),
             };
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
-            sqlx::query("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,analysis_status,analysis_metadata,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)").bind(*media.id.as_uuid()).bind(*media.owner_id.as_uuid()).bind(*media.channel_id.as_uuid()).bind(format!("db:{}", media.id)).bind(&media.original_filename).bind(&media.content_type).bind(media.size_bytes as i64).bind(&media.sha256).bind(&media.analysis_status).bind(&media.analysis_metadata).bind(media.created_at).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,width,height,analysis_status,analysis_metadata,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(*media.id.as_uuid()).bind(*media.owner_id.as_uuid()).bind(*media.channel_id.as_uuid()).bind(format!("db:{}", media.id)).bind(&media.original_filename).bind(&media.content_type).bind(media.size_bytes as i64).bind(&media.sha256).bind(media.width.map(|value| value as i32)).bind(media.height.map(|value| value as i32)).bind(&media.analysis_status).bind(&media.analysis_metadata).bind(media.created_at).execute(&mut *tx).await.map_err(sql_error)?;
             sqlx::query("insert into media_blobs(media_id,content) values($1,$2)")
                 .bind(*media.id.as_uuid())
-                .bind(content)
+                .bind(upload.content)
                 .execute(&mut *tx)
                 .await
                 .map_err(sql_error)?;
+            if let Some(preview) = upload.preview {
+                sqlx::query("insert into media_variants(media_id,variant,content_type,size_bytes,width,height,content,created_at) values($1,'preview',$2,$3,$4,$5,$6,$7)")
+                    .bind(*media.id.as_uuid()).bind(preview.content_type).bind(preview.content.len() as i64).bind(preview.width as i32).bind(preview.height as i32).bind(preview.content).bind(media.created_at).execute(&mut *tx).await.map_err(sql_error)?;
+            }
             tx.commit().await.map_err(sql_error)?;
             Ok(media)
         })
@@ -273,6 +320,28 @@ impl ChatRepository for PostgresChatRepository {
         Box::pin(async move {
             let row = sqlx::query("select m.id,m.owner_id,m.channel_id,m.original_filename,m.content_type,m.size_bytes,m.sha256,m.width,m.height,m.duration_ms,m.alt_text,m.analysis_status,m.analysis_metadata,m.created_at,b.content from media_objects m join media_blobs b on b.media_id=m.id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2").bind(*actor.as_uuid()).bind(*media_id.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
             media_blob_from_postgres(row)
+        })
+    }
+
+    fn load_media_preview<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, Option<MediaVariant>> {
+        Box::pin(async move {
+            let row = sqlx::query("select v.content_type,v.width,v.height,v.content from media_variants v join media_objects m on m.id=v.media_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where v.media_id=$2 and v.variant='preview'")
+                .bind(*actor.as_uuid()).bind(*media_id.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?;
+            row.map(|row| {
+                Ok(MediaVariant {
+                    content_type: row.try_get("content_type").map_err(sql_error)?,
+                    width: u32::try_from(row.try_get::<i32, _>("width").map_err(sql_error)?)
+                        .map_err(storage)?,
+                    height: u32::try_from(row.try_get::<i32, _>("height").map_err(sql_error)?)
+                        .map_err(storage)?,
+                    content: row.try_get("content").map_err(sql_error)?,
+                })
+            })
+            .transpose()
         })
     }
 
@@ -388,7 +457,7 @@ impl ChatRepository for PostgresChatRepository {
                 .map(circle_with_role)
                 .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
                 .collect::<Result<Vec<_>, _>>()?;
-            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
             let summaries = channel_rows
                 .into_iter()
@@ -718,7 +787,7 @@ impl ChatRepository for PostgresChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id, c.slug, c.name, c.kind, c.circle_id, m.role, m.last_read_sequence, coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id = c.id where m.user_id = $1 order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
                 .await
@@ -952,6 +1021,101 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn list_channel_reactions<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<crate::domain::MessageReactionSummary>> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i32>(
+                "select 1 from channel_memberships where channel_id=$1 and user_id=$2",
+            )
+            .bind(*channel_id.as_uuid())
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select r.message_id,r.emoji,count(*) as reaction_count,bool_or(r.user_id=$1) as reacted_by_me from message_reactions r join messages m on m.id=r.message_id where m.channel_id=$2 group by r.message_id,r.emoji order by r.message_id,r.emoji")
+                .bind(*actor.as_uuid()).bind(*channel_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter()
+                .map(|row| {
+                    Ok(crate::domain::MessageReactionSummary {
+                        message_id: MessageId::from_uuid(
+                            row.try_get("message_id").map_err(storage)?,
+                        ),
+                        emoji: row.try_get("emoji").map_err(storage)?,
+                        count: u32::try_from(
+                            row.try_get::<i64, _>("reaction_count").map_err(storage)?,
+                        )
+                        .map_err(storage)?,
+                        reacted_by_me: row.try_get("reacted_by_me").map_err(storage)?,
+                    })
+                })
+                .collect()
+        })
+    }
+
+    fn toggle_message_reaction<'a>(
+        &'a self,
+        actor: UserId,
+        message_id: MessageId,
+        emoji: String,
+    ) -> RepositoryFuture<'a, crate::domain::MessageReactionChange> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let channel: Option<uuid::Uuid> = sqlx::query_scalar("select m.channel_id from messages m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2")
+                .bind(*actor.as_uuid()).bind(*message_id.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            let channel_id =
+                ChannelId::from_uuid(channel.ok_or(RepositoryError::PermissionDenied)?);
+            let inserted = sqlx::query("insert into message_reactions(message_id,user_id,emoji,created_at) values($1,$2,$3,$4) on conflict(message_id,user_id,emoji) do nothing")
+                .bind(*message_id.as_uuid()).bind(*actor.as_uuid()).bind(&emoji).bind(chrono::Utc::now()).execute(&mut *tx).await.map_err(sql_error)?.rows_affected() == 1;
+            if !inserted {
+                sqlx::query(
+                    "delete from message_reactions where message_id=$1 and user_id=$2 and emoji=$3",
+                )
+                .bind(*message_id.as_uuid())
+                .bind(*actor.as_uuid())
+                .bind(&emoji)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            }
+            let count: i64 = sqlx::query_scalar(
+                "select count(*) from message_reactions where message_id=$1 and emoji=$2",
+            )
+            .bind(*message_id.as_uuid())
+            .bind(&emoji)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let change = crate::domain::MessageReactionChange {
+                message_id,
+                channel_id,
+                user_id: actor,
+                emoji,
+                added: inserted,
+                count: u32::try_from(count).map_err(storage)?,
+            };
+            tx.commit().await.map_err(sql_error)?;
+            let event = ChatEvent::MessageReactionChanged {
+                change: change.clone(),
+            };
+            if let Ok(payload) = serde_json::to_string(&event)
+                && sqlx::query("select pg_notify('sproyt_reactions', $1)")
+                    .bind(payload)
+                    .execute(&self.pool)
+                    .await
+                    .is_err()
+            {
+                tracing::warn!(error_kind = "database_notify", message_id = %change.message_id.as_uuid(), "reaction persisted but realtime notification failed");
+            }
+            Ok(change)
+        })
+    }
+
     fn latest_sequence<'a>(
         &'a self,
         channel_id: ChannelId,
@@ -1080,6 +1244,10 @@ impl ChatRepository for PostgresChatRepository {
 
     fn subscribe_messages(&self) -> Option<broadcast::Receiver<MessageId>> {
         Some(self.messages.subscribe())
+    }
+
+    fn subscribe_reactions(&self) -> Option<broadcast::Receiver<ChatEvent>> {
+        Some(self.reactions.subscribe())
     }
 
     fn subscribe_presence(&self) -> Option<broadcast::Receiver<ChatEvent>> {
@@ -1832,6 +2000,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let kind: String = row.try_get("kind").map_err(storage)?;
     let role: String = row.try_get("role").map_err(storage)?;
     let circle_id: Option<uuid::Uuid> = row.try_get("circle_id").map_err(storage)?;
+    let direct_user_id: Option<uuid::Uuid> = row.try_get("direct_user_id").map_err(storage)?;
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
@@ -1840,6 +2009,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
         name: DisplayName::new(name).map_err(storage)?,
         kind: ChannelKind::parse(&kind).ok_or_else(|| storage("invalid channel kind"))?,
         circle_id: circle_id.map(CircleId::from_uuid),
+        direct_user_id: direct_user_id.map(UserId::from_uuid),
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,
         latest_sequence: ChannelSequence::try_from(latest_sequence).map_err(storage)?,

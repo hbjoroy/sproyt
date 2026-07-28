@@ -9,7 +9,7 @@ mod process;
 mod protocol;
 mod ws;
 
-use std::time::Duration;
+use std::{io::Cursor, time::Duration};
 
 use axum::{
     Json, Router,
@@ -36,7 +36,10 @@ use crate::{
     auth::{AuthError, AuthService},
     chat::{ChatEngine, ChatError},
     config::{AppConfig, AuthMode, LogFormat},
-    domain::{ChannelId, ChannelSequence, MediaId, MessageBody, MessageLimit, UserId},
+    domain::{
+        ChannelId, ChannelSequence, MediaId, MediaUpload, MediaVariant, MessageBody, MessageLimit,
+        UserId,
+    },
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{
         EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, HeartGateway, ProcessLinkId,
@@ -142,6 +145,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/api/v1/me/export", get(export_my_data))
         .route("/api/v1/channels/{id}/media", post(upload_media))
         .route("/api/v1/media/{id}", get(download_media))
+        .route("/api/v1/media/{id}/preview", get(download_media_preview))
         .route("/ws", get(ws_handler))
         .route("/api/v1/processes", post(start_process))
         .route("/api/v1/processes/{id}", get(get_process))
@@ -557,6 +561,7 @@ async fn export_my_data(
 }
 
 const MAX_MEDIA_BYTES: usize = 35 * 1024 * 1024;
+const MEDIA_PREVIEW_LONG_EDGE: u32 = 720;
 
 async fn upload_media(
     State(state): State<AppState>,
@@ -622,19 +627,39 @@ async fn upload_media(
                 .into_response();
         }
     };
+    let (content, dimensions, preview) = match prepare_uploaded_media(content, &content_type).await
+    {
+        Ok(value) => value,
+        Err(MediaPreparationError::InvalidImage) => {
+            return (
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                "image is incomplete or invalid",
+            )
+                .into_response();
+        }
+        Err(MediaPreparationError::Worker) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "could not prepare image",
+            )
+                .into_response();
+        }
+    };
     match state
         .chat
-        .store_media(
-            principal.user.id,
+        .store_media(MediaUpload {
+            actor: principal.user.id,
             channel_id,
-            if filename.is_empty() {
+            filename: if filename.is_empty() {
                 "upload".into()
             } else {
                 filename
             },
             content_type,
             content,
-        )
+            dimensions,
+            preview,
+        })
         .await
     {
         Ok(media) => (
@@ -643,6 +668,82 @@ async fn upload_media(
         )
             .into_response(),
         Err(error) => chat_error_response(error),
+    }
+}
+
+#[derive(Debug)]
+enum MediaPreparationError {
+    InvalidImage,
+    Worker,
+}
+
+async fn prepare_uploaded_media(
+    content: Vec<u8>,
+    content_type: &str,
+) -> Result<(Vec<u8>, Option<(u32, u32)>, Option<MediaVariant>), MediaPreparationError> {
+    if !matches!(
+        content_type,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    ) {
+        return Ok((content, None, None));
+    }
+    if !has_complete_image_container(&content, content_type) {
+        return Err(MediaPreparationError::InvalidImage);
+    }
+    tokio::task::spawn_blocking(move || {
+        use image::GenericImageView;
+
+        let image =
+            image::load_from_memory(&content).map_err(|_| MediaPreparationError::InvalidImage)?;
+        let dimensions = image.dimensions();
+        if dimensions.0 <= MEDIA_PREVIEW_LONG_EDGE && dimensions.1 <= MEDIA_PREVIEW_LONG_EDGE {
+            return Ok((content, Some(dimensions), None));
+        }
+        let preview_image = image.resize(
+            MEDIA_PREVIEW_LONG_EDGE,
+            MEDIA_PREVIEW_LONG_EDGE,
+            image::imageops::FilterType::Lanczos3,
+        );
+        let preview_dimensions = preview_image.dimensions();
+        let (preview_type, preview_content) = if preview_image.color().has_alpha() {
+            let mut output = Cursor::new(Vec::new());
+            preview_image
+                .write_to(&mut output, image::ImageFormat::Png)
+                .map_err(|_| MediaPreparationError::InvalidImage)?;
+            ("image/png", output.into_inner())
+        } else {
+            let mut output = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, 82)
+                .encode_image(&preview_image)
+                .map_err(|_| MediaPreparationError::InvalidImage)?;
+            ("image/jpeg", output)
+        };
+        Ok((
+            content,
+            Some(dimensions),
+            Some(MediaVariant {
+                content_type: preview_type.to_owned(),
+                width: preview_dimensions.0,
+                height: preview_dimensions.1,
+                content: preview_content,
+            }),
+        ))
+    })
+    .await
+    .map_err(|_| MediaPreparationError::Worker)?
+}
+
+fn has_complete_image_container(content: &[u8], content_type: &str) -> bool {
+    match content_type {
+        "image/jpeg" => content.ends_with(&[0xff, 0xd9]),
+        "image/png" => content.ends_with(b"\0\0\0\0IEND\xaeB`\x82"),
+        "image/gif" => content.last() == Some(&0x3b),
+        "image/webp" => content
+            .get(4..8)
+            .and_then(|size| size.try_into().ok())
+            .map(u32::from_le_bytes)
+            .is_some_and(|size| usize::try_from(size).ok() == content.len().checked_sub(8)),
+        _ => false,
     }
 }
 
@@ -675,6 +776,54 @@ async fn download_media(
     response.headers_mut().insert(
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=3600"),
+    );
+    response.headers_mut().insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
+async fn download_media_preview(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return auth_error_response(error),
+    };
+    let media_id = match MediaId::new(id) {
+        Ok(value) => value,
+        Err(error) => {
+            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+    };
+    match state
+        .chat
+        .load_media_preview(principal.user.id.clone(), media_id)
+        .await
+    {
+        Ok(Some(preview)) => media_content_response(preview.content_type, preview.content),
+        Ok(None) => match state.chat.load_media(principal.user.id, media_id).await {
+            Ok((media, content)) => media_content_response(media.content_type, content),
+            Err(error) => chat_error_response(error),
+        },
+        Err(error) => chat_error_response(error),
+    }
+}
+
+fn media_content_response(content_type: String, content: Vec<u8>) -> axum::response::Response {
+    let mut response = content.into_response();
+    if let Ok(value) = HeaderValue::from_str(&content_type) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, value);
+    }
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=86400, immutable"),
     );
     response.headers_mut().insert(
         "x-content-type-options",
@@ -1644,8 +1793,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         width: min(1120px, 100%);
         display: grid;
         grid-template-columns: 280px minmax(0, 1fr);
-        grid-template-rows: auto 1fr auto;
-        min-height: min(760px, calc(100vh - 48px));
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        height: min(760px, calc(100dvh - 48px));
+        min-height: 0;
         border: 1px solid #d7d8d0;
         border-radius: 8px;
         background: #ffffff;
@@ -1689,9 +1839,28 @@ const INDEX_HTML: &str = r##"<!doctype html>
       #media-previews { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
       #media-previews:empty { display: none; }
       #media-previews span { padding: 5px 8px; border-radius: 999px; background: #e7eee8; font-size: .8rem; }
+      .composer-input { position: relative; min-width: 0; }
+      .mention-suggestions { position: absolute; right: 0; bottom: calc(100% + 6px); left: 0; z-index: 10; max-height: min(42vh, 280px); overflow-y: auto; padding: 5px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 10px 28px #0003; }
+      .mention-suggestions[hidden] { display: none; }
+      .mention-suggestions button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: transparent; color: #18201d; text-align: left; }
+      .mention-suggestions button:hover, .mention-suggestions button[aria-selected="true"] { background: #dfe8e1; color: #183d2e; }
+      .mention-suggestions small { color: #647269; }
       .message-media { margin: 10px 0 0; }
       .message-media img, .message-media video { display: block; max-width: min(100%, 720px); max-height: 70vh; border-radius: 10px; background: #111; }
+      .message-media img { cursor: zoom-in; }
       .message-media figcaption { margin-top: 4px; color: #647269; font-size: .78rem; }
+      .media-lightbox { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 48px 20px 20px; border: 0; background: #090c0acc; color: white; }
+      .media-lightbox::backdrop { background: #090c0ae6; }
+      .media-lightbox img { display: block; width: auto; max-width: calc(100vw - 40px); height: auto; max-height: calc(100dvh - 100px); margin: auto; object-fit: contain; }
+      .media-lightbox p { margin: 8px auto 0; text-align: center; }
+      .media-lightbox button { position: fixed; top: 10px; right: 14px; min-width: 42px; min-height: 42px; border-color: #fff8; background: #111b; color: white; font-size: 1.5rem; }
+      .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px; }
+      .reaction-badge { min-height: 28px; padding: 3px 8px; border-radius: 999px; background: #eef2ed; color: #183d2e; font-size: .84rem; }
+      .reaction-badge[aria-pressed="true"] { border-color: #245b45; background: #d7e8dc; font-weight: 700; }
+      .reaction-picker { position: relative; }
+      .reaction-picker summary { cursor: pointer; list-style: none; padding: 3px 7px; border: 1px solid #cbd1c8; border-radius: 999px; font-size: .84rem; }
+      .reaction-picker div { position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 8; display: grid; grid-template-columns: repeat(4, auto); gap: 3px; padding: 6px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
+      .reaction-picker button { min-height: 34px; padding: 4px 7px; }
       .mobile-navigation-toggle { display: none; }
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
@@ -1704,6 +1873,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .channel-group .unread { min-width: 0; padding: 1px 6px; font-size: .7rem; }
       .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
       .conversation-header p { margin: 4px 0 0; color: #647269; }
+      .peer-status[hidden] { display: none; }
+      .profile-status { margin-left: 5px; cursor: help; }
       .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
       .empty-state h2 { margin-top: 0; }
       .onboarding { display: grid; gap: 10px; }
@@ -1838,6 +2009,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         align-content: start;
         display: grid;
         gap: 10px;
+        min-height: 0;
         overflow-y: auto;
         background: #fbfbf8;
       }
@@ -1949,7 +2121,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         main {
-          min-height: calc(100vh - 24px);
+          height: calc(100dvh - 24px);
+          min-height: 0;
           grid-template-columns: 1fr;
         }
 
@@ -1990,6 +2163,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .messages {
           background: #121814;
         }
+
+        .mention-suggestions { background: #19211c; border-color: #344038; }
+        .mention-suggestions button { color: #eef3ee; }
+        .reaction-badge { background: #26332b; color: #eef3ee; }
+        .reaction-badge[aria-pressed="true"] { background: #315d48; }
+        .reaction-picker div { background: #19211c; border-color: #344038; }
 
         label,
         .meta,
@@ -2087,7 +2266,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         </details>
       </aside>
       <header class="conversation-header">
-        <div><h2 id="conversation-title">Samtalar</h2><p class="status" id="status" role="status" aria-live="polite">Koplar til …</p></div>
+        <div><h2 id="conversation-title">Samtalar</h2><p class="peer-status" id="conversation-peer-status" hidden></p><p class="status" id="status" role="status" aria-live="polite">Koplar til …</p></div>
         <div class="view-controls" aria-label="Meldingsvising">
           <button id="view-mode" type="button" aria-pressed="true">Les</button>
           <button id="raw-mode" type="button" aria-pressed="false">Kjelde</button>
@@ -2109,22 +2288,27 @@ const INDEX_HTML: &str = r##"<!doctype html>
       <form class="send" id="send-form">
         <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
         <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews" aria-live="polite"></div>
-        <textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" disabled></textarea>
+        <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
         <button id="send" type="submit" disabled>Send</button>
       </form>
     </main>
+    <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
 
     <script type="module" nonce="{{NONCE}}">
       const connectForm = document.querySelector("#connect-form");
       const sendForm = document.querySelector("#send-form");
       const channelInput = document.querySelector("#channel");
       const bodyInput = document.querySelector("#body");
+      const mentionSuggestions = document.querySelector("#mention-suggestions");
       const sendButton = document.querySelector("#send");
       const statusText = document.querySelector("#status-text");
       const statusEmoji = document.querySelector("#status-emoji");
       const currentStatus = document.querySelector("#current-status");
       const mediaInput = document.querySelector("#media-input");
       const mediaPreviews = document.querySelector("#media-previews");
+      const mediaLightbox = document.querySelector("#media-lightbox");
+      const mediaLightboxImage = document.querySelector("#media-lightbox-image");
+      const mediaLightboxCaption = document.querySelector("#media-lightbox-caption");
       const viewModeButton = document.querySelector("#view-mode");
       const rawModeButton = document.querySelector("#raw-mode");
       const statusEl = document.querySelector("#status");
@@ -2133,6 +2317,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const directUser = document.querySelector("#direct-user");
       const openDirect = document.querySelector("#open-direct");
       const conversationTitle = document.querySelector("#conversation-title");
+      const conversationPeerStatus = document.querySelector("#conversation-peer-status");
       const circleSelect = document.querySelector("#circle-select");
       const circleName = document.querySelector("#circle-name");
       const circleSlug = document.querySelector("#circle-slug");
@@ -2170,6 +2355,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const browserSessionId = `browser-${crypto.randomUUID()}`;
       let activeChannelId = null;
       let subscribedChannelId = null;
+      let reconnectScrollOffset = null;
       let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
@@ -2184,11 +2370,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let mermaidPromise = null;
       let knownChannels = [];
       let knownUsers = [];
+      const knownCircleUsers = new Map();
       let knownMentions = [];
       let knownTasks = [];
       const knownCircles = new Map();
       let temporaryAgentId = null;
       let pendingMedia = [];
+      const messageReactions = new Map();
+      const reactionEmojis = [...document.querySelectorAll("#message-emoji-options [data-emoji]")].map((button) => button.dataset.emoji);
+      let mentionMatches = [];
+      let selectedMentionIndex = 0;
+      let activeMention = null;
 
       function scheduleSessionRefresh(seconds) {
         if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
@@ -2303,6 +2495,104 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
         if (files.length) { event.preventDefault(); uploadMediaFiles(files); }
       });
+      document.querySelector("#media-lightbox-close").addEventListener("click", () => mediaLightbox.close());
+      mediaLightbox.addEventListener("click", (event) => {
+        if (event.target === mediaLightbox) mediaLightbox.close();
+      });
+      mediaLightbox.addEventListener("close", () => {
+        mediaLightboxImage.removeAttribute("src");
+      });
+
+      function mentionHandle(user) {
+        return user.display_name.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "");
+      }
+
+      function closeMentionSuggestions() {
+        activeMention = null;
+        mentionMatches = [];
+        selectedMentionIndex = 0;
+        mentionSuggestions.hidden = true;
+        bodyInput.setAttribute("aria-expanded", "false");
+        bodyInput.removeAttribute("aria-activedescendant");
+      }
+
+      function mentionCandidates() {
+        const channel = knownChannels.find((item) => item.id === activeChannelId);
+        return channel?.circle_id ? (knownCircleUsers.get(channel.circle_id) || []) : knownUsers;
+      }
+
+      function selectMention(index) {
+        const user = mentionMatches[index];
+        if (!user || !activeMention) return;
+        const replacement = `@${mentionHandle(user)} `;
+        bodyInput.setRangeText(replacement, activeMention.start, activeMention.end, "end");
+        closeMentionSuggestions();
+        bodyInput.focus();
+      }
+
+      function renderMentionSuggestions() {
+        mentionSuggestions.replaceChildren(...mentionMatches.map((user, index) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.id = `mention-option-${user.id}`;
+          button.setAttribute("role", "option");
+          button.setAttribute("aria-selected", String(index === selectedMentionIndex));
+          const name = document.createElement("span");
+          name.textContent = user.display_name;
+          const handle = document.createElement("small");
+          handle.textContent = `@${mentionHandle(user)}`;
+          button.append(name, handle);
+          button.addEventListener("pointerdown", (event) => event.preventDefault());
+          button.addEventListener("click", () => selectMention(index));
+          return button;
+        }));
+        mentionSuggestions.hidden = mentionMatches.length === 0;
+        bodyInput.setAttribute("aria-expanded", String(mentionMatches.length > 0));
+        if (mentionMatches.length > 0) {
+          bodyInput.setAttribute("aria-activedescendant", `mention-option-${mentionMatches[selectedMentionIndex].id}`);
+        } else {
+          bodyInput.removeAttribute("aria-activedescendant");
+        }
+      }
+
+      function updateMentionSuggestions() {
+        const caret = bodyInput.selectionStart;
+        if (caret === null || bodyInput.selectionEnd !== caret) {
+          closeMentionSuggestions();
+          return;
+        }
+        const match = bodyInput.value.slice(0, caret).match(/(?:^|\s)@([\p{L}\p{N}_-]*)$/u);
+        if (!match) {
+          closeMentionSuggestions();
+          return;
+        }
+        const query = match[1].toLocaleLowerCase();
+        activeMention = { start: caret - query.length - 1, end: caret };
+        mentionMatches = mentionCandidates()
+          .filter((user) => mentionHandle(user).startsWith(query))
+          .sort((left, right) => left.display_name.localeCompare(right.display_name));
+        selectedMentionIndex = Math.min(selectedMentionIndex, Math.max(0, mentionMatches.length - 1));
+        renderMentionSuggestions();
+      }
+
+      bodyInput.addEventListener("input", updateMentionSuggestions);
+      bodyInput.addEventListener("click", updateMentionSuggestions);
+      bodyInput.addEventListener("keydown", (event) => {
+        if (mentionSuggestions.hidden || mentionMatches.length === 0) return;
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const direction = event.key === "ArrowDown" ? 1 : -1;
+          selectedMentionIndex = (selectedMentionIndex + direction + mentionMatches.length) % mentionMatches.length;
+          renderMentionSuggestions();
+        } else if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          selectMention(selectedMentionIndex);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          closeMentionSuggestions();
+        }
+      });
+      bodyInput.addEventListener("blur", () => window.setTimeout(closeMentionSuggestions, 100));
 
       connectForm.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -2495,9 +2785,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         catchUpTargets.clear();
-        requestedChannelSlug = (channelInput.value.trim() || "")
-          .toLowerCase()
-          .replace(/[^a-z0-9_-]+/g, "-");
+        if (activeChannelId && messagesEl.childElementCount > 0) {
+          reconnectScrollOffset = Math.max(0, messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight);
+        }
+        if (!activeChannelId) {
+          requestedChannelSlug = (channelInput.value.trim() || "")
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, "-");
+        }
         const protocol = window.location.protocol === "https:" ? "wss" : "ws";
         const websocketUrl = new URL(`${protocol}://${window.location.host}/ws`);
         const developmentParticipant = new URLSearchParams(window.location.search).get("participant");
@@ -2770,7 +3065,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         directUser.replaceChildren(new Option("Vel brukar", ""));
         channelMember.replaceChildren(new Option("Vel brukar", ""));
         knownUsers.filter((user) => user.id !== currentParticipantId).forEach((user) => {
-          const handle = user.display_name.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "");
+          const handle = mentionHandle(user);
           const status = [user.status_emoji, user.status_text].filter(Boolean).join(" ");
           const label = `${user.display_name} (@${handle})${status ? ` · ${status}` : ""}`;
           directUser.add(new Option(label, user.id));
@@ -2785,6 +3080,48 @@ const INDEX_HTML: &str = r##"<!doctype html>
             : "Set status";
         }
         openDirect.disabled = !directUser.value;
+      }
+
+      function activeProfile(userId) {
+        return knownUsers.find((user) => user.id === userId);
+      }
+
+      function profileStatus(profile) {
+        if (!profile || (!profile.status_emoji && !profile.status_text)) return null;
+        return {
+          symbol: profile.status_emoji || "●",
+          text: profile.status_text || "",
+          label: [profile.status_emoji, profile.status_text].filter(Boolean).join(" ")
+        };
+      }
+
+      function appendProfileStatus(target, userId) {
+        const status = profileStatus(activeProfile(userId));
+        if (!status) return;
+        const indicator = document.createElement("span");
+        indicator.className = "profile-status";
+        indicator.textContent = status.symbol;
+        indicator.title = status.label;
+        indicator.setAttribute("aria-label", `Status: ${status.label}`);
+        target.append(indicator);
+      }
+
+      function renderConversationIdentity() {
+        const channel = knownChannels.find((item) => item.id === activeChannelId);
+        conversationPeerStatus.hidden = true;
+        conversationPeerStatus.replaceChildren();
+        if (!channel) return;
+        conversationTitle.textContent = channel.name;
+        const peer = channel.direct_user_id ? activeProfile(channel.direct_user_id) : null;
+        const status = profileStatus(peer);
+        if (!peer || !status) return;
+        conversationPeerStatus.hidden = false;
+        const symbol = document.createElement("span");
+        symbol.textContent = status.symbol;
+        symbol.title = status.label;
+        symbol.setAttribute("aria-label", `Status: ${status.label}`);
+        conversationPeerStatus.append(symbol);
+        if (status.text) conversationPeerStatus.append(document.createTextNode(` ${status.text}`));
       }
 
       function renderServerEvent(event) {
@@ -2804,12 +3141,28 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "users_listed") {
           knownUsers = payload.users;
           renderKnownUsers();
+          renderConversationIdentity();
+          renderTimeline({ preserveScroll: true });
+          updateMentionSuggestions();
+          return;
+        }
+
+        if (event.type === "circle_users_listed") {
+          knownCircleUsers.set(payload.circle_id, payload.users);
+          updateMentionSuggestions();
           return;
         }
 
         if (event.type === "status_updated") {
           knownUsers = [payload.profile, ...knownUsers.filter((user) => user.id !== payload.profile.id)];
+          for (const [circleId, users] of knownCircleUsers) {
+            if (users.some((user) => user.id === payload.profile.id)) {
+              knownCircleUsers.set(circleId, [payload.profile, ...users.filter((user) => user.id !== payload.profile.id)]);
+            }
+          }
           renderKnownUsers();
+          renderConversationIdentity();
+          renderTimeline({ preserveScroll: true });
           document.querySelector("#status-editor").open = false;
           return;
         }
@@ -2900,10 +3253,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "channels_listed") {
           knownChannels = payload.channels;
           renderChannels();
+          renderConversationIdentity();
           updateAgentAccessControls();
           const requested = knownChannels.find((channel) => channel.slug === requestedChannelSlug);
           const current = knownChannels.find((channel) => channel.id === activeChannelId);
-          const next = requested || current || knownChannels[0];
+          // Reconnects (including silent OIDC refresh) must keep the active
+          // conversation. The requested slug is only a startup fallback.
+          const next = current || requested || knownChannels[0];
           if (next && next.id !== activeChannelId) selectChannel(next);
           return;
         }
@@ -2954,8 +3310,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           subscribedChannelId = payload.channel_id;
           statusEl.textContent = "Tilkopla";
-          const channel = knownChannels.find((item) => item.id === activeChannelId);
-          conversationTitle.textContent = channel?.name || "Samtale";
+          renderConversationIdentity();
           payload.history.forEach(appendTimelineMessage);
           historyHasMore = payload.history.length === historyPageSize;
           historyLoading = false;
@@ -2963,7 +3318,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           bodyInput.disabled = false;
           sendButton.disabled = false;
           renderChannels();
-          renderTimeline({ forceBottom: true });
+          const scrollOffset = reconnectScrollOffset;
+          reconnectScrollOffset = null;
+          renderTimeline({ forceBottom: scrollOffset === null || scrollOffset < 80 });
+          if (scrollOffset !== null && scrollOffset >= 80) restoreConversationScrollOffset(scrollOffset);
           updateAgentAccessControls();
           return;
         }
@@ -2972,6 +3330,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (payload.channel_id === subscribedChannelId) {
             subscribedChannelId = null;
             setConnected(socket?.readyState === WebSocket.OPEN, "Koplar til samtalen …");
+          }
+          return;
+        }
+
+        if (event.type === "channel_reactions_listed") {
+          if (payload.channel_id === activeChannelId) {
+            replaceChannelReactions(payload.reactions);
+            renderTimeline({ preserveScroll: true });
+          }
+          return;
+        }
+
+        if (event.type === "message_reaction_changed") {
+          if (payload.change.channel_id === activeChannelId) {
+            applyReactionChange(payload.change);
+            renderTimeline({ preserveScroll: true });
           }
           return;
         }
@@ -2986,6 +3360,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
               renderTimeline();
             } else {
               renderChannels();
+            }
+          } else if (chatEvent.type === "message_reaction_changed") {
+            if (chatEvent.change.channel_id === activeChannelId) {
+              applyReactionChange(chatEvent.change);
+              renderTimeline({ preserveScroll: true });
             }
           } else if (chatEvent.type === "participant_joined") {
             if (chatEvent.participant_id !== currentParticipantId) pushSystem("Ein ven kom inn i samtalen.");
@@ -3144,7 +3523,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         subscribedChannelId = null;
         activeChannelId = null;
+        reconnectScrollOffset = null;
         timeline.length = 0;
+        messageReactions.clear();
         seenMessageIds.clear();
         historyRequestIds.clear();
         historyHasMore = false;
@@ -3152,6 +3533,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bodyInput.disabled = true;
         sendButton.disabled = true;
         messagesEl.replaceChildren();
+        renderConversationIdentity();
         if (kind === "unread") {
           conversationTitle.textContent = "Uleste meldingar";
           const unread = knownChannels.filter((channel) => channel.latest_sequence > channel.last_read_sequence);
@@ -3292,9 +3674,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         historyLoading = false;
         messagesEl.replaceChildren();
         activeChannelId = channel.id;
+        reconnectScrollOffset = null;
+        closeMentionSuggestions();
+        if (channel.circle_id) sendCommand("list_circle_users", { circle_id: channel.circle_id });
+        sendCommand("list_channel_reactions", { channel_id: channel.id });
         renderMediaPreviews();
         requestedChannelSlug = channel.slug;
-        conversationTitle.textContent = channel.name;
+        renderConversationIdentity();
         renderChannels();
         updateAgentAccessControls();
         bodyInput.disabled = true;
@@ -3441,9 +3827,42 @@ const INDEX_HTML: &str = r##"<!doctype html>
         renderMermaidDiagrams();
         if (preserveScroll) {
           messagesEl.scrollTop = messagesEl.scrollHeight - previousHeight + previousTop;
-        } else if (forceBottom || wasNearBottom) {
+        } else if (forceBottom) {
+          settleConversationAtBottom();
+        } else if (wasNearBottom) {
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
+      }
+
+      function settleConversationAtBottom() {
+        const scroll = () => { messagesEl.scrollTop = messagesEl.scrollHeight; };
+        scroll();
+        requestAnimationFrame(() => {
+          scroll();
+          sendForm.scrollIntoView({ block: "nearest" });
+          requestAnimationFrame(scroll);
+        });
+        window.setTimeout(scroll, 150);
+        messagesEl.querySelectorAll("img").forEach((image) => {
+          if (!image.complete) image.addEventListener("load", scroll, { once: true });
+        });
+        messagesEl.querySelectorAll("video").forEach((video) => {
+          if (video.readyState < 1) video.addEventListener("loadedmetadata", scroll, { once: true });
+        });
+      }
+
+      function restoreConversationScrollOffset(offset) {
+        const restore = () => {
+          messagesEl.scrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight - offset);
+        };
+        restore();
+        requestAnimationFrame(restore);
+        messagesEl.querySelectorAll("img").forEach((image) => {
+          if (!image.complete) image.addEventListener("load", restore, { once: true });
+        });
+        messagesEl.querySelectorAll("video").forEach((video) => {
+          if (video.readyState < 1) video.addEventListener("loadedmetadata", restore, { once: true });
+        });
       }
 
       function renderMessage(message) {
@@ -3467,6 +3886,71 @@ const INDEX_HTML: &str = r##"<!doctype html>
         timeline.unshift(...older);
       }
 
+      function replaceChannelReactions(reactions) {
+        messageReactions.clear();
+        for (const reaction of reactions) {
+          if (!messageReactions.has(reaction.message_id)) messageReactions.set(reaction.message_id, new Map());
+          messageReactions.get(reaction.message_id).set(reaction.emoji, {
+            count: reaction.count,
+            reactedByMe: reaction.reacted_by_me
+          });
+        }
+      }
+
+      function applyReactionChange(change) {
+        if (!messageReactions.has(change.message_id)) messageReactions.set(change.message_id, new Map());
+        const reactions = messageReactions.get(change.message_id);
+        const current = reactions.get(change.emoji) || { count: 0, reactedByMe: false };
+        current.count = change.count;
+        if (change.user_id === currentParticipantId) current.reactedByMe = change.added;
+        if (current.count === 0) reactions.delete(change.emoji);
+        else reactions.set(change.emoji, current);
+        if (reactions.size === 0) messageReactions.delete(change.message_id);
+      }
+
+      function reactionButton(messageId, emoji, reaction) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "reaction-badge";
+        button.setAttribute("aria-pressed", String(reaction.reactedByMe));
+        button.setAttribute("aria-label", `${emoji}: ${reaction.count} reaksjonar`);
+        button.textContent = `${emoji} ${reaction.count}`;
+        button.addEventListener("click", () => sendCommand("toggle_message_reaction", {
+          message_id: messageId, emoji
+        }));
+        return button;
+      }
+
+      function renderMessageReactions(message) {
+        const bar = document.createElement("div");
+        bar.className = "message-reactions";
+        const reactions = messageReactions.get(message.id) || new Map();
+        for (const emoji of reactionEmojis) {
+          const reaction = reactions.get(emoji);
+          if (reaction?.count > 0) bar.append(reactionButton(message.id, emoji, reaction));
+        }
+        const picker = document.createElement("details");
+        picker.className = "reaction-picker";
+        const summary = document.createElement("summary");
+        summary.setAttribute("aria-label", "Legg til reaksjon");
+        summary.textContent = "😊 +";
+        const choices = document.createElement("div");
+        for (const emoji of reactionEmojis) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = emoji;
+          button.setAttribute("aria-label", `Reager med ${emoji}`);
+          button.addEventListener("click", () => {
+            sendCommand("toggle_message_reaction", { message_id: message.id, emoji });
+            picker.open = false;
+          });
+          choices.append(button);
+        }
+        picker.append(summary, choices);
+        bar.append(picker);
+        return bar;
+      }
+
       function appendMessage(message) {
         const wrapper = document.createElement("article");
         wrapper.className = "message";
@@ -3476,9 +3960,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const sender = message.sender_id === currentParticipantId
           ? "Du"
           : (message.sender_display_name || "Ein ven");
+        const senderLabel = document.createElement("span");
+        senderLabel.textContent = sender;
+        appendProfileStatus(senderLabel, message.sender_id);
+        meta.append(senderLabel);
         const sentAt = new Date(message.sent_at);
-        const time = Number.isNaN(sentAt.valueOf()) ? "" : ` · ${sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-        meta.textContent = `${sender}${time}`;
+        if (!Number.isNaN(sentAt.valueOf())) {
+          const timestamp = document.createElement("time");
+          timestamp.dateTime = sentAt.toISOString();
+          timestamp.title = sentAt.toLocaleString([], { dateStyle: "full", timeStyle: "short" });
+          timestamp.textContent = ` · ${formatMessageTimestamp(sentAt)}`;
+          meta.append(timestamp);
+        }
 
         const body = document.createElement("div");
         if (renderMode === "raw") {
@@ -3491,8 +3984,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
           renderMessageBody(message.body, body);
         }
 
-        wrapper.append(meta, body);
+        wrapper.append(meta, body, renderMessageReactions(message));
         messagesEl.append(wrapper);
+      }
+
+      function formatMessageTimestamp(sentAt, now = new Date()) {
+        const sameDay = sentAt.getFullYear() === now.getFullYear()
+          && sentAt.getMonth() === now.getMonth()
+          && sentAt.getDate() === now.getDate();
+        if (sameDay) return sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const options = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+        if (sentAt.getFullYear() !== now.getFullYear()) options.year = "numeric";
+        return sentAt.toLocaleString([], options);
       }
 
       function renderSystem(text) {
@@ -3529,14 +4032,36 @@ const INDEX_HTML: &str = r##"<!doctype html>
           figure.className = "message-media";
           const element = media.contentType.startsWith("video/") ? document.createElement("video") : document.createElement("img");
           const participant = new URL(window.location.href).searchParams.get("participant");
-          element.src = `/api/v1/media/${media.id}${participant ? `?participant=${encodeURIComponent(participant)}` : ""}`;
+          const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
+          const originalUrl = `/api/v1/media/${media.id}${authQuery}`;
+          element.src = media.contentType.startsWith("image/")
+            ? `/api/v1/media/${media.id}/preview${authQuery}`
+            : originalUrl;
           if (element instanceof HTMLVideoElement) { element.controls = true; element.preload = "metadata"; }
-          else { element.alt = media.name; element.loading = "lazy"; }
+          else {
+            element.alt = media.name;
+            element.loading = "lazy";
+            element.tabIndex = 0;
+            element.setAttribute("role", "button");
+            element.setAttribute("aria-label", `Vis ${media.name} i full storleik`);
+            const open = () => openMediaLightbox(originalUrl, media.name);
+            element.addEventListener("click", open);
+            element.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+            });
+          }
           const caption = document.createElement("figcaption");
           caption.textContent = media.name;
           figure.append(element, caption);
           target.append(figure);
         });
+      }
+
+      function openMediaLightbox(url, name) {
+        mediaLightboxImage.src = url;
+        mediaLightboxImage.alt = name;
+        mediaLightboxCaption.textContent = name;
+        mediaLightbox.showModal();
       }
 
       function renderMarkdown(source, target) {
@@ -4330,6 +4855,55 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("response.status === 401 && await refreshSession(true)"));
         assert!(INDEX_HTML.contains("element.loading = \"lazy\""));
         assert!(INDEX_HTML.contains("element.controls = true"));
+        assert!(INDEX_HTML.contains("/api/v1/media/${media.id}/preview"));
+        assert!(INDEX_HTML.contains("function openMediaLightbox(url, name)"));
+        assert!(INDEX_HTML.contains("mediaLightbox.showModal()"));
+    }
+
+    #[tokio::test]
+    async fn image_upload_creates_a_bounded_preview_and_rejects_truncation() {
+        use image::GenericImageView;
+
+        let source = image::DynamicImage::new_rgb8(1_440, 900);
+        let mut encoded = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 90)
+            .encode_image(&source)
+            .unwrap();
+        let (_, dimensions, preview) = prepare_uploaded_media(encoded, "image/jpeg").await.unwrap();
+        assert_eq!(dimensions, Some((1_440, 900)));
+        let preview = preview.unwrap();
+        assert_eq!(preview.content_type, "image/jpeg");
+        let decoded = image::load_from_memory(&preview.content).unwrap();
+        assert_eq!(decoded.dimensions(), (720, 450));
+
+        let truncated = prepare_uploaded_media(vec![0xff, 0xd8, 0xff], "image/jpeg").await;
+        assert!(matches!(
+            truncated,
+            Err(MediaPreparationError::InvalidImage)
+        ));
+    }
+
+    #[test]
+    fn browser_exposes_circle_scoped_mention_autocomplete() {
+        assert!(INDEX_HTML.contains("id=\"mention-suggestions\""));
+        assert!(INDEX_HTML.contains("aria-autocomplete=\"list\""));
+        assert!(INDEX_HTML.contains("sendCommand(\"list_circle_users\""));
+        assert!(INDEX_HTML.contains("knownCircleUsers.get(channel.circle_id)"));
+        assert!(INDEX_HTML.contains("mentionHandle(user).startsWith(query)"));
+        assert!(INDEX_HTML.contains("event.key === \"ArrowDown\""));
+        assert!(INDEX_HTML.contains("event.key === \"Enter\""));
+        assert!(INDEX_HTML.contains("selectMention(selectedMentionIndex)"));
+    }
+
+    #[test]
+    fn browser_exposes_durable_reaction_badges() {
+        assert!(INDEX_HTML.contains("className = \"reaction-badge\""));
+        assert!(INDEX_HTML.contains("`${emoji} ${reaction.count}`"));
+        assert!(INDEX_HTML.contains("aria-pressed"));
+        assert!(INDEX_HTML.contains("sendCommand(\"toggle_message_reaction\""));
+        assert!(INDEX_HTML.contains("sendCommand(\"list_channel_reactions\""));
+        assert!(INDEX_HTML.contains("event.type === \"message_reaction_changed\""));
+        assert!(INDEX_HTML.contains("chatEvent.type === \"message_reaction_changed\""));
     }
 
     async fn start_test_server(
@@ -4647,6 +5221,9 @@ mod protocol_capacity_tests {
         assert!(body.contains("reconnectAfterSessionRefresh()"));
         assert!(body.contains("connect(true)"));
         assert!(body.contains("connect(true, socket)"));
+        assert!(body.contains("const next = current || requested || knownChannels[0]"));
+        assert!(body.contains("let reconnectScrollOffset = null"));
+        assert!(body.contains("restoreConversationScrollOffset(scrollOffset)"));
         assert!(body.contains("previousSocket.close(4000, \"session refreshed\")"));
         assert!(!body.contains("sessionRefreshReconnect"));
         assert!(!body.contains("if (response.status === 401) {\n          window.location.assign"));
@@ -4655,7 +5232,15 @@ mod protocol_capacity_tests {
         assert!(body.contains("function loadOlderHistory()"));
         assert!(body.contains("before: oldest.sequence"));
         assert!(body.contains("renderTimeline({ preserveScroll: true })"));
-        assert!(body.contains("renderTimeline({ forceBottom: true })"));
+        assert!(body.contains(
+            "renderTimeline({ forceBottom: scrollOffset === null || scrollOffset < 80 })"
+        ));
+        assert!(body.contains("function settleConversationAtBottom()"));
+        assert!(body.contains("sendForm.scrollIntoView({ block: \"nearest\" })"));
+        assert!(body.contains("function formatMessageTimestamp(sentAt, now = new Date())"));
+        assert!(body.contains("dateStyle: \"full\", timeStyle: \"short\""));
+        assert!(body.contains("appendProfileStatus(senderLabel, message.sender_id)"));
+        assert!(body.contains("channel.direct_user_id"));
         assert!(body.contains("function approximateUnreadCount(count)"));
         assert!(body.contains("if (count < 50) return \"25+\""));
         assert!(body.contains("if (count < 100) return \"50+\""));
