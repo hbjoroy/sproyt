@@ -2374,6 +2374,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let sessionRefreshPromise = null;
       let sessionRefreshRejected = false;
       let authenticationRecoveryPromise = null;
+      let connectionRecoveryPromise = null;
+      let lastBackgroundRecoveryAt = 0;
       let renderMode = "view";
       let requestNumber = 0;
       const browserSessionId = `browser-${crypto.randomUUID()}`;
@@ -2517,11 +2519,48 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
 
+      async function recoverConnection(replaceOpenSocket = false) {
+        if (connectionRecoveryPromise) return connectionRecoveryPromise;
+        connectionRecoveryPromise = (async () => {
+          let response;
+          try {
+            response = await fetch("/auth/session", {
+              credentials: "same-origin",
+              headers: { "accept": "application/json" }
+            });
+          } catch (_) {
+            scheduleReconnect(1006, "ventar på nett");
+            return;
+          }
+          if (response.status === 401) {
+            await recoverAuthentication();
+            return;
+          }
+          if (!response.ok) {
+            scheduleReconnect(response.status, "kunne ikkje kontrollere økta");
+            return;
+          }
+          const result = await response.json();
+          scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
+          if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+            connect(true);
+          } else if (replaceOpenSocket && socket.readyState === WebSocket.OPEN) {
+            connect(true, socket);
+          }
+        })();
+        try {
+          return await connectionRecoveryPromise;
+        } finally {
+          connectionRecoveryPromise = null;
+        }
+      }
+
       function resumeAfterBackground() {
         if (document.visibilityState === "hidden") return;
-        const socketUnavailable = !socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING;
-        const refreshDueSoon = sessionRefreshDueAt === 0 || Date.now() >= sessionRefreshDueAt - 60_000;
-        if (socketUnavailable || refreshDueSoon) recoverAuthentication().catch(() => scheduleSessionRefresh(30));
+        const now = Date.now();
+        if (now - lastBackgroundRecoveryAt < 5_000) return;
+        lastBackgroundRecoveryAt = now;
+        recoverConnection(true).catch(() => scheduleReconnect(1006, "kunne ikkje gjenopprette sambandet"));
       }
 
       window.addEventListener("pageshow", resumeAfterBackground);
@@ -2961,7 +3000,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const delay = Math.min(15_000, 500 * (2 ** Math.min(reconnectAttempt - 1, 5)));
         const detail = closeReason ? `kode ${closeCode}: ${closeReason}` : `kode ${closeCode}`;
         setConnected(false, `Fråkopla (${detail}) – prøver igjen om ${Math.ceil(delay / 1000)} sekund`);
-        reconnectTimer = window.setTimeout(connect, delay);
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          recoverConnection().catch(() => scheduleReconnect(closeCode, closeReason));
+        }, delay);
       }
 
       function sendCommand(type, payload) {
@@ -5318,6 +5360,10 @@ mod protocol_capacity_tests {
         assert!(body.contains("stableConnectionTimer = window.setTimeout"));
         assert!(body.contains("event.code === 1008"));
         assert!(body.contains("recoverAuthentication().catch"));
+        assert!(body.contains("async function recoverConnection(replaceOpenSocket = false)"));
+        assert!(body.contains("response.status === 401"));
+        assert!(body.contains("connect(true, socket)"));
+        assert!(body.contains("recoverConnection().catch(() => scheduleReconnect"));
         assert!(body.contains("fetch(\"/auth/session\""));
         assert!(body.contains("scheduleInitialSessionRefresh()"));
         assert!(body.contains("sessionRefreshDueAt = Date.now() + delay"));
