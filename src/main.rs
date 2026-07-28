@@ -2114,6 +2114,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         gap: 12px;
         border-top: 1px solid #e4e5de;
       }
+      form.send textarea { min-height: 52px; max-height: 160px; }
 
       @media (max-width: 640px) {
         body {
@@ -2126,16 +2127,27 @@ const INDEX_HTML: &str = r##"<!doctype html>
           grid-template-columns: 1fr;
         }
 
-        .sidebar { grid-row: auto; grid-template-columns: 1fr auto; grid-template-rows: auto auto; border-right: 0; border-bottom: 1px solid #e4e5de; }
-        .identity { grid-column: 1 / -1; }
+        .sidebar { grid-row: auto; grid-template-columns: 1fr auto; grid-template-rows: auto; gap: 8px; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .sidebar .identity { display: none; grid-column: 1 / -1; }
+        .sidebar.mobile-open .identity { display: grid; }
         .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; }
         .sidebar nav, .sidebar .onboarding, .sidebar .agent-access { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding, .sidebar.mobile-open .agent-access { display: grid; }
 
+        .conversation-header { min-height: 48px; padding: 8px 10px; }
+        .conversation-header h2 { margin: 0; font-size: 1.15rem; }
+        .conversation-header p { font-size: .78rem; }
+        .conversation-header .view-controls { display: none; }
+        .conversation-header .status[data-routine="true"] { display: none; }
+
+        form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 8px; align-items: end; }
+        form.send textarea { min-height: 40px; max-height: 112px; padding: 7px 9px; resize: none; }
+        form.send button { min-height: 40px; padding: 7px 10px; }
+        form.send .emoji-picker summary { display: grid; place-items: center; min-width: 38px; min-height: 40px; }
+
         .connect,
         .circle-tools,
-        .process-tools,
-        form.send {
+        .process-tools {
           grid-template-columns: 1fr;
         }
       }
@@ -2932,7 +2944,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function setConnected(connected, status) {
-        statusEl.textContent = status;
+        setConnectionStatus(status);
         const writableChannel = connected
           && activeChannelId !== null
           && subscribedChannelId === activeChannelId;
@@ -2942,6 +2954,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         exportButton.disabled = !connected;
         processButtons.forEach((button) => { button.disabled = !connected; });
         updateOnboardingButtons();
+      }
+
+      function setConnectionStatus(status) {
+        statusEl.textContent = status;
+        statusEl.dataset.routine = String(status === "Tilkopla");
       }
 
       function updateOnboardingButtons() {
@@ -3309,7 +3326,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             return;
           }
           subscribedChannelId = payload.channel_id;
-          statusEl.textContent = "Tilkopla";
+          setConnectionStatus("Tilkopla");
           renderConversationIdentity();
           payload.history.forEach(appendTimelineMessage);
           historyHasMore = payload.history.length === historyPageSize;
@@ -3685,9 +3702,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         updateAgentAccessControls();
         bodyInput.disabled = true;
         sendButton.disabled = true;
-        statusEl.textContent = "Koplar til samtalen …";
+        setConnectionStatus("Koplar til samtalen …");
         if (!sendCommand("subscribe_channel", { channel_id: channel.id })) {
-          statusEl.textContent = "Vent på samband – trykk på samtalen for å prøve igjen";
+          setConnectionStatus("Vent på samband – trykk på samtalen for å prøve igjen");
         }
       }
 
@@ -5252,6 +5269,10 @@ mod protocol_capacity_tests {
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
         assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
         assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
+        assert!(body.contains(".sidebar.mobile-open .identity { display: grid; }"));
+        assert!(body.contains("form.send { grid-template-columns: auto auto minmax(0, 1fr) auto"));
+        assert!(body.contains(".conversation-header .status[data-routine=\"true\"]"));
+        assert!(body.contains("setConnectionStatus(\"Tilkopla\")"));
         assert!(
             body.contains("mobileNavigationToggle.setAttribute(\"aria-expanded\", String(open))")
         );
