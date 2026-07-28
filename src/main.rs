@@ -3008,6 +3008,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const requestId = sendCommand("send_message", { channel_id: activeChannelId, body });
         if (!requestId) return;
         pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });
+        bodyInput.value = "";
+        closeMentionSuggestions();
         bodyInput.readOnly = true;
         setConnected(true, "Sender meldinga …");
       });
@@ -3381,7 +3383,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         pendingMessages.delete(requestId);
         bodyInput.readOnly = false;
-        if (bodyInput.value.trim() === pending.draft) bodyInput.value = "";
         pendingMedia = pendingMedia.filter((media) => !pending.mediaIds.includes(media.id));
         renderMediaPreviews();
         if (message?.channel_id === activeChannelId) bodyInput.focus();
@@ -3393,7 +3394,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (!pending) return;
         pendingMessages.delete(requestId);
         bodyInput.readOnly = false;
-        if (bodyInput.value.trim().length === 0) bodyInput.value = pending.body;
+        if (bodyInput.value.trim().length === 0) bodyInput.value = pending.draft;
         setConnected(socket?.readyState === WebSocket.OPEN, `Meldinga vart ikkje sendt: ${message}`);
         bodyInput.focus();
       }
@@ -5712,9 +5713,10 @@ mod protocol_capacity_tests {
         assert!(body.contains("message?.channel_id !== pending.channelId"));
         assert!(body.contains("message?.body !== pending.body"));
         assert!(body.contains("failPendingMessage(event.request_id"));
-        assert!(!body.contains(
-            "sendCommand(\"send_message\", { channel_id: activeChannelId, body });\n        bodyInput.value = \"\";"
+        assert!(body.contains(
+            "pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });\n        bodyInput.value = \"\";"
         ));
+        assert!(body.contains("bodyInput.value = pending.draft"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
         assert!(body.contains("<details class=\"agent-access\" hidden>"));
         assert!(body.contains("<summary>Agenttilgang</summary>"));
