@@ -173,6 +173,8 @@ pub struct ChannelSummary {
     pub name: DisplayName,
     pub kind: ChannelKind,
     pub circle_id: Option<CircleId>,
+    #[serde(default)]
+    pub direct_user_id: Option<UserId>,
     pub role: MembershipRole,
     #[serde(default)]
     pub last_read_sequence: ChannelSequence,
@@ -200,6 +202,24 @@ pub struct ChatMessage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MessageReactionSummary {
+    pub message_id: MessageId,
+    pub emoji: String,
+    pub count: u32,
+    pub reacted_by_me: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MessageReactionChange {
+    pub message_id: MessageId,
+    pub channel_id: ChannelId,
+    pub user_id: UserId,
+    pub emoji: String,
+    pub added: bool,
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MediaObject {
     pub id: crate::domain::MediaId,
     pub owner_id: UserId,
@@ -215,6 +235,25 @@ pub struct MediaObject {
     pub analysis_status: String,
     pub analysis_metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaVariant {
+    pub content_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub content: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaUpload {
+    pub actor: UserId,
+    pub channel_id: ChannelId,
+    pub filename: String,
+    pub content_type: String,
+    pub content: Vec<u8>,
+    pub dimensions: Option<(u32, u32)>,
+    pub preview: Option<MediaVariant>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

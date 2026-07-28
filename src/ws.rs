@@ -200,6 +200,10 @@ async fn execute_command(
             .list_users(participant_id.clone())
             .await
             .map(|users| ServerEvent::UsersListed { users }),
+        ClientCommand::ListCircleUsers { circle_id } => chat
+            .list_circle_users(participant_id.clone(), circle_id.clone())
+            .await
+            .map(|users| ServerEvent::CircleUsersListed { circle_id, users }),
         ClientCommand::SetStatus {
             text,
             emoji,
@@ -330,6 +334,17 @@ async fn execute_command(
             }
             .await
         }
+        ClientCommand::ListChannelReactions { channel_id } => chat
+            .list_channel_reactions(participant_id.clone(), channel_id.clone())
+            .await
+            .map(|reactions| ServerEvent::ChannelReactionsListed {
+                channel_id,
+                reactions,
+            }),
+        ClientCommand::ToggleMessageReaction { message_id, emoji } => chat
+            .toggle_reaction(participant_id.clone(), message_id, emoji)
+            .await
+            .map(|change| ServerEvent::MessageReactionChanged { change }),
         ClientCommand::MarkRead {
             channel_id,
             sequence,

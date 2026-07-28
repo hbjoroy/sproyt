@@ -189,6 +189,37 @@ where
         .await
         .unwrap();
     assert_eq!(first.sender_display_name.as_str(), "Chat contract actor");
+    let added_reaction = repository
+        .toggle_message_reaction(actor.clone(), first.id, "👍".to_owned())
+        .await
+        .unwrap();
+    assert!(added_reaction.added);
+    assert_eq!(added_reaction.count, 1);
+    assert_eq!(
+        repository
+            .list_channel_reactions(actor.clone(), channel.id.clone())
+            .await
+            .unwrap(),
+        vec![crate::domain::MessageReactionSummary {
+            message_id: first.id,
+            emoji: "👍".to_owned(),
+            count: 1,
+            reacted_by_me: true,
+        }]
+    );
+    let removed_reaction = repository
+        .toggle_message_reaction(actor.clone(), first.id, "👍".to_owned())
+        .await
+        .unwrap();
+    assert!(!removed_reaction.added);
+    assert_eq!(removed_reaction.count, 0);
+    assert!(
+        repository
+            .list_channel_reactions(actor.clone(), channel.id.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
     repository
         .upsert_user(User {
             id: actor.clone(),
@@ -388,6 +419,38 @@ where
         })
         .await
         .unwrap();
+    let circle_profiles = repository
+        .list_circle_user_profiles(actor.clone(), circle.id.clone())
+        .await
+        .unwrap();
+    assert!(
+        circle_profiles
+            .iter()
+            .any(|profile| profile.user.id == actor)
+    );
+    assert!(
+        circle_profiles
+            .iter()
+            .any(|profile| profile.user.id == member)
+    );
+    let outsider = UserId::named(format!("chat-contract-outsider-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: outsider.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Chat contract outsider").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .list_circle_user_profiles(outsider, circle.id.clone())
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
     assert!(
         !repository
             .list_channels_for_user(member.clone())

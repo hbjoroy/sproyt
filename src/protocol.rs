@@ -20,6 +20,9 @@ pub struct ClientEnvelope {
 pub enum ClientCommand {
     Hello,
     ListUsers,
+    ListCircleUsers {
+        circle_id: crate::domain::CircleId,
+    },
     SetStatus {
         text: String,
         emoji: String,
@@ -63,6 +66,13 @@ pub enum ClientCommand {
     SendMessage {
         channel_id: ChannelId,
         body: String,
+    },
+    ListChannelReactions {
+        channel_id: ChannelId,
+    },
+    ToggleMessageReaction {
+        message_id: crate::domain::MessageId,
+        emoji: String,
     },
     MarkRead {
         channel_id: ChannelId,
@@ -136,6 +146,10 @@ pub enum ServerEvent {
     UsersListed {
         users: Vec<crate::domain::UserProfile>,
     },
+    CircleUsersListed {
+        circle_id: crate::domain::CircleId,
+        users: Vec<crate::domain::UserProfile>,
+    },
     StatusUpdated {
         profile: crate::domain::UserProfile,
     },
@@ -173,6 +187,13 @@ pub enum ServerEvent {
     },
     MessageAccepted {
         message: ChatMessage,
+    },
+    ChannelReactionsListed {
+        channel_id: ChannelId,
+        reactions: Vec<crate::domain::MessageReactionSummary>,
+    },
+    MessageReactionChanged {
+        change: crate::domain::MessageReactionChange,
     },
     ReadMarkerUpdated {
         membership: Membership,
