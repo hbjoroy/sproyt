@@ -735,7 +735,14 @@ async fn prepare_uploaded_media(
 
 fn has_complete_image_container(content: &[u8], content_type: &str) -> bool {
     match content_type {
-        "image/jpeg" => content.ends_with(&[0xff, 0xd9]),
+        // Android camera apps commonly create motion photos by appending video or
+        // metadata after the complete JPEG stream. The EOI marker still proves
+        // that the image stream is complete; requiring it to be the final two
+        // bytes rejects those otherwise valid uploads.
+        "image/jpeg" => {
+            content.starts_with(&[0xff, 0xd8])
+                && content.windows(2).any(|window| window == [0xff, 0xd9])
+        }
         "image/png" => content.ends_with(b"\0\0\0\0IEND\xaeB`\x82"),
         "image/gif" => content.last() == Some(&0x3b),
         "image/webp" => content
@@ -4893,6 +4900,18 @@ mod protocol_capacity_tests {
         assert_eq!(preview.content_type, "image/jpeg");
         let decoded = image::load_from_memory(&preview.content).unwrap();
         assert_eq!(decoded.dimensions(), (720, 450));
+
+        let source = image::DynamicImage::new_rgb8(32, 24);
+        let mut motion_photo = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut motion_photo, 90)
+            .encode_image(&source)
+            .unwrap();
+        motion_photo.extend_from_slice(b"appended Android motion-photo payload");
+        let (_, dimensions, preview) = prepare_uploaded_media(motion_photo, "image/jpeg")
+            .await
+            .unwrap();
+        assert_eq!(dimensions, Some((32, 24)));
+        assert!(preview.is_none());
 
         let truncated = prepare_uploaded_media(vec![0xff, 0xd8, 0xff], "image/jpeg").await;
         assert!(matches!(
