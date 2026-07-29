@@ -1974,6 +1974,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: #f7f7f4;
         color: #18201d;
+        overflow-x: clip;
       }
 
       * {
@@ -1982,14 +1983,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       body {
         margin: 0;
+        width: 100%;
+        max-width: 100%;
         min-height: 100vh;
         display: grid;
         place-items: center;
         padding: 24px;
+        overflow-x: clip;
       }
 
       main {
         width: min(1120px, 100%);
+        max-width: 100%;
+        min-width: 0;
         display: grid;
         grid-template-columns: 280px minmax(0, 1fr);
         grid-template-rows: auto minmax(0, 1fr) auto;
@@ -2000,6 +2006,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
         background: #ffffff;
         box-shadow: 0 18px 50px rgb(24 32 29 / 12%);
         overflow: hidden;
+      }
+
+      main > *,
+      .sidebar > *,
+      .conversation-header > *,
+      .messages,
+      .message,
+      .message > *,
+      form.send > * {
+        min-width: 0;
+        max-width: 100%;
       }
 
       header,
@@ -2025,6 +2042,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       .brand { display: flex; align-items: center; gap: 10px; }
+      .brand h1 { min-width: 0; overflow-wrap: anywhere; }
       .brand-mark { display: block; width: 42px; height: 42px; border-radius: 12px; }
       .identity { display: grid; gap: 4px; font-size: .9rem; }
       .identity a { color: #245b45; }
@@ -2223,6 +2241,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         gap: 10px;
         min-height: 0;
         overflow-y: auto;
+        overflow-x: hidden;
         background: #fbfbf8;
       }
 
@@ -2233,6 +2252,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         border: 1px solid #dfe3dc;
         border-radius: 8px;
         background: #ffffff;
+        overflow-wrap: anywhere;
       }
 
       .meta {
@@ -2340,10 +2360,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
           grid-template-rows: auto auto minmax(0, 1fr) auto;
         }
 
-        .sidebar { grid-row: auto; grid-template-columns: 1fr auto; grid-template-rows: auto; gap: 8px; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .sidebar { grid-row: auto; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; gap: 8px; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .brand h1 { margin: 0; font-size: clamp(1.35rem, 8vw, 2rem); }
+        .brand-mark { width: 38px; height: 38px; }
         .sidebar .identity { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open .identity { display: grid; }
-        .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; }
+        .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; white-space: nowrap; }
         .sidebar nav, .sidebar .onboarding, .sidebar .agent-access { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding, .sidebar.mobile-open .agent-access { display: grid; }
 
@@ -2354,13 +2376,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .conversation-header .status[data-routine="true"] { display: none; }
 
         form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 8px; align-items: end; }
+        form.send .composer-input, form.send textarea { min-width: 0; width: 100%; }
         form.send textarea { min-height: 40px; max-height: 112px; padding: 7px 9px; resize: none; }
         form.send button { min-height: 40px; padding: 7px 10px; }
         form.send .emoji-picker summary { display: grid; place-items: center; min-width: 38px; min-height: 40px; }
-        .message-media { max-width: 100%; overflow: hidden; }
+        .message-media { width: 100%; max-width: 100%; overflow: hidden; }
         .message-media img, .message-media video { width: auto; max-width: 100%; max-height: min(48dvh, 420px); object-fit: contain; }
         .media-lightbox { padding: 42px 12px 12px; }
         .media-lightbox img { max-width: calc(100vw - 24px); max-height: calc(100dvh - 82px); }
+        .reaction-picker > div { width: min(310px, calc(100vw - 40px)); }
+        .reaction-viewers ul { max-width: calc(100vw - 40px); }
 
         .connect,
         .circle-tools,
@@ -2439,7 +2464,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <main>
       <aside class="sidebar" id="sidebar-panel">
         <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave.svg" alt=""><h1>Sprøyt</h1></div>
-        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Samtalar og vennekretsar</button>
+        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-label="Samtalar og vennekretsar" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Meny</button>
         <div class="identity">
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
           <details id="status-editor">
