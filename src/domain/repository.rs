@@ -1154,24 +1154,25 @@ impl ChatRepository for InMemoryChatRepository {
                 .flatten()
                 .map(|message| message.id)
                 .collect::<HashSet<_>>();
-            let mut grouped = HashMap::<(MessageId, String), (u32, bool)>::new();
+            let mut grouped = HashMap::<(MessageId, String), Vec<UserId>>::new();
             for (message_id, user_id, emoji) in &state.message_reactions {
                 if message_ids.contains(message_id) {
-                    let summary = grouped
+                    grouped
                         .entry((*message_id, emoji.clone()))
-                        .or_insert((0, false));
-                    summary.0 += 1;
-                    summary.1 |= user_id == &actor;
+                        .or_default()
+                        .push(user_id.clone());
                 }
             }
             let mut summaries = grouped
                 .into_iter()
-                .map(|((message_id, emoji), (count, reacted_by_me))| {
+                .map(|((message_id, emoji), mut user_ids)| {
+                    user_ids.sort();
                     crate::domain::MessageReactionSummary {
                         message_id,
                         emoji,
-                        count,
-                        reacted_by_me,
+                        count: user_ids.len() as u32,
+                        reacted_by_me: user_ids.contains(&actor),
+                        user_ids,
                     }
                 })
                 .collect::<Vec<_>>();

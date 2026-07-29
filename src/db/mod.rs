@@ -205,6 +205,7 @@ where
             emoji: "👍".to_owned(),
             count: 1,
             reacted_by_me: true,
+            user_ids: vec![actor.clone()],
         }]
     );
     let removed_reaction = repository

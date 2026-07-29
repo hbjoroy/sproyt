@@ -2067,6 +2067,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .reaction-picker summary { cursor: pointer; list-style: none; padding: 3px 7px; border: 1px solid #cbd1c8; border-radius: 999px; font-size: .84rem; }
       .reaction-picker div { position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 8; display: grid; grid-template-columns: repeat(4, auto); gap: 3px; padding: 6px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
       .reaction-picker button { min-height: 34px; padding: 4px 7px; }
+      .reaction-viewers { position: relative; margin-left: auto; }
+      .reaction-viewers summary { cursor: pointer; list-style: none; padding: 3px 10px; border: 1px solid #cbd1c8; border-radius: 999px; color: #506057; font-size: .84rem; font-weight: 700; letter-spacing: .08em; }
+      .reaction-viewers ul { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 9; width: max-content; max-width: min(78vw, 340px); margin: 0; padding: 8px 12px; border: 1px solid #cbd1c8; border-radius: 9px; background: #fff; box-shadow: 0 8px 24px #0002; list-style: none; }
+      .reaction-viewers li { padding: 3px 0; color: #27342e; font-size: .86rem; overflow-wrap: anywhere; }
       .mobile-navigation-toggle { display: none; }
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
@@ -4370,7 +4374,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (!messageReactions.has(reaction.message_id)) messageReactions.set(reaction.message_id, new Map());
           messageReactions.get(reaction.message_id).set(reaction.emoji, {
             count: reaction.count,
-            reactedByMe: reaction.reacted_by_me
+            reactedByMe: reaction.reacted_by_me,
+            userIds: reaction.user_ids || []
           });
         }
       }
@@ -4378,8 +4383,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function applyReactionChange(change) {
         if (!messageReactions.has(change.message_id)) messageReactions.set(change.message_id, new Map());
         const reactions = messageReactions.get(change.message_id);
-        const current = reactions.get(change.emoji) || { count: 0, reactedByMe: false };
+        const current = reactions.get(change.emoji) || { count: 0, reactedByMe: false, userIds: [] };
         current.count = change.count;
+        current.userIds = current.userIds.filter((userId) => userId !== change.user_id);
+        if (change.added) current.userIds.push(change.user_id);
         if (change.user_id === currentParticipantId) current.reactedByMe = change.added;
         if (current.count === 0) reactions.delete(change.emoji);
         else reactions.set(change.emoji, current);
@@ -4426,6 +4433,26 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         picker.append(summary, choices);
         bar.append(picker);
+        if ([...reactions.values()].some((reaction) => reaction.count > 0)) {
+          const viewers = document.createElement("details");
+          viewers.className = "reaction-viewers";
+          const viewersSummary = document.createElement("summary");
+          viewersSummary.textContent = "…";
+          viewersSummary.setAttribute("aria-label", "Sjå kven som har reagert");
+          const list = document.createElement("ul");
+          for (const [emoji, reaction] of reactions) {
+            if (reaction.count === 0) continue;
+            const names = reaction.userIds.map((userId) => {
+              if (userId === currentParticipantId) return "Du";
+              return activeProfile(userId)?.display_name || "Ein ven";
+            });
+            const item = document.createElement("li");
+            item.textContent = `${emoji} ${names.join(", ")}`;
+            list.append(item);
+          }
+          viewers.append(viewersSummary, list);
+          bar.append(viewers);
+        }
         return bar;
       }
 
@@ -5421,6 +5448,10 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("sendCommand(\"list_channel_reactions\""));
         assert!(INDEX_HTML.contains("event.type === \"message_reaction_changed\""));
         assert!(INDEX_HTML.contains("chatEvent.type === \"message_reaction_changed\""));
+        assert!(INDEX_HTML.contains("className = \"reaction-viewers\""));
+        assert!(INDEX_HTML.contains("Sjå kven som har reagert"));
+        assert!(INDEX_HTML.contains("reaction.user_ids || []"));
+        assert!(INDEX_HTML.contains("activeProfile(userId)?.display_name"));
     }
 
     async fn start_test_server(
