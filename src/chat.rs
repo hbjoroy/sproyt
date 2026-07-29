@@ -5,6 +5,7 @@ use std::{
 };
 
 use tokio::sync::{broadcast, mpsc, oneshot};
+use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -23,7 +24,33 @@ const MAILBOX_CAPACITY: usize = 1024;
 const CHANNEL_EVENT_CAPACITY: usize = 256;
 const PUBLISHED_MESSAGE_CACHE: usize = 4096;
 const PRESENCE_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(75);
-pub const REACTION_EMOJIS: &[&str] = &["😀", "😂", "❤️", "👍", "🎉", "🤔", "🙏", "🔥"];
+fn is_reaction_emoji(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 32 || value.graphemes(true).count() != 1 {
+        return false;
+    }
+    value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{00a9}'
+                | '\u{00ae}'
+                | '\u{203c}'
+                | '\u{2049}'
+                | '\u{2122}'
+                | '\u{2139}'
+                | '\u{3030}'
+                | '\u{303d}'
+                | '\u{3297}'
+                | '\u{3299}'
+        ) || ('\u{2190}'..='\u{21ff}').contains(&character)
+            || ('\u{2300}'..='\u{23ff}').contains(&character)
+            || ('\u{2460}'..='\u{24ff}').contains(&character)
+            || ('\u{25a0}'..='\u{27bf}').contains(&character)
+            || ('\u{1f000}'..='\u{1faff}').contains(&character)
+            || ('\u{1fc00}'..='\u{1ffff}').contains(&character)
+            || character == '\u{20e3}'
+    })
+}
 
 #[derive(Clone)]
 pub struct ChatEngine {
@@ -660,7 +687,8 @@ impl ChatEngine {
         message_id: MessageId,
         emoji: String,
     ) -> Result<MessageReactionChange, ChatError> {
-        if !REACTION_EMOJIS.contains(&emoji.as_str()) {
+        let emoji = emoji.trim().to_owned();
+        if !is_reaction_emoji(&emoji) {
             return Err(TextValidationError::InvalidReaction.into());
         }
         let (reply, response) = oneshot::channel();
@@ -1053,6 +1081,16 @@ impl ChannelState {
 mod tests {
     use super::*;
     use crate::domain::InMemoryChatRepository;
+
+    #[test]
+    fn reaction_validation_accepts_one_unicode_emoji_grapheme() {
+        for emoji in ["❤️", "👍🏽", "👨‍👩‍👧‍👦", "🇳🇴", "🌊"] {
+            assert!(is_reaction_emoji(emoji), "rejected {emoji}");
+        }
+        for invalid in ["", "ja", "👍👍", "<script>", "a"] {
+            assert!(!is_reaction_emoji(invalid), "accepted {invalid}");
+        }
+    }
 
     async fn chat_fixture() -> (ChatEngine, ChannelId, UserId, UserId) {
         let chat = ChatEngine::start(Arc::new(InMemoryChatRepository::default()));

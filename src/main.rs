@@ -2065,8 +2065,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .reaction-badge[aria-pressed="true"] { border-color: #245b45; background: #d7e8dc; font-weight: 700; }
       .reaction-picker { position: relative; }
       .reaction-picker summary { cursor: pointer; list-style: none; padding: 3px 7px; border: 1px solid #cbd1c8; border-radius: 999px; font-size: .84rem; }
-      .reaction-picker div { position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 8; display: grid; grid-template-columns: repeat(4, auto); gap: 3px; padding: 6px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
+      .reaction-picker > div { position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 8; display: grid; grid-template-columns: repeat(4, auto); gap: 3px; width: min(310px, 82vw); padding: 6px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
       .reaction-picker button { min-height: 34px; padding: 4px 7px; }
+      .reaction-custom { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; margin-top: 3px; }
+      .reaction-custom input { min-height: 36px; padding: 5px 8px; }
       .reaction-viewers { position: relative; margin-left: auto; }
       .reaction-viewers summary { cursor: pointer; list-style: none; padding: 3px 10px; border: 1px solid #cbd1c8; border-radius: 999px; color: #506057; font-size: .84rem; font-weight: 700; letter-spacing: .08em; }
       .reaction-viewers ul { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 9; width: max-content; max-width: min(78vw, 340px); margin: 0; padding: 8px 12px; border: 1px solid #cbd1c8; border-radius: 9px; background: #fff; box-shadow: 0 8px 24px #0002; list-style: none; }
@@ -2355,6 +2357,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         form.send textarea { min-height: 40px; max-height: 112px; padding: 7px 9px; resize: none; }
         form.send button { min-height: 40px; padding: 7px 10px; }
         form.send .emoji-picker summary { display: grid; place-items: center; min-width: 38px; min-height: 40px; }
+        .message-media { max-width: 100%; overflow: hidden; }
+        .message-media img, .message-media video { width: auto; max-width: 100%; max-height: min(48dvh, 420px); object-fit: contain; }
+        .media-lightbox { padding: 42px 12px 12px; }
+        .media-lightbox img { max-width: calc(100vw - 24px); max-height: calc(100dvh - 82px); }
 
         .connect,
         .circle-tools,
@@ -2391,7 +2397,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .mention-suggestions button { color: #eef3ee; }
         .reaction-badge { background: #26332b; color: #eef3ee; }
         .reaction-badge[aria-pressed="true"] { background: #315d48; }
-        .reaction-picker div { background: #19211c; border-color: #344038; }
+        .reaction-picker > div, .reaction-viewers ul { background: #19211c; border-color: #344038; }
+        .reaction-viewers li { color: #eef3ee; }
 
         label,
         .meta,
@@ -2526,6 +2533,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       </form>
     </main>
     <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
+    <datalist id="reaction-emoji-catalog"><option value="😍">forelska hjarteauge</option><option value="🥰">glad kjærleik</option><option value="😊">smil glad</option><option value="🤣">ler latter</option><option value="😢">trist gråt</option><option value="😭">gråt</option><option value="😮">overraska</option><option value="😡">sint</option><option value="👏">applaus bra</option><option value="🙌">hurra</option><option value="💪">sterk</option><option value="🤝">avtale</option><option value="👀">ser</option><option value="💯">hundre perfekt</option><option value="✅">ferdig ja</option><option value="❌">nei feil</option><option value="⭐">stjerne</option><option value="💡">idé</option><option value="🚀">rakett</option><option value="🥳">fest</option><option value="🍻">skål</option><option value="🌊">bølgje sjøsprøyt</option></datalist>
 
     <script type="module" nonce="{{NONCE}}">
       const serviceWorkerReady = "serviceWorker" in navigator
@@ -4410,7 +4418,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const bar = document.createElement("div");
         bar.className = "message-reactions";
         const reactions = messageReactions.get(message.id) || new Map();
-        for (const emoji of reactionEmojis) {
+        const displayedEmojis = [...reactions.keys()].sort((left, right) => {
+          const leftIndex = reactionEmojis.indexOf(left);
+          const rightIndex = reactionEmojis.indexOf(right);
+          return (leftIndex < 0 ? 999 : leftIndex) - (rightIndex < 0 ? 999 : rightIndex) || left.localeCompare(right);
+        });
+        for (const emoji of displayedEmojis) {
           const reaction = reactions.get(emoji);
           if (reaction?.count > 0) bar.append(reactionButton(message.id, emoji, reaction));
         }
@@ -4431,6 +4444,29 @@ const INDEX_HTML: &str = r##"<!doctype html>
           });
           choices.append(button);
         }
+        const custom = document.createElement("div");
+        custom.className = "reaction-custom";
+        const customInput = document.createElement("input");
+        customInput.type = "search";
+        customInput.maxLength = 32;
+        customInput.setAttribute("list", "reaction-emoji-catalog");
+        customInput.setAttribute("aria-label", "Søk eller lim inn Unicode-emoji");
+        customInput.placeholder = "Søk eller lim inn emoji";
+        const customButton = document.createElement("button");
+        customButton.type = "button";
+        customButton.textContent = "Bruk";
+        const submitCustomReaction = () => {
+          const emoji = customInput.value.trim();
+          if (!emoji) return;
+          sendCommand("toggle_message_reaction", { message_id: message.id, emoji });
+          picker.open = false;
+        };
+        customButton.addEventListener("click", submitCustomReaction);
+        customInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") { event.preventDefault(); submitCustomReaction(); }
+        });
+        custom.append(customInput, customButton);
+        choices.append(custom);
         picker.append(summary, choices);
         bar.append(picker);
         if ([...reactions.values()].some((reaction) => reaction.count > 0)) {
@@ -5366,6 +5402,8 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("/api/v1/media/${media.id}/preview"));
         assert!(INDEX_HTML.contains("function openMediaLightbox(url, name)"));
         assert!(INDEX_HTML.contains("mediaLightbox.showModal()"));
+        assert!(INDEX_HTML.contains("max-height: min(48dvh, 420px)"));
+        assert!(INDEX_HTML.contains("max-width: calc(100vw - 24px)"));
         assert!(INDEX_HTML.contains("id=\"upload-status\""));
         assert!(INDEX_HTML.contains("request.upload.addEventListener(\"progress\""));
         assert!(INDEX_HTML.contains("Behandlar fila"));
@@ -5452,6 +5490,9 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("Sjå kven som har reagert"));
         assert!(INDEX_HTML.contains("reaction.user_ids || []"));
         assert!(INDEX_HTML.contains("activeProfile(userId)?.display_name"));
+        assert!(INDEX_HTML.contains("id=\"reaction-emoji-catalog\""));
+        assert!(INDEX_HTML.contains("Søk eller lim inn Unicode-emoji"));
+        assert!(INDEX_HTML.contains("submitCustomReaction"));
     }
 
     async fn start_test_server(
