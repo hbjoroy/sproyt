@@ -858,11 +858,13 @@ async fn prepare_uploaded_media(
     if !has_complete_image_container(&content, content_type) {
         return Err(MediaPreparationError::InvalidImage);
     }
+    let is_jpeg = content_type == "image/jpeg";
     tokio::task::spawn_blocking(move || {
         use image::GenericImageView;
 
         let image =
             image::load_from_memory(&content).map_err(|_| MediaPreparationError::InvalidImage)?;
+        let image = apply_exif_orientation(image, &content, is_jpeg);
         let dimensions = image.dimensions();
         if dimensions.0 <= MEDIA_PREVIEW_LONG_EDGE && dimensions.1 <= MEDIA_PREVIEW_LONG_EDGE {
             return Ok((content, Some(dimensions), None));
@@ -899,6 +901,36 @@ async fn prepare_uploaded_media(
     })
     .await
     .map_err(|_| MediaPreparationError::Worker)?
+}
+
+fn apply_exif_orientation(
+    image: image::DynamicImage,
+    content: &[u8],
+    is_jpeg: bool,
+) -> image::DynamicImage {
+    if !is_jpeg {
+        return image;
+    }
+    let mut cursor = Cursor::new(content);
+    let orientation = exif::Reader::new()
+        .read_from_container(&mut cursor)
+        .ok()
+        .and_then(|metadata| {
+            metadata
+                .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+                .and_then(|field| field.value.get_uint(0))
+        })
+        .unwrap_or(1);
+    match orientation {
+        2 => image.fliph(),
+        3 => image.rotate180(),
+        4 => image.flipv(),
+        5 => image.rotate90().fliph(),
+        6 => image.rotate90(),
+        7 => image.rotate270().fliph(),
+        8 => image.rotate270(),
+        _ => image,
+    }
 }
 
 fn has_complete_image_container(content: &[u8], content_type: &str) -> bool {
@@ -5470,6 +5502,23 @@ mod protocol_capacity_tests {
         assert_eq!(preview.content_type, "image/jpeg");
         let decoded = image::load_from_memory(&preview.content).unwrap();
         assert_eq!(decoded.dimensions(), (720, 450));
+
+        let portrait_pixels = image::DynamicImage::new_rgb8(1_440, 900);
+        let mut iphone_jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut iphone_jpeg, 90)
+            .encode_image(&portrait_pixels)
+            .unwrap();
+        let exif_orientation_6 = [
+            0xff, 0xe1, 0x00, 0x22, b'E', b'x', b'i', b'f', 0, 0, b'I', b'I', 0x2a, 0, 8, 0, 0, 0,
+            1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        iphone_jpeg.splice(2..2, exif_orientation_6);
+        let (_, dimensions, preview) = prepare_uploaded_media(iphone_jpeg, "image/jpeg")
+            .await
+            .unwrap();
+        assert_eq!(dimensions, Some((900, 1_440)));
+        let decoded = image::load_from_memory(&preview.unwrap().content).unwrap();
+        assert_eq!(decoded.dimensions(), (450, 720));
 
         let source = image::DynamicImage::new_rgb8(32, 24);
         let mut motion_photo = Vec::new();
