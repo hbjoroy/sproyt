@@ -12,6 +12,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 getrandom = "0.3"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+http = "1"
 openidconnect = "4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -24,6 +25,7 @@ tower-http = { version = "0.6", features = ["request-id", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["serde", "v5", "v7"] }
+web-push-native = "0.4"
 
 [dev-dependencies]
 futures-util = "0.3"

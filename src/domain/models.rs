@@ -207,6 +207,7 @@ pub struct MessageReactionSummary {
     pub emoji: String,
     pub count: u32,
     pub reacted_by_me: bool,
+    pub user_ids: Vec<UserId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

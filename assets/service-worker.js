@@ -35,3 +35,33 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(caches.match(request).then((cached) => cached || fetch(request)));
   }
 });
+
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+  event.waitUntil((async () => {
+    const payload = event.data.json();
+    const notification = payload.notification || payload.web_push?.notification;
+    if (!notification?.title) return;
+    await self.registration.showNotification(notification.title, {
+      body: notification.body,
+      icon: "/assets/sproyt-wave-192.png",
+      badge: "/assets/sproyt-wave-192.png",
+      tag: notification.tag,
+      data: { navigate: notification.navigate || "/" }
+    });
+  })());
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const destination = new URL(event.notification.data?.navigate || "/", self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    const existing = windows.find((client) => client.url.startsWith(self.location.origin));
+    if (existing) {
+      await existing.navigate(destination);
+      return existing.focus();
+    }
+    return clients.openWindow(destination);
+  })());
+});

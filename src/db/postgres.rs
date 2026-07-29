@@ -1038,23 +1038,30 @@ impl ChatRepository for PostgresChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select r.message_id,r.emoji,count(*) as reaction_count,bool_or(r.user_id=$1) as reacted_by_me from message_reactions r join messages m on m.id=r.message_id where m.channel_id=$2 group by r.message_id,r.emoji order by r.message_id,r.emoji")
-                .bind(*actor.as_uuid()).bind(*channel_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
-            rows.into_iter()
-                .map(|row| {
-                    Ok(crate::domain::MessageReactionSummary {
-                        message_id: MessageId::from_uuid(
-                            row.try_get("message_id").map_err(storage)?,
-                        ),
-                        emoji: row.try_get("emoji").map_err(storage)?,
-                        count: u32::try_from(
-                            row.try_get::<i64, _>("reaction_count").map_err(storage)?,
-                        )
-                        .map_err(storage)?,
-                        reacted_by_me: row.try_get("reacted_by_me").map_err(storage)?,
-                    })
-                })
-                .collect()
+            let rows = sqlx::query("select r.message_id,r.emoji,r.user_id from message_reactions r join messages m on m.id=r.message_id where m.channel_id=$1 order by r.message_id,r.emoji,r.created_at,r.user_id")
+                .bind(*channel_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            let mut grouped = std::collections::BTreeMap::<(MessageId, String), Vec<UserId>>::new();
+            for row in rows {
+                let message_id = MessageId::from_uuid(row.try_get("message_id").map_err(storage)?);
+                let emoji = row.try_get::<String, _>("emoji").map_err(storage)?;
+                let user_id = UserId::from_uuid(row.try_get("user_id").map_err(storage)?);
+                grouped
+                    .entry((message_id, emoji))
+                    .or_default()
+                    .push(user_id);
+            }
+            Ok(grouped
+                .into_iter()
+                .map(
+                    |((message_id, emoji), user_ids)| crate::domain::MessageReactionSummary {
+                        message_id,
+                        emoji,
+                        count: user_ids.len() as u32,
+                        reacted_by_me: user_ids.contains(&actor),
+                        user_ids,
+                    },
+                )
+                .collect())
         })
     }
 

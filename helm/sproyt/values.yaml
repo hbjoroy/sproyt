@@ -76,6 +76,9 @@ secret:
   oidcClientSecretKey: SPROYT_OIDC_CLIENT_SECRET
   sessionKeyKey: SPROYT_SESSION_KEY
   sessionPreviousKeysKey: SPROYT_SESSION_PREVIOUS_KEYS
+  vapidPublicKeyKey: SPROYT_VAPID_PUBLIC_KEY
+  vapidPrivateKeyKey: SPROYT_VAPID_PRIVATE_KEY
+  vapidSubjectKey: SPROYT_VAPID_SUBJECT
   # Change this opaque value when externally managed secret contents change.
   rolloutChecksum: ""
 
