@@ -8,10 +8,10 @@ use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
 use super::{
     AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary,
     ChatEvent, ChatMessage, Circle, CircleId, CircleMembership, CircleRole, CreateChannel,
-    CreateCircle, CreateCircleInvitation, DeleteCircle, InboxMention, IssuedInvitation,
-    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
-    MediaVariant, Membership, MessageId, PortableUserExport, SendMessage, User, UserId,
-    UserProfile, UserTask,
+    CreateCircle, CreateCircleInvitation, DeleteCircle, EditMessage, InboxMention,
+    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
+    MediaObject, MediaUpload, MediaVariant, Membership, MessageId, PortableUserExport, SendMessage,
+    User, UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -111,6 +111,7 @@ pub trait ChatRepository: Send + Sync + 'static {
         query: LoadRecentMessages,
     ) -> RepositoryFuture<'a, Vec<ChatMessage>>;
     fn append_message<'a>(&'a self, command: SendMessage) -> RepositoryFuture<'a, ChatMessage>;
+    fn edit_message<'a>(&'a self, command: EditMessage) -> RepositoryFuture<'a, ChatMessage>;
     fn append_message_idempotent<'a>(
         &'a self,
         command: SendMessage,
@@ -169,6 +170,9 @@ pub trait ChatRepository: Send + Sync + 'static {
         None
     }
     fn subscribe_reactions(&self) -> Option<broadcast::Receiver<ChatEvent>> {
+        None
+    }
+    fn subscribe_message_updates(&self) -> Option<broadcast::Receiver<ChatEvent>> {
         None
     }
     fn subscribe_presence(&self) -> Option<broadcast::Receiver<ChatEvent>> {
@@ -1057,6 +1061,7 @@ impl ChatRepository for InMemoryChatRepository {
                 body: command.body,
                 sequence: next_sequence,
                 sent_at: persisted_now(),
+                edited_at: None,
             };
 
             state
@@ -1065,6 +1070,24 @@ impl ChatRepository for InMemoryChatRepository {
                 .or_default()
                 .push(message.clone());
             Ok(message)
+        })
+    }
+
+    fn edit_message<'a>(&'a self, command: EditMessage) -> RepositoryFuture<'a, ChatMessage> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let message = state
+                .messages
+                .values_mut()
+                .flatten()
+                .find(|message| message.id == command.message_id)
+                .ok_or(RepositoryError::NotFound)?;
+            if message.sender_id != command.actor {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            message.body = command.body;
+            message.edited_at = Some(persisted_now());
+            Ok(message.clone())
         })
     }
 
@@ -1110,6 +1133,7 @@ impl ChatRepository for InMemoryChatRepository {
                 body: command.body,
                 sequence: next_sequence,
                 sent_at: persisted_now(),
+                edited_at: None,
             };
             state.command_receipts.insert(key, message.id);
             state

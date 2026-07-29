@@ -20,6 +20,9 @@ pub enum ChatEvent {
     MessageAccepted {
         message: ChatMessage,
     },
+    MessageEdited {
+        message: ChatMessage,
+    },
     MessageReactionChanged {
         change: MessageReactionChange,
     },

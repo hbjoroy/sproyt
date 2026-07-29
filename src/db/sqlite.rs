@@ -14,11 +14,12 @@ use crate::domain::{
     AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelKind, ChannelRef,
     ChannelSequence, ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId,
     CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, DisplayName, ExportedChannel, ExportedCircle,
-    InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
-    MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole,
-    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport,
-    RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserProfile, UserTask,
+    CreateCircleInvitation, DeleteCircle, DisplayName, EditMessage, ExportedChannel,
+    ExportedCircle, InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel,
+    LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership,
+    MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
+    PortableUserExport, RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserProfile,
+    UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -370,7 +371,7 @@ impl ChatRepository for SqliteChatRepository {
                 .collect::<Result<Vec<_>, _>>()?;
             let mut channels = Vec::with_capacity(summaries.len());
             for channel in summaries {
-                let rows = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? order by sequence")
+                let rows = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = ? order by sequence")
                     .bind(channel.id.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
                 channels.push(ExportedChannel {
                     channel,
@@ -727,16 +728,16 @@ impl ChatRepository for SqliteChatRepository {
             let limit = i64::try_from(usize::from(query.limit)).map_err(storage)?;
             let (rows, reverse) = if let Some(after) = query.after {
                 let after = i64::try_from(u64::from(after)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? and sequence > ? order by sequence asc limit ?")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = ? and sequence > ? order by sequence asc limit ?")
                     .bind(query.channel_id.to_string()).bind(after).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, false)
             } else if let Some(before) = query.before {
                 let before = i64::try_from(u64::from(before)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? and sequence < ? order by sequence desc limit ?")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = ? and sequence < ? order by sequence desc limit ?")
                     .bind(query.channel_id.to_string()).bind(before).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             } else {
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = ? order by sequence desc limit ?")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = ? order by sequence desc limit ?")
                     .bind(query.channel_id.to_string()).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             };
@@ -788,6 +789,7 @@ impl ChatRepository for SqliteChatRepository {
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
                 sent_at: persisted_now(),
+                edited_at: None,
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values (?, ?, ?, ?, ?, ?, ?)")
                 .bind(message.id.as_uuid().to_string())
@@ -802,6 +804,38 @@ impl ChatRepository for SqliteChatRepository {
                 .map_err(sql_error)?;
             persist_mentions_sqlite(&mut transaction, &message).await?;
             persist_attachments_sqlite(&mut transaction, &message).await?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(message)
+        })
+    }
+
+    fn edit_message<'a>(&'a self, command: EditMessage) -> RepositoryFuture<'a, ChatMessage> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let edited_at = persisted_now();
+            let row = sqlx::query("update messages set body=?,edited_at=? where id=? and sender_id=? returning id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at")
+                .bind(command.body.as_str()).bind(edited_at)
+                .bind(command.message_id.as_uuid().to_string()).bind(command.actor.to_string())
+                .fetch_optional(&mut *transaction).await.map_err(sql_error)?;
+            let Some(row) = row else {
+                let exists = sqlx::query_scalar::<_, i64>("select 1 from messages where id=?")
+                    .bind(command.message_id.as_uuid().to_string())
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                return Err(if exists.is_some() {
+                    RepositoryError::PermissionDenied
+                } else {
+                    RepositoryError::NotFound
+                });
+            };
+            let message = chat_message(row)?;
+            sqlx::query("delete from message_mentions where message_id=?")
+                .bind(message.id.as_uuid().to_string())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            persist_mentions_sqlite(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(message)
         })
@@ -886,6 +920,7 @@ impl ChatRepository for SqliteChatRepository {
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
                 sent_at: persisted_now(),
+                edited_at: None,
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values (?, ?, ?, ?, ?, ?, ?)")
                 .bind(message.id.as_uuid().to_string())
@@ -914,7 +949,7 @@ impl ChatRepository for SqliteChatRepository {
 
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
-            let row = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where id = ?")
+            let row = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where id = ?")
                 .bind(id.as_uuid().to_string())
                 .fetch_optional(&self.pool)
                 .await
@@ -2097,6 +2132,7 @@ fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryE
     let sequence: i64 = row.try_get("sequence").map_err(storage)?;
     let body: String = row.try_get("body").map_err(storage)?;
     let sent_at: DateTime<Utc> = row.try_get("created_at").map_err(storage)?;
+    let edited_at = row.try_get("edited_at").unwrap_or(None);
     let id = uuid::Uuid::parse_str(&id).map_err(storage)?;
     Ok(ChatMessage {
         id: MessageId::from_uuid(id),
@@ -2106,6 +2142,7 @@ fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryE
         body: MessageBody::new(body).map_err(storage)?,
         sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
         sent_at,
+        edited_at,
     })
 }
 
