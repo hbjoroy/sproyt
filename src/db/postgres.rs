@@ -19,11 +19,12 @@ use crate::domain::{
     AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelKind, ChannelRef,
     ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle,
     CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, DisplayName, ExportedChannel, ExportedCircle,
-    InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
-    MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole,
-    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PresenceLease,
-    RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserProfile, UserTask,
+    CreateCircleInvitation, DeleteCircle, DisplayName, EditMessage, ExportedChannel,
+    ExportedCircle, InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel,
+    LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership,
+    MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
+    PortableUserExport, PresenceLease, RepositoryError, RepositoryFuture, SendMessage, User,
+    UserId, UserProfile, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -41,6 +42,7 @@ pub struct PostgresChatRepository {
     messages: broadcast::Sender<MessageId>,
     presence: broadcast::Sender<ChatEvent>,
     reactions: broadcast::Sender<ChatEvent>,
+    message_updates: broadcast::Sender<ChatEvent>,
 }
 
 impl PostgresChatRepository {
@@ -59,12 +61,18 @@ impl PostgresChatRepository {
             .listen("sproyt_reactions")
             .await
             .map_err(sql_error)?;
+        listener
+            .listen("sproyt_message_updates")
+            .await
+            .map_err(sql_error)?;
         let (messages, _) = broadcast::channel(1024);
         let (presence, _) = broadcast::channel(1024);
         let (reactions, _) = broadcast::channel(1024);
+        let (message_updates, _) = broadcast::channel(1024);
         let message_publisher = messages.clone();
         let presence_publisher = presence.clone();
         let reaction_publisher = reactions.clone();
+        let update_publisher = message_updates.clone();
         let listener_url = url.to_owned();
         tokio::spawn(async move {
             loop {
@@ -103,6 +111,17 @@ impl PostgresChatRepository {
                             ),
                         }
                     }
+                    Ok(notification) if notification.channel() == "sproyt_message_updates" => {
+                        match serde_json::from_str::<ChatEvent>(notification.payload()) {
+                            Ok(event @ ChatEvent::MessageEdited { .. }) => {
+                                let _ = update_publisher.send(event);
+                            }
+                            _ => tracing::warn!(
+                                error_kind = "invalid_message_update",
+                                "ignored invalid sproyt_message_updates notification"
+                            ),
+                        }
+                    }
                     Ok(_) => {}
                     Err(error) => {
                         tracing::warn!(
@@ -120,9 +139,12 @@ impl PostgresChatRepository {
                                         replacement.listen("sproyt_presence").await;
                                     let reactions_ready =
                                         replacement.listen("sproyt_reactions").await;
+                                    let updates_ready =
+                                        replacement.listen("sproyt_message_updates").await;
                                     if messages_ready.is_ok()
                                         && presence_ready.is_ok()
                                         && reactions_ready.is_ok()
+                                        && updates_ready.is_ok()
                                     {
                                         listener = replacement;
                                         tracing::info!(
@@ -148,6 +170,7 @@ impl PostgresChatRepository {
             messages,
             presence,
             reactions,
+            message_updates,
         })
     }
 
@@ -465,7 +488,7 @@ impl ChatRepository for PostgresChatRepository {
                 .collect::<Result<Vec<_>, _>>()?;
             let mut channels = Vec::with_capacity(summaries.len());
             for channel in summaries {
-                let rows = sqlx::query("select id,channel_id,sender_id,sender_display_name,sequence,body,created_at from messages where channel_id=$1 order by sequence")
+                let rows = sqlx::query("select id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at from messages where channel_id=$1 order by sequence")
                     .bind(*channel.id.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
                 channels.push(ExportedChannel {
                     channel,
@@ -808,16 +831,16 @@ impl ChatRepository for PostgresChatRepository {
             let limit = i64::try_from(usize::from(query.limit)).map_err(storage)?;
             let (rows, reverse) = if let Some(after) = query.after {
                 let after = i64::try_from(u64::from(after)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = $1 and sequence > $2 order by sequence asc limit $3")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = $1 and sequence > $2 order by sequence asc limit $3")
                     .bind(*query.channel_id.as_uuid()).bind(after).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, false)
             } else if let Some(before) = query.before {
                 let before = i64::try_from(u64::from(before)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = $1 and sequence < $2 order by sequence desc limit $3")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = $1 and sequence < $2 order by sequence desc limit $3")
                     .bind(*query.channel_id.as_uuid()).bind(before).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             } else {
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where channel_id = $1 order by sequence desc limit $2")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = $1 order by sequence desc limit $2")
                     .bind(*query.channel_id.as_uuid()).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             };
@@ -869,6 +892,7 @@ impl ChatRepository for PostgresChatRepository {
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
                 sent_at: persisted_now(),
+                edited_at: None,
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values ($1, $2, $3, $4, $5, $6, $7)")
                 .bind(*message.id.as_uuid())
@@ -891,6 +915,50 @@ impl ChatRepository for PostgresChatRepository {
                 .is_err()
             {
                 tracing::warn!(error_kind = "database_notify", message_id = %message.id.as_uuid(), "message persisted but realtime notification failed");
+            }
+            Ok(message)
+        })
+    }
+
+    fn edit_message<'a>(&'a self, command: EditMessage) -> RepositoryFuture<'a, ChatMessage> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let row = sqlx::query("update messages set body=$1,edited_at=now() where id=$2 and sender_id=$3 returning id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at")
+                .bind(command.body.as_str())
+                .bind(*command.message_id.as_uuid())
+                .bind(*command.actor.as_uuid())
+                .fetch_optional(&mut *transaction).await.map_err(sql_error)?;
+            let Some(row) = row else {
+                let exists = sqlx::query_scalar::<_, i32>("select 1 from messages where id=$1")
+                    .bind(*command.message_id.as_uuid())
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                return Err(if exists.is_some() {
+                    RepositoryError::PermissionDenied
+                } else {
+                    RepositoryError::NotFound
+                });
+            };
+            let message = chat_message(row)?;
+            sqlx::query("delete from message_mentions where message_id=$1")
+                .bind(*message.id.as_uuid())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            persist_mentions_postgres(&mut transaction, &message).await?;
+            transaction.commit().await.map_err(sql_error)?;
+            let event = ChatEvent::MessageEdited {
+                message: message.clone(),
+            };
+            if let Ok(payload) = serde_json::to_string(&event)
+                && sqlx::query("select pg_notify('sproyt_message_updates',$1)")
+                    .bind(payload)
+                    .execute(&self.pool)
+                    .await
+                    .is_err()
+            {
+                tracing::warn!(error_kind="database_notify", message_id=%message.id.as_uuid(), "message edited but realtime notification failed");
             }
             Ok(message)
         })
@@ -975,6 +1043,7 @@ impl ChatRepository for PostgresChatRepository {
                 body: command.body,
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
                 sent_at: persisted_now(),
+                edited_at: None,
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values ($1, $2, $3, $4, $5, $6, $7)")
                 .bind(*message.id.as_uuid())
@@ -1011,7 +1080,7 @@ impl ChatRepository for PostgresChatRepository {
 
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
-            let row = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at from messages where id = $1")
+            let row = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where id = $1")
                 .bind(*id.as_uuid())
                 .fetch_optional(&self.pool)
                 .await
@@ -1255,6 +1324,10 @@ impl ChatRepository for PostgresChatRepository {
 
     fn subscribe_reactions(&self) -> Option<broadcast::Receiver<ChatEvent>> {
         Some(self.reactions.subscribe())
+    }
+
+    fn subscribe_message_updates(&self) -> Option<broadcast::Receiver<ChatEvent>> {
+        Some(self.message_updates.subscribe())
     }
 
     fn subscribe_presence(&self) -> Option<broadcast::Receiver<ChatEvent>> {
@@ -2222,6 +2295,7 @@ fn chat_message(row: PgRow) -> Result<ChatMessage, RepositoryError> {
     let sequence: i64 = row.try_get("sequence").map_err(storage)?;
     let body: String = row.try_get("body").map_err(storage)?;
     let sent_at = row.try_get("created_at").map_err(storage)?;
+    let edited_at = row.try_get("edited_at").unwrap_or(None);
     Ok(ChatMessage {
         id: MessageId::from_uuid(id),
         channel_id: ChannelId::from_uuid(channel_id),
@@ -2230,6 +2304,7 @@ fn chat_message(row: PgRow) -> Result<ChatMessage, RepositoryError> {
         body: MessageBody::new(body).map_err(storage)?,
         sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
         sent_at,
+        edited_at,
     })
 }
 
@@ -2506,6 +2581,7 @@ mod tests {
             .unwrap();
         let replica = PostgresChatRepository::connect(&url).await.unwrap();
         let mut replica_events = replica.subscribe_messages().unwrap();
+        let mut replica_updates = replica.subscribe_message_updates().unwrap();
         let message = repository
             .append_message(SendMessage {
                 actor: alice.clone(),
@@ -2530,7 +2606,21 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(loaded, vec![message]);
+        assert_eq!(loaded, vec![message.clone()]);
+        let edited = repository
+            .edit_message(EditMessage {
+                actor: alice.clone(),
+                message_id: message.id,
+                body: MessageBody::new("durable, edited").unwrap(),
+            })
+            .await
+            .unwrap();
+        let update =
+            tokio::time::timeout(std::time::Duration::from_secs(2), replica_updates.recv())
+                .await
+                .expect("second replica did not receive message edit notification")
+                .unwrap();
+        assert_eq!(update, ChatEvent::MessageEdited { message: edited });
 
         let mut writers = tokio::task::JoinSet::new();
         for index in 0..32 {

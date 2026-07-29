@@ -334,6 +334,14 @@ async fn execute_command(
             }
             .await
         }
+        ClientCommand::EditMessage { message_id, body } => {
+            async {
+                chat.edit_message(participant_id.clone(), message_id, MessageBody::new(body)?)
+                    .await
+                    .map(|message| ServerEvent::MessageEdited { message })
+            }
+            .await
+        }
         ClientCommand::ListChannelReactions { channel_id } => chat
             .list_channel_reactions(participant_id.clone(), channel_id.clone())
             .await

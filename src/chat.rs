@@ -13,7 +13,7 @@ use crate::domain::PrincipalKind;
 use crate::domain::{
     AcceptCircleInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
     ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
-    CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName,
+    CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName, EditMessage,
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId, MessageLimit,
     MessageReactionChange, MessageReactionSummary, PresenceLease, RepositoryError, SendMessage,
@@ -105,6 +105,28 @@ impl ChatEngine {
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             tracing::warn!(skipped, "reaction notification listener lagged");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
+        if let Some(mut notifications) = repository.subscribe_message_updates() {
+            let notification_mailbox = mailbox.clone();
+            tokio::spawn(async move {
+                loop {
+                    match notifications.recv().await {
+                        Ok(event) => {
+                            if notification_mailbox
+                                .send(Command::ExternalUpdate { event })
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(skipped, "message update notification listener lagged");
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
                     }
@@ -703,6 +725,25 @@ impl ChatEngine {
             .map_err(|_| ChatError::EngineStopped)?;
         response.await.map_err(|_| ChatError::EngineStopped)?
     }
+
+    pub async fn edit_message(
+        &self,
+        actor: UserId,
+        message_id: MessageId,
+        body: MessageBody,
+    ) -> Result<ChatMessage, ChatError> {
+        let (reply, response) = oneshot::channel();
+        self.mailbox
+            .send(Command::EditMessage {
+                actor,
+                message_id,
+                body,
+                reply,
+            })
+            .await
+            .map_err(|_| ChatError::EngineStopped)?;
+        response.await.map_err(|_| ChatError::EngineStopped)?
+    }
 }
 
 #[derive(Debug)]
@@ -795,10 +836,19 @@ enum Command {
         emoji: String,
         reply: oneshot::Sender<Result<MessageReactionChange, ChatError>>,
     },
+    EditMessage {
+        actor: UserId,
+        message_id: MessageId,
+        body: MessageBody,
+        reply: oneshot::Sender<Result<ChatMessage, ChatError>>,
+    },
     ExternalMessage {
         message_id: MessageId,
     },
     ExternalReaction {
+        event: ChatEvent,
+    },
+    ExternalUpdate {
         event: ChatEvent,
     },
     ExternalPresence {
@@ -878,6 +928,30 @@ impl ChatActor {
                     }
                     let _ = reply.send(response);
                 }
+                Command::EditMessage {
+                    actor,
+                    message_id,
+                    body,
+                    reply,
+                } => {
+                    let response = self
+                        .repository
+                        .edit_message(EditMessage {
+                            actor,
+                            message_id,
+                            body,
+                        })
+                        .await
+                        .map_err(ChatError::from);
+                    if let Ok(message) = &response {
+                        self.channel_mut(message.channel_id.clone()).publish(
+                            ChatEvent::MessageEdited {
+                                message: message.clone(),
+                            },
+                        );
+                    }
+                    let _ = reply.send(response);
+                }
                 Command::ExternalMessage { message_id } => {
                     match self.repository.load_message(message_id).await {
                         Ok(message) => self.publish_message(message),
@@ -890,6 +964,11 @@ impl ChatActor {
                 Command::ExternalReaction { event } => {
                     if let ChatEvent::MessageReactionChanged { change } = &event {
                         self.channel_mut(change.channel_id.clone()).publish(event);
+                    }
+                }
+                Command::ExternalUpdate { event } => {
+                    if let ChatEvent::MessageEdited { message } = &event {
+                        self.channel_mut(message.channel_id.clone()).publish(event);
                     }
                 }
                 Command::ExternalPresence { event } => self.publish_presence(event),
@@ -1137,6 +1216,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn edits_are_authorized_persisted_and_broadcast() {
+        let (chat, channel, alice, bob) = chat_fixture().await;
+        let mut subscription = chat
+            .subscribe(channel.clone(), alice.clone())
+            .await
+            .unwrap();
+        let _joined = subscription.receiver.recv().await.unwrap();
+        let message = chat
+            .send_message(channel, alice.clone(), MessageBody::new("før").unwrap())
+            .await
+            .unwrap();
+        let _accepted = next_message_event(&mut subscription.receiver).await;
+        let denied = chat
+            .edit_message(bob, message.id, MessageBody::new("uautorisert").unwrap())
+            .await;
+        assert!(matches!(
+            denied,
+            Err(ChatError::Repository(RepositoryError::PermissionDenied))
+        ));
+        let edited = chat
+            .edit_message(alice, message.id, MessageBody::new("etter").unwrap())
+            .await
+            .unwrap();
+        assert_eq!(edited.body.as_str(), "etter");
+        assert!(edited.edited_at.is_some());
+        assert_eq!(edited.sequence, message.sequence);
+        assert_eq!(
+            subscription.receiver.recv().await.unwrap(),
+            ChatEvent::MessageEdited { message: edited }
+        );
+    }
+
+    #[tokio::test]
     async fn new_subscribers_load_history_from_repository() {
         let (chat, channel, alice, bob) = chat_fixture().await;
         chat.send_message(
@@ -1234,7 +1346,8 @@ mod tests {
         loop {
             match receiver.recv().await.unwrap() {
                 ChatEvent::MessageAccepted { message } => return message,
-                ChatEvent::ChannelCreated { .. }
+                ChatEvent::MessageEdited { .. }
+                | ChatEvent::ChannelCreated { .. }
                 | ChatEvent::ParticipantJoined { .. }
                 | ChatEvent::ParticipantLeft { .. }
                 | ChatEvent::MessageReactionChanged { .. }

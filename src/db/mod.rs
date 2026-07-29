@@ -105,8 +105,9 @@ where
     use crate::domain::{
         AcceptCircleInvitation, AddChannelMember, ChannelKind, ChannelRef, ChannelSequence,
         ChannelSlug, CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle,
-        DisplayName, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MessageBody,
-        MessageLimit, PORTABLE_USER_EXPORT_FORMAT, PrincipalKind, SendMessage, User, UserId,
+        DisplayName, EditMessage, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
+        MessageBody, MessageLimit, PORTABLE_USER_EXPORT_FORMAT, PrincipalKind, SendMessage, User,
+        UserId,
     };
     use chrono::Utc;
 
@@ -177,7 +178,7 @@ where
             .any(|summary| summary.id == general_id),
         "new authenticated users must inherit general"
     );
-    let first = repository
+    let mut first = repository
         .append_message_idempotent(
             SendMessage {
                 actor: actor.clone(),
@@ -255,6 +256,28 @@ where
         )
         .await;
     assert_eq!(mismatched_replay, Err(RepositoryError::Conflict));
+    assert_eq!(
+        repository
+            .edit_message(EditMessage {
+                actor: UserId::named(format!("{suffix}-other")),
+                message_id: first.id,
+                body: MessageBody::new("not allowed").unwrap(),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    let original_sequence = first.sequence;
+    first = repository
+        .edit_message(EditMessage {
+            actor: actor.clone(),
+            message_id: first.id,
+            body: MessageBody::new("first, edited").unwrap(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(first.body.as_str(), "first, edited");
+    assert_eq!(first.sequence, original_sequence);
+    assert!(first.edited_at.is_some());
     assert_eq!(
         repository
             .load_recent_messages(LoadRecentMessages {

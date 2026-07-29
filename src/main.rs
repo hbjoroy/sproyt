@@ -2111,6 +2111,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .media-lightbox p { margin: 8px auto 0; text-align: center; }
       .media-lightbox button { position: fixed; top: 10px; right: 14px; min-width: 42px; min-height: 42px; border-color: #fff8; background: #111b; color: white; font-size: 1.5rem; }
       .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px; }
+      .message-actions { display: flex; gap: 6px; justify-content: flex-end; }
+      .message-actions button { min-height: 28px; padding: 3px 8px; background: transparent; color: #506057; font-size: .8rem; }
+      .message-editor { display: grid; gap: 6px; }
+      .message-editor textarea { min-height: 72px; }
+      .message-editor div { display: flex; gap: 6px; justify-content: flex-end; }
       .reaction-badge { min-height: 28px; padding: 3px 8px; border-radius: 999px; background: #eef2ed; color: #183d2e; font-size: .84rem; }
       .reaction-badge[aria-pressed="true"] { border-color: #245b45; background: #d7e8dc; font-weight: 700; }
       .reaction-picker { position: relative; }
@@ -3904,6 +3909,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
             } else {
               renderChannels();
             }
+          } else if (chatEvent.type === "message_edited") {
+            if (chatEvent.message.channel_id === activeChannelId) {
+              replaceTimelineMessage(chatEvent.message);
+              renderTimeline({ preserveScroll: true });
+            }
           } else if (chatEvent.type === "message_reaction_changed") {
             if (chatEvent.change.channel_id === activeChannelId) {
               applyReactionChange(chatEvent.change);
@@ -3927,6 +3937,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
             renderChannels();
           }
           finishPendingMessage(event.request_id, payload.message);
+          return;
+        }
+
+        if (event.type === "message_edited") {
+          if (payload.message.channel_id === activeChannelId) {
+            replaceTimelineMessage(payload.message);
+            renderTimeline({ preserveScroll: true });
+          }
           return;
         }
 
@@ -4423,6 +4441,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
         timeline.push({ type: "message", message });
       }
 
+      function replaceTimelineMessage(message) {
+        const item = timeline.find((candidate) => candidate.type === "message" && candidate.message.id === message.id);
+        if (item) item.message = message;
+        else appendTimelineMessage(message);
+      }
+
       function prependTimelineMessages(messages) {
         const older = [];
         for (const message of messages) {
@@ -4570,6 +4594,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
           timestamp.textContent = ` · ${formatMessageTimestamp(sentAt)}`;
           meta.append(timestamp);
         }
+        if (message.edited_at) {
+          const edited = document.createElement("small");
+          edited.textContent = " · redigert";
+          edited.title = new Date(message.edited_at).toLocaleString();
+          meta.append(edited);
+        }
 
         const body = document.createElement("div");
         if (renderMode === "raw") {
@@ -4583,6 +4613,46 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         wrapper.append(meta, body, renderMessageReactions(message));
+        if (message.sender_id === currentParticipantId) {
+          const actions = document.createElement("div");
+          actions.className = "message-actions";
+          const edit = document.createElement("button");
+          edit.type = "button";
+          edit.textContent = "Rediger";
+          edit.addEventListener("click", () => {
+            const editor = document.createElement("form");
+            editor.className = "message-editor";
+            const input = document.createElement("textarea");
+            const mediaTokenPattern = /\[\[media:[0-9a-f-]{36}\|[^|\]]+\|[^\]]*\]\]/gi;
+            const mediaTokens = message.body.match(mediaTokenPattern) || [];
+            input.value = message.body.replace(mediaTokenPattern, "").trim();
+            input.setAttribute("aria-label", "Rediger melding");
+            const controls = document.createElement("div");
+            const cancel = document.createElement("button");
+            cancel.type = "button";
+            cancel.textContent = "Avbryt";
+            const save = document.createElement("button");
+            save.type = "submit";
+            save.textContent = "Lagre";
+            controls.append(cancel, save);
+            editor.append(input, controls);
+            body.hidden = true;
+            actions.hidden = true;
+            wrapper.insertBefore(editor, wrapper.querySelector(".message-reactions"));
+            cancel.addEventListener("click", () => { editor.remove(); body.hidden = false; actions.hidden = false; });
+            editor.addEventListener("submit", (event) => {
+              event.preventDefault();
+              const value = input.value.trim();
+              const updatedBody = [value, ...mediaTokens].filter(Boolean).join("\n");
+              if (!updatedBody || updatedBody === message.body) { cancel.click(); return; }
+              sendCommand("edit_message", { message_id: message.id, body: updatedBody });
+              cancel.click();
+            });
+            input.focus();
+          });
+          actions.append(edit);
+          wrapper.append(actions);
+        }
         messagesEl.append(wrapper);
       }
 
@@ -5567,6 +5637,19 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("id=\"reaction-emoji-catalog\""));
         assert!(INDEX_HTML.contains("Søk eller lim inn Unicode-emoji"));
         assert!(INDEX_HTML.contains("submitCustomReaction"));
+    }
+
+    #[test]
+    fn browser_exposes_author_owned_message_editing() {
+        assert!(INDEX_HTML.contains("sendCommand(\"edit_message\""));
+        assert!(INDEX_HTML.contains("message.sender_id === currentParticipantId"));
+        assert!(INDEX_HTML.contains("chatEvent.type === \"message_edited\""));
+        assert!(INDEX_HTML.contains("event.type === \"message_edited\""));
+        assert!(INDEX_HTML.contains("· redigert"));
+        assert!(INDEX_HTML.contains("className = \"message-editor\""));
+        assert!(
+            INDEX_HTML.contains("const mediaTokens = message.body.match(mediaTokenPattern) || []")
+        );
     }
 
     async fn start_test_server(

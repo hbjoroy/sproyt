@@ -199,6 +199,8 @@ pub struct ChatMessage {
     pub body: MessageBody,
     pub sequence: ChannelSequence,
     pub sent_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
