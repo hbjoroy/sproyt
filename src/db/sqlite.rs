@@ -1016,6 +1016,72 @@ impl ChatRepository for SqliteChatRepository {
         })
     }
 
+    fn load_thread<'a>(
+        &'a self,
+        actor: UserId,
+        root_message_id: MessageId,
+    ) -> RepositoryFuture<'a, Vec<ChatMessage>> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i64>("select 1 from messages root join channel_memberships cm on cm.channel_id=root.channel_id and cm.user_id=? where root.id=? and root.parent_message_id is null")
+                .bind(actor.to_string()).bind(root_message_id.as_uuid().to_string())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at from messages where id=? or parent_message_id=? order by (parent_message_id is not null),sequence")
+                .bind(root_message_id.as_uuid().to_string()).bind(root_message_id.as_uuid().to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(chat_message).collect()
+        })
+    }
+
+    fn list_thread_summaries<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<crate::domain::ThreadSummary>> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i64>(
+                "select 1 from channel_memberships where channel_id=? and user_id=?",
+            )
+            .bind(channel_id.to_string())
+            .bind(actor.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select r.parent_message_id,count(*) as reply_count,sum(case when r.sequence>coalesce(trm.last_read_sequence,0) and r.sender_id<>? then 1 else 0 end) as unread_count,max(r.sequence) as latest_sequence from messages r left join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=? where r.channel_id=? and r.parent_message_id is not null group by r.parent_message_id order by max(r.sequence)")
+                .bind(actor.to_string()).bind(actor.to_string()).bind(channel_id.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(thread_summary_sqlite).collect()
+        })
+    }
+
+    fn mark_thread_read<'a>(
+        &'a self,
+        actor: UserId,
+        root_message_id: MessageId,
+        sequence: ChannelSequence,
+    ) -> RepositoryFuture<'a, crate::domain::ThreadSummary> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let latest: Option<i64> = sqlx::query_scalar("select max(reply.sequence) from messages root join channel_memberships cm on cm.channel_id=root.channel_id and cm.user_id=? left join messages reply on reply.parent_message_id=root.id where root.id=? and root.parent_message_id is null")
+                .bind(actor.to_string()).bind(root_message_id.as_uuid().to_string()).fetch_optional(&mut *tx).await.map_err(sql_error)?.flatten();
+            let latest = latest.ok_or(RepositoryError::NotFound)?;
+            let requested = i64::try_from(u64::from(sequence)).map_err(storage)?;
+            if requested > latest {
+                return Err(RepositoryError::NotFound);
+            }
+            sqlx::query("insert into thread_read_markers(root_message_id,user_id,last_read_sequence,updated_at) values(?,?,?,?) on conflict(root_message_id,user_id) do update set last_read_sequence=max(thread_read_markers.last_read_sequence,excluded.last_read_sequence),updated_at=excluded.updated_at")
+                .bind(root_message_id.as_uuid().to_string()).bind(actor.to_string()).bind(requested).bind(persisted_now()).execute(&mut *tx).await.map_err(sql_error)?;
+            let row = sqlx::query("select r.parent_message_id,count(*) as reply_count,sum(case when r.sequence>trm.last_read_sequence and r.sender_id<>? then 1 else 0 end) as unread_count,max(r.sequence) as latest_sequence from messages r join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=? where r.parent_message_id=? group by r.parent_message_id,trm.last_read_sequence")
+                .bind(actor.to_string()).bind(actor.to_string()).bind(root_message_id.as_uuid().to_string()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+            let summary = thread_summary_sqlite(row)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(summary)
+        })
+    }
+
     fn list_channel_reactions<'a>(
         &'a self,
         actor: UserId,
@@ -1154,7 +1220,7 @@ impl ChatRepository for SqliteChatRepository {
 
     fn list_mentions<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<InboxMention>> {
         Box::pin(async move {
-            let rows = sqlx::query("select m.id,m.channel_id,m.sender_id,m.sender_display_name,m.sequence,m.body,m.created_at,c.name as channel_name,mm.read_at from message_mentions mm join messages m on m.id=mm.message_id join channels c on c.id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=mm.mentioned_user_id where mm.mentioned_user_id=? order by m.created_at desc limit 200")
+            let rows = sqlx::query("select m.id,m.channel_id,m.parent_message_id,m.sender_id,m.sender_display_name,m.sequence,m.body,m.created_at,c.name as channel_name,mm.read_at from message_mentions mm join messages m on m.id=mm.message_id join channels c on c.id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=mm.mentioned_user_id where mm.mentioned_user_id=? order by m.created_at desc limit 200")
                 .bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(inbox_mention).collect()
         })
@@ -2235,6 +2301,21 @@ fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryE
     })
 }
 
+fn thread_summary_sqlite(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<crate::domain::ThreadSummary, RepositoryError> {
+    let root: String = row.try_get("parent_message_id").map_err(storage)?;
+    let reply_count: i64 = row.try_get("reply_count").map_err(storage)?;
+    let unread_count: i64 = row.try_get("unread_count").map_err(storage)?;
+    let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
+    Ok(crate::domain::ThreadSummary {
+        root_message_id: MessageId::from_uuid(uuid::Uuid::parse_str(&root).map_err(storage)?),
+        reply_count: u32::try_from(reply_count).map_err(storage)?,
+        unread_count: u32::try_from(unread_count).map_err(storage)?,
+        latest_sequence: ChannelSequence::try_from(latest_sequence).map_err(storage)?,
+    })
+}
+
 fn persisted_now() -> DateTime<Utc> {
     DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
         .expect("current UTC timestamp is representable")
@@ -2731,11 +2812,20 @@ mod tests {
             .into_iter()
             .find(|channel| channel.slug.as_str() == "general")
             .unwrap();
+        let root = repository
+            .append_message(SendMessage {
+                actor: alice.clone(),
+                channel_id: general.id.clone(),
+                parent_message_id: None,
+                body: MessageBody::new("Kan nokon ordne dette?").unwrap(),
+            })
+            .await
+            .unwrap();
         let message = repository
             .append_message(SendMessage {
                 actor: alice.clone(),
                 channel_id: general.id,
-                parent_message_id: None,
+                parent_message_id: Some(root.id),
                 body: MessageBody::new("@BobBuilder kan du ordne dette?").unwrap(),
             })
             .await
@@ -2751,6 +2841,7 @@ mod tests {
         let mentions = repository.list_mentions(bob.clone()).await.unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].message, message);
+        assert_eq!(mentions[0].message.parent_message_id, Some(root.id));
         assert!(!mentions[0].read);
 
         let task = repository

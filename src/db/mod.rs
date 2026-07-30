@@ -124,13 +124,21 @@ where
         })
         .await
         .unwrap();
+    let thread_circle = repository
+        .create_circle(CreateCircle {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("chat-thread-circle-{suffix}")).unwrap(),
+            name: DisplayName::new("Thread contract circle").unwrap(),
+        })
+        .await
+        .unwrap();
     let channel = repository
         .create_channel(CreateChannel {
             actor: actor.clone(),
             slug: ChannelSlug::new(format!("chat-contract-{suffix}")).unwrap(),
             name: DisplayName::new("Chat contract channel").unwrap(),
             kind: ChannelKind::Local,
-            circle_id: None,
+            circle_id: Some(thread_circle.id.clone()),
         })
         .await
         .unwrap();
@@ -454,6 +462,70 @@ where
         Err(RepositoryError::Conflict)
     ));
     assert_eq!(repository.load_message(reply.id).await.unwrap(), reply);
+    let thread_reader = UserId::named(format!("thread-reader-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: thread_reader.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Thread reader").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let thread_invite = repository
+        .create_circle_invitation(CreateCircleInvitation {
+            actor: actor.clone(),
+            circle_id: thread_circle.id,
+        })
+        .await
+        .unwrap();
+    repository
+        .accept_circle_invitation(AcceptCircleInvitation {
+            actor: thread_reader.clone(),
+            token: thread_invite.token,
+        })
+        .await
+        .unwrap();
+    repository
+        .add_channel_member(AddChannelMember {
+            actor: actor.clone(),
+            channel_id: channel.id.clone(),
+            user_id: thread_reader.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .load_thread(thread_reader.clone(), second.id)
+            .await
+            .unwrap(),
+        vec![second.clone(), reply.clone()]
+    );
+    let summary = repository
+        .list_thread_summaries(thread_reader.clone(), channel.id.clone())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|summary| summary.root_message_id == second.id)
+        .unwrap();
+    assert_eq!(summary.reply_count, 1);
+    assert_eq!(summary.unread_count, 1);
+    assert_eq!(summary.latest_sequence, reply.sequence);
+    let read = repository
+        .mark_thread_read(thread_reader.clone(), second.id, reply.sequence)
+        .await
+        .unwrap();
+    assert_eq!(read.unread_count, 0);
+    assert_eq!(
+        repository
+            .mark_thread_read(thread_reader, second.id, ChannelSequence::new(0))
+            .await
+            .unwrap()
+            .unread_count,
+        0
+    );
 
     let circle = repository
         .create_circle(CreateCircle {

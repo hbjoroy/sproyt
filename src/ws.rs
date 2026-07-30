@@ -316,6 +316,27 @@ async fn execute_command(
                 Err(error) => Err(error),
             }
         }
+        ClientCommand::LoadThread { root_message_id } => chat
+            .load_thread(participant_id.clone(), root_message_id)
+            .await
+            .map(|messages| ServerEvent::ThreadLoaded {
+                root_message_id,
+                messages,
+            }),
+        ClientCommand::ListThreadSummaries { channel_id } => chat
+            .list_thread_summaries(participant_id.clone(), channel_id.clone())
+            .await
+            .map(|summaries| ServerEvent::ThreadSummariesListed {
+                channel_id,
+                summaries,
+            }),
+        ClientCommand::MarkThreadRead {
+            root_message_id,
+            sequence,
+        } => chat
+            .mark_thread_read(participant_id.clone(), root_message_id, sequence)
+            .await
+            .map(|summary| ServerEvent::ThreadReadUpdated { summary }),
         ClientCommand::UnsubscribeChannel { channel_id } => {
             disconnect(chat, participant_id, &channel_id, subscriptions).await;
             Ok(ServerEvent::SubscriptionEnded { channel_id })

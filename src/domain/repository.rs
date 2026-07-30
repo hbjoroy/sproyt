@@ -11,7 +11,7 @@ use super::{
     CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, EditMessage, InboxMention,
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MessageId, PortableUserExport, SendMessage,
-    User, UserId, UserProfile, UserTask,
+    ThreadSummary, User, UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -119,6 +119,22 @@ pub trait ChatRepository: Send + Sync + 'static {
         request_id: String,
     ) -> RepositoryFuture<'a, ChatMessage>;
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage>;
+    fn load_thread<'a>(
+        &'a self,
+        actor: UserId,
+        root_message_id: MessageId,
+    ) -> RepositoryFuture<'a, Vec<ChatMessage>>;
+    fn list_thread_summaries<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<ThreadSummary>>;
+    fn mark_thread_read<'a>(
+        &'a self,
+        actor: UserId,
+        root_message_id: MessageId,
+        sequence: ChannelSequence,
+    ) -> RepositoryFuture<'a, ThreadSummary>;
     fn list_channel_reactions<'a>(
         &'a self,
         actor: UserId,
@@ -1222,6 +1238,143 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn load_thread<'a>(
+        &'a self,
+        actor: UserId,
+        root_message_id: MessageId,
+    ) -> RepositoryFuture<'a, Vec<ChatMessage>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let root = state
+                .messages
+                .values()
+                .flatten()
+                .find(|message| {
+                    message.id == root_message_id && message.parent_message_id.is_none()
+                })
+                .ok_or(RepositoryError::NotFound)?;
+            if !state
+                .memberships
+                .contains_key(&(root.channel_id.clone(), actor))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut messages = vec![root.clone()];
+            messages.extend(
+                state
+                    .messages
+                    .get(&root.channel_id)
+                    .into_iter()
+                    .flatten()
+                    .filter(|message| message.parent_message_id == Some(root_message_id))
+                    .cloned(),
+            );
+            Ok(messages)
+        })
+    }
+
+    fn list_thread_summaries<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<ThreadSummary>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            if !state
+                .memberships
+                .contains_key(&(channel_id.clone(), actor.clone()))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut grouped = HashMap::<MessageId, Vec<&ChatMessage>>::new();
+            for message in state.messages.get(&channel_id).into_iter().flatten() {
+                if let Some(root_message_id) = message.parent_message_id {
+                    grouped.entry(root_message_id).or_default().push(message);
+                }
+            }
+            let mut summaries = grouped
+                .into_iter()
+                .map(|(root_message_id, replies)| {
+                    let last_read = state
+                        .thread_read_markers
+                        .get(&(root_message_id, actor.clone()))
+                        .copied()
+                        .unwrap_or(ChannelSequence::new(0));
+                    ThreadSummary {
+                        root_message_id,
+                        reply_count: replies.len() as u32,
+                        unread_count: replies
+                            .iter()
+                            .filter(|message| {
+                                message.sequence > last_read && message.sender_id != actor
+                            })
+                            .count() as u32,
+                        latest_sequence: replies.last().expect("thread has replies").sequence,
+                    }
+                })
+                .collect::<Vec<_>>();
+            summaries.sort_by_key(|summary| summary.latest_sequence);
+            Ok(summaries)
+        })
+    }
+
+    fn mark_thread_read<'a>(
+        &'a self,
+        actor: UserId,
+        root_message_id: MessageId,
+        sequence: ChannelSequence,
+    ) -> RepositoryFuture<'a, ThreadSummary> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let root = state
+                .messages
+                .values()
+                .flatten()
+                .find(|message| {
+                    message.id == root_message_id && message.parent_message_id.is_none()
+                })
+                .ok_or(RepositoryError::NotFound)?;
+            let channel_id = root.channel_id.clone();
+            if !state
+                .memberships
+                .contains_key(&(channel_id.clone(), actor.clone()))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let replies = state
+                .messages
+                .get(&channel_id)
+                .into_iter()
+                .flatten()
+                .filter(|message| message.parent_message_id == Some(root_message_id))
+                .map(|message| (message.sequence, message.sender_id.clone()))
+                .collect::<Vec<_>>();
+            let latest = replies
+                .last()
+                .map(|(sequence, _)| *sequence)
+                .ok_or(RepositoryError::NotFound)?;
+            if sequence > latest {
+                return Err(RepositoryError::NotFound);
+            }
+            let marker = state
+                .thread_read_markers
+                .entry((root_message_id, actor.clone()))
+                .or_insert(ChannelSequence::new(0));
+            if sequence > *marker {
+                *marker = sequence;
+            }
+            Ok(ThreadSummary {
+                root_message_id,
+                reply_count: replies.len() as u32,
+                unread_count: replies
+                    .iter()
+                    .filter(|(sequence, sender_id)| *sequence > *marker && sender_id != &actor)
+                    .count() as u32,
+                latest_sequence: latest,
+            })
+        })
+    }
+
     fn list_channel_reactions<'a>(
         &'a self,
         actor: UserId,
@@ -1389,6 +1542,7 @@ struct RepositoryState {
     media_previews: HashMap<MediaId, MediaVariant>,
     command_receipts: HashMap<(UserId, String), MessageId>,
     message_reactions: HashSet<(MessageId, UserId, String)>,
+    thread_read_markers: HashMap<(MessageId, UserId), ChannelSequence>,
 }
 
 #[cfg(test)]

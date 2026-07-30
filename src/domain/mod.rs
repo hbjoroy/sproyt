@@ -17,8 +17,8 @@ pub use models::{
     Channel, ChannelKind, ChannelSummary, ChatMessage, Circle, CircleInvitation, CircleMembership,
     CircleRole, ExportedChannel, ExportedCircle, InboxMention, IssuedInvitation, MediaObject,
     MediaUpload, MediaVariant, Membership, MembershipRole, MessageReactionChange,
-    MessageReactionSummary, PORTABLE_USER_EXPORT_FORMAT, PortableUserExport, PrincipalKind, User,
-    UserProfile, UserTask,
+    MessageReactionSummary, PORTABLE_USER_EXPORT_FORMAT, PortableUserExport, PrincipalKind,
+    ThreadSummary, User, UserProfile, UserTask,
 };
 pub use policy::Policy;
 #[cfg(test)]

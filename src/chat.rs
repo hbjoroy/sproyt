@@ -712,6 +712,40 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn load_thread(
+        &self,
+        actor: UserId,
+        root_message_id: MessageId,
+    ) -> Result<Vec<ChatMessage>, ChatError> {
+        self.repository
+            .load_thread(actor, root_message_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn list_thread_summaries(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> Result<Vec<crate::domain::ThreadSummary>, ChatError> {
+        self.repository
+            .list_thread_summaries(actor, channel_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn mark_thread_read(
+        &self,
+        actor: UserId,
+        root_message_id: MessageId,
+        sequence: ChannelSequence,
+    ) -> Result<crate::domain::ThreadSummary, ChatError> {
+        self.repository
+            .mark_thread_read(actor, root_message_id, sequence)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn list_channel_reactions(
         &self,
         actor: UserId,

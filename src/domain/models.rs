@@ -208,6 +208,14 @@ pub struct ChatMessage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ThreadSummary {
+    pub root_message_id: MessageId,
+    pub reply_count: u32,
+    pub unread_count: u32,
+    pub latest_sequence: ChannelSequence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MessageReactionSummary {
     pub message_id: MessageId,
     pub emoji: String,
