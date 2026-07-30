@@ -864,10 +864,20 @@ async fn prepare_uploaded_media(
 
         let image =
             image::load_from_memory(&content).map_err(|_| MediaPreparationError::InvalidImage)?;
-        let image = apply_exif_orientation(image, &content, is_jpeg);
+        let orientation = exif_orientation(&content, is_jpeg);
+        let image = apply_exif_orientation(image, orientation);
+        let normalized_content = if is_jpeg && orientation != 1 {
+            let mut output = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, 92)
+                .encode_image(&image)
+                .map_err(|_| MediaPreparationError::InvalidImage)?;
+            output
+        } else {
+            content
+        };
         let dimensions = image.dimensions();
         if dimensions.0 <= MEDIA_PREVIEW_LONG_EDGE && dimensions.1 <= MEDIA_PREVIEW_LONG_EDGE {
-            return Ok((content, Some(dimensions), None));
+            return Ok((normalized_content, Some(dimensions), None));
         }
         let preview_image = image.resize(
             MEDIA_PREVIEW_LONG_EDGE,
@@ -889,7 +899,7 @@ async fn prepare_uploaded_media(
             ("image/jpeg", output)
         };
         Ok((
-            content,
+            normalized_content,
             Some(dimensions),
             Some(MediaVariant {
                 content_type: preview_type.to_owned(),
@@ -903,16 +913,12 @@ async fn prepare_uploaded_media(
     .map_err(|_| MediaPreparationError::Worker)?
 }
 
-fn apply_exif_orientation(
-    image: image::DynamicImage,
-    content: &[u8],
-    is_jpeg: bool,
-) -> image::DynamicImage {
+fn exif_orientation(content: &[u8], is_jpeg: bool) -> u32 {
     if !is_jpeg {
-        return image;
+        return 1;
     }
     let mut cursor = Cursor::new(content);
-    let orientation = exif::Reader::new()
+    exif::Reader::new()
         .read_from_container(&mut cursor)
         .ok()
         .and_then(|metadata| {
@@ -920,7 +926,10 @@ fn apply_exif_orientation(
                 .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
                 .and_then(|field| field.value.get_uint(0))
         })
-        .unwrap_or(1);
+        .unwrap_or(1)
+}
+
+fn apply_exif_orientation(image: image::DynamicImage, orientation: u32) -> image::DynamicImage {
     match orientation {
         2 => image.fliph(),
         3 => image.rotate180(),
@@ -1991,7 +2000,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 <html lang="nn">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#27604a">
     <meta name="application-name" content="Sprøyt">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2002,6 +2011,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <title>Sprøyt</title>
     <style nonce="{{NONCE}}">
       :root {
+        --app-height: 100dvh;
         color-scheme: light dark;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: #f7f7f4;
@@ -2155,6 +2165,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
       .empty-state h2 { margin-top: 0; }
       .onboarding { display: grid; gap: 10px; }
+      .onboarding > summary { cursor: pointer; font-weight: 700; }
+      .onboarding-fields { display: grid; gap: 10px; padding-top: 10px; }
       .onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       .onboarding-notice { margin: 0; color: #506057; font-size: .85rem; line-height: 1.4; }
       .agent-access { border-top: 1px solid var(--border); padding-top: 12px; }
@@ -2408,24 +2420,36 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       @media (max-width: 640px) {
         body {
-          padding: 12px;
+          height: var(--app-height);
+          min-height: 0;
+          padding-top: max(12px, env(safe-area-inset-top));
+          padding-right: max(12px, env(safe-area-inset-right));
+          padding-bottom: max(12px, env(safe-area-inset-bottom));
+          padding-left: max(12px, env(safe-area-inset-left));
         }
 
         main {
-          height: calc(100dvh - 24px);
+          height: 100%;
           min-height: 0;
           grid-template-columns: 1fr;
           grid-template-rows: auto auto minmax(0, 1fr) auto;
         }
 
-        .sidebar { grid-row: auto; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; gap: 8px; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .sidebar { grid-row: auto; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; gap: 8px; min-height: 0; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .sidebar.mobile-open { max-height: min(68dvh, calc(var(--app-height) - 132px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; touch-action: pan-y; }
         .brand h1 { margin: 0; font-size: clamp(1.35rem, 8vw, 2rem); }
         .brand-mark { width: 38px; height: 38px; }
         .sidebar .identity { display: none; grid-column: 1 / -1; }
-        .sidebar.mobile-open .identity { display: grid; }
+        .sidebar.mobile-open .identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; }
+        .sidebar.mobile-open .identity > span { grid-column: 1 / -1; }
         .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; white-space: nowrap; }
         .sidebar nav, .sidebar .onboarding, .sidebar .agent-access { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding, .sidebar.mobile-open .agent-access { display: grid; }
+        .sidebar.mobile-open nav { gap: 6px; }
+        .sidebar.mobile-open .onboarding { gap: 0; }
+        .sidebar.mobile-open .onboarding-fields { gap: 7px; padding-top: 8px; }
+        .sidebar.mobile-open .navigation-heading { margin: 3px 4px; }
+        .sidebar.mobile-open input, .sidebar.mobile-open select, .sidebar.mobile-open button { min-height: 36px; padding-top: 5px; padding-bottom: 5px; }
 
         .conversation-header { min-height: 48px; padding: 8px 10px; }
         .conversation-header h2 { margin: 0; font-size: 1.15rem; }
@@ -2557,7 +2581,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <label>Brukar<select id="direct-user"><option value="">Vel brukar</option></select></label>
           <button id="open-direct" type="button" disabled>Start samtale</button>
         </nav>
-        <section class="onboarding" id="mobile-onboarding" aria-label="Ny vennekrets">
+        <details class="onboarding" id="mobile-onboarding">
+          <summary>Administrer kretsar og kanalar</summary>
+          <div class="onboarding-fields" aria-label="Ny vennekrets">
           <p class="navigation-heading">Vennekrets</p>
           <label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label>
           <label>Namn<input id="circle-name" placeholder="Turvenner"></label>
@@ -2576,7 +2602,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="add-channel-member" type="button" disabled>Legg til i vald kanal</button>
           <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
           <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
-        </section>
+          </div>
+        </details>
         <details class="agent-access" {{AGENT_HIDDEN}}>
           <summary>Agenttilgang</summary>
           <p>Lag ein kortliva MCP-agent for den opne samtalen. Tilgangen varer i 30 minutt og kan lesast og skrive meldingar.</p>
@@ -2622,6 +2649,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <datalist id="reaction-emoji-catalog"><option value="😍">forelska hjarteauge</option><option value="🥰">glad kjærleik</option><option value="😊">smil glad</option><option value="🤣">ler latter</option><option value="😢">trist gråt</option><option value="😭">gråt</option><option value="😮">overraska</option><option value="😡">sint</option><option value="👏">applaus bra</option><option value="🙌">hurra</option><option value="💪">sterk</option><option value="🤝">avtale</option><option value="👀">ser</option><option value="💯">hundre perfekt</option><option value="✅">ferdig ja</option><option value="❌">nei feil</option><option value="⭐">stjerne</option><option value="💡">idé</option><option value="🚀">rakett</option><option value="🥳">fest</option><option value="🍻">skål</option><option value="🌊">bølgje sjøsprøyt</option></datalist>
 
     <script type="module" nonce="{{NONCE}}">
+      function syncAppViewportHeight() {
+        const height = window.visualViewport?.height || window.innerHeight;
+        document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
+      }
+      syncAppViewportHeight();
+      window.addEventListener("resize", syncAppViewportHeight, { passive: true });
+      window.visualViewport?.addEventListener("resize", syncAppViewportHeight, { passive: true });
+
       const serviceWorkerReady = "serviceWorker" in navigator
         ? navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(() => navigator.serviceWorker.ready)
         : Promise.resolve(null);
@@ -5829,6 +5864,11 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("rel=\"manifest\" href=\"/manifest.webmanifest\""));
         assert!(INDEX_HTML.contains("navigator.serviceWorker.register"));
         assert!(INDEX_HTML.contains("/assets/sproyt-wave.svg"));
+        assert!(INDEX_HTML.contains("viewport-fit=cover"));
+        assert!(INDEX_HTML.contains("--app-height: 100dvh"));
+        assert!(INDEX_HTML.contains("env(safe-area-inset-bottom)"));
+        assert!(INDEX_HTML.contains("window.visualViewport?.height || window.innerHeight"));
+        assert!(INDEX_HTML.contains("height: var(--app-height)"));
         assert!(SERVICE_WORKER.contains("request.mode === \"navigate\""));
         assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/api/\")"));
         assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/auth/\")"));
@@ -5862,12 +5902,29 @@ mod protocol_capacity_tests {
             1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
         ];
         iphone_jpeg.splice(2..2, exif_orientation_6);
-        let (_, dimensions, preview) = prepare_uploaded_media(iphone_jpeg, "image/jpeg")
+        let (normalized, dimensions, preview) = prepare_uploaded_media(iphone_jpeg, "image/jpeg")
             .await
             .unwrap();
         assert_eq!(dimensions, Some((900, 1_440)));
         let decoded = image::load_from_memory(&preview.unwrap().content).unwrap();
         assert_eq!(decoded.dimensions(), (450, 720));
+        let normalized = image::load_from_memory(&normalized).unwrap();
+        assert_eq!(normalized.dimensions(), (900, 1_440));
+
+        let small_portrait_pixels = image::DynamicImage::new_rgb8(640, 480);
+        let mut small_samsung_jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut small_samsung_jpeg, 90)
+            .encode_image(&small_portrait_pixels)
+            .unwrap();
+        small_samsung_jpeg.splice(2..2, exif_orientation_6);
+        let (normalized, dimensions, preview) =
+            prepare_uploaded_media(small_samsung_jpeg, "image/jpeg")
+                .await
+                .unwrap();
+        assert_eq!(dimensions, Some((480, 640)));
+        assert!(preview.is_none());
+        let normalized = image::load_from_memory(&normalized).unwrap();
+        assert_eq!(normalized.dimensions(), (480, 640));
 
         let source = image::DynamicImage::new_rgb8(32, 24);
         let mut motion_photo = Vec::new();
@@ -6334,8 +6391,11 @@ mod protocol_capacity_tests {
         assert!(body.contains(":focus-visible"));
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
         assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
+        assert!(body.contains("<summary>Administrer kretsar og kanalar</summary>"));
         assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
-        assert!(body.contains(".sidebar.mobile-open .identity { display: grid; }"));
+        assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
+        assert!(body.contains(".sidebar.mobile-open { max-height:"));
+        assert!(body.contains("overflow-y: auto; overscroll-behavior: contain;"));
         assert!(body.contains("grid-template-rows: auto auto minmax(0, 1fr) auto;"));
         assert!(body.contains("form.send { grid-template-columns: auto auto minmax(0, 1fr) auto"));
         assert!(body.contains(".conversation-header .status[data-routine=\"true\"]"));
