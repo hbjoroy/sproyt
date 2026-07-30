@@ -2000,7 +2000,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 <html lang="nn">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#27604a">
     <meta name="application-name" content="Sprøyt">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2011,6 +2011,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <title>Sprøyt</title>
     <style nonce="{{NONCE}}">
       :root {
+        --app-height: 100dvh;
         color-scheme: light dark;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: #f7f7f4;
@@ -2417,11 +2418,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       @media (max-width: 640px) {
         body {
-          padding: 12px;
+          height: var(--app-height);
+          min-height: 0;
+          padding-top: max(12px, env(safe-area-inset-top));
+          padding-right: max(12px, env(safe-area-inset-right));
+          padding-bottom: max(12px, env(safe-area-inset-bottom));
+          padding-left: max(12px, env(safe-area-inset-left));
         }
 
         main {
-          height: calc(100dvh - 24px);
+          height: 100%;
           min-height: 0;
           grid-template-columns: 1fr;
           grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -2631,6 +2637,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <datalist id="reaction-emoji-catalog"><option value="😍">forelska hjarteauge</option><option value="🥰">glad kjærleik</option><option value="😊">smil glad</option><option value="🤣">ler latter</option><option value="😢">trist gråt</option><option value="😭">gråt</option><option value="😮">overraska</option><option value="😡">sint</option><option value="👏">applaus bra</option><option value="🙌">hurra</option><option value="💪">sterk</option><option value="🤝">avtale</option><option value="👀">ser</option><option value="💯">hundre perfekt</option><option value="✅">ferdig ja</option><option value="❌">nei feil</option><option value="⭐">stjerne</option><option value="💡">idé</option><option value="🚀">rakett</option><option value="🥳">fest</option><option value="🍻">skål</option><option value="🌊">bølgje sjøsprøyt</option></datalist>
 
     <script type="module" nonce="{{NONCE}}">
+      function syncAppViewportHeight() {
+        const height = window.visualViewport?.height || window.innerHeight;
+        document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
+      }
+      syncAppViewportHeight();
+      window.addEventListener("resize", syncAppViewportHeight, { passive: true });
+      window.visualViewport?.addEventListener("resize", syncAppViewportHeight, { passive: true });
+
       const serviceWorkerReady = "serviceWorker" in navigator
         ? navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(() => navigator.serviceWorker.ready)
         : Promise.resolve(null);
@@ -5838,6 +5852,11 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("rel=\"manifest\" href=\"/manifest.webmanifest\""));
         assert!(INDEX_HTML.contains("navigator.serviceWorker.register"));
         assert!(INDEX_HTML.contains("/assets/sproyt-wave.svg"));
+        assert!(INDEX_HTML.contains("viewport-fit=cover"));
+        assert!(INDEX_HTML.contains("--app-height: 100dvh"));
+        assert!(INDEX_HTML.contains("env(safe-area-inset-bottom)"));
+        assert!(INDEX_HTML.contains("window.visualViewport?.height || window.innerHeight"));
+        assert!(INDEX_HTML.contains("height: var(--app-height)"));
         assert!(SERVICE_WORKER.contains("request.mode === \"navigate\""));
         assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/api/\")"));
         assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/auth/\")"));
