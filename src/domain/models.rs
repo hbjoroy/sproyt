@@ -201,6 +201,8 @@ pub struct ChatMessage {
     pub sent_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

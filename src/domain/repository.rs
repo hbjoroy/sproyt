@@ -8,7 +8,7 @@ use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
 use super::{
     AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary,
     ChatEvent, ChatMessage, Circle, CircleId, CircleMembership, CircleRole, CreateChannel,
-    CreateCircle, CreateCircleInvitation, DeleteCircle, EditMessage, InboxMention,
+    CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, EditMessage, InboxMention,
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MessageId, PortableUserExport, SendMessage,
     User, UserId, UserProfile, UserTask,
@@ -112,6 +112,7 @@ pub trait ChatRepository: Send + Sync + 'static {
     ) -> RepositoryFuture<'a, Vec<ChatMessage>>;
     fn append_message<'a>(&'a self, command: SendMessage) -> RepositoryFuture<'a, ChatMessage>;
     fn edit_message<'a>(&'a self, command: EditMessage) -> RepositoryFuture<'a, ChatMessage>;
+    fn delete_message<'a>(&'a self, command: DeleteMessage) -> RepositoryFuture<'a, ChatMessage>;
     fn append_message_idempotent<'a>(
         &'a self,
         command: SendMessage,
@@ -1062,6 +1063,7 @@ impl ChatRepository for InMemoryChatRepository {
                 sequence: next_sequence,
                 sent_at: persisted_now(),
                 edited_at: None,
+                deleted_at: None,
             };
 
             state
@@ -1085,9 +1087,41 @@ impl ChatRepository for InMemoryChatRepository {
             if message.sender_id != command.actor {
                 return Err(RepositoryError::PermissionDenied);
             }
+            if message.deleted_at.is_some() {
+                return Err(RepositoryError::Conflict);
+            }
             message.body = command.body;
             message.edited_at = Some(persisted_now());
             Ok(message.clone())
+        })
+    }
+
+    fn delete_message<'a>(&'a self, command: DeleteMessage) -> RepositoryFuture<'a, ChatMessage> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let message = state
+                .messages
+                .values_mut()
+                .flatten()
+                .find(|message| message.id == command.message_id)
+                .ok_or(RepositoryError::NotFound)?;
+            if message.sender_id != command.actor {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let changed = message.deleted_at.is_none();
+            if changed {
+                message.body = super::MessageBody::new("Meldinga er sletta.")
+                    .expect("static tombstone is valid");
+                message.edited_at = None;
+                message.deleted_at = Some(persisted_now());
+            }
+            let deleted = message.clone();
+            if changed {
+                state
+                    .message_reactions
+                    .retain(|(message_id, _, _)| message_id != &command.message_id);
+            }
+            Ok(deleted)
         })
     }
 
@@ -1134,6 +1168,7 @@ impl ChatRepository for InMemoryChatRepository {
                 sequence: next_sequence,
                 sent_at: persisted_now(),
                 edited_at: None,
+                deleted_at: None,
             };
             state.command_receipts.insert(key, message.id);
             state
@@ -1218,16 +1253,16 @@ impl ChatRepository for InMemoryChatRepository {
     ) -> RepositoryFuture<'a, crate::domain::MessageReactionChange> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
-            let channel_id = state
+            let message = state
                 .messages
-                .iter()
-                .find_map(|(channel_id, messages)| {
-                    messages
-                        .iter()
-                        .any(|message| message.id == message_id)
-                        .then(|| channel_id.clone())
-                })
+                .values()
+                .flatten()
+                .find(|message| message.id == message_id)
                 .ok_or(RepositoryError::NotFound)?;
+            if message.deleted_at.is_some() {
+                return Err(RepositoryError::Conflict);
+            }
+            let channel_id = message.channel_id.clone();
             if !state
                 .memberships
                 .contains_key(&(channel_id.clone(), actor.clone()))

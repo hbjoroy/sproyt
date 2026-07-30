@@ -342,6 +342,10 @@ async fn execute_command(
             }
             .await
         }
+        ClientCommand::DeleteMessage { message_id } => chat
+            .delete_message(participant_id.clone(), message_id)
+            .await
+            .map(|message| ServerEvent::MessageDeleted { message }),
         ClientCommand::ListChannelReactions { channel_id } => chat
             .list_channel_reactions(participant_id.clone(), channel_id.clone())
             .await

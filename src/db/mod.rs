@@ -105,9 +105,9 @@ where
     use crate::domain::{
         AcceptCircleInvitation, AddChannelMember, ChannelKind, ChannelRef, ChannelSequence,
         ChannelSlug, CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle,
-        DisplayName, EditMessage, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
-        MessageBody, MessageLimit, PORTABLE_USER_EXPORT_FORMAT, PrincipalKind, SendMessage, User,
-        UserId,
+        DeleteMessage, DisplayName, EditMessage, JoinChannel, LeaveChannel, LoadRecentMessages,
+        MarkRead, MessageBody, MessageLimit, PORTABLE_USER_EXPORT_FORMAT, PrincipalKind,
+        SendMessage, User, UserId,
     };
     use chrono::Utc;
 
@@ -366,7 +366,7 @@ where
             })
             .await
             .unwrap(),
-        vec![first, second.clone()]
+        vec![first.clone(), second.clone()]
     );
     assert_eq!(
         repository
@@ -389,6 +389,39 @@ where
         .unwrap();
     assert_eq!(summary.last_read_sequence, ChannelSequence::new(1));
     assert_eq!(summary.latest_sequence, ChannelSequence::new(3));
+
+    assert_eq!(
+        repository
+            .delete_message(DeleteMessage {
+                actor: UserId::named(format!("{suffix}-other")),
+                message_id: first.id,
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    let deleted = repository
+        .delete_message(DeleteMessage {
+            actor: actor.clone(),
+            message_id: first.id,
+        })
+        .await
+        .unwrap();
+    assert_eq!(deleted.id, first.id);
+    assert_eq!(deleted.sequence, first.sequence);
+    assert_eq!(deleted.body.as_str(), "Meldinga er sletta.");
+    assert!(deleted.edited_at.is_none());
+    assert!(deleted.deleted_at.is_some());
+    assert!(matches!(
+        repository
+            .edit_message(EditMessage {
+                actor: actor.clone(),
+                message_id: first.id,
+                body: MessageBody::new("kan ikkje hentast tilbake").unwrap(),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied) | Err(RepositoryError::Conflict)
+    ));
+    assert_eq!(repository.load_message(first.id).await.unwrap(), deleted);
 
     let circle = repository
         .create_circle(CreateCircle {

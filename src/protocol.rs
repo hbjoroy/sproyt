@@ -71,6 +71,9 @@ pub enum ClientCommand {
         message_id: crate::domain::MessageId,
         body: String,
     },
+    DeleteMessage {
+        message_id: crate::domain::MessageId,
+    },
     ListChannelReactions {
         channel_id: ChannelId,
     },
@@ -193,6 +196,9 @@ pub enum ServerEvent {
         message: ChatMessage,
     },
     MessageEdited {
+        message: ChatMessage,
+    },
+    MessageDeleted {
         message: ChatMessage,
     },
     ChannelReactionsListed {

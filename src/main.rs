@@ -3914,6 +3914,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
               replaceTimelineMessage(chatEvent.message);
               renderTimeline({ preserveScroll: true });
             }
+          } else if (chatEvent.type === "message_deleted") {
+            messageReactions.delete(chatEvent.message.id);
+            if (chatEvent.message.channel_id === activeChannelId) {
+              replaceTimelineMessage(chatEvent.message);
+              renderTimeline({ preserveScroll: true });
+            }
           } else if (chatEvent.type === "message_reaction_changed") {
             if (chatEvent.change.channel_id === activeChannelId) {
               applyReactionChange(chatEvent.change);
@@ -3941,6 +3947,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "message_edited") {
+          if (payload.message.channel_id === activeChannelId) {
+            replaceTimelineMessage(payload.message);
+            renderTimeline({ preserveScroll: true });
+          }
+          return;
+        }
+
+        if (event.type === "message_deleted") {
+          messageReactions.delete(payload.message.id);
           if (payload.message.channel_id === activeChannelId) {
             replaceTimelineMessage(payload.message);
             renderTimeline({ preserveScroll: true });
@@ -4594,7 +4609,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
           timestamp.textContent = ` · ${formatMessageTimestamp(sentAt)}`;
           meta.append(timestamp);
         }
-        if (message.edited_at) {
+        if (message.deleted_at) {
+          const deleted = document.createElement("small");
+          deleted.textContent = " · sletta";
+          deleted.title = new Date(message.deleted_at).toLocaleString();
+          meta.append(deleted);
+        } else if (message.edited_at) {
           const edited = document.createElement("small");
           edited.textContent = " · redigert";
           edited.title = new Date(message.edited_at).toLocaleString();
@@ -4602,7 +4622,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         const body = document.createElement("div");
-        if (renderMode === "raw") {
+        if (message.deleted_at) {
+          body.className = "rendered message-tombstone";
+          body.textContent = "Meldinga er sletta.";
+        } else if (renderMode === "raw") {
           const pre = document.createElement("pre");
           pre.className = "raw-body";
           pre.textContent = message.body;
@@ -4612,8 +4635,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           renderMessageBody(message.body, body);
         }
 
-        wrapper.append(meta, body, renderMessageReactions(message));
-        if (message.sender_id === currentParticipantId) {
+        wrapper.append(meta, body);
+        if (!message.deleted_at) wrapper.append(renderMessageReactions(message));
+        if (!message.deleted_at && message.sender_id === currentParticipantId) {
           const actions = document.createElement("div");
           actions.className = "message-actions";
           const edit = document.createElement("button");
@@ -4650,7 +4674,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
             });
             input.focus();
           });
-          actions.append(edit);
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "Slett";
+          remove.addEventListener("click", () => {
+            if (window.confirm("Vil du slette meldinga? Ho blir ståande som ei sletta melding i samtalen.")) {
+              sendCommand("delete_message", { message_id: message.id });
+            }
+          });
+          actions.append(edit, remove);
           wrapper.append(actions);
         }
         messagesEl.append(wrapper);
@@ -5649,6 +5681,20 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("className = \"message-editor\""));
         assert!(
             INDEX_HTML.contains("const mediaTokens = message.body.match(mediaTokenPattern) || []")
+        );
+    }
+
+    #[test]
+    fn browser_exposes_author_owned_soft_deletion() {
+        assert!(INDEX_HTML.contains("sendCommand(\"delete_message\""));
+        assert!(INDEX_HTML.contains("chatEvent.type === \"message_deleted\""));
+        assert!(INDEX_HTML.contains("event.type === \"message_deleted\""));
+        assert!(INDEX_HTML.contains("Meldinga er sletta."));
+        assert!(INDEX_HTML.contains("window.confirm(\"Vil du slette meldinga?"));
+        assert!(
+            INDEX_HTML.contains(
+                "if (!message.deleted_at) wrapper.append(renderMessageReactions(message))"
+            )
         );
     }
 

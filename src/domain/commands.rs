@@ -82,6 +82,12 @@ pub struct EditMessage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeleteMessage {
+    pub actor: UserId,
+    pub message_id: super::MessageId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MarkRead {
     pub actor: UserId,
     pub channel_id: ChannelId,
