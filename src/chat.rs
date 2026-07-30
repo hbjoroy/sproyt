@@ -13,11 +13,11 @@ use crate::domain::PrincipalKind;
 use crate::domain::{
     AcceptCircleInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
     ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
-    CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DisplayName, EditMessage,
-    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
-    MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId, MessageLimit,
-    MessageReactionChange, MessageReactionSummary, PresenceLease, RepositoryError, SendMessage,
-    TextValidationError, User, UserId, UserProfile,
+    CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, DisplayName,
+    EditMessage, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
+    MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId,
+    MessageLimit, MessageReactionChange, MessageReactionSummary, PresenceLease, RepositoryError,
+    SendMessage, TextValidationError, User, UserId, UserProfile,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -744,6 +744,23 @@ impl ChatEngine {
             .map_err(|_| ChatError::EngineStopped)?;
         response.await.map_err(|_| ChatError::EngineStopped)?
     }
+
+    pub async fn delete_message(
+        &self,
+        actor: UserId,
+        message_id: MessageId,
+    ) -> Result<ChatMessage, ChatError> {
+        let (reply, response) = oneshot::channel();
+        self.mailbox
+            .send(Command::DeleteMessage {
+                actor,
+                message_id,
+                reply,
+            })
+            .await
+            .map_err(|_| ChatError::EngineStopped)?;
+        response.await.map_err(|_| ChatError::EngineStopped)?
+    }
 }
 
 #[derive(Debug)]
@@ -840,6 +857,11 @@ enum Command {
         actor: UserId,
         message_id: MessageId,
         body: MessageBody,
+        reply: oneshot::Sender<Result<ChatMessage, ChatError>>,
+    },
+    DeleteMessage {
+        actor: UserId,
+        message_id: MessageId,
         reply: oneshot::Sender<Result<ChatMessage, ChatError>>,
     },
     ExternalMessage {
@@ -952,6 +974,25 @@ impl ChatActor {
                     }
                     let _ = reply.send(response);
                 }
+                Command::DeleteMessage {
+                    actor,
+                    message_id,
+                    reply,
+                } => {
+                    let response = self
+                        .repository
+                        .delete_message(DeleteMessage { actor, message_id })
+                        .await
+                        .map_err(ChatError::from);
+                    if let Ok(message) = &response {
+                        self.channel_mut(message.channel_id.clone()).publish(
+                            ChatEvent::MessageDeleted {
+                                message: message.clone(),
+                            },
+                        );
+                    }
+                    let _ = reply.send(response);
+                }
                 Command::ExternalMessage { message_id } => {
                     match self.repository.load_message(message_id).await {
                         Ok(message) => self.publish_message(message),
@@ -967,7 +1008,9 @@ impl ChatActor {
                     }
                 }
                 Command::ExternalUpdate { event } => {
-                    if let ChatEvent::MessageEdited { message } = &event {
+                    if let ChatEvent::MessageEdited { message }
+                    | ChatEvent::MessageDeleted { message } = &event
+                    {
                         self.channel_mut(message.channel_id.clone()).publish(event);
                     }
                 }
@@ -1229,14 +1272,22 @@ mod tests {
             .unwrap();
         let _accepted = next_message_event(&mut subscription.receiver).await;
         let denied = chat
-            .edit_message(bob, message.id, MessageBody::new("uautorisert").unwrap())
+            .edit_message(
+                bob.clone(),
+                message.id,
+                MessageBody::new("uautorisert").unwrap(),
+            )
             .await;
         assert!(matches!(
             denied,
             Err(ChatError::Repository(RepositoryError::PermissionDenied))
         ));
         let edited = chat
-            .edit_message(alice, message.id, MessageBody::new("etter").unwrap())
+            .edit_message(
+                alice.clone(),
+                message.id,
+                MessageBody::new("etter").unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(edited.body.as_str(), "etter");
@@ -1244,7 +1295,20 @@ mod tests {
         assert_eq!(edited.sequence, message.sequence);
         assert_eq!(
             subscription.receiver.recv().await.unwrap(),
-            ChatEvent::MessageEdited { message: edited }
+            ChatEvent::MessageEdited {
+                message: edited.clone()
+            }
+        );
+        assert!(matches!(
+            chat.delete_message(bob, edited.id).await,
+            Err(ChatError::Repository(RepositoryError::PermissionDenied))
+        ));
+        let deleted = chat.delete_message(alice, edited.id).await.unwrap();
+        assert_eq!(deleted.sequence, edited.sequence);
+        assert!(deleted.deleted_at.is_some());
+        assert_eq!(
+            subscription.receiver.recv().await.unwrap(),
+            ChatEvent::MessageDeleted { message: deleted }
         );
     }
 
@@ -1347,6 +1411,7 @@ mod tests {
             match receiver.recv().await.unwrap() {
                 ChatEvent::MessageAccepted { message } => return message,
                 ChatEvent::MessageEdited { .. }
+                | ChatEvent::MessageDeleted { .. }
                 | ChatEvent::ChannelCreated { .. }
                 | ChatEvent::ParticipantJoined { .. }
                 | ChatEvent::ParticipantLeft { .. }

@@ -19,7 +19,7 @@ use crate::domain::{
     AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelKind, ChannelRef,
     ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle,
     CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, DisplayName, EditMessage, ExportedChannel,
+    CreateCircleInvitation, DeleteCircle, DeleteMessage, DisplayName, EditMessage, ExportedChannel,
     ExportedCircle, InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel,
     LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership,
     MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
@@ -113,7 +113,10 @@ impl PostgresChatRepository {
                     }
                     Ok(notification) if notification.channel() == "sproyt_message_updates" => {
                         match serde_json::from_str::<ChatEvent>(notification.payload()) {
-                            Ok(event @ ChatEvent::MessageEdited { .. }) => {
+                            Ok(
+                                event @ (ChatEvent::MessageEdited { .. }
+                                | ChatEvent::MessageDeleted { .. }),
+                            ) => {
                                 let _ = update_publisher.send(event);
                             }
                             _ => tracing::warn!(
@@ -488,7 +491,7 @@ impl ChatRepository for PostgresChatRepository {
                 .collect::<Result<Vec<_>, _>>()?;
             let mut channels = Vec::with_capacity(summaries.len());
             for channel in summaries {
-                let rows = sqlx::query("select id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at from messages where channel_id=$1 order by sequence")
+                let rows = sqlx::query("select id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at from messages where channel_id=$1 order by sequence")
                     .bind(*channel.id.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
                 channels.push(ExportedChannel {
                     channel,
@@ -831,16 +834,16 @@ impl ChatRepository for PostgresChatRepository {
             let limit = i64::try_from(usize::from(query.limit)).map_err(storage)?;
             let (rows, reverse) = if let Some(after) = query.after {
                 let after = i64::try_from(u64::from(after)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = $1 and sequence > $2 order by sequence asc limit $3")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = $1 and sequence > $2 order by sequence asc limit $3")
                     .bind(*query.channel_id.as_uuid()).bind(after).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, false)
             } else if let Some(before) = query.before {
                 let before = i64::try_from(u64::from(before)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = $1 and sequence < $2 order by sequence desc limit $3")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = $1 and sequence < $2 order by sequence desc limit $3")
                     .bind(*query.channel_id.as_uuid()).bind(before).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             } else {
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where channel_id = $1 order by sequence desc limit $2")
+                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = $1 order by sequence desc limit $2")
                     .bind(*query.channel_id.as_uuid()).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             };
@@ -893,6 +896,7 @@ impl ChatRepository for PostgresChatRepository {
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
                 sent_at: persisted_now(),
                 edited_at: None,
+                deleted_at: None,
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values ($1, $2, $3, $4, $5, $6, $7)")
                 .bind(*message.id.as_uuid())
@@ -923,7 +927,7 @@ impl ChatRepository for PostgresChatRepository {
     fn edit_message<'a>(&'a self, command: EditMessage) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
-            let row = sqlx::query("update messages set body=$1,edited_at=now() where id=$2 and sender_id=$3 returning id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at")
+            let row = sqlx::query("update messages set body=$1,edited_at=now() where id=$2 and sender_id=$3 and deleted_at is null returning id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
                 .bind(command.body.as_str())
                 .bind(*command.message_id.as_uuid())
                 .bind(*command.actor.as_uuid())
@@ -959,6 +963,58 @@ impl ChatRepository for PostgresChatRepository {
                     .is_err()
             {
                 tracing::warn!(error_kind="database_notify", message_id=%message.id.as_uuid(), "message edited but realtime notification failed");
+            }
+            Ok(message)
+        })
+    }
+
+    fn delete_message<'a>(&'a self, command: DeleteMessage) -> RepositoryFuture<'a, ChatMessage> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let row = sqlx::query("update messages set body='Meldinga er sletta.',edited_at=null,deleted_at=coalesce(deleted_at,now()) where id=$1 and sender_id=$2 returning id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
+                .bind(*command.message_id.as_uuid())
+                .bind(*command.actor.as_uuid())
+                .fetch_optional(&mut *transaction).await.map_err(sql_error)?;
+            let Some(row) = row else {
+                let exists = sqlx::query_scalar::<_, i32>("select 1 from messages where id=$1")
+                    .bind(*command.message_id.as_uuid())
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                return Err(if exists.is_some() {
+                    RepositoryError::PermissionDenied
+                } else {
+                    RepositoryError::NotFound
+                });
+            };
+            let message = chat_message(row)?;
+            sqlx::query("delete from message_mentions where message_id=$1")
+                .bind(*message.id.as_uuid())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("delete from message_reactions where message_id=$1")
+                .bind(*message.id.as_uuid())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("delete from notification_outbox where message_id=$1")
+                .bind(*message.id.as_uuid())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            let event = ChatEvent::MessageDeleted {
+                message: message.clone(),
+            };
+            if let Ok(payload) = serde_json::to_string(&event)
+                && sqlx::query("select pg_notify('sproyt_message_updates',$1)")
+                    .bind(payload)
+                    .execute(&self.pool)
+                    .await
+                    .is_err()
+            {
+                tracing::warn!(error_kind="database_notify", message_id=%message.id.as_uuid(), "message deleted but realtime notification failed");
             }
             Ok(message)
         })
@@ -1044,6 +1100,7 @@ impl ChatRepository for PostgresChatRepository {
                 sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
                 sent_at: persisted_now(),
                 edited_at: None,
+                deleted_at: None,
             };
             sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values ($1, $2, $3, $4, $5, $6, $7)")
                 .bind(*message.id.as_uuid())
@@ -1080,7 +1137,7 @@ impl ChatRepository for PostgresChatRepository {
 
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
-            let row = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at from messages where id = $1")
+            let row = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where id = $1")
                 .bind(*id.as_uuid())
                 .fetch_optional(&self.pool)
                 .await
@@ -1142,7 +1199,7 @@ impl ChatRepository for PostgresChatRepository {
     ) -> RepositoryFuture<'a, crate::domain::MessageReactionChange> {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
-            let channel: Option<uuid::Uuid> = sqlx::query_scalar("select m.channel_id from messages m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2")
+            let channel: Option<uuid::Uuid> = sqlx::query_scalar("select m.channel_id from messages m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2 and m.deleted_at is null")
                 .bind(*actor.as_uuid()).bind(*message_id.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)?;
             let channel_id =
                 ChannelId::from_uuid(channel.ok_or(RepositoryError::PermissionDenied)?);
@@ -2296,6 +2353,7 @@ fn chat_message(row: PgRow) -> Result<ChatMessage, RepositoryError> {
     let body: String = row.try_get("body").map_err(storage)?;
     let sent_at = row.try_get("created_at").map_err(storage)?;
     let edited_at = row.try_get("edited_at").unwrap_or(None);
+    let deleted_at = row.try_get("deleted_at").unwrap_or(None);
     Ok(ChatMessage {
         id: MessageId::from_uuid(id),
         channel_id: ChannelId::from_uuid(channel_id),
@@ -2305,6 +2363,7 @@ fn chat_message(row: PgRow) -> Result<ChatMessage, RepositoryError> {
         sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
         sent_at,
         edited_at,
+        deleted_at,
     })
 }
 

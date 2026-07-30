@@ -8,7 +8,7 @@ mod text;
 
 pub use commands::{
     AcceptCircleInvitation, AddChannelMember, ChannelRef, CreateChannel, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, EditMessage, JoinChannel, LeaveChannel,
+    CreateCircleInvitation, DeleteCircle, DeleteMessage, EditMessage, JoinChannel, LeaveChannel,
     LoadRecentMessages, MarkRead, MessageLimit, SendMessage,
 };
 pub use events::ChatEvent;
