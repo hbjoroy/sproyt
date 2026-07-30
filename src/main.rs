@@ -2165,6 +2165,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
       .empty-state h2 { margin-top: 0; }
       .onboarding { display: grid; gap: 10px; }
+      .onboarding > summary { cursor: pointer; font-weight: 700; }
+      .onboarding-fields { display: grid; gap: 10px; padding-top: 10px; }
       .onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       .onboarding-notice { margin: 0; color: #506057; font-size: .85rem; line-height: 1.4; }
       .agent-access { border-top: 1px solid var(--border); padding-top: 12px; }
@@ -2433,14 +2435,21 @@ const INDEX_HTML: &str = r##"<!doctype html>
           grid-template-rows: auto auto minmax(0, 1fr) auto;
         }
 
-        .sidebar { grid-row: auto; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; gap: 8px; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .sidebar { grid-row: auto; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; gap: 8px; min-height: 0; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
+        .sidebar.mobile-open { max-height: min(68dvh, calc(var(--app-height) - 132px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; touch-action: pan-y; }
         .brand h1 { margin: 0; font-size: clamp(1.35rem, 8vw, 2rem); }
         .brand-mark { width: 38px; height: 38px; }
         .sidebar .identity { display: none; grid-column: 1 / -1; }
-        .sidebar.mobile-open .identity { display: grid; }
+        .sidebar.mobile-open .identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; }
+        .sidebar.mobile-open .identity > span { grid-column: 1 / -1; }
         .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; white-space: nowrap; }
         .sidebar nav, .sidebar .onboarding, .sidebar .agent-access { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding, .sidebar.mobile-open .agent-access { display: grid; }
+        .sidebar.mobile-open nav { gap: 6px; }
+        .sidebar.mobile-open .onboarding { gap: 0; }
+        .sidebar.mobile-open .onboarding-fields { gap: 7px; padding-top: 8px; }
+        .sidebar.mobile-open .navigation-heading { margin: 3px 4px; }
+        .sidebar.mobile-open input, .sidebar.mobile-open select, .sidebar.mobile-open button { min-height: 36px; padding-top: 5px; padding-bottom: 5px; }
 
         .conversation-header { min-height: 48px; padding: 8px 10px; }
         .conversation-header h2 { margin: 0; font-size: 1.15rem; }
@@ -2572,7 +2581,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <label>Brukar<select id="direct-user"><option value="">Vel brukar</option></select></label>
           <button id="open-direct" type="button" disabled>Start samtale</button>
         </nav>
-        <section class="onboarding" id="mobile-onboarding" aria-label="Ny vennekrets">
+        <details class="onboarding" id="mobile-onboarding">
+          <summary>Administrer kretsar og kanalar</summary>
+          <div class="onboarding-fields" aria-label="Ny vennekrets">
           <p class="navigation-heading">Vennekrets</p>
           <label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label>
           <label>Namn<input id="circle-name" placeholder="Turvenner"></label>
@@ -2591,7 +2602,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="add-channel-member" type="button" disabled>Legg til i vald kanal</button>
           <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
           <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
-        </section>
+          </div>
+        </details>
         <details class="agent-access" {{AGENT_HIDDEN}}>
           <summary>Agenttilgang</summary>
           <p>Lag ein kortliva MCP-agent for den opne samtalen. Tilgangen varer i 30 minutt og kan lesast og skrive meldingar.</p>
@@ -6379,8 +6391,11 @@ mod protocol_capacity_tests {
         assert!(body.contains(":focus-visible"));
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
         assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
+        assert!(body.contains("<summary>Administrer kretsar og kanalar</summary>"));
         assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
-        assert!(body.contains(".sidebar.mobile-open .identity { display: grid; }"));
+        assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
+        assert!(body.contains(".sidebar.mobile-open { max-height:"));
+        assert!(body.contains("overflow-y: auto; overscroll-behavior: contain;"));
         assert!(body.contains("grid-template-rows: auto auto minmax(0, 1fr) auto;"));
         assert!(body.contains("form.send { grid-template-columns: auto auto minmax(0, 1fr) auto"));
         assert!(body.contains(".conversation-header .status[data-routine=\"true\"]"));
