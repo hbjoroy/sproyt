@@ -864,10 +864,20 @@ async fn prepare_uploaded_media(
 
         let image =
             image::load_from_memory(&content).map_err(|_| MediaPreparationError::InvalidImage)?;
-        let image = apply_exif_orientation(image, &content, is_jpeg);
+        let orientation = exif_orientation(&content, is_jpeg);
+        let image = apply_exif_orientation(image, orientation);
+        let normalized_content = if is_jpeg && orientation != 1 {
+            let mut output = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, 92)
+                .encode_image(&image)
+                .map_err(|_| MediaPreparationError::InvalidImage)?;
+            output
+        } else {
+            content
+        };
         let dimensions = image.dimensions();
         if dimensions.0 <= MEDIA_PREVIEW_LONG_EDGE && dimensions.1 <= MEDIA_PREVIEW_LONG_EDGE {
-            return Ok((content, Some(dimensions), None));
+            return Ok((normalized_content, Some(dimensions), None));
         }
         let preview_image = image.resize(
             MEDIA_PREVIEW_LONG_EDGE,
@@ -889,7 +899,7 @@ async fn prepare_uploaded_media(
             ("image/jpeg", output)
         };
         Ok((
-            content,
+            normalized_content,
             Some(dimensions),
             Some(MediaVariant {
                 content_type: preview_type.to_owned(),
@@ -903,16 +913,12 @@ async fn prepare_uploaded_media(
     .map_err(|_| MediaPreparationError::Worker)?
 }
 
-fn apply_exif_orientation(
-    image: image::DynamicImage,
-    content: &[u8],
-    is_jpeg: bool,
-) -> image::DynamicImage {
+fn exif_orientation(content: &[u8], is_jpeg: bool) -> u32 {
     if !is_jpeg {
-        return image;
+        return 1;
     }
     let mut cursor = Cursor::new(content);
-    let orientation = exif::Reader::new()
+    exif::Reader::new()
         .read_from_container(&mut cursor)
         .ok()
         .and_then(|metadata| {
@@ -920,7 +926,10 @@ fn apply_exif_orientation(
                 .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
                 .and_then(|field| field.value.get_uint(0))
         })
-        .unwrap_or(1);
+        .unwrap_or(1)
+}
+
+fn apply_exif_orientation(image: image::DynamicImage, orientation: u32) -> image::DynamicImage {
     match orientation {
         2 => image.fliph(),
         3 => image.rotate180(),
@@ -5862,12 +5871,29 @@ mod protocol_capacity_tests {
             1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
         ];
         iphone_jpeg.splice(2..2, exif_orientation_6);
-        let (_, dimensions, preview) = prepare_uploaded_media(iphone_jpeg, "image/jpeg")
+        let (normalized, dimensions, preview) = prepare_uploaded_media(iphone_jpeg, "image/jpeg")
             .await
             .unwrap();
         assert_eq!(dimensions, Some((900, 1_440)));
         let decoded = image::load_from_memory(&preview.unwrap().content).unwrap();
         assert_eq!(decoded.dimensions(), (450, 720));
+        let normalized = image::load_from_memory(&normalized).unwrap();
+        assert_eq!(normalized.dimensions(), (900, 1_440));
+
+        let small_portrait_pixels = image::DynamicImage::new_rgb8(640, 480);
+        let mut small_samsung_jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut small_samsung_jpeg, 90)
+            .encode_image(&small_portrait_pixels)
+            .unwrap();
+        small_samsung_jpeg.splice(2..2, exif_orientation_6);
+        let (normalized, dimensions, preview) =
+            prepare_uploaded_media(small_samsung_jpeg, "image/jpeg")
+                .await
+                .unwrap();
+        assert_eq!(dimensions, Some((480, 640)));
+        assert!(preview.is_none());
+        let normalized = image::load_from_memory(&normalized).unwrap();
+        assert_eq!(normalized.dimensions(), (480, 640));
 
         let source = image::DynamicImage::new_rgb8(32, 24);
         let mut motion_photo = Vec::new();
