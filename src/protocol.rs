@@ -57,6 +57,16 @@ pub enum ClientCommand {
         after: Option<ChannelSequence>,
         before: Option<ChannelSequence>,
     },
+    LoadThread {
+        root_message_id: crate::domain::MessageId,
+    },
+    ListThreadSummaries {
+        channel_id: ChannelId,
+    },
+    MarkThreadRead {
+        root_message_id: crate::domain::MessageId,
+        sequence: crate::domain::ChannelSequence,
+    },
     SubscribeChannel {
         channel_id: ChannelId,
     },
@@ -186,6 +196,17 @@ pub enum ServerEvent {
     MessagesLoaded {
         channel_id: ChannelId,
         messages: Vec<ChatMessage>,
+    },
+    ThreadLoaded {
+        root_message_id: crate::domain::MessageId,
+        messages: Vec<ChatMessage>,
+    },
+    ThreadSummariesListed {
+        channel_id: ChannelId,
+        summaries: Vec<crate::domain::ThreadSummary>,
+    },
+    ThreadReadUpdated {
+        summary: crate::domain::ThreadSummary,
     },
     SubscriptionStarted {
         channel_id: ChannelId,

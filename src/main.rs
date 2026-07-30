@@ -2700,8 +2700,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let requestedChannelSlug = "general";
       const timeline = [];
       const threadReplies = new Map();
+      const threadRoots = new Map();
+      const threadSummaries = new Map();
       const pendingThreadReplies = new Map();
       let activeThreadRootId = null;
+      let pendingThreadToOpen = null;
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
       const pendingCommands = new Map();
@@ -3919,6 +3922,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           setConnectionStatus("Tilkopla");
           renderConversationIdentity();
           payload.history.forEach(appendTimelineMessage);
+          sendCommand("list_thread_summaries", { channel_id: payload.channel_id });
           historyHasMore = payload.history.length === historyPageSize;
           historyLoading = false;
           acknowledgeLatest(payload.channel_id, payload.history);
@@ -3928,6 +3932,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const scrollOffset = reconnectScrollOffset;
           reconnectScrollOffset = null;
           renderTimeline({ forceBottom: scrollOffset === null || scrollOffset < 80 });
+          if (pendingThreadToOpen) {
+            const rootMessageId = pendingThreadToOpen;
+            pendingThreadToOpen = null;
+            window.setTimeout(() => openThread(rootMessageId), 0);
+          }
           if (scrollOffset !== null && scrollOffset >= 80) restoreConversationScrollOffset(scrollOffset);
           updateAgentAccessControls();
           return;
@@ -3954,6 +3963,33 @@ const INDEX_HTML: &str = r##"<!doctype html>
             applyReactionChange(payload.change);
             renderTimeline({ preserveScroll: true });
           }
+          return;
+        }
+
+        if (event.type === "thread_summaries_listed") {
+          if (payload.channel_id !== activeChannelId) return;
+          threadSummaries.clear();
+          for (const summary of payload.summaries) threadSummaries.set(summary.root_message_id, summary);
+          renderTimeline({ preserveScroll: true });
+          return;
+        }
+
+        if (event.type === "thread_loaded") {
+          const root = payload.messages.find((message) => message.id === payload.root_message_id);
+          const replies = payload.messages.filter((message) => message.parent_message_id === payload.root_message_id);
+          if (root) threadRoots.set(payload.root_message_id, root);
+          threadReplies.set(payload.root_message_id, replies);
+          if (activeThreadRootId === payload.root_message_id) {
+            renderThread();
+            const latest = replies.at(-1)?.sequence;
+            if (latest !== undefined) sendCommand("mark_thread_read", { root_message_id: payload.root_message_id, sequence: latest });
+          }
+          return;
+        }
+
+        if (event.type === "thread_read_updated") {
+          threadSummaries.set(payload.summary.root_message_id, payload.summary);
+          renderTimeline({ preserveScroll: true });
           return;
         }
 
@@ -4165,6 +4201,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         reconnectScrollOffset = null;
         timeline.length = 0;
         threadReplies.clear();
+        threadRoots.clear();
+        threadSummaries.clear();
         if (threadPanel.open) threadPanel.close();
         messageReactions.clear();
         seenMessageIds.clear();
@@ -4223,7 +4261,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           open.textContent = "Opne samtalen";
           open.addEventListener("click", () => {
             const channel = knownChannels.find((item) => item.id === mention.message.channel_id);
-            if (channel) selectChannel(channel);
+            if (channel) {
+              pendingThreadToOpen = mention.message.parent_message_id || null;
+              selectChannel(channel);
+            }
           });
           actions.append(open);
           if (!mention.read) {
@@ -4310,6 +4351,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         subscribedChannelId = null;
         timeline.length = 0;
         threadReplies.clear();
+        threadRoots.clear();
+        threadSummaries.clear();
         if (threadPanel.open) threadPanel.close();
         seenMessageIds.clear();
         historyRequestIds.clear();
@@ -4525,7 +4568,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
           replies.push(message);
           replies.sort((left, right) => left.sequence - right.sequence);
           threadReplies.set(message.parent_message_id, replies);
-          if (activeThreadRootId === message.parent_message_id) renderThread();
+          const previous = threadSummaries.get(message.parent_message_id);
+          threadSummaries.set(message.parent_message_id, {
+            root_message_id: message.parent_message_id,
+            reply_count: (previous?.reply_count || 0) + 1,
+            unread_count: activeThreadRootId === message.parent_message_id || message.sender_id === currentParticipantId
+              ? (previous?.unread_count || 0)
+              : (previous?.unread_count || 0) + 1,
+            latest_sequence: message.sequence
+          });
+          if (activeThreadRootId === message.parent_message_id) {
+            renderThread();
+            sendCommand("mark_thread_read", { root_message_id: message.parent_message_id, sequence: message.sequence });
+          }
           return;
         }
         timeline.push({ type: "message", message });
@@ -4542,9 +4597,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (activeThreadRootId === message.parent_message_id) renderThread();
           return;
         }
+        if (threadRoots.has(message.id)) {
+          threadRoots.set(message.id, message);
+          if (activeThreadRootId === message.id) renderThread();
+        }
         const item = timeline.find((candidate) => candidate.type === "message" && candidate.message.id === message.id);
         if (item) item.message = message;
-        else appendTimelineMessage(message);
+        else if (!threadRoots.has(message.id)) appendTimelineMessage(message);
       }
 
       function prependTimelineMessages(messages) {
@@ -4566,15 +4625,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function openThread(messageId) {
         activeThreadRootId = messageId;
-        renderThread();
         if (!threadPanel.open) threadPanel.showModal();
+        threadMessages.innerHTML = '<div class="empty-state"><p>Lastar tråden …</p></div>';
+        sendCommand("load_thread", { root_message_id: messageId });
         threadBody.focus();
       }
 
       function renderThread() {
         if (!activeThreadRootId) return;
-        const root = timeline.find((item) => item.type === "message" && item.message.id === activeThreadRootId)?.message;
-        if (!root) { threadPanel.close(); return; }
+        const root = timeline.find((item) => item.type === "message" && item.message.id === activeThreadRootId)?.message
+          || threadRoots.get(activeThreadRootId);
+        if (!root) return;
         threadForm.hidden = Boolean(root.deleted_at);
         threadMessages.replaceChildren();
         const rootContainer = document.createElement("div");
@@ -4752,12 +4813,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         wrapper.append(meta, body);
         if (!message.deleted_at) wrapper.append(renderMessageReactions(message));
-        const replyCount = (threadReplies.get(message.id) || []).length;
+        const summary = threadSummaries.get(message.id);
+        const replyCount = summary?.reply_count || 0;
         if (includeThread && !message.parent_message_id && (!message.deleted_at || replyCount > 0)) {
           const thread = document.createElement("button");
           thread.type = "button";
           thread.className = "thread-link";
           thread.textContent = replyCount === 0 ? "Svar i tråd" : `${replyCount} svar`;
+          if (summary?.unread_count > 0) thread.textContent += ` · ${summary.unread_count} uleste`;
           thread.setAttribute("aria-label", replyCount === 0 ? "Start ein tråd" : `Opne tråd med ${replyCount} svar`);
           thread.addEventListener("click", () => openThread(message.id));
           wrapper.append(thread);
@@ -5832,6 +5895,12 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("Svar i tråd"));
         assert!(INDEX_HTML.contains("message.parent_message_id"));
         assert!(INDEX_HTML.contains(".thread-panel { width: 100vw"));
+        assert!(INDEX_HTML.contains("sendCommand(\"load_thread\""));
+        assert!(INDEX_HTML.contains("sendCommand(\"list_thread_summaries\""));
+        assert!(INDEX_HTML.contains("sendCommand(\"mark_thread_read\""));
+        assert!(INDEX_HTML.contains("event.type === \"thread_loaded\""));
+        assert!(INDEX_HTML.contains("summary?.unread_count"));
+        assert!(INDEX_HTML.contains("pendingThreadToOpen = mention.message.parent_message_id"));
     }
 
     async fn start_test_server(

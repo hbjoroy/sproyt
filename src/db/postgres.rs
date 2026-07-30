@@ -1164,6 +1164,72 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn load_thread<'a>(
+        &'a self,
+        actor: UserId,
+        root_message_id: MessageId,
+    ) -> RepositoryFuture<'a, Vec<ChatMessage>> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i32>("select 1 from messages root join channel_memberships cm on cm.channel_id=root.channel_id and cm.user_id=$1 where root.id=$2 and root.parent_message_id is null")
+                .bind(*actor.as_uuid()).bind(*root_message_id.as_uuid())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at from messages where id=$1 or parent_message_id=$1 order by parent_message_id nulls first,sequence")
+                .bind(*root_message_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(chat_message).collect()
+        })
+    }
+
+    fn list_thread_summaries<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<crate::domain::ThreadSummary>> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i32>(
+                "select 1 from channel_memberships where channel_id=$1 and user_id=$2",
+            )
+            .bind(*channel_id.as_uuid())
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select r.parent_message_id,count(*) as reply_count,count(*) filter(where r.sequence>coalesce(trm.last_read_sequence,0) and r.sender_id<>$1) as unread_count,max(r.sequence) as latest_sequence from messages r left join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=$1 where r.channel_id=$2 and r.parent_message_id is not null group by r.parent_message_id order by max(r.sequence)")
+                .bind(*actor.as_uuid()).bind(*channel_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(thread_summary_postgres).collect()
+        })
+    }
+
+    fn mark_thread_read<'a>(
+        &'a self,
+        actor: UserId,
+        root_message_id: MessageId,
+        sequence: ChannelSequence,
+    ) -> RepositoryFuture<'a, crate::domain::ThreadSummary> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let latest: Option<i64> = sqlx::query_scalar("select max(reply.sequence) from messages root join channel_memberships cm on cm.channel_id=root.channel_id and cm.user_id=$1 left join messages reply on reply.parent_message_id=root.id where root.id=$2 and root.parent_message_id is null")
+                .bind(*actor.as_uuid()).bind(*root_message_id.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)?.flatten();
+            let latest = latest.ok_or(RepositoryError::NotFound)?;
+            let requested = i64::try_from(u64::from(sequence)).map_err(storage)?;
+            if requested > latest {
+                return Err(RepositoryError::NotFound);
+            }
+            sqlx::query("insert into thread_read_markers(root_message_id,user_id,last_read_sequence) values($1,$2,$3) on conflict(root_message_id,user_id) do update set last_read_sequence=greatest(thread_read_markers.last_read_sequence,excluded.last_read_sequence),updated_at=now()")
+                .bind(*root_message_id.as_uuid()).bind(*actor.as_uuid()).bind(requested).execute(&mut *tx).await.map_err(sql_error)?;
+            let row = sqlx::query("select r.parent_message_id,count(*) as reply_count,count(*) filter(where r.sequence>trm.last_read_sequence and r.sender_id<>$1) as unread_count,max(r.sequence) as latest_sequence from messages r join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=$1 where r.parent_message_id=$2 group by r.parent_message_id,trm.last_read_sequence")
+                .bind(*actor.as_uuid()).bind(*root_message_id.as_uuid()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+            let summary = thread_summary_postgres(row)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(summary)
+        })
+    }
+
     fn list_channel_reactions<'a>(
         &'a self,
         actor: UserId,
@@ -1309,7 +1375,7 @@ impl ChatRepository for PostgresChatRepository {
 
     fn list_mentions<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<InboxMention>> {
         Box::pin(async move {
-            let rows = sqlx::query("select m.id,m.channel_id,m.sender_id,m.sender_display_name,m.sequence,m.body,m.created_at,c.name as channel_name,mm.read_at from message_mentions mm join messages m on m.id=mm.message_id join channels c on c.id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=mm.mentioned_user_id where mm.mentioned_user_id=$1 order by m.created_at desc limit 200")
+            let rows = sqlx::query("select m.id,m.channel_id,m.parent_message_id,m.sender_id,m.sender_display_name,m.sequence,m.body,m.created_at,c.name as channel_name,mm.read_at from message_mentions mm join messages m on m.id=mm.message_id join channels c on c.id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=mm.mentioned_user_id where mm.mentioned_user_id=$1 order by m.created_at desc limit 200")
                 .bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(inbox_mention).collect()
         })
@@ -2409,6 +2475,18 @@ fn chat_message(row: PgRow) -> Result<ChatMessage, RepositoryError> {
         sent_at,
         edited_at,
         deleted_at,
+    })
+}
+
+fn thread_summary_postgres(row: PgRow) -> Result<crate::domain::ThreadSummary, RepositoryError> {
+    let reply_count: i64 = row.try_get("reply_count").map_err(storage)?;
+    let unread_count: i64 = row.try_get("unread_count").map_err(storage)?;
+    let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
+    Ok(crate::domain::ThreadSummary {
+        root_message_id: MessageId::from_uuid(row.try_get("parent_message_id").map_err(storage)?),
+        reply_count: u32::try_from(reply_count).map_err(storage)?,
+        unread_count: u32::try_from(unread_count).map_err(storage)?,
+        latest_sequence: ChannelSequence::try_from(latest_sequence).map_err(storage)?,
     })
 }
 
