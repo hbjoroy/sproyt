@@ -71,6 +71,8 @@ pub struct LoadRecentMessages {
 pub struct SendMessage {
     pub actor: UserId,
     pub channel_id: ChannelId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_message_id: Option<super::MessageId>,
     pub body: MessageBody,
 }
 

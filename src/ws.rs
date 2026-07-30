@@ -320,16 +320,31 @@ async fn execute_command(
             disconnect(chat, participant_id, &channel_id, subscriptions).await;
             Ok(ServerEvent::SubscriptionEnded { channel_id })
         }
-        ClientCommand::SendMessage { channel_id, body } => {
+        ClientCommand::SendMessage {
+            channel_id,
+            parent_message_id,
+            body,
+        } => {
             async {
-                let message = chat
-                    .send_message_idempotent(
+                let body = MessageBody::new(body)?;
+                let message = if let Some(parent_message_id) = parent_message_id {
+                    chat.send_thread_reply_idempotent(
                         channel_id,
                         participant_id.clone(),
-                        MessageBody::new(body)?,
+                        parent_message_id,
+                        body,
                         command_request_id,
                     )
-                    .await?;
+                    .await?
+                } else {
+                    chat.send_message_idempotent(
+                        channel_id,
+                        participant_id.clone(),
+                        body,
+                        command_request_id,
+                    )
+                    .await?
+                };
                 Ok(ServerEvent::MessageAccepted { message })
             }
             .await

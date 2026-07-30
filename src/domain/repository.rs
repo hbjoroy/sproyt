@@ -1047,6 +1047,18 @@ impl ChatRepository for InMemoryChatRepository {
             if !Policy::can_send_to_channel(role) {
                 return Err(RepositoryError::PermissionDenied);
             }
+            if let Some(parent_id) = command.parent_message_id {
+                let parent = state
+                    .messages
+                    .get(&command.channel_id)
+                    .into_iter()
+                    .flatten()
+                    .find(|message| message.id == parent_id)
+                    .ok_or(RepositoryError::NotFound)?;
+                if parent.parent_message_id.is_some() || parent.deleted_at.is_some() {
+                    return Err(RepositoryError::Conflict);
+                }
+            }
 
             let next_sequence = state.next_sequence(&command.channel_id)?;
             let sender_display_name = state
@@ -1057,6 +1069,7 @@ impl ChatRepository for InMemoryChatRepository {
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id.clone(),
+                parent_message_id: command.parent_message_id,
                 sender_id: command.actor,
                 sender_display_name,
                 body: command.body,
@@ -1141,7 +1154,10 @@ impl ChatRepository for InMemoryChatRepository {
                     .find(|message| &message.id == message_id)
                     .cloned()
                     .ok_or(RepositoryError::NotFound)?;
-                if message.channel_id != command.channel_id || message.body != command.body {
+                if message.channel_id != command.channel_id
+                    || message.parent_message_id != command.parent_message_id
+                    || message.body != command.body
+                {
                     return Err(RepositoryError::Conflict);
                 }
                 return Ok(message);
@@ -1153,6 +1169,18 @@ impl ChatRepository for InMemoryChatRepository {
             if !Policy::can_send_to_channel(role) {
                 return Err(RepositoryError::PermissionDenied);
             }
+            if let Some(parent_id) = command.parent_message_id {
+                let parent = state
+                    .messages
+                    .get(&command.channel_id)
+                    .into_iter()
+                    .flatten()
+                    .find(|message| message.id == parent_id)
+                    .ok_or(RepositoryError::NotFound)?;
+                if parent.parent_message_id.is_some() || parent.deleted_at.is_some() {
+                    return Err(RepositoryError::Conflict);
+                }
+            }
             let next_sequence = state.next_sequence(&command.channel_id)?;
             let sender_display_name = state
                 .users
@@ -1162,6 +1190,7 @@ impl ChatRepository for InMemoryChatRepository {
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id.clone(),
+                parent_message_id: command.parent_message_id,
                 sender_id: command.actor,
                 sender_display_name,
                 body: command.body,
@@ -1450,6 +1479,7 @@ mod tests {
             .append_message(SendMessage {
                 actor: alice.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("Persistent nok snart").unwrap(),
             })
             .await
@@ -1488,6 +1518,7 @@ mod tests {
             .append_message(SendMessage {
                 actor: alice.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("Hei").unwrap(),
             })
             .await
@@ -1550,6 +1581,7 @@ mod tests {
             .append_message(SendMessage {
                 actor: alice,
                 channel_id: channel.id,
+                parent_message_id: None,
                 body: MessageBody::new("should fail").unwrap(),
             })
             .await;
@@ -1575,6 +1607,7 @@ mod tests {
                 SendMessage {
                     actor: alice.clone(),
                     channel_id: channel.id.clone(),
+                    parent_message_id: None,
                     body: MessageBody::new("first").unwrap(),
                 },
                 "request-1".to_owned(),
@@ -1586,6 +1619,7 @@ mod tests {
                 SendMessage {
                     actor: alice.clone(),
                     channel_id: channel.id.clone(),
+                    parent_message_id: None,
                     body: MessageBody::new("first").unwrap(),
                 },
                 "request-1".to_owned(),
@@ -1598,6 +1632,7 @@ mod tests {
                 SendMessage {
                     actor: alice,
                     channel_id: channel.id.clone(),
+                    parent_message_id: None,
                     body: MessageBody::new("must not replace").unwrap(),
                 },
                 "request-1".to_owned(),

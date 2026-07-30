@@ -371,7 +371,7 @@ impl ChatRepository for SqliteChatRepository {
                 .collect::<Result<Vec<_>, _>>()?;
             let mut channels = Vec::with_capacity(summaries.len());
             for channel in summaries {
-                let rows = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = ? order by sequence")
+                let rows = sqlx::query("select id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = ? order by sequence")
                     .bind(channel.id.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
                 channels.push(ExportedChannel {
                     channel,
@@ -728,16 +728,16 @@ impl ChatRepository for SqliteChatRepository {
             let limit = i64::try_from(usize::from(query.limit)).map_err(storage)?;
             let (rows, reverse) = if let Some(after) = query.after {
                 let after = i64::try_from(u64::from(after)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = ? and sequence > ? order by sequence asc limit ?")
+                (sqlx::query("select id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = ? and sequence > ? order by sequence asc limit ?")
                     .bind(query.channel_id.to_string()).bind(after).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, false)
             } else if let Some(before) = query.before {
                 let before = i64::try_from(u64::from(before)).map_err(storage)?;
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = ? and sequence < ? order by sequence desc limit ?")
+                (sqlx::query("select id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = ? and sequence < ? order by sequence desc limit ?")
                     .bind(query.channel_id.to_string()).bind(before).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             } else {
-                (sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = ? order by sequence desc limit ?")
+                (sqlx::query("select id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = ? order by sequence desc limit ?")
                     .bind(query.channel_id.to_string()).bind(limit)
                     .fetch_all(&self.pool).await.map_err(sql_error)?, true)
             };
@@ -767,6 +767,12 @@ impl ChatRepository for SqliteChatRepository {
             if !Policy::can_send_to_channel(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
+            validate_thread_parent_sqlite(
+                &mut transaction,
+                command.channel_id.clone(),
+                command.parent_message_id,
+            )
+            .await?;
             let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence = next_sequence + 1 where channel_id = ? returning next_sequence - 1")
                 .bind(command.channel_id.to_string())
                 .fetch_optional(&mut *transaction)
@@ -784,6 +790,7 @@ impl ChatRepository for SqliteChatRepository {
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id,
+                parent_message_id: command.parent_message_id,
                 sender_id: command.actor,
                 sender_display_name,
                 body: command.body,
@@ -792,9 +799,10 @@ impl ChatRepository for SqliteChatRepository {
                 edited_at: None,
                 deleted_at: None,
             };
-            sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+            sqlx::query("insert into messages (id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(message.id.as_uuid().to_string())
                 .bind(message.channel_id.to_string())
+                .bind(message.parent_message_id.map(|id| id.as_uuid().to_string()))
                 .bind(message.sender_id.to_string())
                 .bind(message.sender_display_name.as_str())
                 .bind(sequence)
@@ -814,7 +822,7 @@ impl ChatRepository for SqliteChatRepository {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             let edited_at = persisted_now();
-            let row = sqlx::query("update messages set body=?,edited_at=? where id=? and sender_id=? and deleted_at is null returning id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
+            let row = sqlx::query("update messages set body=?,edited_at=? where id=? and sender_id=? and deleted_at is null returning id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
                 .bind(command.body.as_str()).bind(edited_at)
                 .bind(command.message_id.as_uuid().to_string()).bind(command.actor.to_string())
                 .fetch_optional(&mut *transaction).await.map_err(sql_error)?;
@@ -846,7 +854,7 @@ impl ChatRepository for SqliteChatRepository {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             let deleted_at = persisted_now();
-            let row = sqlx::query("update messages set body='Meldinga er sletta.',edited_at=null,deleted_at=coalesce(deleted_at,?) where id=? and sender_id=? returning id,channel_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
+            let row = sqlx::query("update messages set body='Meldinga er sletta.',edited_at=null,deleted_at=coalesce(deleted_at,?) where id=? and sender_id=? returning id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
                 .bind(deleted_at)
                 .bind(command.message_id.as_uuid().to_string())
                 .bind(command.actor.to_string())
@@ -894,7 +902,7 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             if reservation.rows_affected() == 0 {
-                let row = sqlx::query("select m.id, m.channel_id, m.sender_id, m.sender_display_name, m.sequence, m.body, m.created_at from command_receipts r join messages m on m.id = r.message_id where r.principal_id = ? and r.request_id = ?")
+                let row = sqlx::query("select m.id, m.channel_id, m.parent_message_id, m.sender_id, m.sender_display_name, m.sequence, m.body, m.created_at from command_receipts r join messages m on m.id = r.message_id where r.principal_id = ? and r.request_id = ?")
                     .bind(command.actor.to_string())
                     .bind(&request_id)
                     .fetch_optional(&mut *transaction)
@@ -902,8 +910,9 @@ impl ChatRepository for SqliteChatRepository {
                     .map_err(sql_error)?
                     .ok_or_else(|| storage("idempotency receipt has no message"))?;
                 let message = chat_message(row)?;
-                let payload_matches =
-                    message.channel_id == command.channel_id && message.body == command.body;
+                let payload_matches = message.channel_id == command.channel_id
+                    && message.parent_message_id == command.parent_message_id
+                    && message.body == command.body;
                 if payload_matches {
                     tracing::debug!(
                         principal_id = %command.actor,
@@ -937,6 +946,12 @@ impl ChatRepository for SqliteChatRepository {
             if !Policy::can_send_to_channel(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
+            validate_thread_parent_sqlite(
+                &mut transaction,
+                command.channel_id.clone(),
+                command.parent_message_id,
+            )
+            .await?;
             let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence = next_sequence + 1 where channel_id = ? returning next_sequence - 1")
                 .bind(command.channel_id.to_string())
                 .fetch_optional(&mut *transaction)
@@ -954,6 +969,7 @@ impl ChatRepository for SqliteChatRepository {
             let message = ChatMessage {
                 id: MessageId::generate(),
                 channel_id: command.channel_id,
+                parent_message_id: command.parent_message_id,
                 sender_id: command.actor,
                 sender_display_name,
                 body: command.body,
@@ -962,9 +978,10 @@ impl ChatRepository for SqliteChatRepository {
                 edited_at: None,
                 deleted_at: None,
             };
-            sqlx::query("insert into messages (id, channel_id, sender_id, sender_display_name, sequence, body, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+            sqlx::query("insert into messages (id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(message.id.as_uuid().to_string())
                 .bind(message.channel_id.to_string())
+                .bind(message.parent_message_id.map(|id| id.as_uuid().to_string()))
                 .bind(message.sender_id.to_string())
                 .bind(message.sender_display_name.as_str())
                 .bind(sequence)
@@ -989,7 +1006,7 @@ impl ChatRepository for SqliteChatRepository {
 
     fn load_message<'a>(&'a self, id: MessageId) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
-            let row = sqlx::query("select id, channel_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where id = ?")
+            let row = sqlx::query("select id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where id = ?")
                 .bind(id.as_uuid().to_string())
                 .fetch_optional(&self.pool)
                 .await
@@ -2164,9 +2181,38 @@ fn user_task(row: sqlx::sqlite::SqliteRow) -> Result<UserTask, RepositoryError> 
     })
 }
 
+async fn validate_thread_parent_sqlite(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    channel_id: ChannelId,
+    parent_message_id: Option<MessageId>,
+) -> Result<(), RepositoryError> {
+    let Some(parent_message_id) = parent_message_id else {
+        return Ok(());
+    };
+    let parent = sqlx::query_as::<_, (Option<String>, Option<DateTime<Utc>>)>(
+        "select parent_message_id, deleted_at from messages where id=? and channel_id=?",
+    )
+    .bind(parent_message_id.as_uuid().to_string())
+    .bind(channel_id.to_string())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(sql_error)?
+    .ok_or(RepositoryError::NotFound)?;
+    if parent.0.is_some() || parent.1.is_some() {
+        return Err(RepositoryError::Conflict);
+    }
+    Ok(())
+}
+
 fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryError> {
     let id: String = row.try_get("id").map_err(storage)?;
     let channel_id: String = row.try_get("channel_id").map_err(storage)?;
+    let parent_message_id = row
+        .try_get::<Option<String>, _>("parent_message_id")
+        .unwrap_or(None)
+        .map(|id| uuid::Uuid::parse_str(&id).map(MessageId::from_uuid))
+        .transpose()
+        .map_err(storage)?;
     let sender_id: String = row.try_get("sender_id").map_err(storage)?;
     let sender_display_name: String = row.try_get("sender_display_name").map_err(storage)?;
     let sequence: i64 = row.try_get("sequence").map_err(storage)?;
@@ -2178,6 +2224,7 @@ fn chat_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, RepositoryE
     Ok(ChatMessage {
         id: MessageId::from_uuid(id),
         channel_id: ChannelId::new(channel_id).map_err(storage)?,
+        parent_message_id,
         sender_id: UserId::new(sender_id).map_err(storage)?,
         sender_display_name: DisplayName::new(sender_display_name).map_err(storage)?,
         body: MessageBody::new(body).map_err(storage)?,
@@ -2407,6 +2454,7 @@ mod tests {
             .append_message(SendMessage {
                 actor: alice.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("durable").unwrap(),
             })
             .await
@@ -2428,6 +2476,7 @@ mod tests {
                 SendMessage {
                     actor: UserId::named("sqlite-alice"),
                     channel_id: channel.id.clone(),
+                    parent_message_id: None,
                     body: MessageBody::new("once").unwrap(),
                 },
                 "request-1".to_owned(),
@@ -2439,6 +2488,7 @@ mod tests {
                 SendMessage {
                     actor: UserId::named("sqlite-alice"),
                     channel_id: channel.id.clone(),
+                    parent_message_id: None,
                     body: MessageBody::new("once").unwrap(),
                 },
                 "request-1".to_owned(),
@@ -2451,6 +2501,7 @@ mod tests {
                 SendMessage {
                     actor: UserId::named("sqlite-alice"),
                     channel_id: channel.id.clone(),
+                    parent_message_id: None,
                     body: MessageBody::new("twice").unwrap(),
                 },
                 "request-1".to_owned(),
@@ -2494,6 +2545,7 @@ mod tests {
             .append_message(SendMessage {
                 actor: alice.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: media_body.clone(),
             })
             .await
@@ -2502,6 +2554,7 @@ mod tests {
             .append_message(SendMessage {
                 actor: alice.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: media_body,
             })
             .await;
@@ -2682,6 +2735,7 @@ mod tests {
             .append_message(SendMessage {
                 actor: alice.clone(),
                 channel_id: general.id,
+                parent_message_id: None,
                 body: MessageBody::new("@BobBuilder kan du ordne dette?").unwrap(),
             })
             .await

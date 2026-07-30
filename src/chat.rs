@@ -646,7 +646,7 @@ impl ChatEngine {
         sender_id: UserId,
         body: MessageBody,
     ) -> Result<ChatMessage, ChatError> {
-        self.send_message_command(channel_id, sender_id, body, None)
+        self.send_message_command(channel_id, sender_id, None, body, None)
             .await
     }
 
@@ -657,14 +657,33 @@ impl ChatEngine {
         body: MessageBody,
         request_id: String,
     ) -> Result<ChatMessage, ChatError> {
-        self.send_message_command(channel_id, sender_id, body, Some(request_id))
+        self.send_message_command(channel_id, sender_id, None, body, Some(request_id))
             .await
+    }
+
+    pub async fn send_thread_reply_idempotent(
+        &self,
+        channel_id: ChannelId,
+        sender_id: UserId,
+        parent_message_id: MessageId,
+        body: MessageBody,
+        request_id: String,
+    ) -> Result<ChatMessage, ChatError> {
+        self.send_message_command(
+            channel_id,
+            sender_id,
+            Some(parent_message_id),
+            body,
+            Some(request_id),
+        )
+        .await
     }
 
     async fn send_message_command(
         &self,
         channel_id: ChannelId,
         sender_id: UserId,
+        parent_message_id: Option<MessageId>,
         body: MessageBody,
         request_id: Option<String>,
     ) -> Result<ChatMessage, ChatError> {
@@ -673,6 +692,7 @@ impl ChatEngine {
             .send(Command::SendMessage {
                 channel_id,
                 sender_id,
+                parent_message_id,
                 body,
                 request_id,
                 reply,
@@ -843,6 +863,7 @@ enum Command {
     SendMessage {
         channel_id: ChannelId,
         sender_id: UserId,
+        parent_message_id: Option<MessageId>,
         body: MessageBody,
         request_id: Option<String>,
         reply: oneshot::Sender<Result<ChatMessage, ChatError>>,
@@ -921,12 +942,13 @@ impl ChatActor {
                 Command::SendMessage {
                     channel_id,
                     sender_id,
+                    parent_message_id,
                     body,
                     request_id,
                     reply,
                 } => {
                     let response = self
-                        .send_message(channel_id, sender_id, body, request_id)
+                        .send_message(channel_id, sender_id, parent_message_id, body, request_id)
                         .await;
                     let _ = reply.send(response);
                 }
@@ -1139,12 +1161,14 @@ impl ChatActor {
         &mut self,
         channel_id: ChannelId,
         sender_id: UserId,
+        parent_message_id: Option<MessageId>,
         body: MessageBody,
         request_id: Option<String>,
     ) -> Result<ChatMessage, ChatError> {
         let command = SendMessage {
             actor: sender_id,
             channel_id: channel_id.clone(),
+            parent_message_id,
             body,
         };
         let message = match request_id {
@@ -1326,6 +1350,45 @@ mod tests {
         let subscription = chat.subscribe(channel, bob).await.unwrap();
         assert_eq!(subscription.history.len(), 1);
         assert_eq!(u64::from(subscription.history[0].sequence), 1);
+    }
+
+    #[tokio::test]
+    async fn thread_replies_are_persisted_and_broadcast_with_the_root_id() {
+        let (chat, channel, alice, bob) = chat_fixture().await;
+        let mut subscription = chat.subscribe(channel.clone(), bob).await.unwrap();
+        let _joined = subscription.receiver.recv().await.unwrap();
+        let root = chat
+            .send_message(
+                channel.clone(),
+                alice.clone(),
+                MessageBody::new("Rotmelding").unwrap(),
+            )
+            .await
+            .unwrap();
+        let _root_event = next_message_event(&mut subscription.receiver).await;
+        let reply = chat
+            .send_thread_reply_idempotent(
+                channel.clone(),
+                alice.clone(),
+                root.id,
+                MessageBody::new("Svar").unwrap(),
+                "thread-reply".to_owned(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.parent_message_id, Some(root.id));
+        assert_eq!(next_message_event(&mut subscription.receiver).await, reply);
+        assert!(matches!(
+            chat.send_thread_reply_idempotent(
+                channel,
+                alice,
+                reply.id,
+                MessageBody::new("Nøsta svar").unwrap(),
+                "nested-thread-reply".to_owned(),
+            )
+            .await,
+            Err(ChatError::Repository(RepositoryError::Conflict))
+        ));
     }
 
     #[tokio::test]
