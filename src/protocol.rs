@@ -65,6 +65,8 @@ pub enum ClientCommand {
     },
     SendMessage {
         channel_id: ChannelId,
+        #[serde(default)]
+        parent_message_id: Option<crate::domain::MessageId>,
         body: String,
     },
     EditMessage {

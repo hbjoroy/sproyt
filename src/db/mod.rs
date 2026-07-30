@@ -183,6 +183,7 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("first").unwrap(),
             },
             "same-request".to_owned(),
@@ -238,6 +239,7 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("first").unwrap(),
             },
             "same-request".to_owned(),
@@ -250,6 +252,7 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("different").unwrap(),
             },
             "same-request".to_owned(),
@@ -308,6 +311,7 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("second").unwrap(),
             },
             "second-request".to_owned(),
@@ -323,6 +327,7 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("third").unwrap(),
             },
             "third-request".to_owned(),
@@ -422,6 +427,33 @@ where
         Err(RepositoryError::PermissionDenied) | Err(RepositoryError::Conflict)
     ));
     assert_eq!(repository.load_message(first.id).await.unwrap(), deleted);
+
+    let reply = repository
+        .append_message_idempotent(
+            SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                parent_message_id: Some(second.id),
+                body: MessageBody::new("svar i tråden").unwrap(),
+            },
+            "thread-reply-request".to_owned(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reply.parent_message_id, Some(second.id));
+    assert_eq!(reply.channel_id, second.channel_id);
+    assert!(matches!(
+        repository
+            .append_message(SendMessage {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                parent_message_id: Some(reply.id),
+                body: MessageBody::new("nested reply").unwrap(),
+            })
+            .await,
+        Err(RepositoryError::Conflict)
+    ));
+    assert_eq!(repository.load_message(reply.id).await.unwrap(), reply);
 
     let circle = repository
         .create_circle(CreateCircle {
@@ -571,6 +603,7 @@ where
             .append_message(SendMessage {
                 actor: actor.clone(),
                 channel_id: circle_channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new(format!("portable message {sequence}")).unwrap(),
             })
             .await
@@ -715,6 +748,7 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("first").unwrap(),
             },
             "same-request".to_owned(),
@@ -726,6 +760,7 @@ where
             SendMessage {
                 actor: actor.clone(),
                 channel_id: channel.id.clone(),
+                parent_message_id: None,
                 body: MessageBody::new("first").unwrap(),
             },
             "same-request".to_owned(),

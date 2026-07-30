@@ -2110,6 +2110,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .media-lightbox img { display: block; width: auto; max-width: calc(100vw - 40px); height: auto; max-height: calc(100dvh - 100px); margin: auto; object-fit: contain; }
       .media-lightbox p { margin: 8px auto 0; text-align: center; }
       .media-lightbox button { position: fixed; top: 10px; right: 14px; min-width: 42px; min-height: 42px; border-color: #fff8; background: #111b; color: white; font-size: 1.5rem; }
+      .thread-panel { width: min(520px, calc(100vw - 24px)); max-height: min(760px, calc(100dvh - 24px)); margin: auto 12px auto auto; padding: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); color: var(--ink); }
+      .thread-panel::backdrop { background: #14221b55; }
+      .thread-panel > header { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--paper); }
+      .thread-panel > header h2 { margin: 0; font-size: 1.15rem; }
+      .thread-panel > header button { min-width: 42px; min-height: 42px; padding: 4px; }
+      .thread-messages { display: grid; gap: 10px; max-height: calc(100dvh - 190px); padding: 12px; overflow-y: auto; }
+      .thread-root { border-bottom: 2px solid var(--line); }
+      .thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); }
+      .thread-form textarea { min-width: 0; min-height: 44px; max-height: 120px; }
+      .thread-link { font-weight: 700; }
       .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px; }
       .message-actions { display: flex; gap: 6px; justify-content: flex-end; }
       .message-actions button { min-height: 28px; padding: 3px 8px; background: transparent; color: #506057; font-size: .8rem; }
@@ -2421,6 +2431,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .message-media img, .message-media video { width: auto; max-width: 100%; max-height: min(48dvh, 420px); object-fit: contain; }
         .media-lightbox { padding: 42px 12px 12px; }
         .media-lightbox img { max-width: calc(100vw - 24px); max-height: calc(100dvh - 82px); }
+        .thread-panel { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; border-radius: 0; }
+        .thread-messages { max-height: calc(100dvh - 132px); }
         .reaction-picker > div { width: min(310px, calc(100vw - 40px)); }
         .reaction-viewers ul { max-width: calc(100vw - 40px); }
 
@@ -2594,6 +2606,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <button id="send" type="submit" disabled>Send</button>
       </form>
     </main>
+    <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
     <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
     <datalist id="reaction-emoji-catalog"><option value="😍">forelska hjarteauge</option><option value="🥰">glad kjærleik</option><option value="😊">smil glad</option><option value="🤣">ler latter</option><option value="😢">trist gråt</option><option value="😭">gråt</option><option value="😮">overraska</option><option value="😡">sint</option><option value="👏">applaus bra</option><option value="🙌">hurra</option><option value="💪">sterk</option><option value="🤝">avtale</option><option value="👀">ser</option><option value="💯">hundre perfekt</option><option value="✅">ferdig ja</option><option value="❌">nei feil</option><option value="⭐">stjerne</option><option value="💡">idé</option><option value="🚀">rakett</option><option value="🥳">fest</option><option value="🍻">skål</option><option value="🌊">bølgje sjøsprøyt</option></datalist>
 
@@ -2622,6 +2635,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const mediaLightbox = document.querySelector("#media-lightbox");
       const mediaLightboxImage = document.querySelector("#media-lightbox-image");
       const mediaLightboxCaption = document.querySelector("#media-lightbox-caption");
+      const threadPanel = document.querySelector("#thread-panel");
+      const threadMessages = document.querySelector("#thread-messages");
+      const threadForm = document.querySelector("#thread-form");
+      const threadBody = document.querySelector("#thread-body");
       const viewModeButton = document.querySelector("#view-mode");
       const rawModeButton = document.querySelector("#raw-mode");
       const statusEl = document.querySelector("#status");
@@ -2682,6 +2699,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
+      const threadReplies = new Map();
+      const pendingThreadReplies = new Map();
+      let activeThreadRootId = null;
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
       const pendingCommands = new Map();
@@ -2966,6 +2986,20 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (files.length) { event.preventDefault(); uploadMediaFiles(files); }
       });
       document.querySelector("#media-lightbox-close").addEventListener("click", () => mediaLightbox.close());
+      document.querySelector("#thread-close").addEventListener("click", () => threadPanel.close());
+      threadPanel.addEventListener("close", () => { activeThreadRootId = null; });
+      threadForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const body = threadBody.value.trim();
+        if (!body || !activeThreadRootId || !activeChannelId) return;
+        const requestId = sendCommand("send_message", {
+          channel_id: activeChannelId,
+          parent_message_id: activeThreadRootId,
+          body
+        });
+        pendingThreadReplies.set(requestId, { rootId: activeThreadRootId, body });
+        threadBody.value = "";
+      });
       mediaLightbox.addEventListener("click", (event) => {
         if (event.target === mediaLightbox) mediaLightbox.close();
       });
@@ -3473,6 +3507,31 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bodyInput.focus();
       }
 
+      function finishPendingThreadReply(requestId, message) {
+        const pending = requestId ? pendingThreadReplies.get(requestId) : undefined;
+        if (!pending) return false;
+        pendingThreadReplies.delete(requestId);
+        if (message?.parent_message_id !== pending.rootId || message?.body !== pending.body) {
+          if (activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
+            threadBody.value = pending.body;
+          }
+          setConnected(socket?.readyState === WebSocket.OPEN, "Tråden fekk ei ugyldig sendekvittering; svaret er bevart");
+          return true;
+        }
+        return true;
+      }
+
+      function failPendingThreadReply(requestId, message) {
+        const pending = requestId ? pendingThreadReplies.get(requestId) : undefined;
+        if (!pending) return false;
+        pendingThreadReplies.delete(requestId);
+        if (activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
+          threadBody.value = pending.body;
+        }
+        setConnected(socket?.readyState === WebSocket.OPEN, `Trådsvaret vart ikkje sendt: ${message}`);
+        return true;
+      }
+
       function setConnected(connected, status) {
         setConnectionStatus(status);
         const writableChannel = connected
@@ -3943,6 +4002,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             renderChannels();
           }
           finishPendingMessage(event.request_id, payload.message);
+          finishPendingThreadReply(event.request_id, payload.message);
           return;
         }
 
@@ -4011,7 +4071,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "error") {
           if (historyRequestIds.delete(event.request_id)) historyLoading = false;
           if (requestedCommand === "send_message") {
-            failPendingMessage(event.request_id, payload.message || payload.code || "ukjend feil");
+            const message = payload.message || payload.code || "ukjend feil";
+            if (!failPendingThreadReply(event.request_id, message)) {
+              failPendingMessage(event.request_id, message);
+            }
             pushSystem(payload.message || payload.code);
             return;
           }
@@ -4101,6 +4164,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         activeChannelId = null;
         reconnectScrollOffset = null;
         timeline.length = 0;
+        threadReplies.clear();
+        if (threadPanel.open) threadPanel.close();
         messageReactions.clear();
         seenMessageIds.clear();
         historyRequestIds.clear();
@@ -4244,6 +4309,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
         subscribedChannelId = null;
         timeline.length = 0;
+        threadReplies.clear();
+        if (threadPanel.open) threadPanel.close();
         seenMessageIds.clear();
         historyRequestIds.clear();
         historyHasMore = false;
@@ -4453,10 +4520,28 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function appendTimelineMessage(message) {
         if (seenMessageIds.has(message.id)) return;
         seenMessageIds.add(message.id);
+        if (message.parent_message_id) {
+          const replies = threadReplies.get(message.parent_message_id) || [];
+          replies.push(message);
+          replies.sort((left, right) => left.sequence - right.sequence);
+          threadReplies.set(message.parent_message_id, replies);
+          if (activeThreadRootId === message.parent_message_id) renderThread();
+          return;
+        }
         timeline.push({ type: "message", message });
       }
 
       function replaceTimelineMessage(message) {
+        if (message.parent_message_id) {
+          const replies = threadReplies.get(message.parent_message_id) || [];
+          const index = replies.findIndex((candidate) => candidate.id === message.id);
+          if (index >= 0) replies[index] = message;
+          else replies.push(message);
+          replies.sort((left, right) => left.sequence - right.sequence);
+          threadReplies.set(message.parent_message_id, replies);
+          if (activeThreadRootId === message.parent_message_id) renderThread();
+          return;
+        }
         const item = timeline.find((candidate) => candidate.type === "message" && candidate.message.id === message.id);
         if (item) item.message = message;
         else appendTimelineMessage(message);
@@ -4467,9 +4552,39 @@ const INDEX_HTML: &str = r##"<!doctype html>
         for (const message of messages) {
           if (seenMessageIds.has(message.id)) continue;
           seenMessageIds.add(message.id);
+          if (message.parent_message_id) {
+            const replies = threadReplies.get(message.parent_message_id) || [];
+            replies.push(message);
+            replies.sort((left, right) => left.sequence - right.sequence);
+            threadReplies.set(message.parent_message_id, replies);
+            continue;
+          }
           older.push({ type: "message", message });
         }
         timeline.unshift(...older);
+      }
+
+      function openThread(messageId) {
+        activeThreadRootId = messageId;
+        renderThread();
+        if (!threadPanel.open) threadPanel.showModal();
+        threadBody.focus();
+      }
+
+      function renderThread() {
+        if (!activeThreadRootId) return;
+        const root = timeline.find((item) => item.type === "message" && item.message.id === activeThreadRootId)?.message;
+        if (!root) { threadPanel.close(); return; }
+        threadForm.hidden = Boolean(root.deleted_at);
+        threadMessages.replaceChildren();
+        const rootContainer = document.createElement("div");
+        rootContainer.className = "thread-root";
+        appendMessage(root, rootContainer, false);
+        threadMessages.append(rootContainer);
+        for (const reply of threadReplies.get(activeThreadRootId) || []) {
+          appendMessage(reply, threadMessages, false);
+        }
+        threadMessages.scrollTop = threadMessages.scrollHeight;
       }
 
       function replaceChannelReactions(reactions) {
@@ -4588,7 +4703,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         return bar;
       }
 
-      function appendMessage(message) {
+      function appendMessage(message, target = messagesEl, includeThread = true) {
         const wrapper = document.createElement("article");
         wrapper.className = "message";
 
@@ -4637,6 +4752,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         wrapper.append(meta, body);
         if (!message.deleted_at) wrapper.append(renderMessageReactions(message));
+        const replyCount = (threadReplies.get(message.id) || []).length;
+        if (includeThread && !message.parent_message_id && (!message.deleted_at || replyCount > 0)) {
+          const thread = document.createElement("button");
+          thread.type = "button";
+          thread.className = "thread-link";
+          thread.textContent = replyCount === 0 ? "Svar i tråd" : `${replyCount} svar`;
+          thread.setAttribute("aria-label", replyCount === 0 ? "Start ein tråd" : `Opne tråd med ${replyCount} svar`);
+          thread.addEventListener("click", () => openThread(message.id));
+          wrapper.append(thread);
+        }
         if (!message.deleted_at && message.sender_id === currentParticipantId) {
           const actions = document.createElement("div");
           actions.className = "message-actions";
@@ -4685,7 +4810,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           actions.append(edit, remove);
           wrapper.append(actions);
         }
-        messagesEl.append(wrapper);
+        target.append(wrapper);
       }
 
       function formatMessageTimestamp(sentAt, now = new Date()) {
@@ -5696,6 +5821,17 @@ mod protocol_capacity_tests {
                 "if (!message.deleted_at) wrapper.append(renderMessageReactions(message))"
             )
         );
+    }
+
+    #[test]
+    fn browser_exposes_compact_durable_message_threads() {
+        assert!(INDEX_HTML.contains("id=\"thread-panel\""));
+        assert!(INDEX_HTML.contains("parent_message_id: activeThreadRootId"));
+        assert!(INDEX_HTML.contains("function openThread(messageId)"));
+        assert!(INDEX_HTML.contains("const threadReplies = new Map()"));
+        assert!(INDEX_HTML.contains("Svar i tråd"));
+        assert!(INDEX_HTML.contains("message.parent_message_id"));
+        assert!(INDEX_HTML.contains(".thread-panel { width: 100vw"));
     }
 
     async fn start_test_server(

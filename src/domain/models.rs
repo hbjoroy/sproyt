@@ -194,6 +194,8 @@ pub struct Membership {
 pub struct ChatMessage {
     pub id: MessageId,
     pub channel_id: ChannelId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_message_id: Option<MessageId>,
     pub sender_id: UserId,
     pub sender_display_name: DisplayName,
     pub body: MessageBody,
