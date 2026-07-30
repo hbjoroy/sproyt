@@ -2119,7 +2119,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .thread-root { border-bottom: 2px solid var(--line); }
       .thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); }
       .thread-form textarea { min-width: 0; min-height: 44px; max-height: 120px; }
-      .thread-link { font-weight: 700; }
+      .thread-link { min-height: 28px; margin-left: auto; padding: 3px 9px; border-radius: 999px; background: #eef2ed; color: #183d2e; font-size: .84rem; font-weight: 700; white-space: nowrap; }
       .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px; }
       .message-actions { display: flex; gap: 6px; justify-content: flex-end; }
       .message-actions button { min-height: 28px; padding: 3px 8px; background: transparent; color: #506057; font-size: .8rem; }
@@ -2134,7 +2134,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .reaction-picker button { min-height: 34px; padding: 4px 7px; }
       .reaction-custom { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; margin-top: 3px; }
       .reaction-custom input { min-height: 36px; padding: 5px 8px; }
-      .reaction-viewers { position: relative; margin-left: auto; }
+      .reaction-viewers { position: relative; }
       .reaction-viewers summary { cursor: pointer; list-style: none; padding: 3px 10px; border: 1px solid #cbd1c8; border-radius: 999px; color: #506057; font-size: .84rem; font-weight: 700; letter-spacing: .08em; }
       .reaction-viewers ul { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 9; width: max-content; max-width: min(78vw, 340px); margin: 0; padding: 8px 12px; border: 1px solid #cbd1c8; border-radius: 9px; background: #fff; box-shadow: 0 8px 24px #0002; list-style: none; }
       .reaction-viewers li { padding: 3px 0; color: #27342e; font-size: .86rem; overflow-wrap: anywhere; }
@@ -2295,6 +2295,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .message {
         display: grid;
         gap: 4px;
+        min-width: 0;
+        max-width: 100%;
         padding: 12px;
         border: 1px solid #dfe3dc;
         border-radius: 8px;
@@ -2310,8 +2312,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .rendered {
         display: grid;
         gap: 10px;
+        min-width: 0;
+        max-width: 100%;
         line-height: 1.45;
+        overflow-wrap: anywhere;
       }
+
+      .rendered > *,
+      .rendered p,
+      .rendered li,
+      .rendered a { min-width: 0; max-width: 100%; }
+      .rendered a { overflow-wrap: anywhere; word-break: break-word; }
 
       .rendered h1,
       .rendered h2,
@@ -4812,18 +4823,28 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         wrapper.append(meta, body);
-        if (!message.deleted_at) wrapper.append(renderMessageReactions(message));
+        let footer = null;
+        if (!message.deleted_at) {
+          footer = renderMessageReactions(message);
+          wrapper.append(footer);
+        }
         const summary = threadSummaries.get(message.id);
         const replyCount = summary?.reply_count || 0;
         if (includeThread && !message.parent_message_id && (!message.deleted_at || replyCount > 0)) {
+          if (!footer) {
+            footer = document.createElement("div");
+            footer.className = "message-reactions";
+            wrapper.append(footer);
+          }
           const thread = document.createElement("button");
           thread.type = "button";
           thread.className = "thread-link";
-          thread.textContent = replyCount === 0 ? "Svar i tråd" : `${replyCount} svar`;
-          if (summary?.unread_count > 0) thread.textContent += ` · ${summary.unread_count} uleste`;
+          thread.textContent = replyCount === 0 ? "🧵" : `🧵 ${replyCount}`;
+          if (summary?.unread_count > 0) thread.textContent += ` · ${summary.unread_count}`;
+          thread.title = replyCount === 0 ? "Start ein tråd" : `${replyCount} svar${summary?.unread_count > 0 ? `, ${summary.unread_count} uleste` : ""}`;
           thread.setAttribute("aria-label", replyCount === 0 ? "Start ein tråd" : `Opne tråd med ${replyCount} svar`);
           thread.addEventListener("click", () => openThread(message.id));
-          wrapper.append(thread);
+          footer.insertBefore(thread, footer.querySelector(".reaction-viewers"));
         }
         if (!message.deleted_at && message.sender_id === currentParticipantId) {
           const actions = document.createElement("div");
@@ -5084,8 +5105,46 @@ const INDEX_HTML: &str = r##"<!doctype html>
             code.textContent = part.slice(1, -1);
             parent.append(code);
           } else if (part.length > 0) {
-            parent.append(document.createTextNode(part));
+            appendLinkedText(parent, part);
           }
+        }
+      }
+
+      function appendLinkedText(parent, text) {
+        const urlPattern = /https?:\/\/[^\s<>]+/gi;
+        let offset = 0;
+        for (const match of text.matchAll(urlPattern)) {
+          const start = match.index ?? 0;
+          if (start > offset) parent.append(document.createTextNode(text.slice(offset, start)));
+          let href = match[0];
+          let suffix = "";
+          while (/[),.!?:;\]}]$/.test(href)) {
+            suffix = href.slice(-1) + suffix;
+            href = href.slice(0, -1);
+          }
+          const link = document.createElement("a");
+          link.href = href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.referrerPolicy = "no-referrer";
+          link.title = href;
+          link.textContent = readableLinkLabel(href);
+          parent.append(link);
+          if (suffix) parent.append(document.createTextNode(suffix));
+          offset = start + match[0].length;
+        }
+        if (offset < text.length) parent.append(document.createTextNode(text.slice(offset)));
+      }
+
+      function readableLinkLabel(href) {
+        try {
+          const url = new URL(href);
+          const host = url.hostname.replace(/^www\./i, "");
+          const path = url.pathname === "/" ? "" : url.pathname.replace(/\/$/, "");
+          const label = `${host}${path}`;
+          return label.length > 72 ? `${label.slice(0, 69)}…` : label;
+        } catch (_) {
+          return href.length > 72 ? `${href.slice(0, 69)}…` : href;
         }
       }
 
@@ -5879,11 +5938,9 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("event.type === \"message_deleted\""));
         assert!(INDEX_HTML.contains("Meldinga er sletta."));
         assert!(INDEX_HTML.contains("window.confirm(\"Vil du slette meldinga?"));
-        assert!(
-            INDEX_HTML.contains(
-                "if (!message.deleted_at) wrapper.append(renderMessageReactions(message))"
-            )
-        );
+        assert!(INDEX_HTML.contains(
+            "if (!message.deleted_at) {\n          footer = renderMessageReactions(message);"
+        ));
     }
 
     #[test]
@@ -5892,7 +5949,12 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("parent_message_id: activeThreadRootId"));
         assert!(INDEX_HTML.contains("function openThread(messageId)"));
         assert!(INDEX_HTML.contains("const threadReplies = new Map()"));
-        assert!(INDEX_HTML.contains("Svar i tråd"));
+        assert!(INDEX_HTML.contains("thread.textContent = replyCount === 0 ? \"🧵\""));
+        assert!(
+            INDEX_HTML.contains(
+                "footer.insertBefore(thread, footer.querySelector(\".reaction-viewers\"))"
+            )
+        );
         assert!(INDEX_HTML.contains("message.parent_message_id"));
         assert!(INDEX_HTML.contains(".thread-panel { width: 100vw"));
         assert!(INDEX_HTML.contains("sendCommand(\"load_thread\""));
@@ -5901,6 +5963,19 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("event.type === \"thread_loaded\""));
         assert!(INDEX_HTML.contains("summary?.unread_count"));
         assert!(INDEX_HTML.contains("pendingThreadToOpen = mention.message.parent_message_id"));
+    }
+
+    #[test]
+    fn browser_linkifies_safe_web_urls_without_expanding_messages() {
+        assert!(INDEX_HTML.contains("function appendLinkedText(parent, text)"));
+        assert!(INDEX_HTML.contains("const urlPattern = /https?:\\/\\/[^\\s<>]+/gi"));
+        assert!(INDEX_HTML.contains("link.rel = \"noopener noreferrer\""));
+        assert!(INDEX_HTML.contains("link.referrerPolicy = \"no-referrer\""));
+        assert!(INDEX_HTML.contains("function readableLinkLabel(href)"));
+        assert!(
+            INDEX_HTML.contains(".rendered a { overflow-wrap: anywhere; word-break: break-word; }")
+        );
+        assert!(INDEX_HTML.contains("min-width: 0;\n        max-width: 100%;"));
     }
 
     async fn start_test_server(
