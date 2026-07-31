@@ -1710,6 +1710,20 @@ async fn index(
     let principal = match state.auth.authenticate_request(None, cookie).await {
         Ok(principal) => principal,
         Err(AuthError::Unauthorized) => {
+            // A suspended browser may have lost its short access session while
+            // retaining the long-lived refresh credential. Renew locally and
+            // retry this URL before involving the identity provider.
+            if let Ok(renewal) = state.auth.renew_session(cookie).await {
+                let return_to = query
+                    .invite
+                    .as_deref()
+                    .filter(|token| is_safe_invitation_token(token))
+                    .map_or_else(|| "/".to_owned(), |token| format!("/?invite={token}"));
+                return redirect_with_cookies(
+                    &return_to,
+                    &[renewal.set_cookie, renewal.set_refresh_cookie],
+                );
+            }
             let login_location = query
                 .invite
                 .filter(|token| is_safe_invitation_token(token))
@@ -1916,7 +1930,11 @@ async fn auth_logout(State(state): State<AppState>) -> axum::response::Response 
     let logout = state.auth.logout();
     redirect_with_cookies(
         &logout.redirect_url,
-        &[logout.clear_cookie, logout.clear_refresh_cookie],
+        &[
+            logout.clear_cookie,
+            logout.clear_refresh_cookie,
+            logout.clear_legacy_refresh_cookie,
+        ],
     )
 }
 
