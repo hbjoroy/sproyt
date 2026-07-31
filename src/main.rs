@@ -2027,21 +2027,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
         margin: 0;
         width: 100%;
         max-width: 100%;
-        min-height: 100vh;
+        height: var(--app-height);
+        min-height: 0;
         display: grid;
         place-items: center;
-        padding: 24px;
+        padding: 12px;
         overflow-x: clip;
       }
 
       main {
-        width: min(1120px, 100%);
+        width: 100%;
         max-width: 100%;
         min-width: 0;
         display: grid;
         grid-template-columns: 280px minmax(0, 1fr);
         grid-template-rows: auto minmax(0, 1fr) auto;
-        height: min(760px, calc(100dvh - 48px));
+        height: 100%;
         min-height: 0;
         border: 1px solid #d7d8d0;
         border-radius: 8px;
@@ -2078,9 +2079,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         display: grid;
         grid-template-rows: auto auto 1fr auto;
         gap: 18px;
+        min-height: 0;
         padding: 20px 16px;
         border-right: 1px solid #e4e5de;
         background: #f4f6f2;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
       }
 
       .brand { display: flex; align-items: center; gap: 10px; }
@@ -5869,6 +5874,9 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("env(safe-area-inset-bottom)"));
         assert!(INDEX_HTML.contains("window.visualViewport?.height || window.innerHeight"));
         assert!(INDEX_HTML.contains("height: var(--app-height)"));
+        assert!(!INDEX_HTML.contains("width: min(1120px, 100%)"));
+        assert!(!INDEX_HTML.contains("height: min(760px, calc(100dvh - 48px));"));
+        assert!(INDEX_HTML.contains("overflow-y: auto;\n        overscroll-behavior: contain;\n        scrollbar-gutter: stable;"));
         assert!(SERVICE_WORKER.contains("request.mode === \"navigate\""));
         assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/api/\")"));
         assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/auth/\")"));
