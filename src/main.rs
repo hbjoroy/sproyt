@@ -3302,7 +3302,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       circleChannel.addEventListener("input", updateOnboardingButtons);
       circleButtons[1].addEventListener("click", () => {
         if (!circleSelect.value) return;
-        const slug = slugify(circleChannel.value);
+        const slug = scopedCircleChannelSlug(circleSelect.value, circleChannel.value);
+        onboardingNotice.textContent = "Lagar kanalen …";
         sendCommand("create_channel", { slug, name: circleChannel.value.trim(), kind: channelKind.value, circle_id: circleSelect.value });
       });
       joinableChannel.addEventListener("change", updateOnboardingButtons);
@@ -3383,6 +3384,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function slugify(value) {
         return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+      }
+
+      function scopedCircleChannelSlug(circleId, value) {
+        const scope = circleId.replace(/-/g, "");
+        const base = slugify(value).replace(/^-+|-+$/g, "") || "kanal";
+        return `${scope}-${base.slice(0, 47)}`;
       }
 
       function invitationValueToToken(value) {
@@ -3874,13 +3881,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         if (event.type === "circle_created") {
+          knownCircles.set(payload.circle.id, { ...payload.circle, role: "owner" });
           circleSelect.add(new Option(`${payload.circle.name} (owner)`, payload.circle.id));
           circleSelect.value = payload.circle.id;
           pushSystem(`Vennekretsen ${payload.circle.name} er oppretta.`);
           onboardingNotice.textContent = `${payload.circle.name} er klar. No kan du invitere vener.`;
           circleName.value = "";
+          updateOnboardingButtons();
           sendCommand("create_channel", {
-            slug: "prat", name: "Prat", kind: "private", circle_id: payload.circle.id
+            slug: scopedCircleChannelSlug(payload.circle.id, "prat"), name: "Prat", kind: "private", circle_id: payload.circle.id
           });
           return;
         }
@@ -3930,6 +3939,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           renderChannels();
           selectChannel(payload.channel);
           circleChannel.value = "";
+          onboardingNotice.textContent = `Kanalen ${payload.channel.name} er klar.`;
+          updateOnboardingButtons();
           if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
           return;
         }
@@ -4173,6 +4184,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           if (requestedCommand === "create_circle") {
             onboardingNotice.textContent = "Vennekretsen kunne ikkje opprettast. Prøv eit anna namn.";
+            return;
+          }
+          if (requestedCommand === "create_channel") {
+            onboardingNotice.textContent = "Kanalen kunne ikkje opprettast. Prøv eit anna namn eller prøv igjen.";
+            updateOnboardingButtons();
             return;
           }
           pushSystem(payload.message || payload.code);
@@ -6323,6 +6339,13 @@ mod protocol_capacity_tests {
         assert!(body.contains("id=\"channel-kind\""));
         assert!(body.contains("id=\"joinable-channel\""));
         assert!(body.contains("id=\"add-channel-member\""));
+        assert!(body.contains("function scopedCircleChannelSlug(circleId, value)"));
+        assert!(body.contains("scopedCircleChannelSlug(circleSelect.value, circleChannel.value)"));
+        assert!(body.contains("scopedCircleChannelSlug(payload.circle.id, \"prat\")"));
+        assert!(body.contains(
+            "knownCircles.set(payload.circle.id, { ...payload.circle, role: \"owner\" })"
+        ));
+        assert!(body.contains("Kanalen kunne ikkje opprettast."));
         assert!(body.contains("sendCommand(\"list_joinable_channels\""));
         assert!(body.contains("sendCommand(\"add_channel_member\""));
         assert!(body.contains("const browserSessionId = `browser-${crypto.randomUUID()}`"));
