@@ -28,7 +28,8 @@ use crate::{
 };
 
 const LOGIN_TTL_SECONDS: u64 = 600;
-const SESSION_TTL_SECONDS: u64 = 8 * 60 * 60;
+const ACCESS_SESSION_MAX_TTL_SECONDS: u64 = 8 * 60 * 60;
+const REFRESH_IDLE_TTL_SECONDS: u64 = 30 * 24 * 60 * 60;
 const SESSION_REFRESH_LEAD_SECONDS: u64 = 60;
 pub const LOGIN_COOKIE: &str = "sproyt_oidc_tx";
 pub const SESSION_COOKIE: &str = "sproyt_session";
@@ -151,12 +152,14 @@ impl AuthService {
             Self::Development => Logout {
                 redirect_url: "/".to_owned(),
                 clear_cookie: clear_cookie(SESSION_COOKIE, "/"),
-                clear_refresh_cookie: clear_cookie(REFRESH_COOKIE, "/auth/refresh"),
+                clear_refresh_cookie: clear_cookie(REFRESH_COOKIE, "/"),
+                clear_legacy_refresh_cookie: clear_cookie(REFRESH_COOKIE, "/auth/refresh"),
             },
             Self::Oidc(service) => Logout {
                 redirect_url: service.logout_redirect_url(),
                 clear_cookie: clear_cookie(SESSION_COOKIE, "/"),
-                clear_refresh_cookie: clear_cookie(REFRESH_COOKIE, "/auth/refresh"),
+                clear_refresh_cookie: clear_cookie(REFRESH_COOKIE, "/"),
+                clear_legacy_refresh_cookie: clear_cookie(REFRESH_COOKIE, "/auth/refresh"),
             },
         }
     }
@@ -193,6 +196,7 @@ pub struct Logout {
     pub redirect_url: String,
     pub clear_cookie: String,
     pub clear_refresh_cookie: String,
+    pub clear_legacy_refresh_cookie: String,
 }
 
 pub struct OidcService {
@@ -384,11 +388,11 @@ impl OidcService {
         let now = now_seconds();
         let token_expires_at =
             u64::try_from(claims.expiration().timestamp()).map_err(|_| AuthError::Unauthorized)?;
-        let expires_at = token_expires_at.min(now.saturating_add(SESSION_TTL_SECONDS));
+        let expires_at = token_expires_at.min(now.saturating_add(ACCESS_SESSION_MAX_TTL_SECONDS));
         if expires_at <= now {
             return Err(AuthError::Unauthorized);
         }
-        let refresh_expires_at = now.saturating_add(SESSION_TTL_SECONDS);
+        let refresh_expires_at = now.saturating_add(REFRESH_IDLE_TTL_SECONDS);
         let refresh_cookie = token
             .refresh_token()
             .map(|refresh_token| {
@@ -401,7 +405,7 @@ impl OidcService {
                         expires_at: refresh_expires_at,
                     })
                     .map(|value| {
-                        secure_cookie(REFRESH_COOKIE, &value, "/auth/refresh", SESSION_TTL_SECONDS)
+                        secure_cookie(REFRESH_COOKIE, &value, "/", REFRESH_IDLE_TTL_SECONDS)
                     })
             })
             .transpose()?;
@@ -484,7 +488,7 @@ impl OidcService {
         &self,
         cookie_header: Option<&str>,
     ) -> Result<SessionRenewal, AuthError> {
-        let (issuer, subject, display_name, refresh_token, refresh_expires_at) =
+        let (issuer, subject, display_name, refresh_token) =
             if let Some(value) = read_cookie(cookie_header, REFRESH_COOKIE) {
                 let claims: RefreshClaims = self.codec.open(value)?;
                 validate_refresh_claims(&claims.issuer, claims.expires_at, &self.issuer)?;
@@ -493,7 +497,6 @@ impl OidcService {
                     claims.subject,
                     claims.display_name,
                     claims.refresh_token,
-                    claims.expires_at,
                 )
             } else {
                 let value =
@@ -509,7 +512,6 @@ impl OidcService {
                     claims.subject,
                     claims.display_name,
                     refresh_token,
-                    refresh_expires_at,
                 )
             };
         // A provider may legitimately omit a refresh token even when
@@ -536,7 +538,10 @@ impl OidcService {
             .name()
             .and_then(|name| name.get(None))
             .map_or(display_name, |name| name.to_string());
-        let refresh_max_age = refresh_expires_at.saturating_sub(now_seconds()).max(1);
+        // Successful use starts a fresh inactivity window. The provider can
+        // still impose a shorter absolute lifetime on its refresh token.
+        let refresh_expires_at = now_seconds().saturating_add(REFRESH_IDLE_TTL_SECONDS);
+        let refresh_max_age = REFRESH_IDLE_TTL_SECONDS;
         let access_max_age = token
             .expires_in()
             .unwrap_or(Duration::from_secs(300))
@@ -564,12 +569,7 @@ impl OidcService {
         })?;
         Ok(SessionRenewal {
             set_cookie: secure_cookie(SESSION_COOKIE, &value, "/", access_max_age),
-            set_refresh_cookie: secure_cookie(
-                REFRESH_COOKIE,
-                &refresh_value,
-                "/auth/refresh",
-                refresh_max_age,
-            ),
+            set_refresh_cookie: secure_cookie(REFRESH_COOKIE, &refresh_value, "/", refresh_max_age),
             refresh_after_seconds: refresh_after_seconds(access_max_age),
         })
     }
@@ -1125,7 +1125,7 @@ mod tests {
                 access_token: Some("expired-access-token".to_owned()),
                 refresh_token: Some("refresh-a".to_owned()),
                 expires_at: now_seconds().saturating_sub(1),
-                refresh_expires_at: Some(now_seconds() + SESSION_TTL_SECONDS),
+                refresh_expires_at: Some(now_seconds() + REFRESH_IDLE_TTL_SECONDS),
             })
             .unwrap();
         let resumed = auth
@@ -1185,8 +1185,8 @@ mod tests {
         assert!((1..=300).contains(&max_age));
         let refresh_cookie = complete.set_refresh_cookie.as_ref().unwrap();
         assert!(refresh_cookie.contains("sproyt_refresh="));
-        assert!(refresh_cookie.contains("Path=/auth/refresh"));
-        assert!(refresh_cookie.contains(&format!("Max-Age={SESSION_TTL_SECONDS}")));
+        assert!(refresh_cookie.contains("Path=/"));
+        assert!(refresh_cookie.contains(&format!("Max-Age={REFRESH_IDLE_TTL_SECONDS}")));
         let restored = auth
             .authenticate_session(Some(&complete.set_cookie))
             .await
@@ -1218,6 +1218,16 @@ mod tests {
             .open(read_cookie(Some(&renewal.set_refresh_cookie), REFRESH_COOKIE).unwrap())
             .unwrap();
         assert_eq!(renewed_refresh.refresh_token, "refresh-b");
+        let remaining_idle_lifetime = renewed_refresh.expires_at.saturating_sub(now_seconds());
+        assert!(
+            (REFRESH_IDLE_TTL_SECONDS - 2..=REFRESH_IDLE_TTL_SECONDS)
+                .contains(&remaining_idle_lifetime)
+        );
+        assert!(
+            renewal
+                .set_refresh_cookie
+                .contains(&format!("Max-Age={REFRESH_IDLE_TTL_SECONDS}"))
+        );
         assert!(
             auth.authenticate_session(Some(&renewed_cookie))
                 .await
@@ -1271,7 +1281,12 @@ mod tests {
         assert!(logout.clear_cookie.contains("sproyt_session="));
         assert!(logout.clear_cookie.contains("Max-Age=0"));
         assert!(logout.clear_refresh_cookie.contains("sproyt_refresh="));
-        assert!(logout.clear_refresh_cookie.contains("Path=/auth/refresh"));
+        assert!(logout.clear_refresh_cookie.contains("Path=/"));
+        assert!(
+            logout
+                .clear_legacy_refresh_cookie
+                .contains("Path=/auth/refresh")
+        );
         server.abort();
     }
 }
