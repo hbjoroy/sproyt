@@ -580,6 +580,47 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn leave_circle<'a>(&'a self, command: crate::domain::LeaveCircle) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let role: Option<String> = sqlx::query_scalar(
+                "select role from circle_memberships where circle_id=$1 and user_id=$2 for update",
+            )
+            .bind(*command.circle_id.as_uuid())
+            .bind(*command.actor.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let role = role.as_deref().and_then(CircleRole::parse);
+            if !Policy::can_leave_circle(role.as_ref()) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("delete from channel_memberships where user_id=$1 and channel_id in (select id from channels where circle_id=$2)")
+                .bind(*command.actor.as_uuid())
+                .bind(*command.circle_id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            let result =
+                sqlx::query("delete from circle_memberships where circle_id=$1 and user_id=$2")
+                    .bind(*command.circle_id.as_uuid())
+                    .bind(*command.actor.as_uuid())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+            if result.rows_affected() != 1 {
+                return Err(RepositoryError::NotFound);
+            }
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values ($1,'circle.membership_left','circle',$2,jsonb_build_object('role','member'))")
+                .bind(*command.actor.as_uuid())
+                .bind(command.circle_id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)
+        })
+    }
+
     fn create_circle_invitation<'a>(
         &'a self,
         command: CreateCircleInvitation,
@@ -2825,7 +2866,7 @@ mod tests {
              where action in ('agent.created', 'agent.grant_created', \
              'agent.grant_changed', 'agent.grant_revoked', 'agent.revoked', 'process.started', \
              'process.correlation_requested', 'process.inspection_requested', \
-             'circle.feature_changed', 'circle.deleted')",
+             'circle.feature_changed', 'circle.membership_left', 'circle.deleted')",
         )
         .fetch_all(&repository.pool)
         .await
@@ -2840,6 +2881,7 @@ mod tests {
             "process.correlation_requested",
             "process.inspection_requested",
             "circle.feature_changed",
+            "circle.membership_left",
             "circle.deleted",
         ] {
             assert!(

@@ -121,6 +121,9 @@ pub enum ClientCommand {
     DeleteCircle {
         circle_id: crate::domain::CircleId,
     },
+    LeaveCircle {
+        circle_id: crate::domain::CircleId,
+    },
     CreateCircleInvitation {
         circle_id: crate::domain::CircleId,
     },
@@ -279,6 +282,9 @@ pub enum ServerEvent {
         circles: Vec<(crate::domain::Circle, crate::domain::CircleRole)>,
     },
     CircleDeleted {
+        circle_id: crate::domain::CircleId,
+    },
+    CircleLeft {
         circle_id: crate::domain::CircleId,
     },
     CircleInvitationCreated {

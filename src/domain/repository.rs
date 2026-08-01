@@ -82,6 +82,7 @@ pub trait ChatRepository: Send + Sync + 'static {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<(Circle, CircleRole)>>;
     fn delete_circle<'a>(&'a self, command: DeleteCircle) -> RepositoryFuture<'a, ()>;
+    fn leave_circle<'a>(&'a self, command: super::LeaveCircle) -> RepositoryFuture<'a, ()>;
     fn create_circle_invitation<'a>(
         &'a self,
         command: CreateCircleInvitation,
@@ -742,6 +743,31 @@ impl ChatRepository for InMemoryChatRepository {
             state
                 .command_receipts
                 .retain(|_, message_id| !message_ids.contains(message_id));
+            Ok(())
+        })
+    }
+
+    fn leave_circle<'a>(&'a self, command: super::LeaveCircle) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let membership_key = (command.circle_id.clone(), command.actor.clone());
+            let role = state
+                .circle_memberships
+                .get(&membership_key)
+                .map(|membership| &membership.role);
+            if !Policy::can_leave_circle(role) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            state.circle_memberships.remove(&membership_key);
+            let channel_ids = state
+                .channels
+                .values()
+                .filter(|channel| channel.circle_id.as_ref() == Some(&command.circle_id))
+                .map(|channel| channel.id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            state.memberships.retain(|(channel_id, user_id), _| {
+                user_id != &command.actor || !channel_ids.contains(channel_id)
+            });
             Ok(())
         })
     }

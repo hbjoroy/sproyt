@@ -783,8 +783,8 @@ where
         agent::{AgentScope, CreateAgent, GrantAgent},
         domain::{
             AcceptCircleInvitation, AddChannelMember, ChannelKind, ChannelSlug, CreateChannel,
-            CreateCircle, CreateCircleInvitation, DisplayName, LoadRecentMessages, MarkRead,
-            MessageBody, MessageLimit, PrincipalKind, SendMessage, User, UserId,
+            CreateCircle, CreateCircleInvitation, DisplayName, LeaveCircle, LoadRecentMessages,
+            MarkRead, MessageBody, MessageLimit, PrincipalKind, SendMessage, User, UserId,
         },
         process::{
             EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, ProcessError,
@@ -1276,8 +1276,8 @@ where
     assert_eq!(failure.payload["kind"], "unauthorized");
     repository
         .set_circle_feature(SetCircleFeature {
-            circle_id: circle.id,
-            actor,
+            circle_id: circle.id.clone(),
+            actor: actor.clone(),
             feature: "heart.event-planning".to_owned(),
             enabled: false,
         })
@@ -1287,12 +1287,45 @@ where
         repository
             .enqueue_correlation(EnqueueCorrelation {
                 process_link_id: link.id,
-                actor: member,
+                actor: member.clone(),
                 request_id: "process-response-after-kill".to_owned(),
                 payload: serde_json::json!({"answer":"no"}),
             })
             .await,
         Err(RepositoryError::PermissionDenied),
         "disabled Heart feature accepted process work"
+    );
+    assert_eq!(
+        repository
+            .leave_circle(LeaveCircle {
+                actor: actor.clone(),
+                circle_id: circle.id.clone(),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied),
+        "a circle owner must not leave an ownerless circle"
+    );
+    repository
+        .leave_circle(LeaveCircle {
+            actor: member.clone(),
+            circle_id: circle.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .list_circles_for_user(member.clone())
+            .await
+            .unwrap()
+            .iter()
+            .all(|(listed, _)| listed.id != circle.id)
+    );
+    assert!(
+        repository
+            .list_channels_for_user(member)
+            .await
+            .unwrap()
+            .iter()
+            .all(|listed| listed.circle_id.as_ref() != Some(&circle.id))
     );
 }

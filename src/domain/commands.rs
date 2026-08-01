@@ -28,6 +28,12 @@ pub struct DeleteCircle {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LeaveCircle {
+    pub actor: UserId,
+    pub circle_id: CircleId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CreateCircleInvitation {
     pub actor: UserId,
     pub circle_id: CircleId,

@@ -398,6 +398,17 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn leave_circle(
+        &self,
+        actor: UserId,
+        circle_id: crate::domain::CircleId,
+    ) -> Result<(), ChatError> {
+        self.repository
+            .leave_circle(crate::domain::LeaveCircle { actor, circle_id })
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn create_circle_invitation(
         &self,
         actor: UserId,
