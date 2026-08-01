@@ -38,12 +38,18 @@ YAML
 kubectl -n "$namespace" expose deployment postgres --port=5432 --target-port=5432
 kubectl -n "$namespace" rollout status deployment/postgres --timeout=120s
 for _ in {1..30}; do
-  if kubectl -n "$namespace" exec deployment/postgres -- pg_isready -U sproyt -d sproyt; then
+  # The image briefly starts an init-only PostgreSQL server on the Unix
+  # socket before replacing it with the final TCP-listening server. Waiting
+  # on TCP avoids treating that transient bootstrap process as application
+  # readiness.
+  if kubectl -n "$namespace" exec deployment/postgres -- \
+    pg_isready -h 127.0.0.1 -p 5432 -U sproyt -d sproyt; then
     break
   fi
   sleep 1
 done
-kubectl -n "$namespace" exec deployment/postgres -- pg_isready -U sproyt -d sproyt
+kubectl -n "$namespace" exec deployment/postgres -- \
+  pg_isready -h 127.0.0.1 -p 5432 -U sproyt -d sproyt
 
 kubectl -n "$namespace" create secret generic sproyt-ci \
   --from-literal=DATABASE_URL="$database_url" \
