@@ -21,7 +21,7 @@ gate has been signed off in the target environment.
 | S-12 | Implemented | Central `Policy`, executable authorization matrix and mutation-audit migrations | Review target-environment audit retention/access |
 | S-13 | Implemented and published | Pinned scratch ARM64 image, restricted runtime contract, SBOM and vulnerability CI; registry evidence below | Retain CI and registry evidence with the release record |
 | S-14 | Implemented | Helm delivery verifier and kind install, migration, two-replica scale and rollback gate | Install in the ARM64 target cluster and provide manual Ingress |
-| S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, recovery CI, SQLite capacity/restart gate, PostgreSQL two-process realtime/restart/catch-up gate, safe MCP latency/idempotency evidence tool, owner-authorized audited circle deletion, and snapshot-consistent `sproyt.user-export.v1` self-export | Run target-sized MCP/browser load, name owners, accept privacy/retention and sign off rollout |
+| S-15 | Baseline implemented, sign-off pending | SLOs/runbook, Prometheus/Grafana resources, privacy-bounded browser connection/session/upload outcome metrics and alerts, recovery CI, SQLite capacity/restart gate, PostgreSQL two-process realtime/restart/catch-up gate, safe MCP latency/idempotency evidence tool, owner-authorized audited circle deletion, and snapshot-consistent `sproyt.user-export.v1` self-export | Run target-sized MCP/browser load, name owners, accept privacy/retention and sign off rollout |
 | S-16 | Implemented and active | Sproyt `ProcessGateway` contract, clean-container Heart start/replay/reconciliation/receive/completion contract passed 2026-07-19 against `dc8b2b1`, green `ea-heart-client` contract/CI at `9510cc4`, and private Heart component active in the same Sprøyt Helm/Argo release | Exercise a real process start and status round-trip in the target cluster |
 | S-17 | Implemented | Durable process link/event/outbox state, stable command receipts, Heart `Idempotency-Key`/`X-Heart-Client`, exact replay, bounded retry and unknown-outcome lookup at Heart `dc8b2b1` | Exercise restart/rolling update in the target cluster |
 | S-18 | Pilot active; environment acceptance pending | Event-planning definition, browser/MCP flow tests, kill switch, Heart receive/idempotent-start contract, HTTP 503 failure-isolation regression proving ordinary chat remains durable and queued process work recovers exactly once, ordered migration plus immutable definition bootstrap, same-release private Service/Deployment/PDB/NetworkPolicy, and successful target-cluster activation after database/schema ownership repair on 2026-07-19 | Exercise the pilot end to end and verify restart/rolling-update in the target cluster |
@@ -30,11 +30,26 @@ gate has been signed off in the target environment.
 | S-21 | Implemented; renewed-session acceptance pending | Production session boundary; encrypted session; refresh about 60 seconds before expiry; overlapping WebSocket handoff after cookie rotation; PostgreSQL-backed presence keeps the old and replacement connection in one atomic global lease set; periodic provider revalidation; profile/logout shell; no simulated production identity; live Authentik identity verified | Deploy migration 0016 and verify two-user message/presence flow through a complete refresh interval, then retain logout/revocation in the scheduled security drill |
 | S-22 | Implemented and active | Responsive navigation/timeline/composer; durable human-readable sender snapshots; circle-grouped channels; visible keyboard focus; bounded exponential reconnect; draft preservation; read markers/unread badges; accessible mobile drawer | Complete two-user usability and presence sign-off after the overlapping session-handoff rollout |
 | S-23 | Implemented; rollout pending | Guided circle creation with automatic `Prat` channel; selected-circle invite action; shareable invite links; OIDC-signed return path; copy/fallback UX; link recognition and actionable invalid/expired feedback; creator-only initial channel membership; discoverable open circle channels; explicitly invited private-channel members; global `general` membership; two-user authorization contracts | Exercise channel creation, open joining and private invitation through production Authentik |
-| S-24 | In progress | Heart/process and agent credential controls have independent server-rendered flags that default off; Heart is an active private component of the same Sprøyt release; CSP, focus, mobile drawer, reconnect and capacity gates; immutable ARM64/GitOps rollout; live OIDC identity | Complete two-user/session acceptance, Heart end-to-end and failure-isolation passes, dedicated-channel MCP load evidence, then sign off private beta |
+| S-24 | In progress | Heart/process and agent credential controls have independent server-rendered flags that default off; Heart is an active private component of the same Sprøyt release; CSP, focus, mobile drawer, reconnect and capacity gates; privacy-bounded fleet metrics for browser connection/session/upload outcomes; immutable ARM64/GitOps rollout; live OIDC identity | Complete two-user/session acceptance, Heart end-to-end and failure-isolation passes, dedicated-channel MCP load evidence, then sign off private beta |
 
 ## Current immutable image evidence
 
-The current publicly observed chat revision
+The current production chat revision is
+`4abef10a7435cd549d749b8e4a1f08d46f106234`, published as:
+
+```text
+oci.bjoroy.me/sproyt/sproyt:4abef10a7435cd549d749b8e4a1f08d46f106234
+sha256:54f862678ddc780ea0811d4f19aac95749ceb52ecf89a1f194004ae224091e92
+```
+
+GitOps commit `4e9823d718c928a8ef2b43d6dbd3ef370e2aae9b` pins this revision and digest.
+The public `/versionz`, `/healthz` and `/readyz` endpoints reported the exact
+application revision, `ok` and `ready` after rollout. Fast main CI passed; full
+release-gate run `30719102247` supplied quality, PostgreSQL, recovery and audit
+evidence; all jobs, including the heavyweight ARM64 container/Kubernetes
+delivery, SBOM and vulnerability gates, completed successfully.
+
+The previously recorded publicly observed chat revision
 `d945e62c9eee3b9470383bc416e301b878e5c836` is published as:
 
 ```text

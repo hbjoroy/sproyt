@@ -26,6 +26,13 @@ struct OperationalStateInner {
     in_flight: AtomicU64,
     server_errors: AtomicU64,
     duration_micros: AtomicU64,
+    client_ws_connected: AtomicU64,
+    client_ws_disconnected: AtomicU64,
+    client_ws_errors: AtomicU64,
+    client_session_refresh_succeeded: AtomicU64,
+    client_session_refresh_failed: AtomicU64,
+    client_upload_succeeded: AtomicU64,
+    client_upload_failed: AtomicU64,
     shutdown: watch::Sender<bool>,
 }
 
@@ -38,6 +45,13 @@ impl Default for OperationalState {
                 in_flight: AtomicU64::new(0),
                 server_errors: AtomicU64::new(0),
                 duration_micros: AtomicU64::new(0),
+                client_ws_connected: AtomicU64::new(0),
+                client_ws_disconnected: AtomicU64::new(0),
+                client_ws_errors: AtomicU64::new(0),
+                client_session_refresh_succeeded: AtomicU64::new(0),
+                client_session_refresh_failed: AtomicU64::new(0),
+                client_upload_succeeded: AtomicU64::new(0),
+                client_upload_failed: AtomicU64::new(0),
                 shutdown: watch::channel(false).0,
             }),
         }
@@ -45,6 +59,19 @@ impl Default for OperationalState {
 }
 
 impl OperationalState {
+    pub fn record_client_event(&self, event: ClientEvent) {
+        let counter = match event {
+            ClientEvent::WebSocketConnected => &self.inner.client_ws_connected,
+            ClientEvent::WebSocketDisconnected => &self.inner.client_ws_disconnected,
+            ClientEvent::WebSocketError => &self.inner.client_ws_errors,
+            ClientEvent::SessionRefreshSucceeded => &self.inner.client_session_refresh_succeeded,
+            ClientEvent::SessionRefreshFailed => &self.inner.client_session_refresh_failed,
+            ClientEvent::UploadSucceeded => &self.inner.client_upload_succeeded,
+            ClientEvent::UploadFailed => &self.inner.client_upload_failed,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn set_ready(&self, ready: bool) {
         self.inner.ready.store(ready, Ordering::Release);
     }
@@ -94,8 +121,61 @@ impl OperationalState {
             "sproyt_http_request_duration_microseconds_total {duration_micros}"
         )
         .expect("writing to a String cannot fail");
+        writeln!(output, "# TYPE sproyt_client_events_total counter")
+            .expect("writing to a String cannot fail");
+        for (event, value) in [
+            (
+                "websocket_connected",
+                self.inner.client_ws_connected.load(Ordering::Relaxed),
+            ),
+            (
+                "websocket_disconnected",
+                self.inner.client_ws_disconnected.load(Ordering::Relaxed),
+            ),
+            (
+                "websocket_error",
+                self.inner.client_ws_errors.load(Ordering::Relaxed),
+            ),
+            (
+                "session_refresh_succeeded",
+                self.inner
+                    .client_session_refresh_succeeded
+                    .load(Ordering::Relaxed),
+            ),
+            (
+                "session_refresh_failed",
+                self.inner
+                    .client_session_refresh_failed
+                    .load(Ordering::Relaxed),
+            ),
+            (
+                "upload_succeeded",
+                self.inner.client_upload_succeeded.load(Ordering::Relaxed),
+            ),
+            (
+                "upload_failed",
+                self.inner.client_upload_failed.load(Ordering::Relaxed),
+            ),
+        ] {
+            writeln!(
+                output,
+                "sproyt_client_events_total{{event=\"{event}\"}} {value}"
+            )
+            .expect("writing to a String cannot fail");
+        }
         output
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ClientEvent {
+    WebSocketConnected,
+    WebSocketDisconnected,
+    WebSocketError,
+    SessionRefreshSucceeded,
+    SessionRefreshFailed,
+    UploadSucceeded,
+    UploadFailed,
 }
 
 pub async fn record_metrics(
@@ -148,8 +228,10 @@ mod tests {
     #[test]
     fn metrics_do_not_expose_application_data() {
         let operations = OperationalState::default();
+        operations.record_client_event(ClientEvent::WebSocketDisconnected);
         let metrics = operations.metrics();
         assert!(metrics.contains("sproyt_ready 0"));
+        assert!(metrics.contains("sproyt_client_events_total{event=\"websocket_disconnected\"} 1"));
         assert!(!metrics.contains("message"));
     }
 

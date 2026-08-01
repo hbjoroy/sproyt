@@ -14,7 +14,10 @@ data:
       "panels": [
         {"id": 1, "title": "Ready replicas", "type": "stat", "targets": [{"expr": "sum(sproyt_ready{namespace=\"{{ .Release.Namespace }}\"})", "refId": "A"}], "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0}},
         {"id": 2, "title": "HTTP server error ratio", "type": "timeseries", "targets": [{"expr": "sum(rate(sproyt_http_server_errors_total{namespace=\"{{ .Release.Namespace }}\"}[5m])) / clamp_min(sum(rate(sproyt_http_requests_total{namespace=\"{{ .Release.Namespace }}\"}[5m])), 0.001)", "refId": "A"}], "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0}},
-        {"id": 3, "title": "Average HTTP duration", "type": "timeseries", "targets": [{"expr": "sum(rate(sproyt_http_request_duration_microseconds_total{namespace=\"{{ .Release.Namespace }}\"}[5m])) / clamp_min(sum(rate(sproyt_http_requests_total{namespace=\"{{ .Release.Namespace }}\"}[5m])), 0.001) / 1000000", "refId": "A"}], "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0}}
+        {"id": 3, "title": "Average HTTP duration", "type": "timeseries", "targets": [{"expr": "sum(rate(sproyt_http_request_duration_microseconds_total{namespace=\"{{ .Release.Namespace }}\"}[5m])) / clamp_min(sum(rate(sproyt_http_requests_total{namespace=\"{{ .Release.Namespace }}\"}[5m])), 0.001) / 1000000", "refId": "A"}], "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0}},
+        {"id": 4, "title": "Browser connection events", "type": "timeseries", "targets": [{"expr": "sum by (event) (rate(sproyt_client_events_total{namespace=\"{{ .Release.Namespace }}\",event=~\"websocket_.*\"}[5m]))", "legendFormat": "{{`{{event}}`}}", "refId": "A"}], "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}},
+        {"id": 5, "title": "Session refresh outcomes", "type": "timeseries", "targets": [{"expr": "sum by (event) (rate(sproyt_client_events_total{namespace=\"{{ .Release.Namespace }}\",event=~\"session_refresh_.*\"}[5m]))", "legendFormat": "{{`{{event}}`}}", "refId": "A"}], "gridPos": {"h": 8, "w": 6, "x": 12, "y": 8}},
+        {"id": 6, "title": "Upload outcomes", "type": "timeseries", "targets": [{"expr": "sum by (event) (rate(sproyt_client_events_total{namespace=\"{{ .Release.Namespace }}\",event=~\"upload_.*\"}[5m]))", "legendFormat": "{{`{{event}}`}}", "refId": "A"}], "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8}}
       ],
       "schemaVersion": 39,
       "tags": ["sproyt"],

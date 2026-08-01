@@ -45,7 +45,7 @@ use crate::{
         UserId,
     },
     notification::{NotificationPreferences, NotificationService, PushSubscriptionInput},
-    operations::{OperationalState, healthz, metrics, record_metrics},
+    operations::{ClientEvent, OperationalState, healthz, metrics, record_metrics},
     process::{
         EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, HeartGateway, ProcessLinkId,
         ProcessService, SetCircleFeature, SharedProcessGateway,
@@ -164,6 +164,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/auth/refresh", post(auth_refresh))
         .route("/auth/logout", get(auth_logout))
         .route("/api/v1/me/export", get(export_my_data))
+        .route("/api/v1/client-events", post(record_client_event))
         .route(
             "/api/v1/me/notifications",
             get(notification_settings).put(save_notification_preferences),
@@ -212,6 +213,45 @@ async fn versionz() -> Json<VersionInfo> {
         version: env!("CARGO_PKG_VERSION"),
         revision: BUILD_REVISION,
     })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ClientEventInput {
+    WebsocketConnected,
+    WebsocketDisconnected,
+    WebsocketError,
+    SessionRefreshSucceeded,
+    SessionRefreshFailed,
+    UploadSucceeded,
+    UploadFailed,
+}
+
+#[derive(Deserialize)]
+struct ClientEventReport {
+    event: ClientEventInput,
+}
+
+async fn record_client_event(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(report): Json<ClientEventReport>,
+) -> axum::response::Response {
+    if let Err(error) = authenticate_http(&state, query, &headers).await {
+        return auth_error_response(error);
+    }
+    let event = match report.event {
+        ClientEventInput::WebsocketConnected => ClientEvent::WebSocketConnected,
+        ClientEventInput::WebsocketDisconnected => ClientEvent::WebSocketDisconnected,
+        ClientEventInput::WebsocketError => ClientEvent::WebSocketError,
+        ClientEventInput::SessionRefreshSucceeded => ClientEvent::SessionRefreshSucceeded,
+        ClientEventInput::SessionRefreshFailed => ClientEvent::SessionRefreshFailed,
+        ClientEventInput::UploadSucceeded => ClientEvent::UploadSucceeded,
+        ClientEventInput::UploadFailed => ClientEvent::UploadFailed,
+    };
+    state.operations.record_client_event(event);
+    axum::http::StatusCode::NO_CONTENT.into_response()
 }
 
 async fn pwa_manifest() -> axum::response::Response {
@@ -2819,6 +2859,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let managedCircleId = null;
       let reconnectScrollOffset = null;
       const activeConversationKey = "sproyt.active-channel.v1";
+      const channelDraftPrefix = "sproyt.channel-draft.v1.";
       const collapsedChannelGroupsKey = "sproyt.collapsed-channel-groups.v1";
       const linkedChannelId = new URL(window.location.href).searchParams.get("channel");
       let restoredChannelId = linkedChannelId;
@@ -2855,6 +2896,37 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let selectedMentionIndex = 0;
       let activeMention = null;
 
+      function channelDraftKey(channelId) {
+        return `${channelDraftPrefix}${channelId}`;
+      }
+
+      function persistActiveDraft() {
+        if (!activeChannelId) return;
+        try {
+          const key = channelDraftKey(activeChannelId);
+          if (bodyInput.value) window.localStorage.setItem(key, bodyInput.value);
+          else window.localStorage.removeItem(key);
+        } catch (_) {}
+      }
+
+      function restoreActiveDraft() {
+        try { bodyInput.value = window.localStorage.getItem(channelDraftKey(activeChannelId)) || ""; }
+        catch (_) { bodyInput.value = ""; }
+      }
+
+      function reportClientEvent(event) {
+        const participant = new URL(window.location.href).searchParams.get("participant");
+        const query = participant ? `?participant=${encodeURIComponent(participant)}` : "";
+        fetch(`/api/v1/client-events${query}`, {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          keepalive: true,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ event })
+        }).catch(() => {});
+      }
+
       function scheduleSessionRefresh(seconds) {
         if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
         const delay = Math.max(1, Number(seconds) || 1) * 1000;
@@ -2884,6 +2956,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             headers: { "accept": "application/json" }
           });
         } catch (_) {
+          reportClientEvent("session_refresh_failed");
           sessionRefreshRejected = false;
           scheduleSessionRefresh(30);
           return false;
@@ -2893,11 +2966,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
           // real authentication expiry. A refresh token is optional at some
           // OIDC providers, so a failed proactive refresh must not create an
           // Authentik callback/reload loop while the session is still valid.
+          reportClientEvent("session_refresh_failed");
           sessionRefreshRejected = true;
           scheduleSessionRefresh(30);
           return false;
         }
         if (!response.ok) {
+          reportClientEvent("session_refresh_failed");
           sessionRefreshRejected = false;
           scheduleSessionRefresh(30);
           return false;
@@ -2910,12 +2985,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           headers: { "accept": "application/json" }
         });
         if (!verification.ok) {
+          reportClientEvent("session_refresh_failed");
           sessionRefreshRejected = verification.status === 401;
           scheduleSessionRefresh(30);
           return false;
         }
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
         sessionRefreshBroadcast?.postMessage({ refreshAfterSeconds: Number(result.refresh_after_seconds) || 300 });
+        reportClientEvent("session_refresh_succeeded");
         reconnectAfterSessionRefresh();
         return true;
       }
@@ -3142,18 +3219,21 @@ const INDEX_HTML: &str = r##"<!doctype html>
               response = await postMedia(url, form, filename);
             }
           } catch (error) {
+            reportClientEvent("upload_failed");
             const online = navigator.onLine ? "Nettlesaren fekk ikkje noko HTTP-svar frå tenesta" : "Eininga er fråkopla nettet";
             setUploadStatus(`Opplasting av ${file.name || "fila"} feila: ${online}. ${error?.message || "Ukjend nettverksfeil"}.`, "error");
             continue;
           }
           if (response.status === 401) {
+            reportClientEvent("upload_failed");
             setUploadStatus("Opplasting feila (HTTP 401): Økta kunne ikkje fornyast. Logg inn på nytt.", "error");
             continue;
           }
-          if (!response.ok) { setUploadStatus(await uploadFailureMessage(response, file.name || "fila"), "error"); continue; }
+          if (!response.ok) { reportClientEvent("upload_failed"); setUploadStatus(await uploadFailureMessage(response, file.name || "fila"), "error"); continue; }
           const result = await response.json();
           pendingMedia.push(result.media);
           renderMediaPreviews();
+          reportClientEvent("upload_succeeded");
           setUploadStatus(`${file.name || "Fila"} er behandla og klar til å sendast.`, "success");
         }
         setConnected(socket?.readyState === WebSocket.OPEN, "Tilkopla");
@@ -3278,7 +3358,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         renderMentionSuggestions();
       }
 
-      bodyInput.addEventListener("input", updateMentionSuggestions);
+      bodyInput.addEventListener("input", () => {
+        persistActiveDraft();
+        updateMentionSuggestions();
+      });
       bodyInput.addEventListener("click", updateMentionSuggestions);
       bodyInput.addEventListener("keydown", (event) => {
         if (mentionSuggestions.hidden || mentionMatches.length === 0) return;
@@ -3316,6 +3399,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (!requestId) return;
         pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });
         bodyInput.value = "";
+        persistActiveDraft();
         closeMentionSuggestions();
         bodyInput.readOnly = true;
         setConnected(true, "Sender meldinga …");
@@ -3325,6 +3409,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const start = input.selectionStart ?? input.value.length;
         const end = input.selectionEnd ?? start;
         input.setRangeText(emoji, start, end, "end");
+        if (input === bodyInput) persistActiveDraft();
         input.focus();
       }
 
@@ -3598,6 +3683,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           if (!previousSocket && socket !== nextSocket) return;
           socket = nextSocket;
+          reportClientEvent("websocket_connected");
           if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
           setConnected(true, "Tilkopla");
           stableConnectionTimer = window.setTimeout(() => {
@@ -3640,6 +3726,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             return;
           }
           if (socket !== nextSocket) return;
+          reportClientEvent("websocket_disconnected");
           subscribedChannelId = null;
           for (const requestId of pendingMessages.keys()) {
             failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
@@ -3661,7 +3748,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         nextSocket.addEventListener("error", () => {
           if (previousSocket && socket === previousSocket) return;
-          if (socket === nextSocket) setConnected(false, "Mista sambandet");
+          if (socket === nextSocket) {
+            reportClientEvent("websocket_error");
+            setConnected(false, "Mista sambandet");
+          }
         });
       }
 
@@ -3719,6 +3809,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         pendingMessages.delete(requestId);
         bodyInput.readOnly = false;
         if (bodyInput.value.trim().length === 0) bodyInput.value = pending.draft;
+        persistActiveDraft();
         setConnected(socket?.readyState === WebSocket.OPEN, `Meldinga vart ikkje sendt: ${message}`);
         bodyInput.focus();
       }
@@ -4783,6 +4874,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function selectChannel(channel) {
         if (!channel) return;
         if (channel.id === activeChannelId && channel.id === subscribedChannelId) return;
+        persistActiveDraft();
         sidebar.classList.remove("mobile-open");
         mobileNavigationToggle.setAttribute("aria-expanded", "false");
         activeInboxKind = null;
@@ -4800,6 +4892,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         historyLoading = false;
         messagesEl.replaceChildren();
         activeChannelId = channel.id;
+        restoreActiveDraft();
         restoredChannelId = channel.id;
         try { window.localStorage.setItem(activeConversationKey, channel.id); } catch (_) {}
         reconnectScrollOffset = null;
@@ -6784,6 +6877,14 @@ mod protocol_capacity_tests {
             "pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });\n        bodyInput.value = \"\";"
         ));
         assert!(body.contains("bodyInput.value = pending.draft"));
+        assert!(body.contains("const channelDraftPrefix = \"sproyt.channel-draft.v1.\""));
+        assert!(body.contains("function persistActiveDraft()"));
+        assert!(body.contains("function restoreActiveDraft()"));
+        assert!(body.contains("window.localStorage.setItem(key, bodyInput.value)"));
+        assert!(body.contains(
+            "if (channel.id === activeChannelId && channel.id === subscribedChannelId) return;\n        persistActiveDraft();"
+        ));
+        assert!(body.contains("activeChannelId = channel.id;\n        restoreActiveDraft();"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
         assert!(body.contains("<details class=\"agent-access\" hidden>"));
         assert!(body.contains("<summary>Agenttilgang</summary>"));
@@ -6899,6 +7000,57 @@ mod protocol_capacity_tests {
             .to_str()
             .unwrap();
         assert!(!second_policy.contains(&format!("'nonce-{nonce}'")));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn authenticated_client_events_are_bounded_and_exported_without_payload_data() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+        let client = reqwest::Client::new();
+
+        let accepted = client
+            .post(format!(
+                "http://{address}/api/v1/client-events?participant=telemetry-user"
+            ))
+            .json(&serde_json::json!({"event":"session_refresh_failed"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), axum::http::StatusCode::NO_CONTENT);
+
+        let rejected = client
+            .post(format!(
+                "http://{address}/api/v1/client-events?participant=telemetry-user"
+            ))
+            .json(&serde_json::json!({
+                "event":"arbitrary_event",
+                "message":"private text must never become a metric"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            rejected.status(),
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY
+        );
+
+        let metrics = client
+            .get(format!("http://{address}/metrics"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(metrics.contains("sproyt_client_events_total{event=\"session_refresh_failed\"} 1"));
+        assert!(!metrics.contains("private text"));
+        assert!(!metrics.contains("telemetry-user"));
         server.abort();
     }
 

@@ -24,12 +24,21 @@ PostgreSQL metrics. Traces and logs may contain request IDs and durable object
 IDs, but never message bodies, cookies, authorization headers, OIDC tokens, or
 client secrets.
 
+Authenticated browsers report only a fixed event name for WebSocket connect,
+disconnect/error, session-refresh success/failure and upload success/failure.
+No close reason, URL, filename, browser identity or application content is
+accepted by the endpoint or emitted as a metric. Use these counters to detect
+fleet-wide regressions; use a request ID supplied to a user for individual HTTP
+failures. A refresh-failure ratio above 10% for 15 minutes or more than ten
+WebSocket transport errors in 15 minutes creates an operator ticket.
+
 For clusters running Prometheus Operator and Grafana's dashboard sidecar,
 enable `monitoring.serviceMonitor.enabled`,
 `monitoring.prometheusRule.enabled`, and
 `monitoring.grafanaDashboard.enabled`. The chart then installs a `/metrics`
 scrape target, page alerts for five minutes of failed readiness and a five-minute
-HTTP 5xx ratio above 2%, and the Sproyt overview dashboard. Add the Prometheus
+HTTP 5xx ratio above 2%, browser session/WebSocket regression tickets, and the
+Sproyt overview dashboard with connection, refresh and upload outcomes. Add the Prometheus
 selector labels required by the cluster through each `additionalLabels` map.
 
 ## Backup and restore drill

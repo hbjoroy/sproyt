@@ -13,9 +13,9 @@ checkout and pass the deployed application and GitOps revisions explicitly:
 
 ```bash
 bash tools/verify-production-rollout.sh \
-  eec2d792780622fac50caabe62e213106cb547e4 \
-  sha256:08ca736359ed085ff0ba5ed103a48f76ea35ac39d7a03a8166507ce59e8a0ae2 \
-  62bcdee990d3350611253e33db77f6f015be91ba
+  4abef10a7435cd549d749b8e4a1f08d46f106234 \
+  sha256:54f862678ddc780ea0811d4f19aac95749ceb52ecf89a1f194004ae224091e92 \
+  4e9823d718c928a8ef2b43d6dbd3ef370e2aae9b
 ```
 
 The verifier does not read Secrets or mutate the cluster. It verifies internal
@@ -49,6 +49,8 @@ two-user browser journey below.
       two-replica load/reconnect evidence meets the objectives in
       `operations.md`.
 - [ ] Dashboard, alerts, on-call owner, and incident channel are recorded.
+- [ ] Browser WebSocket, session-refresh and upload outcome panels show no
+      unexplained regression during the rollout observation window.
 - [ ] Capacity headroom covers at least twice the measured beta peak.
 - [ ] Retention, backup deletion lag, export access policy, and privacy owner are accepted.
 - [ ] Release owner records image digest, chart version, migration set, rollout

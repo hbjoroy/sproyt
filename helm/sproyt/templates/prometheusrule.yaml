@@ -32,4 +32,24 @@ spec:
           annotations:
             summary: Sproyt HTTP server error ratio exceeds two percent
             runbook_url: {{ printf "%s/docs/operations.md" .Chart.Home | quote }}
+        - alert: SproytSessionRefreshFailureRatioHigh
+          expr: |
+            sum(rate(sproyt_client_events_total{namespace={{ .Release.Namespace | quote }},event="session_refresh_failed"}[15m]))
+              /
+            clamp_min(sum(rate(sproyt_client_events_total{namespace={{ .Release.Namespace | quote }},event=~"session_refresh_(succeeded|failed)"}[15m])), 0.001)
+              > 0.10
+          for: 15m
+          labels:
+            severity: ticket
+          annotations:
+            summary: More than ten percent of browser session refreshes fail
+            runbook_url: {{ printf "%s/docs/operations.md" .Chart.Home | quote }}
+        - alert: SproytWebSocketErrorsHigh
+          expr: sum(increase(sproyt_client_events_total{namespace={{ .Release.Namespace | quote }},event="websocket_error"}[15m])) > 10
+          for: 5m
+          labels:
+            severity: ticket
+          annotations:
+            summary: Browsers report repeated WebSocket transport errors
+            runbook_url: {{ printf "%s/docs/operations.md" .Chart.Home | quote }}
 {{- end }}
