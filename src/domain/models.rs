@@ -135,6 +135,48 @@ pub struct IssuedInvitation {
     pub token: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InvitationTarget {
+    Circle {
+        circle_id: CircleId,
+    },
+    Channel {
+        circle_id: CircleId,
+        channel_id: ChannelId,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvitationResponse {
+    Declined,
+    Accepted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct InvitationPreview {
+    pub target: InvitationTarget,
+    pub circle_name: DisplayName,
+    pub channel_name: Option<DisplayName>,
+    pub invited_by_name: DisplayName,
+    pub expires_at: DateTime<Utc>,
+    pub response: Option<InvitationResponse>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct IssuedChatInvitation {
+    pub target: InvitationTarget,
+    pub token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AcceptedChatInvitation {
+    pub target: InvitationTarget,
+    pub channel: Channel,
+}
+
 impl MembershipRole {
     pub const fn as_str(&self) -> &'static str {
         match self {

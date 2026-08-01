@@ -127,6 +127,18 @@ pub enum ClientCommand {
     AcceptCircleInvitation {
         token: String,
     },
+    CreateInvitation {
+        target: crate::domain::InvitationTarget,
+    },
+    InspectInvitation {
+        token: String,
+    },
+    DeclineInvitation {
+        token: String,
+    },
+    AcceptInvitation {
+        token: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -274,6 +286,21 @@ pub enum ServerEvent {
     },
     CircleInvitationAccepted {
         membership: crate::domain::CircleMembership,
+    },
+    InvitationCreated {
+        invitation: crate::domain::IssuedChatInvitation,
+    },
+    InvitationInspected {
+        token: String,
+        invitation: crate::domain::InvitationPreview,
+    },
+    InvitationDeclined {
+        token: String,
+        invitation: crate::domain::InvitationPreview,
+    },
+    InvitationAccepted {
+        token: String,
+        invitation: crate::domain::AcceptedChatInvitation,
     },
     Error {
         code: &'static str,

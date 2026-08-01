@@ -40,6 +40,18 @@ pub struct AcceptCircleInvitation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CreateChatInvitation {
+    pub actor: UserId,
+    pub target: super::InvitationTarget,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct InvitationTokenCommand {
+    pub actor: UserId,
+    pub token: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct JoinChannel {
     pub actor: UserId,
     pub channel: ChannelRef,

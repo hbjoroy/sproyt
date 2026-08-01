@@ -11,13 +11,15 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::domain::PrincipalKind;
 use crate::domain::{
-    AcceptCircleInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
-    ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
-    CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, DisplayName,
-    EditMessage, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead,
-    MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId,
-    MessageLimit, MessageReactionChange, MessageReactionSummary, PresenceLease, RepositoryError,
-    SendMessage, TextValidationError, User, UserId, UserProfile,
+    AcceptCircleInvitation, AcceptedChatInvitation, ChannelId, ChannelKind, ChannelRef,
+    ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle,
+    CircleMembership, CircleRole, CreateChannel, CreateChatInvitation, CreateCircle,
+    CreateCircleInvitation, DeleteCircle, DeleteMessage, DisplayName, EditMessage,
+    InvitationPreview, InvitationTarget, InvitationTokenCommand, IssuedChatInvitation,
+    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
+    MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId, MessageLimit,
+    MessageReactionChange, MessageReactionSummary, PresenceLease, RepositoryError, SendMessage,
+    TextValidationError, User, UserId, UserProfile,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -414,6 +416,47 @@ impl ChatEngine {
     ) -> Result<CircleMembership, ChatError> {
         self.repository
             .accept_circle_invitation(AcceptCircleInvitation { actor, token })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn create_invitation(
+        &self,
+        actor: UserId,
+        target: InvitationTarget,
+    ) -> Result<IssuedChatInvitation, ChatError> {
+        self.repository
+            .create_chat_invitation(CreateChatInvitation { actor, target })
+            .await
+            .map_err(ChatError::from)
+    }
+    pub async fn inspect_invitation(
+        &self,
+        actor: UserId,
+        token: String,
+    ) -> Result<InvitationPreview, ChatError> {
+        self.repository
+            .inspect_chat_invitation(InvitationTokenCommand { actor, token })
+            .await
+            .map_err(ChatError::from)
+    }
+    pub async fn decline_invitation(
+        &self,
+        actor: UserId,
+        token: String,
+    ) -> Result<InvitationPreview, ChatError> {
+        self.repository
+            .decline_chat_invitation(InvitationTokenCommand { actor, token })
+            .await
+            .map_err(ChatError::from)
+    }
+    pub async fn accept_invitation(
+        &self,
+        actor: UserId,
+        token: String,
+    ) -> Result<AcceptedChatInvitation, ChatError> {
+        self.repository
+            .accept_chat_invitation(InvitationTokenCommand { actor, token })
             .await
             .map_err(ChatError::from)
     }

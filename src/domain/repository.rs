@@ -90,6 +90,30 @@ pub trait ChatRepository: Send + Sync + 'static {
         &'a self,
         command: AcceptCircleInvitation,
     ) -> RepositoryFuture<'a, CircleMembership>;
+    fn create_chat_invitation<'a>(
+        &'a self,
+        _command: super::CreateChatInvitation,
+    ) -> RepositoryFuture<'a, super::IssuedChatInvitation> {
+        Box::pin(async { Err(RepositoryError::NotFound) })
+    }
+    fn inspect_chat_invitation<'a>(
+        &'a self,
+        _command: super::InvitationTokenCommand,
+    ) -> RepositoryFuture<'a, super::InvitationPreview> {
+        Box::pin(async { Err(RepositoryError::NotFound) })
+    }
+    fn decline_chat_invitation<'a>(
+        &'a self,
+        _command: super::InvitationTokenCommand,
+    ) -> RepositoryFuture<'a, super::InvitationPreview> {
+        Box::pin(async { Err(RepositoryError::NotFound) })
+    }
+    fn accept_chat_invitation<'a>(
+        &'a self,
+        _command: super::InvitationTokenCommand,
+    ) -> RepositoryFuture<'a, super::AcceptedChatInvitation> {
+        Box::pin(async { Err(RepositoryError::NotFound) })
+    }
     fn create_channel<'a>(&'a self, command: CreateChannel) -> RepositoryFuture<'a, Channel>;
     fn join_channel<'a>(&'a self, command: JoinChannel) -> RepositoryFuture<'a, Membership>;
     fn list_joinable_channels<'a>(
