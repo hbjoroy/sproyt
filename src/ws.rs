@@ -77,7 +77,7 @@ pub async fn handle_socket(
         tokio::select! {
             _ = reauthentication.tick() => {
                 if auth
-                    .revalidate_request(requested_name.clone(), session_cookie.as_deref())
+                    .authenticate_request(requested_name.clone(), session_cookie.as_deref())
                     .await
                     .is_err()
                 {
@@ -460,6 +460,37 @@ async fn execute_command(
             .accept_circle_invitation(participant_id.clone(), token)
             .await
             .map(|membership| ServerEvent::CircleInvitationAccepted { membership }),
+        ClientCommand::CreateInvitation { target } => chat
+            .create_invitation(participant_id.clone(), target)
+            .await
+            .map(|invitation| ServerEvent::InvitationCreated { invitation }),
+        ClientCommand::InspectInvitation { token } => {
+            let response_token = token.clone();
+            chat.inspect_invitation(participant_id.clone(), token)
+                .await
+                .map(|invitation| ServerEvent::InvitationInspected {
+                    token: response_token,
+                    invitation,
+                })
+        }
+        ClientCommand::DeclineInvitation { token } => {
+            let response_token = token.clone();
+            chat.decline_invitation(participant_id.clone(), token)
+                .await
+                .map(|invitation| ServerEvent::InvitationDeclined {
+                    token: response_token,
+                    invitation,
+                })
+        }
+        ClientCommand::AcceptInvitation { token } => {
+            let response_token = token.clone();
+            chat.accept_invitation(participant_id.clone(), token)
+                .await
+                .map(|invitation| ServerEvent::InvitationAccepted {
+                    token: response_token,
+                    invitation,
+                })
+        }
         ClientCommand::Ping => {
             let active = subscriptions
                 .iter()

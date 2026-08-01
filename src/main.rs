@@ -2565,6 +2565,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           border-color: #344038;
         }
       }
+      .invitation-card { display: grid; gap: .65rem; margin: .5rem 0; padding: .9rem; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--surface) 92%, var(--accent)); max-width: 34rem; }
+      .invitation-card.declined { opacity: .55; }
+      .invitation-card h4, .invitation-card p { margin: 0; }
+      .invitation-card .invitation-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+      .invitation-card button { width: auto; min-height: 2.5rem; }
     </style>
   </head>
   <body>
@@ -2623,6 +2628,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="join-circle-channel" type="button" disabled>Bli med i kanal</button>
           <label>Inviter brukar<select id="channel-member"><option value="">Vel brukar</option></select></label>
           <button id="add-channel-member" type="button" disabled>Legg til i vald kanal</button>
+          <button id="create-channel-invitation" type="button" disabled>Kopier kanalinvitasjon</button>
           <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
           <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
           </div>
@@ -2758,6 +2764,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let renderMode = "view";
       let requestNumber = 0;
       const browserSessionId = `browser-${crypto.randomUUID()}`;
+      const sessionRefreshLeaseKey = "sproyt.session-refresh-lease.v1";
+      const sessionRefreshBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
       let activeChannelId = null;
       let subscribedChannelId = null;
       let reconnectScrollOffset = null;
@@ -2803,6 +2811,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         sessionRefreshDueAt = Date.now() + delay;
         sessionRefreshTimer = window.setTimeout(() => refreshSession().catch(() => scheduleSessionRefresh(30)), delay);
       }
+
+      sessionRefreshBroadcast?.addEventListener("message", (event) => {
+        const seconds = Number(event.data?.refreshAfterSeconds);
+        if (Number.isFinite(seconds) && seconds > 0) scheduleSessionRefresh(seconds);
+      });
 
       function reconnectAfterSessionRefresh() {
         if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
@@ -2852,8 +2865,50 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return false;
         }
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
+        sessionRefreshBroadcast?.postMessage({ refreshAfterSeconds: Number(result.refresh_after_seconds) || 300 });
         reconnectAfterSessionRefresh();
         return true;
+      }
+
+      async function refreshWithLocalStorageLease() {
+        const now = Date.now();
+        const lease = { owner: browserSessionId, expiresAt: now + 15000 };
+        try {
+          const current = JSON.parse(window.localStorage.getItem(sessionRefreshLeaseKey) || "null");
+          if (current?.owner !== browserSessionId && Number(current?.expiresAt) > now) {
+            scheduleSessionRefresh(Math.max(2, Math.ceil((current.expiresAt - now) / 1000)));
+            return false;
+          }
+          window.localStorage.setItem(sessionRefreshLeaseKey, JSON.stringify(lease));
+          const acquired = JSON.parse(window.localStorage.getItem(sessionRefreshLeaseKey) || "null");
+          if (acquired?.owner !== browserSessionId) {
+            scheduleSessionRefresh(5);
+            return false;
+          }
+        } catch (_) {
+          return performSessionRefresh();
+        }
+        try {
+          return await performSessionRefresh();
+        } finally {
+          try {
+            const current = JSON.parse(window.localStorage.getItem(sessionRefreshLeaseKey) || "null");
+            if (current?.owner === browserSessionId) window.localStorage.removeItem(sessionRefreshLeaseKey);
+          } catch (_) {}
+        }
+      }
+
+      async function useCurrentSessionIfAnotherTabRenewed() {
+        try {
+          const response = await fetch("/auth/session", { credentials: "same-origin", cache: "no-store", headers: { "accept": "application/json" } });
+          if (!response.ok) return false;
+          const result = await response.json();
+          const seconds = Number(result.refresh_after_seconds) || 300;
+          scheduleSessionRefresh(seconds);
+          return true;
+        } catch (_) {
+          return false;
+        }
       }
 
       async function refreshSession(waitForLock = false) {
@@ -2862,12 +2917,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (navigator.locks) {
             const options = waitForLock ? {} : { ifAvailable: true };
             return navigator.locks.request("sproyt-session-refresh", options, async (lock) => {
-              if (lock) return performSessionRefresh();
+              if (lock) {
+                if (waitForLock && await useCurrentSessionIfAnotherTabRenewed()) return true;
+                return performSessionRefresh();
+              }
               scheduleSessionRefresh(30);
               return false;
             });
           }
-          return performSessionRefresh();
+          return refreshWithLocalStorageLease();
         })();
         try {
           return await sessionRefreshPromise;
@@ -3332,8 +3390,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       addChannelMember.addEventListener("click", () => {
         if (activeChannelId && channelMember.value) sendCommand("add_channel_member", { channel_id: activeChannelId, user_id: channelMember.value });
       });
+      document.getElementById("create-channel-invitation").addEventListener("click", () => {
+        const channel = knownChannels.find((item) => item.id === activeChannelId);
+        if (channel?.circle_id) sendCommand("create_invitation", { target: { type: "channel", circle_id: channel.circle_id, channel_id: channel.id } });
+      });
       circleButtons[2].addEventListener("click", () => {
-        if (circleSelect.value) sendCommand("create_circle_invitation", { circle_id: circleSelect.value });
+        if (circleSelect.value) sendCommand("create_invitation", { target: { type: "circle", circle_id: circleSelect.value } });
       });
       circleButtons[3].addEventListener("click", () => {
         const token = invitationValueToToken(invitationToken.value);
@@ -3413,6 +3475,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function invitationValueToToken(value) {
         const candidate = value.trim();
         if (!candidate) return "";
+        const meta = candidate.match(/^\[\[invite:([A-Za-z0-9_-]{32,128})\]\]$/);
+        if (meta) return meta[1];
         try {
           const url = new URL(candidate, window.location.origin);
           return url.searchParams.get("invite") || candidate;
@@ -3638,6 +3702,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         joinCircleChannel.disabled = !connected || !joinableChannel.value;
         const active = knownChannels.find((channel) => channel.id === activeChannelId);
         addChannelMember.disabled = !connected || !channelMember.value || !active || !["owner", "moderator"].includes(active.role);
+        document.getElementById("create-channel-invitation").disabled = !connected || !active?.circle_id || !["owner", "moderator"].includes(active.role);
       }
 
       async function processApi(path, method = "GET", body = undefined) {
@@ -3925,6 +3990,24 @@ const INDEX_HTML: &str = r##"<!doctype html>
           updateOnboardingButtons();
           return;
         }
+        if (event.type === "invitation_created") {
+          invitationToken.value = `[[invite:${payload.invitation.token}]]`;
+          copyInvitation.hidden = false;
+          onboardingNotice.textContent = "Invitasjonsmeldinga er klar. Kopier henne inn i ein samtale.";
+          updateOnboardingButtons();
+          return;
+        }
+        if (event.type === "invitation_inspected" || event.type === "invitation_declined") {
+          updateInvitationCards(payload.token, payload.invitation);
+          return;
+        }
+        if (event.type === "invitation_accepted") {
+          markInvitationAccepted(payload.token);
+          sendCommand("list_my_circles");
+          sendCommand("list_my_channels");
+          pendingInvitationChannel = payload.invitation.channel.id;
+          return;
+        }
         if (event.type === "circle_invitation_accepted") {
           onboardingNotice.textContent = "Du er med i vennekretsen. Samtalane blir lasta inn no.";
           invitationToken.value = "";
@@ -3947,7 +4030,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const restored = knownChannels.find((channel) => channel.id === restoredChannelId);
           // Reconnects (including silent OIDC refresh) must keep the active
           // conversation. The requested slug is only a startup fallback.
-          const next = current || restored || requested || knownChannels[0];
+          const invited = knownChannels.find((channel) => channel.id === pendingInvitationChannel);
+          const next = invited || current || restored || requested || knownChannels[0];
+          if (invited) pendingInvitationChannel = null;
           if (next && next.id !== activeChannelId) selectChannel(next);
           return;
         }
@@ -5000,16 +5085,24 @@ const INDEX_HTML: &str = r##"<!doctype html>
         updateOnboardingButtons();
       }
 
+      let pendingInvitationChannel = null;
+
       function renderMessageBody(source, target) {
         const token = /\[\[media:([0-9a-f-]{36})\|([^|\]]+)\|([^\]]*)\]\]/gi;
         const attachments = [];
-        const text = source.replace(token, (_, id, contentType, encodedName) => {
+        const invitations = [];
+        const withoutInvitations = source.replace(/\[\[invite:([A-Za-z0-9_-]{32,128})\]\]/g, (_, invitationToken) => {
+          invitations.push(invitationToken);
+          return "";
+        });
+        const text = withoutInvitations.replace(token, (_, id, contentType, encodedName) => {
           let name = "media";
           try { name = decodeURIComponent(encodedName || "media"); } catch (_) {}
           attachments.push({ id, contentType, name });
           return "";
         }).trim();
         if (text) renderMarkdown(text, target);
+        invitations.forEach((invitationToken) => renderInvitationCard(invitationToken, target));
         attachments.forEach((media) => {
           const figure = document.createElement("figure");
           figure.className = "message-media";
@@ -5037,6 +5130,49 @@ const INDEX_HTML: &str = r##"<!doctype html>
           caption.textContent = media.name;
           figure.append(element, caption);
           target.append(figure);
+        });
+      }
+
+      function renderInvitationCard(token, target) {
+        const card = document.createElement("section");
+        card.className = "invitation-card";
+        card.dataset.invitationToken = token;
+        card.innerHTML = "<p>Lastar invitasjonen …</p>";
+        target.append(card);
+        sendCommand("inspect_invitation", { token });
+      }
+
+      function updateInvitationCards(token, invitation) {
+        document.querySelectorAll(".invitation-card").forEach((card) => {
+          if (card.dataset.invitationToken !== token) return;
+          const accepted = invitation.response === "accepted";
+          const declined = invitation.response === "declined";
+          const targetName = invitation.channel_name ? `kanalen ${invitation.channel_name}` : `vennekretsen ${invitation.circle_name}`;
+          card.classList.toggle("declined", declined);
+          card.replaceChildren();
+          const heading = document.createElement("h4");
+          heading.textContent = `Invitasjon til ${targetName}`;
+          const detail = document.createElement("p");
+          detail.textContent = accepted ? "Du har godteke invitasjonen." : `${invitation.invited_by_name} har invitert deg.`;
+          card.append(heading, detail);
+          if (!accepted) {
+            const actions = document.createElement("div"); actions.className = "invitation-actions";
+            const accept = document.createElement("button"); accept.type = "button"; accept.textContent = declined ? "Godta likevel" : "Godta";
+            accept.addEventListener("click", () => sendCommand("accept_invitation", { token }));
+            const decline = document.createElement("button"); decline.type = "button"; decline.textContent = "Avvis"; decline.disabled = declined;
+            decline.addEventListener("click", () => sendCommand("decline_invitation", { token }));
+            actions.append(accept, decline); card.append(actions);
+          }
+        });
+      }
+
+      function markInvitationAccepted(token) {
+        document.querySelectorAll(".invitation-card").forEach((card) => {
+          if (card.dataset.invitationToken !== token) return;
+          card.classList.remove("declined");
+          const detail = card.querySelector("p");
+          if (detail) detail.textContent = "Du har godteke invitasjonen.";
+          card.querySelector(".invitation-actions")?.remove();
         });
       }
 
@@ -6409,7 +6545,13 @@ mod protocol_capacity_tests {
         assert!(body.contains("reconnectAfterSessionRefresh()"));
         assert!(body.contains("connect(true)"));
         assert!(body.contains("connect(true, socket)"));
-        assert!(body.contains("const next = current || restored || requested || knownChannels[0]"));
+        assert!(body.contains(
+            "const next = invited || current || restored || requested || knownChannels[0]"
+        ));
+        assert!(body.contains("[[invite:${payload.invitation.token}]]"));
+        assert!(body.contains("function renderInvitationCard(token, target)"));
+        assert!(body.contains("sendCommand(\"accept_invitation\", { token })"));
+        assert!(body.contains("sendCommand(\"decline_invitation\", { token })"));
         assert!(body.contains("window.localStorage.setItem(activeConversationKey, channel.id)"));
         assert!(body.contains("let reconnectScrollOffset = null"));
         assert!(body.contains("restoreConversationScrollOffset(scrollOffset)"));

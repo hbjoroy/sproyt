@@ -11,15 +11,16 @@ use crate::agent::{
     CreatedAgent, GrantAgent, MessageProvenance,
 };
 use crate::domain::{
-    AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelKind, ChannelRef,
-    ChannelSequence, ChannelSlug, ChannelSummary, ChatMessage, ChatRepository, Circle, CircleId,
-    CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, DeleteMessage, DisplayName, EditMessage, ExportedChannel,
-    ExportedCircle, InboxMention, InvitationId, IssuedInvitation, JoinChannel, LeaveChannel,
-    LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership,
-    MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
-    PortableUserExport, RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserProfile,
-    UserTask,
+    AcceptCircleInvitation, AcceptedChatInvitation, AddChannelMember, Channel, ChannelId,
+    ChannelKind, ChannelRef, ChannelSequence, ChannelSlug, ChannelSummary, ChatMessage,
+    ChatRepository, Circle, CircleId, CircleInvitation, CircleMembership, CircleRole,
+    CreateChannel, CreateChatInvitation, CreateCircle, CreateCircleInvitation, DeleteCircle,
+    DeleteMessage, DisplayName, EditMessage, ExportedChannel, ExportedCircle, InboxMention,
+    InvitationId, InvitationPreview, InvitationResponse, InvitationTarget, InvitationTokenCommand,
+    IssuedChatInvitation, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
+    MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole,
+    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport,
+    RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserProfile, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -532,6 +533,131 @@ impl ChatRepository for SqliteChatRepository {
                 user_id: command.actor,
                 role: CircleRole::Member,
                 joined_at,
+            })
+        })
+    }
+
+    fn create_chat_invitation<'a>(
+        &'a self,
+        command: CreateChatInvitation,
+    ) -> RepositoryFuture<'a, IssuedChatInvitation> {
+        Box::pin(async move {
+            let (target_type, circle_id, channel_id) = match &command.target {
+                InvitationTarget::Circle { circle_id } => ("circle", circle_id.to_string(), None),
+                InvitationTarget::Channel {
+                    circle_id,
+                    channel_id,
+                } => (
+                    "channel",
+                    circle_id.to_string(),
+                    Some(channel_id.to_string()),
+                ),
+            };
+            let allowed: Option<i64> = if let Some(channel_id) = &channel_id {
+                sqlx::query_scalar("select 1 from channels c join channel_memberships m on m.channel_id=c.id where c.id=? and c.circle_id=? and m.user_id=? and m.role in ('owner','moderator')")
+                    .bind(channel_id).bind(&circle_id).bind(command.actor.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?
+            } else {
+                sqlx::query_scalar("select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'")
+                    .bind(&circle_id).bind(command.actor.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?
+            };
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut random = [0_u8; 32];
+            getrandom::fill(&mut random).map_err(storage)?;
+            let token = URL_SAFE_NO_PAD.encode(random);
+            let hash = Sha256::digest(token.as_bytes()).to_vec();
+            let expires_at = Utc::now() + Duration::days(7);
+            sqlx::query("insert into chat_invitations(id,token_hash,target_type,circle_id,channel_id,invited_by,expires_at) values(?,?,?,?,?,?,?)")
+                .bind(Uuid::new_v4().to_string()).bind(hash).bind(target_type).bind(circle_id).bind(channel_id)
+                .bind(command.actor.to_string()).bind(expires_at).execute(&self.pool).await.map_err(sql_error)?;
+            Ok(IssuedChatInvitation {
+                target: command.target,
+                token,
+                expires_at,
+            })
+        })
+    }
+
+    fn inspect_chat_invitation<'a>(
+        &'a self,
+        command: InvitationTokenCommand,
+    ) -> RepositoryFuture<'a, InvitationPreview> {
+        Box::pin(
+            async move { load_sqlite_invitation(&self.pool, &command.actor, &command.token).await },
+        )
+    }
+
+    fn decline_chat_invitation<'a>(
+        &'a self,
+        command: InvitationTokenCommand,
+    ) -> RepositoryFuture<'a, InvitationPreview> {
+        Box::pin(async move {
+            let hash = Sha256::digest(command.token.as_bytes()).to_vec();
+            let id: String = sqlx::query_scalar("select id from chat_invitations where token_hash=? and expires_at>current_timestamp")
+                .bind(hash).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
+            sqlx::query("insert into chat_invitation_responses(invitation_id,user_id,response) values(?,?,'declined') on conflict(invitation_id,user_id) do update set response='declined', responded_at=current_timestamp")
+                .bind(id).bind(command.actor.to_string()).execute(&self.pool).await.map_err(sql_error)?;
+            load_sqlite_invitation(&self.pool, &command.actor, &command.token).await
+        })
+    }
+
+    fn accept_chat_invitation<'a>(
+        &'a self,
+        command: InvitationTokenCommand,
+    ) -> RepositoryFuture<'a, AcceptedChatInvitation> {
+        Box::pin(async move {
+            let preview =
+                load_sqlite_invitation(&self.pool, &command.actor, &command.token).await?;
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let (invitation_id,): (String,) = sqlx::query_as("select id from chat_invitations where token_hash=? and expires_at>current_timestamp")
+                .bind(Sha256::digest(command.token.as_bytes()).to_vec()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+            let channel_id = match &preview.target {
+                InvitationTarget::Circle { circle_id } => {
+                    sqlx::query("insert into circle_memberships(circle_id,user_id,role) values(?,?,'member') on conflict(circle_id,user_id) do nothing")
+                        .bind(circle_id.to_string()).bind(command.actor.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+                    let existing: Option<String> = sqlx::query_scalar("select id from channels where circle_id=? and lower(name)='prat' order by id limit 1")
+                        .bind(circle_id.to_string()).fetch_optional(&mut *tx).await.map_err(sql_error)?;
+                    let id = existing.unwrap_or_else(|| Uuid::new_v4().to_string());
+                    sqlx::query("insert into channels(id,slug,name,kind,circle_id,created_by) values(?,?,'Prat','private',?,?) on conflict(slug) do nothing")
+                        .bind(&id).bind(format!("{}-prat", circle_id.to_string().replace('-', ""))).bind(circle_id.to_string()).bind(command.actor.to_string())
+                        .execute(&mut *tx).await.map_err(sql_error)?;
+                    id
+                }
+                InvitationTarget::Channel {
+                    circle_id,
+                    channel_id,
+                } => {
+                    let member: Option<i64> = sqlx::query_scalar(
+                        "select 1 from circle_memberships where circle_id=? and user_id=?",
+                    )
+                    .bind(circle_id.to_string())
+                    .bind(command.actor.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+                    if member.is_none() {
+                        return Err(RepositoryError::PermissionDenied);
+                    }
+                    channel_id.to_string()
+                }
+            };
+            sqlx::query("insert into channel_memberships(channel_id,user_id,role) values(?,?,'member') on conflict(channel_id,user_id) do nothing")
+                .bind(&channel_id).bind(command.actor.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into chat_invitation_responses(invitation_id,user_id,response) values(?,?,'accepted') on conflict(invitation_id,user_id) do update set response='accepted', responded_at=current_timestamp")
+                .bind(invitation_id).bind(command.actor.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+            let row = sqlx::query(
+                "select id,slug,name,kind,circle_id,created_by from channels where id=?",
+            )
+            .bind(channel_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let channel = channel_from_row(row)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(AcceptedChatInvitation {
+                target: preview.target,
+                channel,
             })
         })
     }
@@ -2142,6 +2268,55 @@ fn channel_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Channel, RepositoryE
     })
 }
 
+async fn load_sqlite_invitation(
+    pool: &SqlitePool,
+    actor: &UserId,
+    token: &str,
+) -> Result<InvitationPreview, RepositoryError> {
+    let row = sqlx::query("select i.target_type,i.circle_id,i.channel_id,i.expires_at,c.name circle_name,ch.name channel_name,u.display_name invited_by_name,r.response from chat_invitations i join circles c on c.id=i.circle_id left join channels ch on ch.id=i.channel_id join users u on u.id=i.invited_by left join chat_invitation_responses r on r.invitation_id=i.id and r.user_id=? where i.token_hash=? and i.expires_at>current_timestamp")
+        .bind(actor.to_string()).bind(Sha256::digest(token.as_bytes()).to_vec()).fetch_optional(pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
+    let circle_id = CircleId::from_uuid(
+        Uuid::parse_str(&row.try_get::<String, _>("circle_id").map_err(storage)?)
+            .map_err(storage)?,
+    );
+    let target = if row.try_get::<String, _>("target_type").map_err(storage)? == "circle" {
+        InvitationTarget::Circle { circle_id }
+    } else {
+        InvitationTarget::Channel {
+            circle_id,
+            channel_id: ChannelId::new(row.try_get::<String, _>("channel_id").map_err(storage)?)
+                .map_err(storage)?,
+        }
+    };
+    let response = match row
+        .try_get::<Option<String>, _>("response")
+        .map_err(storage)?
+        .as_deref()
+    {
+        Some("declined") => Some(InvitationResponse::Declined),
+        Some("accepted") => Some(InvitationResponse::Accepted),
+        _ => None,
+    };
+    Ok(InvitationPreview {
+        target,
+        circle_name: DisplayName::new(row.try_get::<String, _>("circle_name").map_err(storage)?)
+            .map_err(storage)?,
+        channel_name: row
+            .try_get::<Option<String>, _>("channel_name")
+            .map_err(storage)?
+            .map(DisplayName::new)
+            .transpose()
+            .map_err(storage)?,
+        invited_by_name: DisplayName::new(
+            row.try_get::<String, _>("invited_by_name")
+                .map_err(storage)?,
+        )
+        .map_err(storage)?,
+        expires_at: row.try_get("expires_at").map_err(storage)?,
+        response,
+    })
+}
+
 async fn persist_attachments_sqlite(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     message: &ChatMessage,
@@ -2862,5 +3037,121 @@ mod tests {
         let completed = repository.set_task_done(bob, task.id, true).await.unwrap();
         assert_eq!(completed.status, "done");
         assert!(completed.completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn chat_invitations_are_previewable_reversible_and_scope_channel_access() {
+        let repository = SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        repository.migrate().await.unwrap();
+        let owner = UserId::named("invite-owner");
+        let member = UserId::named("invite-member");
+        let outsider = UserId::named("invite-outsider");
+        for (id, name) in [
+            (owner.clone(), "Owner"),
+            (member.clone(), "Member"),
+            (outsider.clone(), "Outsider"),
+        ] {
+            repository
+                .upsert_user(User {
+                    id,
+                    kind: PrincipalKind::Human,
+                    display_name: DisplayName::new(name).unwrap(),
+                    external_provider: None,
+                    external_subject: None,
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: owner.clone(),
+                slug: ChannelSlug::new("invite-circle").unwrap(),
+                name: DisplayName::new("Invite circle").unwrap(),
+            })
+            .await
+            .unwrap();
+        let issued = repository
+            .create_chat_invitation(CreateChatInvitation {
+                actor: owner.clone(),
+                target: InvitationTarget::Circle {
+                    circle_id: circle.id.clone(),
+                },
+            })
+            .await
+            .unwrap();
+        let preview = repository
+            .inspect_chat_invitation(InvitationTokenCommand {
+                actor: member.clone(),
+                token: issued.token.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(preview.circle_name.as_str(), "Invite circle");
+        assert_eq!(preview.response, None);
+        let declined = repository
+            .decline_chat_invitation(InvitationTokenCommand {
+                actor: member.clone(),
+                token: issued.token.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(declined.response, Some(InvitationResponse::Declined));
+        let accepted = repository
+            .accept_chat_invitation(InvitationTokenCommand {
+                actor: member.clone(),
+                token: issued.token,
+            })
+            .await
+            .unwrap();
+        assert_eq!(accepted.channel.name.as_str(), "Prat");
+        assert!(
+            repository
+                .list_channels_for_user(member.clone())
+                .await
+                .unwrap()
+                .iter()
+                .any(|channel| channel.id == accepted.channel.id)
+        );
+
+        let private = repository
+            .create_channel(CreateChannel {
+                actor: owner.clone(),
+                slug: ChannelSlug::new("invite-private").unwrap(),
+                name: DisplayName::new("Hemmeleg").unwrap(),
+                kind: ChannelKind::Private,
+                circle_id: Some(circle.id.clone()),
+            })
+            .await
+            .unwrap();
+        let channel_invite = repository
+            .create_chat_invitation(CreateChatInvitation {
+                actor: owner,
+                target: InvitationTarget::Channel {
+                    circle_id: circle.id,
+                    channel_id: private.id.clone(),
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repository
+                .accept_chat_invitation(InvitationTokenCommand {
+                    actor: outsider,
+                    token: channel_invite.token.clone()
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
+        let joined = repository
+            .accept_chat_invitation(InvitationTokenCommand {
+                actor: member,
+                token: channel_invite.token,
+            })
+            .await
+            .unwrap();
+        assert_eq!(joined.channel.id, private.id);
     }
 }

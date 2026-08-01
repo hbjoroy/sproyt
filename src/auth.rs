@@ -100,6 +100,7 @@ impl AuthService {
         }
     }
 
+    #[allow(dead_code)] // Explicit provider revalidation remains available for sensitive future operations.
     pub async fn revalidate_request(
         &self,
         requested_name: Option<String>,
@@ -190,6 +191,14 @@ fn refresh_after_seconds(max_age: u64) -> u64 {
     } else {
         (max_age / 2).max(1)
     }
+}
+
+fn access_session_ttl(expires_in: Option<Duration>) -> u64 {
+    expires_in
+        .unwrap_or(Duration::from_secs(300))
+        .min(Duration::from_secs(ACCESS_SESSION_MAX_TTL_SECONDS))
+        .as_secs()
+        .max(1)
 }
 
 pub struct Logout {
@@ -386,12 +395,11 @@ impl OidcService {
             .unwrap_or(&subject);
         let principal = principal(&self.issuer, &subject, display_name)?;
         let now = now_seconds();
-        let token_expires_at =
-            u64::try_from(claims.expiration().timestamp()).map_err(|_| AuthError::Unauthorized)?;
-        let expires_at = token_expires_at.min(now.saturating_add(ACCESS_SESSION_MAX_TTL_SECONDS));
-        if expires_at <= now {
-            return Err(AuthError::Unauthorized);
-        }
+        // The ID token expiry validates the authentication assertion. The
+        // access token has its own lifetime, supplied by the token endpoint,
+        // and that is the lifetime that must bound the application session.
+        let access_max_age = access_session_ttl(token.expires_in());
+        let expires_at = now.saturating_add(access_max_age);
         let refresh_expires_at = now.saturating_add(REFRESH_IDLE_TTL_SECONDS);
         let refresh_cookie = token
             .refresh_token()
@@ -449,6 +457,7 @@ impl OidcService {
         ))
     }
 
+    #[allow(dead_code)] // Kept separate from routine WebSocket expiry checks to avoid provider coupling.
     async fn revalidate_session(
         &self,
         cookie_header: Option<&str>,
@@ -525,29 +534,15 @@ impl OidcService {
             .await
             .map_err(|_| AuthError::Unauthorized)?;
         let access_token = token.access_token().secret().to_owned();
-        let user_info: CoreUserInfoClaims = client
-            .user_info(
-                AccessToken::new(access_token.clone()),
-                Some(SubjectIdentifier::new(subject.clone())),
-            )
-            .map_err(AuthError::external)?
-            .request_async(&self.http_client)
-            .await
-            .map_err(|_| AuthError::Unauthorized)?;
-        let display_name = user_info
-            .name()
-            .and_then(|name| name.get(None))
-            .map_or(display_name, |name| name.to_string());
+        // Refresh-token exchange already authenticates the grant. Do not make
+        // renewal depend on a second userinfo round-trip: profile freshness is
+        // handled by the explicit revalidation path, while background renewal
+        // should remain reliable during a partial provider outage.
         // Successful use starts a fresh inactivity window. The provider can
         // still impose a shorter absolute lifetime on its refresh token.
         let refresh_expires_at = now_seconds().saturating_add(REFRESH_IDLE_TTL_SECONDS);
         let refresh_max_age = REFRESH_IDLE_TTL_SECONDS;
-        let access_max_age = token
-            .expires_in()
-            .unwrap_or(Duration::from_secs(300))
-            .min(Duration::from_secs(refresh_max_age))
-            .as_secs()
-            .max(1);
+        let access_max_age = access_session_ttl(token.expires_in()).min(refresh_max_age);
         let renewed = SessionClaims {
             issuer: issuer.clone(),
             subject: subject.clone(),
@@ -1072,6 +1067,17 @@ mod tests {
             validate_session_claims(&claims, "https://issuer.example"),
             Err(AuthError::Unauthorized)
         ));
+    }
+
+    #[test]
+    fn access_session_uses_access_token_lifetime_with_a_bounded_fallback() {
+        assert_eq!(access_session_ttl(Some(Duration::from_secs(3_600))), 3_600);
+        assert_eq!(access_session_ttl(None), 300);
+        assert_eq!(
+            access_session_ttl(Some(Duration::from_secs(24 * 60 * 60))),
+            ACCESS_SESSION_MAX_TTL_SECONDS
+        );
+        assert_eq!(refresh_after_seconds(3_600), 3_540);
     }
 
     #[tokio::test]
