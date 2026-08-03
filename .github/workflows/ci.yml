@@ -32,13 +32,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
       - name: Cache Cargo data
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -90,13 +90,13 @@ jobs:
       SPROYT_POSTGRES_TEST_URL: postgres://sproyt:sproyt-ci@127.0.0.1:5432/sproyt
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
       - name: Cache Cargo data
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -120,10 +120,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache Cargo tools and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/cargo-audit
@@ -161,7 +161,7 @@ jobs:
       SPROYT_ENV: test
       SPROYT_AUTH_MODE: development
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Migrate source database
         run: cargo run --locked -- migrate
       - name: Seed durable chat evidence
@@ -191,7 +191,7 @@ jobs:
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select max(sequence) from messages where channel_id='01900000-0000-7000-8000-000000000002'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select sender_display_name from messages where id='01900000-0000-7000-8000-000000000003'")" = "Recovery user"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: recovery-drill-backup
           path: sproyt.dump
@@ -203,7 +203,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Helm
         uses: azure/setup-helm@v5
@@ -324,7 +324,7 @@ jobs:
           severity-cutoff: high
 
       - name: Upload delivery evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: delivery-evidence
           path: |
