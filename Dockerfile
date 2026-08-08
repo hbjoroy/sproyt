@@ -34,7 +34,8 @@ RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry
       *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
     && rustup target add "$rust_target" \
-    && SPROYT_BUILD_REVISION="$VCS_REF" cargo zigbuild --locked --release --target "$rust_target" \
+    && cargo clean --package sproyt --release --target "$rust_target" \
+    && SPROYT_BUILD_REVISION="$VCS_REF" cargo zigbuild --locked --release --target "$rust_target" --bin sproyt \
     && install -D "target/$rust_target/release/sproyt" /out/sproyt
 
 FROM build-base AS native-builder
@@ -48,7 +49,8 @@ COPY migrations ./migrations
 COPY assets ./assets
 ARG VCS_REF=unknown
 RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
-    SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release \
+    cargo clean --package sproyt --release \
+    && SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release --bin sproyt \
     && install -D target/release/sproyt /out/sproyt
 
 FROM ${BUILD_VARIANT}-builder AS compiled
