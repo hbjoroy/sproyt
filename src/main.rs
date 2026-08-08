@@ -4914,8 +4914,40 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bottomChannelList.replaceChildren();
         bottomCircleList.replaceChildren();
         const activeCircle = knownCircles.get(activeCircleId);
-        bottomChannelToggle.textContent = activeCircle ? `Kanalar · ${activeCircle.name}` : "Kanalar";
-        bottomCircleToggle.textContent = activeCircle ? `Kretsar · ${activeCircle.name}` : "Kretsar";
+        const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
+        const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.direct_user_id);
+        const showingShared = !activeCircle && activeChannel && !activeChannel.circle_id && !activeChannel.direct_user_id;
+        const navigationContext = activeCircle?.name || (showingShared ? "(Felles)" : null);
+        bottomChannelToggle.textContent = navigationContext ? `Kanalar · ${navigationContext}` : "Kanalar";
+        bottomCircleToggle.textContent = navigationContext ? `Kretsar · ${navigationContext}` : "Kretsar";
+
+        const sharedUnreadCount = sharedChannels.reduce(
+          (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
+          0
+        );
+        const sharedButton = document.createElement("button");
+        sharedButton.type = "button";
+        sharedButton.textContent = "(Felles)";
+        sharedButton.disabled = sharedChannels.length === 0;
+        sharedButton.setAttribute("aria-current", showingShared ? "page" : "false");
+        if (sharedUnreadCount > 0) {
+          sharedButton.classList.add("has-unread");
+          const unread = document.createElement("span");
+          unread.className = "unread";
+          unread.textContent = approximateUnreadCount(sharedUnreadCount);
+          unread.setAttribute("aria-label", `${sharedUnreadCount} uleste meldingar i Felles`);
+          sharedButton.append(unread);
+        }
+        sharedButton.addEventListener("click", () => {
+          const firstChannel = sharedChannels[0];
+          if (!firstChannel) return;
+          clearActiveCircle();
+          circleSelect.value = "";
+          closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
+          if (firstChannel.id === activeChannelId) renderChannels();
+          else selectChannel(firstChannel);
+        });
+        bottomCircleList.append(sharedButton);
 
         if (knownCircles.size === 0) {
           const empty = document.createElement("p");
@@ -4946,7 +4978,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
               circleSelect.value = circleId;
               sendCommand("list_joinable_channels", { circle_id: circleId });
               closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
-              renderChannels();
+              const firstChannel = channels[0];
+              if (firstChannel) selectChannel(firstChannel);
+              else renderChannels();
             });
             bottomCircleList.append(button);
           }
@@ -5309,6 +5343,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (channel.circle_id) {
           setActiveCircle(channel.circle_id);
           circleSelect.value = channel.circle_id;
+        } else if (!channel.direct_user_id) {
+          clearActiveCircle();
+          circleSelect.value = "";
         }
         reconnectScrollOffset = null;
         closeMentionSuggestions();
@@ -7719,6 +7756,13 @@ mod protocol_capacity_tests {
         assert!(body.contains("id=\"bottom-circle-panel\""));
         assert!(body.contains("function renderBottomNavigation()"));
         assert!(body.contains("const circleChannels = activeCircleId"));
+        assert!(body.contains("sharedButton.textContent = \"(Felles)\""));
+        assert!(body.contains("sharedButton.disabled = sharedChannels.length === 0"));
+        assert!(body.contains("const firstChannel = channels[0]"));
+        assert!(body.contains("if (firstChannel) selectChannel(firstChannel)"));
+        assert!(
+            body.contains("else if (!channel.direct_user_id) {\n          clearActiveCircle()")
+        );
         assert!(body.contains(
             "const otherChannels = knownChannels.filter((channel) => !channel.circle_id)"
         ));
