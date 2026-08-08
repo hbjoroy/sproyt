@@ -3,10 +3,15 @@
 Attach durable links or artifacts for every checked item. A release is not
 production-ready based only on a successful build.
 
-Before release, manually dispatch `CI` for the exact commit or push its `v*`
-release tag. Normal pull requests and `main` pushes deliberately run only the
-fast quality and PostgreSQL gates; the full ARM64/kind/SBOM/recovery gate also
-runs weekly as a regression sentinel.
+Before release, manually dispatch `CI` from the exact `main` commit with
+`publish_image` enabled, or push its reviewed `v*` release tag. Manual publish
+dispatches from other refs are rejected. The publish job runs only after every
+full release job passes and publishes the already-tested ARM64 image under the
+immutable commit tag. Record the digest from the
+`registry-evidence-<commit>` artifact. Normal pull requests and `main` pushes
+deliberately run only the fast quality and PostgreSQL gates; the full
+ARM64/kind/SBOM/recovery gate also runs weekly as a regression sentinel without
+publishing an image.
 
 For the read-only cluster and public-boundary portion, run from a current
 checkout and pass the deployed application and GitOps revisions explicitly:
