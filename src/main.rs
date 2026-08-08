@@ -2915,15 +2915,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const sessionRefreshLeaseKey = "sproyt.session-refresh-lease.v1";
       const sessionRefreshBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
       let activeChannelId = null;
+      let activeCircleId = null;
       let activeInboxKind = null;
       let managedCircleId = null;
       let reconnectScrollOffset = null;
       const activeConversationKey = "sproyt.active-channel.v1";
+      const activeCircleKey = "sproyt.active-circle.v1";
       const channelDraftPrefix = "sproyt.channel-draft.v1.";
       const collapsedChannelGroupsKey = "sproyt.collapsed-channel-groups.v1";
       const linkedChannelId = new URL(window.location.href).searchParams.get("channel");
       let restoredChannelId = linkedChannelId;
       if (!restoredChannelId) try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
+      let restoredCircleId = null;
+      try { restoredCircleId = window.localStorage.getItem(activeCircleKey); } catch (_) {}
       let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
@@ -2998,6 +3002,35 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function restoreActiveDraft() {
         try { bodyInput.value = window.localStorage.getItem(channelDraftKey(activeChannelId)) || ""; }
         catch (_) { bodyInput.value = ""; }
+      }
+
+      function setActiveCircle(circleId) {
+        activeCircleId = circleId || null;
+        if (activeCircleId) {
+          restoredCircleId = activeCircleId;
+          try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}
+        }
+      }
+
+      function clearActiveCircle(circleId = null) {
+        if (circleId && activeCircleId !== circleId && restoredCircleId !== circleId) return;
+        activeCircleId = null;
+        restoredCircleId = null;
+        try { window.localStorage.removeItem(activeCircleKey); } catch (_) {}
+      }
+
+      function restoreActiveCircle() {
+        const selected = [activeCircleId, restoredCircleId, circleSelect.value]
+          .find((circleId) => circleId && knownCircles.has(circleId));
+        const fallback = selected || knownCircles.keys().next().value || null;
+        if (!fallback) {
+          clearActiveCircle();
+          circleSelect.value = "";
+          return null;
+        }
+        setActiveCircle(fallback);
+        circleSelect.value = fallback;
+        return fallback;
       }
 
       function reportClientEvent(event) {
@@ -3630,7 +3663,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       invitationToken.addEventListener("input", updateOnboardingButtons);
       circleSelect.addEventListener("change", updateOnboardingButtons);
       circleSelect.addEventListener("change", () => {
-        if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+        if (circleSelect.value) {
+          setActiveCircle(circleSelect.value);
+          sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+        } else {
+          clearActiveCircle();
+        }
       });
       circleChannel.addEventListener("input", updateOnboardingButtons);
       circleButtons[1].addEventListener("click", () => {
@@ -4262,10 +4300,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
             knownCircles.set(circle.id, { ...circle, role });
             circleSelect.add(new Option(`${circle.name} (${role})`, circle.id));
           });
-          if (!circleSelect.value && payload.circles.length > 0) {
-            circleSelect.value = payload.circles[0][0].id;
-          }
-          if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+          const restoredCircle = restoreActiveCircle();
+          if (restoredCircle) sendCommand("list_joinable_channels", { circle_id: restoredCircle });
           updateOnboardingButtons();
           renderChannels();
           return;
@@ -4274,6 +4310,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           knownCircles.set(payload.circle.id, { ...payload.circle, role: "owner" });
           circleSelect.add(new Option(`${payload.circle.name} (owner)`, payload.circle.id));
           circleSelect.value = payload.circle.id;
+          setActiveCircle(payload.circle.id);
           pushSystem(`Vennekretsen ${payload.circle.name} er oppretta.`);
           onboardingNotice.textContent = `${payload.circle.name} er klar. No kan du invitere vener.`;
           circleName.value = "";
@@ -4284,7 +4321,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         if (event.type === "circle_deleted") {
-          activeChannelId = null;
+          const deletedCircleId = payload.circle_id;
+          const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
+          if (activeChannel?.circle_id === deletedCircleId) {
+            activeChannelId = null;
+            connectionSupervisor.state.subscribedChannelId = null;
+            restoredChannelId = null;
+            try { window.localStorage.removeItem(activeConversationKey); } catch (_) {}
+          }
+          clearActiveCircle(deletedCircleId);
           sendCommand("list_my_circles");
           sendCommand("list_my_channels");
           pushSystem("Vennekretsen og den tilhøyrande historikken er sletta.");
@@ -4295,6 +4340,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (circleChannelDialog.open) circleChannelDialog.close();
           knownCircles.delete(departedCircleId);
           knownChannels = knownChannels.filter((channel) => channel.circle_id !== departedCircleId);
+          clearActiveCircle(departedCircleId);
           if (activeChannelId && !knownChannels.some((channel) => channel.id === activeChannelId)) {
             activeChannelId = null;
             connectionSupervisor.state.subscribedChannelId = null;
@@ -4763,6 +4809,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (!circle) return;
         managedCircleId = circleId;
         circleSelect.value = circleId;
+        setActiveCircle(circleId);
         updateOnboardingButtons();
         circleChannelTitle.textContent = `Kanalar i ${circle.name}`;
         circleJoinableList.innerHTML = '<p class="status">Lastar tilgjengelege kanalar …</p>';
@@ -5041,6 +5088,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         restoreActiveDraft();
         restoredChannelId = channel.id;
         try { window.localStorage.setItem(activeConversationKey, channel.id); } catch (_) {}
+        if (channel.circle_id) {
+          setActiveCircle(channel.circle_id);
+          circleSelect.value = channel.circle_id;
+        }
         reconnectScrollOffset = null;
         closeMentionSuggestions();
         if (channel.circle_id) sendCommand("list_circle_users", { circle_id: channel.circle_id });
@@ -7284,6 +7335,19 @@ mod protocol_capacity_tests {
         assert!(body.contains("scopedCircleChannelSlug(payload.circle.id, \"prat\")"));
         assert!(body.contains(
             "knownCircles.set(payload.circle.id, { ...payload.circle, role: \"owner\" })"
+        ));
+        assert!(body.contains("const activeCircleKey = \"sproyt.active-circle.v1\""));
+        assert!(body.contains("function restoreActiveCircle()"));
+        assert!(body.contains(".find((circleId) => circleId && knownCircles.has(circleId))"));
+        assert!(body.contains(
+            "try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}"
+        ));
+        assert!(body.contains("const restoredCircle = restoreActiveCircle();"));
+        assert!(body.contains("if (restoredCircle) sendCommand(\"list_joinable_channels\", { circle_id: restoredCircle });"));
+        assert!(body.contains("clearActiveCircle(deletedCircleId);"));
+        assert!(body.contains("clearActiveCircle(departedCircleId);"));
+        assert!(body.contains(
+            "if (channel.circle_id) {\n          setActiveCircle(channel.circle_id);\n          circleSelect.value = channel.circle_id;\n        }"
         ));
         assert!(body.contains("Kanalen kunne ikkje opprettast."));
         assert!(body.contains("sendCommand(\"list_joinable_channels\""));
