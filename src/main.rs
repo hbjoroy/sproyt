@@ -2224,7 +2224,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .mention-suggestions button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: transparent; color: #18201d; text-align: left; }
       .mention-suggestions button:hover, .mention-suggestions button[aria-selected="true"] { background: #dfe8e1; color: #183d2e; }
       .mention-suggestions small { color: #647269; }
-      .message-media { margin: 10px 0 0; }
+      .message-media { margin: 7px 0 0; }
       .message-media img, .message-media video { display: block; max-width: min(100%, 720px); max-height: 70vh; border-radius: 10px; background: #111; }
       .message-media img { cursor: zoom-in; }
       .message-media figcaption { margin-top: 4px; color: #647269; font-size: .78rem; }
@@ -2238,12 +2238,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .thread-panel > header { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--paper); }
       .thread-panel > header h2 { margin: 0; font-size: 1.15rem; }
       .thread-panel > header button { min-width: 42px; min-height: 42px; padding: 4px; }
-      .thread-messages { display: grid; gap: 10px; max-height: calc(100dvh - 190px); padding: 12px; overflow-y: auto; }
+      .thread-messages { display: grid; gap: 8px; max-height: calc(100dvh - 190px); padding: 10px; overflow-y: auto; }
       .thread-root { border-bottom: 2px solid var(--line); }
       .thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); }
       .thread-form textarea { min-width: 0; min-height: 44px; max-height: 120px; }
       .thread-link { min-height: 28px; margin-left: auto; padding: 3px 9px; border-radius: 999px; background: #eef2ed; color: #183d2e; font-size: .84rem; font-weight: 700; white-space: nowrap; }
-      .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px; }
+      .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 6px; }
       .message-actions { display: flex; gap: 6px; justify-content: flex-end; }
       .message-actions button { min-height: 28px; padding: 3px 8px; background: transparent; color: #506057; font-size: .8rem; }
       .message-editor { display: grid; gap: 6px; }
@@ -2262,6 +2262,65 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .reaction-viewers ul { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 9; width: max-content; max-width: min(78vw, 340px); margin: 0; padding: 8px 12px; border: 1px solid #cbd1c8; border-radius: 9px; background: #fff; box-shadow: 0 8px 24px #0002; list-style: none; }
       .reaction-viewers li { padding: 3px 0; color: #27342e; font-size: .86rem; overflow-wrap: anywhere; }
       .mobile-navigation-toggle { display: none; }
+      .bottom-navigation {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 6px;
+        padding: 6px 12px;
+        border-top: 1px solid #e4e5de;
+        background: #f4f6f2;
+      }
+      .bottom-navigation-panel { min-width: 0; }
+      .bottom-navigation-panel > summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 38px;
+        padding: 6px 9px;
+        border: 1px solid #cbd1c8;
+        border-radius: 8px;
+        background: #fff;
+        color: #183d2e;
+        cursor: pointer;
+        font-size: .86rem;
+        font-weight: 700;
+        list-style: none;
+      }
+      .bottom-navigation-panel > summary::-webkit-details-marker { display: none; }
+      .bottom-navigation-panel > summary::after { content: "⌃"; margin-left: 8px; }
+      .bottom-navigation-panel[open] > summary::after { content: "⌄"; }
+      .bottom-navigation-panel > summary:hover { background: #edf2ee; }
+      .bottom-navigation-list {
+        display: grid;
+        gap: 3px;
+        max-height: min(32dvh, 260px);
+        margin: 5px 0 0;
+        padding: 6px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        border: 1px solid #cbd1c8;
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 8px 24px rgb(35 59 47 / 16%);
+      }
+      .bottom-navigation-list button {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        min-height: 38px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+      }
+      .bottom-navigation-list button:hover,
+      .bottom-navigation-list button[aria-current="page"] { background: #dfe8e1; color: #183d2e; }
+      .bottom-navigation-list button.has-unread { color: #183d2e; font-weight: 800; }
+      .bottom-navigation-heading { margin: 5px 4px 1px; color: #647269; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+      .bottom-navigation-list .unread { flex: none; }
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
       .task-editor { display: grid; gap: 8px; margin-top: 12px; }
@@ -2291,8 +2350,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .channel-button.has-unread, .channel-group.has-unread > summary, .inbox-button.has-unread { color: #183d2e; font-weight: 800; }
       .unread { min-width: 1.6em; padding: 2px 6px; border-radius: 999px; background: #245b45; color: white; font-size: .75rem; text-align: center; }
       .channel-group .unread { min-width: 0; margin-left: auto; padding: 1px 6px; font-size: .7rem; }
-      .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-      .conversation-header p { margin: 4px 0 0; color: #647269; }
+      .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 14px; }
+      .conversation-header h2 { margin: 0; font-size: 1.25rem; line-height: 1.15; }
+      .conversation-header p { margin: 2px 0 0; color: #647269; font-size: .84rem; line-height: 1.25; }
       .peer-status[hidden] { display: none; }
       .profile-status { margin-left: 5px; cursor: help; }
       .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
@@ -2447,7 +2507,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .messages {
         align-content: start;
         display: grid;
-        gap: 10px;
+        gap: 8px;
+        padding: 12px;
         min-height: 0;
         overflow-y: auto;
         overflow-x: hidden;
@@ -2459,7 +2520,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         gap: 4px;
         min-width: 0;
         max-width: 100%;
-        padding: 12px;
+        padding: 9px 10px;
         border: 1px solid #dfe3dc;
         border-radius: 8px;
         background: #ffffff;
@@ -2473,7 +2534,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       .rendered {
         display: grid;
-        gap: 10px;
+        gap: 7px;
         min-width: 0;
         max-width: 100%;
         line-height: 1.45;
@@ -2566,6 +2627,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         gap: 12px;
         border-top: 1px solid #e4e5de;
       }
+      .composer-area { min-width: 0; }
       form.send textarea { min-height: 52px; max-height: 160px; }
 
       @media (max-width: 640px) {
@@ -2601,11 +2663,20 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .sidebar.mobile-open .navigation-heading { margin: 3px 4px; }
         .sidebar.mobile-open input, .sidebar.mobile-open select, .sidebar.mobile-open button { min-height: 36px; padding-top: 5px; padding-bottom: 5px; }
 
-        .conversation-header { min-height: 48px; padding: 8px 10px; }
-        .conversation-header h2 { margin: 0; font-size: 1.15rem; }
+        .conversation-header { min-height: 44px; padding: 6px 10px; }
+        .conversation-header h2 { margin: 0; font-size: 1.1rem; }
         .conversation-header p { font-size: .78rem; }
         .conversation-header .view-controls { display: none; }
         .conversation-header .status[data-routine="true"] { display: none; }
+
+        .bottom-navigation {
+          padding-right: max(8px, env(safe-area-inset-right));
+          padding-bottom: 6px;
+          padding-left: max(8px, env(safe-area-inset-left));
+        }
+        .bottom-navigation-list { max-height: min(36dvh, calc(var(--app-height) - 210px)); }
+        .bottom-navigation-panel > summary,
+        .bottom-navigation-list button { min-height: 40px; }
 
         form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 8px; align-items: end; }
         form.send .composer-input, form.send textarea { min-width: 0; width: 100%; }
@@ -2620,6 +2691,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .thread-messages { max-height: calc(100dvh - 132px); }
         .reaction-picker > div { width: min(310px, calc(100vw - 40px)); }
         .reaction-viewers ul { max-width: calc(100vw - 40px); }
+        .message-actions button,
+        .thread-link,
+        .reaction-badge,
+        .reaction-picker summary,
+        .reaction-viewers summary { min-height: 40px; }
 
         .connect,
         .circle-tools,
@@ -2651,6 +2727,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .messages {
           background: #121814;
         }
+
+        .bottom-navigation { border-color: #344038; background: #19211c; }
+        .bottom-navigation-panel > summary, .bottom-navigation-list { border-color: #344038; background: #19211c; color: #eef3ee; }
+        .bottom-navigation-list button.has-unread { color: #d8eddd; }
 
         .mention-suggestions { background: #19211c; border-color: #344038; }
         .mention-suggestions button { color: #eef3ee; }
@@ -2794,12 +2874,24 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <section class="process-view" id="process-view" aria-live="polite" hidden></section>
       </header>
       <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
-      <form class="send" id="send-form">
+      <div class="composer-area">
+        <nav class="bottom-navigation" aria-label="Krets- og kanalveljar">
+          <details class="bottom-navigation-panel" id="bottom-channel-panel">
+            <summary id="bottom-channel-toggle" aria-controls="bottom-channel-list">Kanalar</summary>
+            <div class="bottom-navigation-list" id="bottom-channel-list"><p class="status">Lastar …</p></div>
+          </details>
+          <details class="bottom-navigation-panel" id="bottom-circle-panel">
+            <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list">Kretsar</summary>
+            <div class="bottom-navigation-list" id="bottom-circle-list"><p class="status">Lastar …</p></div>
+          </details>
+        </nav>
+        <form class="send" id="send-form">
         <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
         <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="assertive"></p>
         <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
         <button id="send" type="submit" disabled>Send</button>
-      </form>
+        </form>
+      </div>
     </main>
     <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
     <dialog class="circle-channel-dialog" id="circle-channel-dialog" aria-labelledby="circle-channel-title"><header><h2 id="circle-channel-title">Kanalar</h2><button id="circle-channel-close" type="button" aria-label="Lukk kanalveljaren">×</button></header><div class="circle-channel-dialog-body"><section><p class="navigation-heading">Tilgjengelege kanalar</p><div class="joinable-channel-list" id="circle-joinable-list"><p class="status">Lastar …</p></div></section><form class="circle-channel-create" id="circle-channel-create"><strong>Lag ny kanal</strong><label>Namn<input id="managed-channel-name" maxlength="80" placeholder="Turprat" required></label><label>Tilgang<select id="managed-channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label><button type="submit">Lag kanal</button></form><section class="circle-membership-actions"><button class="danger-button" id="leave-circle" type="button">Forlat vennekretsen</button><small id="circle-membership-notice">Du mistar tilgang til kanalane i kretsen, men meldingane dine blir ståande.</small></section></div></dialog>
@@ -2858,6 +2950,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const statusEl = document.querySelector("#status");
       const messagesEl = document.querySelector("#messages");
       const channelList = document.querySelector("#channel-list");
+      const bottomChannelPanel = document.querySelector("#bottom-channel-panel");
+      const bottomCirclePanel = document.querySelector("#bottom-circle-panel");
+      const bottomChannelToggle = document.querySelector("#bottom-channel-toggle");
+      const bottomCircleToggle = document.querySelector("#bottom-circle-toggle");
+      const bottomChannelList = document.querySelector("#bottom-channel-list");
+      const bottomCircleList = document.querySelector("#bottom-circle-list");
       const directUser = document.querySelector("#direct-user");
       const openDirect = document.querySelector("#open-direct");
       const conversationTitle = document.querySelector("#conversation-title");
@@ -2915,15 +3013,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const sessionRefreshLeaseKey = "sproyt.session-refresh-lease.v1";
       const sessionRefreshBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
       let activeChannelId = null;
+      let activeCircleId = null;
       let activeInboxKind = null;
       let managedCircleId = null;
       let reconnectScrollOffset = null;
       const activeConversationKey = "sproyt.active-channel.v1";
+      const activeCircleKey = "sproyt.active-circle.v1";
       const channelDraftPrefix = "sproyt.channel-draft.v1.";
       const collapsedChannelGroupsKey = "sproyt.collapsed-channel-groups.v1";
       const linkedChannelId = new URL(window.location.href).searchParams.get("channel");
       let restoredChannelId = linkedChannelId;
       if (!restoredChannelId) try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
+      let restoredCircleId = null;
+      try { restoredCircleId = window.localStorage.getItem(activeCircleKey); } catch (_) {}
       let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
@@ -2936,6 +3038,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
       const pendingCommands = new Map();
+      let latestChannelListRequestId = null;
+      let latestCircleListRequestId = null;
       const pendingMessages = new Map();
       const historyRequestIds = new Set();
       const historyPageSize = 50;
@@ -2998,6 +3102,35 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function restoreActiveDraft() {
         try { bodyInput.value = window.localStorage.getItem(channelDraftKey(activeChannelId)) || ""; }
         catch (_) { bodyInput.value = ""; }
+      }
+
+      function setActiveCircle(circleId) {
+        activeCircleId = circleId || null;
+        if (activeCircleId) {
+          restoredCircleId = activeCircleId;
+          try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}
+        }
+      }
+
+      function clearActiveCircle(circleId = null) {
+        if (circleId && activeCircleId !== circleId && restoredCircleId !== circleId) return;
+        activeCircleId = null;
+        restoredCircleId = null;
+        try { window.localStorage.removeItem(activeCircleKey); } catch (_) {}
+      }
+
+      function restoreActiveCircle() {
+        const selected = [activeCircleId, restoredCircleId, circleSelect.value]
+          .find((circleId) => circleId && knownCircles.has(circleId));
+        const fallback = selected || knownCircles.keys().next().value || null;
+        if (!fallback) {
+          clearActiveCircle();
+          circleSelect.value = "";
+          return null;
+        }
+        setActiveCircle(fallback);
+        circleSelect.value = fallback;
+        return fallback;
       }
 
       function reportClientEvent(event) {
@@ -3616,7 +3749,23 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const open = sidebar.classList.toggle("mobile-open");
         mobileNavigationToggle.setAttribute("aria-expanded", String(open));
       });
+      bottomChannelPanel.addEventListener("toggle", () => {
+        if (bottomChannelPanel.open) bottomCirclePanel.open = false;
+      });
+      bottomCirclePanel.addEventListener("toggle", () => {
+        if (bottomCirclePanel.open) bottomChannelPanel.open = false;
+      });
       document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && bottomChannelPanel.open) {
+          event.preventDefault();
+          closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
+          return;
+        }
+        if (event.key === "Escape" && bottomCirclePanel.open) {
+          event.preventDefault();
+          closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
+          return;
+        }
         if (event.key === "Escape" && sidebar.classList.contains("mobile-open")) {
           sidebar.classList.remove("mobile-open");
           mobileNavigationToggle.setAttribute("aria-expanded", "false");
@@ -3630,7 +3779,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       invitationToken.addEventListener("input", updateOnboardingButtons);
       circleSelect.addEventListener("change", updateOnboardingButtons);
       circleSelect.addEventListener("change", () => {
-        if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+        if (circleSelect.value) {
+          setActiveCircle(circleSelect.value);
+          sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+        } else {
+          clearActiveCircle();
+        }
       });
       circleChannel.addEventListener("input", updateOnboardingButtons);
       circleButtons[1].addEventListener("click", () => {
@@ -3658,7 +3812,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const token = invitationValueToToken(invitationToken.value);
         if (token) {
           onboardingNotice.textContent = "Kontrollerer invitasjonen …";
-          sendCommand("accept_circle_invitation", { token });
+          sendCommand("accept_invitation", { token });
         }
       });
       copyInvitation.addEventListener("click", async () => {
@@ -3905,6 +4059,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         currentSocket.send(JSON.stringify(command));
         pendingCommands.set(command.request_id, type);
+        if (type === "list_my_channels") latestChannelListRequestId = command.request_id;
+        if (type === "list_my_circles") latestCircleListRequestId = command.request_id;
         return command.request_id;
       }
 
@@ -4256,16 +4412,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "circles_listed") {
+          if (event.request_id !== latestCircleListRequestId) return;
+          latestCircleListRequestId = null;
           knownCircles.clear();
           circleSelect.replaceChildren(new Option("Ingen", ""));
           payload.circles.forEach(([circle, role]) => {
             knownCircles.set(circle.id, { ...circle, role });
             circleSelect.add(new Option(`${circle.name} (${role})`, circle.id));
           });
-          if (!circleSelect.value && payload.circles.length > 0) {
-            circleSelect.value = payload.circles[0][0].id;
-          }
-          if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
+          const restoredCircle = restoreActiveCircle();
+          if (restoredCircle) sendCommand("list_joinable_channels", { circle_id: restoredCircle });
           updateOnboardingButtons();
           renderChannels();
           return;
@@ -4274,6 +4430,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           knownCircles.set(payload.circle.id, { ...payload.circle, role: "owner" });
           circleSelect.add(new Option(`${payload.circle.name} (owner)`, payload.circle.id));
           circleSelect.value = payload.circle.id;
+          setActiveCircle(payload.circle.id);
           pushSystem(`Vennekretsen ${payload.circle.name} er oppretta.`);
           onboardingNotice.textContent = `${payload.circle.name} er klar. No kan du invitere vener.`;
           circleName.value = "";
@@ -4284,7 +4441,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         if (event.type === "circle_deleted") {
-          activeChannelId = null;
+          const deletedCircleId = payload.circle_id;
+          const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
+          if (activeChannel?.circle_id === deletedCircleId) {
+            activeChannelId = null;
+            connectionSupervisor.state.subscribedChannelId = null;
+            restoredChannelId = null;
+            try { window.localStorage.removeItem(activeConversationKey); } catch (_) {}
+          }
+          clearActiveCircle(deletedCircleId);
           sendCommand("list_my_circles");
           sendCommand("list_my_channels");
           pushSystem("Vennekretsen og den tilhøyrande historikken er sletta.");
@@ -4295,6 +4460,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (circleChannelDialog.open) circleChannelDialog.close();
           knownCircles.delete(departedCircleId);
           knownChannels = knownChannels.filter((channel) => channel.circle_id !== departedCircleId);
+          clearActiveCircle(departedCircleId);
           if (activeChannelId && !knownChannels.some((channel) => channel.id === activeChannelId)) {
             activeChannelId = null;
             connectionSupervisor.state.subscribedChannelId = null;
@@ -4326,6 +4492,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         if (event.type === "invitation_accepted") {
           markInvitationAccepted(payload.token);
+          onboardingNotice.textContent = "Du er med i vennekretsen. Samtalane blir lasta inn no.";
+          invitationToken.value = "";
+          copyInvitation.hidden = true;
           sendCommand("list_my_circles");
           sendCommand("list_my_channels");
           pendingInvitationChannel = payload.invitation.channel.id;
@@ -4344,6 +4513,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "channels_listed") {
+          if (event.request_id !== latestChannelListRequestId) return;
+          latestChannelListRequestId = null;
           knownChannels = payload.channels;
           renderChannels();
           renderConversationIdentity();
@@ -4627,7 +4798,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             pushSystem(payload.message || payload.code);
             return;
           }
-          if (requestedCommand === "accept_circle_invitation") {
+          if (requestedCommand === "accept_invitation") {
             onboardingNotice.textContent = payload.code === "not_found"
               ? "Invitasjonen finst ikkje eller er ikkje gyldig lenger. Be venen din lage ei ny lenkje."
               : "Du kunne ikkje bli med med denne invitasjonen. Kontroller lenkja eller be om ei ny.";
@@ -4654,6 +4825,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function renderChannels() {
         channelList.replaceChildren();
         renderPrimaryNavigation();
+        renderBottomNavigation();
         if (knownChannels.length === 0) {
           const empty = document.createElement("p");
           empty.className = "status";
@@ -4738,6 +4910,98 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
 
+      function renderBottomNavigation() {
+        bottomChannelList.replaceChildren();
+        bottomCircleList.replaceChildren();
+        const activeCircle = knownCircles.get(activeCircleId);
+        bottomChannelToggle.textContent = activeCircle ? `Kanalar · ${activeCircle.name}` : "Kanalar";
+        bottomCircleToggle.textContent = activeCircle ? `Kretsar · ${activeCircle.name}` : "Kretsar";
+
+        if (knownCircles.size === 0) {
+          const empty = document.createElement("p");
+          empty.className = "status";
+          empty.textContent = "Ingen vennekretsar enno";
+          bottomCircleList.append(empty);
+        } else {
+          for (const [circleId, circle] of knownCircles) {
+            const channels = knownChannels.filter((channel) => channel.circle_id === circleId);
+            const unreadCount = channels.reduce(
+              (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
+              0
+            );
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = circle.name;
+            button.setAttribute("aria-current", circleId === activeCircleId ? "page" : "false");
+            if (unreadCount > 0) {
+              button.classList.add("has-unread");
+              const unread = document.createElement("span");
+              unread.className = "unread";
+              unread.textContent = approximateUnreadCount(unreadCount);
+              unread.setAttribute("aria-label", `${unreadCount} uleste meldingar i ${circle.name}`);
+              button.append(unread);
+            }
+            button.addEventListener("click", () => {
+              setActiveCircle(circleId);
+              circleSelect.value = circleId;
+              sendCommand("list_joinable_channels", { circle_id: circleId });
+              closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
+              renderChannels();
+            });
+            bottomCircleList.append(button);
+          }
+        }
+
+        const circleChannels = activeCircleId
+          ? knownChannels.filter((channel) => channel.circle_id === activeCircleId)
+          : [];
+        appendBottomChannelButtons(circleChannels, bottomChannelList, "Ingen kanalar i den valde kretsen.");
+
+        const otherChannels = knownChannels.filter((channel) => !channel.circle_id);
+        if (otherChannels.length > 0) {
+          const heading = document.createElement("p");
+          heading.className = "bottom-navigation-heading";
+          heading.textContent = "Andre samtalar";
+          bottomChannelList.append(heading);
+          appendBottomChannelButtons(otherChannels, bottomChannelList);
+        }
+      }
+
+      function appendBottomChannelButtons(channels, target, emptyText = "") {
+        if (channels.length === 0 && emptyText) {
+          const empty = document.createElement("p");
+          empty.className = "status";
+          empty.textContent = emptyText;
+          target.append(empty);
+          return;
+        }
+        for (const channel of channels) {
+          const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = channel.direct_user_id ? channel.name : `# ${channel.name}`;
+          button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
+          if (unreadCount > 0) {
+            button.classList.add("has-unread");
+            const unread = document.createElement("span");
+            unread.className = "unread";
+            unread.textContent = approximateUnreadCount(unreadCount);
+            unread.setAttribute("aria-label", `${unreadCount} uleste meldingar`);
+            button.append(unread);
+          }
+          button.addEventListener("click", () => {
+            closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
+            selectChannel(channel);
+          });
+          target.append(button);
+        }
+      }
+
+      function closeBottomNavigation(panel, toggle) {
+        panel.open = false;
+        toggle.focus();
+      }
+
       function renderChannelActions(channel) {
         const actions = document.createElement("details");
         const summary = document.createElement("summary");
@@ -4763,6 +5027,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (!circle) return;
         managedCircleId = circleId;
         circleSelect.value = circleId;
+        setActiveCircle(circleId);
         updateOnboardingButtons();
         circleChannelTitle.textContent = `Kanalar i ${circle.name}`;
         circleJoinableList.innerHTML = '<p class="status">Lastar tilgjengelege kanalar …</p>';
@@ -5041,6 +5306,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         restoreActiveDraft();
         restoredChannelId = channel.id;
         try { window.localStorage.setItem(activeConversationKey, channel.id); } catch (_) {}
+        if (channel.circle_id) {
+          setActiveCircle(channel.circle_id);
+          circleSelect.value = channel.circle_id;
+        }
         reconnectScrollOffset = null;
         closeMentionSuggestions();
         if (channel.circle_id) sendCommand("list_circle_users", { circle_id: channel.circle_id });
@@ -5155,6 +5424,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState !== "visible") return;
         resumeAfterBackground();
+        sendCommand("list_my_channels");
         if (!activeChannelId) return;
         const visibleMessages = timeline
           .filter((item) => item.type === "message" && item.message.channel_id === activeChannelId)
@@ -6925,6 +7195,26 @@ mod protocol_capacity_tests {
     }
 
     #[test]
+    fn browser_keeps_conversation_dense_without_shrinking_mobile_message_actions() {
+        assert!(INDEX_HTML.contains(
+            ".conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 14px; }"
+        ));
+        assert!(INDEX_HTML.contains(".messages {\n        align-content: start;\n        display: grid;\n        gap: 8px;\n        padding: 12px;"));
+        assert!(INDEX_HTML.contains("padding: 9px 10px;"));
+        assert!(INDEX_HTML.contains(".rendered {\n        display: grid;\n        gap: 7px;"));
+        assert!(INDEX_HTML.contains(
+            ".message-actions button,\n        .thread-link,\n        .reaction-badge,\n        .reaction-picker summary,\n        .reaction-viewers summary { min-height: 40px; }"
+        ));
+    }
+
+    #[test]
+    fn browser_refreshes_unread_summaries_when_a_background_tab_returns() {
+        assert!(INDEX_HTML.contains(
+            "if (document.visibilityState !== \"visible\") return;\n        resumeAfterBackground();\n        sendCommand(\"list_my_channels\");"
+        ));
+    }
+
+    #[test]
     fn browser_linkifies_safe_web_urls_without_expanding_messages() {
         assert!(INDEX_HTML.contains("function appendLinkedText(parent, text)"));
         assert!(INDEX_HTML.contains("const urlPattern = /https?:\\/\\/[^\\s<>]+/gi"));
@@ -7285,11 +7575,29 @@ mod protocol_capacity_tests {
         assert!(body.contains(
             "knownCircles.set(payload.circle.id, { ...payload.circle, role: \"owner\" })"
         ));
+        assert!(body.contains("const activeCircleKey = \"sproyt.active-circle.v1\""));
+        assert!(body.contains("function restoreActiveCircle()"));
+        assert!(body.contains(".find((circleId) => circleId && knownCircles.has(circleId))"));
+        assert!(body.contains(
+            "try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}"
+        ));
+        assert!(body.contains("const restoredCircle = restoreActiveCircle();"));
+        assert!(body.contains("if (restoredCircle) sendCommand(\"list_joinable_channels\", { circle_id: restoredCircle });"));
+        assert!(body.contains("clearActiveCircle(deletedCircleId);"));
+        assert!(body.contains("clearActiveCircle(departedCircleId);"));
+        assert!(body.contains(
+            "if (channel.circle_id) {\n          setActiveCircle(channel.circle_id);\n          circleSelect.value = channel.circle_id;\n        }"
+        ));
         assert!(body.contains("Kanalen kunne ikkje opprettast."));
         assert!(body.contains("sendCommand(\"list_joinable_channels\""));
         assert!(body.contains("sendCommand(\"add_channel_member\""));
         assert!(body.contains("const browserSessionId = `browser-${crypto.randomUUID()}`"));
         assert!(body.contains("request_id: `${browserSessionId}-${requestNumber}`"));
+        assert!(body.contains(
+            "if (type === \"list_my_channels\") latestChannelListRequestId = command.request_id;"
+        ));
+        assert!(body.contains("if (event.request_id !== latestChannelListRequestId) return;"));
+        assert!(body.contains("if (event.request_id !== latestCircleListRequestId) return;"));
         assert!(!body.contains("request_id: `browser-${requestNumber}`"));
         assert!(body.contains("if (event.type === \"message_accepted\")"));
         assert!(body.contains("finishPendingMessage(event.request_id, payload.message)"));
@@ -7347,6 +7655,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("[[invite:${payload.invitation.token}]]"));
         assert!(body.contains("function renderInvitationCard(token, target)"));
         assert!(body.contains("sendCommand(\"accept_invitation\", { token })"));
+        assert!(!body.contains("sendCommand(\"accept_circle_invitation\", { token })"));
         assert!(body.contains("sendCommand(\"decline_invitation\", { token })"));
         assert!(body.contains("window.localStorage.setItem(activeConversationKey, channel.id)"));
         assert!(body.contains("let reconnectScrollOffset = null"));
@@ -7374,6 +7683,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("groupUnreadCount = channels.reduce"));
         assert!(body.contains("group.classList.add(\"has-unread\")"));
         assert!(body.contains("button.classList.add(\"has-unread\")"));
+        assert!(body.contains("if (unreadCount > 0) {"));
         assert!(body.contains("class=\"inbox-navigation\""));
         assert!(body.contains("id=\"unread-count\""));
         assert!(body.contains("id=\"mention-count\""));
@@ -7403,6 +7713,20 @@ mod protocol_capacity_tests {
         assert!(body.contains(":focus-visible"));
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
         assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
+        assert!(body.contains("class=\"bottom-navigation\" aria-label=\"Krets- og kanalveljar\""));
+        assert!(body.contains("id=\"bottom-channel-panel\""));
+        assert!(body.contains("id=\"bottom-circle-panel\""));
+        assert!(body.contains("function renderBottomNavigation()"));
+        assert!(body.contains("const circleChannels = activeCircleId"));
+        assert!(body.contains(
+            "const otherChannels = knownChannels.filter((channel) => !channel.circle_id)"
+        ));
+        assert!(body.contains("heading.textContent = \"Andre samtalar\""));
+        assert!(body.contains("button.setAttribute(\"aria-current\", circleId === activeCircleId ? \"page\" : \"false\")"));
+        assert!(body.contains("button.classList.add(\"has-unread\")"));
+        assert!(body.contains("function closeBottomNavigation(panel, toggle)"));
+        assert!(body.contains("if (event.key === \"Escape\" && bottomChannelPanel.open)"));
+        assert!(body.contains("padding-bottom: 6px;"));
         assert!(body.contains("<summary>Administrer kretsar og kanalar</summary>"));
         assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
         assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
@@ -8683,6 +9007,118 @@ mod protocol_capacity_tests {
                 .unwrap()
                 .iter()
                 .all(|entry| entry[0]["id"] != circle_id)
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn leaving_circle_disconnects_inaccessible_websocket_channels() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+        let mut owner = connect_as(address, "leave-circle-owner").await;
+        let circle = command(
+            &mut owner,
+            "leave-circle-create",
+            "create_circle",
+            serde_json::json!({"slug":"leave-circle","name":"Leave circle"}),
+        )
+        .await;
+        let circle_id = circle["payload"]["circle"]["id"].clone();
+        let channel = command(
+            &mut owner,
+            "leave-circle-channel",
+            "create_channel",
+            serde_json::json!({"slug":"leave-circle-chat","name":"Leave circle chat","kind":"local","circle_id":circle_id}),
+        )
+        .await;
+        let channel_id = channel["payload"]["channel"]["id"].clone();
+        let invitation = command(
+            &mut owner,
+            "leave-circle-invite",
+            "create_circle_invitation",
+            serde_json::json!({"circle_id":circle_id}),
+        )
+        .await;
+
+        let mut member = connect_as(address, "leave-circle-member").await;
+        let member_id = command(
+            &mut member,
+            "leave-circle-member-hello",
+            "hello",
+            serde_json::Value::Null,
+        )
+        .await["payload"]["participant_id"]
+            .clone();
+        command(
+            &mut member,
+            "leave-circle-accept",
+            "accept_circle_invitation",
+            serde_json::json!({"token":invitation["payload"]["invitation"]["token"]}),
+        )
+        .await;
+        command(
+            &mut member,
+            "leave-circle-join-channel",
+            "join_channel",
+            serde_json::json!({"channel":{"type":"id","value":channel_id}}),
+        )
+        .await;
+        command(
+            &mut owner,
+            "leave-circle-owner-subscribe",
+            "subscribe_channel",
+            serde_json::json!({"channel_id":channel_id}),
+        )
+        .await;
+        command(
+            &mut member,
+            "leave-circle-member-subscribe",
+            "subscribe_channel",
+            serde_json::json!({"channel_id":channel_id}),
+        )
+        .await;
+
+        command(
+            &mut member,
+            "leave-circle",
+            "leave_circle",
+            serde_json::json!({"circle_id":circle_id}),
+        )
+        .await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let frame = owner.next().await.unwrap().unwrap();
+                if let ClientMessage::Text(text) = frame {
+                    let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if event["type"] == "chat"
+                        && event["payload"]["event"]["type"] == "participant_left"
+                        && event["payload"]["event"]["participant_id"] == member_id
+                    {
+                        return;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("owner did not observe the departed member leaving presence");
+
+        command(
+            &mut owner,
+            "leave-circle-send-after-leave",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"must not reach departed member"}),
+        )
+        .await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(350), member.next())
+                .await
+                .is_err(),
+            "departed member received a websocket event after leaving the circle"
         );
         server.abort();
     }
