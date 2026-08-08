@@ -448,14 +448,24 @@ async fn execute_command(
             .list_circles(participant_id.clone())
             .await
             .map(|circles| ServerEvent::CirclesListed { circles }),
-        ClientCommand::DeleteCircle { circle_id } => chat
-            .delete_circle(participant_id.clone(), circle_id.clone())
+        ClientCommand::DeleteCircle { circle_id } => {
+            async {
+                chat.delete_circle(participant_id.clone(), circle_id.clone())
+                    .await?;
+                disconnect_inaccessible_channels(chat, participant_id, subscriptions).await;
+                Ok(ServerEvent::CircleDeleted { circle_id })
+            }
             .await
-            .map(|()| ServerEvent::CircleDeleted { circle_id }),
-        ClientCommand::LeaveCircle { circle_id } => chat
-            .leave_circle(participant_id.clone(), circle_id.clone())
+        }
+        ClientCommand::LeaveCircle { circle_id } => {
+            async {
+                chat.leave_circle(participant_id.clone(), circle_id.clone())
+                    .await?;
+                disconnect_inaccessible_channels(chat, participant_id, subscriptions).await;
+                Ok(ServerEvent::CircleLeft { circle_id })
+            }
             .await
-            .map(|()| ServerEvent::CircleLeft { circle_id }),
+        }
         ClientCommand::CreateCircleInvitation { circle_id } => chat
             .create_circle_invitation(participant_id.clone(), circle_id)
             .await
@@ -527,6 +537,26 @@ async fn disconnect(
                 active.connection_id,
             )
             .await;
+    }
+}
+
+async fn disconnect_inaccessible_channels(
+    chat: &ChatEngine,
+    participant_id: &UserId,
+    subscriptions: &mut HashMap<ChannelId, ActiveSubscription>,
+) {
+    let visible_channels = chat.list_channels(participant_id.clone()).await.ok();
+    let channels_to_disconnect = subscriptions
+        .keys()
+        .filter(|channel_id| {
+            visible_channels
+                .as_ref()
+                .is_none_or(|channels| !channels.iter().any(|channel| &channel.id == *channel_id))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for channel_id in channels_to_disconnect {
+        disconnect(chat, participant_id, &channel_id, subscriptions).await;
     }
 }
 

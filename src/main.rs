@@ -4933,6 +4933,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             button.addEventListener("click", () => {
               setActiveCircle(circleId);
               circleSelect.value = circleId;
+              sendCommand("list_joinable_channels", { circle_id: circleId });
               closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
               renderChannels();
             });
@@ -4969,7 +4970,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           button.type = "button";
           button.textContent = channel.direct_user_id ? channel.name : `# ${channel.name}`;
           button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
-          if (unreadCount > 0 && channel.id !== activeChannelId) {
+          if (unreadCount > 0) {
             button.classList.add("has-unread");
             const unread = document.createElement("span");
             unread.className = "unread";
@@ -7657,6 +7658,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("groupUnreadCount = channels.reduce"));
         assert!(body.contains("group.classList.add(\"has-unread\")"));
         assert!(body.contains("button.classList.add(\"has-unread\")"));
+        assert!(body.contains("if (unreadCount > 0) {"));
         assert!(body.contains("class=\"inbox-navigation\""));
         assert!(body.contains("id=\"unread-count\""));
         assert!(body.contains("id=\"mention-count\""));
@@ -8980,6 +8982,118 @@ mod protocol_capacity_tests {
                 .unwrap()
                 .iter()
                 .all(|entry| entry[0]["id"] != circle_id)
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn leaving_circle_disconnects_inaccessible_websocket_channels() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+        let mut owner = connect_as(address, "leave-circle-owner").await;
+        let circle = command(
+            &mut owner,
+            "leave-circle-create",
+            "create_circle",
+            serde_json::json!({"slug":"leave-circle","name":"Leave circle"}),
+        )
+        .await;
+        let circle_id = circle["payload"]["circle"]["id"].clone();
+        let channel = command(
+            &mut owner,
+            "leave-circle-channel",
+            "create_channel",
+            serde_json::json!({"slug":"leave-circle-chat","name":"Leave circle chat","kind":"local","circle_id":circle_id}),
+        )
+        .await;
+        let channel_id = channel["payload"]["channel"]["id"].clone();
+        let invitation = command(
+            &mut owner,
+            "leave-circle-invite",
+            "create_circle_invitation",
+            serde_json::json!({"circle_id":circle_id}),
+        )
+        .await;
+
+        let mut member = connect_as(address, "leave-circle-member").await;
+        let member_id = command(
+            &mut member,
+            "leave-circle-member-hello",
+            "hello",
+            serde_json::Value::Null,
+        )
+        .await["payload"]["participant_id"]
+            .clone();
+        command(
+            &mut member,
+            "leave-circle-accept",
+            "accept_circle_invitation",
+            serde_json::json!({"token":invitation["payload"]["invitation"]["token"]}),
+        )
+        .await;
+        command(
+            &mut member,
+            "leave-circle-join-channel",
+            "join_channel",
+            serde_json::json!({"channel":{"type":"id","value":channel_id}}),
+        )
+        .await;
+        command(
+            &mut owner,
+            "leave-circle-owner-subscribe",
+            "subscribe_channel",
+            serde_json::json!({"channel_id":channel_id}),
+        )
+        .await;
+        command(
+            &mut member,
+            "leave-circle-member-subscribe",
+            "subscribe_channel",
+            serde_json::json!({"channel_id":channel_id}),
+        )
+        .await;
+
+        command(
+            &mut member,
+            "leave-circle",
+            "leave_circle",
+            serde_json::json!({"circle_id":circle_id}),
+        )
+        .await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let frame = owner.next().await.unwrap().unwrap();
+                if let ClientMessage::Text(text) = frame {
+                    let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if event["type"] == "chat"
+                        && event["payload"]["event"]["type"] == "participant_left"
+                        && event["payload"]["event"]["participant_id"] == member_id
+                    {
+                        return;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("owner did not observe the departed member leaving presence");
+
+        command(
+            &mut owner,
+            "leave-circle-send-after-leave",
+            "send_message",
+            serde_json::json!({"channel_id":channel_id,"body":"must not reach departed member"}),
+        )
+        .await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(350), member.next())
+                .await
+                .is_err(),
+            "departed member received a websocket event after leaving the circle"
         );
         server.abort();
     }
