@@ -2875,6 +2875,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       </header>
       <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
       <div class="composer-area">
+        <form class="send" id="send-form">
+        <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
+        <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="assertive"></p>
+        <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
+        <button id="send" type="submit" disabled>Send</button>
+        </form>
         <nav class="bottom-navigation" aria-label="Krets- og kanalveljar">
           <details class="bottom-navigation-panel" id="bottom-channel-panel">
             <summary id="bottom-channel-toggle" aria-controls="bottom-channel-list">Kanalar</summary>
@@ -2885,12 +2891,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
             <div class="bottom-navigation-list" id="bottom-circle-list"><p class="status">Lastar …</p></div>
           </details>
         </nav>
-        <form class="send" id="send-form">
-        <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
-        <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="assertive"></p>
-        <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
-        <button id="send" type="submit" disabled>Send</button>
-        </form>
       </div>
     </main>
     <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
@@ -7714,6 +7714,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
         assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
         assert!(body.contains("class=\"bottom-navigation\" aria-label=\"Krets- og kanalveljar\""));
+        assert!(body.contains("</form>\n        <nav class=\"bottom-navigation\""));
         assert!(body.contains("id=\"bottom-channel-panel\""));
         assert!(body.contains("id=\"bottom-circle-panel\""));
         assert!(body.contains("function renderBottomNavigation()"));
