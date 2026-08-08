@@ -312,53 +312,9 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  delivery-amd64-smoke:
-    name: Native AMD64 Kubernetes smoke
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build native AMD64 smoke image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64
-          build-args: |
-            BUILD_VARIANT=native
-            VCS_REF=${{ github.sha }}
-          load: true
-          push: false
-          tags: local/sproyt-smoke:${{ github.sha }}
-          labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha,scope=amd64
-          cache-to: type=gha,mode=max,scope=amd64
-
-      - name: Install pinned kind
-        run: |
-          curl --fail --location --silent --show-error \
-            --output /tmp/kind \
-            https://github.com/kubernetes-sigs/kind/releases/download/v0.24.0/kind-linux-amd64
-          echo 'b89aada5a39d620da3fcd16435b7f28d858927dd53f92cbac77686b0588b600d  /tmp/kind' \
-            | sha256sum --check
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
-          kind version
-
-      - name: Create ephemeral Kubernetes cluster
-        run: kind create cluster --wait 120s
-
-      - name: Load image and exercise install, scale, and rollback
-        env:
-          SPROYT_IMAGE: local/sproyt-smoke:${{ github.sha }}
-        run: |
-          kind load docker-image "$SPROYT_IMAGE"
-          bash tools/kind-smoke.sh
+  # TODO: Restore the native AMD64 Kind smoke when its dependency cache has a
+  # bounded, independently verified backend. Production currently publishes
+  # only the tested ARM64 image used by the Raspberry Pi cluster.
 
   publish-image:
     name: Publish immutable OCI image
@@ -372,7 +328,6 @@ jobs:
       - security-audit
       - recovery-drill
       - delivery-arm64
-      - delivery-amd64-smoke
     runs-on: ubuntu-latest
     environment:
       name: production-registry
