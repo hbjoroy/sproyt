@@ -3038,6 +3038,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
       const pendingCommands = new Map();
+      let latestChannelListRequestId = null;
+      let latestCircleListRequestId = null;
       const pendingMessages = new Map();
       const historyRequestIds = new Set();
       const historyPageSize = 50;
@@ -3810,7 +3812,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const token = invitationValueToToken(invitationToken.value);
         if (token) {
           onboardingNotice.textContent = "Kontrollerer invitasjonen …";
-          sendCommand("accept_circle_invitation", { token });
+          sendCommand("accept_invitation", { token });
         }
       });
       copyInvitation.addEventListener("click", async () => {
@@ -4057,6 +4059,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         currentSocket.send(JSON.stringify(command));
         pendingCommands.set(command.request_id, type);
+        if (type === "list_my_channels") latestChannelListRequestId = command.request_id;
+        if (type === "list_my_circles") latestCircleListRequestId = command.request_id;
         return command.request_id;
       }
 
@@ -4408,6 +4412,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "circles_listed") {
+          if (event.request_id !== latestCircleListRequestId) return;
+          latestCircleListRequestId = null;
           knownCircles.clear();
           circleSelect.replaceChildren(new Option("Ingen", ""));
           payload.circles.forEach(([circle, role]) => {
@@ -4486,6 +4492,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         if (event.type === "invitation_accepted") {
           markInvitationAccepted(payload.token);
+          onboardingNotice.textContent = "Du er med i vennekretsen. Samtalane blir lasta inn no.";
+          invitationToken.value = "";
+          copyInvitation.hidden = true;
           sendCommand("list_my_circles");
           sendCommand("list_my_channels");
           pendingInvitationChannel = payload.invitation.channel.id;
@@ -4504,6 +4513,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "channels_listed") {
+          if (event.request_id !== latestChannelListRequestId) return;
+          latestChannelListRequestId = null;
           knownChannels = payload.channels;
           renderChannels();
           renderConversationIdentity();
@@ -4787,7 +4798,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             pushSystem(payload.message || payload.code);
             return;
           }
-          if (requestedCommand === "accept_circle_invitation") {
+          if (requestedCommand === "accept_invitation") {
             onboardingNotice.textContent = payload.code === "not_found"
               ? "Invitasjonen finst ikkje eller er ikkje gyldig lenger. Be venen din lage ei ny lenkje."
               : "Du kunne ikkje bli med med denne invitasjonen. Kontroller lenkja eller be om ei ny.";
@@ -5413,6 +5424,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState !== "visible") return;
         resumeAfterBackground();
+        sendCommand("list_my_channels");
         if (!activeChannelId) return;
         const visibleMessages = timeline
           .filter((item) => item.type === "message" && item.message.channel_id === activeChannelId)
@@ -7196,6 +7208,13 @@ mod protocol_capacity_tests {
     }
 
     #[test]
+    fn browser_refreshes_unread_summaries_when_a_background_tab_returns() {
+        assert!(INDEX_HTML.contains(
+            "if (document.visibilityState !== \"visible\") return;\n        resumeAfterBackground();\n        sendCommand(\"list_my_channels\");"
+        ));
+    }
+
+    #[test]
     fn browser_linkifies_safe_web_urls_without_expanding_messages() {
         assert!(INDEX_HTML.contains("function appendLinkedText(parent, text)"));
         assert!(INDEX_HTML.contains("const urlPattern = /https?:\\/\\/[^\\s<>]+/gi"));
@@ -7574,6 +7593,11 @@ mod protocol_capacity_tests {
         assert!(body.contains("sendCommand(\"add_channel_member\""));
         assert!(body.contains("const browserSessionId = `browser-${crypto.randomUUID()}`"));
         assert!(body.contains("request_id: `${browserSessionId}-${requestNumber}`"));
+        assert!(body.contains(
+            "if (type === \"list_my_channels\") latestChannelListRequestId = command.request_id;"
+        ));
+        assert!(body.contains("if (event.request_id !== latestChannelListRequestId) return;"));
+        assert!(body.contains("if (event.request_id !== latestCircleListRequestId) return;"));
         assert!(!body.contains("request_id: `browser-${requestNumber}`"));
         assert!(body.contains("if (event.type === \"message_accepted\")"));
         assert!(body.contains("finishPendingMessage(event.request_id, payload.message)"));
@@ -7631,6 +7655,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("[[invite:${payload.invitation.token}]]"));
         assert!(body.contains("function renderInvitationCard(token, target)"));
         assert!(body.contains("sendCommand(\"accept_invitation\", { token })"));
+        assert!(!body.contains("sendCommand(\"accept_circle_invitation\", { token })"));
         assert!(body.contains("sendCommand(\"decline_invitation\", { token })"));
         assert!(body.contains("window.localStorage.setItem(activeConversationKey, channel.id)"));
         assert!(body.contains("let reconnectScrollOffset = null"));
