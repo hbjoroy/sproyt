@@ -28,6 +28,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
@@ -153,7 +154,11 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/readyz", get(app_readyz))
         .route("/versionz", get(versionz))
         .route("/manifest.webmanifest", get(pwa_manifest))
-        .route("/assets/client-store.js", get(client_store))
+        .route("/assets/client-store.js", get(client_store_legacy))
+        .route(
+            "/assets/client-store/{revision}/client-store.js",
+            get(client_store),
+        )
         .route("/service-worker.js", get(service_worker))
         .route("/offline", get(offline_page))
         .route("/assets/sproyt-wave.svg", get(wave_logo_svg))
@@ -267,11 +272,36 @@ async fn pwa_manifest() -> axum::response::Response {
         .into_response()
 }
 
-async fn client_store() -> axum::response::Response {
+fn client_store_fingerprint(build_revision: &str, client_store: &[u8]) -> String {
+    let revision_is_safe = (7..=64).contains(&build_revision.len())
+        && build_revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
+    if revision_is_safe {
+        return build_revision.to_owned();
+    }
+    format!("{:x}", Sha256::digest(client_store))
+}
+
+async fn client_store_legacy() -> axum::response::Response {
     (
         [
             (CONTENT_TYPE, "text/javascript; charset=utf-8"),
             (CACHE_CONTROL, "no-cache"),
+        ],
+        CLIENT_STORE,
+    )
+        .into_response()
+}
+
+async fn client_store(Path(fingerprint): Path<String>) -> axum::response::Response {
+    if fingerprint != client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes()) {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [
+            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "public, max-age=31536000, immutable"),
         ],
         CLIENT_STORE,
     )
@@ -1801,8 +1831,11 @@ async fn index(
         return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let nonce = URL_SAFE_NO_PAD.encode(random);
+    let client_store_revision = client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes());
+    let client_store_url = format!("/assets/client-store/{client_store_revision}/client-store.js");
     let html = INDEX_HTML
         .replace("{{NONCE}}", &nonce)
+        .replace("{{CLIENT_STORE_URL}}", &client_store_url)
         .replace(
             "{{DISPLAY_NAME}}",
             &escape_html(&principal.user.display_name.to_string()),
@@ -2774,7 +2807,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <datalist id="reaction-emoji-catalog"><option value="😍">forelska hjarteauge</option><option value="🥰">glad kjærleik</option><option value="😊">smil glad</option><option value="🤣">ler latter</option><option value="😢">trist gråt</option><option value="😭">gråt</option><option value="😮">overraska</option><option value="😡">sint</option><option value="👏">applaus bra</option><option value="🙌">hurra</option><option value="💪">sterk</option><option value="🤝">avtale</option><option value="👀">ser</option><option value="💯">hundre perfekt</option><option value="✅">ferdig ja</option><option value="❌">nei feil</option><option value="⭐">stjerne</option><option value="💡">idé</option><option value="🚀">rakett</option><option value="🥳">fest</option><option value="🍻">skål</option><option value="🌊">bølgje sjøsprøyt</option></datalist>
 
     <script type="module" nonce="{{NONCE}}">
-      import { createApplicationStore, createServerEventMailbox } from "/assets/client-store.js";
+      import { createApplicationStore, createServerEventMailbox } from "{{CLIENT_STORE_URL}}";
 
       function syncAppViewportHeight() {
         const height = window.visualViewport?.height || window.innerHeight;
@@ -6770,7 +6803,7 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("const connectionSupervisor = (() => {"));
         assert!(
             INDEX_HTML
-                .contains("import { createApplicationStore, createServerEventMailbox } from \"/assets/client-store.js\";")
+                .contains("import { createApplicationStore, createServerEventMailbox } from \"{{CLIENT_STORE_URL}}\";")
         );
         assert!(INDEX_HTML.contains("const applicationStore = createApplicationStore();"));
         assert!(CLIENT_STORE.contains("export function createApplicationStore()"));
@@ -6818,6 +6851,30 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("connectionSupervisor.replaceAfterSessionRefresh()"));
         assert!(INDEX_HTML.contains("serverEventMailbox.enqueue(JSON.parse(event.data))"));
         assert!(!INDEX_HTML.contains("renderServerEvent(JSON.parse(event.data))"));
+    }
+
+    #[test]
+    fn client_store_fingerprint_uses_safe_revisions_or_asset_hashes() {
+        assert_eq!(
+            client_store_fingerprint("a1b2c3d", b"first asset"),
+            "a1b2c3d"
+        );
+        assert_eq!(
+            client_store_fingerprint(&"a".repeat(64), b"first asset"),
+            "a".repeat(64)
+        );
+
+        let unknown = client_store_fingerprint("unknown", b"first asset");
+        assert_eq!(unknown.len(), 64);
+        assert_ne!(unknown, "unknown");
+        assert_ne!(
+            unknown,
+            client_store_fingerprint("unknown", b"second asset")
+        );
+        assert_ne!(
+            client_store_fingerprint("ABCDEF0", b"first asset"),
+            "ABCDEF0"
+        );
     }
 
     #[test]
@@ -7134,8 +7191,12 @@ mod protocol_capacity_tests {
             .to_owned();
         let body = first.text().await.unwrap();
         assert!(body.contains(&format!("<script type=\"module\" nonce=\"{nonce}\">")));
+        let client_store_fingerprint =
+            client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes());
         assert!(
-            body.find("import { createApplicationStore, createServerEventMailbox } from \"/assets/client-store.js\";")
+            body.find(&format!(
+                "import {{ createApplicationStore, createServerEventMailbox }} from \"/assets/client-store/{client_store_fingerprint}/client-store.js\";"
+            ))
                 .unwrap()
             < body
                     .find("function syncAppViewportHeight() {")
@@ -7149,6 +7210,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("mermaidPromise = import("));
         assert!(!body.contains("npm/mermaid@11/dist/"));
         assert!(!body.contains("{{NONCE}}"));
+        assert!(!body.contains("{{CLIENT_STORE_URL}}"));
         assert!(!body.contains("{{DISPLAY_NAME}}"));
         assert!(!body.contains("{{AGENT_HIDDEN}}"));
         assert!(body.contains("Innlogga som <strong>guest</strong>"));
@@ -7180,21 +7242,40 @@ mod protocol_capacity_tests {
         assert!(worker_policy.contains("default-src 'none'"));
         assert!(worker_policy.contains("connect-src 'self'"));
 
-        let client_store = reqwest::get(format!("http://{address}/assets/client-store.js"))
-            .await
-            .unwrap();
+        let client_store_url = format!(
+            "http://{address}/assets/client-store/{client_store_fingerprint}/client-store.js"
+        );
+        let client_store = reqwest::get(&client_store_url).await.unwrap();
         assert_eq!(client_store.status(), reqwest::StatusCode::OK);
         assert_eq!(
             client_store.headers()["content-type"],
             "text/javascript; charset=utf-8"
         );
-        assert_eq!(client_store.headers()["cache-control"], "no-cache");
+        assert_eq!(
+            client_store.headers()["cache-control"],
+            "public, max-age=31536000, immutable"
+        );
         let client_store_body = client_store.text().await.unwrap();
         assert!(client_store_body.contains("export function createApplicationStore()"));
         assert!(
             client_store_body
                 .contains("export function createServerEventMailbox({ reduce, deliver })")
         );
+        let legacy_client_store = reqwest::get(format!("http://{address}/assets/client-store.js"))
+            .await
+            .unwrap();
+        assert_eq!(legacy_client_store.status(), reqwest::StatusCode::OK);
+        assert_eq!(legacy_client_store.headers()["cache-control"], "no-cache");
+        assert_eq!(
+            legacy_client_store.headers()["content-type"],
+            "text/javascript; charset=utf-8"
+        );
+        let stale_client_store = reqwest::get(format!(
+            "http://{address}/assets/client-store/stale-revision/client-store.js"
+        ))
+        .await
+        .unwrap();
+        assert_eq!(stale_client_store.status(), reqwest::StatusCode::NOT_FOUND);
         assert!(body.contains("id=\"channel-kind\""));
         assert!(body.contains("id=\"joinable-channel\""));
         assert!(body.contains("id=\"add-channel-member\""));
