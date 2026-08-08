@@ -271,6 +271,10 @@ async fn service_worker() -> axum::response::Response {
             (CONTENT_TYPE, "text/javascript; charset=utf-8"),
             (CACHE_CONTROL, "no-cache"),
             (HeaderName::from_static("service-worker-allowed"), "/"),
+            (
+                HeaderName::from_static("content-security-policy"),
+                "default-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+            ),
         ],
         SERVICE_WORKER,
     )
@@ -7101,6 +7105,17 @@ mod protocol_capacity_tests {
         );
         assert!(body.contains("payload.channel_id !== activeChannelId"));
         assert!(body.contains("const pendingMessages = new Map()"));
+
+        let service_worker = reqwest::get(format!("http://{address}/service-worker.js"))
+            .await
+            .unwrap();
+        assert_eq!(service_worker.status(), reqwest::StatusCode::OK);
+        assert_eq!(service_worker.headers()["cache-control"], "no-cache");
+        let worker_policy = service_worker.headers()["content-security-policy"]
+            .to_str()
+            .unwrap();
+        assert!(worker_policy.contains("default-src 'none'"));
+        assert!(worker_policy.contains("connect-src 'self'"));
         assert!(body.contains("id=\"channel-kind\""));
         assert!(body.contains("id=\"joinable-channel\""));
         assert!(body.contains("id=\"add-channel-member\""));
