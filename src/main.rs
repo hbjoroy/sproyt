@@ -4461,7 +4461,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "message_reaction_changed") {
           if (payload.change.channel_id === activeChannelId) {
             applyReactionChange(payload.change);
-            renderTimeline({ preserveScroll: true });
+            if (!patchMessageReactions(payload.change.message_id)) {
+              renderTimeline({ preserveScroll: true });
+            }
           }
           return;
         }
@@ -4518,7 +4520,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           } else if (chatEvent.type === "message_reaction_changed") {
             if (chatEvent.change.channel_id === activeChannelId) {
               applyReactionChange(chatEvent.change);
-              renderTimeline({ preserveScroll: true });
+              if (!patchMessageReactions(chatEvent.change.message_id)) {
+                renderTimeline({ preserveScroll: true });
+              }
             }
           } else if (chatEvent.type === "participant_joined") {
             if (chatEvent.participant_id !== currentParticipantId) pushSystem("Ein ven kom inn i samtalen.");
@@ -5455,6 +5459,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
           bar.append(viewers);
         }
         return bar;
+      }
+
+      function patchMessageReactions(messageId) {
+        const message = timeline.find((item) => item.type === "message" && item.message.id === messageId)?.message;
+        if (!message) return false;
+        const card = [...messagesEl.querySelectorAll("[data-message-id]")]
+          .find((candidate) => candidate.dataset.messageId === messageId);
+        const reactions = card?.querySelector(".message-reactions");
+        if (!reactions) return false;
+        const interaction = captureTimelineInteraction();
+        const nextReactions = renderMessageReactions(message);
+        const thread = reactions.querySelector(".thread-link");
+        if (thread) nextReactions.insertBefore(thread, nextReactions.querySelector(".reaction-viewers"));
+        reactions.replaceWith(nextReactions);
+        restoreTimelineInteraction(interaction);
+        return true;
       }
 
       function appendMessage(message, target = messagesEl, includeThread = true) {
@@ -6677,6 +6697,48 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("id=\"reaction-emoji-catalog\""));
         assert!(INDEX_HTML.contains("Søk eller lim inn Unicode-emoji"));
         assert!(INDEX_HTML.contains("submitCustomReaction"));
+    }
+
+    #[test]
+    fn browser_patches_only_affected_reaction_card_with_timeline_fallback() {
+        assert!(INDEX_HTML.contains("function patchMessageReactions(messageId)"));
+        assert!(INDEX_HTML.contains(
+            "const message = timeline.find((item) => item.type === \"message\" && item.message.id === messageId)?.message;"
+        ));
+        assert!(INDEX_HTML.contains(
+            "[...messagesEl.querySelectorAll(\"[data-message-id]\")]\n          .find((candidate) => candidate.dataset.messageId === messageId)"
+        ));
+        assert!(INDEX_HTML.contains("const nextReactions = renderMessageReactions(message);"));
+        assert!(INDEX_HTML.contains("const thread = reactions.querySelector(\".thread-link\");"));
+        assert!(INDEX_HTML.contains(
+            "if (thread) nextReactions.insertBefore(thread, nextReactions.querySelector(\".reaction-viewers\"));"
+        ));
+        assert!(INDEX_HTML.contains("reactions.replaceWith(nextReactions);"));
+        assert!(!INDEX_HTML.contains("reactions.replaceWith(renderMessageReactions(message));"));
+        assert!(INDEX_HTML.contains("if (!reactions) return false;"));
+
+        let patch = INDEX_HTML
+            .split("function patchMessageReactions(messageId) {")
+            .nth(1)
+            .and_then(|value| value.split("\n      function appendMessage").next())
+            .expect("keyed reaction patch helper");
+        let capture = patch
+            .find("const interaction = captureTimelineInteraction();")
+            .expect("capture interaction before patch");
+        let replace = patch
+            .find("reactions.replaceWith(nextReactions);")
+            .expect("replace reaction footer");
+        let restore = patch
+            .find("restoreTimelineInteraction(interaction);")
+            .expect("restore interaction after patch");
+        assert!(capture < replace && replace < restore);
+
+        for reaction_event in [
+            "if (event.type === \"message_reaction_changed\") {\n          if (payload.change.channel_id === activeChannelId) {\n            applyReactionChange(payload.change);\n            if (!patchMessageReactions(payload.change.message_id)) {\n              renderTimeline({ preserveScroll: true });\n            }",
+            "} else if (chatEvent.type === \"message_reaction_changed\") {\n            if (chatEvent.change.channel_id === activeChannelId) {\n              applyReactionChange(chatEvent.change);\n              if (!patchMessageReactions(chatEvent.change.message_id)) {\n                renderTimeline({ preserveScroll: true });\n              }",
+        ] {
+            assert!(INDEX_HTML.contains(reaction_event));
+        }
     }
 
     #[test]
