@@ -94,6 +94,22 @@ cargo test --locked --all-targets --all-features
 
 Build only from a reviewed, committed revision, use that revision as the
 immutable tag and OCI label, and record the digest read back from the registry.
+The preferred production path is the manually dispatched GitHub `CI` workflow
+on `main` with `publish_image` enabled, or a reviewed `v*` tag. Manual publish
+dispatches from other refs are rejected. The separate publish job waits for
+quality, PostgreSQL, security, recovery and delivery jobs, then pushes the exact
+ARM64 image that passed kind, SBOM and vulnerability checks. It does not rebuild
+the image after the gates.
+
+Configure the GitHub `production-registry` environment with
+`SPROYT_OCI_USERNAME` and `SPROYT_OCI_PASSWORD` secrets for a Zot account scoped
+to push only `oci.bjoroy.me/sproyt/sproyt`. Retain the resulting
+`registry-evidence-<commit>` artifact and use its registry digest in GitOps.
+
+The local `wslc`/`regctl` procedure below is a break-glass fallback when GitHub
+Actions publishing is unavailable. It must use the same reviewed commit and
+full release-gate evidence.
+
 Zot authentication currently works reliably through `regctl`; `wslc push` may
 return `unauthorized` even after a successful interactive `wslc login`.
 
