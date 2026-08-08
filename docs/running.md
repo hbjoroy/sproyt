@@ -103,7 +103,9 @@ the image after the gates.
 
 Configure the GitHub `production-registry` environment with
 `SPROYT_OCI_USERNAME` and `SPROYT_OCI_PASSWORD` secrets for a Zot account scoped
-to push only `oci.bjoroy.me/sproyt/sproyt`. Retain the resulting
+to push only `oci.bjoroy.me/sproyt/sproyt`. CI imports the tested Docker archive
+with digest-pinned `regctl`, because Docker client login/push is incompatible
+with the current Zot authentication path. Retain the resulting
 `registry-evidence-<commit>` artifact and use its registry digest in GitOps.
 
 The local `wslc`/`regctl` procedure below is a break-glass fallback when GitHub
