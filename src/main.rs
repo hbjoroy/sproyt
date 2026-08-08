@@ -57,6 +57,7 @@ const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION") {
     None => "unknown",
 };
 const PWA_MANIFEST: &str = include_str!("../assets/manifest.webmanifest");
+const CLIENT_STORE: &str = include_str!("../assets/client-store.js");
 const SERVICE_WORKER: &str = include_str!("../assets/service-worker.js");
 const OFFLINE_HTML: &str = include_str!("../assets/offline.html");
 const WAVE_LOGO_SVG: &str = include_str!("../assets/sproyt-wave.svg");
@@ -152,6 +153,7 @@ fn build_router(state: AppState, operations: OperationalState) -> Router {
         .route("/readyz", get(app_readyz))
         .route("/versionz", get(versionz))
         .route("/manifest.webmanifest", get(pwa_manifest))
+        .route("/assets/client-store.js", get(client_store))
         .route("/service-worker.js", get(service_worker))
         .route("/offline", get(offline_page))
         .route("/assets/sproyt-wave.svg", get(wave_logo_svg))
@@ -261,6 +263,17 @@ async fn pwa_manifest() -> axum::response::Response {
             (CACHE_CONTROL, "public, max-age=3600"),
         ],
         PWA_MANIFEST,
+    )
+        .into_response()
+}
+
+async fn client_store() -> axum::response::Response {
+    (
+        [
+            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "no-cache"),
+        ],
+        CLIENT_STORE,
     )
         .into_response()
 }
@@ -1807,7 +1820,7 @@ async fn index(
             if state.agent_ui_enabled { "" } else { "hidden" },
         );
     let policy = format!(
-        "default-src 'self'; script-src 'nonce-{nonce}' https://cdn.jsdelivr.net; worker-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        "default-src 'self'; script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; worker-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     );
     let mut response = Html(html).into_response();
     let headers = response.headers_mut();
@@ -2761,6 +2774,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <datalist id="reaction-emoji-catalog"><option value="😍">forelska hjarteauge</option><option value="🥰">glad kjærleik</option><option value="😊">smil glad</option><option value="🤣">ler latter</option><option value="😢">trist gråt</option><option value="😭">gråt</option><option value="😮">overraska</option><option value="😡">sint</option><option value="👏">applaus bra</option><option value="🙌">hurra</option><option value="💪">sterk</option><option value="🤝">avtale</option><option value="👀">ser</option><option value="💯">hundre perfekt</option><option value="✅">ferdig ja</option><option value="❌">nei feil</option><option value="⭐">stjerne</option><option value="💡">idé</option><option value="🚀">rakett</option><option value="🥳">fest</option><option value="🍻">skål</option><option value="🌊">bølgje sjøsprøyt</option></datalist>
 
     <script type="module" nonce="{{NONCE}}">
+      import { createApplicationStore, createServerEventMailbox } from "/assets/client-store.js";
+
       function syncAppViewportHeight() {
         const height = window.visualViewport?.height || window.innerHeight;
         document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
@@ -2908,31 +2923,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let selectedMentionIndex = 0;
       let activeMention = null;
 
-      const applicationStore = (() => {
-        let state = Object.freeze({
-          session: Object.freeze({ refreshDueAt: 0 }),
-          connection: Object.freeze({ connected: false, status: "Koplar til …" }),
-          transport: Object.freeze({ lastEventType: null, processedEvents: 0 })
-        });
-        const replaceSlice = (slice, patch) => {
-          state = Object.freeze({
-            ...state,
-            [slice]: Object.freeze({ ...state[slice], ...patch })
-          });
-        };
-        return Object.freeze({
-          get snapshot() { return state; },
-          updateSession(patch) { replaceSlice("session", patch); },
-          updateConnection(patch) { replaceSlice("connection", patch); },
-          reduceServerEvent(event) {
-            replaceSlice("transport", {
-              lastEventType: event.type || null,
-              processedEvents: state.transport.processedEvents + 1
-            });
-            return event;
-          }
-        });
-      })();
+      const applicationStore = createApplicationStore();
 
       const sessionSupervisor = (() => {
         const state = {
@@ -2953,25 +2944,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         });
       })();
 
-      const serverEventMailbox = (() => {
-        const queue = [];
-        let draining = false;
-        return Object.freeze({
-          enqueue(event) {
-            queue.push(event);
-            if (draining) return;
-            draining = true;
-            try {
-              while (queue.length > 0) {
-                renderServerEvent(applicationStore.reduceServerEvent(queue.shift()));
-              }
-            } finally {
-              draining = false;
-            }
-          },
-          get size() { return queue.length; }
-        });
-      })();
+      const serverEventMailbox = createServerEventMailbox({
+        reduce: applicationStore.reduceServerEvent,
+        deliver: renderServerEvent
+      });
 
       function channelDraftKey(channelId) {
         return `${channelDraftPrefix}${channelId}`;
@@ -6792,14 +6768,33 @@ mod protocol_capacity_tests {
     fn browser_routes_session_connection_and_events_through_supervisors() {
         assert!(INDEX_HTML.contains("const sessionSupervisor = (() => {"));
         assert!(INDEX_HTML.contains("const connectionSupervisor = (() => {"));
-        assert!(INDEX_HTML.contains("const applicationStore = (() => {"));
-        assert!(INDEX_HTML.contains("updateSession(patch)"));
-        assert!(INDEX_HTML.contains("updateConnection(patch)"));
-        assert!(INDEX_HTML.contains("reduceServerEvent(event)"));
         assert!(
             INDEX_HTML
-                .contains("renderServerEvent(applicationStore.reduceServerEvent(queue.shift()))")
+                .contains("import { createApplicationStore, createServerEventMailbox } from \"/assets/client-store.js\";")
         );
+        assert!(INDEX_HTML.contains("const applicationStore = createApplicationStore();"));
+        assert!(CLIENT_STORE.contains("export function createApplicationStore()"));
+        assert!(CLIENT_STORE.contains("updateSession(patch)"));
+        assert!(CLIENT_STORE.contains("updateConnection(patch)"));
+        assert!(CLIENT_STORE.contains("reduceServerEvent(event)"));
+        assert!(
+            CLIENT_STORE.contains("export function createServerEventMailbox({ reduce, deliver })")
+        );
+        assert!(CLIENT_STORE.contains("deliver(reduce(queue.shift()));"));
+        let mailbox = CLIENT_STORE
+            .split("export function createServerEventMailbox({ reduce, deliver }) {")
+            .nth(1)
+            .expect("serialized mailbox factory");
+        let queued = mailbox.find("queue.push(event);").expect("enqueue event");
+        let reduce_then_deliver = mailbox
+            .find("deliver(reduce(queue.shift()));")
+            .expect("reduce before delivery");
+        assert!(queued < reduce_then_deliver);
+        assert!(INDEX_HTML.contains("const serverEventMailbox = createServerEventMailbox({"));
+        assert!(INDEX_HTML.contains("reduce: applicationStore.reduceServerEvent,"));
+        assert!(INDEX_HTML.contains("deliver: renderServerEvent"));
+        assert!(!INDEX_HTML.contains("const applicationStore = (() => {"));
+        assert!(!INDEX_HTML.contains("const serverEventMailbox = (() => {"));
         assert!(!INDEX_HTML.contains("let sessionRefreshTimer"));
         assert!(!INDEX_HTML.contains("let sessionRefreshPromise"));
         assert!(!INDEX_HTML.contains("let authenticationRecoveryPromise"));
@@ -6821,8 +6816,6 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("connectionSupervisor.start();"));
         assert!(INDEX_HTML.contains("sessionSupervisor.schedule(seconds)"));
         assert!(INDEX_HTML.contains("connectionSupervisor.replaceAfterSessionRefresh()"));
-        assert!(INDEX_HTML.contains("const serverEventMailbox = (() => {"));
-        assert!(INDEX_HTML.contains("while (queue.length > 0) {"));
         assert!(INDEX_HTML.contains("serverEventMailbox.enqueue(JSON.parse(event.data))"));
         assert!(!INDEX_HTML.contains("renderServerEvent(JSON.parse(event.data))"));
     }
@@ -7129,9 +7122,10 @@ mod protocol_capacity_tests {
         let policy = headers["content-security-policy"].to_str().unwrap();
         assert!(policy.contains("object-src 'none'"));
         assert!(policy.contains("frame-ancestors 'none'"));
+        assert!(policy.contains("script-src 'self' 'nonce-"));
         assert!(policy.contains("worker-src 'self'"));
         let nonce = policy
-            .split("script-src 'nonce-")
+            .split("script-src 'self' 'nonce-")
             .nth(1)
             .unwrap()
             .split('\'')
@@ -7140,6 +7134,13 @@ mod protocol_capacity_tests {
             .to_owned();
         let body = first.text().await.unwrap();
         assert!(body.contains(&format!("<script type=\"module\" nonce=\"{nonce}\">")));
+        assert!(
+            body.find("import { createApplicationStore, createServerEventMailbox } from \"/assets/client-store.js\";")
+                .unwrap()
+            < body
+                    .find("function syncAppViewportHeight() {")
+                    .unwrap()
+        );
         assert!(body.contains(&format!("<style nonce=\"{nonce}\">")));
         assert!(
             body.contains("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs")
@@ -7178,6 +7179,22 @@ mod protocol_capacity_tests {
             .unwrap();
         assert!(worker_policy.contains("default-src 'none'"));
         assert!(worker_policy.contains("connect-src 'self'"));
+
+        let client_store = reqwest::get(format!("http://{address}/assets/client-store.js"))
+            .await
+            .unwrap();
+        assert_eq!(client_store.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            client_store.headers()["content-type"],
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(client_store.headers()["cache-control"], "no-cache");
+        let client_store_body = client_store.text().await.unwrap();
+        assert!(client_store_body.contains("export function createApplicationStore()"));
+        assert!(
+            client_store_body
+                .contains("export function createServerEventMailbox({ reduce, deliver })")
+        );
         assert!(body.contains("id=\"channel-kind\""));
         assert!(body.contains("id=\"joinable-channel\""));
         assert!(body.contains("id=\"add-channel-member\""));
