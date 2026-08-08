@@ -2262,6 +2262,65 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .reaction-viewers ul { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 9; width: max-content; max-width: min(78vw, 340px); margin: 0; padding: 8px 12px; border: 1px solid #cbd1c8; border-radius: 9px; background: #fff; box-shadow: 0 8px 24px #0002; list-style: none; }
       .reaction-viewers li { padding: 3px 0; color: #27342e; font-size: .86rem; overflow-wrap: anywhere; }
       .mobile-navigation-toggle { display: none; }
+      .bottom-navigation {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 6px;
+        padding: 6px 12px;
+        border-top: 1px solid #e4e5de;
+        background: #f4f6f2;
+      }
+      .bottom-navigation-panel { min-width: 0; }
+      .bottom-navigation-panel > summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 38px;
+        padding: 6px 9px;
+        border: 1px solid #cbd1c8;
+        border-radius: 8px;
+        background: #fff;
+        color: #183d2e;
+        cursor: pointer;
+        font-size: .86rem;
+        font-weight: 700;
+        list-style: none;
+      }
+      .bottom-navigation-panel > summary::-webkit-details-marker { display: none; }
+      .bottom-navigation-panel > summary::after { content: "⌃"; margin-left: 8px; }
+      .bottom-navigation-panel[open] > summary::after { content: "⌄"; }
+      .bottom-navigation-panel > summary:hover { background: #edf2ee; }
+      .bottom-navigation-list {
+        display: grid;
+        gap: 3px;
+        max-height: min(32dvh, 260px);
+        margin: 5px 0 0;
+        padding: 6px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        border: 1px solid #cbd1c8;
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 8px 24px rgb(35 59 47 / 16%);
+      }
+      .bottom-navigation-list button {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        min-height: 38px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+      }
+      .bottom-navigation-list button:hover,
+      .bottom-navigation-list button[aria-current="page"] { background: #dfe8e1; color: #183d2e; }
+      .bottom-navigation-list button.has-unread { color: #183d2e; font-weight: 800; }
+      .bottom-navigation-heading { margin: 5px 4px 1px; color: #647269; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+      .bottom-navigation-list .unread { flex: none; }
       .navigation-heading { margin: 0 8px 6px; color: #647269; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
       .channel-list { display: grid; gap: 4px; align-content: start; }
       .task-editor { display: grid; gap: 8px; margin-top: 12px; }
@@ -2566,6 +2625,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         gap: 12px;
         border-top: 1px solid #e4e5de;
       }
+      .composer-area { min-width: 0; }
       form.send textarea { min-height: 52px; max-height: 160px; }
 
       @media (max-width: 640px) {
@@ -2606,6 +2666,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .conversation-header p { font-size: .78rem; }
         .conversation-header .view-controls { display: none; }
         .conversation-header .status[data-routine="true"] { display: none; }
+
+        .bottom-navigation {
+          padding-right: max(8px, env(safe-area-inset-right));
+          padding-bottom: 6px;
+          padding-left: max(8px, env(safe-area-inset-left));
+        }
+        .bottom-navigation-list { max-height: min(36dvh, calc(var(--app-height) - 210px)); }
 
         form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 8px; align-items: end; }
         form.send .composer-input, form.send textarea { min-width: 0; width: 100%; }
@@ -2651,6 +2718,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .messages {
           background: #121814;
         }
+
+        .bottom-navigation { border-color: #344038; background: #19211c; }
+        .bottom-navigation-panel > summary, .bottom-navigation-list { border-color: #344038; background: #19211c; color: #eef3ee; }
 
         .mention-suggestions { background: #19211c; border-color: #344038; }
         .mention-suggestions button { color: #eef3ee; }
@@ -2794,12 +2864,24 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <section class="process-view" id="process-view" aria-live="polite" hidden></section>
       </header>
       <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
-      <form class="send" id="send-form">
+      <div class="composer-area">
+        <nav class="bottom-navigation" aria-label="Krets- og kanalveljar">
+          <details class="bottom-navigation-panel" id="bottom-channel-panel">
+            <summary id="bottom-channel-toggle" aria-controls="bottom-channel-list">Kanalar</summary>
+            <div class="bottom-navigation-list" id="bottom-channel-list" role="list"><p class="status">Lastar …</p></div>
+          </details>
+          <details class="bottom-navigation-panel" id="bottom-circle-panel">
+            <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list">Kretsar</summary>
+            <div class="bottom-navigation-list" id="bottom-circle-list" role="list"><p class="status">Lastar …</p></div>
+          </details>
+        </nav>
+        <form class="send" id="send-form">
         <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
         <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="assertive"></p>
         <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
         <button id="send" type="submit" disabled>Send</button>
-      </form>
+        </form>
+      </div>
     </main>
     <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
     <dialog class="circle-channel-dialog" id="circle-channel-dialog" aria-labelledby="circle-channel-title"><header><h2 id="circle-channel-title">Kanalar</h2><button id="circle-channel-close" type="button" aria-label="Lukk kanalveljaren">×</button></header><div class="circle-channel-dialog-body"><section><p class="navigation-heading">Tilgjengelege kanalar</p><div class="joinable-channel-list" id="circle-joinable-list"><p class="status">Lastar …</p></div></section><form class="circle-channel-create" id="circle-channel-create"><strong>Lag ny kanal</strong><label>Namn<input id="managed-channel-name" maxlength="80" placeholder="Turprat" required></label><label>Tilgang<select id="managed-channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label><button type="submit">Lag kanal</button></form><section class="circle-membership-actions"><button class="danger-button" id="leave-circle" type="button">Forlat vennekretsen</button><small id="circle-membership-notice">Du mistar tilgang til kanalane i kretsen, men meldingane dine blir ståande.</small></section></div></dialog>
@@ -2858,6 +2940,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const statusEl = document.querySelector("#status");
       const messagesEl = document.querySelector("#messages");
       const channelList = document.querySelector("#channel-list");
+      const bottomChannelPanel = document.querySelector("#bottom-channel-panel");
+      const bottomCirclePanel = document.querySelector("#bottom-circle-panel");
+      const bottomChannelToggle = document.querySelector("#bottom-channel-toggle");
+      const bottomCircleToggle = document.querySelector("#bottom-circle-toggle");
+      const bottomChannelList = document.querySelector("#bottom-channel-list");
+      const bottomCircleList = document.querySelector("#bottom-circle-list");
       const directUser = document.querySelector("#direct-user");
       const openDirect = document.querySelector("#open-direct");
       const conversationTitle = document.querySelector("#conversation-title");
@@ -3649,7 +3737,23 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const open = sidebar.classList.toggle("mobile-open");
         mobileNavigationToggle.setAttribute("aria-expanded", String(open));
       });
+      bottomChannelPanel.addEventListener("toggle", () => {
+        if (bottomChannelPanel.open) bottomCirclePanel.open = false;
+      });
+      bottomCirclePanel.addEventListener("toggle", () => {
+        if (bottomCirclePanel.open) bottomChannelPanel.open = false;
+      });
       document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && bottomChannelPanel.open) {
+          event.preventDefault();
+          closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
+          return;
+        }
+        if (event.key === "Escape" && bottomCirclePanel.open) {
+          event.preventDefault();
+          closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
+          return;
+        }
         if (event.key === "Escape" && sidebar.classList.contains("mobile-open")) {
           sidebar.classList.remove("mobile-open");
           mobileNavigationToggle.setAttribute("aria-expanded", "false");
@@ -4700,6 +4804,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function renderChannels() {
         channelList.replaceChildren();
         renderPrimaryNavigation();
+        renderBottomNavigation();
         if (knownChannels.length === 0) {
           const empty = document.createElement("p");
           empty.className = "status";
@@ -4782,6 +4887,97 @@ const INDEX_HTML: &str = r##"<!doctype html>
           group.addEventListener("toggle", () => persistChannelGroupState(groupId, group.open));
           channelList.append(group);
         }
+      }
+
+      function renderBottomNavigation() {
+        bottomChannelList.replaceChildren();
+        bottomCircleList.replaceChildren();
+        const activeCircle = knownCircles.get(activeCircleId);
+        bottomChannelToggle.textContent = activeCircle ? `Kanalar · ${activeCircle.name}` : "Kanalar";
+        bottomCircleToggle.textContent = activeCircle ? `Kretsar · ${activeCircle.name}` : "Kretsar";
+
+        if (knownCircles.size === 0) {
+          const empty = document.createElement("p");
+          empty.className = "status";
+          empty.textContent = "Ingen vennekretsar enno";
+          bottomCircleList.append(empty);
+        } else {
+          for (const [circleId, circle] of knownCircles) {
+            const channels = knownChannels.filter((channel) => channel.circle_id === circleId);
+            const unreadCount = channels.reduce(
+              (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
+              0
+            );
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = circle.name;
+            button.setAttribute("aria-current", circleId === activeCircleId ? "page" : "false");
+            if (unreadCount > 0) {
+              button.classList.add("has-unread");
+              const unread = document.createElement("span");
+              unread.className = "unread";
+              unread.textContent = approximateUnreadCount(unreadCount);
+              unread.setAttribute("aria-label", `${unreadCount} uleste meldingar i ${circle.name}`);
+              button.append(unread);
+            }
+            button.addEventListener("click", () => {
+              setActiveCircle(circleId);
+              circleSelect.value = circleId;
+              closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
+              renderChannels();
+            });
+            bottomCircleList.append(button);
+          }
+        }
+
+        const circleChannels = activeCircleId
+          ? knownChannels.filter((channel) => channel.circle_id === activeCircleId)
+          : [];
+        appendBottomChannelButtons(circleChannels, bottomChannelList, "Ingen kanalar i den valde kretsen.");
+
+        const otherChannels = knownChannels.filter((channel) => !channel.circle_id);
+        if (otherChannels.length > 0) {
+          const heading = document.createElement("p");
+          heading.className = "bottom-navigation-heading";
+          heading.textContent = "Andre samtalar";
+          bottomChannelList.append(heading);
+          appendBottomChannelButtons(otherChannels, bottomChannelList);
+        }
+      }
+
+      function appendBottomChannelButtons(channels, target, emptyText = "") {
+        if (channels.length === 0 && emptyText) {
+          const empty = document.createElement("p");
+          empty.className = "status";
+          empty.textContent = emptyText;
+          target.append(empty);
+          return;
+        }
+        for (const channel of channels) {
+          const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = channel.direct_user_id ? channel.name : `# ${channel.name}`;
+          button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
+          if (unreadCount > 0 && channel.id !== activeChannelId) {
+            button.classList.add("has-unread");
+            const unread = document.createElement("span");
+            unread.className = "unread";
+            unread.textContent = approximateUnreadCount(unreadCount);
+            unread.setAttribute("aria-label", `${unreadCount} uleste meldingar`);
+            button.append(unread);
+          }
+          button.addEventListener("click", () => {
+            closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
+            selectChannel(channel);
+          });
+          target.append(button);
+        }
+      }
+
+      function closeBottomNavigation(panel, toggle) {
+        panel.open = false;
+        toggle.focus();
       }
 
       function renderChannelActions(channel) {
@@ -7467,6 +7663,20 @@ mod protocol_capacity_tests {
         assert!(body.contains(":focus-visible"));
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
         assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
+        assert!(body.contains("class=\"bottom-navigation\" aria-label=\"Krets- og kanalveljar\""));
+        assert!(body.contains("id=\"bottom-channel-panel\""));
+        assert!(body.contains("id=\"bottom-circle-panel\""));
+        assert!(body.contains("function renderBottomNavigation()"));
+        assert!(body.contains("const circleChannels = activeCircleId"));
+        assert!(body.contains(
+            "const otherChannels = knownChannels.filter((channel) => !channel.circle_id)"
+        ));
+        assert!(body.contains("heading.textContent = \"Andre samtalar\""));
+        assert!(body.contains("button.setAttribute(\"aria-current\", circleId === activeCircleId ? \"page\" : \"false\")"));
+        assert!(body.contains("button.classList.add(\"has-unread\")"));
+        assert!(body.contains("function closeBottomNavigation(panel, toggle)"));
+        assert!(body.contains("if (event.key === \"Escape\" && bottomChannelPanel.open)"));
+        assert!(body.contains("padding-bottom: 6px;"));
         assert!(body.contains("<summary>Administrer kretsar og kanalar</summary>"));
         assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
         assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
