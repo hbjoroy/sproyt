@@ -2353,6 +2353,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 14px; }
       .conversation-header h2 { margin: 0; font-size: 1.25rem; line-height: 1.15; }
       .conversation-header p { margin: 2px 0 0; color: #647269; font-size: .84rem; line-height: 1.25; }
+      .mobile-app-mark { display: none; }
+      .conversation-context[hidden] { display: none; }
+      .connection-status { display: flex; min-width: 0; align-items: center; gap: 6px; }
+      .connection-status .status { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .connection-status-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #a26b24; }
+      .connection-status-dot[data-routine="true"] { background: #2b7657; }
       .peer-status[hidden] { display: none; }
       .profile-status { margin-left: 5px; cursor: help; }
       .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
@@ -2624,11 +2630,25 @@ const INDEX_HTML: &str = r##"<!doctype html>
       form.send {
         display: grid;
         grid-template-columns: auto auto 1fr auto;
-        gap: 12px;
+        gap: 6px;
+        padding: 6px 8px;
         border-top: 1px solid #e4e5de;
+        --composer-rest-height: 46px;
+        --composer-max-height: 126px;
+        align-items: end;
       }
       .composer-area { min-width: 0; }
-      form.send textarea { min-height: 52px; max-height: 160px; }
+      form.send textarea { height: var(--composer-rest-height); min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 11px 10px; line-height: 20px; resize: none; overflow-y: hidden; }
+      .composer-icon, form.send .emoji-picker > summary { display: grid; width: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border: 1px solid #cbd1c8; border-radius: 8px; background: transparent; color: #245b45; cursor: pointer; font-size: 1.25rem; list-style: none; }
+      form.send .emoji-picker > summary::-webkit-details-marker { display: none; }
+      .composer-icon:hover, form.send .emoji-picker > summary:hover { background: #edf2ee; }
+      form.send .emoji-picker[aria-disabled="true"] > summary, .composer-icon:disabled { cursor: default; opacity: .55; pointer-events: none; }
+      form.send #send { min-width: 44px; min-height: 44px; padding: 0 12px; }
+      form.send .composer-input { align-self: end; }
+      form.send #media-previews, form.send #upload-status { display: none; grid-column: 1 / -1; }
+      form.send.is-expanded #media-previews:not(:empty) { display: flex; }
+      form.send.is-expanded #upload-status:not(:empty) { display: block; }
+      @media (prefers-reduced-motion: no-preference) { form.send { transition: padding .16s ease, gap .16s ease; } }
 
       @media (max-width: 640px) {
         body {
@@ -2643,14 +2663,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         main {
           height: 100%;
           min-height: 0;
+          position: relative;
           grid-template-columns: 1fr;
-          grid-template-rows: auto auto minmax(0, 1fr) auto;
+          grid-template-rows: 52px minmax(0, 1fr) auto;
         }
 
-        .sidebar { grid-row: auto; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; gap: 8px; min-height: 0; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #e4e5de; }
-        .sidebar.mobile-open { max-height: min(68dvh, calc(var(--app-height) - 132px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; touch-action: pan-y; }
-        .brand h1 { margin: 0; font-size: clamp(1.35rem, 8vw, 2rem); }
-        .brand-mark { width: 38px; height: 38px; }
+        .sidebar { display: none; }
+        .sidebar.mobile-open { position: absolute; top: 52px; right: 0; left: 0; z-index: 5; display: grid; max-height: min(68dvh, calc(var(--app-height) - 132px)); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 8px; min-height: 0; padding: 8px 10px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; touch-action: pan-y; border-right: 0; border-bottom: 1px solid #e4e5de; box-shadow: 0 12px 24px rgb(24 32 29 / 16%); }
+        .sidebar .brand, .sidebar .mobile-navigation-toggle { display: none; }
         .sidebar .identity { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open .identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; }
         .sidebar.mobile-open .identity > span { grid-column: 1 / -1; }
@@ -2663,11 +2683,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .sidebar.mobile-open .navigation-heading { margin: 3px 4px; }
         .sidebar.mobile-open input, .sidebar.mobile-open select, .sidebar.mobile-open button { min-height: 36px; padding-top: 5px; padding-bottom: 5px; }
 
-        .conversation-header { min-height: 44px; padding: 6px 10px; }
-        .conversation-header h2 { margin: 0; font-size: 1.1rem; }
-        .conversation-header p { font-size: .78rem; }
+        .conversation-header { position: sticky; top: 0; z-index: 4; display: grid; grid-template-columns: 32px minmax(0, 1fr) 44px; min-height: 52px; height: 52px; gap: 8px; padding: 4px 10px; background: #f4f6f2; }
+        .mobile-app-mark { display: grid; width: 32px; height: 32px; place-items: center; }
+        .mobile-app-mark img { display: block; width: 30px; height: 30px; border-radius: 9px; }
+        .conversation-details { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 6px; }
+        .conversation-heading { display: flex; min-width: 0; align-items: baseline; gap: 5px; overflow: hidden; white-space: nowrap; }
+        .conversation-header h2 { overflow: hidden; margin: 0; font-size: 1rem; text-overflow: ellipsis; }
+        .conversation-header p { font-size: .76rem; }
+        .conversation-context { overflow: hidden; margin: 0 !important; text-overflow: ellipsis; white-space: nowrap; }
+        .conversation-header .peer-status { grid-column: 2; grid-row: 1; margin: 0; overflow: hidden; max-width: 4.5rem; text-overflow: ellipsis; white-space: nowrap; }
+        .connection-status { grid-column: 3; grid-row: 1; }
+        .connection-status .status[data-routine="true"] { display: none; }
+        .connection-status-dot { width: 7px; height: 7px; }
+        .conversation-header > .mobile-navigation-toggle { display: grid; width: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border-radius: 8px; background: #245b45; font-size: 0; }
+        .conversation-header > .mobile-navigation-toggle::before { content: "☰"; font-size: 1.25rem; line-height: 1; }
         .conversation-header .view-controls { display: none; }
-        .conversation-header .status[data-routine="true"] { display: none; }
+        .conversation-header #connect-form { display: none !important; }
 
         .bottom-navigation {
           padding-right: max(8px, env(safe-area-inset-right));
@@ -2678,11 +2709,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .bottom-navigation-panel > summary,
         .bottom-navigation-list button { min-height: 40px; }
 
-        form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 8px; align-items: end; }
+        form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 6px 8px; --composer-rest-height: 46px; --composer-max-height: 126px; }
         form.send .composer-input, form.send textarea { min-width: 0; width: 100%; }
-        form.send textarea { min-height: 40px; max-height: 112px; padding: 7px 9px; resize: none; }
-        form.send button { min-height: 40px; padding: 7px 10px; }
-        form.send .emoji-picker summary { display: grid; place-items: center; min-width: 38px; min-height: 40px; }
+        form.send textarea { min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 11px 9px; resize: none; }
+        form.send button { min-height: 44px; }
+        form.send .emoji-picker summary { min-width: 44px; min-height: 44px; }
         .message-media { width: 100%; max-width: 100%; overflow: hidden; }
         .message-media img, .message-media video { width: auto; max-width: 100%; max-height: min(48dvh, 420px); object-fit: contain; }
         .media-lightbox { padding: 42px 12px 12px; }
@@ -2729,6 +2760,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         .bottom-navigation { border-color: #344038; background: #19211c; }
+        .composer-icon, form.send .emoji-picker > summary { border-color: #344038; color: #d8eddd; }
+        .composer-icon:hover, form.send .emoji-picker > summary:hover { background: #26352c; }
+        .conversation-header { background: #19211c; }
+        .connection-status-dot { background: #d19a51; }
+        .connection-status-dot[data-routine="true"] { background: #6dbc8e; }
         .bottom-navigation-panel > summary, .bottom-navigation-list { border-color: #344038; background: #19211c; color: #eef3ee; }
         .bottom-navigation-list button.has-unread { color: #d8eddd; }
 
@@ -2783,7 +2819,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <main>
       <aside class="sidebar" id="sidebar-panel">
         <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave.svg" alt=""><h1>Sprøyt</h1></div>
-        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-label="Samtalar og vennekretsar" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Meny</button>
         <div class="identity">
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
           <details id="status-editor">
@@ -2853,14 +2888,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
           </div>
           <p class="onboarding-notice" id="agent-access-notice" role="status" aria-live="polite">Vel ei samtale for å lage tilgang.</p>
         </details>
-      </aside>
-      <header class="conversation-header">
-        <div><h2 id="conversation-title">Samtalar</h2><p class="peer-status" id="conversation-peer-status" hidden></p><p class="status" id="status" role="status" aria-live="polite">Koplar til …</p></div>
-        <div class="view-controls" aria-label="Meldingsvising">
-          <button id="view-mode" type="button" aria-pressed="true">Les</button>
-          <button id="raw-mode" type="button" aria-pressed="false">Kjelde</button>
-        </div>
-        <form id="connect-form" hidden><input id="channel" value="general"><button id="connect" type="submit">Kople til</button></form>
         <div class="advanced-tools" {{ADVANCED_HIDDEN}}>
           <button id="enable-heart" type="button" disabled>Slå på event-planlegging</button>
           <label>Tittel<input id="process-title" placeholder="Middag på laurdag"></label>
@@ -2872,13 +2899,23 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="process-no" type="button" disabled>Svar nei</button>
         </div>
         <section class="process-view" id="process-view" aria-live="polite" hidden></section>
+      </aside>
+      <header class="conversation-header">
+        <div class="mobile-app-mark"><img src="/assets/sproyt-wave.svg" alt=""></div>
+        <div class="conversation-details"><div class="conversation-heading"><h2 id="conversation-title">Samtalar</h2><p class="conversation-context" id="conversation-context" hidden></p></div><p class="peer-status" id="conversation-peer-status" hidden></p><div class="connection-status"><span class="connection-status-dot" id="connection-status-dot" role="img" aria-label="Sambandsstatus: koplar til"></span><p class="status" id="status" role="status" aria-live="polite">Koplar til …</p></div></div>
+        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-label="Opne samtalar og vennekretsar" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Meny</button>
+        <div class="view-controls" aria-label="Meldingsvising">
+          <button id="view-mode" type="button" aria-pressed="true">Les</button>
+          <button id="raw-mode" type="button" aria-pressed="false">Kjelde</button>
+        </div>
+        <form id="connect-form" hidden><input id="channel" value="general"><button id="connect" type="submit">Kople til</button></form>
       </header>
       <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
       <div class="composer-area">
         <form class="send" id="send-form">
         <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
-        <button id="attach-media" type="button" aria-label="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="assertive"></p>
-        <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
+        <button class="composer-icon" id="attach-media" type="button" aria-label="Last opp bilete eller video" title="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="polite"></p>
+        <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" rows="1" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
         <button id="send" type="submit" disabled>Send</button>
         </form>
         <nav class="bottom-navigation" aria-label="Krets- og kanalveljar">
@@ -2918,6 +2955,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const bodyInput = document.querySelector("#body");
       const mentionSuggestions = document.querySelector("#mention-suggestions");
       const sendButton = document.querySelector("#send");
+      const attachMediaButton = document.querySelector("#attach-media");
+      const messageEmojiPicker = document.querySelector(".emoji-picker");
       const statusText = document.querySelector("#status-text");
       const statusEmoji = document.querySelector("#status-emoji");
       const currentStatus = document.querySelector("#current-status");
@@ -2948,6 +2987,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const viewModeButton = document.querySelector("#view-mode");
       const rawModeButton = document.querySelector("#raw-mode");
       const statusEl = document.querySelector("#status");
+      const connectionStatusDot = document.querySelector("#connection-status-dot");
       const messagesEl = document.querySelector("#messages");
       const channelList = document.querySelector("#channel-list");
       const bottomChannelPanel = document.querySelector("#bottom-channel-panel");
@@ -2959,6 +2999,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const directUser = document.querySelector("#direct-user");
       const openDirect = document.querySelector("#open-direct");
       const conversationTitle = document.querySelector("#conversation-title");
+      const conversationContext = document.querySelector("#conversation-context");
       const conversationPeerStatus = document.querySelector("#conversation-peer-status");
       const circleSelect = document.querySelector("#circle-select");
       const circleName = document.querySelector("#circle-name");
@@ -2985,6 +3026,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const processButtons = ["#enable-heart", "#start-process", "#refresh-process", "#inspect-process", "#process-yes", "#process-no"].map((id) => document.querySelector(id));
       const sidebar = document.querySelector("#sidebar-panel");
       const mobileNavigationToggle = document.querySelector("#mobile-navigation-toggle");
+      const composerArea = document.querySelector(".composer-area");
 
       const connectionSupervisor = (() => {
         const state = {
@@ -3059,6 +3101,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let mentionMatches = [];
       let selectedMentionIndex = 0;
       let activeMention = null;
+      let composerHasFocus = false;
+      let composerComposing = false;
+      const usesDesktopComposerKeys = window.matchMedia("(any-hover: hover) and (any-pointer: fine)");
 
       const applicationStore = createApplicationStore();
 
@@ -3102,6 +3147,29 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function restoreActiveDraft() {
         try { bodyInput.value = window.localStorage.getItem(channelDraftKey(activeChannelId)) || ""; }
         catch (_) { bodyInput.value = ""; }
+        syncComposerState();
+      }
+
+      function activeChannelMedia() {
+        return pendingMedia.filter((media) => media.channel_id === activeChannelId);
+      }
+
+      function resizeComposer() {
+        const maximum = Number.parseFloat(window.getComputedStyle(bodyInput).maxHeight);
+        bodyInput.style.height = "auto";
+        const height = Math.min(bodyInput.scrollHeight, maximum);
+        bodyInput.style.height = `${height}px`;
+        bodyInput.style.overflowY = bodyInput.scrollHeight > maximum ? "auto" : "hidden";
+      }
+
+      function syncComposerState() {
+        const expanded = composerHasFocus
+          || bodyInput.value.length > 0
+          || activeChannelMedia().length > 0
+          || uploadStatus.textContent.length > 0
+          || !mentionSuggestions.hidden;
+        sendForm.classList.toggle("is-expanded", expanded);
+        resizeComposer();
       }
 
       function setActiveCircle(circleId) {
@@ -3387,16 +3455,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
       window.addEventListener("online", resumeAfterBackground);
 
       function renderMediaPreviews() {
-        mediaPreviews.replaceChildren(...pendingMedia.filter((media) => media.channel_id === activeChannelId).map((media) => {
+        mediaPreviews.replaceChildren(...activeChannelMedia().map((media) => {
           const item = document.createElement("span");
           item.textContent = `${media.content_type.startsWith("video/") ? "🎬" : "🖼️"} ${media.original_filename}`;
           return item;
         }));
+        syncComposerState();
       }
 
       function setUploadStatus(message, kind = "progress") {
         uploadStatus.textContent = message;
         uploadStatus.dataset.kind = kind;
+        uploadStatus.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
+        syncComposerState();
       }
 
       async function uploadFailureMessage(response, filename) {
@@ -3475,7 +3546,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tilkopla");
       }
 
-      document.querySelector("#attach-media").addEventListener("click", () => mediaInput.click());
+      attachMediaButton.addEventListener("click", () => {
+        if (!attachMediaButton.disabled) mediaInput.click();
+      });
       mediaInput.addEventListener("change", () => { uploadMediaFiles([...mediaInput.files]); mediaInput.value = ""; });
       bodyInput.addEventListener("paste", (event) => {
         const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
@@ -3533,6 +3606,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         mentionSuggestions.hidden = true;
         bodyInput.setAttribute("aria-expanded", "false");
         bodyInput.removeAttribute("aria-activedescendant");
+        syncComposerState();
       }
 
       function mentionCandidates() {
@@ -3572,6 +3646,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         } else {
           bodyInput.removeAttribute("aria-activedescendant");
         }
+        syncComposerState();
       }
 
       function updateMentionSuggestions() {
@@ -3597,24 +3672,30 @@ const INDEX_HTML: &str = r##"<!doctype html>
       bodyInput.addEventListener("input", () => {
         persistActiveDraft();
         updateMentionSuggestions();
+        syncComposerState();
       });
       bodyInput.addEventListener("click", updateMentionSuggestions);
+      bodyInput.addEventListener("focus", () => { composerHasFocus = true; syncComposerState(); });
+      bodyInput.addEventListener("compositionstart", () => { composerComposing = true; syncComposerState(); });
+      bodyInput.addEventListener("compositionend", () => { composerComposing = false; persistActiveDraft(); updateMentionSuggestions(); syncComposerState(); });
       bodyInput.addEventListener("keydown", (event) => {
-        if (mentionSuggestions.hidden || mentionMatches.length === 0) return;
-        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (!mentionSuggestions.hidden && mentionMatches.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
           event.preventDefault();
           const direction = event.key === "ArrowDown" ? 1 : -1;
           selectedMentionIndex = (selectedMentionIndex + direction + mentionMatches.length) % mentionMatches.length;
           renderMentionSuggestions();
-        } else if (event.key === "Enter" || event.key === "Tab") {
+        } else if (!mentionSuggestions.hidden && mentionMatches.length > 0 && (event.key === "Enter" || event.key === "Tab")) {
           event.preventDefault();
           selectMention(selectedMentionIndex);
-        } else if (event.key === "Escape") {
+        } else if (!mentionSuggestions.hidden && mentionMatches.length > 0 && event.key === "Escape") {
           event.preventDefault();
           closeMentionSuggestions();
+        } else if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !composerComposing && usesDesktopComposerKeys.matches) {
+          event.preventDefault();
+          sendForm.requestSubmit();
         }
       });
-      bodyInput.addEventListener("blur", () => window.setTimeout(closeMentionSuggestions, 100));
+      bodyInput.addEventListener("blur", () => window.setTimeout(() => { composerHasFocus = false; closeMentionSuggestions(); syncComposerState(); }, 100));
 
       connectForm.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -3638,6 +3719,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         persistActiveDraft();
         closeMentionSuggestions();
         bodyInput.readOnly = true;
+        syncComposerState();
         setConnected(true, "Sender meldinga …");
       });
 
@@ -3645,7 +3727,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const start = input.selectionStart ?? input.value.length;
         const end = input.selectionEnd ?? start;
         input.setRangeText(emoji, start, end, "end");
-        if (input === bodyInput) persistActiveDraft();
+        if (input === bodyInput) { persistActiveDraft(); syncComposerState(); }
         input.focus();
       }
 
@@ -3745,9 +3827,32 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       viewModeButton.addEventListener("click", () => setRenderMode("view"));
       rawModeButton.addEventListener("click", () => setRenderMode("raw"));
-      mobileNavigationToggle.addEventListener("click", () => {
-        const open = sidebar.classList.toggle("mobile-open");
+      function setMobileNavigationOpen(open, restoreFocus = false) {
+        if (open) {
+          bottomChannelPanel.open = false;
+          bottomCirclePanel.open = false;
+        }
+        sidebar.classList.toggle("mobile-open", open);
+        if (open) {
+          sidebar.setAttribute("role", "dialog");
+          sidebar.setAttribute("aria-modal", "true");
+          sidebar.setAttribute("aria-label", "Samtalar og vennekretsar");
+        } else {
+          sidebar.removeAttribute("role");
+          sidebar.removeAttribute("aria-modal");
+          sidebar.removeAttribute("aria-label");
+        }
+        messagesEl.inert = open;
+        composerArea.inert = open;
         mobileNavigationToggle.setAttribute("aria-expanded", String(open));
+        if (open) {
+          const firstControl = sidebar.querySelector("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary");
+          firstControl?.focus();
+        }
+        if (restoreFocus) mobileNavigationToggle.focus();
+      }
+      mobileNavigationToggle.addEventListener("click", () => {
+        setMobileNavigationOpen(!sidebar.classList.contains("mobile-open"));
       });
       bottomChannelPanel.addEventListener("toggle", () => {
         if (bottomChannelPanel.open) bottomCirclePanel.open = false;
@@ -3756,6 +3861,29 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (bottomCirclePanel.open) bottomChannelPanel.open = false;
       });
       document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && (circleChannelDialog.open || threadPanel.open || mediaLightbox.open)) {
+          return;
+        }
+        if (event.key === "Tab" && sidebar.classList.contains("mobile-open")) {
+          const controls = Array.from(sidebar.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary"))
+            .filter((control) => !control.hidden && control.offsetParent !== null);
+          if (controls.length > 0) {
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first.focus();
+            }
+          }
+        }
+        if (event.key === "Escape" && sidebar.classList.contains("mobile-open")) {
+          event.preventDefault();
+          setMobileNavigationOpen(false, true);
+          return;
+        }
         if (event.key === "Escape" && bottomChannelPanel.open) {
           event.preventDefault();
           closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
@@ -3765,11 +3893,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
           event.preventDefault();
           closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
           return;
-        }
-        if (event.key === "Escape" && sidebar.classList.contains("mobile-open")) {
-          sidebar.classList.remove("mobile-open");
-          mobileNavigationToggle.setAttribute("aria-expanded", "false");
-          mobileNavigationToggle.focus();
         }
       });
       circleButtons[0].addEventListener("click", () => sendCommand("create_circle", {
@@ -4081,7 +4204,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bodyInput.readOnly = false;
         pendingMedia = pendingMedia.filter((media) => !pending.mediaIds.includes(media.id));
         renderMediaPreviews();
-        if (message?.channel_id === activeChannelId) bodyInput.focus();
+        if (message?.channel_id === activeChannelId) {
+          setUploadStatus("");
+          bodyInput.focus();
+        }
+        syncComposerState();
         setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tilkopla");
       }
 
@@ -4092,6 +4219,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bodyInput.readOnly = false;
         if (bodyInput.value.trim().length === 0) bodyInput.value = pending.draft;
         persistActiveDraft();
+        syncComposerState();
         setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, `Meldinga vart ikkje sendt: ${message}`);
         bodyInput.focus();
       }
@@ -4129,6 +4257,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           && connectionSupervisor.state.subscribedChannelId === activeChannelId;
         bodyInput.disabled = !writableChannel;
         sendButton.disabled = !writableChannel || pendingMessages.size > 0;
+        attachMediaButton.disabled = !writableChannel || pendingMessages.size > 0;
+        messageEmojiPicker.setAttribute("aria-disabled", String(!writableChannel || pendingMessages.size > 0));
         circleButtons.forEach((button) => { button.disabled = !connected; });
         exportButton.disabled = !connected;
         processButtons.forEach((button) => { button.disabled = !connected; });
@@ -4139,7 +4269,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         applicationStore.updateConnection({ status });
         const connection = applicationStore.snapshot.connection;
         statusEl.textContent = connection.status;
-        statusEl.dataset.routine = String(connection.status === "Tilkopla");
+        const routine = connection.status === "Tilkopla";
+        statusEl.dataset.routine = String(routine);
+        connectionStatusDot.dataset.routine = String(routine);
+        connectionStatusDot.setAttribute("aria-label", `Sambandsstatus: ${connection.status}`);
       }
 
       function updateOnboardingButtons() {
@@ -4315,10 +4448,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function renderConversationIdentity() {
         const channel = knownChannels.find((item) => item.id === activeChannelId);
+        conversationContext.hidden = true;
+        conversationContext.textContent = "";
         conversationPeerStatus.hidden = true;
         conversationPeerStatus.replaceChildren();
         if (!channel) return;
         conversationTitle.textContent = channel.name;
+        conversationContext.textContent = channel.circle_id
+          ? (knownCircles.get(channel.circle_id)?.name || "Vennekrets")
+          : (channel.direct_user_id ? "Direktemelding" : "Felles");
+        conversationContext.hidden = false;
         const peer = channel.direct_user_id ? activeProfile(channel.direct_user_id) : null;
         const status = profileStatus(peer);
         if (!peer || !status) return;
@@ -4607,6 +4746,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           acknowledgeLatest(payload.channel_id, payload.history);
           bodyInput.disabled = false;
           sendButton.disabled = false;
+          attachMediaButton.disabled = false;
+          messageEmojiPicker.setAttribute("aria-disabled", "false");
+          syncComposerState();
           renderChannels();
           const scrollOffset = reconnectScrollOffset;
           reconnectScrollOffset = null;
@@ -5148,8 +5290,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         connectionSupervisor.state.subscribedChannelId = null;
         activeChannelId = null;
         activeInboxKind = kind;
-        sidebar.classList.remove("mobile-open");
-        mobileNavigationToggle.setAttribute("aria-expanded", "false");
+        setMobileNavigationOpen(false);
         reconnectScrollOffset = null;
         timeline.length = 0;
         threadReplies.clear();
@@ -5163,8 +5304,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         historyLoading = false;
         bodyInput.disabled = true;
         sendButton.disabled = true;
+        attachMediaButton.disabled = true;
+        messageEmojiPicker.setAttribute("aria-disabled", "true");
+        syncComposerState();
         messagesEl.replaceChildren();
         renderConversationIdentity();
+        conversationContext.textContent = "For deg";
+        conversationContext.hidden = false;
         if (kind === "unread") {
           conversationTitle.textContent = "Uleste meldingar";
           const unread = knownChannels
@@ -5320,8 +5466,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (!channel) return;
         if (channel.id === activeChannelId && channel.id === connectionSupervisor.state.subscribedChannelId) return;
         persistActiveDraft();
-        sidebar.classList.remove("mobile-open");
-        mobileNavigationToggle.setAttribute("aria-expanded", "false");
+        setMobileNavigationOpen(false);
         activeInboxKind = null;
         const previousChannelId = connectionSupervisor.state.subscribedChannelId;
         if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
@@ -5358,6 +5503,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         updateAgentAccessControls();
         bodyInput.disabled = true;
         sendButton.disabled = true;
+        attachMediaButton.disabled = true;
+        messageEmojiPicker.setAttribute("aria-disabled", "true");
         setConnectionStatus("Koplar til samtalen …");
         if (!sendCommand("subscribe_channel", { channel_id: channel.id })) {
           setConnectionStatus("Vent på samband – trykk på samtalen for å prøve igjen");
@@ -6888,6 +7035,28 @@ mod protocol_capacity_tests {
     }
 
     #[test]
+    fn browser_uses_a_compact_composer_with_safe_keyboard_semantics() {
+        assert!(INDEX_HTML.contains("--composer-rest-height: 46px"));
+        assert!(INDEX_HTML.contains("--composer-max-height: 126px"));
+        assert!(INDEX_HTML.contains("resize: none; overflow-y: hidden"));
+        assert!(INDEX_HTML.contains("function resizeComposer()"));
+        assert!(INDEX_HTML.contains("bodyInput.scrollHeight > maximum ? \"auto\" : \"hidden\""));
+        assert!(INDEX_HTML.contains("form.send.is-expanded #media-previews:not(:empty)"));
+        assert!(INDEX_HTML.contains("form.send.is-expanded #upload-status:not(:empty)"));
+        assert!(INDEX_HTML.contains("min-width: 44px; min-height: 44px"));
+        assert!(INDEX_HTML.contains("composer-icon\" id=\"attach-media\""));
+        assert!(INDEX_HTML.contains("compositionstart"));
+        assert!(INDEX_HTML.contains("compositionend"));
+        assert!(INDEX_HTML.contains("event.keyCode !== 229"));
+        assert!(INDEX_HTML.contains("!event.isComposing"));
+        assert!(INDEX_HTML.contains("usesDesktopComposerKeys.matches"));
+        assert!(INDEX_HTML.contains("sendForm.requestSubmit()"));
+        assert!(INDEX_HTML.contains("@media (prefers-reduced-motion: no-preference)"));
+        assert!(INDEX_HTML.contains("attachMediaButton.disabled = !writableChannel"));
+        assert!(INDEX_HTML.contains("syncComposerState();"));
+    }
+
+    #[test]
     fn browser_is_an_installable_pwa_with_bounded_offline_caching() {
         let manifest: serde_json::Value = serde_json::from_str(PWA_MANIFEST).unwrap();
         assert_eq!(manifest["name"], "Sprøyt");
@@ -7229,6 +7398,36 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("event.type === \"thread_loaded\""));
         assert!(INDEX_HTML.contains("summary?.unread_count"));
         assert!(INDEX_HTML.contains("pendingThreadToOpen = mention.message.parent_message_id"));
+    }
+
+    #[test]
+    fn browser_uses_compact_accessible_mobile_conversation_bar() {
+        assert!(INDEX_HTML.contains(
+            "<div class=\"mobile-app-mark\"><img src=\"/assets/sproyt-wave.svg\" alt=\"\"></div>"
+        ));
+        assert!(INDEX_HTML.contains("id=\"conversation-context\" hidden"));
+        assert!(INDEX_HTML.contains(
+            "id=\"connection-status-dot\" role=\"img\" aria-label=\"Sambandsstatus: koplar til\""
+        ));
+        assert!(INDEX_HTML.contains("aria-label=\"Opne samtalar og vennekretsar\""));
+        assert!(INDEX_HTML.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
+        assert!(INDEX_HTML.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
+        assert!(INDEX_HTML.contains(".conversation-header { position: sticky; top: 0;"));
+        assert!(INDEX_HTML.contains("grid-template-columns: 32px minmax(0, 1fr) 44px;"));
+        assert!(INDEX_HTML.contains("width: 44px; min-width: 44px; min-height: 44px;"));
+        assert!(INDEX_HTML.contains("connectionStatusDot.setAttribute(\"aria-label\", `Sambandsstatus: ${connection.status}`)"));
+        assert!(INDEX_HTML.contains("conversationContext.textContent = channel.circle_id"));
+        assert!(INDEX_HTML.contains("(channel.direct_user_id ? \"Direktemelding\" : \"Felles\")"));
+        assert!(
+            INDEX_HTML
+                .contains("sidebar.setAttribute(\"aria-label\", \"Samtalar og vennekretsar\")")
+        );
+        assert!(INDEX_HTML.contains("firstControl?.focus()"));
+        assert!(
+            INDEX_HTML
+                .contains("event.key === \"Tab\" && sidebar.classList.contains(\"mobile-open\")")
+        );
+        assert!(INDEX_HTML.contains("messagesEl.inert = open"));
     }
 
     #[test]
@@ -7775,11 +7974,11 @@ mod protocol_capacity_tests {
         assert!(body.contains("<summary>Administrer kretsar og kanalar</summary>"));
         assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
         assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
-        assert!(body.contains(".sidebar.mobile-open { max-height:"));
+        assert!(body.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
         assert!(body.contains("overflow-y: auto; overscroll-behavior: contain;"));
-        assert!(body.contains("grid-template-rows: auto auto minmax(0, 1fr) auto;"));
+        assert!(body.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
         assert!(body.contains("form.send { grid-template-columns: auto auto minmax(0, 1fr) auto"));
-        assert!(body.contains(".conversation-header .status[data-routine=\"true\"]"));
+        assert!(body.contains(".connection-status .status[data-routine=\"true\"]"));
         assert!(body.contains("setConnectionStatus(\"Tilkopla\")"));
         assert!(
             body.contains("mobileNavigationToggle.setAttribute(\"aria-expanded\", String(open))")
