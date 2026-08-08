@@ -1803,7 +1803,7 @@ async fn index(
             if state.agent_ui_enabled { "" } else { "hidden" },
         );
     let policy = format!(
-        "default-src 'self'; script-src 'nonce-{nonce}' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        "default-src 'self'; script-src 'nonce-{nonce}' https://cdn.jsdelivr.net; worker-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     );
     let mut response = Html(html).into_response();
     let headers = response.headers_mut();
@@ -2836,17 +2836,26 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const sidebar = document.querySelector("#sidebar-panel");
       const mobileNavigationToggle = document.querySelector("#mobile-navigation-toggle");
 
-      let socket = null;
-      let heartbeatTimer = null;
-      let reconnectTimer = null;
-      let reconnectAttempt = 0;
-      let stableConnectionTimer = null;
-      let sessionRefreshTimer = null;
-      let sessionRefreshDueAt = 0;
-      let sessionRefreshPromise = null;
-      let sessionRefreshRejected = false;
-      let authenticationRecoveryPromise = null;
-      let connectionRecoveryPromise = null;
+      const connectionSupervisor = (() => {
+        const state = {
+          socket: null,
+          socketHandoff: null,
+          subscribedChannelId: null,
+          recoveryPromise: null,
+          reconnectTimer: null,
+          reconnectAttempt: 0,
+          heartbeatTimer: null,
+          stableConnectionTimer: null
+        };
+        return Object.freeze({
+          state,
+          start() { connect(); },
+          recover: recoverConnection,
+          replaceAfterSessionRefresh: reconnectAfterSessionRefresh,
+          scheduleReconnect,
+          send: sendCommand
+        });
+      })();
       let lastBackgroundRecoveryAt = 0;
       let renderMode = "view";
       let requestNumber = 0;
@@ -2854,7 +2863,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const sessionRefreshLeaseKey = "sproyt.session-refresh-lease.v1";
       const sessionRefreshBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
       let activeChannelId = null;
-      let subscribedChannelId = null;
       let activeInboxKind = null;
       let managedCircleId = null;
       let reconnectScrollOffset = null;
@@ -2896,6 +2904,71 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let selectedMentionIndex = 0;
       let activeMention = null;
 
+      const applicationStore = (() => {
+        let state = Object.freeze({
+          session: Object.freeze({ refreshDueAt: 0 }),
+          connection: Object.freeze({ connected: false, status: "Koplar til …" }),
+          transport: Object.freeze({ lastEventType: null, processedEvents: 0 })
+        });
+        const replaceSlice = (slice, patch) => {
+          state = Object.freeze({
+            ...state,
+            [slice]: Object.freeze({ ...state[slice], ...patch })
+          });
+        };
+        return Object.freeze({
+          get snapshot() { return state; },
+          updateSession(patch) { replaceSlice("session", patch); },
+          updateConnection(patch) { replaceSlice("connection", patch); },
+          reduceServerEvent(event) {
+            replaceSlice("transport", {
+              lastEventType: event.type || null,
+              processedEvents: state.transport.processedEvents + 1
+            });
+            return event;
+          }
+        });
+      })();
+
+      const sessionSupervisor = (() => {
+        const state = {
+          refreshTimer: null,
+          refreshDueAt: 0,
+          refreshPromise: null,
+          refreshRejected: false,
+          authenticationRecoveryPromise: null
+        };
+        return Object.freeze({
+          state,
+          start() {
+            scheduleInitialSessionRefresh().catch(() => scheduleSessionRefresh(30));
+          },
+          schedule: scheduleSessionRefresh,
+          refresh: refreshSession,
+          recoverAuthentication
+        });
+      })();
+
+      const serverEventMailbox = (() => {
+        const queue = [];
+        let draining = false;
+        return Object.freeze({
+          enqueue(event) {
+            queue.push(event);
+            if (draining) return;
+            draining = true;
+            try {
+              while (queue.length > 0) {
+                renderServerEvent(applicationStore.reduceServerEvent(queue.shift()));
+              }
+            } finally {
+              draining = false;
+            }
+          },
+          get size() { return queue.length; }
+        });
+      })();
+
       function channelDraftKey(channelId) {
         return `${channelDraftPrefix}${channelId}`;
       }
@@ -2928,23 +3001,32 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function scheduleSessionRefresh(seconds) {
-        if (sessionRefreshTimer !== null) window.clearTimeout(sessionRefreshTimer);
+        if (sessionSupervisor.state.refreshTimer !== null) {
+          window.clearTimeout(sessionSupervisor.state.refreshTimer);
+        }
         const delay = Math.max(1, Number(seconds) || 1) * 1000;
-        sessionRefreshDueAt = Date.now() + delay;
-        sessionRefreshTimer = window.setTimeout(() => refreshSession().catch(() => scheduleSessionRefresh(30)), delay);
+        sessionSupervisor.state.refreshDueAt = Date.now() + delay;
+        applicationStore.updateSession({ refreshDueAt: sessionSupervisor.state.refreshDueAt });
+        sessionSupervisor.state.refreshTimer = window.setTimeout(
+          () => refreshSession().catch(() => scheduleSessionRefresh(30)),
+          delay
+        );
       }
 
       sessionRefreshBroadcast?.addEventListener("message", (event) => {
         const seconds = Number(event.data?.refreshAfterSeconds);
-        if (Number.isFinite(seconds) && seconds > 0) scheduleSessionRefresh(seconds);
+        if (Number.isFinite(seconds) && seconds > 0) sessionSupervisor.schedule(seconds);
+        if (event.data?.type === "session_rotated") connectionSupervisor.replaceAfterSessionRefresh();
       });
 
       function reconnectAfterSessionRefresh() {
-        if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+        const currentSocket = connectionSupervisor.state.socket;
+        if (connectionSupervisor.state.socketHandoff) return;
+        if (!currentSocket || currentSocket.readyState === WebSocket.CLOSED || currentSocket.readyState === WebSocket.CLOSING) {
           connect(true);
           return;
         }
-        if (socket.readyState === WebSocket.OPEN) connect(true, socket);
+        if (currentSocket.readyState === WebSocket.OPEN) connect(true, currentSocket);
       }
 
       async function performSessionRefresh() {
@@ -2957,7 +3039,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           });
         } catch (_) {
           reportClientEvent("session_refresh_failed");
-          sessionRefreshRejected = false;
+          sessionSupervisor.state.refreshRejected = false;
           scheduleSessionRefresh(30);
           return false;
         }
@@ -2967,17 +3049,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
           // OIDC providers, so a failed proactive refresh must not create an
           // Authentik callback/reload loop while the session is still valid.
           reportClientEvent("session_refresh_failed");
-          sessionRefreshRejected = true;
+          sessionSupervisor.state.refreshRejected = true;
           scheduleSessionRefresh(30);
           return false;
         }
         if (!response.ok) {
           reportClientEvent("session_refresh_failed");
-          sessionRefreshRejected = false;
+          sessionSupervisor.state.refreshRejected = false;
           scheduleSessionRefresh(30);
           return false;
         }
-        sessionRefreshRejected = false;
+        sessionSupervisor.state.refreshRejected = false;
         const result = await response.json();
         const verification = await fetch("/auth/session", {
           credentials: "same-origin",
@@ -2986,12 +3068,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         });
         if (!verification.ok) {
           reportClientEvent("session_refresh_failed");
-          sessionRefreshRejected = verification.status === 401;
+          sessionSupervisor.state.refreshRejected = verification.status === 401;
           scheduleSessionRefresh(30);
           return false;
         }
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
-        sessionRefreshBroadcast?.postMessage({ refreshAfterSeconds: Number(result.refresh_after_seconds) || 300 });
+        sessionRefreshBroadcast?.postMessage({
+          type: "session_rotated",
+          refreshAfterSeconds: Number(result.refresh_after_seconds) || 300
+        });
         reportClientEvent("session_refresh_succeeded");
         reconnectAfterSessionRefresh();
         return true;
@@ -3039,8 +3124,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       async function refreshSession(waitForLock = false) {
-        if (sessionRefreshPromise) return sessionRefreshPromise;
-        sessionRefreshPromise = (async () => {
+        if (sessionSupervisor.state.refreshPromise) return sessionSupervisor.state.refreshPromise;
+        sessionSupervisor.state.refreshPromise = (async () => {
           if (navigator.locks) {
             const options = waitForLock ? {} : { ifAvailable: true };
             return navigator.locks.request("sproyt-session-refresh", options, async (lock) => {
@@ -3055,9 +3140,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return refreshWithLocalStorageLease();
         })();
         try {
-          return await sessionRefreshPromise;
+          return await sessionSupervisor.state.refreshPromise;
         } finally {
-          sessionRefreshPromise = null;
+          sessionSupervisor.state.refreshPromise = null;
         }
       }
 
@@ -3076,18 +3161,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
       }
 
-      scheduleInitialSessionRefresh().catch(() => scheduleSessionRefresh(30));
-
       async function recoverAuthentication() {
-        if (authenticationRecoveryPromise) return authenticationRecoveryPromise;
-        authenticationRecoveryPromise = (async () => {
+        if (sessionSupervisor.state.authenticationRecoveryPromise) {
+          return sessionSupervisor.state.authenticationRecoveryPromise;
+        }
+        sessionSupervisor.state.authenticationRecoveryPromise = (async () => {
           setConnectionStatus("Fornyar økta …");
           const refreshed = await refreshSession(true);
           if (refreshed) {
-            if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) connect(true);
+            const currentSocket = connectionSupervisor.state.socket;
+            if (!currentSocket || currentSocket.readyState === WebSocket.CLOSED || currentSocket.readyState === WebSocket.CLOSING) connect(true);
             return;
           }
-          if (sessionRefreshRejected) {
+          if (sessionSupervisor.state.refreshRejected) {
             setConnectionStatus("Økta må stadfestast på nytt …");
             window.location.assign("/auth/login");
             return;
@@ -3095,15 +3181,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
           scheduleReconnect(1006, "ventar på nett for å fornye økta");
         })();
         try {
-          return await authenticationRecoveryPromise;
+          return await sessionSupervisor.state.authenticationRecoveryPromise;
         } finally {
-          authenticationRecoveryPromise = null;
+          sessionSupervisor.state.authenticationRecoveryPromise = null;
         }
       }
 
       async function recoverConnection(replaceOpenSocket = false) {
-        if (connectionRecoveryPromise) return connectionRecoveryPromise;
-        connectionRecoveryPromise = (async () => {
+        if (connectionSupervisor.state.recoveryPromise) {
+          return connectionSupervisor.state.recoveryPromise;
+        }
+        connectionSupervisor.state.recoveryPromise = (async () => {
           let response;
           try {
             response = await fetch("/auth/session", {
@@ -3125,16 +3213,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           const result = await response.json();
           scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
-          if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+          const currentSocket = connectionSupervisor.state.socket;
+          if (!currentSocket || currentSocket.readyState === WebSocket.CLOSED || currentSocket.readyState === WebSocket.CLOSING) {
             connect(true);
-          } else if (replaceOpenSocket && socket.readyState === WebSocket.OPEN) {
-            connect(true, socket);
+          } else if (replaceOpenSocket && currentSocket.readyState === WebSocket.OPEN) {
+            connect(true, currentSocket);
           }
         })();
         try {
-          return await connectionRecoveryPromise;
+          return await connectionSupervisor.state.recoveryPromise;
         } finally {
-          connectionRecoveryPromise = null;
+          connectionSupervisor.state.recoveryPromise = null;
         }
       }
 
@@ -3143,7 +3232,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const now = Date.now();
         if (now - lastBackgroundRecoveryAt < 5_000) return;
         lastBackgroundRecoveryAt = now;
-        recoverConnection(true).catch(() => scheduleReconnect(1006, "kunne ikkje gjenopprette sambandet"));
+        connectionSupervisor.recover(false)
+          .catch(() => connectionSupervisor.scheduleReconnect(1006, "kunne ikkje gjenopprette sambandet"));
       }
 
       window.addEventListener("pageshow", resumeAfterBackground);
@@ -3236,7 +3326,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           reportClientEvent("upload_succeeded");
           setUploadStatus(`${file.name || "Fila"} er behandla og klar til å sendast.`, "success");
         }
-        setConnected(socket?.readyState === WebSocket.OPEN, "Tilkopla");
+        setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tilkopla");
       }
 
       document.querySelector("#attach-media").addEventListener("click", () => mediaInput.click());
@@ -3382,7 +3472,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       connectForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        connect();
+        connectionSupervisor.start();
       });
 
       sendForm.addEventListener("submit", (event) => {
@@ -3391,10 +3481,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const channelMedia = pendingMedia.filter((media) => media.channel_id === activeChannelId);
         const mediaTokens = channelMedia.map((media) => `[[media:${media.id}|${media.content_type}|${encodeURIComponent(media.original_filename)}]]`).join("\n");
         const body = [draft, mediaTokens].filter(Boolean).join("\n");
-        if (!socket || socket.readyState !== WebSocket.OPEN || !activeChannelId || body.length === 0) {
+        if (!connectionSupervisor.state.socket || connectionSupervisor.state.socket.readyState !== WebSocket.OPEN || !activeChannelId || body.length === 0) {
           return;
         }
-        if (subscribedChannelId !== activeChannelId) return;
+        if (connectionSupervisor.state.subscribedChannelId !== activeChannelId) return;
         const requestId = sendCommand("send_message", { channel_id: activeChannelId, body });
         if (!requestId) return;
         pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });
@@ -3640,19 +3730,20 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function connect(silent = false, previousSocket = null) {
-        if (reconnectTimer !== null) {
-          window.clearTimeout(reconnectTimer);
-          reconnectTimer = null;
+        if (connectionSupervisor.state.reconnectTimer !== null) {
+          window.clearTimeout(connectionSupervisor.state.reconnectTimer);
+          connectionSupervisor.state.reconnectTimer = null;
         }
-        if (!previousSocket && heartbeatTimer !== null) {
-          window.clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
+        if (!previousSocket && connectionSupervisor.state.heartbeatTimer !== null) {
+          window.clearInterval(connectionSupervisor.state.heartbeatTimer);
+          connectionSupervisor.state.heartbeatTimer = null;
         }
-        if (!previousSocket && stableConnectionTimer !== null) {
-          window.clearTimeout(stableConnectionTimer);
-          stableConnectionTimer = null;
+        if (!previousSocket && connectionSupervisor.state.stableConnectionTimer !== null) {
+          window.clearTimeout(connectionSupervisor.state.stableConnectionTimer);
+          connectionSupervisor.state.stableConnectionTimer = null;
         }
-        if (!previousSocket && socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        const currentSocket = connectionSupervisor.state.socket;
+        if (!previousSocket && currentSocket && (currentSocket.readyState === WebSocket.OPEN || currentSocket.readyState === WebSocket.CONNECTING)) {
           return;
         }
 
@@ -3671,24 +3762,33 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (developmentParticipant) websocketUrl.searchParams.set("participant", developmentParticipant);
         const nextSocket = new WebSocket(websocketUrl);
         if (!previousSocket) {
-          socket = nextSocket;
-          subscribedChannelId = null;
+          connectionSupervisor.state.socket = nextSocket;
+          connectionSupervisor.state.subscribedChannelId = null;
         }
         if (!silent) setConnected(false, "Koplar til ...");
 
         nextSocket.addEventListener("open", () => {
-          if (previousSocket && socket !== previousSocket) {
+          if (previousSocket && connectionSupervisor.state.socket !== previousSocket) {
             nextSocket.close(4000, "superseded session refresh");
             return;
           }
-          if (!previousSocket && socket !== nextSocket) return;
-          socket = nextSocket;
+          if (!previousSocket && connectionSupervisor.state.socket !== nextSocket) return;
+          connectionSupervisor.state.socket = nextSocket;
+          if (previousSocket) {
+            connectionSupervisor.state.socketHandoff = { previousSocket, nextSocket };
+            if (activeChannelId) {
+              connectionSupervisor.state.subscribedChannelId = null;
+              setConnected(true, "Gjenopprettar samtalen …");
+            }
+          }
           reportClientEvent("websocket_connected");
-          if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+          if (connectionSupervisor.state.heartbeatTimer !== null) {
+            window.clearInterval(connectionSupervisor.state.heartbeatTimer);
+          }
           setConnected(true, "Tilkopla");
-          stableConnectionTimer = window.setTimeout(() => {
-            if (socket === nextSocket && nextSocket.readyState === WebSocket.OPEN) {
-              reconnectAttempt = 0;
+          connectionSupervisor.state.stableConnectionTimer = window.setTimeout(() => {
+            if (connectionSupervisor.state.socket === nextSocket && nextSocket.readyState === WebSocket.OPEN) {
+              connectionSupervisor.state.reconnectAttempt = 0;
             }
           }, 10_000);
           sendCommand("hello");
@@ -3698,46 +3798,46 @@ const INDEX_HTML: &str = r##"<!doctype html>
           sendCommand("list_mentions");
           sendCommand("list_tasks");
           if (activeChannelId) sendCommand("subscribe_channel", { channel_id: activeChannelId });
-          heartbeatTimer = window.setInterval(() => {
+          connectionSupervisor.state.heartbeatTimer = window.setInterval(() => {
             sendCommand("ping");
-            sendCommand("list_users");
-            sendCommand("list_my_channels");
-            sendCommand("list_mentions");
-            sendCommand("list_tasks");
-            if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
           }, 20_000);
-          if (previousSocket) {
-            window.setTimeout(() => {
-              if (socket === nextSocket && nextSocket.readyState === WebSocket.OPEN) {
-                previousSocket.close(4000, "session refreshed");
-              }
-            }, 500);
-          }
+          if (previousSocket && !activeChannelId) finishSocketHandoff(nextSocket);
         });
 
         nextSocket.addEventListener("message", (event) => {
-          if (socket !== nextSocket) return;
-          renderServerEvent(JSON.parse(event.data));
+          if (connectionSupervisor.state.socket !== nextSocket) return;
+          serverEventMailbox.enqueue(JSON.parse(event.data));
         });
 
         nextSocket.addEventListener("close", (event) => {
-          if (previousSocket && socket === previousSocket) {
+          if (connectionSupervisor.state.socketHandoff?.nextSocket === nextSocket) {
+            const fallbackSocket = connectionSupervisor.state.socketHandoff.previousSocket;
+            connectionSupervisor.state.socketHandoff = null;
+            if (fallbackSocket.readyState === WebSocket.OPEN) {
+              connectionSupervisor.state.socket = fallbackSocket;
+              connectionSupervisor.state.subscribedChannelId = activeChannelId;
+              setConnected(true, "Tilkopla");
+              scheduleSessionRefresh(30);
+              return;
+            }
+          }
+          if (previousSocket && connectionSupervisor.state.socket === previousSocket) {
             scheduleSessionRefresh(30);
             return;
           }
-          if (socket !== nextSocket) return;
+          if (connectionSupervisor.state.socket !== nextSocket) return;
           reportClientEvent("websocket_disconnected");
-          subscribedChannelId = null;
+          connectionSupervisor.state.subscribedChannelId = null;
           for (const requestId of pendingMessages.keys()) {
             failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
           }
-          if (heartbeatTimer !== null) {
-            window.clearInterval(heartbeatTimer);
-            heartbeatTimer = null;
+          if (connectionSupervisor.state.heartbeatTimer !== null) {
+            window.clearInterval(connectionSupervisor.state.heartbeatTimer);
+            connectionSupervisor.state.heartbeatTimer = null;
           }
-          if (stableConnectionTimer !== null) {
-            window.clearTimeout(stableConnectionTimer);
-            stableConnectionTimer = null;
+          if (connectionSupervisor.state.stableConnectionTimer !== null) {
+            window.clearTimeout(connectionSupervisor.state.stableConnectionTimer);
+            connectionSupervisor.state.stableConnectionTimer = null;
           }
           if (event.code === 1008) {
             recoverAuthentication().catch(() => scheduleReconnect(event.code, event.reason));
@@ -3747,27 +3847,40 @@ const INDEX_HTML: &str = r##"<!doctype html>
         });
 
         nextSocket.addEventListener("error", () => {
-          if (previousSocket && socket === previousSocket) return;
-          if (socket === nextSocket) {
+          if (previousSocket && connectionSupervisor.state.socket === previousSocket) return;
+          if (connectionSupervisor.state.socket === nextSocket) {
             reportClientEvent("websocket_error");
             setConnected(false, "Mista sambandet");
           }
         });
       }
 
+      function finishSocketHandoff(nextSocket) {
+        if (connectionSupervisor.state.socketHandoff?.nextSocket !== nextSocket || connectionSupervisor.state.socket !== nextSocket) return;
+        const previousSocket = connectionSupervisor.state.socketHandoff.previousSocket;
+        connectionSupervisor.state.socketHandoff = null;
+        if (previousSocket.readyState === WebSocket.OPEN) {
+          previousSocket.close(4000, "session refreshed");
+        }
+      }
+
       function scheduleReconnect(closeCode = 1006, closeReason = "") {
-        reconnectAttempt += 1;
-        const delay = Math.min(15_000, 500 * (2 ** Math.min(reconnectAttempt - 1, 5)));
+        connectionSupervisor.state.reconnectAttempt += 1;
+        const delay = Math.min(
+          15_000,
+          500 * (2 ** Math.min(connectionSupervisor.state.reconnectAttempt - 1, 5))
+        );
         const detail = closeReason ? `kode ${closeCode}: ${closeReason}` : `kode ${closeCode}`;
         setConnected(false, `Fråkopla (${detail}) – prøver igjen om ${Math.ceil(delay / 1000)} sekund`);
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null;
+        connectionSupervisor.state.reconnectTimer = window.setTimeout(() => {
+          connectionSupervisor.state.reconnectTimer = null;
           recoverConnection().catch(() => scheduleReconnect(closeCode, closeReason));
         }, delay);
       }
 
       function sendCommand(type, payload) {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return null;
+        const currentSocket = connectionSupervisor.state.socket;
+        if (!currentSocket || currentSocket.readyState !== WebSocket.OPEN) return null;
         requestNumber += 1;
         const command = {
           protocol: "sproyt.chat.v1",
@@ -3777,7 +3890,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (payload !== undefined) {
           command.payload = payload;
         }
-        socket.send(JSON.stringify(command));
+        currentSocket.send(JSON.stringify(command));
         pendingCommands.set(command.request_id, type);
         return command.request_id;
       }
@@ -3800,7 +3913,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         pendingMedia = pendingMedia.filter((media) => !pending.mediaIds.includes(media.id));
         renderMediaPreviews();
         if (message?.channel_id === activeChannelId) bodyInput.focus();
-        setConnected(socket?.readyState === WebSocket.OPEN, "Tilkopla");
+        setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tilkopla");
       }
 
       function failPendingMessage(requestId, message) {
@@ -3810,7 +3923,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bodyInput.readOnly = false;
         if (bodyInput.value.trim().length === 0) bodyInput.value = pending.draft;
         persistActiveDraft();
-        setConnected(socket?.readyState === WebSocket.OPEN, `Meldinga vart ikkje sendt: ${message}`);
+        setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, `Meldinga vart ikkje sendt: ${message}`);
         bodyInput.focus();
       }
 
@@ -3822,7 +3935,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
             threadBody.value = pending.body;
           }
-          setConnected(socket?.readyState === WebSocket.OPEN, "Tråden fekk ei ugyldig sendekvittering; svaret er bevart");
+          setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tråden fekk ei ugyldig sendekvittering; svaret er bevart");
           return true;
         }
         return true;
@@ -3835,15 +3948,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
           threadBody.value = pending.body;
         }
-        setConnected(socket?.readyState === WebSocket.OPEN, `Trådsvaret vart ikkje sendt: ${message}`);
+        setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, `Trådsvaret vart ikkje sendt: ${message}`);
         return true;
       }
 
       function setConnected(connected, status) {
+        applicationStore.updateConnection({ connected, status });
         setConnectionStatus(status);
         const writableChannel = connected
           && activeChannelId !== null
-          && subscribedChannelId === activeChannelId;
+          && connectionSupervisor.state.subscribedChannelId === activeChannelId;
         bodyInput.disabled = !writableChannel;
         sendButton.disabled = !writableChannel || pendingMessages.size > 0;
         circleButtons.forEach((button) => { button.disabled = !connected; });
@@ -3853,12 +3967,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function setConnectionStatus(status) {
-        statusEl.textContent = status;
-        statusEl.dataset.routine = String(status === "Tilkopla");
+        applicationStore.updateConnection({ status });
+        const connection = applicationStore.snapshot.connection;
+        statusEl.textContent = connection.status;
+        statusEl.dataset.routine = String(connection.status === "Tilkopla");
       }
 
       function updateOnboardingButtons() {
-        const connected = socket?.readyState === WebSocket.OPEN;
+        const connected = connectionSupervisor.state.socket?.readyState === WebSocket.OPEN;
         circleButtons[0].disabled = !connected || circleName.value.trim().length < 2;
         circleButtons[2].disabled = !connected || !circleSelect.value;
         circleButtons[3].disabled = !connected || !invitationValueToToken(invitationToken.value);
@@ -4020,6 +4136,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         target.append(indicator);
       }
 
+      function refreshVisibleProfileStatuses(userId = null) {
+        document.querySelectorAll("[data-profile-user-id]").forEach((target) => {
+          if (userId && target.dataset.profileUserId !== userId) return;
+          target.querySelector(".profile-status")?.remove();
+          appendProfileStatus(target, target.dataset.profileUserId);
+        });
+      }
+
       function renderConversationIdentity() {
         const channel = knownChannels.find((item) => item.id === activeChannelId);
         conversationPeerStatus.hidden = true;
@@ -4056,7 +4180,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           knownUsers = payload.users;
           renderKnownUsers();
           renderConversationIdentity();
-          renderTimeline({ preserveScroll: true });
+          refreshVisibleProfileStatuses();
           updateMentionSuggestions();
           return;
         }
@@ -4076,8 +4200,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           renderKnownUsers();
           renderConversationIdentity();
-          renderTimeline({ preserveScroll: true });
-          document.querySelector("#status-editor").open = false;
+          refreshVisibleProfileStatuses(payload.profile.id);
+          if (payload.profile.id === currentParticipantId) {
+            document.querySelector("#status-editor").open = false;
+          }
           return;
         }
 
@@ -4158,7 +4284,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           knownChannels = knownChannels.filter((channel) => channel.circle_id !== departedCircleId);
           if (activeChannelId && !knownChannels.some((channel) => channel.id === activeChannelId)) {
             activeChannelId = null;
-            subscribedChannelId = null;
+            connectionSupervisor.state.subscribedChannelId = null;
             restoredChannelId = null;
             try { window.localStorage.removeItem(activeConversationKey); } catch (_) {}
           }
@@ -4255,7 +4381,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "membership_left") {
           if (payload.channel_id === activeChannelId) {
             activeChannelId = null;
-            subscribedChannelId = null;
+            connectionSupervisor.state.subscribedChannelId = null;
             restoredChannelId = null;
             try { window.localStorage.removeItem(activeConversationKey); } catch (_) {}
           }
@@ -4287,7 +4413,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             sendCommand("unsubscribe_channel", { channel_id: payload.channel_id });
             return;
           }
-          subscribedChannelId = payload.channel_id;
+          connectionSupervisor.state.subscribedChannelId = payload.channel_id;
           setConnectionStatus("Tilkopla");
           renderConversationIdentity();
           payload.history.forEach(appendTimelineMessage);
@@ -4308,13 +4434,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           if (scrollOffset !== null && scrollOffset >= 80) restoreConversationScrollOffset(scrollOffset);
           updateAgentAccessControls();
+          finishSocketHandoff(connectionSupervisor.state.socket);
           return;
         }
 
         if (event.type === "subscription_ended") {
-          if (payload.channel_id === subscribedChannelId) {
-            subscribedChannelId = null;
-            setConnected(socket?.readyState === WebSocket.OPEN, "Koplar til samtalen …");
+          if (payload.channel_id === connectionSupervisor.state.subscribedChannelId) {
+            connectionSupervisor.state.subscribedChannelId = null;
+            setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Koplar til samtalen …");
           }
           return;
         }
@@ -4697,10 +4824,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function showInbox(kind) {
-        if (subscribedChannelId) {
-          sendCommand("unsubscribe_channel", { channel_id: subscribedChannelId });
+        if (connectionSupervisor.state.subscribedChannelId) {
+          sendCommand("unsubscribe_channel", {
+            channel_id: connectionSupervisor.state.subscribedChannelId
+          });
         }
-        subscribedChannelId = null;
+        connectionSupervisor.state.subscribedChannelId = null;
         activeChannelId = null;
         activeInboxKind = kind;
         sidebar.classList.remove("mobile-open");
@@ -4873,14 +5002,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function selectChannel(channel) {
         if (!channel) return;
-        if (channel.id === activeChannelId && channel.id === subscribedChannelId) return;
+        if (channel.id === activeChannelId && channel.id === connectionSupervisor.state.subscribedChannelId) return;
         persistActiveDraft();
         sidebar.classList.remove("mobile-open");
         mobileNavigationToggle.setAttribute("aria-expanded", "false");
         activeInboxKind = null;
-        const previousChannelId = subscribedChannelId;
+        const previousChannelId = connectionSupervisor.state.subscribedChannelId;
         if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
-        subscribedChannelId = null;
+        connectionSupervisor.state.subscribedChannelId = null;
         timeline.length = 0;
         threadReplies.clear();
         threadRoots.clear();
@@ -5022,7 +5151,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function loadOlderHistory() {
-        if (!activeChannelId || !historyHasMore || historyLoading || subscribedChannelId !== activeChannelId) return;
+        if (!activeChannelId || !historyHasMore || historyLoading || connectionSupervisor.state.subscribedChannelId !== activeChannelId) return;
         const oldest = timeline.find((item) => item.type === "message")?.message;
         if (!oldest) return;
         historyLoading = true;
@@ -5039,6 +5168,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const previousHeight = messagesEl.scrollHeight;
         const previousTop = messagesEl.scrollTop;
         const wasNearBottom = previousHeight - previousTop - messagesEl.clientHeight < 80;
+        const interaction = captureTimelineInteraction();
         messagesEl.replaceChildren();
         for (const item of timeline) {
           if (item.type === "message") {
@@ -5048,6 +5178,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
         }
         renderMermaidDiagrams();
+        restoreTimelineInteraction(interaction);
         if (preserveScroll) {
           messagesEl.scrollTop = messagesEl.scrollHeight - previousHeight + previousTop;
         } else if (forceBottom) {
@@ -5055,6 +5186,31 @@ const INDEX_HTML: &str = r##"<!doctype html>
         } else if (wasNearBottom) {
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
+      }
+
+      function captureTimelineInteraction() {
+        const picker = messagesEl.querySelector(".reaction-picker[open]");
+        if (!picker) return null;
+        const messageId = picker.closest("[data-message-id]")?.dataset.messageId;
+        if (!messageId) return null;
+        const input = picker.querySelector("input");
+        return {
+          messageId,
+          customReaction: input?.value || "",
+          focusCustomReaction: document.activeElement === input
+        };
+      }
+
+      function restoreTimelineInteraction(interaction) {
+        if (!interaction) return;
+        const card = [...messagesEl.querySelectorAll("[data-message-id]")]
+          .find((candidate) => candidate.dataset.messageId === interaction.messageId);
+        const picker = card?.querySelector(".reaction-picker");
+        if (!picker) return;
+        picker.open = true;
+        const input = picker.querySelector("input");
+        if (input) input.value = interaction.customReaction;
+        if (input && interaction.focusCustomReaction) input.focus({ preventScroll: true });
       }
 
       function settleConversationAtBottom() {
@@ -5300,6 +5456,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function appendMessage(message, target = messagesEl, includeThread = true) {
         const wrapper = document.createElement("article");
         wrapper.className = "message";
+        wrapper.dataset.messageId = message.id;
 
         const meta = document.createElement("div");
         meta.className = "meta";
@@ -5308,6 +5465,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           : (message.sender_display_name || "Ein ven");
         const senderLabel = document.createElement("span");
         senderLabel.textContent = sender;
+        senderLabel.dataset.profileUserId = message.sender_id;
         appendProfileStatus(senderLabel, message.sender_id);
         meta.append(senderLabel);
         const sentAt = new Date(message.sent_at);
@@ -5440,7 +5598,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         messagesEl.append(line);
       }
 
-      connect();
+      sessionSupervisor.start();
+      connectionSupervisor.start();
       const invitationFromUrl = new URL(window.location.href).searchParams.get("invite");
       if (invitationFromUrl) {
         invitationToken.value = window.location.href;
@@ -6517,6 +6676,92 @@ mod protocol_capacity_tests {
     }
 
     #[test]
+    fn browser_keepalive_does_not_rebuild_interactive_message_views() {
+        let heartbeat = INDEX_HTML
+            .split("connectionSupervisor.state.heartbeatTimer = window.setInterval(() => {")
+            .nth(1)
+            .and_then(|value| value.split("}, 20_000);").next())
+            .expect("heartbeat block");
+        assert!(heartbeat.contains("sendCommand(\"ping\")"));
+        assert!(!heartbeat.contains("list_users"));
+        assert!(!heartbeat.contains("list_my_channels"));
+        assert!(!heartbeat.contains("list_mentions"));
+        assert!(!heartbeat.contains("list_tasks"));
+        assert!(INDEX_HTML.contains("function refreshVisibleProfileStatuses(userId = null)"));
+        assert!(INDEX_HTML.contains("senderLabel.dataset.profileUserId = message.sender_id"));
+        assert!(INDEX_HTML.contains("refreshVisibleProfileStatuses(payload.profile.id)"));
+        assert!(INDEX_HTML.contains("const interaction = captureTimelineInteraction()"));
+        assert!(INDEX_HTML.contains("restoreTimelineInteraction(interaction)"));
+        assert!(INDEX_HTML.contains(".reaction-picker[open]"));
+        assert!(INDEX_HTML.contains("focus({ preventScroll: true })"));
+    }
+
+    #[test]
+    fn browser_rotates_sockets_only_for_real_session_changes() {
+        assert!(INDEX_HTML.contains("event.data?.type === \"session_rotated\""));
+        assert!(INDEX_HTML.contains("type: \"session_rotated\""));
+        assert!(INDEX_HTML.contains("if (connectionSupervisor.state.socketHandoff) return"));
+        assert!(
+            INDEX_HTML.contains(
+                "connectionSupervisor.state.socketHandoff = { previousSocket, nextSocket }"
+            )
+        );
+        assert!(INDEX_HTML.contains("finishSocketHandoff(connectionSupervisor.state.socket)"));
+        assert!(
+            INDEX_HTML
+                .contains("connectionSupervisor.state.socketHandoff?.nextSocket === nextSocket")
+        );
+        assert!(INDEX_HTML.contains("connectionSupervisor.state.socket = fallbackSocket"));
+        assert!(!INDEX_HTML.contains("}, 500);"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.recover(false)"));
+        assert!(INDEX_HTML.contains(
+            ".catch(() => connectionSupervisor.scheduleReconnect(1006, \"kunne ikkje gjenopprette sambandet\"))"
+        ));
+        assert!(!INDEX_HTML.contains(
+            "recoverConnection(true).catch(() => scheduleReconnect(1006, \"kunne ikkje gjenopprette sambandet\"))"
+        ));
+    }
+
+    #[test]
+    fn browser_routes_session_connection_and_events_through_supervisors() {
+        assert!(INDEX_HTML.contains("const sessionSupervisor = (() => {"));
+        assert!(INDEX_HTML.contains("const connectionSupervisor = (() => {"));
+        assert!(INDEX_HTML.contains("const applicationStore = (() => {"));
+        assert!(INDEX_HTML.contains("updateSession(patch)"));
+        assert!(INDEX_HTML.contains("updateConnection(patch)"));
+        assert!(INDEX_HTML.contains("reduceServerEvent(event)"));
+        assert!(
+            INDEX_HTML
+                .contains("renderServerEvent(applicationStore.reduceServerEvent(queue.shift()))")
+        );
+        assert!(!INDEX_HTML.contains("let sessionRefreshTimer"));
+        assert!(!INDEX_HTML.contains("let sessionRefreshPromise"));
+        assert!(!INDEX_HTML.contains("let authenticationRecoveryPromise"));
+        assert!(!INDEX_HTML.contains("let connectionRecoveryPromise"));
+        assert!(!INDEX_HTML.contains("let reconnectTimer"));
+        assert!(!INDEX_HTML.contains("let reconnectAttempt"));
+        assert!(!INDEX_HTML.contains("let heartbeatTimer"));
+        assert!(!INDEX_HTML.contains("let stableConnectionTimer"));
+        assert!(!INDEX_HTML.contains("let socket = null"));
+        assert!(!INDEX_HTML.contains("let socketHandoff = null"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.state.recoveryPromise"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.state.reconnectTimer"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.state.reconnectAttempt"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.state.heartbeatTimer"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.state.stableConnectionTimer"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.state.socket"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.state.socketHandoff"));
+        assert!(INDEX_HTML.contains("sessionSupervisor.start();"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.start();"));
+        assert!(INDEX_HTML.contains("sessionSupervisor.schedule(seconds)"));
+        assert!(INDEX_HTML.contains("connectionSupervisor.replaceAfterSessionRefresh()"));
+        assert!(INDEX_HTML.contains("const serverEventMailbox = (() => {"));
+        assert!(INDEX_HTML.contains("while (queue.length > 0) {"));
+        assert!(INDEX_HTML.contains("serverEventMailbox.enqueue(JSON.parse(event.data))"));
+        assert!(!INDEX_HTML.contains("renderServerEvent(JSON.parse(event.data))"));
+    }
+
+    #[test]
     fn browser_exposes_author_owned_message_editing() {
         assert!(INDEX_HTML.contains("sendCommand(\"edit_message\""));
         assert!(INDEX_HTML.contains("message.sender_id === currentParticipantId"));
@@ -6818,6 +7063,7 @@ mod protocol_capacity_tests {
         let policy = headers["content-security-policy"].to_str().unwrap();
         assert!(policy.contains("object-src 'none'"));
         assert!(policy.contains("frame-ancestors 'none'"));
+        assert!(policy.contains("worker-src 'self'"));
         let nonce = policy
             .split("script-src 'nonce-")
             .nth(1)
@@ -6846,10 +7092,12 @@ mod protocol_capacity_tests {
             )
         );
         assert!(body.contains("const nextSocket = new WebSocket(websocketUrl)"));
-        assert!(body.contains("let subscribedChannelId = null"));
-        assert!(body.contains("subscribedChannelId === activeChannelId"));
+        assert!(!body.contains("let subscribedChannelId = null"));
         assert!(
-            body.contains("channel.id === activeChannelId && channel.id === subscribedChannelId")
+            body.contains("connectionSupervisor.state.subscribedChannelId === activeChannelId")
+        );
+        assert!(
+            body.contains("channel.id === activeChannelId && channel.id === connectionSupervisor.state.subscribedChannelId")
         );
         assert!(body.contains("payload.channel_id !== activeChannelId"));
         assert!(body.contains("const pendingMessages = new Map()"));
@@ -6882,7 +7130,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("function restoreActiveDraft()"));
         assert!(body.contains("window.localStorage.setItem(key, bodyInput.value)"));
         assert!(body.contains(
-            "if (channel.id === activeChannelId && channel.id === subscribedChannelId) return;\n        persistActiveDraft();"
+            "if (channel.id === activeChannelId && channel.id === connectionSupervisor.state.subscribedChannelId) return;\n        persistActiveDraft();"
         ));
         assert!(body.contains("activeChannelId = channel.id;\n        restoreActiveDraft();"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
@@ -6901,21 +7149,23 @@ mod protocol_capacity_tests {
         ));
         assert!(body.contains("connect();"));
         assert!(body.contains("function scheduleReconnect(closeCode"));
-        assert!(body.contains("stableConnectionTimer = window.setTimeout"));
+        assert!(
+            body.contains("connectionSupervisor.state.stableConnectionTimer = window.setTimeout")
+        );
         assert!(body.contains("event.code === 1008"));
         assert!(body.contains("recoverAuthentication().catch"));
         assert!(body.contains("async function recoverConnection(replaceOpenSocket = false)"));
         assert!(body.contains("response.status === 401"));
-        assert!(body.contains("connect(true, socket)"));
+        assert!(body.contains("connect(true, currentSocket)"));
         assert!(body.contains("recoverConnection().catch(() => scheduleReconnect"));
         assert!(body.contains("fetch(\"/auth/session\""));
         assert!(body.contains("scheduleInitialSessionRefresh()"));
-        assert!(body.contains("sessionRefreshDueAt = Date.now() + delay"));
+        assert!(body.contains("sessionSupervisor.state.refreshDueAt = Date.now() + delay"));
         assert!(body.contains("window.addEventListener(\"pageshow\", resumeAfterBackground)"));
         assert!(body.contains("window.addEventListener(\"online\", resumeAfterBackground)"));
         assert!(body.contains("reconnectAfterSessionRefresh()"));
         assert!(body.contains("connect(true)"));
-        assert!(body.contains("connect(true, socket)"));
+        assert!(body.contains("connect(true, currentSocket)"));
         assert!(body.contains(
             "const next = invited || current || restored || requested || knownChannels[0]"
         ));
