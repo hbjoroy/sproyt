@@ -365,6 +365,8 @@ jobs:
     environment:
       name: production-registry
       deployment: false
+    env:
+      REGCTL_IMAGE: regclient/regctl:v0.11.5@sha256:dbe356c6cf9f8f85e302b9e47fed481ef3f1b04807350e99b02ab2cadee0a993
     steps:
       - name: Download tested ARM64 release image
         uses: actions/download-artifact@v7
@@ -381,23 +383,36 @@ jobs:
           test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
 
       - name: Log in to production OCI registry
-        uses: docker/login-action@v4
-        with:
-          registry: oci.bjoroy.me
-          username: ${{ secrets.SPROYT_OCI_USERNAME }}
-          password: ${{ secrets.SPROYT_OCI_PASSWORD }}
+        env:
+          SPROYT_OCI_USERNAME: ${{ secrets.SPROYT_OCI_USERNAME }}
+          SPROYT_OCI_PASSWORD: ${{ secrets.SPROYT_OCI_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/regctl-config"
+          printf '%s' "$SPROYT_OCI_PASSWORD" | docker run --rm -i --user 0:0 \
+            -e HOME=/config \
+            -v "$RUNNER_TEMP/regctl-config:/config" \
+            "$REGCTL_IMAGE" \
+            registry login oci.bjoroy.me --user "$SPROYT_OCI_USERNAME" --pass-stdin
 
       - name: Publish immutable commit tag
         id: publish
         env:
-          LOCAL_IMAGE: local/sproyt-arm64:${{ github.sha }}
           REGISTRY_IMAGE: oci.bjoroy.me/sproyt/sproyt:${{ github.sha }}
         run: |
           set -euo pipefail
-          docker tag "$LOCAL_IMAGE" "$REGISTRY_IMAGE"
-          docker push "$REGISTRY_IMAGE"
-          registry_digest="sha256:$(docker buildx imagetools inspect "$REGISTRY_IMAGE" --raw | sha256sum | cut -d' ' -f1)"
-          test "${registry_digest#sha256:}" != "$registry_digest"
+          docker run --rm --user 0:0 \
+            -e HOME=/config \
+            -v "$RUNNER_TEMP/regctl-config:/config" \
+            -v "$PWD:/work:ro" \
+            "$REGCTL_IMAGE" \
+            image import "$REGISTRY_IMAGE" /work/sproyt-arm64.tar
+          registry_digest=$(docker run --rm --user 0:0 \
+            -e HOME=/config \
+            -v "$RUNNER_TEMP/regctl-config:/config" \
+            "$REGCTL_IMAGE" \
+            image digest "$REGISTRY_IMAGE")
+          [[ "$registry_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "digest=$registry_digest" >> "$GITHUB_OUTPUT"
           jq --null-input \
             --arg image "$REGISTRY_IMAGE" \
