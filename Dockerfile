@@ -10,32 +10,41 @@ RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry
     apk add --no-cache zig=0.15.2-r0 \
     && cargo install --locked --version 0.23.0 cargo-zigbuild
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY migrations ./migrations
-COPY assets ./assets
 ARG TARGETARCH
-ARG VCS_REF=unknown
-RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=sproyt-zig-target,target=/src/target \
-    --mount=type=cache,id=sproyt-zig-cache,target=/root/.cache/zig \
-    case "$TARGETARCH" in \
+RUN case "$TARGETARCH" in \
       amd64) rust_target=x86_64-unknown-linux-musl ;; \
       arm64) rust_target=aarch64-unknown-linux-musl ;; \
       *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
     && rustup target add "$rust_target" \
-    && SPROYT_BUILD_REVISION="$VCS_REF" cargo zigbuild --locked --release --target "$rust_target" \
-    && install -D "target/$rust_target/release/sproyt" /out/sproyt
-
-FROM build-base AS native-builder
-COPY Cargo.toml Cargo.lock ./
+    && mkdir -p src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && cargo zigbuild --locked --release --target "$rust_target"
 COPY src ./src
 COPY migrations ./migrations
 COPY assets ./assets
 ARG VCS_REF=unknown
-RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=sproyt-native-target,target=/src/target \
-    SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release \
+RUN case "$TARGETARCH" in \
+      amd64) rust_target=x86_64-unknown-linux-musl ;; \
+      arm64) rust_target=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && rustup target add "$rust_target" \
+    && cargo clean --package sproyt --release --target "$rust_target" \
+    && SPROYT_BUILD_REVISION="$VCS_REF" cargo zigbuild --locked --release --target "$rust_target" --bin sproyt \
+    && install -D "target/$rust_target/release/sproyt" /out/sproyt
+
+FROM build-base AS native-builder
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && cargo build --locked --release
+COPY src ./src
+COPY migrations ./migrations
+COPY assets ./assets
+ARG VCS_REF=unknown
+RUN cargo clean --package sproyt --release \
+    && SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release --bin sproyt \
     && install -D target/release/sproyt /out/sproyt
 
 FROM ${BUILD_VARIANT}-builder AS compiled
