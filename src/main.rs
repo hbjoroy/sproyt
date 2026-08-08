@@ -2675,6 +2675,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
           padding-left: max(8px, env(safe-area-inset-left));
         }
         .bottom-navigation-list { max-height: min(36dvh, calc(var(--app-height) - 210px)); }
+        .bottom-navigation-panel > summary,
+        .bottom-navigation-list button { min-height: 40px; }
 
         form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 8px; align-items: end; }
         form.send .composer-input, form.send textarea { min-width: 0; width: 100%; }
@@ -2728,6 +2730,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         .bottom-navigation { border-color: #344038; background: #19211c; }
         .bottom-navigation-panel > summary, .bottom-navigation-list { border-color: #344038; background: #19211c; color: #eef3ee; }
+        .bottom-navigation-list button.has-unread { color: #d8eddd; }
 
         .mention-suggestions { background: #19211c; border-color: #344038; }
         .mention-suggestions button { color: #eef3ee; }
@@ -2875,11 +2878,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <nav class="bottom-navigation" aria-label="Krets- og kanalveljar">
           <details class="bottom-navigation-panel" id="bottom-channel-panel">
             <summary id="bottom-channel-toggle" aria-controls="bottom-channel-list">Kanalar</summary>
-            <div class="bottom-navigation-list" id="bottom-channel-list" role="list"><p class="status">Lastar …</p></div>
+            <div class="bottom-navigation-list" id="bottom-channel-list"><p class="status">Lastar …</p></div>
           </details>
           <details class="bottom-navigation-panel" id="bottom-circle-panel">
             <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list">Kretsar</summary>
-            <div class="bottom-navigation-list" id="bottom-circle-list" role="list"><p class="status">Lastar …</p></div>
+            <div class="bottom-navigation-list" id="bottom-circle-list"><p class="status">Lastar …</p></div>
           </details>
         </nav>
         <form class="send" id="send-form">
