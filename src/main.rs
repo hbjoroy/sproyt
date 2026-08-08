@@ -2224,7 +2224,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .mention-suggestions button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: transparent; color: #18201d; text-align: left; }
       .mention-suggestions button:hover, .mention-suggestions button[aria-selected="true"] { background: #dfe8e1; color: #183d2e; }
       .mention-suggestions small { color: #647269; }
-      .message-media { margin: 10px 0 0; }
+      .message-media { margin: 7px 0 0; }
       .message-media img, .message-media video { display: block; max-width: min(100%, 720px); max-height: 70vh; border-radius: 10px; background: #111; }
       .message-media img { cursor: zoom-in; }
       .message-media figcaption { margin-top: 4px; color: #647269; font-size: .78rem; }
@@ -2238,12 +2238,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .thread-panel > header { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--paper); }
       .thread-panel > header h2 { margin: 0; font-size: 1.15rem; }
       .thread-panel > header button { min-width: 42px; min-height: 42px; padding: 4px; }
-      .thread-messages { display: grid; gap: 10px; max-height: calc(100dvh - 190px); padding: 12px; overflow-y: auto; }
+      .thread-messages { display: grid; gap: 8px; max-height: calc(100dvh - 190px); padding: 10px; overflow-y: auto; }
       .thread-root { border-bottom: 2px solid var(--line); }
       .thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); }
       .thread-form textarea { min-width: 0; min-height: 44px; max-height: 120px; }
       .thread-link { min-height: 28px; margin-left: auto; padding: 3px 9px; border-radius: 999px; background: #eef2ed; color: #183d2e; font-size: .84rem; font-weight: 700; white-space: nowrap; }
-      .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px; }
+      .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 6px; }
       .message-actions { display: flex; gap: 6px; justify-content: flex-end; }
       .message-actions button { min-height: 28px; padding: 3px 8px; background: transparent; color: #506057; font-size: .8rem; }
       .message-editor { display: grid; gap: 6px; }
@@ -2350,8 +2350,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .channel-button.has-unread, .channel-group.has-unread > summary, .inbox-button.has-unread { color: #183d2e; font-weight: 800; }
       .unread { min-width: 1.6em; padding: 2px 6px; border-radius: 999px; background: #245b45; color: white; font-size: .75rem; text-align: center; }
       .channel-group .unread { min-width: 0; margin-left: auto; padding: 1px 6px; font-size: .7rem; }
-      .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-      .conversation-header p { margin: 4px 0 0; color: #647269; }
+      .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 14px; }
+      .conversation-header h2 { margin: 0; font-size: 1.25rem; line-height: 1.15; }
+      .conversation-header p { margin: 2px 0 0; color: #647269; font-size: .84rem; line-height: 1.25; }
       .peer-status[hidden] { display: none; }
       .profile-status { margin-left: 5px; cursor: help; }
       .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
@@ -2506,7 +2507,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .messages {
         align-content: start;
         display: grid;
-        gap: 10px;
+        gap: 8px;
+        padding: 12px;
         min-height: 0;
         overflow-y: auto;
         overflow-x: hidden;
@@ -2518,7 +2520,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         gap: 4px;
         min-width: 0;
         max-width: 100%;
-        padding: 12px;
+        padding: 9px 10px;
         border: 1px solid #dfe3dc;
         border-radius: 8px;
         background: #ffffff;
@@ -2532,7 +2534,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       .rendered {
         display: grid;
-        gap: 10px;
+        gap: 7px;
         min-width: 0;
         max-width: 100%;
         line-height: 1.45;
@@ -2661,8 +2663,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .sidebar.mobile-open .navigation-heading { margin: 3px 4px; }
         .sidebar.mobile-open input, .sidebar.mobile-open select, .sidebar.mobile-open button { min-height: 36px; padding-top: 5px; padding-bottom: 5px; }
 
-        .conversation-header { min-height: 48px; padding: 8px 10px; }
-        .conversation-header h2 { margin: 0; font-size: 1.15rem; }
+        .conversation-header { min-height: 44px; padding: 6px 10px; }
+        .conversation-header h2 { margin: 0; font-size: 1.1rem; }
         .conversation-header p { font-size: .78rem; }
         .conversation-header .view-controls { display: none; }
         .conversation-header .status[data-routine="true"] { display: none; }
@@ -2687,6 +2689,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .thread-messages { max-height: calc(100dvh - 132px); }
         .reaction-picker > div { width: min(310px, calc(100vw - 40px)); }
         .reaction-viewers ul { max-width: calc(100vw - 40px); }
+        .message-actions button,
+        .thread-link,
+        .reaction-badge,
+        .reaction-picker summary,
+        .reaction-viewers summary { min-height: 40px; }
 
         .connect,
         .circle-tools,
@@ -7169,6 +7176,19 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("event.type === \"thread_loaded\""));
         assert!(INDEX_HTML.contains("summary?.unread_count"));
         assert!(INDEX_HTML.contains("pendingThreadToOpen = mention.message.parent_message_id"));
+    }
+
+    #[test]
+    fn browser_keeps_conversation_dense_without_shrinking_mobile_message_actions() {
+        assert!(INDEX_HTML.contains(
+            ".conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 14px; }"
+        ));
+        assert!(INDEX_HTML.contains(".messages {\n        align-content: start;\n        display: grid;\n        gap: 8px;\n        padding: 12px;"));
+        assert!(INDEX_HTML.contains("padding: 9px 10px;"));
+        assert!(INDEX_HTML.contains(".rendered {\n        display: grid;\n        gap: 7px;"));
+        assert!(INDEX_HTML.contains(
+            ".message-actions button,\n        .thread-link,\n        .reaction-badge,\n        .reaction-picker summary,\n        .reaction-viewers summary { min-height: 40px; }"
+        ));
     }
 
     #[test]
