@@ -313,8 +313,10 @@ jobs:
           compression-level: 0
 
   # TODO: Restore the native AMD64 Kind smoke when its dependency cache has a
-  # bounded, independently verified backend. Production currently publishes
-  # only the tested ARM64 image used by the Raspberry Pi cluster.
+  # bounded, independently verified backend. Evidence from the split builds
+  # suggests the large arm64 and amd64 GHA cache scopes may evict each other
+  # under the repository cache quota; verify isolated backends or retention.
+  # Production currently publishes only the tested ARM64 Raspberry Pi image.
 
   publish-image:
     name: Publish immutable OCI image
