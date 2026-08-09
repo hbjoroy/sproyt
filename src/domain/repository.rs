@@ -8,10 +8,11 @@ use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
 use super::{
     AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary,
     ChatEvent, ChatMessage, Circle, CircleId, CircleMembership, CircleRole, CreateChannel,
-    CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, EditMessage, InboxMention,
-    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
-    MediaObject, MediaUpload, MediaVariant, Membership, MessageId, PortableUserExport, SendMessage,
-    ThreadSummary, User, UserId, UserProfile, UserTask,
+    CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel,
+    EditMessage, InboxMention, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
+    MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MessageId,
+    PortableUserExport, SendMessage, ThreadSummary, UpdateChannelDescription, User, UserId,
+    UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -121,7 +122,7 @@ pub trait ChatRepository: Send + Sync + 'static {
         &'a self,
         actor: UserId,
         circle_id: CircleId,
-    ) -> RepositoryFuture<'a, Vec<Channel>>;
+    ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>>;
     fn add_channel_member<'a>(
         &'a self,
         command: AddChannelMember,
@@ -131,6 +132,15 @@ pub trait ChatRepository: Send + Sync + 'static {
         &'a self,
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>>;
+    fn list_channel_user_profiles<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<UserProfile>>;
+    fn update_channel_description<'a>(
+        &'a self,
+        command: UpdateChannelDescription,
+    ) -> RepositoryFuture<'a, String>;
     fn load_recent_messages<'a>(
         &'a self,
         query: LoadRecentMessages,
@@ -620,6 +630,11 @@ impl ChatRepository for InMemoryChatRepository {
                                     })
                                 },
                             ),
+                            description: state
+                                .channel_descriptions
+                                .get(&channel.id)
+                                .cloned()
+                                .unwrap_or_default(),
                             role: membership.role.clone(),
                             last_read_sequence: membership.last_read_sequence,
                             latest_sequence: messages
@@ -942,7 +957,7 @@ impl ChatRepository for InMemoryChatRepository {
         &'a self,
         actor: UserId,
         circle_id: CircleId,
-    ) -> RepositoryFuture<'a, Vec<Channel>> {
+    ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>> {
         Box::pin(async move {
             let state = self.lock_state()?;
             if !state
@@ -961,7 +976,14 @@ impl ChatRepository for InMemoryChatRepository {
                             .memberships
                             .contains_key(&(channel.id.clone(), actor.clone()))
                 })
-                .cloned()
+                .map(|channel| DiscoverableChannel {
+                    description: state
+                        .channel_descriptions
+                        .get(&channel.id)
+                        .cloned()
+                        .unwrap_or_default(),
+                    channel: channel.clone(),
+                })
                 .collect())
         })
     }
@@ -1008,6 +1030,13 @@ impl ChatRepository for InMemoryChatRepository {
         Box::pin(async move {
             let mut state = self.lock_state()?;
             let key = (command.channel_id, command.actor);
+            let channel = state
+                .channels
+                .get(&key.0)
+                .ok_or(RepositoryError::NotFound)?;
+            if channel.circle_id.is_some() && channel.name.as_str().eq_ignore_ascii_case("Prat") {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let role = state
                 .memberships
                 .get(&key)
@@ -1051,6 +1080,11 @@ impl ChatRepository for InMemoryChatRepository {
                                 })
                             },
                         ),
+                        description: state
+                            .channel_descriptions
+                            .get(&channel.id)
+                            .cloned()
+                            .unwrap_or_default(),
                         role: membership.role.clone(),
                         last_read_sequence: membership.last_read_sequence,
                         latest_sequence: state
@@ -1063,6 +1097,57 @@ impl ChatRepository for InMemoryChatRepository {
                 .collect::<Vec<_>>();
             channels.sort_by(|left, right| left.slug.cmp(&right.slug));
             Ok(channels)
+        })
+    }
+
+    fn list_channel_user_profiles<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<UserProfile>> {
+        Box::pin(async move {
+            let member_ids = {
+                let state = self.lock_state()?;
+                if !state
+                    .memberships
+                    .contains_key(&(channel_id.clone(), actor.clone()))
+                {
+                    return Err(RepositoryError::PermissionDenied);
+                }
+                state
+                    .memberships
+                    .keys()
+                    .filter(|(member_channel_id, _)| member_channel_id == &channel_id)
+                    .map(|(_, user_id)| user_id.clone())
+                    .collect::<HashSet<_>>()
+            };
+            let mut profiles = self.list_user_profiles(actor).await?;
+            profiles.retain(|profile| member_ids.contains(&profile.user.id));
+            Ok(profiles)
+        })
+    }
+
+    fn update_channel_description<'a>(
+        &'a self,
+        command: UpdateChannelDescription,
+    ) -> RepositoryFuture<'a, String> {
+        Box::pin(async move {
+            let description = command.description.trim().to_owned();
+            if description.len() > 2_000 {
+                return Err(RepositoryError::Conflict);
+            }
+            let mut state = self.lock_state()?;
+            let role = state
+                .memberships
+                .get(&(command.channel_id.clone(), command.actor))
+                .map(|membership| &membership.role);
+            if role != Some(&MembershipRole::Owner) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            state
+                .channel_descriptions
+                .insert(command.channel_id, description.clone());
+            Ok(description)
         })
     }
 
@@ -1582,6 +1667,7 @@ struct RepositoryState {
     circle_invitations: HashMap<Vec<u8>, CircleInvitation>,
     channels: HashMap<ChannelId, Channel>,
     channels_by_slug: HashMap<super::ChannelSlug, ChannelId>,
+    channel_descriptions: HashMap<ChannelId, String>,
     direct_conversations: HashMap<(UserId, UserId), ChannelId>,
     memberships: HashMap<(ChannelId, UserId), Membership>,
     messages: HashMap<ChannelId, Vec<ChatMessage>>,
@@ -1655,6 +1741,56 @@ mod tests {
             .await
             .unwrap();
         id
+    }
+
+    #[tokio::test]
+    async fn channel_members_and_owner_description_are_scoped_and_durable() {
+        let repository = InMemoryChatRepository::default();
+        let owner = add_human(&repository, "owner").await;
+        let member = add_human(&repository, "member").await;
+        let channel = repository
+            .create_channel(CreateChannel {
+                actor: owner.clone(),
+                slug: ChannelSlug::new("crew").unwrap(),
+                name: DisplayName::new("Crew").unwrap(),
+                kind: ChannelKind::Public,
+                circle_id: None,
+            })
+            .await
+            .unwrap();
+        repository
+            .join_channel(JoinChannel {
+                actor: member.clone(),
+                channel: ChannelRef::Id(channel.id.clone()),
+            })
+            .await
+            .unwrap();
+
+        let members = repository
+            .list_channel_user_profiles(member.clone(), channel.id.clone())
+            .await
+            .unwrap();
+        assert_eq!(members.len(), 2);
+        assert_eq!(
+            repository
+                .update_channel_description(UpdateChannelDescription {
+                    actor: member,
+                    channel_id: channel.id.clone(),
+                    description: "ikkje lov".into(),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
+        repository
+            .update_channel_description(UpdateChannelDescription {
+                actor: owner.clone(),
+                channel_id: channel.id.clone(),
+                description: "  **Velkomen** om bord.  ".into(),
+            })
+            .await
+            .unwrap();
+        let channels = repository.list_channels_for_user(owner).await.unwrap();
+        assert_eq!(channels[0].description, "**Velkomen** om bord.");
     }
 
     #[tokio::test]

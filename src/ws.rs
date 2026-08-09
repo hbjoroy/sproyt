@@ -253,9 +253,9 @@ async fn execute_command(
             .map(|membership| ServerEvent::MembershipJoined { membership }),
         ClientCommand::LeaveChannel { channel_id } => {
             async {
-                disconnect(chat, participant_id, &channel_id, subscriptions).await;
                 chat.leave_channel(participant_id.clone(), channel_id.clone())
                     .await?;
+                disconnect(chat, participant_id, &channel_id, subscriptions).await;
                 Ok(ServerEvent::MembershipLeft { channel_id })
             }
             .await
@@ -264,6 +264,20 @@ async fn execute_command(
             .list_channels(participant_id.clone())
             .await
             .map(|channels| ServerEvent::ChannelsListed { channels }),
+        ClientCommand::ListChannelUsers { channel_id } => chat
+            .list_channel_users(participant_id.clone(), channel_id.clone())
+            .await
+            .map(|users| ServerEvent::ChannelUsersListed { channel_id, users }),
+        ClientCommand::UpdateChannelDescription {
+            channel_id,
+            description,
+        } => chat
+            .update_channel_description(participant_id.clone(), channel_id.clone(), description)
+            .await
+            .map(|description| ServerEvent::ChannelDescriptionUpdated {
+                channel_id,
+                description,
+            }),
         ClientCommand::ListJoinableChannels { circle_id } => chat
             .list_joinable_channels(participant_id.clone(), circle_id)
             .await

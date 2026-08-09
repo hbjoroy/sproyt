@@ -15,12 +15,13 @@ use crate::domain::{
     ChannelKind, ChannelRef, ChannelSequence, ChannelSlug, ChannelSummary, ChatMessage,
     ChatRepository, Circle, CircleId, CircleInvitation, CircleMembership, CircleRole,
     CreateChannel, CreateChatInvitation, CreateCircle, CreateCircleInvitation, DeleteCircle,
-    DeleteMessage, DisplayName, EditMessage, ExportedChannel, ExportedCircle, InboxMention,
-    InvitationId, InvitationPreview, InvitationResponse, InvitationTarget, InvitationTokenCommand,
-    IssuedChatInvitation, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
-    MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole,
-    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport,
-    RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserProfile, UserTask,
+    DeleteMessage, DiscoverableChannel, DisplayName, EditMessage, ExportedChannel, ExportedCircle,
+    InboxMention, InvitationId, InvitationPreview, InvitationResponse, InvitationTarget,
+    InvitationTokenCommand, IssuedChatInvitation, IssuedInvitation, JoinChannel, LeaveChannel,
+    LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership,
+    MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
+    PortableUserExport, RepositoryError, RepositoryFuture, SendMessage, UpdateChannelDescription,
+    User, UserId, UserProfile, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -364,7 +365,7 @@ impl ChatRepository for SqliteChatRepository {
                 .map(circle_with_role)
                 .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
                 .collect::<Result<Vec<_>, _>>()?;
-            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
+            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
                 .bind(actor.to_string()).bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
             let summaries = channel_rows
                 .into_iter()
@@ -814,7 +815,7 @@ impl ChatRepository for SqliteChatRepository {
         &'a self,
         actor: UserId,
         circle_id: CircleId,
-    ) -> RepositoryFuture<'a, Vec<Channel>> {
+    ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>> {
         Box::pin(async move {
             let member: Option<i64> = sqlx::query_scalar(
                 "select 1 from circle_memberships where circle_id=? and user_id=?",
@@ -827,9 +828,11 @@ impl ChatRepository for SqliteChatRepository {
             if member.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by from channels c join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=? left join channel_memberships m on m.channel_id=c.id and m.user_id=? where c.circle_id=? and c.kind!='private' and m.user_id is null order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by,c.description from channels c join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=? left join channel_memberships m on m.channel_id=c.id and m.user_id=? where c.circle_id=? and c.kind!='private' and m.user_id is null order by c.slug")
                 .bind(actor.to_string()).bind(actor.to_string()).bind(circle_id.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
-            rows.into_iter().map(channel_from_row).collect()
+            rows.into_iter()
+                .map(discoverable_channel_from_row)
+                .collect()
         })
     }
 
@@ -851,15 +854,21 @@ impl ChatRepository for SqliteChatRepository {
 
     fn leave_channel<'a>(&'a self, command: LeaveChannel) -> RepositoryFuture<'a, ()> {
         Box::pin(async move {
-            let role: Option<String> = sqlx::query_scalar(
-                "select role from channel_memberships where channel_id = ? and user_id = ?",
+            let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+                "select m.role,c.name,c.circle_id from channel_memberships m join channels c on c.id=m.channel_id where m.channel_id = ? and m.user_id = ?",
             )
             .bind(command.channel_id.to_string())
             .bind(command.actor.to_string())
             .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?;
-            let role = role.as_deref().and_then(MembershipRole::parse);
+            let Some((role, name, circle_id)) = row else {
+                return Err(RepositoryError::NotFound);
+            };
+            if circle_id.is_some() && name.eq_ignore_ascii_case("Prat") {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let role = MembershipRole::parse(&role);
             if !Policy::can_leave_channel(role.as_ref()) {
                 return Err(RepositoryError::NotFound);
             }
@@ -882,12 +891,54 @@ impl ChatRepository for SqliteChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
                 .bind(actor.to_string()).bind(actor.to_string())
                 .fetch_all(&self.pool)
                 .await
                 .map_err(sql_error)?;
             rows.into_iter().map(channel_summary).collect()
+        })
+    }
+
+    fn list_channel_user_profiles<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<UserProfile>> {
+        Box::pin(async move {
+            let allowed: Option<i64> = sqlx::query_scalar(
+                "select 1 from channel_memberships where channel_id=? and user_id=?",
+            )
+            .bind(channel_id.to_string())
+            .bind(actor.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join channel_memberships m on m.user_id=u.id where m.channel_id=? and u.kind='human' order by u.display_name collate nocase,u.id")
+                .bind(channel_id.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(user_profile_from_row).collect()
+        })
+    }
+
+    fn update_channel_description<'a>(
+        &'a self,
+        command: UpdateChannelDescription,
+    ) -> RepositoryFuture<'a, String> {
+        Box::pin(async move {
+            let description = command.description.trim().to_owned();
+            if description.len() > 2_000 {
+                return Err(RepositoryError::Conflict);
+            }
+            let result = sqlx::query("update channels set description=? where id=? and exists (select 1 from channel_memberships where channel_id=? and user_id=? and role='owner')")
+                .bind(&description).bind(command.channel_id.to_string()).bind(command.channel_id.to_string()).bind(command.actor.to_string())
+                .execute(&self.pool).await.map_err(sql_error)?;
+            if result.rows_affected() != 1 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(description)
         })
     }
 
@@ -2186,6 +2237,7 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
     let role: String = row.try_get("role").map_err(storage)?;
     let circle_id: Option<String> = row.try_get("circle_id").map_err(storage)?;
     let direct_user_id: Option<String> = row.try_get("direct_user_id").map_err(storage)?;
+    let description: String = row.try_get("description").map_err(storage)?;
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
@@ -2201,9 +2253,20 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
             .map(UserId::new)
             .transpose()
             .map_err(storage)?,
+        description,
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,
         latest_sequence: ChannelSequence::try_from(latest_sequence).map_err(storage)?,
+    })
+}
+
+fn discoverable_channel_from_row(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<DiscoverableChannel, RepositoryError> {
+    let description: String = row.try_get("description").map_err(storage)?;
+    Ok(DiscoverableChannel {
+        channel: channel_from_row(row)?,
+        description,
     })
 }
 

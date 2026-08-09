@@ -477,7 +477,7 @@ where
     let thread_invite = repository
         .create_circle_invitation(CreateCircleInvitation {
             actor: actor.clone(),
-            circle_id: thread_circle.id,
+            circle_id: thread_circle.id.clone(),
         })
         .await
         .unwrap();
@@ -496,6 +496,38 @@ where
         })
         .await
         .unwrap();
+    let default_channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!(
+                "{}-prat",
+                thread_circle.id.to_string().replace('-', "")
+            ))
+            .unwrap(),
+            name: DisplayName::new("Prat").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: Some(thread_circle.id.clone()),
+        })
+        .await
+        .unwrap();
+    repository
+        .add_channel_member(AddChannelMember {
+            actor: actor.clone(),
+            channel_id: default_channel.id.clone(),
+            user_id: thread_reader.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .leave_channel(LeaveChannel {
+                actor: thread_reader.clone(),
+                channel_id: default_channel.id,
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied),
+        "the circle's default Prat channel must not be leaveable"
+    );
     assert_eq!(
         repository
             .load_thread(thread_reader.clone(), second.id)
@@ -626,7 +658,7 @@ where
             .await
             .unwrap()
             .iter()
-            .any(|channel| channel.id == circle_channel.id)
+            .any(|channel| channel.channel.id == circle_channel.id)
     );
     repository
         .join_channel(JoinChannel {

@@ -10,17 +10,17 @@ pub use commands::{
     AcceptCircleInvitation, AddChannelMember, ChannelRef, CreateChannel, CreateChatInvitation,
     CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, EditMessage,
     InvitationTokenCommand, JoinChannel, LeaveChannel, LeaveCircle, LoadRecentMessages, MarkRead,
-    MessageLimit, SendMessage,
+    MessageLimit, SendMessage, UpdateChannelDescription,
 };
 pub use events::ChatEvent;
 pub use ids::{ChannelId, ChannelSequence, CircleId, InvitationId, MediaId, MessageId, UserId};
 pub use models::{
     AcceptedChatInvitation, Channel, ChannelKind, ChannelSummary, ChatMessage, Circle,
-    CircleInvitation, CircleMembership, CircleRole, ExportedChannel, ExportedCircle, InboxMention,
-    InvitationPreview, InvitationResponse, InvitationTarget, IssuedChatInvitation,
-    IssuedInvitation, MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole,
-    MessageReactionChange, MessageReactionSummary, PORTABLE_USER_EXPORT_FORMAT, PortableUserExport,
-    PrincipalKind, ThreadSummary, User, UserProfile, UserTask,
+    CircleInvitation, CircleMembership, CircleRole, DiscoverableChannel, ExportedChannel,
+    ExportedCircle, InboxMention, InvitationPreview, InvitationResponse, InvitationTarget,
+    IssuedChatInvitation, IssuedInvitation, MediaObject, MediaUpload, MediaVariant, Membership,
+    MembershipRole, MessageReactionChange, MessageReactionSummary, PORTABLE_USER_EXPORT_FORMAT,
+    PortableUserExport, PrincipalKind, ThreadSummary, User, UserProfile, UserTask,
 };
 pub use policy::Policy;
 #[cfg(test)]

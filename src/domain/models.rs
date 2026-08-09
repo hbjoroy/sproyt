@@ -220,11 +220,20 @@ pub struct ChannelSummary {
     pub circle_id: Option<CircleId>,
     #[serde(default)]
     pub direct_user_id: Option<UserId>,
+    #[serde(default)]
+    pub description: String,
     pub role: MembershipRole,
     #[serde(default)]
     pub last_read_sequence: ChannelSequence,
     #[serde(default)]
     pub latest_sequence: ChannelSequence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscoverableChannel {
+    pub channel: Channel,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

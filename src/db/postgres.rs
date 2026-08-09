@@ -20,12 +20,13 @@ use crate::domain::{
     ChannelKind, ChannelRef, ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage,
     ChatRepository, Circle, CircleId, CircleInvitation, CircleMembership, CircleRole,
     CreateChannel, CreateChatInvitation, CreateCircle, CreateCircleInvitation, DeleteCircle,
-    DeleteMessage, DisplayName, EditMessage, ExportedChannel, ExportedCircle, InboxMention,
-    InvitationId, InvitationPreview, InvitationResponse, InvitationTarget, InvitationTokenCommand,
-    IssuedChatInvitation, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
-    MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole,
-    MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PresenceLease,
-    RepositoryError, RepositoryFuture, SendMessage, User, UserId, UserProfile, UserTask,
+    DeleteMessage, DiscoverableChannel, DisplayName, EditMessage, ExportedChannel, ExportedCircle,
+    InboxMention, InvitationId, InvitationPreview, InvitationResponse, InvitationTarget,
+    InvitationTokenCommand, IssuedChatInvitation, IssuedInvitation, JoinChannel, LeaveChannel,
+    LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership,
+    MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
+    PortableUserExport, PresenceLease, RepositoryError, RepositoryFuture, SendMessage,
+    UpdateChannelDescription, User, UserId, UserProfile, UserTask,
 };
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -484,7 +485,7 @@ impl ChatRepository for PostgresChatRepository {
                 .map(circle_with_role)
                 .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
                 .collect::<Result<Vec<_>, _>>()?;
-            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
             let summaries = channel_rows
                 .into_iter()
@@ -913,7 +914,7 @@ impl ChatRepository for PostgresChatRepository {
         &'a self,
         actor: UserId,
         circle_id: CircleId,
-    ) -> RepositoryFuture<'a, Vec<Channel>> {
+    ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>> {
         Box::pin(async move {
             let member: Option<i32> = sqlx::query_scalar(
                 "select 1 from circle_memberships where circle_id=$1 and user_id=$2",
@@ -926,9 +927,11 @@ impl ChatRepository for PostgresChatRepository {
             if member.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by from channels c join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=$1 left join channel_memberships m on m.channel_id=c.id and m.user_id=$1 where c.circle_id=$2 and c.kind!='private' and m.user_id is null order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by,c.description from channels c join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=$1 left join channel_memberships m on m.channel_id=c.id and m.user_id=$1 where c.circle_id=$2 and c.kind!='private' and m.user_id is null order by c.slug")
                 .bind(*actor.as_uuid()).bind(*circle_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
-            rows.into_iter().map(channel_from_row).collect()
+            rows.into_iter()
+                .map(discoverable_channel_from_row)
+                .collect()
         })
     }
 
@@ -950,15 +953,21 @@ impl ChatRepository for PostgresChatRepository {
 
     fn leave_channel<'a>(&'a self, command: LeaveChannel) -> RepositoryFuture<'a, ()> {
         Box::pin(async move {
-            let role: Option<String> = sqlx::query_scalar(
-                "select role from channel_memberships where channel_id = $1 and user_id = $2",
+            let row: Option<(String, String, Option<uuid::Uuid>)> = sqlx::query_as(
+                "select m.role,c.name,c.circle_id from channel_memberships m join channels c on c.id=m.channel_id where m.channel_id = $1 and m.user_id = $2",
             )
             .bind(*command.channel_id.as_uuid())
             .bind(*command.actor.as_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?;
-            let role = role.as_deref().and_then(MembershipRole::parse);
+            let Some((role, name, circle_id)) = row else {
+                return Err(RepositoryError::NotFound);
+            };
+            if circle_id.is_some() && name.eq_ignore_ascii_case("Prat") {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let role = MembershipRole::parse(&role);
             if !Policy::can_leave_channel(role.as_ref()) {
                 return Err(RepositoryError::NotFound);
             }
@@ -982,12 +991,54 @@ impl ChatRepository for PostgresChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
                 .await
                 .map_err(sql_error)?;
             rows.into_iter().map(channel_summary).collect()
+        })
+    }
+
+    fn list_channel_user_profiles<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> RepositoryFuture<'a, Vec<UserProfile>> {
+        Box::pin(async move {
+            let allowed: Option<i32> = sqlx::query_scalar(
+                "select 1 from channel_memberships where channel_id=$1 and user_id=$2",
+            )
+            .bind(*channel_id.as_uuid())
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
+                .bind(*channel_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(user_profile_from_row).collect()
+        })
+    }
+
+    fn update_channel_description<'a>(
+        &'a self,
+        command: UpdateChannelDescription,
+    ) -> RepositoryFuture<'a, String> {
+        Box::pin(async move {
+            let description = command.description.trim().to_owned();
+            if description.len() > 2_000 {
+                return Err(RepositoryError::Conflict);
+            }
+            let result = sqlx::query("update channels set description=$1 where id=$2 and exists (select 1 from channel_memberships where channel_id=$2 and user_id=$3 and role='owner')")
+                .bind(&description).bind(*command.channel_id.as_uuid()).bind(*command.actor.as_uuid())
+                .execute(&self.pool).await.map_err(sql_error)?;
+            if result.rows_affected() != 1 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(description)
         })
     }
 
@@ -2390,6 +2441,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let role: String = row.try_get("role").map_err(storage)?;
     let circle_id: Option<uuid::Uuid> = row.try_get("circle_id").map_err(storage)?;
     let direct_user_id: Option<uuid::Uuid> = row.try_get("direct_user_id").map_err(storage)?;
+    let description: String = row.try_get("description").map_err(storage)?;
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
@@ -2399,9 +2451,18 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
         kind: ChannelKind::parse(&kind).ok_or_else(|| storage("invalid channel kind"))?,
         circle_id: circle_id.map(CircleId::from_uuid),
         direct_user_id: direct_user_id.map(UserId::from_uuid),
+        description,
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,
         latest_sequence: ChannelSequence::try_from(latest_sequence).map_err(storage)?,
+    })
+}
+
+fn discoverable_channel_from_row(row: PgRow) -> Result<DiscoverableChannel, RepositoryError> {
+    let description: String = row.try_get("description").map_err(storage)?;
+    Ok(DiscoverableChannel {
+        channel: channel_from_row(row)?,
+        description,
     })
 }
 
