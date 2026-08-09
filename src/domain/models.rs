@@ -159,9 +159,12 @@ pub struct InvitationPreview {
     pub target: InvitationTarget,
     pub circle_name: DisplayName,
     pub channel_name: Option<DisplayName>,
+    pub invited_by: UserId,
     pub invited_by_name: DisplayName,
     pub expires_at: DateTime<Utc>,
     pub response: Option<InvitationResponse>,
+    pub accepted_count: u32,
+    pub declined_count: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

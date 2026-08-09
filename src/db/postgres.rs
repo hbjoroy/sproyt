@@ -736,6 +736,11 @@ impl ChatRepository for PostgresChatRepository {
         command: InvitationTokenCommand,
     ) -> RepositoryFuture<'a, InvitationPreview> {
         Box::pin(async move {
+            let preview =
+                load_postgres_invitation(&self.pool, &command.actor, &command.token).await?;
+            if preview.invited_by == command.actor {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let id: Uuid = sqlx::query_scalar(
                 "select id from chat_invitations where token_hash=$1 and expires_at>now()",
             )
@@ -757,6 +762,9 @@ impl ChatRepository for PostgresChatRepository {
         Box::pin(async move {
             let preview =
                 load_postgres_invitation(&self.pool, &command.actor, &command.token).await?;
+            if preview.invited_by == command.actor {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
             let invitation_id:Uuid=sqlx::query_scalar("select id from chat_invitations where token_hash=$1 and expires_at>now() for update")
                 .bind(Sha256::digest(command.token.as_bytes()).to_vec()).fetch_one(&mut *tx).await.map_err(sql_error)?;
@@ -2502,7 +2510,7 @@ async fn load_postgres_invitation(
     actor: &UserId,
     token: &str,
 ) -> Result<InvitationPreview, RepositoryError> {
-    let row=sqlx::query("select i.target_type,i.circle_id,i.channel_id,i.expires_at,c.name circle_name,ch.name channel_name,u.display_name invited_by_name,r.response from chat_invitations i join circles c on c.id=i.circle_id left join channels ch on ch.id=i.channel_id join users u on u.id=i.invited_by left join chat_invitation_responses r on r.invitation_id=i.id and r.user_id=$1 where i.token_hash=$2 and i.expires_at>now()")
+    let row=sqlx::query("select i.target_type,i.circle_id,i.channel_id,i.invited_by,i.expires_at,c.name circle_name,ch.name channel_name,u.display_name invited_by_name,r.response,(select count(*) from chat_invitation_responses ar where ar.invitation_id=i.id and ar.response='accepted') accepted_count,(select count(*) from chat_invitation_responses dr where dr.invitation_id=i.id and dr.response='declined') declined_count from chat_invitations i join circles c on c.id=i.circle_id left join channels ch on ch.id=i.channel_id join users u on u.id=i.invited_by left join chat_invitation_responses r on r.invitation_id=i.id and r.user_id=$1 where i.token_hash=$2 and i.expires_at>now()")
         .bind(*actor.as_uuid()).bind(Sha256::digest(token.as_bytes()).to_vec()).fetch_optional(pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
     let circle_id = CircleId::from_uuid(row.try_get("circle_id").map_err(storage)?);
     let target = if row.try_get::<String, _>("target_type").map_err(storage)? == "circle" {
@@ -2532,6 +2540,7 @@ async fn load_postgres_invitation(
             .map(DisplayName::new)
             .transpose()
             .map_err(storage)?,
+        invited_by: UserId::from_uuid(row.try_get("invited_by").map_err(storage)?),
         invited_by_name: DisplayName::new(
             row.try_get::<String, _>("invited_by_name")
                 .map_err(storage)?,
@@ -2539,6 +2548,10 @@ async fn load_postgres_invitation(
         .map_err(storage)?,
         expires_at: row.try_get("expires_at").map_err(storage)?,
         response,
+        accepted_count: u32::try_from(row.try_get::<i64, _>("accepted_count").map_err(storage)?)
+            .map_err(storage)?,
+        declined_count: u32::try_from(row.try_get::<i64, _>("declined_count").map_err(storage)?)
+            .map_err(storage)?,
     })
 }
 

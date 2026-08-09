@@ -192,6 +192,17 @@ async fn execute_command(
 ) -> ServerEnvelope {
     let request_id = envelope.request_id;
     let command_request_id = request_id.clone();
+    let diagnostic_command = match &envelope.command {
+        ClientCommand::LoadRecentMessages { .. } => "load_recent_messages",
+        ClientCommand::ListChannelReactions { .. } => "list_channel_reactions",
+        ClientCommand::ListThreadSummaries { .. } => "list_thread_summaries",
+        ClientCommand::MarkRead { .. } => "mark_read",
+        ClientCommand::SubscribeChannel { .. } => "subscribe_channel",
+        ClientCommand::OpenDirectChannel { .. } => "open_direct_channel",
+        ClientCommand::AcceptInvitation { .. } => "accept_invitation",
+        ClientCommand::DeclineInvitation { .. } => "decline_invitation",
+        _ => "other",
+    };
     let result: Result<ServerEvent, ChatError> = match envelope.command {
         ClientCommand::Hello => Ok(ServerEvent::Hello {
             participant_id: participant_id.clone(),
@@ -518,7 +529,16 @@ async fn execute_command(
 
     match result {
         Ok(event) => ServerEnvelope::response(request_id, event),
-        Err(error) => ServerEnvelope::response(request_id, error_event(error)),
+        Err(error) => {
+            tracing::warn!(
+                participant_id = %participant_id,
+                %request_id,
+                command = diagnostic_command,
+                error_kind = error.kind(),
+                "websocket command failed"
+            );
+            ServerEnvelope::response(request_id, error_event(error))
+        }
     }
 }
 

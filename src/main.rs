@@ -2120,6 +2120,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <style nonce="{{NONCE}}">
       :root {
         --app-height: 100dvh;
+        --app-offset-top: 0px;
         color-scheme: light dark;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: #f7f7f4;
@@ -2674,7 +2675,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
       @media (prefers-reduced-motion: no-preference) { form.send { transition: padding .16s ease, gap .16s ease; } }
 
       @media (max-width: 640px) {
+        html {
+          height: 100%;
+          overflow: hidden;
+        }
+
         body {
+          position: fixed;
+          top: 0;
+          right: 0;
+          left: 0;
+          transform: translateY(var(--app-offset-top));
           height: var(--app-height);
           min-height: 0;
           padding-top: max(12px, env(safe-area-inset-top));
@@ -2968,12 +2979,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
       import { createApplicationStore, createServerEventMailbox } from "{{CLIENT_STORE_URL}}";
 
       function syncAppViewportHeight() {
-        const height = window.visualViewport?.height || window.innerHeight;
+        const viewport = window.visualViewport;
+        const height = viewport?.height || window.innerHeight;
+        const offsetTop = viewport?.offsetTop || 0;
         document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
+        document.documentElement.style.setProperty("--app-offset-top", `${Math.round(offsetTop)}px`);
       }
       syncAppViewportHeight();
       window.addEventListener("resize", syncAppViewportHeight, { passive: true });
       window.visualViewport?.addEventListener("resize", syncAppViewportHeight, { passive: true });
+      window.visualViewport?.addEventListener("scroll", syncAppViewportHeight, { passive: true });
 
       const serviceWorkerReady = "serviceWorker" in navigator
         ? navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(() => navigator.serviceWorker.ready)
@@ -3109,6 +3124,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const seenMessageIds = new Set();
       const catchUpTargets = new Map();
       const pendingCommands = new Map();
+      const pendingInvitationResponses = new Map();
       let latestChannelListRequestId = null;
       let latestCircleListRequestId = null;
       const pendingMessages = new Map();
@@ -3488,6 +3504,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       window.addEventListener("pageshow", resumeAfterBackground);
       window.addEventListener("focus", resumeAfterBackground);
       window.addEventListener("online", resumeAfterBackground);
+      window.addEventListener("pageshow", refreshVisibleInvitationCards);
+      window.addEventListener("focus", refreshVisibleInvitationCards);
 
       function renderMediaPreviews() {
         mediaPreviews.replaceChildren(...activeChannelMedia().map((media) => {
@@ -4536,7 +4554,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         const payload = event.payload || {};
         const requestedCommand = event.request_id ? pendingCommands.get(event.request_id) : undefined;
+        const pendingInvitation = event.request_id ? pendingInvitationResponses.get(event.request_id) : undefined;
         if (event.request_id) pendingCommands.delete(event.request_id);
+        if (event.request_id) pendingInvitationResponses.delete(event.request_id);
 
         if (event.type === "hello") {
           currentParticipantId = payload.participant_id;
@@ -4990,7 +5010,20 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "error") {
-          if (historyRequestIds.delete(event.request_id)) historyLoading = false;
+          const failedHistory = historyRequestIds.delete(event.request_id);
+          if (failedHistory) {
+            historyLoading = false;
+            historyHasMore = false;
+            console.error("Kunne ikkje laste eldre meldingar", {
+              requestId: event.request_id,
+              command: requestedCommand,
+              code: payload.code,
+              message: payload.message,
+              channelId: activeChannelId
+            });
+            setConnectionStatus("Kunne ikkje laste eldre meldingar. Nyare meldingar er framleis tilgjengelege.");
+            return;
+          }
           if (requestedCommand === "send_message") {
             const message = payload.message || payload.code || "ukjend feil";
             if (!failPendingThreadReply(event.request_id, message)) {
@@ -5000,9 +5033,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
             return;
           }
           if (requestedCommand === "accept_invitation") {
-            onboardingNotice.textContent = payload.code === "not_found"
+            const message = payload.code === "not_found"
               ? "Invitasjonen finst ikkje eller er ikkje gyldig lenger. Be venen din lage ei ny lenkje."
-              : "Du kunne ikkje bli med med denne invitasjonen. Kontroller lenkja eller be om ei ny.";
+              : payload.code === "permission_denied"
+                ? "Du må først vere medlem i vennekretsen før du kan bli med i denne kanalen."
+                : "Du kunne ikkje bli med med denne invitasjonen. Kontroller lenkja eller be om ei ny.";
+            onboardingNotice.textContent = message;
+            if (pendingInvitation) showInvitationError(pendingInvitation.token, message);
+            return;
+          }
+          if (requestedCommand === "decline_invitation") {
+            const message = "Invitasjonen kunne ikkje avvisast. Prøv igjen.";
+            if (pendingInvitation) showInvitationError(pendingInvitation.token, message);
             return;
           }
           if (requestedCommand === "create_circle") {
@@ -5019,7 +5061,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
             circleMembershipNotice.textContent = "Vennekretsen kunne ikkje forlatast. Eigaren må slette kretsen i administrasjon.";
             return;
           }
-          pushSystem(payload.message || payload.code);
+          console.error("Sprøyt-kommando feila", {
+            requestId: event.request_id,
+            command: requestedCommand || "ukjend",
+            code: payload.code,
+            message: payload.message,
+            channelId: activeChannelId
+          });
+          const passiveCommands = new Set([
+            "list_channel_reactions", "list_thread_summaries", "mark_read",
+            "list_users", "list_my_channels", "list_my_circles", "list_mentions", "list_tasks"
+          ]);
+          if (passiveCommands.has(requestedCommand)) {
+            setConnectionStatus(`Kunne ikkje oppdatere samtalen (${requestedCommand || "ukjend"}).`);
+            return;
+          }
+          pushSystem(`${requestedCommand || "Kommando"}: ${payload.message || payload.code}`);
         }
       }
 
@@ -5756,7 +5813,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
         scroll();
         requestAnimationFrame(() => {
           scroll();
-          sendForm.scrollIntoView({ block: "nearest" });
           requestAnimationFrame(scroll);
         });
         window.setTimeout(scroll, 150);
@@ -6256,33 +6312,83 @@ const INDEX_HTML: &str = r##"<!doctype html>
         sendCommand("inspect_invitation", { token });
       }
 
+      function refreshVisibleInvitationCards() {
+        if (document.visibilityState === "hidden") return;
+        const tokens = new Set(
+          [...document.querySelectorAll(".invitation-card")]
+            .map((card) => card.dataset.invitationToken)
+            .filter(Boolean)
+            .slice(0, 20)
+        );
+        tokens.forEach((token) => sendCommand("inspect_invitation", { token }));
+      }
+
       function updateInvitationCards(token, invitation) {
         document.querySelectorAll(".invitation-card").forEach((card) => {
           if (card.dataset.invitationToken !== token) return;
           const accepted = invitation.response === "accepted";
           const declined = invitation.response === "declined";
+          const authoredByMe = invitation.invited_by === currentParticipantId;
           const targetName = invitation.channel_name ? `kanalen ${invitation.channel_name}` : `vennekretsen ${invitation.circle_name}`;
           card.classList.toggle("declined", declined);
+          card.removeAttribute("aria-busy");
           card.replaceChildren();
           const heading = document.createElement("h4");
           heading.textContent = `Invitasjon til ${targetName}`;
           const detail = document.createElement("p");
-          detail.textContent = accepted ? "Du har godteke invitasjonen." : `${invitation.invited_by_name} har invitert deg.`;
+          if (authoredByMe) {
+            const responses = [];
+            if (invitation.accepted_count > 0) responses.push(`${invitation.accepted_count} har godteke`);
+            if (invitation.declined_count > 0) responses.push(`${invitation.declined_count} har avvist`);
+            detail.textContent = responses.length > 0
+              ? `Du sende invitasjonen. ${responses.join(", ")}.`
+              : "Du sende invitasjonen. Ventar på svar.";
+          } else {
+            detail.textContent = accepted ? "Du har godteke invitasjonen." : `${invitation.invited_by_name} har invitert deg.`;
+          }
           card.append(heading, detail);
-          if (!accepted) {
+          if (!accepted && !authoredByMe) {
             const actions = document.createElement("div"); actions.className = "invitation-actions";
             const accept = document.createElement("button"); accept.type = "button"; accept.textContent = declined ? "Godta likevel" : "Godta";
-            accept.addEventListener("click", () => sendCommand("accept_invitation", { token }));
+            accept.addEventListener("click", () => respondToInvitation(token, "accept_invitation", "Godtek invitasjonen …"));
             const decline = document.createElement("button"); decline.type = "button"; decline.textContent = "Avvis"; decline.disabled = declined;
-            decline.addEventListener("click", () => sendCommand("decline_invitation", { token }));
+            decline.addEventListener("click", () => respondToInvitation(token, "decline_invitation", "Avviser invitasjonen …"));
             actions.append(accept, decline); card.append(actions);
           }
+        });
+      }
+
+      function respondToInvitation(token, command, pendingText) {
+        const requestId = sendCommand(command, { token });
+        if (!requestId) {
+          showInvitationError(token, "Vent til sambandet er tilbake, og prøv igjen.");
+          return;
+        }
+        pendingInvitationResponses.set(requestId, { token, command });
+        document.querySelectorAll(".invitation-card").forEach((card) => {
+          if (card.dataset.invitationToken !== token) return;
+          card.setAttribute("aria-busy", "true");
+          const detail = card.querySelector("p");
+          if (detail) detail.textContent = pendingText;
+          card.querySelectorAll(".invitation-actions button").forEach((button) => { button.disabled = true; });
+        });
+      }
+
+      function showInvitationError(token, message) {
+        document.querySelectorAll(".invitation-card").forEach((card) => {
+          if (card.dataset.invitationToken !== token) return;
+          card.removeAttribute("aria-busy");
+          const detail = card.querySelector("p");
+          if (detail) detail.textContent = message;
+          detail?.setAttribute("role", "alert");
+          card.querySelectorAll(".invitation-actions button").forEach((button) => { button.disabled = false; });
         });
       }
 
       function markInvitationAccepted(token) {
         document.querySelectorAll(".invitation-card").forEach((card) => {
           if (card.dataset.invitationToken !== token) return;
+          card.removeAttribute("aria-busy");
           card.classList.remove("declined");
           const detail = card.querySelector("p");
           if (detail) detail.textContent = "Du har godteke invitasjonen.";
@@ -7182,7 +7288,8 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("viewport-fit=cover"));
         assert!(INDEX_HTML.contains("--app-height: 100dvh"));
         assert!(INDEX_HTML.contains("env(safe-area-inset-bottom)"));
-        assert!(INDEX_HTML.contains("window.visualViewport?.height || window.innerHeight"));
+        assert!(INDEX_HTML.contains("const height = viewport?.height || window.innerHeight"));
+        assert!(INDEX_HTML.contains("--app-offset-top: 0px"));
         assert!(INDEX_HTML.contains("height: var(--app-height)"));
         assert!(!INDEX_HTML.contains("width: min(1120px, 100%)"));
         assert!(!INDEX_HTML.contains("height: min(760px, calc(100dvh - 48px));"));
@@ -8007,9 +8114,19 @@ mod protocol_capacity_tests {
         ));
         assert!(body.contains("[[invite:${payload.invitation.token}]]"));
         assert!(body.contains("function renderInvitationCard(token, target)"));
-        assert!(body.contains("sendCommand(\"accept_invitation\", { token })"));
+        assert!(body.contains(
+            "respondToInvitation(token, \"accept_invitation\", \"Godtek invitasjonen …\")"
+        ));
         assert!(!body.contains("sendCommand(\"accept_circle_invitation\", { token })"));
-        assert!(body.contains("sendCommand(\"decline_invitation\", { token })"));
+        assert!(body.contains(
+            "respondToInvitation(token, \"decline_invitation\", \"Avviser invitasjonen …\")"
+        ));
+        assert!(
+            body.contains("const authoredByMe = invitation.invited_by === currentParticipantId")
+        );
+        assert!(body.contains("Du må først vere medlem i vennekretsen"));
+        assert!(body.contains("window.addEventListener(\"focus\", refreshVisibleInvitationCards)"));
+        assert!(body.contains("historyHasMore = false;\n            console.error(\"Kunne ikkje laste eldre meldingar\""));
         assert!(body.contains("window.localStorage.setItem(activeConversationKey, channel.id)"));
         assert!(body.contains("let reconnectScrollOffset = null"));
         assert!(body.contains("restoreConversationScrollOffset(scrollOffset)"));
@@ -8025,7 +8142,14 @@ mod protocol_capacity_tests {
             "renderTimeline({ forceBottom: scrollOffset === null || scrollOffset < 80 })"
         ));
         assert!(body.contains("function settleConversationAtBottom()"));
-        assert!(body.contains("sendForm.scrollIntoView({ block: \"nearest\" })"));
+        assert!(!body.contains("sendForm.scrollIntoView"));
+        assert!(body.contains("const offsetTop = viewport?.offsetTop || 0"));
+        assert!(
+            body.contains(
+                "window.visualViewport?.addEventListener(\"scroll\", syncAppViewportHeight"
+            )
+        );
+        assert!(body.contains("transform: translateY(var(--app-offset-top))"));
         assert!(body.contains("function formatMessageTimestamp(sentAt, now = new Date())"));
         assert!(body.contains("dateStyle: \"full\", timeStyle: \"short\""));
         assert!(body.contains("appendProfileStatus(senderLabel, message.sender_id)"));

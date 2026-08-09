@@ -634,6 +634,11 @@ impl ChatRepository for SqliteChatRepository {
         command: InvitationTokenCommand,
     ) -> RepositoryFuture<'a, InvitationPreview> {
         Box::pin(async move {
+            let preview =
+                load_sqlite_invitation(&self.pool, &command.actor, &command.token).await?;
+            if preview.invited_by == command.actor {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let hash = Sha256::digest(command.token.as_bytes()).to_vec();
             let id: String = sqlx::query_scalar("select id from chat_invitations where token_hash=? and expires_at>current_timestamp")
                 .bind(hash).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
@@ -650,6 +655,9 @@ impl ChatRepository for SqliteChatRepository {
         Box::pin(async move {
             let preview =
                 load_sqlite_invitation(&self.pool, &command.actor, &command.token).await?;
+            if preview.invited_by == command.actor {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
             let (invitation_id,): (String,) = sqlx::query_as("select id from chat_invitations where token_hash=? and expires_at>current_timestamp")
                 .bind(Sha256::digest(command.token.as_bytes()).to_vec()).fetch_one(&mut *tx).await.map_err(sql_error)?;
@@ -2314,7 +2322,7 @@ async fn load_sqlite_invitation(
     actor: &UserId,
     token: &str,
 ) -> Result<InvitationPreview, RepositoryError> {
-    let row = sqlx::query("select i.target_type,i.circle_id,i.channel_id,i.expires_at,c.name circle_name,ch.name channel_name,u.display_name invited_by_name,r.response from chat_invitations i join circles c on c.id=i.circle_id left join channels ch on ch.id=i.channel_id join users u on u.id=i.invited_by left join chat_invitation_responses r on r.invitation_id=i.id and r.user_id=? where i.token_hash=? and i.expires_at>current_timestamp")
+    let row = sqlx::query("select i.target_type,i.circle_id,i.channel_id,i.invited_by,i.expires_at,c.name circle_name,ch.name channel_name,u.display_name invited_by_name,r.response,(select count(*) from chat_invitation_responses ar where ar.invitation_id=i.id and ar.response='accepted') accepted_count,(select count(*) from chat_invitation_responses dr where dr.invitation_id=i.id and dr.response='declined') declined_count from chat_invitations i join circles c on c.id=i.circle_id left join channels ch on ch.id=i.channel_id join users u on u.id=i.invited_by left join chat_invitation_responses r on r.invitation_id=i.id and r.user_id=? where i.token_hash=? and i.expires_at>current_timestamp")
         .bind(actor.to_string()).bind(Sha256::digest(token.as_bytes()).to_vec()).fetch_optional(pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
     let circle_id = CircleId::from_uuid(
         Uuid::parse_str(&row.try_get::<String, _>("circle_id").map_err(storage)?)
@@ -2348,6 +2356,10 @@ async fn load_sqlite_invitation(
             .map(DisplayName::new)
             .transpose()
             .map_err(storage)?,
+        invited_by: UserId::from_uuid(
+            Uuid::parse_str(&row.try_get::<String, _>("invited_by").map_err(storage)?)
+                .map_err(storage)?,
+        ),
         invited_by_name: DisplayName::new(
             row.try_get::<String, _>("invited_by_name")
                 .map_err(storage)?,
@@ -2355,6 +2367,10 @@ async fn load_sqlite_invitation(
         .map_err(storage)?,
         expires_at: row.try_get("expires_at").map_err(storage)?,
         response,
+        accepted_count: u32::try_from(row.try_get::<i64, _>("accepted_count").map_err(storage)?)
+            .map_err(storage)?,
+        declined_count: u32::try_from(row.try_get::<i64, _>("declined_count").map_err(storage)?)
+            .map_err(storage)?,
     })
 }
 
@@ -3133,6 +3149,18 @@ mod tests {
             .unwrap();
         assert_eq!(preview.circle_name.as_str(), "Invite circle");
         assert_eq!(preview.response, None);
+        assert_eq!(preview.invited_by, owner);
+        assert_eq!(preview.accepted_count, 0);
+        assert_eq!(preview.declined_count, 0);
+        assert_eq!(
+            repository
+                .accept_chat_invitation(InvitationTokenCommand {
+                    actor: owner.clone(),
+                    token: issued.token.clone(),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
         let declined = repository
             .decline_chat_invitation(InvitationTokenCommand {
                 actor: member.clone(),
@@ -3141,14 +3169,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(declined.response, Some(InvitationResponse::Declined));
+        assert_eq!(declined.declined_count, 1);
         let accepted = repository
             .accept_chat_invitation(InvitationTokenCommand {
                 actor: member.clone(),
-                token: issued.token,
+                token: issued.token.clone(),
             })
             .await
             .unwrap();
         assert_eq!(accepted.channel.name.as_str(), "Prat");
+        let owner_view = repository
+            .inspect_chat_invitation(InvitationTokenCommand {
+                actor: owner.clone(),
+                token: issued.token,
+            })
+            .await
+            .unwrap();
+        assert_eq!(owner_view.response, None);
+        assert_eq!(owner_view.accepted_count, 1);
+        assert_eq!(owner_view.declined_count, 0);
         assert!(
             repository
                 .list_channels_for_user(member.clone())
