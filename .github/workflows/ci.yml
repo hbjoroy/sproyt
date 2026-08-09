@@ -124,6 +124,10 @@ jobs:
     # weekly, explicitly, or for a version tag.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    env:
+      # Remove the pin after RustSec replaces e11d6b3, which accidentally
+      # published crates/gettext-rs/RUSTSEC-0000-0000.md on 2026-08-09.
+      RUSTSEC_ADVISORY_DB_REVISION: 309ad29d8fe448bf986019e05d47b9e0e29a2218
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -139,10 +143,17 @@ jobs:
       - name: Install cargo-audit
         run: command -v cargo-audit || cargo install cargo-audit --locked
 
+      - name: Check out verified RustSec advisory database
+        run: |
+          git init "$RUNNER_TEMP/rustsec-advisory-db"
+          git -C "$RUNNER_TEMP/rustsec-advisory-db" remote add origin https://github.com/RustSec/advisory-db.git
+          git -C "$RUNNER_TEMP/rustsec-advisory-db" fetch --depth=1 origin "$RUSTSEC_ADVISORY_DB_REVISION"
+          git -C "$RUNNER_TEMP/rustsec-advisory-db" checkout --detach FETCH_HEAD
+
       - name: Audit locked dependencies
         # No fixed release exists. Sproyt performs public-key verification only;
         # see docs/security-exceptions.md for the bounded acceptance.
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        run: cargo audit --db "$RUNNER_TEMP/rustsec-advisory-db" --no-fetch --ignore RUSTSEC-2023-0071
 
   recovery-drill:
     name: PostgreSQL backup and restore drill
