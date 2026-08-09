@@ -2243,17 +2243,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); }
       .thread-form textarea { min-width: 0; min-height: 44px; max-height: 120px; }
       .thread-link { min-height: 28px; margin-left: auto; padding: 3px 9px; border-radius: 999px; background: #eef2ed; color: #183d2e; font-size: .84rem; font-weight: 700; white-space: nowrap; }
-      .message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 6px; }
-      .message-actions { display: flex; gap: 6px; justify-content: flex-end; }
-      .message-actions button { min-height: 28px; padding: 3px 8px; background: transparent; color: #506057; font-size: .8rem; }
+      .message-reactions { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 0; margin-top: 3px; }
+      .message-menu { position: relative; }
+      .message-menu > summary { display: grid; width: 32px; min-width: 32px; min-height: 32px; padding: 0; place-items: center; border: 1px solid #cbd1c8; border-radius: 999px; color: #506057; cursor: pointer; list-style: none; }
+      .message-menu > summary::-webkit-details-marker { display: none; }
+      .message-menu:not([open]) > div { display: none; }
+      .message-menu > div { position: absolute; top: calc(100% + 4px); right: 0; z-index: 9; display: grid; min-width: 154px; gap: 2px; padding: 5px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
+      .message-menu button { min-height: 34px; padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: #27342e; text-align: left; }
+      .message-menu button:hover, .message-menu button:focus-visible { background: #edf2ee; }
       .message-editor { display: grid; gap: 6px; }
       .message-editor textarea { min-height: 72px; }
       .message-editor div { display: flex; gap: 6px; justify-content: flex-end; }
       .reaction-badge { min-height: 28px; padding: 3px 8px; border-radius: 999px; background: #eef2ed; color: #183d2e; font-size: .84rem; }
       .reaction-badge[aria-pressed="true"] { border-color: #245b45; background: #d7e8dc; font-weight: 700; }
-      .reaction-picker { position: relative; }
+      .reaction-picker { position: absolute; right: 0; bottom: 0; }
       .reaction-picker summary { cursor: pointer; list-style: none; padding: 3px 7px; border: 1px solid #cbd1c8; border-radius: 999px; font-size: .84rem; }
-      .reaction-picker > div { position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 8; display: grid; grid-template-columns: repeat(4, auto); gap: 3px; width: min(310px, 82vw); padding: 6px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
+      .reaction-picker > div { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 8; display: grid; grid-template-columns: repeat(4, auto); gap: 3px; width: min(310px, 82vw); padding: 6px; border: 1px solid #cbd1c8; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #0002; }
       .reaction-picker button { min-height: 34px; padding: 4px 7px; }
       .reaction-custom { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; margin-top: 3px; }
       .reaction-custom input { min-height: 36px; padding: 5px 8px; }
@@ -2261,6 +2266,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .reaction-viewers summary { cursor: pointer; list-style: none; padding: 3px 10px; border: 1px solid #cbd1c8; border-radius: 999px; color: #506057; font-size: .84rem; font-weight: 700; letter-spacing: .08em; }
       .reaction-viewers ul { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 9; width: max-content; max-width: min(78vw, 340px); margin: 0; padding: 8px 12px; border: 1px solid #cbd1c8; border-radius: 9px; background: #fff; box-shadow: 0 8px 24px #0002; list-style: none; }
       .reaction-viewers li { padding: 3px 0; color: #27342e; font-size: .86rem; overflow-wrap: anywhere; }
+      @media (any-hover: hover) and (any-pointer: fine) {
+        .message .reaction-picker { visibility: hidden; pointer-events: none; }
+        .message:hover .reaction-picker, .message:focus-within .reaction-picker, .message.reaction-picker-requested .reaction-picker, .message .reaction-picker[open] { visibility: visible; pointer-events: auto; }
+      }
+      @media (any-hover: none), (any-pointer: coarse) {
+        .message .reaction-picker { display: none; }
+        .message.reaction-picker-requested .reaction-picker, .message .reaction-picker[open] { display: block; }
+      }
       .mobile-navigation-toggle { display: none; }
       .bottom-navigation {
         display: grid;
@@ -2275,7 +2288,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         display: flex;
         align-items: center;
         justify-content: space-between;
-        min-height: 38px;
+        min-width: 0;
+        height: 40px;
+        min-height: 40px;
         padding: 6px 9px;
         border: 1px solid #cbd1c8;
         border-radius: 8px;
@@ -2285,10 +2300,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
         font-size: .86rem;
         font-weight: 700;
         list-style: none;
+        overflow: hidden;
       }
+      .bottom-navigation-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .bottom-navigation-panel > summary::-webkit-details-marker { display: none; }
-      .bottom-navigation-panel > summary::after { content: "⌃"; margin-left: 8px; }
-      .bottom-navigation-panel[open] > summary::after { content: "⌄"; }
+      .bottom-navigation-panel > summary::after { content: "⌄"; flex: 0 0 auto; margin-left: 8px; }
+      .bottom-navigation-panel[open] > summary::after { content: "⌃"; }
       .bottom-navigation-panel > summary:hover { background: #edf2ee; }
       .bottom-navigation-list {
         display: grid;
@@ -2523,10 +2540,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       .message {
         display: grid;
-        gap: 4px;
+        gap: 3px;
         min-width: 0;
         max-width: 100%;
-        padding: 9px 10px;
+        padding: 7px 9px;
         border: 1px solid #dfe3dc;
         border-radius: 8px;
         background: #ffffff;
@@ -2534,9 +2551,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       .meta {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 5px;
         color: #506057;
         font-size: 0.85rem;
       }
+      .message-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
       .rendered {
         display: grid;
@@ -2633,17 +2655,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
         gap: 6px;
         padding: 6px 8px;
         border-top: 1px solid #e4e5de;
-        --composer-rest-height: 46px;
+        --composer-rest-height: 44px;
         --composer-max-height: 126px;
         align-items: end;
       }
       .composer-area { min-width: 0; }
-      form.send textarea { height: var(--composer-rest-height); min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 11px 10px; line-height: 20px; resize: none; overflow-y: hidden; }
-      .composer-icon, form.send .emoji-picker > summary { display: grid; width: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border: 1px solid #cbd1c8; border-radius: 8px; background: transparent; color: #245b45; cursor: pointer; font-size: 1.25rem; list-style: none; }
+      form.send textarea { display: block; height: var(--composer-rest-height); min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 10px; line-height: 20px; resize: none; overflow-y: hidden; }
+      form.send .emoji-picker { height: 44px; align-self: end; }
+      .composer-icon, form.send .emoji-picker > summary { display: grid; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border: 1px solid #cbd1c8; border-radius: 8px; background: transparent; color: #245b45; cursor: pointer; font-size: 1.25rem; list-style: none; }
       form.send .emoji-picker > summary::-webkit-details-marker { display: none; }
       .composer-icon:hover, form.send .emoji-picker > summary:hover { background: #edf2ee; }
       form.send .emoji-picker[aria-disabled="true"] > summary, .composer-icon:disabled { cursor: default; opacity: .55; pointer-events: none; }
-      form.send #send { min-width: 44px; min-height: 44px; padding: 0 12px; }
+      form.send #send { height: 44px; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; }
       form.send .composer-input { align-self: end; }
       form.send #media-previews, form.send #upload-status { display: none; grid-column: 1 / -1; }
       form.send.is-expanded #media-previews:not(:empty) { display: flex; }
@@ -2709,9 +2732,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .bottom-navigation-panel > summary,
         .bottom-navigation-list button { min-height: 40px; }
 
-        form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 6px 8px; --composer-rest-height: 46px; --composer-max-height: 126px; }
+        form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 6px 8px; --composer-rest-height: 44px; --composer-max-height: 126px; }
         form.send .composer-input, form.send textarea { min-width: 0; width: 100%; }
-        form.send textarea { min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 11px 9px; resize: none; }
+        form.send textarea { min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 10px 9px; resize: none; }
         form.send button { min-height: 44px; }
         form.send .emoji-picker summary { min-width: 44px; min-height: 44px; }
         .message-media { width: 100%; max-width: 100%; overflow: hidden; }
@@ -2722,11 +2745,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .thread-messages { max-height: calc(100dvh - 132px); }
         .reaction-picker > div { width: min(310px, calc(100vw - 40px)); }
         .reaction-viewers ul { max-width: calc(100vw - 40px); }
-        .message-actions button,
+        .message-menu > summary,
+        .message-menu button,
         .thread-link,
         .reaction-badge,
         .reaction-picker summary,
-        .reaction-viewers summary { min-height: 40px; }
+        .reaction-viewers summary { min-height: 44px; }
+        .message-menu > summary { width: 44px; min-width: 44px; }
 
         .connect,
         .circle-tools,
@@ -2767,6 +2792,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .connection-status-dot[data-routine="true"] { background: #6dbc8e; }
         .bottom-navigation-panel > summary, .bottom-navigation-list { border-color: #344038; background: #19211c; color: #eef3ee; }
         .bottom-navigation-list button.has-unread { color: #d8eddd; }
+        .message-menu > summary { border-color: #344038; color: #d8eddd; }
+        .message-menu > div { border-color: #344038; background: #19211c; }
+        .message-menu button { color: #eef3ee; }
+        .message-menu button:hover, .message-menu button:focus-visible { background: #26352c; }
 
         .mention-suggestions { background: #19211c; border-color: #344038; }
         .mention-suggestions button { color: #eef3ee; }
@@ -2915,16 +2944,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <form class="send" id="send-form">
         <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
         <button class="composer-icon" id="attach-media" type="button" aria-label="Last opp bilete eller video" title="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="polite"></p>
-        <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" rows="1" aria-label="Melding" placeholder="Skriv ei melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
+        <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" rows="1" aria-label="Melding" placeholder="Melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
         <button id="send" type="submit" disabled>Send</button>
         </form>
         <nav class="bottom-navigation" aria-label="Krets- og kanalveljar">
           <details class="bottom-navigation-panel" id="bottom-channel-panel">
-            <summary id="bottom-channel-toggle" aria-controls="bottom-channel-list">Kanalar</summary>
+            <summary id="bottom-channel-toggle" aria-controls="bottom-channel-list" aria-label="Vel kanal"><span class="bottom-navigation-label"># Kanal</span></summary>
             <div class="bottom-navigation-list" id="bottom-channel-list"><p class="status">Lastar …</p></div>
           </details>
           <details class="bottom-navigation-panel" id="bottom-circle-panel">
-            <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list">Kretsar</summary>
+            <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list" aria-label="Vel krets"><span class="bottom-navigation-label">◎ Krets</span></summary>
             <div class="bottom-navigation-list" id="bottom-circle-list"><p class="status">Lastar …</p></div>
           </details>
         </nav>
@@ -3155,11 +3184,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function resizeComposer() {
-        const maximum = Number.parseFloat(window.getComputedStyle(bodyInput).maxHeight);
+        const styles = window.getComputedStyle(bodyInput);
+        const minimum = Number.parseFloat(styles.minHeight);
+        const maximum = Number.parseFloat(styles.maxHeight);
         bodyInput.style.height = "auto";
-        const height = Math.min(bodyInput.scrollHeight, maximum);
+        const height = bodyInput.value.length === 0
+          ? minimum
+          : Math.min(bodyInput.scrollHeight, maximum);
         bodyInput.style.height = `${height}px`;
-        bodyInput.style.overflowY = bodyInput.scrollHeight > maximum ? "auto" : "hidden";
+        bodyInput.style.overflowY = bodyInput.value.length > 0 && bodyInput.scrollHeight > maximum
+          ? "auto"
+          : "hidden";
       }
 
       function syncComposerState() {
@@ -3863,6 +3898,30 @@ const INDEX_HTML: &str = r##"<!doctype html>
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && (circleChannelDialog.open || threadPanel.open || mediaLightbox.open)) {
           return;
+        }
+        if (event.key === "Escape") {
+          const reactionPicker = messagesEl.querySelector(".reaction-picker[open]");
+          if (reactionPicker) {
+            event.preventDefault();
+            reactionPicker.open = false;
+            reactionPicker.closest(".message")?.classList.remove("reaction-picker-requested");
+            reactionPicker.querySelector("summary")?.focus({ preventScroll: true });
+            return;
+          }
+          const reactionViewers = messagesEl.querySelector(".reaction-viewers[open]");
+          if (reactionViewers) {
+            event.preventDefault();
+            reactionViewers.open = false;
+            reactionViewers.querySelector("summary")?.focus({ preventScroll: true });
+            return;
+          }
+          const messageMenu = messagesEl.querySelector(".message-menu[open]");
+          if (messageMenu) {
+            event.preventDefault();
+            messageMenu.open = false;
+            messageMenu.querySelector("summary")?.focus({ preventScroll: true });
+            return;
+          }
         }
         if (event.key === "Tab" && sidebar.classList.contains("mobile-open")) {
           const controls = Array.from(sidebar.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary"))
@@ -5059,9 +5118,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
         const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.direct_user_id);
         const showingShared = !activeCircle && activeChannel && !activeChannel.circle_id && !activeChannel.direct_user_id;
-        const navigationContext = activeCircle?.name || (showingShared ? "(Felles)" : null);
-        bottomChannelToggle.textContent = navigationContext ? `Kanalar · ${navigationContext}` : "Kanalar";
-        bottomCircleToggle.textContent = navigationContext ? `Kretsar · ${navigationContext}` : "Kretsar";
+        const channelLabel = activeChannel
+          ? (activeChannel.direct_user_id ? activeChannel.name : `# ${activeChannel.name}`)
+          : "# Kanal";
+        const circleLabel = activeCircle?.name || (showingShared ? "Felles" : "Krets");
+        bottomChannelToggle.querySelector(".bottom-navigation-label").textContent = channelLabel;
+        bottomChannelToggle.setAttribute("aria-label", `Vel kanal. Aktiv kanal: ${activeChannel?.name || "ingen"}`);
+        bottomCircleToggle.querySelector(".bottom-navigation-label").textContent = `◎ ${circleLabel}`;
+        bottomCircleToggle.setAttribute("aria-label", `Vel krets. Aktiv krets: ${activeCircle?.name || (showingShared ? "Felles" : "ingen")}`);
 
         const sharedUnreadCount = sharedChannels.reduce(
           (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
@@ -5668,7 +5732,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         return {
           messageId,
           customReaction: input?.value || "",
-          focusCustomReaction: document.activeElement === input
+          focusCustomReaction: document.activeElement === input,
+          focusReactionSummary: document.activeElement === picker.querySelector("summary")
         };
       }
 
@@ -5678,10 +5743,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
           .find((candidate) => candidate.dataset.messageId === interaction.messageId);
         const picker = card?.querySelector(".reaction-picker");
         if (!picker) return;
+        card.classList.add("reaction-picker-requested");
         picker.open = true;
         const input = picker.querySelector("input");
         if (input) input.value = interaction.customReaction;
         if (input && interaction.focusCustomReaction) input.focus({ preventScroll: true });
+        else if (interaction.focusReactionSummary) picker.querySelector("summary")?.focus({ preventScroll: true });
       }
 
       function settleConversationAtBottom() {
@@ -5846,7 +5913,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         return button;
       }
 
-      function renderMessageReactions(message) {
+      function renderMessageReactions(message, onPickerToggle) {
         const bar = document.createElement("div");
         bar.className = "message-reactions";
         const reactions = messageReactions.get(message.id) || new Map();
@@ -5861,6 +5928,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         const picker = document.createElement("details");
         picker.className = "reaction-picker";
+        picker.addEventListener("toggle", () => onPickerToggle?.(picker.open));
         const summary = document.createElement("summary");
         summary.setAttribute("aria-label", "Legg til reaksjon");
         summary.textContent = "😊 +";
@@ -5932,7 +6000,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const reactions = card?.querySelector(".message-reactions");
         if (!reactions) return false;
         const interaction = captureTimelineInteraction();
-        const nextReactions = renderMessageReactions(message);
+        const nextReactions = renderMessageReactions(message, (open) => {
+          card.classList.toggle("reaction-picker-requested", open);
+        });
         const thread = reactions.querySelector(".thread-link");
         if (thread) nextReactions.insertBefore(thread, nextReactions.querySelector(".reaction-viewers"));
         reactions.replaceWith(nextReactions);
@@ -5947,6 +6017,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         const meta = document.createElement("div");
         meta.className = "meta";
+        const metaText = document.createElement("span");
+        metaText.className = "message-meta-text";
         const sender = message.sender_id === currentParticipantId
           ? "Du"
           : (message.sender_display_name || "Ein ven");
@@ -5954,26 +6026,27 @@ const INDEX_HTML: &str = r##"<!doctype html>
         senderLabel.textContent = sender;
         senderLabel.dataset.profileUserId = message.sender_id;
         appendProfileStatus(senderLabel, message.sender_id);
-        meta.append(senderLabel);
+        metaText.append(senderLabel);
         const sentAt = new Date(message.sent_at);
         if (!Number.isNaN(sentAt.valueOf())) {
           const timestamp = document.createElement("time");
           timestamp.dateTime = sentAt.toISOString();
           timestamp.title = sentAt.toLocaleString([], { dateStyle: "full", timeStyle: "short" });
           timestamp.textContent = ` · ${formatMessageTimestamp(sentAt)}`;
-          meta.append(timestamp);
+          metaText.append(timestamp);
         }
         if (message.deleted_at) {
           const deleted = document.createElement("small");
           deleted.textContent = " · sletta";
           deleted.title = new Date(message.deleted_at).toLocaleString();
-          meta.append(deleted);
+          metaText.append(deleted);
         } else if (message.edited_at) {
           const edited = document.createElement("small");
           edited.textContent = " · redigert";
           edited.title = new Date(message.edited_at).toLocaleString();
-          meta.append(edited);
+          metaText.append(edited);
         }
+        meta.append(metaText);
 
         const body = document.createElement("div");
         if (message.deleted_at) {
@@ -5992,12 +6065,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         wrapper.append(meta, body);
         let footer = null;
         if (!message.deleted_at) {
-          footer = renderMessageReactions(message);
+          footer = renderMessageReactions(message, (open) => {
+            wrapper.classList.toggle("reaction-picker-requested", open);
+          });
           wrapper.append(footer);
         }
         const summary = threadSummaries.get(message.id);
         const replyCount = summary?.reply_count || 0;
-        if (includeThread && !message.parent_message_id && (!message.deleted_at || replyCount > 0)) {
+        if (includeThread && !message.parent_message_id && replyCount > 0) {
           if (!footer) {
             footer = document.createElement("div");
             footer.className = "message-reactions";
@@ -6013,13 +6088,41 @@ const INDEX_HTML: &str = r##"<!doctype html>
           thread.addEventListener("click", () => openThread(message.id));
           footer.insertBefore(thread, footer.querySelector(".reaction-viewers"));
         }
-        if (!message.deleted_at && message.sender_id === currentParticipantId) {
-          const actions = document.createElement("div");
-          actions.className = "message-actions";
-          const edit = document.createElement("button");
-          edit.type = "button";
-          edit.textContent = "Rediger";
-          edit.addEventListener("click", () => {
+        if (!message.deleted_at) {
+          const menu = document.createElement("details");
+          menu.className = "message-menu";
+          const menuSummary = document.createElement("summary");
+          menuSummary.textContent = "…";
+          menuSummary.setAttribute("aria-label", "Fleire handlingar for meldinga");
+          const menuItems = document.createElement("div");
+          const addReaction = document.createElement("button");
+          addReaction.type = "button";
+          addReaction.textContent = "Legg til reaksjon";
+          addReaction.addEventListener("click", () => {
+            menu.open = false;
+            const picker = wrapper.querySelector(".reaction-picker");
+            if (!picker) return;
+            wrapper.classList.add("reaction-picker-requested");
+            picker.open = true;
+            picker.querySelector("summary")?.focus({ preventScroll: true });
+          });
+          menuItems.append(addReaction);
+          if (includeThread && !message.parent_message_id) {
+            const openThreadButton = document.createElement("button");
+            openThreadButton.type = "button";
+            openThreadButton.textContent = replyCount === 0 ? "Start tråd" : "Opne tråd";
+            openThreadButton.addEventListener("click", () => {
+              menu.open = false;
+              openThread(message.id);
+            });
+            menuItems.append(openThreadButton);
+          }
+          if (message.sender_id === currentParticipantId) {
+            const edit = document.createElement("button");
+            edit.type = "button";
+            edit.textContent = "Rediger";
+            edit.addEventListener("click", () => {
+              menu.open = false;
             const editor = document.createElement("form");
             editor.className = "message-editor";
             const input = document.createElement("textarea");
@@ -6037,9 +6140,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
             controls.append(cancel, save);
             editor.append(input, controls);
             body.hidden = true;
-            actions.hidden = true;
+            menu.hidden = true;
             wrapper.insertBefore(editor, wrapper.querySelector(".message-reactions"));
-            cancel.addEventListener("click", () => { editor.remove(); body.hidden = false; actions.hidden = false; });
+            cancel.addEventListener("click", () => { editor.remove(); body.hidden = false; menu.hidden = false; });
             editor.addEventListener("submit", (event) => {
               event.preventDefault();
               const value = input.value.trim();
@@ -6050,16 +6153,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
             });
             input.focus();
           });
-          const remove = document.createElement("button");
-          remove.type = "button";
-          remove.textContent = "Slett";
-          remove.addEventListener("click", () => {
-            if (window.confirm("Vil du slette meldinga? Ho blir ståande som ei sletta melding i samtalen.")) {
-              sendCommand("delete_message", { message_id: message.id });
-            }
-          });
-          actions.append(edit, remove);
-          wrapper.append(actions);
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.textContent = "Slett";
+            remove.addEventListener("click", () => {
+              if (window.confirm("Vil du slette meldinga? Ho blir ståande som ei sletta melding i samtalen.")) {
+                sendCommand("delete_message", { message_id: message.id });
+              }
+            });
+            menuItems.append(edit, remove);
+          }
+          menu.append(menuSummary, menuItems);
+          meta.append(menu);
         }
         target.append(wrapper);
       }
@@ -7036,11 +7141,15 @@ mod protocol_capacity_tests {
 
     #[test]
     fn browser_uses_a_compact_composer_with_safe_keyboard_semantics() {
-        assert!(INDEX_HTML.contains("--composer-rest-height: 46px"));
+        assert!(INDEX_HTML.contains("--composer-rest-height: 44px"));
         assert!(INDEX_HTML.contains("--composer-max-height: 126px"));
+        assert!(INDEX_HTML.contains("height: 44px; min-width: 44px; min-height: 44px"));
         assert!(INDEX_HTML.contains("resize: none; overflow-y: hidden"));
         assert!(INDEX_HTML.contains("function resizeComposer()"));
-        assert!(INDEX_HTML.contains("bodyInput.scrollHeight > maximum ? \"auto\" : \"hidden\""));
+        assert!(INDEX_HTML.contains("bodyInput.value.length === 0\n          ? minimum"));
+        assert!(
+            INDEX_HTML.contains("bodyInput.value.length > 0 && bodyInput.scrollHeight > maximum")
+        );
         assert!(INDEX_HTML.contains("form.send.is-expanded #media-previews:not(:empty)"));
         assert!(INDEX_HTML.contains("form.send.is-expanded #upload-status:not(:empty)"));
         assert!(INDEX_HTML.contains("min-width: 44px; min-height: 44px"));
@@ -7193,7 +7302,9 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains(
             "[...messagesEl.querySelectorAll(\"[data-message-id]\")]\n          .find((candidate) => candidate.dataset.messageId === messageId)"
         ));
-        assert!(INDEX_HTML.contains("const nextReactions = renderMessageReactions(message);"));
+        assert!(INDEX_HTML.contains(
+            "const nextReactions = renderMessageReactions(message, (open) => {\n          card.classList.toggle(\"reaction-picker-requested\", open);\n        });"
+        ));
         assert!(INDEX_HTML.contains("const thread = reactions.querySelector(\".thread-link\");"));
         assert!(INDEX_HTML.contains(
             "if (thread) nextReactions.insertBefore(thread, nextReactions.querySelector(\".reaction-viewers\"));"
@@ -7374,8 +7485,9 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("Meldinga er sletta."));
         assert!(INDEX_HTML.contains("window.confirm(\"Vil du slette meldinga?"));
         assert!(INDEX_HTML.contains(
-            "if (!message.deleted_at) {\n          footer = renderMessageReactions(message);"
+            "if (!message.deleted_at) {\n          footer = renderMessageReactions(message, (open) => {"
         ));
+        assert!(INDEX_HTML.contains("if (!message.deleted_at) {\n          const menu = document.createElement(\"details\");"));
     }
 
     #[test]
@@ -7431,16 +7543,21 @@ mod protocol_capacity_tests {
     }
 
     #[test]
-    fn browser_keeps_conversation_dense_without_shrinking_mobile_message_actions() {
+    fn browser_keeps_conversation_dense_with_accessible_message_actions() {
         assert!(INDEX_HTML.contains(
             ".conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 14px; }"
         ));
         assert!(INDEX_HTML.contains(".messages {\n        align-content: start;\n        display: grid;\n        gap: 8px;\n        padding: 12px;"));
-        assert!(INDEX_HTML.contains("padding: 9px 10px;"));
+        assert!(INDEX_HTML.contains("padding: 7px 9px;"));
         assert!(INDEX_HTML.contains(".rendered {\n        display: grid;\n        gap: 7px;"));
         assert!(INDEX_HTML.contains(
-            ".message-actions button,\n        .thread-link,\n        .reaction-badge,\n        .reaction-picker summary,\n        .reaction-viewers summary { min-height: 40px; }"
+            ".message-menu > summary,\n        .message-menu button,\n        .thread-link,\n        .reaction-badge,\n        .reaction-picker summary,\n        .reaction-viewers summary { min-height: 44px; }"
         ));
+        assert!(INDEX_HTML.contains("className = \"message-menu\""));
+        assert!(INDEX_HTML.contains("Fleire handlingar for meldinga"));
+        assert!(INDEX_HTML.contains("Legg til reaksjon"));
+        assert!(INDEX_HTML.contains("message.sender_id === currentParticipantId"));
+        assert!(INDEX_HTML.contains("reaction-picker-requested"));
     }
 
     #[test]
@@ -7953,7 +8070,21 @@ mod protocol_capacity_tests {
         assert!(body.contains("</form>\n        <nav class=\"bottom-navigation\""));
         assert!(body.contains("id=\"bottom-channel-panel\""));
         assert!(body.contains("id=\"bottom-circle-panel\""));
+        assert!(body.contains(
+            "aria-label=\"Vel kanal\"><span class=\"bottom-navigation-label\"># Kanal</span>"
+        ));
+        assert!(body.contains(
+            "aria-label=\"Vel krets\"><span class=\"bottom-navigation-label\">◎ Krets</span>"
+        ));
+        assert!(body.contains("height: 40px;\n        min-height: 40px"));
         assert!(body.contains("function renderBottomNavigation()"));
+        assert!(body.contains("const channelLabel = activeChannel"));
+        assert!(body.contains("bottomCircleToggle.querySelector(\".bottom-navigation-label\").textContent = `◎ ${circleLabel}`"));
+        assert!(body.contains(".message-menu:not([open]) > div { display: none; }"));
+        assert!(body.contains(
+            ".message .reaction-picker[open] { visibility: visible; pointer-events: auto; }"
+        ));
+        assert!(body.contains("card.classList.add(\"reaction-picker-requested\")"));
         assert!(body.contains("const circleChannels = activeCircleId"));
         assert!(body.contains("sharedButton.textContent = \"(Felles)\""));
         assert!(body.contains("sharedButton.disabled = sharedChannels.length === 0"));
