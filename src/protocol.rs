@@ -44,6 +44,13 @@ pub enum ClientCommand {
         channel_id: ChannelId,
     },
     ListMyChannels,
+    ListChannelUsers {
+        channel_id: ChannelId,
+    },
+    UpdateChannelDescription {
+        channel_id: ChannelId,
+        description: String,
+    },
     ListJoinableChannels {
         circle_id: crate::domain::CircleId,
     },
@@ -202,8 +209,16 @@ pub enum ServerEvent {
     ChannelsListed {
         channels: Vec<ChannelSummary>,
     },
+    ChannelUsersListed {
+        channel_id: ChannelId,
+        users: Vec<crate::domain::UserProfile>,
+    },
+    ChannelDescriptionUpdated {
+        channel_id: ChannelId,
+        description: String,
+    },
     JoinableChannelsListed {
-        channels: Vec<Channel>,
+        channels: Vec<crate::domain::DiscoverableChannel>,
     },
     ChannelMemberAdded {
         membership: Membership,

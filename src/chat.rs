@@ -501,11 +501,38 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn list_channel_users(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+    ) -> Result<Vec<UserProfile>, ChatError> {
+        self.repository
+            .list_channel_user_profiles(actor, channel_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn update_channel_description(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+        description: String,
+    ) -> Result<String, ChatError> {
+        self.repository
+            .update_channel_description(crate::domain::UpdateChannelDescription {
+                actor,
+                channel_id,
+                description,
+            })
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn list_joinable_channels(
         &self,
         actor: UserId,
         circle_id: crate::domain::CircleId,
-    ) -> Result<Vec<crate::domain::Channel>, ChatError> {
+    ) -> Result<Vec<crate::domain::DiscoverableChannel>, ChatError> {
         self.repository
             .list_joinable_channels(actor, circle_id)
             .await

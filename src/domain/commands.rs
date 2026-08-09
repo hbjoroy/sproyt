@@ -71,6 +71,13 @@ pub struct AddChannelMember {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UpdateChannelDescription {
+    pub actor: UserId,
+    pub channel_id: ChannelId,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LeaveChannel {
     pub actor: UserId,
     pub channel_id: ChannelId,
