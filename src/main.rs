@@ -2397,15 +2397,21 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px; padding: 9px 14px; }
       .conversation-header h2 { margin: 0; font-size: 1.25rem; line-height: 1.15; }
       .conversation-header p { margin: 2px 0 0; color: var(--subtle); font-size: .84rem; line-height: 1.25; }
-      .channel-people { min-width: 44px; min-height: 44px; padding: 0 10px; white-space: nowrap; }
+      .channel-people { min-width: 44px; min-height: 44px; padding: 0 10px; border-color: var(--border); background: var(--surface-raised); color: var(--ink); white-space: nowrap; }
+      .channel-people:hover { background: var(--surface-hover); color: var(--ink); }
       .channel-description { display: flex; align-items: flex-start; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
       .channel-description[hidden] { display: none; }
       .channel-description-content { min-width: 0; flex: 1; font-size: .86rem; color: var(--subtle); }
       .channel-description-content > :first-child { margin-top: 0; }
       .channel-description-content > :last-child { margin-bottom: 0; }
       .channel-description-edit { flex: 0 0 auto; min-width: 40px; min-height: 40px; padding: 0; }
-      .channel-details-dialog { width: min(480px, calc(100vw - 24px)); }
-      .channel-details-dialog-body { display: grid; gap: 14px; }
+      .channel-details-dialog { width: min(480px, calc(100vw - 24px)); max-height: min(720px, calc(100dvh - 24px)); padding: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--paper); color: var(--ink); }
+      .channel-details-dialog::backdrop { background: rgb(16 35 27 / 45%); }
+      .channel-details-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--paper); }
+      .channel-details-dialog > header h2 { margin: 0; font-size: 1.15rem; }
+      .channel-details-dialog > header button { width: 40px; min-width: 40px; min-height: 40px; padding: 0; border-color: var(--border); background: var(--surface-raised); color: var(--ink); font-size: 1.25rem; line-height: 1; }
+      .channel-details-dialog > header button:hover { background: var(--surface-hover); color: var(--ink); }
+      .channel-details-dialog-body { display: grid; gap: 14px; padding: 14px; overflow-y: auto; }
       .channel-member-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
       .channel-member-list li { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; }
       .channel-description-form { display: grid; gap: 8px; }
@@ -2746,6 +2752,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       form.send.is-expanded #media-previews:not(:empty) { display: flex; }
       form.send.is-expanded #upload-status:not(:empty) { display: block; }
       @media (prefers-reduced-motion: no-preference) { form.send { transition: padding .16s ease, gap .16s ease; } }
+
+      @media (min-width: 641px) {
+        .conversation-details { flex: 1 1 auto; }
+        .conversation-header .view-controls { order: 2; }
+        .conversation-header .channel-people { order: 3; }
+      }
 
       @media (max-width: 640px) {
         html {
@@ -7962,6 +7974,13 @@ mod protocol_capacity_tests {
     #[test]
     fn browser_exposes_channel_members_and_owner_managed_markdown_description() {
         assert!(INDEX_HTML.contains("id=\"channel-people\""));
+        assert!(INDEX_HTML.contains(".conversation-header .channel-people { order: 3; }"));
+        assert!(INDEX_HTML.contains(
+            "background: var(--surface-raised); color: var(--ink); white-space: nowrap;"
+        ));
+        assert!(INDEX_HTML.contains(".channel-details-dialog > header { display: flex; align-items: center; justify-content: space-between;"));
+        assert!(INDEX_HTML.contains(".channel-details-dialog > header button { width: 40px; min-width: 40px; min-height: 40px; padding: 0;"));
+        assert!(INDEX_HTML.contains(".channel-details-dialog-body { display: grid; gap: 14px; padding: 14px; overflow-y: auto; }"));
         assert!(
             INDEX_HTML.contains("sendCommand(\"list_channel_users\", { channel_id: channel.id })")
         );
