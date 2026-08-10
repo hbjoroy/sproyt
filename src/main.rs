@@ -2169,7 +2169,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         min-width: 0;
         display: grid;
         grid-template-columns: 280px minmax(0, 1fr);
-        grid-template-rows: auto minmax(0, 1fr) auto;
+        grid-template-rows: auto auto minmax(0, 1fr) auto;
         height: 100%;
         min-height: 0;
         border: 1px solid var(--border);
@@ -2203,6 +2203,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       .sidebar {
+        grid-column: 1;
         grid-row: 1 / -1;
         display: grid;
         grid-template-rows: auto auto 1fr auto;
@@ -2215,6 +2216,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         overscroll-behavior: contain;
         scrollbar-gutter: stable;
       }
+
+      .conversation-header { grid-column: 2; grid-row: 1; }
+      .channel-description { grid-column: 2; grid-row: 2; }
+      .messages { grid-column: 2; grid-row: 3; }
+      .composer-area { grid-column: 2; grid-row: 4; }
 
       .brand { display: flex; align-items: center; gap: 10px; }
       .brand h1 { min-width: 0; overflow-wrap: anywhere; }
@@ -2766,10 +2772,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           min-height: 0;
           position: relative;
           grid-template-columns: 1fr;
-          grid-template-rows: 52px minmax(0, 1fr) auto;
+          grid-template-rows: 52px auto minmax(0, 1fr) auto;
         }
 
         .sidebar { display: none; }
+        .conversation-header { grid-column: 1; grid-row: 1; }
+        .channel-description { grid-column: 1; grid-row: 2; }
+        .messages { grid-column: 1; grid-row: 3; }
+        .composer-area { grid-column: 1; grid-row: 4; }
         .sidebar.mobile-open { position: absolute; top: 52px; right: 0; left: 0; z-index: 5; display: grid; max-height: min(68dvh, calc(var(--app-height) - 132px)); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 8px; min-height: 0; padding: 8px 10px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; touch-action: pan-y; border-right: 0; border-bottom: 1px solid var(--line); box-shadow: 0 12px 24px rgb(24 32 29 / 16%); }
         .sidebar .brand, .sidebar .mobile-navigation-toggle { display: none; }
         .sidebar .identity { display: none; grid-column: 1 / -1; }
@@ -7909,7 +7919,9 @@ mod protocol_capacity_tests {
             "id=\"connection-status-dot\" role=\"img\" aria-label=\"Sambandsstatus: koplar til\""
         ));
         assert!(INDEX_HTML.contains("aria-label=\"Opne samtalar og vennekretsar\""));
-        assert!(INDEX_HTML.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
+        assert!(INDEX_HTML.contains("grid-template-rows: 52px auto minmax(0, 1fr) auto;"));
+        assert!(INDEX_HTML.contains(".composer-area { grid-column: 2; grid-row: 4; }"));
+        assert!(INDEX_HTML.contains(".composer-area { grid-column: 1; grid-row: 4; }"));
         assert!(INDEX_HTML.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
         assert!(INDEX_HTML.contains(".conversation-header { position: sticky; top: 0;"));
         assert!(INDEX_HTML.contains("grid-template-columns: 32px minmax(0, 1fr) 44px 44px;"));
@@ -8561,7 +8573,7 @@ mod protocol_capacity_tests {
         assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
         assert!(body.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
         assert!(body.contains("overflow-y: auto; overscroll-behavior: contain;"));
-        assert!(body.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
+        assert!(body.contains("grid-template-rows: 52px auto minmax(0, 1fr) auto;"));
         assert!(body.contains("form.send { grid-template-columns: auto auto minmax(0, 1fr) auto"));
         assert!(body.contains(".connection-status .status[data-routine=\"true\"]"));
         assert!(body.contains("setConnectionStatus(\"Tilkopla\")"));
