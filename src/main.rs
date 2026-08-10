@@ -3013,9 +3013,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
           </div>
           <p class="navigation-heading">Samtalar og vennekretsar</p>
           <div class="channel-list" id="channel-list"><span class="status">Lastar …</span></div>
-          <p class="navigation-heading">Ny direktemelding</p>
-          <label>Brukar<select id="direct-user"><option value="">Vel brukar</option></select></label>
-          <button id="open-direct" type="button" disabled>Start samtale</button>
         </nav>
         <details class="onboarding" id="mobile-onboarding">
           <summary>Administrer kretsar og kanalar</summary>
@@ -3085,13 +3082,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" rows="1" aria-label="Melding" placeholder="Melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
         <button id="send" type="submit" disabled>Send</button>
         </form>
-        <nav class="bottom-navigation" aria-label="Krets- og kanalveljar">
+        <nav class="bottom-navigation" aria-label="Område- og kanalveljar">
           <details class="bottom-navigation-panel" id="bottom-channel-panel">
             <summary id="bottom-channel-toggle" aria-controls="bottom-channel-list" aria-label="Vel kanal"><span class="bottom-navigation-label"># Kanal</span></summary>
             <div class="bottom-navigation-list" id="bottom-channel-list"><p class="status">Lastar …</p></div>
           </details>
           <details class="bottom-navigation-panel" id="bottom-circle-panel">
-            <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list" aria-label="Vel krets"><span class="bottom-navigation-label">◎ Krets</span></summary>
+            <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list" aria-label="Vel område"><span class="bottom-navigation-label">◎ Felles</span></summary>
             <div class="bottom-navigation-list" id="bottom-circle-list"><p class="status">Lastar …</p></div>
           </details>
         </nav>
@@ -3099,6 +3096,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     </main>
     <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
     <dialog class="circle-channel-dialog" id="circle-channel-dialog" aria-labelledby="circle-channel-title"><header><h2 id="circle-channel-title">Kanalar</h2><button id="circle-channel-close" type="button" aria-label="Lukk kanalveljaren">×</button></header><div class="circle-channel-dialog-body"><section><p class="navigation-heading">Tilgjengelege kanalar</p><div class="joinable-channel-list" id="circle-joinable-list"><p class="status">Lastar …</p></div></section><form class="circle-channel-create" id="circle-channel-create"><strong>Lag ny kanal</strong><label>Namn<input id="managed-channel-name" maxlength="80" placeholder="Turprat" required></label><label>Tilgang<select id="managed-channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label><button type="submit">Lag kanal</button></form><section class="circle-membership-actions"><button class="danger-button" id="leave-circle" type="button">Forlat vennekretsen</button><small id="circle-membership-notice">Du mistar tilgang til kanalane i kretsen, men meldingane dine blir ståande.</small></section></div></dialog>
+    <dialog class="circle-channel-dialog direct-message-dialog" id="direct-message-dialog" aria-labelledby="direct-message-title"><header><h2 id="direct-message-title">Ny samtale</h2><button id="direct-message-close" type="button" aria-label="Lukk personveljaren">×</button></header><div class="circle-channel-dialog-body"><label>Finn ein person<select id="direct-user"><option value="">Vel brukar</option></select></label><button id="open-direct" type="button" disabled>Start samtale</button></div></dialog>
     <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
     <datalist id="reaction-emoji-catalog"><option value="😍">forelska hjarteauge</option><option value="🥰">glad kjærleik</option><option value="😊">smil glad</option><option value="🤣">ler latter</option><option value="😢">trist gråt</option><option value="😭">gråt</option><option value="😮">overraska</option><option value="😡">sint</option><option value="👏">applaus bra</option><option value="🙌">hurra</option><option value="💪">sterk</option><option value="🤝">avtale</option><option value="👀">ser</option><option value="💯">hundre perfekt</option><option value="✅">ferdig ja</option><option value="❌">nei feil</option><option value="⭐">stjerne</option><option value="💡">idé</option><option value="🚀">rakett</option><option value="🥳">fest</option><option value="🍻">skål</option><option value="🌊">bølgje sjøsprøyt</option></datalist>
 
@@ -3167,6 +3165,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const bottomCircleToggle = document.querySelector("#bottom-circle-toggle");
       const bottomChannelList = document.querySelector("#bottom-channel-list");
       const bottomCircleList = document.querySelector("#bottom-circle-list");
+      const directMessageDialog = document.querySelector("#direct-message-dialog");
       const directUser = document.querySelector("#direct-user");
       const openDirect = document.querySelector("#open-direct");
       const conversationTitle = document.querySelector("#conversation-title");
@@ -3237,6 +3236,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const sessionRefreshBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
       let activeChannelId = null;
       let activeCircleId = null;
+      let activeRootScope = "shared";
       let activeInboxKind = null;
       let managedCircleId = null;
       let reconnectScrollOffset = null;
@@ -3366,6 +3366,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function setActiveCircle(circleId) {
         activeCircleId = circleId || null;
         if (activeCircleId) {
+          activeRootScope = "circle";
           restoredCircleId = activeCircleId;
           try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}
         }
@@ -3751,6 +3752,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       document.querySelector("#thread-close").addEventListener("click", () => threadPanel.close());
       threadPanel.addEventListener("close", () => { activeThreadRootId = null; });
       document.querySelector("#circle-channel-close").addEventListener("click", () => circleChannelDialog.close());
+      document.querySelector("#direct-message-close").addEventListener("click", () => directMessageDialog.close());
       channelPeopleButton.addEventListener("click", () => openChannelDetails(false));
       channelDescriptionEdit.addEventListener("click", () => openChannelDetails(true));
       channelDetailsClose.addEventListener("click", () => channelDetailsDialog.close());
@@ -4648,6 +4650,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         return knownUsers.find((user) => user.id === userId);
       }
 
+      function directChannelLabel(channel) {
+        return activeProfile(channel?.direct_user_id)?.display_name || channel?.name || "Direktesamtale";
+      }
+
       function profileStatus(profile) {
         if (!profile || (!profile.status_emoji && !profile.status_text)) return null;
         return {
@@ -4772,6 +4778,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (event.type === "users_listed") {
           knownUsers = payload.users;
           renderKnownUsers();
+          if (knownChannels.length > 0) renderChannels();
           renderConversationIdentity();
           refreshVisibleProfileStatuses();
           updateMentionSuggestions();
@@ -5035,6 +5042,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             knownChannels.push(channel);
           }
           renderChannels();
+          directMessageDialog.close();
           selectChannel(channel);
           sendCommand("list_my_channels");
           return;
@@ -5345,22 +5353,23 @@ const INDEX_HTML: &str = r##"<!doctype html>
         channelList.replaceChildren();
         renderPrimaryNavigation();
         renderBottomNavigation();
-        if (knownChannels.length === 0) {
+        const primaryChannels = knownChannels.filter((channel) => !channel.direct_user_id);
+        if (primaryChannels.length === 0) {
           const empty = document.createElement("p");
           empty.className = "status";
-          empty.textContent = "Ingen samtalar enno";
+          empty.textContent = "Ingen felles- eller kretssamtalar enno";
           channelList.append(empty);
           return;
         }
         const groupedChannels = new Map();
-        for (const channel of knownChannels) {
-          const groupId = channel.circle_id ? `circle:${channel.circle_id}` : (channel.direct_user_id ? "direct" : "shared");
+        for (const channel of primaryChannels) {
+          const groupId = channel.circle_id ? `circle:${channel.circle_id}` : "shared";
           if (!groupedChannels.has(groupId)) groupedChannels.set(groupId, []);
           groupedChannels.get(groupId).push(channel);
         }
         const collapsedGroups = readCollapsedChannelGroups();
         const groups = [...groupedChannels.entries()].sort(([left], [right]) => {
-          const rank = (groupId) => groupId === "direct" ? 0 : (groupId === "shared" ? 1 : 2);
+          const rank = (groupId) => groupId === "shared" ? 0 : 1;
           return rank(left) - rank(right);
         });
         for (const [groupId, channels] of groups) {
@@ -5371,9 +5380,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const heading = document.createElement("summary");
           const headingLabel = document.createElement("span");
           const circleId = groupId.startsWith("circle:") ? groupId.slice(7) : null;
-          headingLabel.textContent = groupId === "direct"
-            ? "Direktemeldingar"
-            : (groupId === "shared" ? "Felles" : (knownCircles.get(circleId)?.name || "Vennekrets"));
+          headingLabel.textContent = groupId === "shared"
+            ? "Felles"
+            : (knownCircles.get(circleId)?.name || "Vennekrets");
           heading.append(headingLabel);
           const groupUnreadCount = channels.reduce(
             (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
@@ -5397,7 +5406,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             button.className = "channel-button";
             button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
             const name = document.createElement("span");
-            name.textContent = channel.direct_user_id ? channel.name : `# ${channel.name}`;
+            name.textContent = channel.direct_user_id ? directChannelLabel(channel) : `# ${channel.name}`;
             button.append(name);
             const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
             if (unreadCount > 0 && channel.id !== activeChannelId) {
@@ -5435,15 +5444,20 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const activeCircle = knownCircles.get(activeCircleId);
         const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
         const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.direct_user_id);
-        const showingShared = !activeCircle && activeChannel && !activeChannel.circle_id && !activeChannel.direct_user_id;
-        const channelLabel = activeChannel
-          ? (activeChannel.direct_user_id ? activeChannel.name : `# ${activeChannel.name}`)
-          : "# Kanal";
-        const circleLabel = activeCircle?.name || (showingShared ? "Felles" : "Krets");
+        const directChannels = knownChannels.filter((channel) => channel.direct_user_id);
+        const showingShared = !activeCircle && activeRootScope === "shared";
+        const showingDirect = !activeCircle && activeRootScope === "direct";
+        const activeChannelInScope = activeChannel && (activeCircle
+          ? activeChannel.circle_id === activeCircleId
+          : (showingDirect ? Boolean(activeChannel.direct_user_id) : (!activeChannel.circle_id && !activeChannel.direct_user_id)));
+        const channelLabel = activeChannelInScope
+          ? (activeChannel.direct_user_id ? directChannelLabel(activeChannel) : `# ${activeChannel.name}`)
+          : (showingDirect ? "Direktesamtalar" : "# Kanal");
+        const circleLabel = activeCircle?.name || (showingDirect ? "Direkte" : "Felles");
         bottomChannelToggle.querySelector(".bottom-navigation-label").textContent = channelLabel;
-        bottomChannelToggle.setAttribute("aria-label", `Vel kanal. Aktiv kanal: ${activeChannel?.name || "ingen"}`);
+        bottomChannelToggle.setAttribute("aria-label", `Vel kanal. Aktiv kanal: ${activeChannelInScope ? (activeChannel.direct_user_id ? directChannelLabel(activeChannel) : activeChannel.name) : "ingen"}`);
         bottomCircleToggle.querySelector(".bottom-navigation-label").textContent = `◎ ${circleLabel}`;
-        bottomCircleToggle.setAttribute("aria-label", `Vel krets. Aktiv krets: ${activeCircle?.name || (showingShared ? "Felles" : "ingen")}`);
+        bottomCircleToggle.setAttribute("aria-label", `Vel område. Aktivt område: ${circleLabel}`);
 
         const sharedUnreadCount = sharedChannels.reduce(
           (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
@@ -5466,12 +5480,40 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const firstChannel = sharedChannels[0];
           if (!firstChannel) return;
           clearActiveCircle();
+          activeRootScope = "shared";
           circleSelect.value = "";
           closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
           if (firstChannel.id === activeChannelId) renderChannels();
           else selectChannel(firstChannel);
         });
         bottomCircleList.append(sharedButton);
+
+        const directUnreadCount = directChannels.reduce(
+          (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
+          0
+        );
+        const directButton = document.createElement("button");
+        directButton.type = "button";
+        directButton.textContent = "(Direkte)";
+        directButton.setAttribute("aria-current", showingDirect ? "page" : "false");
+        if (directUnreadCount > 0) {
+          directButton.classList.add("has-unread");
+          const unread = document.createElement("span");
+          unread.className = "unread";
+          unread.textContent = approximateUnreadCount(directUnreadCount);
+          unread.setAttribute("aria-label", `${directUnreadCount} uleste direktemeldingar`);
+          directButton.append(unread);
+        }
+        directButton.addEventListener("click", () => {
+          clearActiveCircle();
+          activeRootScope = "direct";
+          circleSelect.value = "";
+          closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
+          const firstChannel = directChannels[0];
+          if (firstChannel) selectChannel(firstChannel);
+          else renderChannels();
+        });
+        bottomCircleList.append(directButton);
 
         if (knownCircles.size === 0) {
           const empty = document.createElement("p");
@@ -5510,10 +5552,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
         }
 
-        const circleChannels = activeCircleId
+        const scopedChannels = activeCircleId
           ? knownChannels.filter((channel) => channel.circle_id === activeCircleId)
-          : [];
-        appendBottomChannelButtons(circleChannels, bottomChannelList, "Ingen kanalar i den valde kretsen.");
+          : (showingDirect ? directChannels : sharedChannels);
+        const emptyText = showingDirect
+          ? "Ingen direktesamtalar enno."
+          : (activeCircleId ? "Ingen kanalar i den valde kretsen." : "Ingen felleskanalar enno.");
+        appendBottomChannelButtons(scopedChannels, bottomChannelList, emptyText);
         if (activeCircleId) {
           const discover = document.createElement("button");
           discover.type = "button";
@@ -5524,15 +5569,19 @@ const INDEX_HTML: &str = r##"<!doctype html>
             openChannelManagement(activeCircleId);
           });
           bottomChannelList.append(discover);
-        }
-
-        const otherChannels = knownChannels.filter((channel) => !channel.circle_id);
-        if (otherChannels.length > 0) {
-          const heading = document.createElement("p");
-          heading.className = "bottom-navigation-heading";
-          heading.textContent = "Andre samtalar";
-          bottomChannelList.append(heading);
-          appendBottomChannelButtons(otherChannels, bottomChannelList);
+        } else if (showingDirect) {
+          const startDirect = document.createElement("button");
+          startDirect.type = "button";
+          startDirect.className = "channel-group-action";
+          startDirect.textContent = "+ Ny samtale …";
+          startDirect.addEventListener("click", () => {
+            closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
+            directUser.value = "";
+            openDirect.disabled = true;
+            directMessageDialog.showModal();
+            directUser.focus();
+          });
+          bottomChannelList.append(startDirect);
         }
       }
 
@@ -5548,7 +5597,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
           const button = document.createElement("button");
           button.type = "button";
-          button.textContent = channel.direct_user_id ? channel.name : `# ${channel.name}`;
+          button.textContent = channel.direct_user_id ? directChannelLabel(channel) : `# ${channel.name}`;
           button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
           if (unreadCount > 0) {
             button.classList.add("has-unread");
@@ -5731,7 +5780,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
               button.className = "unread-card";
               const identity = document.createElement("span");
               const name = document.createElement("strong");
-              name.textContent = channel.direct_user_id ? channel.name : `# ${channel.name}`;
+              name.textContent = channel.direct_user_id ? directChannelLabel(channel) : `# ${channel.name}`;
               const context = document.createElement("small");
               context.textContent = channel.circle_id
                 ? (knownCircles.get(channel.circle_id)?.name || "Vennekrets")
@@ -5887,8 +5936,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (channel.circle_id) {
           setActiveCircle(channel.circle_id);
           circleSelect.value = channel.circle_id;
-        } else if (!channel.direct_user_id) {
+        } else {
           clearActiveCircle();
+          activeRootScope = channel.direct_user_id ? "direct" : "shared";
           circleSelect.value = "";
         }
         reconnectScrollOffset = null;
@@ -8551,7 +8601,7 @@ mod protocol_capacity_tests {
         assert!(body.contains(":focus-visible"));
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
         assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
-        assert!(body.contains("class=\"bottom-navigation\" aria-label=\"Krets- og kanalveljar\""));
+        assert!(body.contains("class=\"bottom-navigation\" aria-label=\"Område- og kanalveljar\""));
         assert!(body.contains("</form>\n        <nav class=\"bottom-navigation\""));
         assert!(body.contains("id=\"bottom-channel-panel\""));
         assert!(body.contains("id=\"bottom-circle-panel\""));
@@ -8559,7 +8609,7 @@ mod protocol_capacity_tests {
             "aria-label=\"Vel kanal\"><span class=\"bottom-navigation-label\"># Kanal</span>"
         ));
         assert!(body.contains(
-            "aria-label=\"Vel krets\"><span class=\"bottom-navigation-label\">◎ Krets</span>"
+            "aria-label=\"Vel område\"><span class=\"bottom-navigation-label\">◎ Felles</span>"
         ));
         assert!(body.contains("height: 40px;\n        min-height: 40px"));
         assert!(body.contains("function renderBottomNavigation()"));
@@ -8570,18 +8620,28 @@ mod protocol_capacity_tests {
             ".message .reaction-picker[open] { visibility: visible; pointer-events: auto; }"
         ));
         assert!(body.contains("card.classList.add(\"reaction-picker-requested\")"));
-        assert!(body.contains("const circleChannels = activeCircleId"));
+        assert!(body.contains("const scopedChannels = activeCircleId"));
         assert!(body.contains("sharedButton.textContent = \"(Felles)\""));
         assert!(body.contains("sharedButton.disabled = sharedChannels.length === 0"));
+        assert!(body.contains("directButton.textContent = \"(Direkte)\""));
+        assert!(body.contains(
+            "const directChannels = knownChannels.filter((channel) => channel.direct_user_id)"
+        ));
+        assert!(body.contains(
+            "const primaryChannels = knownChannels.filter((channel) => !channel.direct_user_id)"
+        ));
+        assert!(body.contains("activeRootScope = \"direct\""));
         assert!(body.contains("const firstChannel = channels[0]"));
         assert!(body.contains("if (firstChannel) selectChannel(firstChannel)"));
         assert!(
-            body.contains("else if (!channel.direct_user_id) {\n          clearActiveCircle()")
+            body.contains("activeRootScope = channel.direct_user_id ? \"direct\" : \"shared\"")
         );
-        assert!(body.contains(
-            "const otherChannels = knownChannels.filter((channel) => !channel.circle_id)"
-        ));
-        assert!(body.contains("heading.textContent = \"Andre samtalar\""));
+        assert!(body.contains("id=\"direct-message-dialog\""));
+        assert!(body.contains("startDirect.textContent = \"+ Ny samtale …\""));
+        assert!(body.contains("directMessageDialog.showModal()"));
+        assert!(body.contains("activeProfile(channel?.direct_user_id)?.display_name"));
+        assert!(body.contains("if (knownChannels.length > 0) renderChannels()"));
+        assert!(!body.contains("heading.textContent = \"Andre samtalar\""));
         assert!(body.contains("button.setAttribute(\"aria-current\", circleId === activeCircleId ? \"page\" : \"false\")"));
         assert!(body.contains("button.classList.add(\"has-unread\")"));
         assert!(body.contains("function closeBottomNavigation(panel, toggle)"));
