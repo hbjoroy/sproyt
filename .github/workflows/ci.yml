@@ -38,13 +38,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
       - name: Cache Cargo data
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -96,13 +96,13 @@ jobs:
       SPROYT_POSTGRES_TEST_URL: postgres://sproyt:sproyt-ci@127.0.0.1:5432/sproyt
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
       - name: Cache Cargo data
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -130,10 +130,10 @@ jobs:
       RUSTSEC_ADVISORY_DB_REVISION: 309ad29d8fe448bf986019e05d47b9e0e29a2218
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache Cargo tools and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/cargo-audit
@@ -178,7 +178,7 @@ jobs:
       SPROYT_ENV: test
       SPROYT_AUTH_MODE: development
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Migrate source database
         run: cargo run --locked -- migrate
       - name: Seed durable chat evidence
@@ -208,7 +208,7 @@ jobs:
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select max(sequence) from messages where channel_id='01900000-0000-7000-8000-000000000002'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select sender_display_name from messages where id='01900000-0000-7000-8000-000000000003'")" = "Recovery user"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: recovery-drill-backup
           path: sproyt.dump
@@ -220,7 +220,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Helm
         uses: azure/setup-helm@v5
@@ -304,7 +304,7 @@ jobs:
           severity-cutoff: high
 
       - name: Upload delivery evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: delivery-evidence
           path: |
@@ -316,7 +316,7 @@ jobs:
         run: docker save --output sproyt-arm64.tar local/sproyt-arm64:${{ github.sha }}
 
       - name: Upload tested ARM64 release image
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-image-${{ github.sha }}
           path: sproyt-arm64.tar
@@ -349,7 +349,7 @@ jobs:
       REGCTL_IMAGE: regclient/regctl:v0.11.5@sha256:dbe356c6cf9f8f85e302b9e47fed481ef3f1b04807350e99b02ab2cadee0a993
     steps:
       - name: Download tested ARM64 release image
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-image-${{ github.sha }}
 
@@ -403,7 +403,7 @@ jobs:
             > registry-evidence.json
 
       - name: Upload registry evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: registry-evidence-${{ github.sha }}
           path: registry-evidence.json
