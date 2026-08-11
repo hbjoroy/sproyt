@@ -2226,15 +2226,30 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .brand h1 { min-width: 0; overflow-wrap: anywhere; }
       .brand-mark { display: block; width: 42px; height: 42px; border-radius: 12px; }
       .identity { display: grid; gap: 4px; font-size: .9rem; }
-      .identity a { color: var(--accent); }
-      #status-editor { padding: 6px 0; }
-      #status-editor label span { display: flex; gap: 6px; }
-      #status-emoji { width: 3.2rem; text-align: center; }
+      .identity > span { margin-bottom: 2px; color: var(--muted); font-size: .8rem; }
+      .identity > span strong { color: var(--ink); font-size: .9rem; }
+      .logout-link { display: flex; width: max-content; min-height: 34px; align-items: center; gap: 7px; margin-top: 3px; padding: 5px 8px; border-radius: 7px; color: var(--muted); text-decoration: none; }
+      .logout-link:hover, .logout-link:focus-visible { background: var(--surface-hover); color: var(--ink); }
+      .logout-icon { width: 1.25rem; color: var(--subtle); font-weight: 700; text-align: center; }
+      #status-editor, #notification-editor { padding: 2px 0; }
+      #status-editor > summary, #notification-editor > summary { padding: 5px 0; cursor: pointer; }
+      .status-settings, .notification-settings { display: grid; gap: 8px; padding: 7px 0 3px; }
+      .status-fields { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 6px; }
+      .status-fields label { gap: 3px; }
+      .status-fields label:first-child { width: 44px; }
+      #status-emoji { width: 44px; padding-inline: 4px; text-align: center; }
       #status-text { min-width: 0; }
-      #notification-editor { padding: 6px 0; }
-      .notification-settings { display: grid; gap: 8px; padding-top: 6px; }
-      .notification-settings label { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-      .notification-settings select { min-width: 9rem; }
+      .status-emoji-options { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+      .status-emoji-options button { min-width: 0; min-height: 36px; padding: 3px; border-color: transparent; background: var(--surface-hover); color: var(--ink); font-size: 1rem; }
+      .status-emoji-options button:hover, .status-emoji-options button:focus-visible, .status-emoji-options button[aria-pressed="true"] { border-color: var(--accent); background: var(--surface-raised); }
+      .settings-actions { display: flex; justify-content: flex-end; gap: 6px; }
+      .settings-actions button { width: auto; min-height: 36px; padding: 5px 11px; }
+      .settings-actions .secondary-button { border-color: transparent; background: transparent; color: var(--muted); }
+      .notification-settings label { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+      .notification-settings select { min-width: 8rem; }
+      .notification-settings input[type="checkbox"] { width: 20px; min-width: 20px; min-height: 20px; margin: 0; }
+      .notification-settings .settings-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+      .notification-settings .settings-actions button { min-width: 0; }
       .emoji-picker { position: relative; align-self: center; }
       .emoji-picker summary { cursor: pointer; font-size: 1.35rem; list-style: none; }
       .emoji-picker div { position: absolute; bottom: 2.5rem; left: 0; z-index: 5; display: grid; grid-template-columns: repeat(4, auto); gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--ink); box-shadow: 0 8px 24px #0002; }
@@ -2365,12 +2380,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .bottom-navigation-list button.has-unread { color: var(--ink); font-weight: 800; }
       .bottom-navigation-heading { margin: 5px 4px 1px; color: var(--subtle); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
       .bottom-navigation-list .unread { flex: none; }
-      .navigation-heading { margin: 0 8px 6px; color: var(--subtle); font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .navigation-heading { margin: 0 8px 5px; color: var(--muted); font-size: .8rem; font-weight: 700; letter-spacing: .01em; }
       .task-editor { display: grid; gap: 8px; margin-top: 12px; }
-      .inbox-navigation { display: grid; gap: 4px; margin-bottom: 12px; }
-      .inbox-button { display: flex; align-items: center; gap: 9px; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
+      .inbox-navigation { display: grid; gap: 3px; margin-bottom: 10px; }
+      .inbox-button { display: flex; min-height: 40px; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; }
       .inbox-button:hover, .inbox-button[aria-current="page"] { background: var(--surface-hover); color: var(--ink); }
-      .inbox-icon { width: 1.25rem; color: var(--muted); font-weight: 800; text-align: center; }
+      .inbox-icon { display: grid; width: 26px; height: 26px; flex: none; place-items: center; border-radius: 7px; background: var(--surface-hover); color: var(--muted); font-size: .86rem; font-weight: 800; text-align: center; }
+      .inbox-button[aria-current="page"] .inbox-icon { background: var(--surface-raised); color: var(--accent); }
       .inbox-label { flex: 1; }
       .channel-group { margin: 6px 0; }
       .channel-group > summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; color: var(--subtle); cursor: pointer; font-size: .78rem; font-weight: 700; list-style: none; }
@@ -2415,6 +2431,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .channel-member-list li { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; }
       .channel-member-add { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
       .channel-member-add[hidden] { display: none; }
+      .channel-member-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       .channel-description-form { display: grid; gap: 8px; }
       .channel-description-form[hidden] { display: none; }
       .channel-description-form textarea { min-height: 110px; }
@@ -2732,7 +2749,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       form.send {
         display: grid;
-        grid-template-columns: auto auto 1fr auto;
+        grid-template-columns: minmax(0, 1fr) auto;
         gap: 6px;
         padding: 6px 8px;
         border-top: 1px solid var(--line);
@@ -2741,13 +2758,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         align-items: end;
       }
       .composer-area { min-width: 0; }
+      .composer-tools { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; min-height: 44px; }
+      .composer-tools[hidden] { display: none; }
       form.send textarea { display: block; height: var(--composer-rest-height); min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 10px; line-height: 20px; resize: none; overflow-y: hidden; }
       form.send .emoji-picker { height: 44px; align-self: end; }
       .composer-icon, form.send .emoji-picker > summary { display: grid; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--accent); cursor: pointer; font-size: 1.25rem; list-style: none; }
       form.send .emoji-picker > summary::-webkit-details-marker { display: none; }
       .composer-icon:hover, form.send .emoji-picker > summary:hover { background: var(--surface-hover); }
       form.send .emoji-picker[aria-disabled="true"] > summary, .composer-icon:disabled { cursor: default; opacity: .55; pointer-events: none; }
-      form.send #send { height: 44px; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; }
+      form.send #send { display: grid; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border-radius: 8px; font-size: 1.2rem; }
       form.send .composer-input { align-self: end; }
       form.send #media-previews, form.send #upload-status { display: none; grid-column: 1 / -1; }
       form.send.is-expanded #media-previews:not(:empty) { display: flex; }
@@ -2798,6 +2817,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .sidebar .identity { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open .identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; }
         .sidebar.mobile-open .identity > span { grid-column: 1 / -1; }
+        .sidebar.mobile-open .identity > details, .sidebar.mobile-open .identity > a { grid-column: 1 / -1; }
         .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; white-space: nowrap; }
         .sidebar nav, .sidebar .onboarding, .sidebar .agent-access { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding, .sidebar.mobile-open .agent-access { display: grid; }
@@ -2806,6 +2826,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .sidebar.mobile-open .onboarding-fields { gap: 7px; padding-top: 8px; }
         .sidebar.mobile-open .navigation-heading { margin: 3px 4px; }
         .sidebar.mobile-open input, .sidebar.mobile-open select, .sidebar.mobile-open button { min-height: 36px; padding-top: 5px; padding-bottom: 5px; }
+        .sidebar.mobile-open .notification-settings input[type="checkbox"] { min-height: 20px; padding: 0; }
 
         .conversation-header { position: sticky; top: 0; z-index: 4; display: grid; grid-template-columns: 32px minmax(0, 1fr) 44px 44px; min-height: 52px; height: 52px; gap: 6px; padding: 4px 8px; background: var(--surface); }
         .mobile-app-mark { display: grid; width: 32px; height: 32px; place-items: center; }
@@ -2837,7 +2858,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .bottom-navigation-panel > summary,
         .bottom-navigation-list button { min-height: 40px; }
 
-        form.send { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 6px; padding: 6px 8px; --composer-rest-height: 44px; --composer-max-height: 126px; }
+        form.send { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 6px 8px; --composer-rest-height: 44px; --composer-max-height: 126px; }
         form.send .composer-input, form.send textarea { min-width: 0; width: 100%; }
         form.send textarea { min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 10px 9px; resize: none; }
         form.send button { min-height: 44px; }
@@ -2989,9 +3010,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
           <details id="status-editor">
             <summary id="current-status">Set status</summary>
-            <label>Status <span><input id="status-emoji" aria-label="Status-emoji" maxlength="32" placeholder="🙂"><input id="status-text" maxlength="100" placeholder="Kva skjer?"></span></label>
-            <div class="onboarding-actions" id="status-emoji-options" aria-label="Vel status-emoji"><button type="button" data-emoji="🙂">🙂</button><button type="button" data-emoji="💻">💻</button><button type="button" data-emoji="🏠">🏠</button><button type="button" data-emoji="🚶">🚶</button><button type="button" data-emoji="🍽️">🍽️</button><button type="button" data-emoji="🌴">🌴</button></div>
-            <div class="onboarding-actions"><button id="save-status" type="button">Lagre</button><button id="clear-status" type="button">Fjern</button></div>
+            <div class="status-settings">
+              <div class="status-fields"><label>Emoji<input id="status-emoji" aria-label="Status-emoji" maxlength="32" placeholder="🙂"></label><label>Tekst<input id="status-text" maxlength="100" placeholder="Kva skjer?"></label></div>
+              <div class="status-emoji-options" id="status-emoji-options" aria-label="Vel status-emoji"><button type="button" data-emoji="🙂" aria-label="Glad">🙂</button><button type="button" data-emoji="💻" aria-label="Arbeider">💻</button><button type="button" data-emoji="🏠" aria-label="Heime">🏠</button><button type="button" data-emoji="🚶" aria-label="Ute">🚶</button><button type="button" data-emoji="🍽️" aria-label="Matpause">🍽️</button><button type="button" data-emoji="🌴" aria-label="Ferie">🌴</button></div>
+              <div class="settings-actions"><button class="secondary-button" id="clear-status" type="button">Nullstill</button><button id="save-status" type="button">Lagre</button></div>
+            </div>
           </details>
           <details id="notification-editor">
             <summary id="notification-summary">Varsel</summary>
@@ -2999,11 +3022,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
               <label>Levering<select id="notification-mode"><option value="instant">Direkte</option><option value="weekly">Vekesoppsummering (snart)</option><option value="muted">Ingen</option></select></label>
               <label><span>Direktemeldingar</span><input id="notification-direct" type="checkbox" checked></label>
               <label><span>@omtalar</span><input id="notification-mentions" type="checkbox" checked></label>
-              <div class="onboarding-actions"><button id="enable-notifications" type="button">Slå på på denne eininga</button><button id="save-notifications" type="button">Lagre</button></div>
+              <div class="settings-actions"><button id="enable-notifications" type="button">Slå på varsling</button><button id="save-notifications" type="button">Lagre</button></div>
               <small id="notification-notice" aria-live="polite">Hentar varselinnstillingar …</small>
             </div>
           </details>
-          <a href="/auth/logout">Logg ut</a>
+          <a class="logout-link" href="/auth/logout"><span class="logout-icon" aria-hidden="true">↪</span><span>Logg ut</span></a>
         </div>
         <nav aria-label="Samtalar" id="mobile-navigation">
           <p class="navigation-heading">For deg</p>
@@ -3067,10 +3090,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
       <div class="composer-area">
         <form class="send" id="send-form">
-        <details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details>
-        <button class="composer-icon" id="attach-media" type="button" aria-label="Last opp bilete eller video" title="Last opp bilete eller video">📎</button><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="polite"></p>
+        <div class="composer-tools" id="composer-tools" aria-label="Meldingsverktøy" hidden><details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details><button class="composer-icon" id="attach-media" type="button" aria-label="Last opp bilete eller video" title="Last opp bilete eller video">📎</button></div><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="polite"></p>
         <div class="composer-input"><div id="mention-suggestions" class="mention-suggestions" role="listbox" aria-label="Vel brukar å omtale" hidden></div><textarea id="body" name="body" rows="1" aria-label="Melding" placeholder="Melding …" autocomplete="off" aria-autocomplete="list" aria-controls="mention-suggestions" aria-expanded="false" disabled></textarea></div>
-        <button id="send" type="submit" disabled>Send</button>
+        <button id="send" type="submit" aria-label="Send melding" title="Send melding" disabled><span aria-hidden="true">➤</span></button>
         </form>
         <nav class="bottom-navigation" aria-label="Område- og kanalveljar">
           <details class="bottom-navigation-panel" id="bottom-channel-panel">
@@ -3110,6 +3132,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         : Promise.resolve(null);
       const connectForm = document.querySelector("#connect-form");
       const sendForm = document.querySelector("#send-form");
+      const composerTools = document.querySelector("#composer-tools");
       const channelInput = document.querySelector("#channel");
       const bodyInput = document.querySelector("#body");
       const mentionSuggestions = document.querySelector("#mention-suggestions");
@@ -3176,6 +3199,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const channelMemberAdd = document.querySelector("#channel-member-add");
       const channelMember = document.querySelector("#channel-member");
       const addChannelMember = document.querySelector("#add-channel-member");
+      const inviteChannelMember = document.querySelector("#invite-channel-member");
       const channelMemberStatus = document.querySelector("#channel-member-status");
       const invitationToken = document.querySelector("#invitation-token");
       const copyInvitation = document.querySelector("#copy-invitation");
@@ -3233,12 +3257,21 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let reconnectScrollOffset = null;
       const activeConversationKey = "sproyt.active-channel.v1";
       const activeCircleKey = "sproyt.active-circle.v1";
+      const circleChannelHistoryKey = "sproyt.active-channel-by-circle.v1";
       const channelDraftPrefix = "sproyt.channel-draft.v1.";
       const linkedChannelId = new URL(window.location.href).searchParams.get("channel");
       let restoredChannelId = linkedChannelId;
       if (!restoredChannelId) try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
       let restoredCircleId = null;
       try { restoredCircleId = window.localStorage.getItem(activeCircleKey); } catch (_) {}
+      let lastChannelByCircle = {};
+      try {
+        const storedCircleChannels = JSON.parse(window.localStorage.getItem(circleChannelHistoryKey) || "{}");
+        if (storedCircleChannels && typeof storedCircleChannels === "object" && !Array.isArray(storedCircleChannels)) {
+          lastChannelByCircle = Object.fromEntries(Object.entries(storedCircleChannels)
+            .filter(([circleId, channelId]) => typeof circleId === "string" && circleId.length <= 128 && typeof channelId === "string" && channelId.length <= 128));
+        }
+      } catch (_) {}
       let currentParticipantId = null;
       let requestedChannelSlug = "general";
       const timeline = [];
@@ -3253,6 +3286,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const pendingCommands = new Map();
       const pendingInvitationResponses = new Map();
       const pendingInvitationInspections = new Map();
+      const pendingChannelInvitationRecipients = new Map();
+      const pendingDirectInvitationMessages = new Map();
       const invitationInspectionCache = new Map();
       let latestChannelListRequestId = null;
       let latestCircleListRequestId = null;
@@ -3278,6 +3313,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let activeMention = null;
       let composerHasFocus = false;
       let composerComposing = false;
+      const statusDraft = { emoji: "", text: "", dirty: false };
       const usesDesktopComposerKeys = window.matchMedia("(any-hover: hover) and (any-pointer: fine)");
 
       const applicationStore = createApplicationStore();
@@ -3350,7 +3386,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
           || uploadStatus.textContent.length > 0
           || !mentionSuggestions.hidden;
         sendForm.classList.toggle("is-expanded", expanded);
+        composerTools.hidden = !composerHasFocus;
         resizeComposer();
+      }
+
+      function closeComposerToolsAfterFocusLeaves() {
+        window.setTimeout(() => {
+          if (sendForm.contains(document.activeElement)) return;
+          composerHasFocus = false;
+          messageEmojiPicker.open = false;
+          closeMentionSuggestions();
+          syncComposerState();
+        }, 0);
       }
 
       function setActiveCircle(circleId) {
@@ -3381,6 +3428,30 @@ const INDEX_HTML: &str = r##"<!doctype html>
         setActiveCircle(fallback);
         circleSelect.value = fallback;
         return fallback;
+      }
+
+      function persistCircleChannelHistory() {
+        try { window.localStorage.setItem(circleChannelHistoryKey, JSON.stringify(lastChannelByCircle)); } catch (_) {}
+      }
+
+      function rememberCircleChannel(channel) {
+        if (!channel?.circle_id) return;
+        lastChannelByCircle[channel.circle_id] = channel.id;
+        persistCircleChannelHistory();
+      }
+
+      function forgetCircleChannel(circleId) {
+        if (!circleId || !(circleId in lastChannelByCircle)) return;
+        delete lastChannelByCircle[circleId];
+        persistCircleChannelHistory();
+      }
+
+      function preferredCircleChannel(circleId, channels = knownChannels) {
+        const available = channels.filter((channel) => channel.circle_id === circleId);
+        const remembered = available.find((channel) => channel.id === lastChannelByCircle[circleId]);
+        const primary = available.find((channel) => channel.name.trim().toLocaleLowerCase() === "prat"
+          || channel.slug === scopedCircleChannelSlug(circleId, "prat"));
+        return remembered || primary || available[0] || null;
       }
 
       function reportClientEvent(event) {
@@ -3733,7 +3804,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       attachMediaButton.addEventListener("click", () => {
         if (!attachMediaButton.disabled) mediaInput.click();
       });
-      mediaInput.addEventListener("change", () => { uploadMediaFiles([...mediaInput.files]); mediaInput.value = ""; });
+      mediaInput.addEventListener("change", () => {
+        uploadMediaFiles([...mediaInput.files]);
+        mediaInput.value = "";
+        bodyInput.focus();
+      });
       bodyInput.addEventListener("paste", (event) => {
         const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
         if (files.length) { event.preventDefault(); uploadMediaFiles(files); }
@@ -3873,7 +3948,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         syncComposerState();
       });
       bodyInput.addEventListener("click", updateMentionSuggestions);
-      bodyInput.addEventListener("focus", () => { composerHasFocus = true; syncComposerState(); });
+      sendForm.addEventListener("focusin", () => { composerHasFocus = true; syncComposerState(); });
+      sendForm.addEventListener("focusout", closeComposerToolsAfterFocusLeaves);
+      document.addEventListener("pointerdown", (event) => {
+        if (sendForm.contains(event.target)) return;
+        composerHasFocus = false;
+        messageEmojiPicker.open = false;
+        closeMentionSuggestions();
+        syncComposerState();
+      });
       bodyInput.addEventListener("compositionstart", () => { composerComposing = true; syncComposerState(); });
       bodyInput.addEventListener("compositionend", () => { composerComposing = false; persistActiveDraft(); updateMentionSuggestions(); syncComposerState(); });
       bodyInput.addEventListener("keydown", (event) => {
@@ -3893,7 +3976,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
           sendForm.requestSubmit();
         }
       });
-      bodyInput.addEventListener("blur", () => window.setTimeout(() => { composerHasFocus = false; closeMentionSuggestions(); syncComposerState(); }, 100));
 
       connectForm.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -3930,17 +4012,42 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       document.querySelectorAll("#message-emoji-options [data-emoji]").forEach((button) => {
-        button.addEventListener("click", () => insertEmoji(bodyInput, button.dataset.emoji));
+        button.addEventListener("click", () => {
+          insertEmoji(bodyInput, button.dataset.emoji);
+          messageEmojiPicker.open = false;
+        });
       });
       document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((button) => {
-        button.addEventListener("click", () => { statusEmoji.value = button.dataset.emoji; statusText.focus(); });
+        button.addEventListener("click", () => {
+          statusEmoji.value = button.dataset.emoji;
+          statusDraft.emoji = statusEmoji.value;
+          statusDraft.text = statusText.value;
+          statusDraft.dirty = true;
+          document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((option) => {
+            option.setAttribute("aria-pressed", String(option === button));
+          });
+          statusText.focus();
+        });
+      });
+      [statusEmoji, statusText].forEach((input) => {
+        input.addEventListener("input", () => {
+          statusDraft.emoji = statusEmoji.value;
+          statusDraft.text = statusText.value;
+          statusDraft.dirty = true;
+        });
       });
       document.querySelector("#save-status").addEventListener("click", () => {
-        sendCommand("set_status", { text: statusText.value, emoji: statusEmoji.value, expires_at: null });
+        statusDraft.emoji = statusEmoji.value;
+        statusDraft.text = statusText.value;
+        statusDraft.dirty = true;
+        sendCommand("set_status", { text: statusDraft.text, emoji: statusDraft.emoji, expires_at: null });
       });
       document.querySelector("#clear-status").addEventListener("click", () => {
         statusText.value = "";
         statusEmoji.value = "";
+        statusDraft.text = "";
+        statusDraft.emoji = "";
+        statusDraft.dirty = true;
         sendCommand("set_status", { text: "", emoji: "", expires_at: null });
       });
 
@@ -4132,6 +4239,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       });
       channelMember.addEventListener("change", updateOnboardingButtons);
+      inviteChannelMember.addEventListener("click", () => {
+        const channel = knownChannels.find((item) => item.id === channelDetailsDialog.dataset.channelId);
+        if (!channel?.circle_id || !channelMember.value) return;
+        channelMemberStatus.textContent = "Lagar invitasjonen …";
+        const requestId = sendCommand("create_invitation", {
+          target: { type: "channel", circle_id: channel.circle_id, channel_id: channel.id }
+        });
+        if (requestId) pendingChannelInvitationRecipients.set(requestId, channelMember.value);
+      });
       addChannelMember.addEventListener("click", () => {
         const channelId = channelDetailsDialog.dataset.channelId;
         if (channelId && channelMember.value) {
@@ -4495,7 +4611,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         deleteCircleButton.hidden = selectedCircle?.role !== "owner";
         deleteCircleButton.disabled = !connected || selectedCircle?.role !== "owner";
         const memberChannel = knownChannels.find((channel) => channel.id === channelDetailsDialog.dataset.channelId);
-        addChannelMember.disabled = !connected || !channelMember.value || !memberChannel || !["owner", "moderator"].includes(memberChannel.role);
+        const canManageMember = connected && channelMember.value && memberChannel && ["owner", "moderator"].includes(memberChannel.role);
+        addChannelMember.disabled = !canManageMember;
+        inviteChannelMember.disabled = !canManageMember || !memberChannel.circle_id;
       }
 
       async function processApi(path, method = "GET", body = undefined) {
@@ -4615,8 +4733,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         refreshChannelMemberOptions(channelDetailsDialog.dataset.channelId);
         const own = knownUsers.find((user) => user.id === currentParticipantId);
         if (own) {
-          statusEmoji.value = own.status_emoji || "";
-          statusText.value = own.status_text || "";
+          if (!statusDraft.dirty) {
+            statusDraft.emoji = own.status_emoji || "";
+            statusDraft.text = own.status_text || "";
+            statusEmoji.value = statusDraft.emoji;
+            statusText.value = statusDraft.text;
+          }
+          document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((button) => {
+            button.setAttribute("aria-pressed", String(button.dataset.emoji === statusEmoji.value));
+          });
           currentStatus.textContent = own.status_text || own.status_emoji
             ? `${own.status_emoji || ""} ${own.status_text || ""}`.trim()
             : "Set status";
@@ -4724,9 +4849,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function refreshChannelMemberOptions(channelId) {
+        const channel = knownChannels.find((item) => item.id === channelId);
         const memberIds = new Set((knownChannelUsers.get(channelId) || []).map((user) => user.id));
+        const eligibleUsers = channel?.circle_id ? (knownCircleUsers.get(channel.circle_id) || []) : knownUsers;
         channelMember.replaceChildren(new Option("Vel brukar", ""));
-        knownUsers
+        eligibleUsers
           .filter((user) => user.id !== currentParticipantId && !memberIds.has(user.id))
           .forEach((user) => {
             const status = [user.status_emoji, user.status_text].filter(Boolean).join(" ");
@@ -4742,6 +4869,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         channelMemberAdd.hidden = !["owner", "moderator"].includes(channel.role);
         channelMemberStatus.textContent = "";
         refreshChannelMemberOptions(channel.id);
+        if (channel.circle_id) sendCommand("list_circle_users", { circle_id: channel.circle_id });
         channelDescriptionForm.hidden = channel.role !== "owner";
         channelDescriptionInput.value = channel.description || "";
         channelDescriptionStatus.textContent = "";
@@ -4760,9 +4888,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const requestedCommand = event.request_id ? pendingCommands.get(event.request_id) : undefined;
         const pendingInvitation = event.request_id ? pendingInvitationResponses.get(event.request_id) : undefined;
         const inspectedInvitationToken = event.request_id ? pendingInvitationInspections.get(event.request_id) : undefined;
+        const invitationRecipient = event.request_id ? pendingChannelInvitationRecipients.get(event.request_id) : undefined;
+        const directInvitationMessage = event.request_id ? pendingDirectInvitationMessages.get(event.request_id) : undefined;
         if (event.request_id) pendingCommands.delete(event.request_id);
         if (event.request_id) pendingInvitationResponses.delete(event.request_id);
         if (event.request_id) pendingInvitationInspections.delete(event.request_id);
+        if (event.request_id) pendingChannelInvitationRecipients.delete(event.request_id);
+        if (event.request_id) pendingDirectInvitationMessages.delete(event.request_id);
 
         if (event.type === "hello") {
           currentParticipantId = payload.participant_id;
@@ -4781,6 +4913,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         if (event.type === "circle_users_listed") {
           knownCircleUsers.set(payload.circle_id, payload.users);
+          const memberChannel = knownChannels.find((channel) => channel.id === channelDetailsDialog.dataset.channelId);
+          if (channelDetailsDialog.open && memberChannel?.circle_id === payload.circle_id) {
+            refreshChannelMemberOptions(memberChannel.id);
+          }
           updateMentionSuggestions();
           return;
         }
@@ -4813,6 +4949,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
               knownChannelUsers.set(channelId, [payload.profile, ...users.filter((user) => user.id !== payload.profile.id)]);
             }
           }
+          if (payload.profile.id === currentParticipantId) statusDraft.dirty = false;
           renderKnownUsers();
           renderConversationIdentity();
           refreshVisibleProfileStatuses(payload.profile.id);
@@ -4888,6 +5025,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         if (event.type === "circle_deleted") {
           const deletedCircleId = payload.circle_id;
+          forgetCircleChannel(deletedCircleId);
           const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
           if (activeChannel?.circle_id === deletedCircleId) {
             activeChannelId = null;
@@ -4903,6 +5041,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         if (event.type === "circle_left") {
           const departedCircleId = payload.circle_id;
+          forgetCircleChannel(departedCircleId);
           if (circleChannelDialog.open) circleChannelDialog.close();
           knownCircles.delete(departedCircleId);
           knownChannels = knownChannels.filter((channel) => channel.circle_id !== departedCircleId);
@@ -4926,6 +5065,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
         if (event.type === "invitation_created") {
+          if (invitationRecipient) {
+            const directRequestId = sendCommand("open_direct_channel", { user_id: invitationRecipient });
+            if (directRequestId) {
+              pendingDirectInvitationMessages.set(directRequestId, `[[invite:${payload.invitation.token}]]`);
+              channelMemberStatus.textContent = "Opnar direktemeldinga …";
+            }
+            return;
+          }
           invitationToken.value = `[[invite:${payload.invitation.token}]]`;
           copyInvitation.hidden = false;
           onboardingNotice.textContent = "Invitasjonsmeldinga er klar. Kopier henne inn i ein samtale.";
@@ -5040,6 +5187,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           renderChannels();
           directMessageDialog.close();
           selectChannel(channel);
+          if (directInvitationMessage) {
+            sendCommand("send_message", { channel_id: channel.id, body: directInvitationMessage });
+            channelDetailsDialog.close();
+          }
           sendCommand("list_my_channels");
           return;
         }
@@ -5318,8 +5469,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
           if (requestedCommand === "add_channel_member") {
             channelMemberStatus.textContent = payload.code === "permission_denied"
-              ? "Du har ikkje tilgang til å leggje brukarar til i denne kanalen."
+              ? "Brukaren må vere medlem av kretsen, og du må ha tilgang til å leggje til medlemmer."
               : "Brukaren kunne ikkje leggjast til. Prøv igjen.";
+            return;
+          }
+          if (requestedCommand === "create_invitation" && invitationRecipient) {
+            channelMemberStatus.textContent = "Invitasjonen kunne ikkje lagast. Prøv igjen.";
+            return;
+          }
+          if (requestedCommand === "open_direct_channel" && directInvitationMessage) {
+            channelMemberStatus.textContent = "Direktemeldinga kunne ikkje opnast. Prøv igjen.";
             return;
           }
           if (requestedCommand === "leave_circle") {
@@ -5462,8 +5621,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
               circleSelect.value = circleId;
               sendCommand("list_joinable_channels", { circle_id: circleId });
               closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
-              const firstChannel = channels[0];
-              if (firstChannel) selectChannel(firstChannel);
+              const preferredChannel = preferredCircleChannel(circleId, channels);
+              if (preferredChannel) selectChannel(preferredChannel);
               else renderChannels();
             });
             bottomCircleList.append(button);
@@ -5833,6 +5992,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         restoredChannelId = channel.id;
         try { window.localStorage.setItem(activeConversationKey, channel.id); } catch (_) {}
         if (channel.circle_id) {
+          rememberCircleChannel(channel);
           setActiveCircle(channel.circle_id);
           circleSelect.value = channel.circle_id;
         } else {
@@ -6865,7 +7025,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
     </script>
-    <dialog class="channel-details-dialog" id="channel-details-dialog" aria-labelledby="channel-details-title"><header><h2 id="channel-details-title">Menneske i kanalen</h2><button id="channel-details-close" type="button" aria-label="Lukk kanalopplysningane">×</button></header><div class="channel-details-dialog-body"><ul class="channel-member-list" id="channel-member-list"><li>Lastar …</li></ul><section class="channel-member-add" id="channel-member-add" hidden><strong>Legg til i kanalen</strong><label>Person<select id="channel-member"><option value="">Vel brukar</option></select></label><button id="add-channel-member" type="button" disabled>Legg til</button><p class="status" id="channel-member-status" role="status" aria-live="polite"></p></section><form class="channel-description-form" id="channel-description-form" hidden><label for="channel-description-input"><strong>Kanalomtale</strong> (Markdown)</label><textarea id="channel-description-input" maxlength="2000"></textarea><div><button type="submit">Lagre omtale</button></div><p class="status" id="channel-description-status" role="status"></p></form></div></dialog>
+    <dialog class="channel-details-dialog" id="channel-details-dialog" aria-labelledby="channel-details-title"><header><h2 id="channel-details-title">Menneske i kanalen</h2><button id="channel-details-close" type="button" aria-label="Lukk kanalopplysningane">×</button></header><div class="channel-details-dialog-body"><ul class="channel-member-list" id="channel-member-list"><li>Lastar …</li></ul><section class="channel-member-add" id="channel-member-add" hidden><strong>Legg til i kanalen</strong><label>Person<select id="channel-member"><option value="">Vel brukar</option></select></label><div class="channel-member-actions"><button id="invite-channel-member" type="button" disabled>Inviter</button><button id="add-channel-member" type="button" disabled>Legg til</button></div><p class="status" id="channel-member-status" role="status" aria-live="polite"></p></section><form class="channel-description-form" id="channel-description-form" hidden><label for="channel-description-input"><strong>Kanalomtale</strong> (Markdown)</label><textarea id="channel-description-input" maxlength="2000"></textarea><div><button type="submit">Lagre omtale</button></div><p class="status" id="channel-description-status" role="status"></p></form></div></dialog>
   </body>
 </html>
 "##;
@@ -7511,6 +7671,18 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("form.send.is-expanded #upload-status:not(:empty)"));
         assert!(INDEX_HTML.contains("min-width: 44px; min-height: 44px"));
         assert!(INDEX_HTML.contains("composer-icon\" id=\"attach-media\""));
+        assert!(INDEX_HTML.contains("id=\"composer-tools\" aria-label=\"Meldingsverktøy\" hidden"));
+        assert!(INDEX_HTML.contains("composerTools.hidden = !composerHasFocus"));
+        assert!(INDEX_HTML.contains("sendForm.addEventListener(\"focusin\""));
+        assert!(INDEX_HTML.contains(
+            "sendForm.addEventListener(\"focusout\", closeComposerToolsAfterFocusLeaves)"
+        ));
+        assert!(INDEX_HTML.contains("document.addEventListener(\"pointerdown\""));
+        assert!(INDEX_HTML.contains("if (sendForm.contains(event.target)) return"));
+        assert!(INDEX_HTML.contains("if (sendForm.contains(document.activeElement)) return"));
+        assert!(INDEX_HTML.contains("messageEmojiPicker.open = false"));
+        assert!(INDEX_HTML.contains("aria-label=\"Send melding\" title=\"Send melding\""));
+        assert!(!INDEX_HTML.contains(">Send</button>"));
         assert!(INDEX_HTML.contains("compositionstart"));
         assert!(INDEX_HTML.contains("compositionend"));
         assert!(INDEX_HTML.contains("event.keyCode !== 229"));
@@ -7520,6 +7692,31 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("@media (prefers-reduced-motion: no-preference)"));
         assert!(INDEX_HTML.contains("attachMediaButton.disabled = !writableChannel"));
         assert!(INDEX_HTML.contains("syncComposerState();"));
+    }
+
+    #[test]
+    fn browser_keeps_compact_status_controls_and_saves_the_complete_draft() {
+        assert!(INDEX_HTML.contains("class=\"status-fields\""));
+        assert!(INDEX_HTML.contains("class=\"status-emoji-options\""));
+        assert!(INDEX_HTML.contains("class=\"secondary-button\" id=\"clear-status\""));
+        assert!(INDEX_HTML.contains(">Nullstill</button>"));
+        assert!(INDEX_HTML.contains(">Slå på varsling</button>"));
+        assert!(INDEX_HTML.contains("class=\"logout-link\""));
+        assert!(INDEX_HTML.contains("class=\"logout-icon\" aria-hidden=\"true\""));
+        assert!(INDEX_HTML.contains(".inbox-icon { display: grid; width: 26px; height: 26px"));
+        assert!(INDEX_HTML.contains("letter-spacing: .01em"));
+        assert!(
+            INDEX_HTML.contains("const statusDraft = { emoji: \"\", text: \"\", dirty: false }")
+        );
+        assert!(INDEX_HTML.contains("statusDraft.emoji = statusEmoji.value"));
+        assert!(INDEX_HTML.contains("statusDraft.text = statusText.value"));
+        assert!(INDEX_HTML.contains(
+            "sendCommand(\"set_status\", { text: statusDraft.text, emoji: statusDraft.emoji, expires_at: null })"
+        ));
+        assert!(INDEX_HTML.contains("if (!statusDraft.dirty)"));
+        assert!(INDEX_HTML.contains(
+            "if (payload.profile.id === currentParticipantId) statusDraft.dirty = false"
+        ));
     }
 
     #[test]
@@ -7933,10 +8130,26 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("event.type === \"channel_users_listed\""));
         assert!(INDEX_HTML.contains("id=\"channel-member-add\" hidden"));
         assert!(INDEX_HTML.contains("<strong>Legg til i kanalen</strong>"));
+        assert!(
+            INDEX_HTML
+                .contains("id=\"invite-channel-member\" type=\"button\" disabled>Inviter</button>")
+        );
+        assert!(INDEX_HTML.contains("const pendingChannelInvitationRecipients = new Map()"));
+        assert!(INDEX_HTML.contains("pendingDirectInvitationMessages.set(directRequestId"));
+        assert!(INDEX_HTML.contains(
+            "sendCommand(\"send_message\", { channel_id: channel.id, body: directInvitationMessage })"
+        ));
+        assert!(INDEX_HTML.contains("`[[invite:${payload.invitation.token}]]`"));
         assert!(INDEX_HTML.contains(
             "channelMemberAdd.hidden = ![\"owner\", \"moderator\"].includes(channel.role)"
         ));
         assert!(INDEX_HTML.contains("function refreshChannelMemberOptions(channelId)"));
+        assert!(INDEX_HTML.contains(
+            "const eligibleUsers = channel?.circle_id ? (knownCircleUsers.get(channel.circle_id) || []) : knownUsers"
+        ));
+        assert!(INDEX_HTML.contains(
+            "if (channel.circle_id) sendCommand(\"list_circle_users\", { circle_id: channel.circle_id })"
+        ));
         assert!(INDEX_HTML.contains("!memberIds.has(user.id)"));
         assert!(INDEX_HTML.contains("channelDetailsDialog.dataset.channelId"));
         assert!(!INDEX_HTML.contains("Bli med i kanal"));
@@ -8356,7 +8569,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("clearActiveCircle(deletedCircleId);"));
         assert!(body.contains("clearActiveCircle(departedCircleId);"));
         assert!(body.contains(
-            "if (channel.circle_id) {\n          setActiveCircle(channel.circle_id);\n          circleSelect.value = channel.circle_id;\n        }"
+            "if (channel.circle_id) {\n          rememberCircleChannel(channel);\n          setActiveCircle(channel.circle_id);\n          circleSelect.value = channel.circle_id;\n        }"
         ));
         assert!(body.contains("Kanalen kunne ikkje opprettast."));
         assert!(body.contains("sendCommand(\"list_joinable_channels\""));
@@ -8530,8 +8743,22 @@ mod protocol_capacity_tests {
         ));
         assert!(!body.contains("const primaryChannels = knownChannels.filter"));
         assert!(body.contains("activeRootScope = \"direct\""));
-        assert!(body.contains("const firstChannel = channels[0]"));
-        assert!(body.contains("if (firstChannel) selectChannel(firstChannel)"));
+        assert!(
+            body.contains("const circleChannelHistoryKey = \"sproyt.active-channel-by-circle.v1\"")
+        );
+        assert!(body.contains("function rememberCircleChannel(channel)"));
+        assert!(
+            body.contains("function preferredCircleChannel(circleId, channels = knownChannels)")
+        );
+        assert!(body.contains("const remembered = available.find"));
+        assert!(body.contains("channel.name.trim().toLocaleLowerCase() === \"prat\""));
+        assert!(body.contains("return remembered || primary || available[0] || null"));
+        assert!(
+            body.contains("const preferredChannel = preferredCircleChannel(circleId, channels)")
+        );
+        assert!(body.contains("if (preferredChannel) selectChannel(preferredChannel)"));
+        assert!(body.contains("rememberCircleChannel(channel)"));
+        assert!(body.contains("forgetCircleChannel(departedCircleId)"));
         assert!(
             body.contains("activeRootScope = channel.direct_user_id ? \"direct\" : \"shared\"")
         );
@@ -8553,7 +8780,7 @@ mod protocol_capacity_tests {
         assert!(body.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
         assert!(body.contains("overflow-y: auto; overscroll-behavior: contain;"));
         assert!(body.contains("grid-template-rows: 52px auto minmax(0, 1fr) auto;"));
-        assert!(body.contains("form.send { grid-template-columns: auto auto minmax(0, 1fr) auto"));
+        assert!(body.contains("form.send { grid-template-columns: minmax(0, 1fr) auto"));
         assert!(body.contains(".connection-status .status[data-routine=\"true\"]"));
         assert!(body.contains("setConnectionStatus(\"Tilkopla\")"));
         assert!(
