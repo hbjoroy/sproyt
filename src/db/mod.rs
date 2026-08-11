@@ -640,7 +640,17 @@ where
         .unwrap();
     assert_eq!(
         repository
-            .list_circle_user_profiles(outsider, circle.id.clone())
+            .list_circle_user_profiles(outsider.clone(), circle.id.clone())
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .add_channel_member(AddChannelMember {
+                actor: actor.clone(),
+                channel_id: circle_channel.id.clone(),
+                user_id: outsider,
+            })
             .await,
         Err(RepositoryError::PermissionDenied)
     );
