@@ -4422,10 +4422,24 @@ const INDEX_HTML: &str = r##"<!doctype html>
           if (!previousSocket && connectionSupervisor.state.socket !== nextSocket) return;
           connectionSupervisor.state.socket = nextSocket;
           if (previousSocket) {
-            connectionSupervisor.state.socketHandoff = { previousSocket, nextSocket };
+            const handoff = { previousSocket, nextSocket, timeoutId: null };
+            handoff.timeoutId = window.setTimeout(() => {
+              if (connectionSupervisor.state.socketHandoff !== handoff) return;
+              connectionSupervisor.state.socketHandoff = null;
+              if (previousSocket.readyState === WebSocket.OPEN) {
+                connectionSupervisor.state.socket = previousSocket;
+                connectionSupervisor.state.subscribedChannelId = activeChannelId;
+                setConnected(true, "Tilkopla");
+                nextSocket.close(4001, "session handoff timed out");
+                scheduleSessionRefresh(30);
+                return;
+              }
+              nextSocket.close(4001, "session handoff timed out");
+              connect(true);
+            }, 10_000);
+            connectionSupervisor.state.socketHandoff = handoff;
             if (activeChannelId) {
-              connectionSupervisor.state.subscribedChannelId = null;
-              setConnected(true, "Gjenopprettar samtalen …");
+              setConnectionStatus("Gjenopprettar samtalen …");
             }
           }
           reportClientEvent("websocket_connected");
@@ -4458,7 +4472,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         nextSocket.addEventListener("close", (event) => {
           if (connectionSupervisor.state.socketHandoff?.nextSocket === nextSocket) {
-            const fallbackSocket = connectionSupervisor.state.socketHandoff.previousSocket;
+            const handoff = connectionSupervisor.state.socketHandoff;
+            const fallbackSocket = handoff.previousSocket;
+            if (handoff.timeoutId !== null) window.clearTimeout(handoff.timeoutId);
             connectionSupervisor.state.socketHandoff = null;
             if (fallbackSocket.readyState === WebSocket.OPEN) {
               connectionSupervisor.state.socket = fallbackSocket;
@@ -4504,7 +4520,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function finishSocketHandoff(nextSocket) {
         if (connectionSupervisor.state.socketHandoff?.nextSocket !== nextSocket || connectionSupervisor.state.socket !== nextSocket) return;
-        const previousSocket = connectionSupervisor.state.socketHandoff.previousSocket;
+        const handoff = connectionSupervisor.state.socketHandoff;
+        const previousSocket = handoff.previousSocket;
+        if (handoff.timeoutId !== null) window.clearTimeout(handoff.timeoutId);
         connectionSupervisor.state.socketHandoff = null;
         if (previousSocket.readyState === WebSocket.OPEN) {
           previousSocket.close(4000, "session refreshed");
@@ -4912,6 +4930,26 @@ const INDEX_HTML: &str = r##"<!doctype html>
         updateOnboardingButtons();
       }
 
+      function showChannelMemberLoadError(channelId, message) {
+        channelMemberList.replaceChildren();
+        const item = document.createElement("li");
+        const text = document.createElement("span");
+        text.textContent = message;
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.textContent = "Prøv igjen";
+        retry.addEventListener("click", () => requestChannelMembers(channelId));
+        item.append(text, retry);
+        channelMemberList.append(item);
+      }
+
+      function requestChannelMembers(channelId) {
+        channelMemberList.replaceChildren(Object.assign(document.createElement("li"), { textContent: "Lastar …" }));
+        if (!sendCommand("list_channel_users", { channel_id: channelId })) {
+          showChannelMemberLoadError(channelId, "Ikkje tilkopla enno. Vent litt og prøv igjen.");
+        }
+      }
+
       function openChannelDetails(editDescription = false) {
         const channel = knownChannels.find((item) => item.id === activeChannelId);
         if (!channel) return;
@@ -4923,9 +4961,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         channelDescriptionForm.hidden = channel.role !== "owner";
         channelDescriptionInput.value = channel.description || "";
         channelDescriptionStatus.textContent = "";
-        channelMemberList.replaceChildren(Object.assign(document.createElement("li"), { textContent: "Lastar …" }));
-        sendCommand("list_channel_users", { channel_id: channel.id });
         channelDetailsDialog.showModal();
+        requestChannelMembers(channel.id);
         if (editDescription && channel.role === "owner") channelDescriptionInput.focus();
       }
 
@@ -5513,9 +5550,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
             return;
           }
           if (requestedCommand === "list_channel_users") {
-            channelMemberList.replaceChildren(Object.assign(document.createElement("li"), {
-              textContent: "Medlemslista kunne ikkje lastast. Prøv igjen."
-            }));
+            const channelId = channelDetailsDialog.dataset.channelId;
+            showChannelMemberLoadError(channelId, "Medlemslista kunne ikkje lastast.");
             return;
           }
           if (requestedCommand === "add_channel_member") {
@@ -8004,10 +8040,25 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("type: \"session_rotated\""));
         assert!(INDEX_HTML.contains("if (connectionSupervisor.state.socketHandoff) return"));
         assert!(
-            INDEX_HTML.contains(
-                "connectionSupervisor.state.socketHandoff = { previousSocket, nextSocket }"
-            )
+            INDEX_HTML.contains("const handoff = { previousSocket, nextSocket, timeoutId: null }")
         );
+        assert!(INDEX_HTML.contains("}, 10_000);"));
+        assert!(INDEX_HTML.contains("session handoff timed out"));
+        assert!(
+            INDEX_HTML
+                .contains("if (handoff.timeoutId !== null) window.clearTimeout(handoff.timeoutId)")
+        );
+        let handoff_open = INDEX_HTML
+            .split("if (previousSocket) {")
+            .nth(1)
+            .and_then(|value| {
+                value
+                    .split("reportClientEvent(\"websocket_connected\")")
+                    .next()
+            })
+            .expect("socket handoff open block");
+        assert!(!handoff_open.contains("subscribedChannelId = null"));
+        assert!(handoff_open.contains("setConnectionStatus(\"Gjenopprettar samtalen …\")"));
         assert!(INDEX_HTML.contains("finishSocketHandoff(connectionSupervisor.state.socket)"));
         assert!(
             INDEX_HTML
@@ -8213,9 +8264,13 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains(".channel-details-dialog > header { display: flex; align-items: center; justify-content: space-between;"));
         assert!(INDEX_HTML.contains(".channel-details-dialog > header button { width: 40px; min-width: 40px; min-height: 40px; padding: 0;"));
         assert!(INDEX_HTML.contains(".channel-details-dialog-body { display: grid; gap: 14px; padding: 14px; overflow-y: auto; }"));
+        assert!(INDEX_HTML.contains("function requestChannelMembers(channelId)"));
         assert!(
-            INDEX_HTML.contains("sendCommand(\"list_channel_users\", { channel_id: channel.id })")
+            INDEX_HTML.contains("sendCommand(\"list_channel_users\", { channel_id: channelId })")
         );
+        assert!(INDEX_HTML.contains("showChannelMemberLoadError(channelId"));
+        assert!(INDEX_HTML.contains("retry.textContent = \"Prøv igjen\""));
+        assert!(INDEX_HTML.contains("requestChannelMembers(channel.id)"));
         assert!(INDEX_HTML.contains("event.type === \"channel_users_listed\""));
         assert!(INDEX_HTML.contains("id=\"channel-member-add\" hidden"));
         assert!(INDEX_HTML.contains("<strong>Legg til i kanalen</strong>"));
