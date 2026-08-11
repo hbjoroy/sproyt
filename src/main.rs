@@ -2366,7 +2366,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .bottom-navigation-heading { margin: 5px 4px 1px; color: var(--subtle); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
       .bottom-navigation-list .unread { flex: none; }
       .navigation-heading { margin: 0 8px 6px; color: var(--subtle); font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-      .channel-list { display: grid; gap: 4px; align-content: start; }
       .task-editor { display: grid; gap: 8px; margin-top: 12px; }
       .inbox-navigation { display: grid; gap: 4px; margin-bottom: 12px; }
       .inbox-button { display: flex; align-items: center; gap: 9px; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
@@ -2414,6 +2413,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .channel-details-dialog-body { display: grid; gap: 14px; padding: 14px; overflow-y: auto; }
       .channel-member-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
       .channel-member-list li { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; }
+      .channel-member-add { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .channel-member-add[hidden] { display: none; }
       .channel-description-form { display: grid; gap: 8px; }
       .channel-description-form[hidden] { display: none; }
       .channel-description-form textarea { min-height: 110px; }
@@ -3011,11 +3012,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
             <button class="inbox-button" id="show-mentions" type="button" aria-current="false"><span class="inbox-icon" aria-hidden="true">@</span><span class="inbox-label">Omtalar</span><span class="unread" id="mention-count" hidden></span></button>
             <button class="inbox-button" id="show-tasks" type="button" aria-current="false"><span class="inbox-icon" aria-hidden="true">✓</span><span class="inbox-label">Oppgåver</span><span class="unread" id="task-count" hidden></span></button>
           </div>
-          <p class="navigation-heading">Samtalar og vennekretsar</p>
-          <div class="channel-list" id="channel-list"><span class="status">Lastar …</span></div>
         </nav>
         <details class="onboarding" id="mobile-onboarding">
-          <summary>Administrer kretsar og kanalar</summary>
+          <summary>Administrer kretsar</summary>
           <div class="onboarding-fields" aria-label="Ny vennekrets">
           <p class="navigation-heading">Vennekrets</p>
           <label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label>
@@ -3025,15 +3024,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <label>Invitasjonslenkje<input id="invitation-token" placeholder="Lim inn lenkja du fekk"></label>
           <div class="onboarding-actions"><button id="accept-invitation" type="button" disabled>Bli med</button><button id="copy-invitation" type="button" hidden>Kopier lenkje</button></div>
           <p class="onboarding-notice" id="onboarding-notice" role="status" aria-live="polite">Lag ein ny vennekrets, eller lim inn ei invitasjonslenkje.</p>
-          <p class="navigation-heading">Kanalar</p>
-          <label>Kanalnamn<input id="circle-channel" placeholder="Turprat"></label>
-          <label>Tilgang<select id="channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label>
-          <button id="create-circle-channel" type="button" disabled>Lag kanal</button>
-          <label>Tilgjengelege kanalar<select id="joinable-channel"><option value="">Ingen</option></select></label>
-          <button id="join-circle-channel" type="button" disabled>Bli med i kanal</button>
-          <label>Inviter brukar<select id="channel-member"><option value="">Vel brukar</option></select></label>
-          <button id="add-channel-member" type="button" disabled>Legg til i vald kanal</button>
-          <button id="create-channel-invitation" type="button" disabled>Kopier kanalinvitasjon</button>
           <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
           <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
           </div>
@@ -3066,7 +3056,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <div class="mobile-app-mark"><img src="/assets/sproyt-wave.svg" alt=""></div>
         <div class="conversation-details"><div class="conversation-heading"><h2 id="conversation-title">Samtalar</h2><p class="conversation-context" id="conversation-context" hidden></p></div><p class="peer-status" id="conversation-peer-status" hidden></p><div class="connection-status"><span class="connection-status-dot" id="connection-status-dot" role="img" aria-label="Sambandsstatus: koplar til"></span><p class="status" id="status" role="status" aria-live="polite">Koplar til …</p></div></div>
         <button class="channel-people" id="channel-people" type="button" aria-label="Vis menneska i kanalen" disabled>👥</button>
-        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-label="Opne samtalar og vennekretsar" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Meny</button>
+        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-label="Opne menyen" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Meny</button>
         <div class="view-controls" aria-label="Meldingsvising">
           <button id="view-mode" type="button" aria-pressed="true">Les</button>
           <button id="raw-mode" type="button" aria-pressed="false">Kjelde</button>
@@ -3158,7 +3148,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const statusEl = document.querySelector("#status");
       const connectionStatusDot = document.querySelector("#connection-status-dot");
       const messagesEl = document.querySelector("#messages");
-      const channelList = document.querySelector("#channel-list");
       const bottomChannelPanel = document.querySelector("#bottom-channel-panel");
       const bottomCirclePanel = document.querySelector("#bottom-circle-panel");
       const bottomChannelToggle = document.querySelector("#bottom-channel-toggle");
@@ -3184,12 +3173,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const circleSelect = document.querySelector("#circle-select");
       const circleName = document.querySelector("#circle-name");
       const circleSlug = document.querySelector("#circle-slug");
-      const circleChannel = document.querySelector("#circle-channel");
-      const channelKind = document.querySelector("#channel-kind");
-      const joinableChannel = document.querySelector("#joinable-channel");
-      const joinCircleChannel = document.querySelector("#join-circle-channel");
+      const channelMemberAdd = document.querySelector("#channel-member-add");
       const channelMember = document.querySelector("#channel-member");
       const addChannelMember = document.querySelector("#add-channel-member");
+      const channelMemberStatus = document.querySelector("#channel-member-status");
       const invitationToken = document.querySelector("#invitation-token");
       const copyInvitation = document.querySelector("#copy-invitation");
       const createAgentAccessButton = document.querySelector("#create-agent-access");
@@ -3198,7 +3185,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const agentCredential = document.querySelector("#agent-credential");
       const agentAccessNotice = document.querySelector("#agent-access-notice");
       const onboardingNotice = document.querySelector("#onboarding-notice");
-      const circleButtons = ["#create-circle", "#create-circle-channel", "#create-invitation", "#accept-invitation", "#delete-circle"].map((id) => document.querySelector(id));
+      const createCircleButton = document.querySelector("#create-circle");
+      const createCircleInvitationButton = document.querySelector("#create-invitation");
+      const acceptInvitationButton = document.querySelector("#accept-invitation");
+      const deleteCircleButton = document.querySelector("#delete-circle");
+      const circleButtons = [createCircleButton, createCircleInvitationButton, acceptInvitationButton, deleteCircleButton];
       const exportButton = document.querySelector("#export-data");
       const processTitle = document.querySelector("#process-title");
       const processId = document.querySelector("#process-id");
@@ -3243,7 +3234,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const activeConversationKey = "sproyt.active-channel.v1";
       const activeCircleKey = "sproyt.active-circle.v1";
       const channelDraftPrefix = "sproyt.channel-draft.v1.";
-      const collapsedChannelGroupsKey = "sproyt.collapsed-channel-groups.v1";
       const linkedChannelId = new URL(window.location.href).searchParams.get("channel");
       let restoredChannelId = linkedChannelId;
       if (!restoredChannelId) try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
@@ -4044,7 +4034,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (open) {
           sidebar.setAttribute("role", "dialog");
           sidebar.setAttribute("aria-modal", "true");
-          sidebar.setAttribute("aria-label", "Samtalar og vennekretsar");
+          sidebar.setAttribute("aria-label", "Sprøyt-meny");
         } else {
           sidebar.removeAttribute("role");
           sidebar.removeAttribute("aria-modal");
@@ -4127,7 +4117,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           return;
         }
       });
-      circleButtons[0].addEventListener("click", () => sendCommand("create_circle", {
+      createCircleButton.addEventListener("click", () => sendCommand("create_circle", {
         name: circleName.value.trim(), slug: slugify(circleSlug.value || circleName.value)
       }));
       circleName.addEventListener("input", updateOnboardingButtons);
@@ -4141,29 +4131,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
           clearActiveCircle();
         }
       });
-      circleChannel.addEventListener("input", updateOnboardingButtons);
-      circleButtons[1].addEventListener("click", () => {
-        if (!circleSelect.value) return;
-        const slug = scopedCircleChannelSlug(circleSelect.value, circleChannel.value);
-        onboardingNotice.textContent = "Lagar kanalen …";
-        sendCommand("create_channel", { slug, name: circleChannel.value.trim(), kind: channelKind.value, circle_id: circleSelect.value });
-      });
-      joinableChannel.addEventListener("change", updateOnboardingButtons);
-      joinCircleChannel.addEventListener("click", () => {
-        if (joinableChannel.value) sendCommand("join_channel", { channel: { type: "id", value: joinableChannel.value } });
-      });
       channelMember.addEventListener("change", updateOnboardingButtons);
       addChannelMember.addEventListener("click", () => {
-        if (activeChannelId && channelMember.value) sendCommand("add_channel_member", { channel_id: activeChannelId, user_id: channelMember.value });
+        const channelId = channelDetailsDialog.dataset.channelId;
+        if (channelId && channelMember.value) {
+          channelMemberStatus.textContent = "Legg brukaren til …";
+          sendCommand("add_channel_member", { channel_id: channelId, user_id: channelMember.value });
+        }
       });
-      document.getElementById("create-channel-invitation").addEventListener("click", () => {
-        const channel = knownChannels.find((item) => item.id === activeChannelId);
-        if (channel?.circle_id) sendCommand("create_invitation", { target: { type: "channel", circle_id: channel.circle_id, channel_id: channel.id } });
-      });
-      circleButtons[2].addEventListener("click", () => {
+      createCircleInvitationButton.addEventListener("click", () => {
         if (circleSelect.value) sendCommand("create_invitation", { target: { type: "circle", circle_id: circleSelect.value } });
       });
-      circleButtons[3].addEventListener("click", () => {
+      acceptInvitationButton.addEventListener("click", () => {
         const token = invitationValueToToken(invitationToken.value);
         if (token) {
           onboardingNotice.textContent = "Kontrollerer invitasjonen …";
@@ -4193,7 +4172,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       });
       revokeAgentAccessButton.addEventListener("click", revokeTemporaryAgentAccess);
-      circleButtons[4].addEventListener("click", () => {
+      deleteCircleButton.addEventListener("click", () => {
         if (!circleSelect.value) return;
         const selected = circleSelect.options[circleSelect.selectedIndex]?.textContent || "denne vennekretsen";
         if (window.confirm(`Slett ${selected} og all chat- og prosesshistorikk permanent?`)) {
@@ -4509,14 +4488,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function updateOnboardingButtons() {
         const connected = connectionSupervisor.state.socket?.readyState === WebSocket.OPEN;
-        circleButtons[0].disabled = !connected || circleName.value.trim().length < 2;
-        circleButtons[2].disabled = !connected || !circleSelect.value;
-        circleButtons[3].disabled = !connected || !invitationValueToToken(invitationToken.value);
-        circleButtons[1].disabled = !connected || !circleSelect.value || circleChannel.value.trim().length < 2;
-        joinCircleChannel.disabled = !connected || !joinableChannel.value;
-        const active = knownChannels.find((channel) => channel.id === activeChannelId);
-        addChannelMember.disabled = !connected || !channelMember.value || !active || !["owner", "moderator"].includes(active.role);
-        document.getElementById("create-channel-invitation").disabled = !connected || !active?.circle_id || !["owner", "moderator"].includes(active.role);
+        createCircleButton.disabled = !connected || circleName.value.trim().length < 2;
+        createCircleInvitationButton.disabled = !connected || !circleSelect.value;
+        acceptInvitationButton.disabled = !connected || !invitationValueToToken(invitationToken.value);
+        const selectedCircle = knownCircles.get(circleSelect.value);
+        deleteCircleButton.hidden = selectedCircle?.role !== "owner";
+        deleteCircleButton.disabled = !connected || selectedCircle?.role !== "owner";
+        const memberChannel = knownChannels.find((channel) => channel.id === channelDetailsDialog.dataset.channelId);
+        addChannelMember.disabled = !connected || !channelMember.value || !memberChannel || !["owner", "moderator"].includes(memberChannel.role);
       }
 
       async function processApi(path, method = "GET", body = undefined) {
@@ -4627,14 +4606,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function renderKnownUsers() {
         directUser.replaceChildren(new Option("Vel brukar", ""));
-        channelMember.replaceChildren(new Option("Vel brukar", ""));
         knownUsers.filter((user) => user.id !== currentParticipantId).forEach((user) => {
           const handle = mentionHandle(user);
           const status = [user.status_emoji, user.status_text].filter(Boolean).join(" ");
           const label = `${user.display_name} (@${handle})${status ? ` · ${status}` : ""}`;
           directUser.add(new Option(label, user.id));
-          channelMember.add(new Option(`${user.display_name}${status ? ` · ${status}` : ""}`, user.id));
         });
+        refreshChannelMemberOptions(channelDetailsDialog.dataset.channelId);
         const own = knownUsers.find((user) => user.id === currentParticipantId);
         if (own) {
           statusEmoji.value = own.status_emoji || "";
@@ -4742,12 +4720,28 @@ const INDEX_HTML: &str = r##"<!doctype html>
           appendProfileStatus(item, profile.id);
           channelMemberList.append(item);
         });
+        refreshChannelMemberOptions(channelId);
+      }
+
+      function refreshChannelMemberOptions(channelId) {
+        const memberIds = new Set((knownChannelUsers.get(channelId) || []).map((user) => user.id));
+        channelMember.replaceChildren(new Option("Vel brukar", ""));
+        knownUsers
+          .filter((user) => user.id !== currentParticipantId && !memberIds.has(user.id))
+          .forEach((user) => {
+            const status = [user.status_emoji, user.status_text].filter(Boolean).join(" ");
+            channelMember.add(new Option(`${user.display_name}${status ? ` · ${status}` : ""}`, user.id));
+          });
+        updateOnboardingButtons();
       }
 
       function openChannelDetails(editDescription = false) {
         const channel = knownChannels.find((item) => item.id === activeChannelId);
         if (!channel) return;
         channelDetailsDialog.dataset.channelId = channel.id;
+        channelMemberAdd.hidden = !["owner", "moderator"].includes(channel.role);
+        channelMemberStatus.textContent = "";
+        refreshChannelMemberOptions(channel.id);
         channelDescriptionForm.hidden = channel.role !== "owner";
         channelDescriptionInput.value = channel.description || "";
         channelDescriptionStatus.textContent = "";
@@ -4989,7 +4983,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
           knownChannels.push({ ...payload.channel, role: "owner", latest_sequence: 0, last_read_sequence: 0 });
           renderChannels();
           selectChannel(payload.channel);
-          circleChannel.value = "";
           managedChannelName.value = "";
           if (circleChannelDialog.open) circleChannelDialog.close();
           onboardingNotice.textContent = `Kanalen ${payload.channel.name} er klar.`;
@@ -5000,8 +4993,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
         if (event.type === "joinable_channels_listed") {
           const channels = payload.channels.map((item) => ({ ...item.channel, description: item.description || "" }));
-          joinableChannel.replaceChildren(new Option(channels.length ? "Vel kanal" : "Ingen", ""));
-          channels.forEach((channel) => joinableChannel.add(new Option(`# ${channel.name}`, channel.id)));
           if (managedCircleId && channels.every((channel) => channel.circle_id === managedCircleId)) {
             renderManagedJoinableChannels(channels);
           }
@@ -5031,7 +5022,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
 
         if (event.type === "channel_member_added") {
-          onboardingNotice.textContent = "Brukaren er lagd til i kanalen.";
+          channelMemberStatus.textContent = "Brukaren er lagd til i kanalen.";
+          channelMember.value = "";
+          if (channelDetailsDialog.open && channelDetailsDialog.dataset.channelId === payload.membership.channel_id) {
+            sendCommand("list_channel_users", { channel_id: payload.membership.channel_id });
+          }
+          updateOnboardingButtons();
           return;
         }
 
@@ -5320,6 +5316,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
             }));
             return;
           }
+          if (requestedCommand === "add_channel_member") {
+            channelMemberStatus.textContent = payload.code === "permission_denied"
+              ? "Du har ikkje tilgang til å leggje brukarar til i denne kanalen."
+              : "Brukaren kunne ikkje leggjast til. Prøv igjen.";
+            return;
+          }
           if (requestedCommand === "leave_circle") {
             circleMembershipNotice.textContent = "Vennekretsen kunne ikkje forlatast. Eigaren må slette kretsen i administrasjon.";
             return;
@@ -5350,92 +5352,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function renderChannels() {
-        channelList.replaceChildren();
         renderPrimaryNavigation();
         renderBottomNavigation();
-        const primaryChannels = knownChannels.filter((channel) => !channel.direct_user_id);
-        if (primaryChannels.length === 0) {
-          const empty = document.createElement("p");
-          empty.className = "status";
-          empty.textContent = "Ingen felles- eller kretssamtalar enno";
-          channelList.append(empty);
-          return;
-        }
-        const groupedChannels = new Map();
-        for (const channel of primaryChannels) {
-          const groupId = channel.circle_id ? `circle:${channel.circle_id}` : "shared";
-          if (!groupedChannels.has(groupId)) groupedChannels.set(groupId, []);
-          groupedChannels.get(groupId).push(channel);
-        }
-        const collapsedGroups = readCollapsedChannelGroups();
-        const groups = [...groupedChannels.entries()].sort(([left], [right]) => {
-          const rank = (groupId) => groupId === "shared" ? 0 : 1;
-          return rank(left) - rank(right);
-        });
-        for (const [groupId, channels] of groups) {
-          const group = document.createElement("details");
-          group.className = "channel-group";
-          group.dataset.groupId = groupId;
-          group.open = !collapsedGroups.has(groupId) || channels.some((channel) => channel.id === activeChannelId);
-          const heading = document.createElement("summary");
-          const headingLabel = document.createElement("span");
-          const circleId = groupId.startsWith("circle:") ? groupId.slice(7) : null;
-          headingLabel.textContent = groupId === "shared"
-            ? "Felles"
-            : (knownCircles.get(circleId)?.name || "Vennekrets");
-          heading.append(headingLabel);
-          const groupUnreadCount = channels.reduce(
-            (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
-            0
-          );
-          if (groupUnreadCount > 0) {
-            group.classList.add("has-unread");
-            const unread = document.createElement("span");
-            unread.className = "unread";
-            unread.textContent = approximateUnreadCount(groupUnreadCount);
-            unread.setAttribute("aria-label", `${groupUnreadCount} uleste meldingar i gruppa`);
-            heading.append(unread);
-          }
-          const groupList = document.createElement("div");
-          groupList.className = "channel-group-list";
-          for (const channel of channels) {
-            const entry = document.createElement("div");
-            entry.className = "channel-entry";
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "channel-button";
-            button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
-            const name = document.createElement("span");
-            name.textContent = channel.direct_user_id ? directChannelLabel(channel) : `# ${channel.name}`;
-            button.append(name);
-            const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
-            if (unreadCount > 0 && channel.id !== activeChannelId) {
-              button.classList.add("has-unread");
-              const unread = document.createElement("span");
-              unread.className = "unread";
-              unread.textContent = approximateUnreadCount(unreadCount);
-              unread.setAttribute("aria-label", `${unreadCount} uleste meldingar`);
-              button.append(unread);
-            }
-            button.addEventListener("click", () => selectChannel(channel));
-            entry.append(button);
-            if (channel.circle_id && channel.name.trim().toLocaleLowerCase() !== "prat") {
-              entry.append(renderChannelActions(channel));
-            }
-            groupList.append(entry);
-          }
-          if (circleId) {
-            const manage = document.createElement("button");
-            manage.type = "button";
-            manage.className = "channel-group-action";
-            manage.textContent = "+ Finn eller lag kanal";
-            manage.addEventListener("click", () => openChannelManagement(circleId));
-            groupList.append(manage);
-          }
-          group.append(heading, groupList);
-          group.addEventListener("toggle", () => persistChannelGroupState(groupId, group.open));
-          channelList.append(group);
-        }
       }
 
       function renderBottomNavigation() {
@@ -5569,6 +5487,18 @@ const INDEX_HTML: &str = r##"<!doctype html>
             openChannelManagement(activeCircleId);
           });
           bottomChannelList.append(discover);
+          if (activeChannel?.circle_id === activeCircleId && activeChannel.name.trim().toLocaleLowerCase() !== "prat") {
+            const leave = document.createElement("button");
+            leave.type = "button";
+            leave.className = "channel-group-action danger-button";
+            leave.textContent = `Forlat # ${activeChannel.name}`;
+            leave.addEventListener("click", () => {
+              closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
+              if (!window.confirm(`Vil du forlate kanalen ${activeChannel.name}? Du kan bli med igjen seinare dersom kanalen er open.`)) return;
+              sendCommand("leave_channel", { channel_id: activeChannel.id });
+            });
+            bottomChannelList.append(leave);
+          }
         } else if (showingDirect) {
           const startDirect = document.createElement("button");
           startDirect.type = "button";
@@ -5620,26 +5550,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
         toggle.focus();
       }
 
-      function renderChannelActions(channel) {
-        const actions = document.createElement("details");
-        const summary = document.createElement("summary");
-        summary.setAttribute("aria-label", `Handlingar for ${channel.name}`);
-        summary.textContent = "⋯";
-        const menu = document.createElement("div");
-        menu.className = "channel-entry-menu";
-        const leave = document.createElement("button");
-        leave.type = "button";
-        leave.textContent = "Forlat kanal";
-        leave.addEventListener("click", () => {
-          actions.open = false;
-          if (!window.confirm(`Vil du forlate kanalen ${channel.name}? Du kan bli med igjen seinare dersom kanalen er open.`)) return;
-          sendCommand("leave_channel", { channel_id: channel.id });
-        });
-        menu.append(leave);
-        actions.append(summary, menu);
-        return actions;
-      }
-
       function openChannelManagement(circleId) {
         const circle = knownCircles.get(circleId);
         if (!circle) return;
@@ -5687,17 +5597,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
           card.append(name, description, join);
           circleJoinableList.append(card);
         }
-      }
-
-      function readCollapsedChannelGroups() {
-        try { return new Set(JSON.parse(window.localStorage.getItem(collapsedChannelGroupsKey) || "[]")); }
-        catch (_) { return new Set(); }
-      }
-
-      function persistChannelGroupState(groupId, open) {
-        const collapsed = readCollapsedChannelGroups();
-        if (open) collapsed.delete(groupId); else collapsed.add(groupId);
-        try { window.localStorage.setItem(collapsedChannelGroupsKey, JSON.stringify([...collapsed])); } catch (_) {}
       }
 
       function updateNavigationCount(id, count, label) {
@@ -6966,7 +6865,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
     </script>
-    <dialog class="channel-details-dialog" id="channel-details-dialog" aria-labelledby="channel-details-title"><header><h2 id="channel-details-title">Menneske i kanalen</h2><button id="channel-details-close" type="button" aria-label="Lukk kanalopplysningane">×</button></header><div class="channel-details-dialog-body"><ul class="channel-member-list" id="channel-member-list"><li>Lastar …</li></ul><form class="channel-description-form" id="channel-description-form" hidden><label for="channel-description-input"><strong>Kanalomtale</strong> (Markdown)</label><textarea id="channel-description-input" maxlength="2000"></textarea><div><button type="submit">Lagre omtale</button></div><p class="status" id="channel-description-status" role="status"></p></form></div></dialog>
+    <dialog class="channel-details-dialog" id="channel-details-dialog" aria-labelledby="channel-details-title"><header><h2 id="channel-details-title">Menneske i kanalen</h2><button id="channel-details-close" type="button" aria-label="Lukk kanalopplysningane">×</button></header><div class="channel-details-dialog-body"><ul class="channel-member-list" id="channel-member-list"><li>Lastar …</li></ul><section class="channel-member-add" id="channel-member-add" hidden><strong>Legg til i kanalen</strong><label>Person<select id="channel-member"><option value="">Vel brukar</option></select></label><button id="add-channel-member" type="button" disabled>Legg til</button><p class="status" id="channel-member-status" role="status" aria-live="polite"></p></section><form class="channel-description-form" id="channel-description-form" hidden><label for="channel-description-input"><strong>Kanalomtale</strong> (Markdown)</label><textarea id="channel-description-input" maxlength="2000"></textarea><div><button type="submit">Lagre omtale</button></div><p class="status" id="channel-description-status" role="status"></p></form></div></dialog>
   </body>
 </html>
 "##;
@@ -7980,7 +7879,7 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains(
             "id=\"connection-status-dot\" role=\"img\" aria-label=\"Sambandsstatus: koplar til\""
         ));
-        assert!(INDEX_HTML.contains("aria-label=\"Opne samtalar og vennekretsar\""));
+        assert!(INDEX_HTML.contains("aria-label=\"Opne menyen\""));
         assert!(INDEX_HTML.contains("grid-template-rows: 52px auto minmax(0, 1fr) auto;"));
         assert!(INDEX_HTML.contains(".composer-area { grid-column: 2; grid-row: 4; }"));
         assert!(INDEX_HTML.contains(".composer-area { grid-column: 1; grid-row: 4; }"));
@@ -7991,10 +7890,7 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("connectionStatusDot.setAttribute(\"aria-label\", `Sambandsstatus: ${connection.status}`)"));
         assert!(INDEX_HTML.contains("conversationContext.textContent = channel.circle_id"));
         assert!(INDEX_HTML.contains("(channel.direct_user_id ? \"Direktemelding\" : \"Felles\")"));
-        assert!(
-            INDEX_HTML
-                .contains("sidebar.setAttribute(\"aria-label\", \"Samtalar og vennekretsar\")")
-        );
+        assert!(INDEX_HTML.contains("sidebar.setAttribute(\"aria-label\", \"Sprøyt-meny\")"));
         assert!(INDEX_HTML.contains("firstControl?.focus()"));
         assert!(
             INDEX_HTML
@@ -8035,6 +7931,16 @@ mod protocol_capacity_tests {
             INDEX_HTML.contains("sendCommand(\"list_channel_users\", { channel_id: channel.id })")
         );
         assert!(INDEX_HTML.contains("event.type === \"channel_users_listed\""));
+        assert!(INDEX_HTML.contains("id=\"channel-member-add\" hidden"));
+        assert!(INDEX_HTML.contains("<strong>Legg til i kanalen</strong>"));
+        assert!(INDEX_HTML.contains(
+            "channelMemberAdd.hidden = ![\"owner\", \"moderator\"].includes(channel.role)"
+        ));
+        assert!(INDEX_HTML.contains("function refreshChannelMemberOptions(channelId)"));
+        assert!(INDEX_HTML.contains("!memberIds.has(user.id)"));
+        assert!(INDEX_HTML.contains("channelDetailsDialog.dataset.channelId"));
+        assert!(!INDEX_HTML.contains("Bli med i kanal"));
+        assert!(!INDEX_HTML.contains("Legg til i vald kanal"));
         assert!(INDEX_HTML.contains("channel?.role !== \"owner\""));
         assert!(INDEX_HTML.contains("sendCommand(\"update_channel_description\""));
         assert!(
@@ -8427,11 +8333,14 @@ mod protocol_capacity_tests {
         .await
         .unwrap();
         assert_eq!(stale_client_store.status(), reqwest::StatusCode::NOT_FOUND);
-        assert!(body.contains("id=\"channel-kind\""));
-        assert!(body.contains("id=\"joinable-channel\""));
+        assert!(!body.contains("id=\"channel-kind\""));
+        assert!(!body.contains("id=\"create-circle-channel\""));
+        assert!(!body.contains("id=\"create-channel-invitation\""));
+        assert!(body.contains("id=\"circle-joinable-list\""));
+        assert!(!body.contains("id=\"joinable-channel\""));
         assert!(body.contains("id=\"add-channel-member\""));
         assert!(body.contains("function scopedCircleChannelSlug(circleId, value)"));
-        assert!(body.contains("scopedCircleChannelSlug(circleSelect.value, circleChannel.value)"));
+        assert!(body.contains("scopedCircleChannelSlug(managedCircleId, name)"));
         assert!(body.contains("scopedCircleChannelSlug(payload.circle.id, \"prat\")"));
         assert!(body.contains(
             "knownCircles.set(payload.circle.id, { ...payload.circle, role: \"owner\" })"
@@ -8565,30 +8474,22 @@ mod protocol_capacity_tests {
         assert!(body.contains("function approximateUnreadCount(count)"));
         assert!(body.contains("if (count < 50) return \"25+\""));
         assert!(body.contains("if (count < 100) return \"50+\""));
-        assert!(body.contains("groupUnreadCount = channels.reduce"));
-        assert!(body.contains("group.classList.add(\"has-unread\")"));
         assert!(body.contains("button.classList.add(\"has-unread\")"));
         assert!(body.contains("if (unreadCount > 0) {"));
         assert!(body.contains("class=\"inbox-navigation\""));
         assert!(body.contains("id=\"unread-count\""));
         assert!(body.contains("id=\"mention-count\""));
         assert!(body.contains("id=\"task-count\""));
-        assert!(
-            body.contains(
-                "const collapsedChannelGroupsKey = \"sproyt.collapsed-channel-groups.v1\""
-            )
-        );
-        assert!(body.contains("group.className = \"channel-group\""));
-        assert!(body.contains("groupList.className = \"channel-group-list\""));
         assert!(body.contains("activeInboxKind = kind"));
         assert!(body.contains("className = \"unread-inbox\""));
         assert!(body.contains("className = \"unread-card\""));
-        assert!(body.contains("+ Finn eller lag kanal"));
         assert!(body.contains("function openChannelManagement(circleId)"));
-        assert!(body.contains("function renderChannelActions(channel)"));
+        assert!(!body.contains("Samtalar og vennekretsar"));
+        assert!(!body.contains("id=\"channel-list\""));
+        assert!(body.contains("leave.textContent = `Forlat # ${activeChannel.name}`"));
         assert!(body.contains("sendCommand(\"leave_channel\""));
         assert!(body.contains("event.type === \"membership_left\""));
-        assert!(body.contains("channel.name.trim().toLocaleLowerCase() !== \"prat\""));
+        assert!(body.contains("activeChannel.name.trim().toLocaleLowerCase() !== \"prat\""));
         assert!(body.contains("id=\"circle-channel-dialog\""));
         assert!(body.contains("function renderManagedJoinableChannels(channels)"));
         assert!(body.contains("+ Finn fleire kanalar"));
@@ -8627,9 +8528,7 @@ mod protocol_capacity_tests {
         assert!(body.contains(
             "const directChannels = knownChannels.filter((channel) => channel.direct_user_id)"
         ));
-        assert!(body.contains(
-            "const primaryChannels = knownChannels.filter((channel) => !channel.direct_user_id)"
-        ));
+        assert!(!body.contains("const primaryChannels = knownChannels.filter"));
         assert!(body.contains("activeRootScope = \"direct\""));
         assert!(body.contains("const firstChannel = channels[0]"));
         assert!(body.contains("if (firstChannel) selectChannel(firstChannel)"));
@@ -8647,7 +8546,8 @@ mod protocol_capacity_tests {
         assert!(body.contains("function closeBottomNavigation(panel, toggle)"));
         assert!(body.contains("if (event.key === \"Escape\" && bottomChannelPanel.open)"));
         assert!(body.contains("padding-bottom: 6px;"));
-        assert!(body.contains("<summary>Administrer kretsar og kanalar</summary>"));
+        assert!(body.contains("<summary>Administrer kretsar</summary>"));
+        assert!(!body.contains("Administrer kretsar og kanalar"));
         assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
         assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
         assert!(body.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
