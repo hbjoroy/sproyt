@@ -3109,7 +3109,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
     </main>
     <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
     <dialog class="circle-channel-dialog" id="circle-channel-dialog" aria-labelledby="circle-channel-title"><header><h2 id="circle-channel-title">Kanalar</h2><button id="circle-channel-close" type="button" aria-label="Lukk kanalveljaren">×</button></header><div class="circle-channel-dialog-body"><section><p class="navigation-heading">Tilgjengelege kanalar</p><div class="joinable-channel-list" id="circle-joinable-list"><p class="status">Lastar …</p></div></section><form class="circle-channel-create" id="circle-channel-create"><strong>Lag ny kanal</strong><label>Namn<input id="managed-channel-name" maxlength="80" placeholder="Turprat" required></label><label>Tilgang<select id="managed-channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label><button type="submit">Lag kanal</button></form><section class="circle-membership-actions"><button class="danger-button" id="leave-circle" type="button">Forlat vennekretsen</button><small id="circle-membership-notice">Du mistar tilgang til kanalane i kretsen, men meldingane dine blir ståande.</small></section></div></dialog>
-    <dialog class="circle-channel-dialog direct-message-dialog" id="direct-message-dialog" aria-labelledby="direct-message-title"><header><h2 id="direct-message-title">Ny samtale</h2><button id="direct-message-close" type="button" aria-label="Lukk personveljaren">×</button></header><div class="circle-channel-dialog-body"><label>Finn ein person<select id="direct-user"><option value="">Vel brukar</option></select></label><button id="open-direct" type="button" disabled>Start samtale</button></div></dialog>
+    <dialog class="circle-channel-dialog direct-message-dialog" id="direct-message-dialog" aria-labelledby="direct-message-title"><header><h2 id="direct-message-title">Ny samtale</h2><button id="direct-message-close" type="button" aria-label="Lukk personveljaren">×</button></header><div class="circle-channel-dialog-body"><label>Finn ein person<select id="direct-user"><option value="">Vel brukar</option></select></label><p class="status" id="direct-message-status" role="status" aria-live="polite"></p><button id="open-direct" type="button" disabled>Start samtale</button></div></dialog>
     <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
     <datalist id="reaction-emoji-catalog"><option value="😍">forelska hjarteauge</option><option value="🥰">glad kjærleik</option><option value="😊">smil glad</option><option value="🤣">ler latter</option><option value="😢">trist gråt</option><option value="😭">gråt</option><option value="😮">overraska</option><option value="😡">sint</option><option value="👏">applaus bra</option><option value="🙌">hurra</option><option value="💪">sterk</option><option value="🤝">avtale</option><option value="👀">ser</option><option value="💯">hundre perfekt</option><option value="✅">ferdig ja</option><option value="❌">nei feil</option><option value="⭐">stjerne</option><option value="💡">idé</option><option value="🚀">rakett</option><option value="🥳">fest</option><option value="🍻">skål</option><option value="🌊">bølgje sjøsprøyt</option></datalist>
 
@@ -3180,6 +3180,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const bottomCircleList = document.querySelector("#bottom-circle-list");
       const directMessageDialog = document.querySelector("#direct-message-dialog");
       const directUser = document.querySelector("#direct-user");
+      const directMessageStatus = document.querySelector("#direct-message-status");
       const openDirect = document.querySelector("#open-direct");
       const conversationTitle = document.querySelector("#conversation-title");
       const conversationContext = document.querySelector("#conversation-context");
@@ -4150,9 +4151,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       directUser.addEventListener("change", () => {
         openDirect.disabled = !directUser.value;
+        directMessageStatus.textContent = "";
       });
       openDirect.addEventListener("click", () => {
-        if (directUser.value) sendCommand("open_direct_channel", { user_id: directUser.value });
+        if (!directUser.value) return;
+        const selectedName = directUser.options[directUser.selectedIndex]?.textContent || "personen";
+        directMessageStatus.textContent = `Opnar samtale med ${selectedName} …`;
+        openDirect.disabled = true;
+        if (!sendCommand("open_direct_channel", { user_id: directUser.value })) {
+          directMessageStatus.textContent = "Sprøyt er ikkje tilkopla. Vent litt og prøv igjen.";
+          openDirect.disabled = false;
+        }
       });
       document.querySelector("#show-unread").addEventListener("click", () => showInbox("unread"));
       document.querySelector("#show-mentions").addEventListener("click", () => showInbox("mentions"));
@@ -4744,6 +4753,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function renderKnownUsers() {
+        const selectedUserId = directUser.value;
         directUser.replaceChildren(new Option("Vel brukar", ""));
         knownUsers.filter((user) => user.id !== currentParticipantId).forEach((user) => {
           const handle = mentionHandle(user);
@@ -4751,6 +4761,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           const label = `${user.display_name} (@${handle})${status ? ` · ${status}` : ""}`;
           directUser.add(new Option(label, user.id));
         });
+        if ([...directUser.options].some((option) => option.value === selectedUserId)) {
+          directUser.value = selectedUserId;
+        }
         refreshChannelMemberOptions(channelDetailsDialog.dataset.channelId);
         const own = knownUsers.find((user) => user.id === currentParticipantId);
         if (own) {
@@ -4768,6 +4781,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
             : "Set status";
         }
         openDirect.disabled = !directUser.value;
+        if (directMessageDialog.open) {
+          directMessageStatus.textContent = directUser.options.length > 1
+            ? ""
+            : "Ingen andre brukarar er registrerte enno.";
+        }
+      }
+
+      function openDirectMessageDialog() {
+        directUser.value = "";
+        openDirect.disabled = true;
+        directMessageStatus.textContent = "Hentar fersk personliste …";
+        directMessageDialog.showModal();
+        directUser.focus();
+        if (!sendCommand("list_users")) {
+          directMessageStatus.textContent = "Sprøyt er ikkje tilkopla. Vent litt og prøv igjen.";
+        }
       }
 
       function activeProfile(userId) {
@@ -5206,6 +5235,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             knownChannels.push(channel);
           }
           renderChannels();
+          directMessageStatus.textContent = "";
           directMessageDialog.close();
           selectChannel(channel);
           if (directInvitationMessage) {
@@ -5498,8 +5528,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
             channelMemberStatus.textContent = "Invitasjonen kunne ikkje lagast. Prøv igjen.";
             return;
           }
-          if (requestedCommand === "open_direct_channel" && directInvitationMessage) {
-            channelMemberStatus.textContent = "Direktemeldinga kunne ikkje opnast. Prøv igjen.";
+          if (requestedCommand === "open_direct_channel") {
+            if (directInvitationMessage) {
+              channelMemberStatus.textContent = "Direktemeldinga kunne ikkje opnast. Prøv igjen.";
+            } else {
+              directMessageStatus.textContent = payload.code === "not_found"
+                ? "Brukaren finst ikkje lenger. Lukk dialogen og prøv på nytt."
+                : payload.code === "conflict"
+                  ? "Du kan ikkje starte ei direktesamtale med deg sjølv."
+                  : "Samtalen kunne ikkje opnast. Prøv igjen.";
+              openDirect.disabled = !directUser.value;
+            }
             return;
           }
           if (requestedCommand === "leave_circle") {
@@ -5686,10 +5725,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           startDirect.textContent = "+ Ny samtale …";
           startDirect.addEventListener("click", () => {
             closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
-            directUser.value = "";
-            openDirect.disabled = true;
-            directMessageDialog.showModal();
-            directUser.focus();
+            openDirectMessageDialog();
           });
           bottomChannelList.append(startDirect);
         }
@@ -8824,8 +8860,13 @@ mod protocol_capacity_tests {
             body.contains("activeRootScope = channel.direct_user_id ? \"direct\" : \"shared\"")
         );
         assert!(body.contains("id=\"direct-message-dialog\""));
+        assert!(body.contains("id=\"direct-message-status\" role=\"status\" aria-live=\"polite\""));
         assert!(body.contains("startDirect.textContent = \"+ Ny samtale …\""));
-        assert!(body.contains("directMessageDialog.showModal()"));
+        assert!(body.contains("function openDirectMessageDialog()"));
+        assert!(body.contains("directMessageStatus.textContent = \"Hentar fersk personliste …\""));
+        assert!(body.contains("if (!sendCommand(\"list_users\"))"));
+        assert!(body.contains("if (requestedCommand === \"open_direct_channel\")"));
+        assert!(body.contains("Brukaren finst ikkje lenger. Lukk dialogen og prøv på nytt."));
         assert!(body.contains("activeProfile(channel?.direct_user_id)?.display_name"));
         assert!(body.contains("if (knownChannels.length > 0) renderChannels()"));
         assert!(!body.contains("heading.textContent = \"Andre samtalar\""));
