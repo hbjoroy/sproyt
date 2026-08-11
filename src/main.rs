@@ -2290,8 +2290,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .message-menu > summary::-webkit-details-marker { display: none; }
       .message-menu:not([open]) > div { display: none; }
       .message-menu > div { position: absolute; top: calc(100% + 4px); right: 0; z-index: 9; display: grid; min-width: 154px; gap: 2px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--ink); box-shadow: 0 8px 24px #0002; }
+      .message-menu.footer-menu { margin-left: auto; }
+      .message-menu.footer-menu > div { top: auto; right: 0; bottom: calc(100% + 4px); }
+      .message-menu.footer-menu + .thread-link { margin-left: 0; }
       .message-menu button { min-height: 34px; padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); text-align: left; }
       .message-menu button:hover, .message-menu button:focus-visible { background: var(--surface-hover); }
+      .message-reaction-details { display: grid; gap: 3px; margin: 0 3px 3px; padding: 3px 5px 6px; border-bottom: 1px solid var(--line); }
+      .message-reaction-details[hidden] { display: none; }
+      .message-reaction-details strong { color: var(--muted); font-size: .76rem; }
+      .message-reaction-details ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+      .message-reaction-details li { color: var(--ink); font-size: .82rem; overflow-wrap: anywhere; }
       .message-editor { display: grid; gap: 6px; }
       .message-editor textarea { min-height: 72px; }
       .message-editor div { display: flex; gap: 6px; justify-content: flex-end; }
@@ -2303,10 +2311,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .reaction-picker button { min-height: 34px; padding: 4px 7px; }
       .reaction-custom { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; margin-top: 3px; }
       .reaction-custom input { min-height: 36px; padding: 5px 8px; }
-      .reaction-viewers { position: relative; }
-      .reaction-viewers summary { cursor: pointer; list-style: none; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: .84rem; font-weight: 700; letter-spacing: .08em; }
-      .reaction-viewers ul { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 9; width: max-content; max-width: min(78vw, 340px); margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-raised); color: var(--ink); box-shadow: 0 8px 24px #0002; list-style: none; }
-      .reaction-viewers li { padding: 3px 0; color: var(--ink); font-size: .86rem; overflow-wrap: anywhere; }
       @media (any-hover: hover) and (any-pointer: fine) {
         .message .reaction-picker { visibility: hidden; pointer-events: none; }
         .message:hover .reaction-picker, .message:focus-within .reaction-picker, .message.reaction-picker-requested .reaction-picker, .message .reaction-picker[open] { visibility: visible; pointer-events: auto; }
@@ -2870,13 +2874,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .thread-panel { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; border-radius: 0; }
         .thread-messages { max-height: calc(100dvh - 132px); }
         .reaction-picker > div { width: min(310px, calc(100vw - 40px)); }
-        .reaction-viewers ul { max-width: calc(100vw - 40px); }
         .message-menu > summary,
         .message-menu button,
         .thread-link,
         .reaction-badge,
-        .reaction-picker summary,
-        .reaction-viewers summary { min-height: 44px; }
+        .reaction-picker summary { min-height: 44px; }
         .message-menu > summary { width: 44px; min-width: 44px; }
 
         .connect,
@@ -2953,8 +2955,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .mention-suggestions button { color: var(--ink); }
         .reaction-badge { background: #26332b; color: #eef3ee; }
         .reaction-badge[aria-pressed="true"] { background: #315d48; }
-        .reaction-picker > div, .reaction-viewers ul { background: var(--surface-raised); border-color: var(--border); }
-        .reaction-viewers li { color: var(--ink); }
+        .reaction-picker > div { background: var(--surface-raised); border-color: var(--border); }
 
         label,
         .meta,
@@ -3244,6 +3245,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         });
       })();
       let lastBackgroundRecoveryAt = 0;
+      let lastUserActivityAt = Date.now();
       let renderMode = "view";
       let requestNumber = 0;
       const browserSessionId = `browser-${crypto.randomUUID()}`;
@@ -3497,6 +3499,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       async function performSessionRefresh() {
+        const showRefreshIndicator = document.visibilityState === "visible"
+          && connectionSupervisor.state.socket?.readyState === WebSocket.OPEN;
+        if (showRefreshIndicator) setConnectionStatus("Fornyar økta …");
         let response;
         try {
           response = await fetch("/auth/refresh", {
@@ -3508,6 +3513,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           reportClientEvent("session_refresh_failed");
           sessionSupervisor.state.refreshRejected = false;
           scheduleSessionRefresh(30);
+          if (showRefreshIndicator) setConnectionStatus("Tilkopla");
           return false;
         }
         if (response.status === 401) {
@@ -3518,12 +3524,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           reportClientEvent("session_refresh_failed");
           sessionSupervisor.state.refreshRejected = true;
           scheduleSessionRefresh(30);
+          if (showRefreshIndicator) setConnectionStatus("Tilkopla");
           return false;
         }
         if (!response.ok) {
           reportClientEvent("session_refresh_failed");
           sessionSupervisor.state.refreshRejected = false;
           scheduleSessionRefresh(30);
+          if (showRefreshIndicator) setConnectionStatus("Tilkopla");
           return false;
         }
         sessionSupervisor.state.refreshRejected = false;
@@ -3537,6 +3545,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           reportClientEvent("session_refresh_failed");
           sessionSupervisor.state.refreshRejected = verification.status === 401;
           scheduleSessionRefresh(30);
+          if (showRefreshIndicator) setConnectionStatus("Tilkopla");
           return false;
         }
         scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
@@ -3641,6 +3650,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
             return;
           }
           if (sessionSupervisor.state.refreshRejected) {
+            // A second tab may have rotated the shared cookies while this tab
+            // received a losing 401. Verify once more before any navigation.
+            if (await useCurrentSessionIfAnotherTabRenewed()) {
+              reconnectAfterSessionRefresh();
+              return;
+            }
+            if (document.visibilityState === "visible" && Date.now() - lastUserActivityAt < 120_000) {
+              setConnectionStatus("Økta må stadfestast – vi ventar så du ikkje mistar arbeidet ditt");
+              scheduleSessionRefresh(30);
+              return;
+            }
             setConnectionStatus("Økta må stadfestast på nytt …");
             window.location.assign("/auth/login");
             return;
@@ -3702,6 +3722,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         connectionSupervisor.recover(false)
           .catch(() => connectionSupervisor.scheduleReconnect(1006, "kunne ikkje gjenopprette sambandet"));
       }
+
+      function noteUserActivity() {
+        lastUserActivityAt = Date.now();
+      }
+
+      window.addEventListener("pointerdown", noteUserActivity, { passive: true });
+      window.addEventListener("keydown", noteUserActivity, { passive: true });
+      window.addEventListener("input", noteUserActivity, { passive: true });
 
       window.addEventListener("pageshow", resumeAfterBackground);
       window.addEventListener("focus", resumeAfterBackground);
@@ -4176,13 +4204,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
             reactionPicker.open = false;
             reactionPicker.closest(".message")?.classList.remove("reaction-picker-requested");
             reactionPicker.querySelector("summary")?.focus({ preventScroll: true });
-            return;
-          }
-          const reactionViewers = messagesEl.querySelector(".reaction-viewers[open]");
-          if (reactionViewers) {
-            event.preventDefault();
-            reactionViewers.open = false;
-            reactionViewers.querySelector("summary")?.focus({ preventScroll: true });
             return;
           }
           const messageMenu = messagesEl.querySelector(".message-menu[open]");
@@ -6412,27 +6433,40 @@ const INDEX_HTML: &str = r##"<!doctype html>
         choices.append(custom);
         picker.append(summary, choices);
         bar.append(picker);
-        if ([...reactions.values()].some((reaction) => reaction.count > 0)) {
-          const viewers = document.createElement("details");
-          viewers.className = "reaction-viewers";
-          const viewersSummary = document.createElement("summary");
-          viewersSummary.textContent = "…";
-          viewersSummary.setAttribute("aria-label", "Sjå kven som har reagert");
-          const list = document.createElement("ul");
-          for (const [emoji, reaction] of reactions) {
-            if (reaction.count === 0) continue;
-            const names = reaction.userIds.map((userId) => {
-              if (userId === currentParticipantId) return "Du";
-              return activeProfile(userId)?.display_name || "Ein ven";
-            });
-            const item = document.createElement("li");
-            item.textContent = `${emoji} ${names.join(", ")}`;
-            list.append(item);
-          }
-          viewers.append(viewersSummary, list);
-          bar.append(viewers);
-        }
         return bar;
+      }
+
+      function messageHasReactions(messageId) {
+        return [...(messageReactions.get(messageId)?.values() || [])]
+          .some((reaction) => reaction.count > 0);
+      }
+
+      function syncMessageReactionDetails(menu, messageId) {
+        const details = menu.querySelector(".message-reaction-details");
+        const list = details.querySelector("ul");
+        list.replaceChildren();
+        const reactions = messageReactions.get(messageId) || new Map();
+        for (const [emoji, reaction] of reactions) {
+          if (reaction.count === 0) continue;
+          const names = reaction.userIds.map((userId) => userId === currentParticipantId
+            ? "Du"
+            : (activeProfile(userId)?.display_name || "Ein ven"));
+          const item = document.createElement("li");
+          item.textContent = `${emoji} ${names.join(", ")}`;
+          list.append(item);
+        }
+        details.hidden = list.childElementCount === 0;
+      }
+
+      function placeMessageMenu(card, footer, menu, thread, messageId) {
+        syncMessageReactionDetails(menu, messageId);
+        if (messageHasReactions(messageId) || thread) {
+          menu.classList.add("footer-menu");
+          footer.insertBefore(menu, thread || null);
+          return;
+        }
+        menu.classList.remove("footer-menu");
+        card.querySelector(".meta")?.append(menu);
       }
 
       function patchMessageReactions(messageId) {
@@ -6447,7 +6481,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           card.classList.toggle("reaction-picker-requested", open);
         });
         const thread = reactions.querySelector(".thread-link");
-        if (thread) nextReactions.insertBefore(thread, nextReactions.querySelector(".reaction-viewers"));
+        const menu = card.querySelector(".message-menu");
+        if (thread) nextReactions.append(thread);
+        if (menu) placeMessageMenu(card, nextReactions, menu, thread, messageId);
         reactions.replaceWith(nextReactions);
         restoreTimelineInteraction(interaction);
         return true;
@@ -6515,13 +6551,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
         const summary = threadSummaries.get(message.id);
         const replyCount = summary?.reply_count || 0;
+        let thread = null;
         if (includeThread && !message.parent_message_id && replyCount > 0) {
           if (!footer) {
             footer = document.createElement("div");
             footer.className = "message-reactions";
             wrapper.append(footer);
           }
-          const thread = document.createElement("button");
+          thread = document.createElement("button");
           thread.type = "button";
           thread.className = "thread-link";
           thread.textContent = replyCount === 0 ? "🧵" : `🧵 ${replyCount}`;
@@ -6529,7 +6566,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           thread.title = replyCount === 0 ? "Start ein tråd" : `${replyCount} svar${summary?.unread_count > 0 ? `, ${summary.unread_count} uleste` : ""}`;
           thread.setAttribute("aria-label", replyCount === 0 ? "Start ein tråd" : `Opne tråd med ${replyCount} svar`);
           thread.addEventListener("click", () => openThread(message.id));
-          footer.insertBefore(thread, footer.querySelector(".reaction-viewers"));
+          footer.append(thread);
         }
         if (!message.deleted_at) {
           const menu = document.createElement("details");
@@ -6538,6 +6575,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           menuSummary.textContent = "…";
           menuSummary.setAttribute("aria-label", "Fleire handlingar for meldinga");
           const menuItems = document.createElement("div");
+          const reactionDetails = document.createElement("section");
+          reactionDetails.className = "message-reaction-details";
+          reactionDetails.hidden = true;
+          const reactionHeading = document.createElement("strong");
+          reactionHeading.textContent = "Reaksjonar";
+          const reactionNames = document.createElement("ul");
+          reactionDetails.append(reactionHeading, reactionNames);
+          menuItems.append(reactionDetails);
           const addReaction = document.createElement("button");
           addReaction.type = "button";
           addReaction.textContent = "Legg til reaksjon";
@@ -6607,7 +6652,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             menuItems.append(edit, remove);
           }
           menu.append(menuSummary, menuItems);
-          meta.append(menu);
+          placeMessageMenu(wrapper, footer, menu, thread, message.id);
         }
         target.append(wrapper);
       }
@@ -7839,8 +7884,8 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("sendCommand(\"list_channel_reactions\""));
         assert!(INDEX_HTML.contains("event.type === \"message_reaction_changed\""));
         assert!(INDEX_HTML.contains("chatEvent.type === \"message_reaction_changed\""));
-        assert!(INDEX_HTML.contains("className = \"reaction-viewers\""));
-        assert!(INDEX_HTML.contains("Sjå kven som har reagert"));
+        assert!(INDEX_HTML.contains("className = \"message-reaction-details\""));
+        assert!(INDEX_HTML.contains("reactionHeading.textContent = \"Reaksjonar\""));
         assert!(INDEX_HTML.contains("reaction.user_ids || []"));
         assert!(INDEX_HTML.contains("activeProfile(userId)?.display_name"));
         assert!(INDEX_HTML.contains("id=\"reaction-emoji-catalog\""));
@@ -7861,9 +7906,13 @@ mod protocol_capacity_tests {
             "const nextReactions = renderMessageReactions(message, (open) => {\n          card.classList.toggle(\"reaction-picker-requested\", open);\n        });"
         ));
         assert!(INDEX_HTML.contains("const thread = reactions.querySelector(\".thread-link\");"));
-        assert!(INDEX_HTML.contains(
-            "if (thread) nextReactions.insertBefore(thread, nextReactions.querySelector(\".reaction-viewers\"));"
-        ));
+        assert!(INDEX_HTML.contains("const menu = card.querySelector(\".message-menu\");"));
+        assert!(INDEX_HTML.contains("if (thread) nextReactions.append(thread);"));
+        assert!(
+            INDEX_HTML.contains(
+                "if (menu) placeMessageMenu(card, nextReactions, menu, thread, messageId);"
+            )
+        );
         assert!(INDEX_HTML.contains("reactions.replaceWith(nextReactions);"));
         assert!(!INDEX_HTML.contains("reactions.replaceWith(renderMessageReactions(message));"));
         assert!(INDEX_HTML.contains("if (!reactions) return false;"));
@@ -8052,11 +8101,7 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("function openThread(messageId)"));
         assert!(INDEX_HTML.contains("const threadReplies = new Map()"));
         assert!(INDEX_HTML.contains("thread.textContent = replyCount === 0 ? \"🧵\""));
-        assert!(
-            INDEX_HTML.contains(
-                "footer.insertBefore(thread, footer.querySelector(\".reaction-viewers\"))"
-            )
-        );
+        assert!(INDEX_HTML.contains("footer.append(thread);"));
         assert!(INDEX_HTML.contains("message.parent_message_id"));
         assert!(INDEX_HTML.contains(".thread-panel { width: 100vw"));
         assert!(INDEX_HTML.contains("sendCommand(\"load_thread\""));
@@ -8105,9 +8150,17 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("padding: 7px 9px;"));
         assert!(INDEX_HTML.contains(".rendered {\n        display: grid;\n        gap: 7px;"));
         assert!(INDEX_HTML.contains(
-            ".message-menu > summary,\n        .message-menu button,\n        .thread-link,\n        .reaction-badge,\n        .reaction-picker summary,\n        .reaction-viewers summary { min-height: 44px; }"
+            ".message-menu > summary,\n        .message-menu button,\n        .thread-link,\n        .reaction-badge,\n        .reaction-picker summary { min-height: 44px; }"
         ));
         assert!(INDEX_HTML.contains("className = \"message-menu\""));
+        assert!(
+            INDEX_HTML.contains("function placeMessageMenu(card, footer, menu, thread, messageId)")
+        );
+        assert!(INDEX_HTML.contains("menu.classList.add(\"footer-menu\")"));
+        assert!(INDEX_HTML.contains("footer.insertBefore(menu, thread || null)"));
+        assert!(
+            INDEX_HTML.contains(".message-menu.footer-menu + .thread-link { margin-left: 0; }")
+        );
         assert!(INDEX_HTML.contains("Fleire handlingar for meldinga"));
         assert!(INDEX_HTML.contains("Legg til reaksjon"));
         assert!(INDEX_HTML.contains("message.sender_id === currentParticipantId"));
@@ -8630,6 +8683,13 @@ mod protocol_capacity_tests {
         assert!(body.contains("window.addEventListener(\"pageshow\", resumeAfterBackground)"));
         assert!(body.contains("window.addEventListener(\"online\", resumeAfterBackground)"));
         assert!(body.contains("reconnectAfterSessionRefresh()"));
+        assert!(body.contains("setConnectionStatus(\"Fornyar økta …\")"));
+        assert!(body.contains("let lastUserActivityAt = Date.now()"));
+        assert!(body.contains("function noteUserActivity()"));
+        assert!(body.contains("window.addEventListener(\"pointerdown\", noteUserActivity"));
+        assert!(body.contains("if (await useCurrentSessionIfAnotherTabRenewed())"));
+        assert!(body.contains("Date.now() - lastUserActivityAt < 120_000"));
+        assert!(body.contains("vi ventar så du ikkje mistar arbeidet ditt"));
         assert!(body.contains("connect(true)"));
         assert!(body.contains("connect(true, currentSocket)"));
         assert!(body.contains(
@@ -8663,6 +8723,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("previousSocket.close(4000, \"session refreshed\")"));
         assert!(!body.contains("sessionRefreshReconnect"));
         assert!(!body.contains("if (response.status === 401) {\n          window.location.assign"));
+        assert!(!body.contains("window.location.reload()"));
         assert!(body.contains("Fråkopla (${detail})"));
         assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
         assert!(body.contains("function loadOlderHistory()"));
