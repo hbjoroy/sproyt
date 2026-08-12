@@ -2393,6 +2393,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .bottom-navigation-list button.has-unread { color: var(--ink); font-weight: 800; }
       .bottom-navigation-heading { margin: 5px 4px 1px; color: var(--subtle); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
       .bottom-navigation-list .unread { flex: none; }
+      .circle-toolbox { left: auto; grid-template-columns: minmax(0, 1fr) 44px; width: min(360px, calc(200% + 6px)); max-height: min(42dvh, 340px); padding: 0; overflow: hidden; }
+      .circle-tool-content { display: grid; align-content: start; gap: 3px; min-height: 120px; padding: 6px; overflow-y: auto; overscroll-behavior: contain; }
+      .circle-tool-rail { display: grid; align-content: start; gap: 3px; padding: 5px; border-left: 1px solid var(--border); background: var(--surface); }
+      .bottom-navigation-list .circle-tool-button { position: relative; display: grid; width: 34px; min-width: 34px; min-height: 38px; padding: 0; place-items: center; font-size: 1rem; text-align: center; }
+      .circle-tool-button[aria-pressed="true"] { background: var(--surface-hover); color: var(--accent); }
+      .circle-tool-button.has-unread::after { position: absolute; top: 4px; right: 3px; width: 7px; height: 7px; border: 2px solid var(--surface); border-radius: 999px; background: var(--accent); content: ""; }
       .navigation-heading { margin: 0 8px 5px; color: var(--muted); font-size: .8rem; font-weight: 700; letter-spacing: .01em; }
       .task-editor { display: grid; gap: 8px; margin-top: 12px; }
       .inbox-navigation { display: grid; gap: 3px; margin-bottom: 10px; }
@@ -2439,7 +2445,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .channel-details-dialog > header button { width: 40px; min-width: 40px; min-height: 40px; padding: 0; border-color: var(--border); background: var(--surface-raised); color: var(--ink); font-size: 1.25rem; line-height: 1; }
       .channel-details-dialog > header button:hover { background: var(--surface-hover); color: var(--ink); }
       .channel-details-dialog-body { display: grid; gap: 14px; padding: 14px; overflow-y: auto; }
-      .channel-member-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+      .channel-member-browser { display: grid; gap: 6px; min-height: 0; }
+      .channel-member-search { display: grid; gap: 4px; color: var(--muted); font-size: .82rem; }
+      .channel-member-search input { width: 100%; min-height: 40px; }
+      .channel-member-count { min-height: 1.2em; margin: 0; color: var(--subtle); font-size: .78rem; }
+      .channel-member-list { display: grid; gap: 6px; max-height: min(454px, 45dvh); margin: 0; padding: 0 4px 0 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; list-style: none; }
       .channel-member-list li { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; }
       .channel-member-add { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
       .channel-member-add[hidden] { display: none; }
@@ -2857,11 +2867,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .sidebar.mobile-open .identity > span { grid-column: 1 / -1; }
         .sidebar.mobile-open .identity > details, .sidebar.mobile-open .identity > a { grid-column: 1 / -1; }
         .mobile-navigation-toggle { display: inline-flex; align-items: center; align-self: center; white-space: nowrap; }
-        .sidebar nav, .sidebar .onboarding, .sidebar .agent-access { display: none; grid-column: 1 / -1; }
-        .sidebar.mobile-open nav, .sidebar.mobile-open .onboarding, .sidebar.mobile-open .agent-access { display: grid; }
+        .sidebar nav, .sidebar .agent-access { display: none; grid-column: 1 / -1; }
+        .sidebar.mobile-open nav, .sidebar.mobile-open .agent-access { display: grid; }
         .sidebar.mobile-open nav { gap: 6px; }
-        .sidebar.mobile-open .onboarding { gap: 0; }
-        .sidebar.mobile-open .onboarding-fields { gap: 7px; padding-top: 8px; }
         .sidebar.mobile-open .navigation-heading { margin: 3px 4px; }
         .sidebar.mobile-open input, .sidebar.mobile-open select, .sidebar.mobile-open button { min-height: 36px; padding-top: 5px; padding-bottom: 5px; }
         .sidebar.mobile-open .notification-settings input[type="checkbox"] { min-height: 20px; padding: 0; }
@@ -3067,21 +3075,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
             <button class="inbox-button" id="show-tasks" type="button" aria-current="false"><span class="inbox-icon" aria-hidden="true">✓</span><span class="inbox-label">Oppgåver</span><span class="unread" id="task-count" hidden></span></button>
           </div>
         </nav>
-        <details class="onboarding" id="mobile-onboarding">
-          <summary>Administrer kretsar</summary>
-          <div class="onboarding-fields" aria-label="Ny vennekrets">
-          <p class="navigation-heading">Vennekrets</p>
-          <label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label>
-          <label>Namn<input id="circle-name" placeholder="Turvenner"></label>
-          <input id="circle-slug" type="hidden">
-          <div class="onboarding-actions"><button id="create-circle" type="button" disabled>Lag ny</button><button id="create-invitation" type="button" disabled>Inviter</button></div>
-          <label>Invitasjonslenkje<input id="invitation-token" placeholder="Lim inn lenkja du fekk"></label>
-          <div class="onboarding-actions"><button id="accept-invitation" type="button" disabled>Bli med</button><button id="copy-invitation" type="button" hidden>Kopier lenkje</button></div>
-          <p class="onboarding-notice" id="onboarding-notice" role="status" aria-live="polite">Lag ein ny vennekrets, eller lim inn ei invitasjonslenkje.</p>
-          <button id="delete-circle" type="button" hidden disabled>Slett krets</button>
-          <button id="export-data" type="button" hidden disabled>Eksporter mine data</button>
-          </div>
-        </details>
         <details class="agent-access" {{AGENT_HIDDEN}}>
           <summary>Agenttilgang</summary>
           <p>Lag ein kortliva MCP-agent for den opne samtalen. Tilgangen varer i 30 minutt og kan lesast og skrive meldingar.</p>
@@ -3111,7 +3104,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         <div class="conversation-details"><div class="conversation-heading"><h2 id="conversation-title">Samtalar</h2><span class="conversation-circle" id="conversation-circle" hidden></span></div><div class="conversation-context" id="conversation-context" hidden></div><p class="peer-status" id="conversation-peer-status" hidden></p></div>
         <div class="connection-status"><button class="connection-status-toggle" id="connection-status-toggle" type="button" aria-expanded="false" aria-controls="status" aria-label="Sambandsstatus: koplar til"><span class="connection-status-dot" id="connection-status-dot" aria-hidden="true"></span></button><p class="status" id="status" role="status" aria-live="polite">Koplar til …</p></div>
         <button class="channel-people" id="channel-people" type="button" aria-label="Vis menneska i kanalen" disabled>👥</button>
-        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-label="Opne menyen" aria-expanded="false" aria-controls="mobile-navigation mobile-onboarding">Meny</button>
+        <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-label="Opne menyen" aria-expanded="false" aria-controls="mobile-navigation">Meny</button>
         <div class="view-controls">
           <button class="view-mode-switch" id="view-mode-toggle" type="button" role="switch" aria-checked="false" aria-label="Vis kjeldekode" title="Vis kjeldekode"><span class="view-mode-switch-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5h8l4 4V21.5H6z"/><path d="M14 2.5v4h4M10 11l-2 2 2 2m4-4 2 2-2 2"/></svg></span></button>
         </div>
@@ -3131,12 +3124,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
           </details>
           <details class="bottom-navigation-panel" id="bottom-circle-panel">
             <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list" aria-label="Vel område"><span class="bottom-navigation-label">◎ Felles</span></summary>
-            <div class="bottom-navigation-list" id="bottom-circle-list"><p class="status">Lastar …</p></div>
+            <div class="bottom-navigation-list circle-toolbox" id="bottom-circle-list"><div class="circle-tool-content" id="bottom-circle-content"><p class="status">Lastar …</p></div><div class="circle-tool-rail" role="toolbar" aria-label="Samtaleområde"><button class="circle-tool-button" id="circle-tool-circles" type="button" aria-label="Vennekretsar" title="Vennekretsar" aria-pressed="true">◎</button><button class="circle-tool-button" id="circle-tool-direct" type="button" aria-label="Direkte samtalar" title="Direkte samtalar" aria-pressed="false">💬</button><button class="circle-tool-button" id="circle-tool-shared" type="button" aria-label="Felles" title="Felles" aria-pressed="false">⌂</button><button class="circle-tool-button" id="circle-tool-settings" type="button" aria-label="Administrer vennekretsar" title="Administrer vennekretsar">⚙</button></div></div>
           </details>
         </nav>
       </div>
     </main>
     <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><details class="emoji-picker thread-emoji-picker" id="thread-emoji-picker"><summary aria-label="Legg til emoji i tråden">😊</summary><div id="thread-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
+    <dialog class="circle-channel-dialog" id="circle-admin-dialog" aria-labelledby="circle-admin-title"><header><h2 id="circle-admin-title">Administrer vennekretsar</h2><button id="circle-admin-close" type="button" aria-label="Lukk administrasjon">×</button></header><div class="circle-channel-dialog-body onboarding-fields" aria-label="Administrer vennekretsar"><label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label><label>Namn på ny krets<input id="circle-name" placeholder="Turvenner"></label><input id="circle-slug" type="hidden"><div class="onboarding-actions"><button id="create-circle" type="button" disabled>Lag ny</button><button id="create-invitation" type="button" disabled>Inviter</button></div><label>Invitasjonslenkje<input id="invitation-token" placeholder="Lim inn lenkja du fekk"></label><div class="onboarding-actions"><button id="accept-invitation" type="button" disabled>Bli med</button><button id="copy-invitation" type="button" hidden>Kopier lenkje</button></div><p class="onboarding-notice" id="onboarding-notice" role="status" aria-live="polite">Lag ein ny vennekrets, eller lim inn ei invitasjonslenkje.</p><button id="delete-circle" type="button" hidden disabled>Slett krets</button><button id="export-data" type="button" hidden disabled>Eksporter mine data</button></div></dialog>
     <dialog class="circle-channel-dialog" id="circle-channel-dialog" aria-labelledby="circle-channel-title"><header><h2 id="circle-channel-title">Kanalar</h2><button id="circle-channel-close" type="button" aria-label="Lukk kanalveljaren">×</button></header><div class="circle-channel-dialog-body"><section><p class="navigation-heading">Tilgjengelege kanalar</p><div class="joinable-channel-list" id="circle-joinable-list"><p class="status">Lastar …</p></div></section><form class="circle-channel-create" id="circle-channel-create"><strong>Lag ny kanal</strong><label>Namn<input id="managed-channel-name" maxlength="80" placeholder="Turprat" required></label><label>Tilgang<select id="managed-channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label><button type="submit">Lag kanal</button></form><section class="circle-membership-actions"><button class="danger-button" id="leave-circle" type="button">Forlat vennekretsen</button><small id="circle-membership-notice">Du mistar tilgang til kanalane i kretsen, men meldingane dine blir ståande.</small></section></div></dialog>
     <dialog class="circle-channel-dialog direct-message-dialog" id="direct-message-dialog" aria-labelledby="direct-message-title"><header><h2 id="direct-message-title">Ny samtale</h2><button id="direct-message-close" type="button" aria-label="Lukk personveljaren">×</button></header><div class="circle-channel-dialog-body"><label>Finn ein person<select id="direct-user"><option value="">Vel brukar</option></select></label><p class="status" id="direct-message-status" role="status" aria-live="polite"></p><button id="open-direct" type="button" disabled>Start samtale</button></div></dialog>
     <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
@@ -3209,6 +3203,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const bottomNavigation = document.querySelector(".bottom-navigation");
       const bottomChannelList = document.querySelector("#bottom-channel-list");
       const bottomCircleList = document.querySelector("#bottom-circle-list");
+      const bottomCircleContent = document.querySelector("#bottom-circle-content");
+      const circleToolCircles = document.querySelector("#circle-tool-circles");
+      const circleToolDirect = document.querySelector("#circle-tool-direct");
+      const circleToolShared = document.querySelector("#circle-tool-shared");
+      const circleToolSettings = document.querySelector("#circle-tool-settings");
+      const circleAdminDialog = document.querySelector("#circle-admin-dialog");
+      const circleAdminClose = document.querySelector("#circle-admin-close");
       const directMessageDialog = document.querySelector("#direct-message-dialog");
       const directUser = document.querySelector("#direct-user");
       const directMessageStatus = document.querySelector("#direct-message-status");
@@ -3220,6 +3221,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const channelPeopleButton = document.querySelector("#channel-people");
       const channelDetailsDialog = document.querySelector("#channel-details-dialog");
       const channelDetailsClose = document.querySelector("#channel-details-close");
+      const channelMemberSearch = document.querySelector("#channel-member-search");
+      const channelMemberCount = document.querySelector("#channel-member-count");
       const channelMemberList = document.querySelector("#channel-member-list");
       const channelDescriptionForm = document.querySelector("#channel-description-form");
       const channelDescriptionInput = document.querySelector("#channel-description-input");
@@ -3284,6 +3287,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let activeChannelId = null;
       let activeCircleId = null;
       let activeRootScope = "shared";
+      let circleToolMode = "circles";
       let activeInboxKind = null;
       let managedCircleId = null;
       let reconnectScrollOffset = null;
@@ -3436,6 +3440,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         activeCircleId = circleId || null;
         if (activeCircleId) {
           activeRootScope = "circle";
+          circleToolMode = "circles";
           restoredCircleId = activeCircleId;
           try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}
         }
@@ -3897,6 +3902,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         threadEmojiPicker.open = false;
       });
       document.querySelector("#circle-channel-close").addEventListener("click", () => circleChannelDialog.close());
+      circleAdminClose.addEventListener("click", () => circleAdminDialog.close());
+      circleAdminDialog.addEventListener("close", () => {
+        if (bottomCirclePanel.open) circleToolSettings.focus({ preventScroll: true });
+      });
       document.querySelector("#direct-message-close").addEventListener("click", () => directMessageDialog.close());
       channelPeopleButton.addEventListener("click", () => openChannelDetails(false));
       connectionStatusToggle.addEventListener("click", () => {
@@ -3907,6 +3916,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (threadPanel.open && !threadEmojiPicker.contains(event.target)) threadEmojiPicker.open = false;
       });
       channelDetailsClose.addEventListener("click", () => channelDetailsDialog.close());
+      channelMemberSearch.addEventListener("input", () => {
+        const channelId = channelDetailsDialog.dataset.channelId;
+        if (channelId) renderChannelMembers(channelId);
+      });
       channelDescriptionForm.addEventListener("submit", (event) => {
         event.preventDefault();
         const channelId = channelDetailsDialog.dataset.channelId;
@@ -4262,9 +4275,21 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (bottomChannelPanel.open) bottomCirclePanel.open = false;
       });
       bottomCirclePanel.addEventListener("toggle", () => {
-        if (bottomCirclePanel.open) bottomChannelPanel.open = false;
+        if (bottomCirclePanel.open) {
+          bottomChannelPanel.open = false;
+          renderBottomNavigation();
+        }
+      });
+      circleToolCircles.addEventListener("click", () => setCircleToolMode("circles"));
+      circleToolDirect.addEventListener("click", () => activateRootScope("direct"));
+      circleToolShared.addEventListener("click", () => activateRootScope("shared"));
+      circleToolSettings.addEventListener("click", () => {
+        updateOnboardingButtons();
+        if (!circleAdminDialog.open) circleAdminDialog.showModal();
+        window.setTimeout(() => circleAdminClose.focus(), 0);
       });
       document.addEventListener("pointerdown", (event) => {
+        if (circleAdminDialog.open) return;
         if (bottomNavigation.contains(event.target)) return;
         bottomChannelPanel.open = false;
         bottomCirclePanel.open = false;
@@ -4286,7 +4311,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             return;
           }
         }
-        if (event.key === "Escape" && (circleChannelDialog.open || threadPanel.open || mediaLightbox.open)) {
+        if (event.key === "Escape" && (circleChannelDialog.open || circleAdminDialog.open || threadPanel.open || mediaLightbox.open)) {
           return;
         }
         if (event.key === "Escape" && connectionStatusToggle.getAttribute("aria-expanded") === "true") {
@@ -4995,10 +5020,26 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function renderChannelMembers(channelId) {
         const users = knownChannelUsers.get(channelId) || [];
+        const query = channelMemberSearch.value
+          .normalize("NFKD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLocaleLowerCase("nb-NO")
+          .trim();
+        const visibleUsers = query
+          ? users.filter((profile) => profile.display_name
+            .normalize("NFKD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLocaleLowerCase("nb-NO")
+            .includes(query))
+          : users;
         if (channelId === activeChannelId) {
           channelPeopleButton.textContent = `👥 ${users.length}`;
           channelPeopleButton.setAttribute("aria-label", `Vis dei ${users.length} menneska i kanalen`);
         }
+        channelMemberSearch.disabled = false;
+        channelMemberCount.textContent = query
+          ? `Viser ${visibleUsers.length} av ${users.length}`
+          : `${users.length} menneske`;
         channelMemberList.replaceChildren();
         if (users.length === 0) {
           const empty = document.createElement("li");
@@ -5006,7 +5047,13 @@ const INDEX_HTML: &str = r##"<!doctype html>
           channelMemberList.append(empty);
           return;
         }
-        users.forEach((profile) => {
+        if (visibleUsers.length === 0) {
+          const empty = document.createElement("li");
+          empty.textContent = "Ingen namn passar søket.";
+          channelMemberList.append(empty);
+          return;
+        }
+        visibleUsers.forEach((profile) => {
           const item = document.createElement("li");
           item.dataset.profileUserId = profile.id;
           const name = document.createElement("span");
@@ -5033,6 +5080,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function showChannelMemberLoadError(channelId, message) {
+        channelMemberSearch.disabled = false;
+        channelMemberCount.textContent = "";
         channelMemberList.replaceChildren();
         const item = document.createElement("li");
         const text = document.createElement("span");
@@ -5046,6 +5095,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function requestChannelMembers(channelId) {
+        channelMemberSearch.disabled = true;
+        channelMemberCount.textContent = "";
         channelMemberList.replaceChildren(Object.assign(document.createElement("li"), { textContent: "Lastar …" }));
         if (!sendCommand("list_channel_users", { channel_id: channelId })) {
           showChannelMemberLoadError(channelId, "Ikkje tilkopla enno. Vent litt og prøv igjen.");
@@ -5056,6 +5107,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const channel = knownChannels.find((item) => item.id === activeChannelId);
         if (!channel) return;
         channelDetailsDialog.dataset.channelId = channel.id;
+        channelMemberSearch.value = "";
         channelMemberAdd.hidden = !["owner", "moderator"].includes(channel.role);
         channelMemberStatus.textContent = "";
         refreshChannelMemberOptions(channel.id);
@@ -5713,7 +5765,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 
       function renderBottomNavigation() {
         bottomChannelList.replaceChildren();
-        bottomCircleList.replaceChildren();
+        bottomCircleContent.replaceChildren();
         const activeCircle = knownCircles.get(activeCircleId);
         const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
         const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.direct_user_id);
@@ -5736,63 +5788,16 @@ const INDEX_HTML: &str = r##"<!doctype html>
           (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
           0
         );
-        const sharedButton = document.createElement("button");
-        sharedButton.type = "button";
-        sharedButton.textContent = "(Felles)";
-        sharedButton.disabled = sharedChannels.length === 0;
-        sharedButton.setAttribute("aria-current", showingShared ? "page" : "false");
-        if (sharedUnreadCount > 0) {
-          sharedButton.classList.add("has-unread");
-          const unread = document.createElement("span");
-          unread.className = "unread";
-          unread.textContent = approximateUnreadCount(sharedUnreadCount);
-          unread.setAttribute("aria-label", `${sharedUnreadCount} uleste meldingar i Felles`);
-          sharedButton.append(unread);
-        }
-        sharedButton.addEventListener("click", () => {
-          const firstChannel = sharedChannels[0];
-          if (!firstChannel) return;
-          clearActiveCircle();
-          activeRootScope = "shared";
-          circleSelect.value = "";
-          closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
-          if (firstChannel.id === activeChannelId) renderChannels();
-          else selectChannel(firstChannel);
-        });
-        bottomCircleList.append(sharedButton);
-
         const directUnreadCount = directChannels.reduce(
           (total, channel) => total + Math.max(0, channel.latest_sequence - channel.last_read_sequence),
           0
         );
-        const directButton = document.createElement("button");
-        directButton.type = "button";
-        directButton.textContent = "(Direkte)";
-        directButton.setAttribute("aria-current", showingDirect ? "page" : "false");
-        if (directUnreadCount > 0) {
-          directButton.classList.add("has-unread");
-          const unread = document.createElement("span");
-          unread.className = "unread";
-          unread.textContent = approximateUnreadCount(directUnreadCount);
-          unread.setAttribute("aria-label", `${directUnreadCount} uleste direktemeldingar`);
-          directButton.append(unread);
-        }
-        directButton.addEventListener("click", () => {
-          clearActiveCircle();
-          activeRootScope = "direct";
-          circleSelect.value = "";
-          closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
-          const firstChannel = directChannels[0];
-          if (firstChannel) selectChannel(firstChannel);
-          else renderChannels();
-        });
-        bottomCircleList.append(directButton);
-
+        updateCircleToolButtons(sharedUnreadCount, directUnreadCount);
         if (knownCircles.size === 0) {
           const empty = document.createElement("p");
           empty.className = "status";
           empty.textContent = "Ingen vennekretsar enno";
-          bottomCircleList.append(empty);
+          bottomCircleContent.append(empty);
         } else {
           for (const [circleId, circle] of knownCircles) {
             const channels = knownChannels.filter((channel) => channel.circle_id === circleId);
@@ -5821,7 +5826,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
               if (preferredChannel) selectChannel(preferredChannel);
               else renderChannels();
             });
-            bottomCircleList.append(button);
+            bottomCircleContent.append(button);
           }
         }
 
@@ -5867,7 +5872,42 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
 
-      function appendBottomChannelButtons(channels, target, emptyText = "") {
+      function setCircleToolMode(mode) {
+        circleToolMode = mode;
+        renderBottomNavigation();
+        circleToolCircles.focus({ preventScroll: true });
+      }
+
+      function activateRootScope(scope) {
+        const channels = knownChannels.filter((channel) => scope === "direct"
+          ? Boolean(channel.direct_user_id)
+          : (!channel.circle_id && !channel.direct_user_id));
+        circleToolMode = scope;
+        clearActiveCircle();
+        activeRootScope = scope;
+        circleSelect.value = "";
+        closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
+        const current = channels.find((channel) => channel.id === activeChannelId);
+        if (current) renderChannels();
+        else if (channels[0]) selectChannel(channels[0]);
+        else renderChannels();
+      }
+
+      function updateCircleToolButtons(sharedUnreadCount, directUnreadCount) {
+        for (const [button, mode] of [[circleToolCircles, "circles"], [circleToolDirect, "direct"], [circleToolShared, "shared"]]) {
+          button.setAttribute("aria-pressed", String(circleToolMode === mode));
+        }
+        circleToolDirect.classList.toggle("has-unread", directUnreadCount > 0);
+        circleToolDirect.setAttribute("aria-label", directUnreadCount > 0
+          ? `Direkte samtalar, ${directUnreadCount} uleste meldingar`
+          : "Direkte samtalar");
+        circleToolShared.classList.toggle("has-unread", sharedUnreadCount > 0);
+        circleToolShared.setAttribute("aria-label", sharedUnreadCount > 0
+          ? `Felles, ${sharedUnreadCount} uleste meldingar`
+          : "Felles");
+      }
+
+      function appendBottomChannelButtons(channels, target, emptyText = "", panel = bottomChannelPanel, toggle = bottomChannelToggle) {
         if (channels.length === 0 && emptyText) {
           const empty = document.createElement("p");
           empty.className = "status";
@@ -5890,7 +5930,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             button.append(unread);
           }
           button.addEventListener("click", () => {
-            closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
+            closeBottomNavigation(panel, toggle);
             selectChannel(channel);
           });
           target.append(button);
@@ -6191,6 +6231,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         } else {
           clearActiveCircle();
           activeRootScope = channel.direct_user_id ? "direct" : "shared";
+          circleToolMode = activeRootScope;
           circleSelect.value = "";
         }
         reconnectScrollOffset = null;
@@ -7289,7 +7330,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
     </script>
-    <dialog class="channel-details-dialog" id="channel-details-dialog" aria-labelledby="channel-details-title"><header><h2 id="channel-details-title">Menneske i kanalen</h2><button id="channel-details-close" type="button" aria-label="Lukk kanalopplysningane">×</button></header><div class="channel-details-dialog-body"><ul class="channel-member-list" id="channel-member-list"><li>Lastar …</li></ul><section class="channel-member-add" id="channel-member-add" hidden><strong>Legg til i kanalen</strong><label>Person<select id="channel-member"><option value="">Vel brukar</option></select></label><div class="channel-member-actions"><button id="invite-channel-member" type="button" disabled>Inviter</button><button id="add-channel-member" type="button" disabled>Legg til</button></div><p class="status" id="channel-member-status" role="status" aria-live="polite"></p></section><form class="channel-description-form" id="channel-description-form" hidden><label for="channel-description-input"><strong>Kanalomtale</strong> (Markdown)</label><textarea id="channel-description-input" maxlength="2000"></textarea><div><button type="submit">Lagre omtale</button></div><p class="status" id="channel-description-status" role="status"></p></form></div></dialog>
+    <dialog class="channel-details-dialog" id="channel-details-dialog" aria-labelledby="channel-details-title"><header><h2 id="channel-details-title">Menneske i kanalen</h2><button id="channel-details-close" type="button" aria-label="Lukk kanalopplysningane">×</button></header><div class="channel-details-dialog-body"><section class="channel-member-browser"><label class="channel-member-search" for="channel-member-search">Søk i menneska<input id="channel-member-search" type="search" autocomplete="off" placeholder="Søk etter namn"></label><p class="channel-member-count" id="channel-member-count" role="status" aria-live="polite"></p><ul class="channel-member-list" id="channel-member-list"><li>Lastar …</li></ul></section><section class="channel-member-add" id="channel-member-add" hidden><strong>Legg til i kanalen</strong><label>Person<select id="channel-member"><option value="">Vel brukar</option></select></label><div class="channel-member-actions"><button id="invite-channel-member" type="button" disabled>Inviter</button><button id="add-channel-member" type="button" disabled>Legg til</button></div><p class="status" id="channel-member-status" role="status" aria-live="polite"></p></section><form class="channel-description-form" id="channel-description-form" hidden><label for="channel-description-input"><strong>Kanalomtale</strong> (Markdown)</label><textarea id="channel-description-input" maxlength="2000"></textarea><div><button type="submit">Lagre omtale</button></div><p class="status" id="channel-description-status" role="status"></p></form></div></dialog>
   </body>
 </html>
 "##;
@@ -8448,6 +8489,12 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains(".channel-details-dialog > header { display: flex; align-items: center; justify-content: space-between;"));
         assert!(INDEX_HTML.contains(".channel-details-dialog > header button { width: 40px; min-width: 40px; min-height: 40px; padding: 0;"));
         assert!(INDEX_HTML.contains(".channel-details-dialog-body { display: grid; gap: 14px; padding: 14px; overflow-y: auto; }"));
+        assert!(INDEX_HTML.contains("id=\"channel-member-search\" type=\"search\""));
+        assert!(INDEX_HTML.contains("max-height: min(454px, 45dvh)"));
+        assert!(INDEX_HTML.contains("overscroll-behavior: contain"));
+        assert!(INDEX_HTML.contains("channelMemberSearch.addEventListener(\"input\""));
+        assert!(INDEX_HTML.contains(".normalize(\"NFKD\")"));
+        assert!(INDEX_HTML.contains("`Viser ${visibleUsers.length} av ${users.length}`"));
         assert!(INDEX_HTML.contains("function requestChannelMembers(channelId)"));
         assert!(
             INDEX_HTML.contains("sendCommand(\"list_channel_users\", { channel_id: channelId })")
@@ -9047,7 +9094,7 @@ mod protocol_capacity_tests {
         assert!(body.contains("document.addEventListener(\"visibilitychange\""));
         assert!(body.contains(":focus-visible"));
         assert!(body.contains("id=\"mobile-navigation-toggle\""));
-        assert!(body.contains("aria-controls=\"mobile-navigation mobile-onboarding\""));
+        assert!(body.contains("aria-controls=\"mobile-navigation\""));
         assert!(body.contains(
             "id=\"view-mode-toggle\" type=\"button\" role=\"switch\" aria-checked=\"false\""
         ));
@@ -9099,14 +9146,30 @@ mod protocol_capacity_tests {
         ));
         assert!(body.contains("card.classList.add(\"reaction-picker-requested\")"));
         assert!(body.contains("const scopedChannels = activeCircleId"));
-        assert!(body.contains("sharedButton.textContent = \"(Felles)\""));
-        assert!(body.contains("sharedButton.disabled = sharedChannels.length === 0"));
-        assert!(body.contains("directButton.textContent = \"(Direkte)\""));
+        assert!(!body.contains("sharedButton.textContent = \"(Felles)\""));
+        assert!(!body.contains("directButton.textContent = \"(Direkte)\""));
+        assert!(body.contains("class=\"circle-tool-rail\" role=\"toolbar\""));
+        assert!(body.contains("id=\"circle-tool-circles\""));
+        assert!(body.contains("aria-label=\"Direkte samtalar\""));
+        assert!(body.contains("aria-label=\"Felles\""));
+        assert!(body.contains("id=\"circle-tool-settings\""));
+        assert!(body.contains("let circleToolMode = \"circles\""));
+        assert!(body.contains("function setCircleToolMode(mode)"));
+        assert!(body.contains("function activateRootScope(scope)"));
+        assert!(body.contains(
+            "circleToolDirect.addEventListener(\"click\", () => activateRootScope(\"direct\"))"
+        ));
+        assert!(body.contains(
+            "circleToolShared.addEventListener(\"click\", () => activateRootScope(\"shared\"))"
+        ));
+        assert!(body.contains("circleToolMode = activeRootScope"));
+        assert!(body.contains("if (circleAdminDialog.open) return"));
+        assert!(body.contains("id=\"circle-admin-dialog\""));
+        assert!(body.contains("if (!circleAdminDialog.open) circleAdminDialog.showModal()"));
         assert!(body.contains(
             "const directChannels = knownChannels.filter((channel) => channel.direct_user_id)"
         ));
         assert!(!body.contains("const primaryChannels = knownChannels.filter"));
-        assert!(body.contains("activeRootScope = \"direct\""));
         assert!(
             body.contains("const circleChannelHistoryKey = \"sproyt.active-channel-by-circle.v1\"")
         );
@@ -9142,9 +9205,9 @@ mod protocol_capacity_tests {
         assert!(body.contains("function closeBottomNavigation(panel, toggle)"));
         assert!(body.contains("if (event.key === \"Escape\" && bottomChannelPanel.open)"));
         assert!(body.contains("padding-bottom: 6px;"));
-        assert!(body.contains("<summary>Administrer kretsar</summary>"));
-        assert!(!body.contains("Administrer kretsar og kanalar"));
-        assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .onboarding"));
+        assert!(!body.contains("<summary>Administrer kretsar</summary>"));
+        assert!(body.contains("<h2 id=\"circle-admin-title\">Administrer vennekretsar</h2>"));
+        assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .agent-access"));
         assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
         assert!(body.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
         assert!(body.contains("overflow-y: auto; overscroll-behavior: contain;"));
