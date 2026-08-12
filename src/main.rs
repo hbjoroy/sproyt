@@ -2254,7 +2254,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .emoji-picker div { position: absolute; bottom: 2.5rem; left: 0; z-index: 5; display: grid; grid-template-columns: repeat(4, auto); gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--ink); box-shadow: 0 8px 24px #0002; }
       #media-previews { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
       #media-previews:empty { display: none; }
-      #media-previews span { padding: 5px 8px; border-radius: 999px; background: var(--surface-hover); font-size: .8rem; }
+      .media-preview { display: flex; min-width: 0; align-items: center; gap: 5px; padding: 3px 4px 3px 8px; border-radius: 999px; background: var(--surface-hover); font-size: .8rem; }
+      .media-preview-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .media-preview-remove { display: grid; width: 30px; min-width: 30px; min-height: 30px; padding: 0; place-items: center; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 1rem; line-height: 1; }
+      .media-preview-remove:hover, .media-preview-remove:focus-visible { background: var(--surface-raised); color: var(--ink); }
       #upload-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .85rem; }
       #upload-status:empty { display: none; }
       #upload-status[data-kind="error"] { color: #9f2929; font-weight: 650; }
@@ -2280,8 +2283,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .thread-panel > header button { min-width: 42px; min-height: 42px; padding: 4px; }
       .thread-messages { display: grid; gap: 8px; max-height: calc(100dvh - 190px); padding: 10px; overflow-y: auto; }
       .thread-root { border-bottom: 2px solid var(--line); }
-      .thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); }
+      .thread-form { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); }
       .thread-form textarea { min-width: 0; min-height: 44px; max-height: 120px; }
+      .thread-emoji-picker > summary { display: grid; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: transparent; list-style: none; }
+      .thread-emoji-picker > summary::-webkit-details-marker { display: none; }
       .thread-link { min-height: 28px; margin-left: auto; padding: 3px 9px; border-radius: 999px; background: var(--surface-hover); color: var(--ink); font-size: .84rem; font-weight: 700; white-space: nowrap; }
       .message-reactions { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 0; margin-top: 3px; }
       .message-menu { position: relative; }
@@ -3131,7 +3136,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         </nav>
       </div>
     </main>
-    <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
+    <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><details class="emoji-picker thread-emoji-picker" id="thread-emoji-picker"><summary aria-label="Legg til emoji i tråden">😊</summary><div id="thread-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
     <dialog class="circle-channel-dialog" id="circle-channel-dialog" aria-labelledby="circle-channel-title"><header><h2 id="circle-channel-title">Kanalar</h2><button id="circle-channel-close" type="button" aria-label="Lukk kanalveljaren">×</button></header><div class="circle-channel-dialog-body"><section><p class="navigation-heading">Tilgjengelege kanalar</p><div class="joinable-channel-list" id="circle-joinable-list"><p class="status">Lastar …</p></div></section><form class="circle-channel-create" id="circle-channel-create"><strong>Lag ny kanal</strong><label>Namn<input id="managed-channel-name" maxlength="80" placeholder="Turprat" required></label><label>Tilgang<select id="managed-channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label><button type="submit">Lag kanal</button></form><section class="circle-membership-actions"><button class="danger-button" id="leave-circle" type="button">Forlat vennekretsen</button><small id="circle-membership-notice">Du mistar tilgang til kanalane i kretsen, men meldingane dine blir ståande.</small></section></div></dialog>
     <dialog class="circle-channel-dialog direct-message-dialog" id="direct-message-dialog" aria-labelledby="direct-message-title"><header><h2 id="direct-message-title">Ny samtale</h2><button id="direct-message-close" type="button" aria-label="Lukk personveljaren">×</button></header><div class="circle-channel-dialog-body"><label>Finn ein person<select id="direct-user"><option value="">Vel brukar</option></select></label><p class="status" id="direct-message-status" role="status" aria-live="polite"></p><button id="open-direct" type="button" disabled>Start samtale</button></div></dialog>
     <dialog class="media-lightbox" id="media-lightbox" aria-labelledby="media-lightbox-caption"><button id="media-lightbox-close" type="button" aria-label="Lukk fullskjermbiletet">×</button><img id="media-lightbox-image" alt=""><p id="media-lightbox-caption"></p></dialog>
@@ -3183,6 +3188,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const threadMessages = document.querySelector("#thread-messages");
       const threadForm = document.querySelector("#thread-form");
       const threadBody = document.querySelector("#thread-body");
+      const threadEmojiPicker = document.querySelector("#thread-emoji-picker");
       const circleChannelDialog = document.querySelector("#circle-channel-dialog");
       const circleChannelTitle = document.querySelector("#circle-channel-title");
       const circleJoinableList = document.querySelector("#circle-joinable-list");
@@ -3764,7 +3770,26 @@ const INDEX_HTML: &str = r##"<!doctype html>
       function renderMediaPreviews() {
         mediaPreviews.replaceChildren(...activeChannelMedia().map((media) => {
           const item = document.createElement("span");
-          item.textContent = `${media.content_type.startsWith("video/") ? "🎬" : "🖼️"} ${media.original_filename}`;
+          item.className = "media-preview";
+          const label = document.createElement("span");
+          label.className = "media-preview-label";
+          label.textContent = `${media.content_type.startsWith("video/") ? "🎬" : "🖼️"} ${media.original_filename}`;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "media-preview-remove";
+          remove.textContent = "×";
+          remove.setAttribute("aria-label", `Fjern ${media.original_filename}`);
+          remove.addEventListener("click", () => {
+            if (pendingMessages.size > 0) return;
+            pendingMedia = pendingMedia.filter((candidate) => candidate.id !== media.id);
+            renderMediaPreviews();
+            setUploadStatus(`${media.original_filename} er fjerna.`);
+            window.setTimeout(() => {
+              if (uploadStatus.textContent === `${media.original_filename} er fjerna.`) setUploadStatus("");
+            }, 2_000);
+            bodyInput.focus({ preventScroll: true });
+          });
+          item.append(label, remove);
           return item;
         }));
         syncComposerState();
@@ -3867,7 +3892,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
       });
       document.querySelector("#media-lightbox-close").addEventListener("click", () => mediaLightbox.close());
       document.querySelector("#thread-close").addEventListener("click", () => threadPanel.close());
-      threadPanel.addEventListener("close", () => { activeThreadRootId = null; });
+      threadPanel.addEventListener("close", () => {
+        activeThreadRootId = null;
+        threadEmojiPicker.open = false;
+      });
       document.querySelector("#circle-channel-close").addEventListener("click", () => circleChannelDialog.close());
       document.querySelector("#direct-message-close").addEventListener("click", () => directMessageDialog.close());
       channelPeopleButton.addEventListener("click", () => openChannelDetails(false));
@@ -3876,6 +3904,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       });
       document.addEventListener("pointerdown", (event) => {
         if (!event.target.closest(".connection-status")) connectionStatusToggle.setAttribute("aria-expanded", "false");
+        if (threadPanel.open && !threadEmojiPicker.contains(event.target)) threadEmojiPicker.open = false;
       });
       channelDetailsClose.addEventListener("click", () => channelDetailsDialog.close());
       channelDescriptionForm.addEventListener("submit", (event) => {
@@ -4074,6 +4103,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
           messageEmojiPicker.open = false;
         });
       });
+      document.querySelectorAll("#thread-emoji-options [data-emoji]").forEach((button) => {
+        button.addEventListener("click", () => {
+          insertEmoji(threadBody, button.dataset.emoji);
+          threadEmojiPicker.open = false;
+        });
+      });
       document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((button) => {
         button.addEventListener("click", () => {
           statusEmoji.value = button.dataset.emoji;
@@ -4235,6 +4270,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
         bottomCirclePanel.open = false;
       });
       document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && threadEmojiPicker.open) {
+          event.preventDefault();
+          threadEmojiPicker.open = false;
+          threadEmojiPicker.querySelector("summary")?.focus({ preventScroll: true });
+          return;
+        }
+        if (event.key === "Escape" && threadPanel.open) {
+          const threadReactionPicker = threadMessages.querySelector(".reaction-picker[open]");
+          if (threadReactionPicker) {
+            event.preventDefault();
+            threadReactionPicker.open = false;
+            threadReactionPicker.closest(".message")?.classList.remove("reaction-picker-requested");
+            threadReactionPicker.querySelector("summary")?.focus({ preventScroll: true });
+            return;
+          }
+        }
         if (event.key === "Escape" && (circleChannelDialog.open || threadPanel.open || mediaLightbox.open)) {
           return;
         }
@@ -6289,7 +6340,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const previousHeight = messagesEl.scrollHeight;
         const previousTop = messagesEl.scrollTop;
         const wasNearBottom = previousHeight - previousTop - messagesEl.clientHeight < 80;
-        const interaction = captureTimelineInteraction();
+        const interaction = captureMessageInteraction(messagesEl);
         messagesEl.replaceChildren();
         for (const item of timeline) {
           if (item.type === "message") {
@@ -6299,7 +6350,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           }
         }
         renderMermaidDiagrams();
-        restoreTimelineInteraction(interaction);
+        restoreMessageInteraction(messagesEl, interaction);
         if (preserveScroll) {
           messagesEl.scrollTop = messagesEl.scrollHeight - previousHeight + previousTop;
         } else if (revealMessageId) {
@@ -6335,8 +6386,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         });
       }
 
-      function captureTimelineInteraction() {
-        const picker = messagesEl.querySelector(".reaction-picker[open]");
+      function captureMessageInteraction(container) {
+        const picker = container.querySelector(".reaction-picker[open]");
         if (!picker) return null;
         const messageId = picker.closest("[data-message-id]")?.dataset.messageId;
         if (!messageId) return null;
@@ -6349,9 +6400,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         };
       }
 
-      function restoreTimelineInteraction(interaction) {
+      function restoreMessageInteraction(container, interaction) {
         if (!interaction) return;
-        const card = [...messagesEl.querySelectorAll("[data-message-id]")]
+        const card = [...container.querySelectorAll("[data-message-id]")]
           .find((candidate) => candidate.dataset.messageId === interaction.messageId);
         const picker = card?.querySelector(".reaction-picker");
         if (!picker) return;
@@ -6466,7 +6517,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
         if (!threadPanel.open) threadPanel.showModal();
         threadMessages.innerHTML = '<div class="empty-state"><p>Lastar tråden …</p></div>';
         sendCommand("load_thread", { root_message_id: messageId });
-        threadBody.focus();
       }
 
       function renderThread() {
@@ -6483,7 +6533,23 @@ const INDEX_HTML: &str = r##"<!doctype html>
         for (const reply of threadReplies.get(activeThreadRootId) || []) {
           appendMessage(reply, threadMessages, false);
         }
-        threadMessages.scrollTop = threadMessages.scrollHeight;
+        settleThreadAtBottom();
+      }
+
+      function settleThreadAtBottom() {
+        const scroll = () => { threadMessages.scrollTop = threadMessages.scrollHeight; };
+        scroll();
+        requestAnimationFrame(() => {
+          scroll();
+          requestAnimationFrame(scroll);
+        });
+        window.setTimeout(scroll, 150);
+        threadMessages.querySelectorAll("img").forEach((image) => {
+          if (!image.complete) image.addEventListener("load", scroll, { once: true });
+        });
+        threadMessages.querySelectorAll("video").forEach((video) => {
+          if (video.readyState < 1) video.addEventListener("loadedmetadata", scroll, { once: true });
+        });
       }
 
       function replaceChannelReactions(reactions) {
@@ -6617,23 +6683,29 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function patchMessageReactions(messageId) {
-        const message = timeline.find((item) => item.type === "message" && item.message.id === messageId)?.message;
+        const message = timeline.find((item) => item.type === "message" && item.message.id === messageId)?.message
+          || threadRoots.get(messageId)
+          || [...threadReplies.values()].flat().find((candidate) => candidate.id === messageId);
         if (!message) return false;
-        const card = [...messagesEl.querySelectorAll("[data-message-id]")]
-          .find((candidate) => candidate.dataset.messageId === messageId);
-        const reactions = card?.querySelector(".message-reactions");
-        if (!reactions) return false;
-        const interaction = captureTimelineInteraction();
-        const nextReactions = renderMessageReactions(message, (open) => {
-          card.classList.toggle("reaction-picker-requested", open);
-        });
-        const thread = reactions.querySelector(".thread-link");
-        const menu = card.querySelector(".message-menu");
-        if (thread) nextReactions.append(thread);
-        if (menu) placeMessageMenu(card, nextReactions, menu, thread, messageId);
-        reactions.replaceWith(nextReactions);
-        restoreTimelineInteraction(interaction);
-        return true;
+        let patched = false;
+        for (const container of [messagesEl, threadMessages]) {
+          const card = [...container.querySelectorAll("[data-message-id]")]
+            .find((candidate) => candidate.dataset.messageId === messageId);
+          const reactions = card?.querySelector(".message-reactions");
+          if (!card || !reactions) continue;
+          const interaction = captureMessageInteraction(container);
+          const nextReactions = renderMessageReactions(message, (open) => {
+            card.classList.toggle("reaction-picker-requested", open);
+          });
+          const thread = reactions.querySelector(".thread-link");
+          const menu = card.querySelector(".message-menu");
+          if (thread) nextReactions.append(thread);
+          if (menu) placeMessageMenu(card, nextReactions, menu, thread, messageId);
+          reactions.replaceWith(nextReactions);
+          restoreMessageInteraction(container, interaction);
+          patched = true;
+        }
+        return patched;
       }
 
       function appendMessage(message, target = messagesEl, includeThread = true) {
@@ -7846,6 +7918,17 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("id=\"upload-status\""));
         assert!(INDEX_HTML.contains("request.upload.addEventListener(\"progress\""));
         assert!(INDEX_HTML.contains("Behandlar fila"));
+        assert!(INDEX_HTML.contains("className = \"media-preview-remove\""));
+        assert!(
+            INDEX_HTML.contains(
+                "remove.setAttribute(\"aria-label\", `Fjern ${media.original_filename}`)"
+            )
+        );
+        assert!(INDEX_HTML.contains(
+            "pendingMedia = pendingMedia.filter((candidate) => candidate.id !== media.id)"
+        ));
+        assert!(INDEX_HTML.contains("if (pendingMessages.size > 0) return"));
+        assert!(INDEX_HTML.contains("bodyInput.focus({ preventScroll: true })"));
     }
 
     #[test]
@@ -8043,15 +8126,13 @@ mod protocol_capacity_tests {
     #[test]
     fn browser_patches_only_affected_reaction_card_with_timeline_fallback() {
         assert!(INDEX_HTML.contains("function patchMessageReactions(messageId)"));
-        assert!(INDEX_HTML.contains(
-            "const message = timeline.find((item) => item.type === \"message\" && item.message.id === messageId)?.message;"
-        ));
-        assert!(INDEX_HTML.contains(
-            "[...messagesEl.querySelectorAll(\"[data-message-id]\")]\n          .find((candidate) => candidate.dataset.messageId === messageId)"
-        ));
-        assert!(INDEX_HTML.contains(
-            "const nextReactions = renderMessageReactions(message, (open) => {\n          card.classList.toggle(\"reaction-picker-requested\", open);\n        });"
-        ));
+        assert!(INDEX_HTML.contains("|| [...threadReplies.values()].flat().find"));
+        assert!(INDEX_HTML.contains("for (const container of [messagesEl, threadMessages])"));
+        assert!(
+            INDEX_HTML
+                .contains("const nextReactions = renderMessageReactions(message, (open) => {")
+        );
+        assert!(INDEX_HTML.contains("card.classList.toggle(\"reaction-picker-requested\", open)"));
         assert!(INDEX_HTML.contains("const thread = reactions.querySelector(\".thread-link\");"));
         assert!(INDEX_HTML.contains("const menu = card.querySelector(\".message-menu\");"));
         assert!(INDEX_HTML.contains("if (thread) nextReactions.append(thread);"));
@@ -8062,7 +8143,7 @@ mod protocol_capacity_tests {
         );
         assert!(INDEX_HTML.contains("reactions.replaceWith(nextReactions);"));
         assert!(!INDEX_HTML.contains("reactions.replaceWith(renderMessageReactions(message));"));
-        assert!(INDEX_HTML.contains("if (!reactions) return false;"));
+        assert!(INDEX_HTML.contains("if (!card || !reactions) continue;"));
 
         let patch = INDEX_HTML
             .split("function patchMessageReactions(messageId) {")
@@ -8070,13 +8151,13 @@ mod protocol_capacity_tests {
             .and_then(|value| value.split("\n      function appendMessage").next())
             .expect("keyed reaction patch helper");
         let capture = patch
-            .find("const interaction = captureTimelineInteraction();")
+            .find("const interaction = captureMessageInteraction(container);")
             .expect("capture interaction before patch");
         let replace = patch
             .find("reactions.replaceWith(nextReactions);")
             .expect("replace reaction footer");
         let restore = patch
-            .find("restoreTimelineInteraction(interaction);")
+            .find("restoreMessageInteraction(container, interaction);")
             .expect("restore interaction after patch");
         assert!(capture < replace && replace < restore);
 
@@ -8103,8 +8184,8 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("function refreshVisibleProfileStatuses(userId = null)"));
         assert!(INDEX_HTML.contains("senderLabel.dataset.profileUserId = message.sender_id"));
         assert!(INDEX_HTML.contains("refreshVisibleProfileStatuses(payload.profile.id)"));
-        assert!(INDEX_HTML.contains("const interaction = captureTimelineInteraction()"));
-        assert!(INDEX_HTML.contains("restoreTimelineInteraction(interaction)"));
+        assert!(INDEX_HTML.contains("const interaction = captureMessageInteraction(messagesEl)"));
+        assert!(INDEX_HTML.contains("restoreMessageInteraction(messagesEl, interaction)"));
         assert!(INDEX_HTML.contains(".reaction-picker[open]"));
         assert!(INDEX_HTML.contains("focus({ preventScroll: true })"));
     }
@@ -8261,6 +8342,20 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("id=\"thread-panel\""));
         assert!(INDEX_HTML.contains("parent_message_id: activeThreadRootId"));
         assert!(INDEX_HTML.contains("function openThread(messageId)"));
+        assert!(INDEX_HTML.contains("id=\"thread-emoji-picker\""));
+        assert!(INDEX_HTML.contains("#thread-emoji-options [data-emoji]"));
+        assert!(INDEX_HTML.contains("insertEmoji(threadBody, button.dataset.emoji)"));
+        assert!(INDEX_HTML.contains("if (event.key === \"Escape\" && threadEmojiPicker.open)"));
+        assert!(INDEX_HTML.contains(
+            "threadEmojiPicker.querySelector(\"summary\")?.focus({ preventScroll: true })"
+        ));
+        assert!(
+            INDEX_HTML
+                .contains("if (threadPanel.open && !threadEmojiPicker.contains(event.target))")
+        );
+        assert!(INDEX_HTML.contains("function settleThreadAtBottom()"));
+        assert!(INDEX_HTML.contains("threadMessages.scrollTop = threadMessages.scrollHeight"));
+        assert!(!INDEX_HTML.contains("sendCommand(\"load_thread\", { root_message_id: messageId });\n        threadBody.focus();"));
         assert!(INDEX_HTML.contains("const threadReplies = new Map()"));
         assert!(INDEX_HTML.contains("thread.textContent = replyCount === 0 ? \"🧵\""));
         assert!(INDEX_HTML.contains("footer.append(thread);"));
