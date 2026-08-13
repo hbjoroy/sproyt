@@ -15,10 +15,8 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use super::{
-    add_security_headers, app_readyz, approve_agent_message, auth_callback, auth_login,
-    auth_logout, auth_refresh, auth_session, correlate_process, create_agent, get_process,
-    grant_agent, healthz, index, inspect_process, mcp_handler, metrics, record_metrics,
-    revoke_agent, revoke_agent_grant, set_heart_feature, start_process, versionz, ws_handler,
+    add_security_headers, app_readyz, auth_callback, auth_login, auth_logout, auth_refresh,
+    auth_session, healthz, index, mcp_handler, metrics, record_metrics, versionz, ws_handler,
 };
 use crate::{
     agent::AgentService,
@@ -33,11 +31,17 @@ use crate::{
         export_my_data, notification_settings, record_client_event, save_notification_preferences,
         subscribe_push, unsubscribe_push,
     },
+    web::agents::{
+        approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
+    },
     web::assets::{
         client_store, client_store_legacy, offline_page, pwa_manifest, service_worker,
         wave_logo_192, wave_logo_512, wave_logo_svg,
     },
     web::media::{download_media, download_media_preview, upload_media},
+    web::processes::{
+        correlate_process, get_process, inspect_process, set_heart_feature, start_process,
+    },
 };
 
 #[derive(Clone)]

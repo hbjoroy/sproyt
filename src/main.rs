@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use axum::{
     Json,
-    extract::{Path, Query, Request, State, ws::WebSocketUpgrade},
+    extract::{Query, Request, State, ws::WebSocketUpgrade},
     http::{
         HeaderMap, HeaderName, HeaderValue,
         header::{ACCEPT, AUTHORIZATION, COOKIE, LOCATION, ORIGIN, SET_COOKIE},
@@ -38,22 +38,22 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::{
-    agent::{AgentPrincipal, AgentScope, CreateAgent, GrantAgent},
+    agent::{AgentPrincipal, AgentScope},
     auth::AuthError,
     chat::ChatError,
-    domain::{ChannelId, ChannelSequence, MessageBody, MessageLimit, UserId},
+    domain::{ChannelId, ChannelSequence, MessageBody, MessageLimit},
     operations::{healthz, metrics, record_metrics},
-    process::{
-        EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, ProcessLinkId, SetCircleFeature,
-    },
+    process::{EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, ProcessLinkId},
 };
 #[cfg(test)]
 use crate::{
+    agent::{CreateAgent, GrantAgent},
     auth::AuthService,
     chat::ChatEngine,
+    domain::UserId,
     notification::NotificationService,
     operations::OperationalState,
-    process::{HeartGateway, SharedProcessGateway},
+    process::{HeartGateway, SetCircleFeature, SharedProcessGateway},
 };
 
 #[cfg(test)]
@@ -153,218 +153,6 @@ async fn app_readyz(State(state): State<AppState>) -> axum::response::Response {
     }
 }
 
-#[derive(Deserialize)]
-struct StartProcessRequest {
-    channel_id: String,
-    request_id: String,
-    namespace: String,
-    definition_name: String,
-    definition_version: Option<String>,
-    #[serde(default)]
-    metadata: serde_json::Value,
-}
-
-async fn start_process(
-    State(state): State<AppState>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-    Json(body): Json<StartProcessRequest>,
-) -> axum::response::Response {
-    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
-    let principal = match state
-        .auth
-        .authenticate_request(query.participant, cookie)
-        .await
-    {
-        Ok(principal) => principal,
-        Err(error) => return auth_error_response(error),
-    };
-    let channel_id = match ChannelId::new(body.channel_id) {
-        Ok(id) => id,
-        Err(error) => {
-            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
-        }
-    };
-    match state
-        .processes
-        .enqueue_start(EnqueueProcessStart {
-            channel_id,
-            actor: principal.user.id,
-            request_id: body.request_id,
-            namespace: body.namespace,
-            definition_name: body.definition_name,
-            definition_version: body.definition_version,
-            metadata: body.metadata,
-        })
-        .await
-    {
-        Ok(link) => (
-            axum::http::StatusCode::ACCEPTED,
-            Json(serde_json::json!({"process_link_id": link.id.as_uuid(), "status": link.status})),
-        )
-            .into_response(),
-        Err(error) => repository_response(error),
-    }
-}
-
-#[derive(Deserialize)]
-struct CorrelateProcessRequest {
-    request_id: String,
-    #[serde(default)]
-    payload: serde_json::Value,
-}
-
-async fn correlate_process(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-    Json(body): Json<CorrelateProcessRequest>,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(principal) => principal,
-        Err(error) => return auth_error_response(error),
-    };
-    let process_link_id = match ProcessLinkId::parse(&id) {
-        Ok(id) => id,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                "invalid process link id",
-            )
-                .into_response();
-        }
-    };
-    match state
-        .processes
-        .enqueue_correlation(EnqueueCorrelation {
-            process_link_id,
-            actor: principal.user.id,
-            request_id: body.request_id,
-            payload: body.payload,
-        })
-        .await
-    {
-        Ok(outbox_id) => (
-            axum::http::StatusCode::ACCEPTED,
-            Json(serde_json::json!({"outbox_id": outbox_id.as_uuid()})),
-        )
-            .into_response(),
-        Err(error) => repository_response(error),
-    }
-}
-
-async fn get_process(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(principal) => principal,
-        Err(error) => return auth_error_response(error),
-    };
-    let process_link_id = match ProcessLinkId::parse(&id) {
-        Ok(id) => id,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                "invalid process link id",
-            )
-                .into_response();
-        }
-    };
-    match state
-        .processes
-        .get_process(principal.user.id, process_link_id)
-        .await
-    {
-        Ok(view) => Json(view).into_response(),
-        Err(error) => repository_response(error),
-    }
-}
-
-#[derive(Deserialize)]
-struct InspectProcessRequest {
-    request_id: String,
-}
-
-async fn inspect_process(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-    Json(body): Json<InspectProcessRequest>,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(principal) => principal,
-        Err(error) => return auth_error_response(error),
-    };
-    let process_link_id = match ProcessLinkId::parse(&id) {
-        Ok(id) => id,
-        Err(_) => {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                "invalid process link id",
-            )
-                .into_response();
-        }
-    };
-    match state
-        .processes
-        .enqueue_inspection(EnqueueInspection {
-            process_link_id,
-            actor: principal.user.id,
-            request_id: body.request_id,
-        })
-        .await
-    {
-        Ok(outbox_id) => (
-            axum::http::StatusCode::ACCEPTED,
-            Json(serde_json::json!({"outbox_id":outbox_id.as_uuid()})),
-        )
-            .into_response(),
-        Err(error) => repository_response(error),
-    }
-}
-
-#[derive(Deserialize)]
-struct SetFeatureRequest {
-    enabled: bool,
-}
-
-async fn set_heart_feature(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-    Json(body): Json<SetFeatureRequest>,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(principal) => principal,
-        Err(error) => return auth_error_response(error),
-    };
-    let circle_id = match uuid::Uuid::parse_str(&id) {
-        Ok(id) => crate::domain::CircleId::from_uuid(id),
-        Err(_) => {
-            return (axum::http::StatusCode::BAD_REQUEST, "invalid circle id").into_response();
-        }
-    };
-    match state
-        .processes
-        .set_circle_feature(SetCircleFeature {
-            circle_id,
-            actor: principal.user.id,
-            feature: "heart.event-planning".to_owned(),
-            enabled: body.enabled,
-        })
-        .await
-    {
-        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
-        Err(error) => repository_response(error),
-    }
-}
-
 async fn authenticate_http(
     state: &AppState,
     query: WsQuery,
@@ -417,161 +205,6 @@ fn chat_error_response(error: ChatError) -> axum::response::Response {
         ChatError::EngineStopped => axum::http::StatusCode::SERVICE_UNAVAILABLE,
     };
     (status, error.public_message()).into_response()
-}
-
-#[derive(Deserialize)]
-struct CreateAgentRequest {
-    display_name: String,
-    provider: String,
-    service_identity: String,
-    purpose: String,
-    #[serde(default = "default_agent_rate_limit")]
-    rate_limit_per_minute: u16,
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-const fn default_agent_rate_limit() -> u16 {
-    60
-}
-
-async fn create_agent(
-    State(state): State<AppState>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-    Json(body): Json<CreateAgentRequest>,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(value) => value,
-        Err(error) => return auth_error_response(error),
-    };
-    match state
-        .agents
-        .create(CreateAgent {
-            actor: principal.user.id.clone(),
-            owner_id: principal.user.id,
-            display_name: body.display_name,
-            provider: body.provider,
-            service_identity: body.service_identity,
-            purpose: body.purpose,
-            rate_limit_per_minute: body.rate_limit_per_minute,
-            expires_at: body.expires_at,
-        })
-        .await
-    {
-        Ok(created) => {
-            let mut response = (axum::http::StatusCode::CREATED, Json(created)).into_response();
-            response.headers_mut().insert(
-                axum::http::header::CACHE_CONTROL,
-                HeaderValue::from_static("no-store"),
-            );
-            response
-        }
-        Err(error) => repository_response(error),
-    }
-}
-
-#[derive(Deserialize)]
-struct GrantAgentRequest {
-    circle_id: Option<String>,
-    channel_id: Option<String>,
-    scope: AgentScope,
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-async fn grant_agent(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-    Json(body): Json<GrantAgentRequest>,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(value) => value,
-        Err(error) => return auth_error_response(error),
-    };
-    let agent_id = match UserId::new(id) {
-        Ok(id) => id,
-        Err(error) => {
-            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
-        }
-    };
-    let circle_id = match body
-        .circle_id
-        .map(|id| uuid::Uuid::parse_str(&id).map(crate::domain::CircleId::from_uuid))
-        .transpose()
-    {
-        Ok(id) => id,
-        Err(_) => {
-            return (axum::http::StatusCode::BAD_REQUEST, "invalid circle id").into_response();
-        }
-    };
-    let channel_id = match body.channel_id.map(ChannelId::new).transpose() {
-        Ok(id) => id,
-        Err(error) => {
-            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
-        }
-    };
-    match state
-        .agents
-        .grant(GrantAgent {
-            actor: principal.user.id,
-            agent_id,
-            circle_id,
-            channel_id,
-            scope: body.scope,
-            expires_at: body.expires_at,
-        })
-        .await
-    {
-        Ok(id) => (
-            axum::http::StatusCode::CREATED,
-            Json(serde_json::json!({"grant_id":id})),
-        )
-            .into_response(),
-        Err(error) => repository_response(error),
-    }
-}
-
-async fn revoke_agent_grant(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(value) => value,
-        Err(error) => return auth_error_response(error),
-    };
-    let grant_id = match uuid::Uuid::parse_str(&id) {
-        Ok(id) => id,
-        Err(_) => return (axum::http::StatusCode::BAD_REQUEST, "invalid grant id").into_response(),
-    };
-    match state.agents.revoke(principal.user.id, grant_id).await {
-        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
-        Err(error) => repository_response(error),
-    }
-}
-
-async fn revoke_agent(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(value) => value,
-        Err(error) => return auth_error_response(error),
-    };
-    let agent_id = match UserId::new(id) {
-        Ok(id) => id,
-        Err(error) => {
-            return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
-        }
-    };
-    match state.agents.revoke_agent(principal.user.id, agent_id).await {
-        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
-        Err(error) => repository_response(error),
-    }
 }
 
 #[derive(Deserialize)]
@@ -991,32 +624,6 @@ fn mcp_repository_error(error: crate::domain::RepositoryError) -> (i64, String) 
 }
 fn mcp_chat_error(error: ChatError) -> (i64, String) {
     (-32004, error.public_message())
-}
-
-async fn approve_agent_message(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<WsQuery>,
-    headers: HeaderMap,
-) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(value) => value,
-        Err(error) => return auth_error_response(error),
-    };
-    let message_id = match uuid::Uuid::parse_str(&id) {
-        Ok(id) => crate::domain::MessageId::from_uuid(id),
-        Err(_) => {
-            return (axum::http::StatusCode::BAD_REQUEST, "invalid message id").into_response();
-        }
-    };
-    match state
-        .agents
-        .approve_message(principal.user.id, message_id)
-        .await
-    {
-        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
-        Err(error) => repository_response(error),
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
