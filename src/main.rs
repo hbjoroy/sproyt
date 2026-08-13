@@ -2224,6 +2224,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .brand { display: flex; align-items: center; gap: 10px; }
       .brand h1 { min-width: 0; overflow-wrap: anywhere; }
       .brand-mark { display: block; width: 42px; height: 42px; border-radius: 12px; }
+      .desktop-sidebar-toggle { display: grid; width: 34px; min-width: 34px; min-height: 34px; margin-left: auto; padding: 0; place-items: center; border-radius: 8px; background: transparent; color: var(--muted); font-size: 1.1rem; }
+      .desktop-sidebar-toggle:hover, .desktop-sidebar-toggle:focus-visible { background: var(--surface-hover); color: var(--ink); }
+      .desktop-advanced-entry { display: none; }
       .identity { display: grid; gap: 4px; font-size: .9rem; }
       .identity > span { margin-bottom: 2px; color: var(--muted); font-size: .8rem; }
       .identity > span strong { color: var(--ink); font-size: .9rem; }
@@ -2401,10 +2404,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .bottom-navigation-list button.has-unread { color: var(--ink); font-weight: 800; }
       .bottom-navigation-heading { margin: 5px 4px 1px; color: var(--subtle); font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
       .bottom-navigation-list .unread { flex: none; }
-      .circle-toolbox { left: auto; grid-template-columns: minmax(0, 1fr) 44px; width: min(360px, calc(200% + 6px)); max-height: min(42dvh, 340px); padding: 0; overflow: hidden; }
+      .circle-toolbox { left: auto; grid-template-columns: minmax(0, 1fr) 48px; width: min(364px, calc(200% + 6px)); max-height: min(42dvh, 340px); padding: 0; overflow: visible; }
       .circle-tool-content { display: grid; align-content: start; gap: 3px; min-height: 120px; padding: 6px; overflow-y: auto; overscroll-behavior: contain; }
-      .circle-tool-rail { display: grid; align-content: start; gap: 3px; padding: 5px; border-left: 1px solid var(--border); background: var(--surface); }
-      .bottom-navigation-list .circle-tool-button { position: relative; display: grid; width: 34px; min-width: 34px; min-height: 38px; padding: 0; place-items: center; font-size: 1rem; text-align: center; }
+      .circle-tool-rail { display: grid; justify-items: center; align-content: start; gap: 3px; padding: 5px; border-left: 1px solid var(--border); background: var(--surface); }
+      .bottom-navigation-list .circle-tool-button { position: relative; display: grid; width: 38px; min-width: 38px; min-height: 40px; padding: 0; place-items: center; font-size: 1.22rem; line-height: 1; text-align: center; }
+      .circle-tool-button::before { position: absolute; top: 50%; right: calc(100% + 7px); z-index: 20; width: max-content; max-width: min(220px, 65vw); padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); color: var(--ink); box-shadow: 0 8px 24px #0003; content: attr(aria-label); font-size: .78rem; font-weight: 600; line-height: 1.25; opacity: 0; pointer-events: none; transform: translate(3px, -50%); transition: opacity .12s ease, transform .12s ease; white-space: nowrap; }
+      .circle-tool-button:hover::before, .circle-tool-button:focus-visible::before { opacity: 1; transform: translate(0, -50%); }
       .circle-tool-button[aria-pressed="true"] { background: var(--surface-hover); color: var(--accent); }
       .circle-tool-button.has-unread::after { position: absolute; top: 4px; right: 3px; width: 7px; height: 7px; border: 2px solid var(--surface); border-radius: 999px; background: var(--accent); content: ""; }
       .navigation-heading { margin: 0 8px 5px; color: var(--muted); font-size: .8rem; font-weight: 700; letter-spacing: .01em; }
@@ -2834,6 +2839,112 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .conversation-details { flex: 1 1 auto; }
         .conversation-header .view-controls { order: 2; }
         .conversation-header .channel-people { order: 3; }
+
+        main { transition: grid-template-columns .16s ease; }
+        .sidebar { transition: padding .16s ease; }
+        main.desktop-sidebar-collapsed { grid-template-columns: 56px minmax(0, 1fr); }
+        .sidebar.desktop-collapsed { justify-items: center; gap: 12px; padding: 12px 7px; overflow-x: visible; }
+        .sidebar.desktop-collapsed .brand { width: 100%; display: grid; grid-template-columns: 1fr; justify-items: center; gap: 8px; }
+        .sidebar.desktop-collapsed .brand h1,
+        .sidebar.desktop-collapsed .identity > span,
+        .sidebar.desktop-collapsed .status-summary-label,
+        .sidebar.desktop-collapsed .notification-summary-label,
+        .sidebar.desktop-collapsed .logout-label,
+        .sidebar.desktop-collapsed .navigation-heading { display: none; }
+        .sidebar.desktop-collapsed .desktop-sidebar-toggle { margin: 0; }
+        .sidebar.desktop-collapsed .identity { width: 100%; justify-items: center; }
+        .sidebar.desktop-collapsed #status-editor,
+        .sidebar.desktop-collapsed #notification-editor { width: 100%; padding: 0; }
+        .sidebar.desktop-collapsed #status-editor > summary,
+        .sidebar.desktop-collapsed #notification-editor > summary { display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; border-radius: 8px; list-style: none; font-size: 1.25rem; }
+        .sidebar.desktop-collapsed #status-editor > summary::-webkit-details-marker,
+        .sidebar.desktop-collapsed #notification-editor > summary::-webkit-details-marker { display: none; }
+        .sidebar.desktop-collapsed #status-editor > summary:hover,
+        .sidebar.desktop-collapsed #status-editor > summary:focus-visible,
+        .sidebar.desktop-collapsed #notification-editor > summary:hover,
+        .sidebar.desktop-collapsed #notification-editor > summary:focus-visible,
+        .sidebar.desktop-collapsed .logout-link:hover,
+        .sidebar.desktop-collapsed .logout-link:focus-visible,
+        .sidebar.desktop-collapsed .inbox-button:hover,
+        .sidebar.desktop-collapsed .inbox-button:focus-visible { background: var(--surface-hover); }
+        .sidebar.desktop-collapsed #status-editor > .status-settings,
+        .sidebar.desktop-collapsed #notification-editor > .notification-settings { display: none; }
+        .sidebar.desktop-collapsed .logout-link { display: grid; width: 40px; min-height: 40px; margin: 0; padding: 0; place-items: center; }
+        .sidebar.desktop-collapsed .logout-icon { width: auto; font-size: 1.3rem; }
+        .sidebar.desktop-collapsed nav { width: 100%; }
+        .sidebar.desktop-collapsed .inbox-navigation { justify-items: center; gap: 6px; margin: 0; }
+        .sidebar.desktop-collapsed .inbox-button { position: relative; display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; }
+        .sidebar.desktop-collapsed .inbox-icon { width: 28px; height: 28px; font-size: 1rem; }
+        .sidebar.desktop-collapsed .inbox-label { display: none; }
+        .sidebar.desktop-collapsed .unread { position: absolute; top: -4px; right: -6px; min-width: 1.25rem; padding: 1px 4px; font-size: .65rem; }
+        .sidebar.desktop-collapsed .agent-access { width: 40px; align-self: end; }
+        .sidebar.desktop-collapsed .agent-access > summary { display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; border-radius: 8px; list-style: none; font-size: 0; }
+        .sidebar.desktop-collapsed .agent-access > summary::-webkit-details-marker { display: none; }
+        .sidebar.desktop-collapsed .agent-access > summary::before { content: "⚙"; font-size: 1.15rem; }
+        .sidebar.desktop-collapsed .agent-access > :not(summary) { display: none; }
+        .sidebar.desktop-collapsed .agent-access > summary:hover,
+        .sidebar.desktop-collapsed .agent-access > summary:focus-visible { background: var(--surface-hover); }
+        .sidebar.desktop-collapsed .advanced-tools, .sidebar.desktop-collapsed .process-view { display: none; }
+        .sidebar.desktop-collapsed .desktop-advanced-entry { display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; border-radius: 8px; font-size: 0; }
+        .sidebar.desktop-collapsed .desktop-advanced-entry::before { content: "♥"; font-size: 1.2rem; }
+        .sidebar.desktop-collapsed [data-tooltip] { position: relative; }
+        .sidebar.desktop-collapsed [data-tooltip]::after { position: absolute; top: 50%; left: calc(100% + 10px); z-index: 20; width: max-content; max-width: min(240px, calc(100vw - 80px)); padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); color: var(--ink); box-shadow: 0 6px 18px rgb(0 0 0 / 18%); content: attr(data-tooltip); font-size: .8rem; font-weight: 600; line-height: 1.25; opacity: 0; pointer-events: none; transform: translate(4px, -50%); transition: opacity .12s ease, transform .12s ease; }
+        .sidebar.desktop-collapsed [data-tooltip]:hover::after, .sidebar.desktop-collapsed [data-tooltip]:focus-visible::after { opacity: 1; transform: translate(0, -50%); }
+        @media (prefers-reduced-motion: reduce) { main, .sidebar { transition: none; } }
+      }
+
+      @media (min-width: 641px) and (max-width: 900px) {
+        main { grid-template-columns: 56px minmax(0, 1fr); }
+        .sidebar { justify-items: center; gap: 12px; padding: 12px 7px; overflow-x: visible; }
+        .sidebar .brand { width: 100%; display: grid; grid-template-columns: 1fr; justify-items: center; gap: 8px; }
+        .sidebar .brand h1, .sidebar .identity > span, .sidebar .status-summary-label, .sidebar .notification-summary-label, .sidebar .logout-label, .sidebar .navigation-heading { display: none; }
+        .sidebar .desktop-sidebar-toggle { margin: 0; }
+        .sidebar .identity { width: 100%; justify-items: center; }
+        .sidebar #status-editor, .sidebar #notification-editor { width: 100%; padding: 0; }
+        .sidebar #status-editor > summary, .sidebar #notification-editor > summary { display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; border-radius: 8px; list-style: none; font-size: 1.25rem; }
+        .sidebar #status-editor > summary::-webkit-details-marker, .sidebar #notification-editor > summary::-webkit-details-marker { display: none; }
+        .sidebar #status-editor > .status-settings, .sidebar #notification-editor > .notification-settings { display: none; }
+        .sidebar .logout-link { display: grid; width: 40px; min-height: 40px; margin: 0; padding: 0; place-items: center; }
+        .sidebar .logout-icon { width: auto; font-size: 1.3rem; }
+        .sidebar nav { width: 100%; }
+        .sidebar .inbox-navigation { justify-items: center; gap: 6px; margin: 0; }
+        .sidebar .inbox-button { position: relative; display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; }
+        .sidebar .inbox-icon { width: 28px; height: 28px; font-size: 1rem; }
+        .sidebar .inbox-label { display: none; }
+        .sidebar .unread { position: absolute; top: -4px; right: -6px; min-width: 1.25rem; padding: 1px 4px; font-size: .65rem; }
+        .sidebar .agent-access { width: 40px; align-self: end; }
+        .sidebar .agent-access > summary { display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; border-radius: 8px; list-style: none; font-size: 0; }
+        .sidebar .agent-access > summary::-webkit-details-marker { display: none; }
+        .sidebar .agent-access > summary::before { content: "⚙"; font-size: 1.15rem; }
+        .sidebar .agent-access > :not(summary) { display: none; }
+        .sidebar .advanced-tools, .sidebar .process-view { display: none; }
+        .sidebar .desktop-advanced-entry { display: grid; width: 40px; min-height: 40px; padding: 0; place-items: center; border-radius: 8px; font-size: 0; }
+        .sidebar .desktop-advanced-entry::before { content: "♥"; font-size: 1.2rem; }
+      }
+
+      @media (min-width: 641px) {
+        main.desktop-sidebar-expanded { grid-template-columns: 280px minmax(0, 1fr); }
+        .sidebar.desktop-expanded { justify-items: stretch; gap: 18px; padding: 20px 16px; overflow-x: hidden; }
+        .sidebar.desktop-expanded .brand { display: flex; width: auto; justify-items: initial; gap: 10px; }
+        .sidebar.desktop-expanded .brand h1, .sidebar.desktop-expanded .identity > span, .sidebar.desktop-expanded .status-summary-label, .sidebar.desktop-expanded .notification-summary-label, .sidebar.desktop-expanded .logout-label, .sidebar.desktop-expanded .navigation-heading { display: initial; }
+        .sidebar.desktop-expanded .desktop-sidebar-toggle { margin-left: auto; }
+        .sidebar.desktop-expanded .identity { width: auto; justify-items: initial; }
+        .sidebar.desktop-expanded #status-editor, .sidebar.desktop-expanded #notification-editor { width: auto; padding: 2px 0; }
+        .sidebar.desktop-expanded #status-editor > summary, .sidebar.desktop-expanded #notification-editor > summary { display: list-item; width: auto; min-height: 0; padding: 5px 0; border-radius: 0; font-size: inherit; }
+        .sidebar.desktop-expanded #status-editor > .status-settings, .sidebar.desktop-expanded #notification-editor > .notification-settings { display: grid; }
+        .sidebar.desktop-expanded .logout-link { display: flex; width: max-content; min-height: 34px; margin-top: 3px; padding: 5px 8px; place-items: initial; }
+        .sidebar.desktop-expanded .logout-icon { width: 1.25rem; font-size: inherit; }
+        .sidebar.desktop-expanded nav { width: auto; }
+        .sidebar.desktop-expanded .inbox-navigation { justify-items: initial; gap: 3px; margin-bottom: 10px; }
+        .sidebar.desktop-expanded .inbox-button { position: static; display: flex; width: 100%; min-height: 40px; padding: 5px 8px; place-items: initial; }
+        .sidebar.desktop-expanded .inbox-icon { width: 26px; height: 26px; font-size: .86rem; }
+        .sidebar.desktop-expanded .inbox-label { display: initial; }
+        .sidebar.desktop-expanded .unread { position: static; min-width: 1.6em; padding: 2px 6px; font-size: .75rem; }
+        .sidebar.desktop-expanded .agent-access { width: auto; align-self: auto; }
+        .sidebar.desktop-expanded .agent-access > summary { display: list-item; width: auto; min-height: 0; padding: initial; border-radius: 0; font-size: inherit; }
+        .sidebar.desktop-expanded .agent-access > :not(summary) { display: initial; }
+        .sidebar.desktop-expanded .advanced-tools { display: grid; }
+        .sidebar.desktop-expanded .desktop-advanced-entry { display: none; }
       }
 
       @media (max-width: 640px) {
@@ -3053,11 +3164,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
   <body>
     <main>
       <aside class="sidebar" id="sidebar-panel">
-        <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave.svg" alt=""><h1>Sprøyt</h1></div>
+        <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave.svg" alt=""><h1>Sprøyt</h1><button class="desktop-sidebar-toggle" id="desktop-sidebar-toggle" type="button" aria-expanded="true" aria-label="Kollaps menyen" data-tooltip="Kollaps menyen" title="Kollaps menyen">‹</button></div>
         <div class="identity">
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
           <details id="status-editor">
-            <summary id="current-status">Set status</summary>
+            <summary id="current-status" aria-label="Set status" data-tooltip="Set status" title="Set status"><span class="status-compact-icon" aria-hidden="true">🙂</span><span class="status-summary-label">Set status</span></summary>
             <div class="status-settings">
               <div class="status-fields"><label>Emoji<input id="status-emoji" aria-label="Status-emoji" maxlength="32" placeholder="🙂"></label><label>Tekst<input id="status-text" maxlength="100" placeholder="Kva skjer?"></label></div>
               <div class="status-emoji-options" id="status-emoji-options" aria-label="Vel status-emoji"><button type="button" data-emoji="🙂" aria-label="Glad">🙂</button><button type="button" data-emoji="💻" aria-label="Arbeider">💻</button><button type="button" data-emoji="🏠" aria-label="Heime">🏠</button><button type="button" data-emoji="🚶" aria-label="Ute">🚶</button><button type="button" data-emoji="🍽️" aria-label="Matpause">🍽️</button><button type="button" data-emoji="🌴" aria-label="Ferie">🌴</button></div>
@@ -3065,7 +3176,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             </div>
           </details>
           <details id="notification-editor">
-            <summary id="notification-summary">Varsel</summary>
+            <summary id="notification-summary" aria-label="Varsel" data-tooltip="Varsel" title="Varsel"><span aria-hidden="true">🔔</span><span class="notification-summary-label">Varsel</span></summary>
             <div class="notification-settings">
               <label>Levering<select id="notification-mode"><option value="instant">Direkte</option><option value="weekly">Vekesoppsummering (snart)</option><option value="muted">Ingen</option></select></label>
               <label><span>Direktemeldingar</span><input id="notification-direct" type="checkbox" checked></label>
@@ -3074,18 +3185,17 @@ const INDEX_HTML: &str = r##"<!doctype html>
               <small id="notification-notice" aria-live="polite">Hentar varselinnstillingar …</small>
             </div>
           </details>
-          <a class="logout-link" href="/auth/logout"><span class="logout-icon" aria-hidden="true">↪</span><span>Logg ut</span></a>
         </div>
         <nav aria-label="Samtalar" id="mobile-navigation">
           <p class="navigation-heading">For deg</p>
           <div class="inbox-navigation" aria-label="Personleg innboks">
-            <button class="inbox-button" id="show-unread" type="button" aria-current="false"><span class="inbox-icon" aria-hidden="true">●</span><span class="inbox-label">Ulest</span><span class="unread" id="unread-count" hidden></span></button>
-            <button class="inbox-button" id="show-mentions" type="button" aria-current="false"><span class="inbox-icon" aria-hidden="true">@</span><span class="inbox-label">Omtalar</span><span class="unread" id="mention-count" hidden></span></button>
-            <button class="inbox-button" id="show-tasks" type="button" aria-current="false"><span class="inbox-icon" aria-hidden="true">✓</span><span class="inbox-label">Oppgåver</span><span class="unread" id="task-count" hidden></span></button>
+            <button class="inbox-button" id="show-unread" type="button" aria-current="false" aria-label="Ulest" data-navigation-label="Ulest" data-tooltip="Ulest" title="Ulest"><span class="inbox-icon" aria-hidden="true">●</span><span class="inbox-label">Ulest</span><span class="unread" id="unread-count" hidden></span></button>
+            <button class="inbox-button" id="show-mentions" type="button" aria-current="false" aria-label="Omtalar" data-navigation-label="Omtalar" data-tooltip="Omtalar" title="Omtalar"><span class="inbox-icon" aria-hidden="true">@</span><span class="inbox-label">Omtalar</span><span class="unread" id="mention-count" hidden></span></button>
+            <button class="inbox-button" id="show-tasks" type="button" aria-current="false" aria-label="Oppgåver" data-navigation-label="Oppgåver" data-tooltip="Oppgåver" title="Oppgåver"><span class="inbox-icon" aria-hidden="true">✓</span><span class="inbox-label">Oppgåver</span><span class="unread" id="task-count" hidden></span></button>
           </div>
         </nav>
         <details class="agent-access" {{AGENT_HIDDEN}}>
-          <summary>Agenttilgang</summary>
+          <summary data-tooltip="Agenttilgang" title="Agenttilgang">Agenttilgang</summary>
           <p>Lag ein kortliva MCP-agent for den opne samtalen. Tilgangen varer i 30 minutt og kan lesast og skrive meldingar.</p>
           <button id="create-agent-access" type="button" disabled>Lag kortliva tilgang</button>
           <label for="agent-credential">Credential (blir berre vist no)</label>
@@ -3096,6 +3206,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           </div>
           <p class="onboarding-notice" id="agent-access-notice" role="status" aria-live="polite">Vel ei samtale for å lage tilgang.</p>
         </details>
+        <button class="desktop-advanced-entry" id="desktop-advanced-entry" type="button" aria-label="Heart og prosessar" data-tooltip="Heart og prosessar" title="Heart og prosessar" {{ADVANCED_HIDDEN}}>Heart og prosessar</button>
         <div class="advanced-tools" {{ADVANCED_HIDDEN}}>
           <button id="enable-heart" type="button" disabled>Slå på event-planlegging</button>
           <label>Tittel<input id="process-title" placeholder="Middag på laurdag"></label>
@@ -3107,6 +3218,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           <button id="process-no" type="button" disabled>Svar nei</button>
         </div>
         <section class="process-view" id="process-view" aria-live="polite" hidden></section>
+        <a class="logout-link" href="/auth/logout" aria-label="Logg ut" data-tooltip="Logg ut" title="Logg ut"><span class="logout-icon" aria-hidden="true">↪</span><span class="logout-label">Logg ut</span></a>
       </aside>
       <header class="conversation-header">
         <div class="mobile-app-mark"><img src="/assets/sproyt-wave.svg" alt=""></div>
@@ -3133,7 +3245,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           </details>
           <details class="bottom-navigation-panel" id="bottom-circle-panel">
             <summary id="bottom-circle-toggle" aria-controls="bottom-circle-list" aria-label="Vel område"><span class="bottom-navigation-label">◎ Felles</span></summary>
-            <div class="bottom-navigation-list circle-toolbox" id="bottom-circle-list"><div class="circle-tool-content" id="bottom-circle-content"><p class="status">Lastar …</p></div><div class="circle-tool-rail" role="toolbar" aria-label="Samtaleområde"><button class="circle-tool-button" id="circle-tool-circles" type="button" aria-label="Vennekretsar" title="Vennekretsar" aria-pressed="true">◎</button><button class="circle-tool-button" id="circle-tool-direct" type="button" aria-label="Direkte samtalar" title="Direkte samtalar" aria-pressed="false">💬</button><button class="circle-tool-button" id="circle-tool-shared" type="button" aria-label="Felles" title="Felles" aria-pressed="false">⌂</button><button class="circle-tool-button" id="circle-tool-settings" type="button" aria-label="Administrer vennekretsar" title="Administrer vennekretsar">⚙</button></div></div>
+            <div class="bottom-navigation-list circle-toolbox" id="bottom-circle-list"><div class="circle-tool-content" id="bottom-circle-content"><p class="status">Lastar …</p></div><div class="circle-tool-rail" role="toolbar" aria-label="Samtaleområde"><button class="circle-tool-button" id="circle-tool-shared" type="button" aria-label="Felles" title="Felles" aria-pressed="false">⌂</button><button class="circle-tool-button" id="circle-tool-direct" type="button" aria-label="Direkte samtalar" title="Direkte samtalar" aria-pressed="false">💬</button><button class="circle-tool-button" id="circle-tool-settings" type="button" aria-label="Administrer vennekretsar" title="Administrer vennekretsar">⚙</button></div></div>
           </details>
         </nav>
       </div>
@@ -3219,7 +3331,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const bottomChannelList = document.querySelector("#bottom-channel-list");
       const bottomCircleList = document.querySelector("#bottom-circle-list");
       const bottomCircleContent = document.querySelector("#bottom-circle-content");
-      const circleToolCircles = document.querySelector("#circle-tool-circles");
       const circleToolDirect = document.querySelector("#circle-tool-direct");
       const circleToolShared = document.querySelector("#circle-tool-shared");
       const circleToolSettings = document.querySelector("#circle-tool-settings");
@@ -3269,6 +3380,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const processView = document.querySelector("#process-view");
       const processButtons = ["#enable-heart", "#start-process", "#refresh-process", "#inspect-process", "#process-yes", "#process-no"].map((id) => document.querySelector(id));
       const sidebar = document.querySelector("#sidebar-panel");
+      const appMain = document.querySelector("main");
+      const desktopSidebarToggle = document.querySelector("#desktop-sidebar-toggle");
+      const desktopAdvancedEntry = document.querySelector("#desktop-advanced-entry");
+      const statusEditor = document.querySelector("#status-editor");
+      const notificationEditor = document.querySelector("#notification-editor");
+      const currentStatusIcon = document.querySelector(".status-compact-icon");
+      const currentStatusLabel = document.querySelector(".status-summary-label");
+      const notificationSummaryLabel = document.querySelector(".notification-summary-label");
       const mobileNavigationToggle = document.querySelector("#mobile-navigation-toggle");
       const composerArea = document.querySelector(".composer-area");
 
@@ -3302,7 +3421,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
       let activeChannelId = null;
       let activeCircleId = null;
       let activeRootScope = "shared";
-      let circleToolMode = "circles";
       let activeInboxKind = null;
       let managedCircleId = null;
       let reconnectScrollOffset = null;
@@ -3481,7 +3599,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
         activeCircleId = circleId || null;
         if (activeCircleId) {
           activeRootScope = "circle";
-          circleToolMode = "circles";
           restoredCircleId = activeCircleId;
           try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}
         }
@@ -4390,7 +4507,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
           notificationMode.value = settings.preferences.mode;
           notificationDirect.checked = settings.preferences.direct_messages;
           notificationMentions.checked = settings.preferences.mentions;
-          notificationSummary.textContent = settings.preferences.mode === "muted" ? "Varsel: ingen" : settings.preferences.mode === "weekly" ? "Varsel: kvar veke" : "Varsel: direkte";
+          const notificationLabel = settings.preferences.mode === "muted" ? "Varsel: ingen" : settings.preferences.mode === "weekly" ? "Varsel: kvar veke" : "Varsel: direkte";
+          notificationSummaryLabel.textContent = notificationLabel;
+          notificationSummary.setAttribute("aria-label", notificationLabel);
+          notificationSummary.title = notificationLabel;
+          notificationSummary.dataset.tooltip = notificationLabel;
           enableNotifications.disabled = !settings.enabled || !("PushManager" in window) || !("Notification" in window) || Notification.permission === "denied";
           enableNotifications.dataset.publicKey = settings.public_key || "";
           notificationNotice.textContent = !settings.enabled ? "Push er ikkje konfigurert på serveren enno." : settings.subscriptions ? `${settings.subscriptions} eining(ar) tek imot varsel.` : "Varsel er ikkje slått på på denne eininga.";
@@ -4452,6 +4573,58 @@ const INDEX_HTML: &str = r##"<!doctype html>
       document.querySelector("#show-mentions").addEventListener("click", () => showInbox("mentions"));
       document.querySelector("#show-tasks").addEventListener("click", () => showInbox("tasks"));
 
+      const desktopSidebarStorageKey = "sproyt.desktop-sidebar-collapsed.v1";
+      const compactDesktopViewport = window.matchMedia("(min-width: 641px) and (max-width: 900px)");
+      function sidebarIsCollapsed() {
+        return sidebar.classList.contains("desktop-collapsed");
+      }
+      function setDesktopSidebarCollapsed(collapsed, persist = true) {
+        const effectiveCollapsed = collapsed;
+        sidebar.classList.toggle("desktop-collapsed", effectiveCollapsed);
+        sidebar.classList.toggle("desktop-expanded", !effectiveCollapsed);
+        appMain.classList.toggle("desktop-sidebar-collapsed", effectiveCollapsed);
+        appMain.classList.toggle("desktop-sidebar-expanded", !effectiveCollapsed);
+        desktopSidebarToggle.setAttribute("aria-expanded", String(!effectiveCollapsed));
+        const toggleLabel = effectiveCollapsed ? "Utvid menyen" : "Kollaps menyen";
+        desktopSidebarToggle.setAttribute("aria-label", toggleLabel);
+        desktopSidebarToggle.title = toggleLabel;
+        desktopSidebarToggle.dataset.tooltip = toggleLabel;
+        desktopSidebarToggle.textContent = effectiveCollapsed ? "›" : "‹";
+        if (persist) {
+          storedDesktopSidebarCollapsed = collapsed;
+          try { window.localStorage.setItem(desktopSidebarStorageKey, String(collapsed)); } catch (_) {}
+        }
+      }
+      let storedDesktopSidebarCollapsed = false;
+      try { storedDesktopSidebarCollapsed = window.localStorage.getItem(desktopSidebarStorageKey) === "true"; } catch (_) {}
+      setDesktopSidebarCollapsed(storedDesktopSidebarCollapsed || compactDesktopViewport.matches, false);
+      desktopSidebarToggle.addEventListener("click", () => setDesktopSidebarCollapsed(!sidebarIsCollapsed()));
+      compactDesktopViewport.addEventListener("change", () => setDesktopSidebarCollapsed(compactDesktopViewport.matches || storedDesktopSidebarCollapsed, false));
+      function expandDesktopSidebarAndFocus(control) {
+        if (!sidebarIsCollapsed()) return false;
+        setDesktopSidebarCollapsed(false, false);
+        control.open = true;
+        window.requestAnimationFrame(() => control.querySelector("summary")?.focus());
+        return true;
+      }
+      statusEditor.addEventListener("click", (event) => {
+        if (event.target.closest("summary") && expandDesktopSidebarAndFocus(statusEditor)) event.preventDefault();
+      });
+      notificationEditor.addEventListener("click", (event) => {
+        if (event.target.closest("summary") && expandDesktopSidebarAndFocus(notificationEditor)) event.preventDefault();
+      });
+      desktopAdvancedEntry?.addEventListener("click", () => {
+        setDesktopSidebarCollapsed(false, false);
+        window.requestAnimationFrame(() => {
+          const control = document.querySelector(".advanced-tools button:not([disabled]), .advanced-tools input:not([disabled])");
+          if (control) control.focus();
+          else {
+            processTitle.tabIndex = -1;
+            processTitle.focus();
+          }
+        });
+      });
+
       viewModeToggle.addEventListener("click", () => setRenderMode(renderMode === "raw" ? "view" : "raw"));
       function setMobileNavigationOpen(open, restoreFocus = false) {
         if (open) {
@@ -4489,7 +4662,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
           renderBottomNavigation();
         }
       });
-      circleToolCircles.addEventListener("click", () => setCircleToolMode("circles"));
       circleToolDirect.addEventListener("click", () => activateRootScope("direct"));
       circleToolShared.addEventListener("click", () => activateRootScope("shared"));
       circleToolSettings.addEventListener("click", () => {
@@ -5150,9 +5322,14 @@ const INDEX_HTML: &str = r##"<!doctype html>
           document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((button) => {
             button.setAttribute("aria-pressed", String(button.dataset.emoji === statusEmoji.value));
           });
-          currentStatus.textContent = own.status_text || own.status_emoji
+          const statusLabel = own.status_text || own.status_emoji
             ? `${own.status_emoji || ""} ${own.status_text || ""}`.trim()
             : "Set status";
+          currentStatusIcon.textContent = own.status_emoji || "🙂";
+          currentStatusLabel.textContent = statusLabel;
+          currentStatus.setAttribute("aria-label", statusLabel);
+          currentStatus.title = statusLabel;
+          currentStatus.dataset.tooltip = statusLabel;
         }
         openDirect.disabled = !directUser.value;
         if (directMessageDialog.open) {
@@ -6099,17 +6276,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
         }
       }
 
-      function setCircleToolMode(mode) {
-        circleToolMode = mode;
-        renderBottomNavigation();
-        circleToolCircles.focus({ preventScroll: true });
-      }
-
       function activateRootScope(scope) {
         const channels = knownChannels.filter((channel) => scope === "direct"
           ? Boolean(channel.direct_user_id)
           : (!channel.circle_id && !channel.direct_user_id));
-        circleToolMode = scope;
         clearActiveCircle();
         activeRootScope = scope;
         circleSelect.value = "";
@@ -6121,9 +6291,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function updateCircleToolButtons(sharedUnreadCount, directUnreadCount) {
-        for (const [button, mode] of [[circleToolCircles, "circles"], [circleToolDirect, "direct"], [circleToolShared, "shared"]]) {
-          button.setAttribute("aria-pressed", String(circleToolMode === mode));
-        }
+        circleToolDirect.setAttribute("aria-pressed", String(!activeCircleId && activeRootScope === "direct"));
+        circleToolShared.setAttribute("aria-pressed", String(!activeCircleId && activeRootScope === "shared"));
         circleToolDirect.classList.toggle("has-unread", directUnreadCount > 0);
         circleToolDirect.setAttribute("aria-label", directUnreadCount > 0
           ? `Direkte samtalar, ${directUnreadCount} uleste meldingar`
@@ -6224,6 +6393,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
         badge.hidden = count === 0;
         badge.textContent = count === 0 ? "" : approximateUnreadCount(count);
         badge.setAttribute("aria-label", `${count} ${label}`);
+        const navigationLabel = button.dataset.navigationLabel;
+        const buttonLabel = count === 0 ? navigationLabel : `${navigationLabel}: ${count} ${label}`;
+        button.setAttribute("aria-label", buttonLabel);
+        button.title = buttonLabel;
+        button.dataset.tooltip = buttonLabel;
         button.classList.toggle("has-unread", count > 0);
       }
 
@@ -6458,7 +6632,6 @@ const INDEX_HTML: &str = r##"<!doctype html>
         } else {
           clearActiveCircle();
           activeRootScope = channel.direct_user_id ? "direct" : "shared";
-          circleToolMode = activeRootScope;
           circleSelect.value = "";
         }
         reconnectScrollOffset = null;
@@ -8278,6 +8451,33 @@ mod protocol_capacity_tests {
     }
 
     #[test]
+    fn browser_keeps_desktop_sidebar_controls_compact_and_reachable() {
+        assert!(INDEX_HTML.contains("id=\"desktop-sidebar-toggle\""));
+        assert!(INDEX_HTML.contains("sproyt.desktop-sidebar-collapsed.v1"));
+        assert!(
+            INDEX_HTML.contains("main.desktop-sidebar-collapsed { grid-template-columns: 56px")
+        );
+        assert!(
+            INDEX_HTML.contains("main.desktop-sidebar-expanded { grid-template-columns: 280px")
+        );
+        assert!(INDEX_HTML.contains("id=\"desktop-advanced-entry\""));
+        assert!(INDEX_HTML.contains(
+            ".advanced-tools button:not([disabled]), .advanced-tools input:not([disabled])"
+        ));
+        assert!(INDEX_HTML.contains("processTitle.tabIndex = -1"));
+        assert!(INDEX_HTML.contains("[data-tooltip]:hover::after, .sidebar.desktop-collapsed [data-tooltip]:focus-visible::after"));
+        assert!(INDEX_HTML.contains("data-tooltip=\"Kollaps menyen\""));
+        assert!(INDEX_HTML.contains("data-tooltip=\"Set status\""));
+        assert!(INDEX_HTML.contains("data-tooltip=\"Varsel\""));
+        assert!(INDEX_HTML.contains("data-tooltip=\"Ulest\""));
+        assert!(INDEX_HTML.contains("data-tooltip=\"Omtalar\""));
+        assert!(INDEX_HTML.contains("data-tooltip=\"Oppgåver\""));
+        assert!(INDEX_HTML.contains("button.dataset.tooltip = buttonLabel"));
+        assert!(INDEX_HTML.contains("currentStatus.dataset.tooltip = statusLabel"));
+        assert!(INDEX_HTML.contains("notificationSummary.dataset.tooltip = notificationLabel"));
+    }
+
+    #[test]
     fn browser_is_an_installable_pwa_with_bounded_offline_caching() {
         let manifest: serde_json::Value = serde_json::from_str(PWA_MANIFEST).unwrap();
         assert_eq!(manifest["name"], "Sprøyt");
@@ -9228,7 +9428,9 @@ mod protocol_capacity_tests {
         assert!(body.contains("activeChannelId = channel.id;\n        restoreActiveDraft();"));
         assert!(body.contains("class=\"advanced-tools\" hidden"));
         assert!(body.contains("<details class=\"agent-access\" hidden>"));
-        assert!(body.contains("<summary>Agenttilgang</summary>"));
+        assert!(body.contains(
+            "<summary data-tooltip=\"Agenttilgang\" title=\"Agenttilgang\">Agenttilgang</summary>"
+        ));
         assert!(body.contains("id=\"create-agent-access\""));
         assert!(body.contains("function createTemporaryAgentAccess()"));
         assert!(body.contains("[\"read_history\", \"send_messages\"]"));
@@ -9404,12 +9606,22 @@ mod protocol_capacity_tests {
         assert!(!body.contains("sharedButton.textContent = \"(Felles)\""));
         assert!(!body.contains("directButton.textContent = \"(Direkte)\""));
         assert!(body.contains("class=\"circle-tool-rail\" role=\"toolbar\""));
-        assert!(body.contains("id=\"circle-tool-circles\""));
+        assert!(body.contains(".circle-tool-rail { display: grid; justify-items: center;"));
+        assert!(body.contains("font-size: 1.22rem; line-height: 1; text-align: center;"));
+        assert!(body.contains("content: attr(aria-label)"));
+        assert!(body.contains(
+            ".circle-tool-button:hover::before, .circle-tool-button:focus-visible::before"
+        ));
+        assert!(!body.contains("id=\"circle-tool-circles\""));
+        let shared_tool = body.find("id=\"circle-tool-shared\"").unwrap();
+        let direct_tool = body.find("id=\"circle-tool-direct\"").unwrap();
+        let settings_tool = body.find("id=\"circle-tool-settings\"").unwrap();
+        assert!(shared_tool < direct_tool && direct_tool < settings_tool);
         assert!(body.contains("aria-label=\"Direkte samtalar\""));
         assert!(body.contains("aria-label=\"Felles\""));
         assert!(body.contains("id=\"circle-tool-settings\""));
-        assert!(body.contains("let circleToolMode = \"circles\""));
-        assert!(body.contains("function setCircleToolMode(mode)"));
+        assert!(!body.contains("circleToolMode"));
+        assert!(!body.contains("function setCircleToolMode(mode)"));
         assert!(body.contains("function activateRootScope(scope)"));
         assert!(body.contains(
             "circleToolDirect.addEventListener(\"click\", () => activateRootScope(\"direct\"))"
@@ -9417,7 +9629,9 @@ mod protocol_capacity_tests {
         assert!(body.contains(
             "circleToolShared.addEventListener(\"click\", () => activateRootScope(\"shared\"))"
         ));
-        assert!(body.contains("circleToolMode = activeRootScope"));
+        assert!(body.contains(
+            "circleToolShared.setAttribute(\"aria-pressed\", String(!activeCircleId && activeRootScope === \"shared\"))"
+        ));
         assert!(body.contains("if (circleAdminDialog.open) return"));
         assert!(body.contains("id=\"circle-admin-dialog\""));
         assert!(body.contains("if (!circleAdminDialog.open) circleAdminDialog.showModal()"));
