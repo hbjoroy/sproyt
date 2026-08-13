@@ -7,12 +7,10 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    WsQuery,
     agent::{AgentScope, CreateAgent, GrantAgent},
-    auth_error_response, authenticate_http,
     domain::{ChannelId, UserId},
-    repository_response,
     server::AppState,
+    web::http::{WsQuery, auth_error_response, authenticate_http, repository_response},
 };
 
 #[derive(Deserialize)]

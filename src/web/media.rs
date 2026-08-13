@@ -8,9 +8,9 @@ use axum::{
 };
 
 use crate::{
-    WsQuery, auth_error_response, authenticate_http, chat_error_response,
     domain::{ChannelId, MediaId, MediaUpload, MediaVariant},
     server::AppState,
+    web::http::{WsQuery, auth_error_response, authenticate_http, chat_error_response},
 };
 
 const MAX_MEDIA_BYTES: usize = 35 * 1024 * 1024;

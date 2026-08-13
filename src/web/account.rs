@@ -7,11 +7,12 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    WsQuery, auth_error_response, authenticate_http, chat_error_response,
     notification::{NotificationPreferences, PushSubscriptionInput},
     operations::ClientEvent,
-    repository_response,
     server::AppState,
+    web::http::{
+        WsQuery, auth_error_response, authenticate_http, chat_error_response, repository_response,
+    },
 };
 
 #[derive(Deserialize)]
