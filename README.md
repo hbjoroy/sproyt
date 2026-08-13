@@ -12,8 +12,10 @@ The repository contains the complete application path for durable private
 circles: SQLx repositories, `sproyt.chat.v1` WebSockets, development auth,
 OIDC authorization-code flow, OCI delivery, a Helm chart, optional Heart
 process orchestration, and an MCP adapter for scoped agents. The browser client
-is currently a dependency-light inline view adapter; a later Leptos split must
-continue to use the same HTTP/WebSocket application contracts.
+is dependency-light, compiled into the binary with its HTML, JavaScript and
+PWA assets, and served through the extracted `src/web` adapters. Any future
+client split must continue to use the same HTTP/WebSocket application
+contracts.
 
 Production activation still requires environment-owned evidence: the actual
 Authentik provider slug/client registration, cluster-specific secrets/TLS,
@@ -23,8 +25,9 @@ and the operational sign-offs listed in
 ## Direction
 
 - Rust edition 2024, pinned to Rust 1.96.0 when the local toolchain is available.
-- A replaceable browser view adapter; Leptos SSR/hydration remains the intended
-  frontend split when a separate app crate becomes useful.
+- A dependency-light compile-in browser client; its HTML/JavaScript assets and
+  HTTP adapters are kept separate from the typed chat, agent and process
+  services.
 - axum, Tokio, and Tower for the backend.
 - SQLx for database access.
 - SQLite as the simple local development database.
@@ -35,7 +38,9 @@ and the operational sign-offs listed in
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the living architecture notes.
 
-See [docs/persistence-plan.md](docs/persistence-plan.md) for the planned persistent channel, membership, message, and agent/API interface work.
+See [docs/persistence-plan.md](docs/persistence-plan.md) for the design history
+and contracts behind persistent channels, memberships, messages and agent/API
+interfaces.
 
 See [docs/protocol.md](docs/protocol.md) for the stable WebSocket and agent/MCP
 protocol contract.

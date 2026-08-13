@@ -1,125 +1,135 @@
 # Architecture
 
-This is the living architecture document for Sproyt. Keep it updated as decisions become code.
+This is the living architecture document for Sproyt. It describes the code
+that runs today; update it when an architectural decision becomes code.
 
 ## Goals
 
-Sproyt is a chat application for channels, human users, and agentic users. It should run well locally, in containers, and later in production environments managed by Docker, Podman, Rancher, or Kubernetes-style orchestration.
+Sproyt is a Rust chat application for private friend circles, human users, and
+least-privileged agent users. It runs locally, in OCI containers, and in a
+Kubernetes-style production deployment.
 
-The main engineering bias is to use Rust idiomatically, lean on the type system, keep ownership and borrowing explicit, and avoid `unsafe` unless there is a clear and reviewed need.
+The engineering bias is idiomatic Rust, explicit ownership and typed domain
+boundaries. `unsafe` is not part of the normal application design.
 
-## Baseline Decisions
-
-### Language
-
-- Rust edition 2024.
-- Intended pinned toolchain: Rust 1.96.0.
-- `unsafe` is not part of the normal application design.
-- Prefer small domain types over stringly typed application state.
-
-### Frontend
-
-- Use Leptos for Rust/WASM frontend development.
-- Default to SSR plus hydration, not pure CSR.
-- Use modern browser assumptions: recent Edge, Safari, Chrome, Brave, and preferably Firefox.
-- Avoid browser-only APIs in code that can run during SSR.
-- Keep hydration-safe HTML.
-- Chat message bodies are stored and transported as text. Rendering concerns such as Markdown, code blocks, and Mermaid diagrams belong in clients/view adapters.
-- Clients should offer both rendered view mode and raw/source mode.
-
-### Backend
-
-- Use axum on Tokio.
-- Use Tower/Tower HTTP for middleware concerns.
-- Keep application state typed and explicit.
-- Prefer ordinary HTTP APIs and WebSocket endpoints over framework magic when domain boundaries matter.
-- Runtime configuration should be parsed into typed values at startup before being passed into services.
-
-### Realtime
-
-- Use WebSocket for bidirectional chat traffic.
-- Persist messages before broadcasting realtime events.
-- Treat in-process broadcast channels as an optimization, not durable delivery.
-- Leave room for PostgreSQL `LISTEN/NOTIFY`, NATS, Redis, or another broker if multi-instance fanout needs it later.
-
-### Chat Core
-
-- The chat core is independent of the user interface.
-- The first implementation uses a mailbox/actor pattern: external clients send typed commands to a bounded Tokio `mpsc` queue, and the chat actor serializes state changes per process.
-- Each channel has a bounded broadcast queue for outbound events and a bounded in-memory recent history buffer.
-- WebSocket clients, future Leptos UI code, and agent clients should all connect through the same chat engine contract.
-- Slow consumers are allowed to lag; the first version reports skipped broadcast events instead of blocking the entire channel.
-- This is intentionally single-process for now. Durable storage, replay from database, and cross-process fanout belong in later milestones.
-
-### Database
-
-- Use SQLx.
-- SQLite is allowed for fast local development.
-- PostgreSQL is the production contract.
-- CI should eventually test migrations and repository behavior against PostgreSQL even if SQLite is used locally.
-- Avoid assuming SQLite and PostgreSQL SQL dialects are identical.
-- Durable chat state should be modeled as users, channels, memberships, and messages.
-- Message sequence is per channel, so clients and agents can reconnect and request missed messages after a known sequence.
-
-### Identity
-
-- Production identity is external OIDC.
-- Development identity should be a separate provider implementation, selected by configuration.
-- Do not mix development shortcuts into production OIDC flows.
-- Secrets should come from files or orchestrator secrets where possible, not hard-coded configuration.
-
-### External Interfaces
-
-- WebSocket, HTTP, future Leptos server functions, and future MCP tools should be adapters over the same typed chat command/event surface.
-- Protocol documentation belongs in `docs/protocol.md` once the first persistent command/event names stabilize.
-- MCP should expose chat capabilities as tools over the domain service, not as a separate implementation.
-
-### Containers
-
-- Use OCI-compatible images.
-- Keep the main image definition portable across Podman and Docker.
-- Prefer a primary `Dockerfile` for broad ecosystem compatibility.
-- Use Compose for local and prod-like orchestration, not as the production source of truth.
-- Runtime containers should be stateless except for explicitly mounted dev data.
-
-### Native Build Tooling
-
-- LLVM/clang is welcome in the local and container build toolchain.
-- Do not make application code depend on local workstation-only tools.
-- Prefer Rust-native crates, but keep clang available for crates that need C/C++ compilation or bindgen-style workflows.
-
-## Proposed Workspace Shape
-
-The likely long-term workspace shape:
+## Runtime shape
 
 ```text
-crates/
-  app/          Leptos UI and shared frontend routes/components
-  server/       axum server, HTTP/WebSocket endpoints, SSR integration
-  domain/       core chat types and business rules
-  db/           SQLx repositories and migrations
-  auth/         OIDC and development auth providers
-  config/       typed configuration loading
+Browser client / WebSocket client / MCP client
+                    |
+              axum adapters
+                    |
+      typed services and domain policy
+                    |
+ SQLx repositories / auth provider / Heart gateway
+                    |
+       SQLite (local) or PostgreSQL (production)
 ```
 
-This may start simpler and split only when the code earns the boundary.
+`src/server.rs` owns application construction, routing, middleware, process
+gateway construction, tracing and graceful shutdown. `AppState` holds the
+typed services used by adapters. It is intentionally not a second application
+layer: HTTP, WebSocket and MCP adapters call the same chat, agent, process and
+notification services.
 
-## First Milestones
+## Source layout
 
-1. Hello Chat: minimal runnable Rust server.
-2. Chat mailbox core: typed commands, bounded queues, multi-channel fanout, WebSocket adapter.
-3. Leptos shell: SSR plus hydration with a static first chat screen.
-4. Database skeleton: SQLx, migrations, SQLite and PostgreSQL profiles.
-5. Auth skeleton: dev identity and OIDC configuration shape.
-6. Chat MVP: durable channels, message persistence, WebSocket updates.
-7. Container baseline: portable multi-stage image and Compose files.
+`src/main.rs` is the small binary entry point and hosts the included test
+modules. Runtime assembly lives in `src/server.rs`; protocol and domain
+implementation remain outside the HTTP adapter tree.
 
-See [docs/persistence-plan.md](docs/persistence-plan.md) for the detailed persistent chat and external interface plan.
+```text
+src/
+  agent.rs, auth.rs, chat.rs, notification.rs, operations.rs, process.rs
+                                      typed application services
+  domain/                            identifiers, models, policy, repositories
+  db/                                SQLite and PostgreSQL SQLx repositories
+  protocol.rs, ws.rs                 WebSocket protocol and socket runtime
+  server.rs                          AppState, router, middleware, lifecycle
+  web/
+    assets.rs                        compile-in HTML, JavaScript and PWA assets
+    browser.rs                       browser shell and invitation handling
+    auth.rs                          login, callback, logout and session routes
+    socket.rs                        WebSocket upgrade adapter
+    system.rs                        version, readiness and security middleware
+    http.rs                          shared HTTP auth/query/error contract
+    account.rs                       export, client events and push preferences
+    media.rs                         media upload, download and preview routes
+    processes.rs                     Heart process and feature routes
+    agents.rs                        agent grant and approval routes
+    mcp.rs                           MCP HTTP adapter and tool dispatch
+```
 
-## Open Questions
+The browser client is dependency-light and compiled into the binary from
+`web/assets.rs`. It serves the HTML shell, client-store JavaScript, service
+worker, manifest and logos; `web/browser.rs` fills the authenticated shell
+with its nonce, client asset revision and feature visibility. A future client
+split must retain the same HTTP, WebSocket and typed-service contracts rather
+than duplicate domain logic.
 
-- Exact channel model: public, local, private, membership, moderation.
-- Agent user model: permissions, auditability, provenance, and rate limits.
-- Message model: edits, deletes, reactions, attachments, threads.
-- Retention and compliance requirements.
-- Deployment target: single node, Kubernetes/Rancher, or managed platform.
+`assets/client-store.js` owns the application-state/mailbox boundary, while
+`assets/index.html` contains the current view and interaction layer. The
+fingerprinted client module is immutable; the compatibility URL and service
+worker are revalidated, and the authenticated HTML shell is never cached.
+
+## HTTP and realtime adapters
+
+Routes are declared once in `server.rs`. The route-specific code belongs in
+`web/`, with `web/http.rs` providing the common authenticated query contract
+and stable conversion of auth, chat and repository failures to HTTP responses.
+The global security, request-ID, tracing, metrics and body-limit middleware is
+assembled in `server.rs`.
+
+WebSocket is the bidirectional chat interface. Messages are persisted before
+realtime publication; in-process broadcast queues optimize delivery but are
+not the durable source of truth. PostgreSQL `LISTEN/NOTIFY` supports
+cross-replica wake-up and clients recover from durable channel sequence data.
+
+MCP is an HTTP adapter for scoped agents, not a second chat implementation.
+Its tools authorize through the same agent grants and call the same chat and
+process services as other adapters.
+
+Dependencies point inward: web adapters depend on typed services and domain
+contracts; services depend on domain types and repository traits; database
+adapters implement those traits; `server.rs` composes the graph. Domain code
+must not depend on HTTP, browser or database-specific types, and handlers must
+not contain SQL.
+
+## Persistence and identity
+
+SQLx is the persistence boundary. SQLite is supported for local development;
+PostgreSQL is the production contract. Repository behaviour is exercised
+against the supported backends and database migrations run as an explicit
+command or deployment job, never during normal application startup.
+
+Production identity is external OIDC. Development identity is an explicit
+auth mode and is rejected in production. Encrypted, HttpOnly session cookies
+are validated by HTTP and WebSocket authentication; refresh tokens are never
+exposed to browser JavaScript.
+
+## Tests and quality gates
+
+Unit and adapter-capacity tests are included from `src/main_tests/` so they
+exercise the assembled router and the compile-in browser assets. The suite
+covers HTTP, WebSocket, MCP, browser asset contracts, repository behaviour,
+security headers, auth/session behaviour, media and process flows.
+
+Before a refactor or release, run:
+
+```text
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+See [docs/development.md](docs/development.md) for the full local and CI gate,
+and [docs/protocol.md](docs/protocol.md) for the stable WebSocket and MCP
+contracts.
+
+## Deployment
+
+OCI-compatible images support local Podman/Docker-style use and Helm-managed
+deployment. Runtime containers are stateless apart from explicitly mounted
+local development data; PostgreSQL and explicit external services hold durable
+production state. Operational procedures, readiness, metrics, migration,
+backup/restore and rollback evidence live with the release documentation.
