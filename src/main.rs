@@ -8,13 +8,18 @@ mod notification;
 mod operations;
 mod process;
 mod protocol;
+mod server;
 mod ws;
+
+use server::AppState;
+#[cfg(test)]
+use server::build_router;
 
 use std::{io::Cursor, time::Duration};
 
 use axum::{
-    Json, Router,
-    extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State, ws::WebSocketUpgrade},
+    Json,
+    extract::{Multipart, Path, Query, Request, State, ws::WebSocketUpgrade},
     http::{
         HeaderMap, HeaderName, HeaderValue,
         header::{
@@ -24,33 +29,35 @@ use axum::{
     },
     middleware,
     response::{Html, IntoResponse},
-    routing::{get, post},
 };
+#[cfg(test)]
+use axum::{Router, routing::post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tower_http::{
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    trace::TraceLayer,
-};
-use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
+use tracing::warn;
 
 use crate::{
-    agent::{AgentPrincipal, AgentScope, AgentService, CreateAgent, GrantAgent},
-    auth::{AuthError, AuthService},
-    chat::{ChatEngine, ChatError},
-    config::{AppConfig, AuthMode, LogFormat},
+    agent::{AgentPrincipal, AgentScope, CreateAgent, GrantAgent},
+    auth::AuthError,
+    chat::ChatError,
     domain::{
         ChannelId, ChannelSequence, MediaId, MediaUpload, MediaVariant, MessageBody, MessageLimit,
         UserId,
     },
-    notification::{NotificationPreferences, NotificationService, PushSubscriptionInput},
-    operations::{ClientEvent, OperationalState, healthz, metrics, record_metrics},
+    notification::{NotificationPreferences, PushSubscriptionInput},
+    operations::{ClientEvent, healthz, metrics, record_metrics},
     process::{
-        EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, HeartGateway, ProcessLinkId,
-        ProcessService, SetCircleFeature, SharedProcessGateway,
+        EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, ProcessLinkId, SetCircleFeature,
     },
+};
+#[cfg(test)]
+use crate::{
+    auth::AuthService,
+    chat::ChatEngine,
+    notification::NotificationService,
+    operations::OperationalState,
+    process::{HeartGateway, SharedProcessGateway},
 };
 
 const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION") {
@@ -72,146 +79,9 @@ struct VersionInfo {
     revision: &'static str,
 }
 
-#[derive(Clone)]
-struct AppState {
-    auth: AuthService,
-    chat: ChatEngine,
-    operations: OperationalState,
-    processes: ProcessService,
-    agents: AgentService,
-    notifications: NotificationService,
-    websocket_idle_timeout: Duration,
-    advanced_ui_enabled: bool,
-    agent_ui_enabled: bool,
-}
-
-impl axum::extract::FromRef<AppState> for OperationalState {
-    fn from_ref(state: &AppState) -> Self {
-        state.operations.clone()
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if std::env::args().nth(1).as_deref() == Some("migrate") {
-        let database = AppConfig::database_from_env()?;
-        init_tracing(AppConfig::log_format_from_env()?)?;
-        db::migrate(&database).await?;
-        info!(database = %database.kind(), "database migrations applied");
-        return Ok(());
-    }
-    let config = AppConfig::from_env()?;
-    init_tracing(config.log_format())?;
-    let address = config.bind_address();
-    let operations = OperationalState::default();
-    let repositories = db::connect_repositories(config.database()).await?;
-    let notifications = NotificationService::connect(config.database()).await?;
-    notifications.start_worker(operations.subscribe_shutdown());
-    let auth = match config.auth_mode() {
-        AuthMode::Development => AuthService::development(),
-        AuthMode::Oidc => {
-            AuthService::oidc(
-                config
-                    .oidc()
-                    .expect("OIDC config is present when OIDC mode is selected"),
-            )
-            .await?
-        }
-    };
-    let state = AppState {
-        auth,
-        chat: ChatEngine::start(repositories.chat),
-        operations: operations.clone(),
-        processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
-        agents: AgentService::new(repositories.agent),
-        notifications,
-        websocket_idle_timeout: config.websocket_idle_timeout(),
-        advanced_ui_enabled: std::env::var("SPROYT_UI_ADVANCED_ENABLED").as_deref() == Ok("true"),
-        agent_ui_enabled: std::env::var("SPROYT_UI_AGENT_ENABLED").as_deref() == Ok("true"),
-    };
-    let app = build_router(state, operations.clone());
-
-    let listener = tokio::net::TcpListener::bind(address).await?;
-    operations.set_ready(true);
-    info!(
-        %address,
-        environment = %config.environment(),
-        database = %config.database().kind(),
-        "Sproyt is ready"
-    );
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(operations))
-        .await?;
-
-    Ok(())
-}
-
-fn build_router(state: AppState, operations: OperationalState) -> Router {
-    let request_id_header = HeaderName::from_static("x-request-id");
-    Router::new()
-        .route("/", get(index))
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(app_readyz))
-        .route("/versionz", get(versionz))
-        .route("/manifest.webmanifest", get(pwa_manifest))
-        .route("/assets/client-store.js", get(client_store_legacy))
-        .route(
-            "/assets/client-store/{revision}/client-store.js",
-            get(client_store),
-        )
-        .route("/service-worker.js", get(service_worker))
-        .route("/offline", get(offline_page))
-        .route("/assets/sproyt-wave.svg", get(wave_logo_svg))
-        .route("/assets/sproyt-wave-192.png", get(wave_logo_192))
-        .route("/assets/sproyt-wave-512.png", get(wave_logo_512))
-        .route("/metrics", get(metrics))
-        .route("/auth/login", get(auth_login))
-        .route("/auth/callback", get(auth_callback))
-        .route("/auth/session", get(auth_session))
-        .route("/auth/refresh", post(auth_refresh))
-        .route("/auth/logout", get(auth_logout))
-        .route("/api/v1/me/export", get(export_my_data))
-        .route("/api/v1/client-events", post(record_client_event))
-        .route(
-            "/api/v1/me/notifications",
-            get(notification_settings).put(save_notification_preferences),
-        )
-        .route(
-            "/api/v1/me/push-subscriptions",
-            post(subscribe_push).delete(unsubscribe_push),
-        )
-        .route("/api/v1/channels/{id}/media", post(upload_media))
-        .route("/api/v1/media/{id}", get(download_media))
-        .route("/api/v1/media/{id}/preview", get(download_media_preview))
-        .route("/ws", get(ws_handler))
-        .route("/api/v1/processes", post(start_process))
-        .route("/api/v1/processes/{id}", get(get_process))
-        .route("/api/v1/processes/{id}/inspect", post(inspect_process))
-        .route("/api/v1/processes/{id}/messages", post(correlate_process))
-        .route(
-            "/api/v1/circles/{id}/features/heart-event-planning",
-            post(set_heart_feature),
-        )
-        .route("/api/v1/agents", post(create_agent))
-        .route("/api/v1/agents/{id}/grants", post(grant_agent))
-        .route("/api/v1/agents/{id}/revoke", post(revoke_agent))
-        .route("/api/v1/agent-grants/{id}/revoke", post(revoke_agent_grant))
-        .route(
-            "/api/v1/messages/{id}/approve-agent",
-            post(approve_agent_message),
-        )
-        .route("/mcp", post(mcp_handler))
-        .with_state(state.clone())
-        // Leave room for multipart headers around the 35 MiB media payload.
-        .layer(DefaultBodyLimit::max(36 * 1024 * 1024))
-        .layer(middleware::from_fn_with_state(
-            operations.clone(),
-            record_metrics,
-        ))
-        .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
-        .layer(TraceLayer::new_for_http())
-        .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
-        .layer(middleware::from_fn(add_security_headers))
+    server::run().await
 }
 
 async fn versionz() -> Json<VersionInfo> {
@@ -392,15 +262,6 @@ async fn add_security_headers(
         }
     }
     response
-}
-
-fn process_gateway_from_env() -> Result<Option<SharedProcessGateway>, crate::process::ProcessError>
-{
-    let Some(url) = std::env::var("SPROYT_HEART_URL").ok() else {
-        return Ok(None);
-    };
-    let gateway = HeartGateway::new(url, Duration::from_secs(5), 2)?;
-    Ok(Some(std::sync::Arc::new(gateway)))
 }
 
 async fn app_readyz(State(state): State<AppState>) -> axum::response::Response {
@@ -1892,50 +1753,6 @@ fn escape_html(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
-}
-
-fn init_tracing(log_format: LogFormat) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("sproyt=info"));
-    match log_format {
-        LogFormat::Json => tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .try_init()?,
-        LogFormat::Pretty => tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .try_init()?,
-    }
-    Ok(())
-}
-
-async fn shutdown_signal(operations: OperationalState) {
-    let ctrl_c = async {
-        if let Err(error) = tokio::signal::ctrl_c().await {
-            warn!(%error, "failed to install Ctrl+C handler");
-        }
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut signal) => {
-                signal.recv().await;
-            }
-            Err(error) => warn!(%error, "failed to install SIGTERM handler"),
-        }
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => {},
-        () = terminate => {},
-    }
-
-    operations.begin_shutdown();
-    info!(grace_period_seconds = 30, "shutdown requested");
 }
 
 async fn ws_handler(
