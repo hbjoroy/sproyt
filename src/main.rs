@@ -2258,9 +2258,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .media-preview-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .media-preview-remove { display: grid; width: 30px; min-width: 30px; min-height: 30px; padding: 0; place-items: center; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 1rem; line-height: 1; }
       .media-preview-remove:hover, .media-preview-remove:focus-visible { background: var(--surface-raised); color: var(--ink); }
-      #upload-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .85rem; }
-      #upload-status:empty { display: none; }
-      #upload-status[data-kind="error"] { color: #9f2929; font-weight: 650; }
+      #upload-status, .upload-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .85rem; }
+      #upload-status:empty, .upload-status:empty { display: none; }
+      #upload-status[data-kind="error"], .upload-status[data-kind="error"] { color: #9f2929; font-weight: 650; }
       .composer-input { position: relative; min-width: 0; }
       .mention-suggestions { position: absolute; right: 0; bottom: calc(100% + 6px); left: 0; z-index: 10; max-height: min(42vh, 280px); overflow-y: auto; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--ink); box-shadow: 0 10px 28px #0003; }
       .mention-suggestions[hidden] { display: none; }
@@ -2276,15 +2276,23 @@ const INDEX_HTML: &str = r##"<!doctype html>
       .media-lightbox img { display: block; width: auto; max-width: calc(100vw - 40px); height: auto; max-height: calc(100dvh - 100px); margin: auto; object-fit: contain; }
       .media-lightbox p { margin: 8px auto 0; text-align: center; }
       .media-lightbox button { position: fixed; top: 10px; right: 14px; min-width: 42px; min-height: 42px; border-color: #fff8; background: #111b; color: white; font-size: 1.5rem; }
-      .thread-panel { width: min(520px, calc(100vw - 24px)); max-height: min(760px, calc(100dvh - 24px)); margin: auto 12px auto auto; padding: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); color: var(--ink); }
+      .thread-panel { width: min(520px, calc(100vw - 24px)); height: min(760px, calc(var(--app-height) - 24px)); max-height: min(760px, calc(var(--app-height) - 24px)); margin: auto 12px auto auto; padding: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); color: var(--ink); overflow: hidden; }
+      .thread-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
       .thread-panel::backdrop { background: #14221b55; }
       .thread-panel > header { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--paper); }
       .thread-panel > header h2 { margin: 0; font-size: 1.15rem; }
       .thread-panel > header button { min-width: 42px; min-height: 42px; padding: 4px; }
-      .thread-messages { display: grid; gap: 8px; max-height: calc(100dvh - 190px); padding: 10px; overflow-y: auto; }
+      .thread-messages { display: grid; min-height: 0; gap: 8px; padding: 10px; overflow-y: auto; }
       .thread-root { border-bottom: 2px solid var(--line); }
-      .thread-form { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); }
-      .thread-form textarea { min-width: 0; min-height: 44px; max-height: 120px; }
+      .thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-self: end; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--paper); --composer-rest-height: 44px; --composer-max-height: 126px; }
+      .thread-form textarea { display: block; width: 100%; min-width: 0; height: var(--composer-rest-height); min-height: var(--composer-rest-height); max-height: var(--composer-max-height); padding: 10px; line-height: 20px; resize: none; overflow-y: hidden; }
+      .thread-composer-tools { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; min-height: 44px; }
+      .thread-composer-tools[hidden] { display: none; }
+      .thread-composer-tools .emoji-picker[aria-disabled="true"] > summary, .thread-composer-tools .composer-icon:disabled { cursor: default; opacity: .55; pointer-events: none; }
+      .thread-form.is-expanded #thread-media-previews:not(:empty) { display: flex; }
+      .thread-form.is-expanded #thread-upload-status:not(:empty) { display: block; }
+      .thread-form > .media-previews, .thread-form > .upload-status { display: none; grid-column: 1 / -1; }
+      .thread-form > button[type="submit"] { display: grid; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border-radius: 8px; font-size: 1.2rem; }
       .thread-emoji-picker > summary { display: grid; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: transparent; list-style: none; }
       .thread-emoji-picker > summary::-webkit-details-marker { display: none; }
       .thread-link { min-height: 28px; margin-left: auto; padding: 3px 9px; border-radius: 999px; background: var(--surface-hover); color: var(--ink); font-size: .84rem; font-weight: 700; white-space: nowrap; }
@@ -2909,8 +2917,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
         .message-media img, .message-media video { width: auto; max-width: 100%; max-height: min(48dvh, 420px); object-fit: contain; }
         .media-lightbox { padding: 42px 12px 12px; }
         .media-lightbox img { max-width: calc(100vw - 24px); max-height: calc(100dvh - 82px); }
-        .thread-panel { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; border-radius: 0; }
-        .thread-messages { max-height: calc(100dvh - 132px); }
+        .thread-panel { width: 100vw; max-width: none; height: var(--app-height); max-height: none; margin: var(--app-offset-top) 0 0; border: 0; border-radius: 0; }
+        .thread-messages { min-height: 0; }
+        .thread-form { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
         .reaction-picker > div { width: min(310px, calc(100vw - 40px)); }
         .message-menu > summary,
         .message-menu button,
@@ -3129,7 +3138,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         </nav>
       </div>
     </main>
-    <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><details class="emoji-picker thread-emoji-picker" id="thread-emoji-picker"><summary aria-label="Legg til emoji i tråden">😊</summary><div id="thread-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …" required></textarea><button type="submit">Svar</button></form></dialog>
+    <dialog class="thread-panel" id="thread-panel" aria-labelledby="thread-title"><header><h2 id="thread-title">Tråd</h2><button id="thread-close" type="button" aria-label="Lukk tråden">×</button></header><section class="thread-messages" id="thread-messages"></section><form class="thread-form" id="thread-form"><div class="thread-composer-tools" id="thread-composer-tools" aria-label="Svarverktøy" hidden><details class="emoji-picker thread-emoji-picker" id="thread-emoji-picker"><summary aria-label="Legg til emoji i tråden">😊</summary><div id="thread-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details><button class="composer-icon" id="thread-attach-media" type="button" aria-label="Last opp bilete eller video i tråden" title="Last opp bilete eller video">📎</button></div><input id="thread-media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div class="media-previews" id="thread-media-previews"></div><p class="upload-status" id="thread-upload-status" role="status" aria-live="polite"></p><textarea id="thread-body" aria-label="Svar i tråden" placeholder="Svar i tråden …"></textarea><button id="thread-send" type="submit" aria-label="Send svar i tråden" title="Send svar i tråden"><span aria-hidden="true">➤</span></button></form></dialog>
     <dialog class="circle-channel-dialog" id="circle-admin-dialog" aria-labelledby="circle-admin-title"><header><h2 id="circle-admin-title">Administrer vennekretsar</h2><button id="circle-admin-close" type="button" aria-label="Lukk administrasjon">×</button></header><div class="circle-channel-dialog-body onboarding-fields" aria-label="Administrer vennekretsar"><label>Vennekrets<select id="circle-select"><option value="">Ingen</option></select></label><label>Namn på ny krets<input id="circle-name" placeholder="Turvenner"></label><input id="circle-slug" type="hidden"><div class="onboarding-actions"><button id="create-circle" type="button" disabled>Lag ny</button><button id="create-invitation" type="button" disabled>Inviter</button></div><label>Invitasjonslenkje<input id="invitation-token" placeholder="Lim inn lenkja du fekk"></label><div class="onboarding-actions"><button id="accept-invitation" type="button" disabled>Bli med</button><button id="copy-invitation" type="button" hidden>Kopier lenkje</button></div><p class="onboarding-notice" id="onboarding-notice" role="status" aria-live="polite">Lag ein ny vennekrets, eller lim inn ei invitasjonslenkje.</p><button id="delete-circle" type="button" hidden disabled>Slett krets</button><button id="export-data" type="button" hidden disabled>Eksporter mine data</button></div></dialog>
     <dialog class="circle-channel-dialog" id="circle-channel-dialog" aria-labelledby="circle-channel-title"><header><h2 id="circle-channel-title">Kanalar</h2><button id="circle-channel-close" type="button" aria-label="Lukk kanalveljaren">×</button></header><div class="circle-channel-dialog-body"><section><p class="navigation-heading">Tilgjengelege kanalar</p><div class="joinable-channel-list" id="circle-joinable-list"><p class="status">Lastar …</p></div></section><form class="circle-channel-create" id="circle-channel-create"><strong>Lag ny kanal</strong><label>Namn<input id="managed-channel-name" maxlength="80" placeholder="Turprat" required></label><label>Tilgang<select id="managed-channel-kind"><option value="local">Open i kretsen</option><option value="private">Privat – berre inviterte</option></select></label><button type="submit">Lag kanal</button></form><section class="circle-membership-actions"><button class="danger-button" id="leave-circle" type="button">Forlat vennekretsen</button><small id="circle-membership-notice">Du mistar tilgang til kanalane i kretsen, men meldingane dine blir ståande.</small></section></div></dialog>
     <dialog class="circle-channel-dialog direct-message-dialog" id="direct-message-dialog" aria-labelledby="direct-message-title"><header><h2 id="direct-message-title">Ny samtale</h2><button id="direct-message-close" type="button" aria-label="Lukk personveljaren">×</button></header><div class="circle-channel-dialog-body"><label>Finn ein person<select id="direct-user"><option value="">Vel brukar</option></select></label><p class="status" id="direct-message-status" role="status" aria-live="polite"></p><button id="open-direct" type="button" disabled>Start samtale</button></div></dialog>
@@ -3183,6 +3192,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const threadForm = document.querySelector("#thread-form");
       const threadBody = document.querySelector("#thread-body");
       const threadEmojiPicker = document.querySelector("#thread-emoji-picker");
+      const threadComposerTools = document.querySelector("#thread-composer-tools");
+      const threadAttachMediaButton = document.querySelector("#thread-attach-media");
+      const threadMediaInput = document.querySelector("#thread-media-input");
+      const threadMediaPreviews = document.querySelector("#thread-media-previews");
+      const threadUploadStatus = document.querySelector("#thread-upload-status");
+      const threadSendButton = document.querySelector("#thread-send");
       const circleChannelDialog = document.querySelector("#circle-channel-dialog");
       const circleChannelTitle = document.querySelector("#circle-channel-title");
       const circleJoinableList = document.querySelector("#circle-joinable-list");
@@ -3295,6 +3310,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const activeCircleKey = "sproyt.active-circle.v1";
       const circleChannelHistoryKey = "sproyt.active-channel-by-circle.v1";
       const channelDraftPrefix = "sproyt.channel-draft.v1.";
+      const threadDraftPrefix = "sproyt.thread-draft.v1.";
       const linkedChannelId = new URL(window.location.href).searchParams.get("channel");
       let restoredChannelId = linkedChannelId;
       if (!restoredChannelId) try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
@@ -3342,6 +3358,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       const knownCircles = new Map();
       let temporaryAgentId = null;
       let pendingMedia = [];
+      const threadComposerStates = new Map();
       const messageReactions = new Map();
       const reactionEmojis = [...document.querySelectorAll("#message-emoji-options [data-emoji]")].map((button) => button.dataset.emoji);
       let mentionMatches = [];
@@ -3395,6 +3412,30 @@ const INDEX_HTML: &str = r##"<!doctype html>
         try { bodyInput.value = window.localStorage.getItem(channelDraftKey(activeChannelId)) || ""; }
         catch (_) { bodyInput.value = ""; }
         syncComposerState();
+      }
+
+      function threadDraftKey(channelId, rootId) {
+        return `${threadDraftPrefix}${channelId}.${rootId}`;
+      }
+
+      function persistThreadDraft(rootId = activeThreadRootId, channelId = activeChannelId) {
+        const state = threadComposerStates.get(rootId);
+        if (!rootId || !channelId || !state) return;
+        try {
+          const key = threadDraftKey(channelId, rootId);
+          if (state.draft) window.localStorage.setItem(key, state.draft);
+          else window.localStorage.removeItem(key);
+        } catch (_) {}
+      }
+
+      function restoreThreadDraft(rootId, channelId) {
+        try { return window.localStorage.getItem(threadDraftKey(channelId, rootId)) || ""; }
+        catch (_) { return ""; }
+      }
+
+      function clearThreadDraft(rootId, channelId) {
+        if (!rootId || !channelId) return;
+        try { window.localStorage.removeItem(threadDraftKey(channelId, rootId)); } catch (_) {}
       }
 
       function activeChannelMedia() {
@@ -3816,7 +3857,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         return `Opplasting av ${filename} feila (HTTP ${response.status})${reason}.${reference}`;
       }
 
-      function postMedia(url, form, filename) {
+      function postMedia(url, form, filename, setStatus = setUploadStatus) {
         return new Promise((resolve, reject) => {
           const request = new XMLHttpRequest();
           request.open("POST", url);
@@ -3824,10 +3865,10 @@ const INDEX_HTML: &str = r##"<!doctype html>
           request.setRequestHeader("accept", "application/json");
           request.upload.addEventListener("progress", (event) => {
             const progress = event.lengthComputable ? ` ${Math.min(100, Math.round(event.loaded * 100 / event.total))} %` : "";
-            setUploadStatus(`Lastar opp ${filename}${progress} …`);
+            setStatus(`Lastar opp ${filename}${progress} …`);
           });
           request.upload.addEventListener("load", () => {
-            setUploadStatus(`Opplasting av ${filename} er ferdig. Behandlar fila …`);
+            setStatus(`Opplasting av ${filename} er ferdig. Behandlar fila …`);
           });
           request.addEventListener("load", () => resolve({
             status: request.status,
@@ -3883,6 +3924,120 @@ const INDEX_HTML: &str = r##"<!doctype html>
         setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tilkopla");
       }
 
+      function threadComposerState(rootId = activeThreadRootId) {
+        if (!rootId) return null;
+        if (!threadComposerStates.has(rootId)) {
+          threadComposerStates.set(rootId, { draft: "", media: [], status: "", statusKind: "progress", hasFocus: false, composing: false, uploadCount: 0 });
+        }
+        return threadComposerStates.get(rootId);
+      }
+
+      function hasPendingThreadReply(rootId = activeThreadRootId) {
+        return [...pendingThreadReplies.values()].some((pending) => pending.rootId === rootId);
+      }
+
+      function resizeThreadComposer() {
+        const styles = window.getComputedStyle(threadBody);
+        const minimum = Number.parseFloat(styles.minHeight);
+        const maximum = Number.parseFloat(styles.maxHeight);
+        threadBody.style.height = "auto";
+        const height = threadBody.value.length === 0 ? minimum : Math.min(threadBody.scrollHeight, maximum);
+        threadBody.style.height = `${height}px`;
+        threadBody.style.overflowY = threadBody.value.length > 0 && threadBody.scrollHeight > maximum ? "auto" : "hidden";
+      }
+
+      function syncThreadComposer() {
+        const state = threadComposerState();
+        if (!state) return;
+        const expanded = state.hasFocus || threadBody.value.length > 0 || state.media.length > 0 || state.status.length > 0 || state.uploadCount > 0 || threadEmojiPicker.open;
+        threadForm.classList.toggle("is-expanded", expanded);
+        threadComposerTools.hidden = !state.hasFocus;
+        const writable = Boolean(activeThreadRootId && activeChannelId && connectionSupervisor.state.subscribedChannelId === activeChannelId && connectionSupervisor.state.socket?.readyState === WebSocket.OPEN);
+        threadBody.disabled = !writable;
+        threadAttachMediaButton.disabled = !writable || state.uploadCount > 0;
+        threadSendButton.disabled = !writable || state.uploadCount > 0 || hasPendingThreadReply();
+        threadEmojiPicker.setAttribute("aria-disabled", String(!writable || state.uploadCount > 0));
+        resizeThreadComposer();
+      }
+
+      function setThreadUploadStatus(message, kind = "progress", rootId = activeThreadRootId) {
+        const state = threadComposerState(rootId);
+        if (!state) return;
+        state.status = message;
+        state.statusKind = kind;
+        if (rootId === activeThreadRootId) {
+          threadUploadStatus.textContent = message;
+          threadUploadStatus.dataset.kind = kind;
+          threadUploadStatus.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
+          syncThreadComposer();
+        }
+      }
+
+      function renderThreadMediaPreviews() {
+        const state = threadComposerState();
+        if (!state) return;
+        threadMediaPreviews.replaceChildren(...state.media.map((media) => {
+          const item = document.createElement("span");
+          item.className = "media-preview";
+          const label = document.createElement("span");
+          label.className = "media-preview-label";
+          label.textContent = `${media.content_type.startsWith("video/") ? "🎬" : "🖼️"} ${media.original_filename}`;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "media-preview-remove";
+          remove.textContent = "×";
+          remove.setAttribute("aria-label", `Fjern ${media.original_filename}`);
+          remove.addEventListener("click", () => {
+            if (state.uploadCount > 0 || hasPendingThreadReply()) return;
+            state.media = state.media.filter((candidate) => candidate.id !== media.id);
+            setThreadUploadStatus(`${media.original_filename} er fjerna.`);
+            renderThreadMediaPreviews();
+            threadBody.focus({ preventScroll: true });
+          });
+          item.append(label, remove);
+          return item;
+        }));
+        syncThreadComposer();
+      }
+
+      async function uploadThreadMediaFiles(files) {
+        const channelId = activeChannelId;
+        const rootId = activeThreadRootId;
+        const state = threadComposerState(rootId);
+        if (!channelId || !rootId || !state) return;
+        for (const file of files) {
+          if (!file.size || file.size > 35 * 1024 * 1024) {
+            setThreadUploadStatus(`${file.name || "Fila"} må vere mellom 1 byte og 35 MiB.`, "error", rootId);
+            continue;
+          }
+          state.uploadCount += 1;
+          syncThreadComposer();
+          const form = new FormData();
+          form.append("file", file, file.name || "clipboard-image.png");
+          const filename = file.name || "bilete";
+          const participant = new URL(window.location.href).searchParams.get("participant");
+          const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
+          const url = `/api/v1/channels/${channelId}/media${authQuery}`;
+          try {
+            let response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
+            if (response.status === 401 && await refreshSession(true)) response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
+            if (response.status === 401) throw new Error("Økta kunne ikkje fornyast. Logg inn på nytt.");
+            if (!response.ok) throw new Error(await uploadFailureMessage(response, filename));
+            const result = await response.json();
+            // The upload belongs to the channel and root that were active when it started.
+            state.media.push({ ...result.media, channel_id: channelId, parent_message_id: rootId });
+            reportClientEvent("upload_succeeded");
+            setThreadUploadStatus(`${filename} er behandla og klar til å sendast.`, "success", rootId);
+          } catch (error) {
+            reportClientEvent("upload_failed");
+            setThreadUploadStatus(`Opplasting av ${filename} feila: ${error?.message || "Ukjend feil"}`, "error", rootId);
+          } finally {
+            state.uploadCount = Math.max(0, state.uploadCount - 1);
+            if (rootId === activeThreadRootId) syncThreadComposer();
+          }
+        }
+      }
+
       attachMediaButton.addEventListener("click", () => {
         if (!attachMediaButton.disabled) mediaInput.click();
       });
@@ -3895,9 +4050,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
         if (files.length) { event.preventDefault(); uploadMediaFiles(files); }
       });
+      threadAttachMediaButton.addEventListener("click", () => {
+        if (!threadAttachMediaButton.disabled) threadMediaInput.click();
+      });
+      threadMediaInput.addEventListener("change", () => {
+        uploadThreadMediaFiles([...threadMediaInput.files]);
+        threadMediaInput.value = "";
+        threadBody.focus({ preventScroll: true });
+      });
+      threadBody.addEventListener("paste", (event) => {
+        const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
+        if (files.length) { event.preventDefault(); uploadThreadMediaFiles(files); }
+      });
       document.querySelector("#media-lightbox-close").addEventListener("click", () => mediaLightbox.close());
       document.querySelector("#thread-close").addEventListener("click", () => threadPanel.close());
       threadPanel.addEventListener("close", () => {
+        persistThreadDraft();
         activeThreadRootId = null;
         threadEmojiPicker.open = false;
       });
@@ -3950,15 +4118,54 @@ const INDEX_HTML: &str = r##"<!doctype html>
       });
       threadForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        const body = threadBody.value.trim();
-        if (!body || !activeThreadRootId || !activeChannelId) return;
+        const rootId = activeThreadRootId;
+        const channelId = activeChannelId;
+        const state = threadComposerState(rootId);
+        const draft = threadBody.value.trim();
+        const media = state?.media || [];
+        const mediaTokens = media.map((item) => `[[media:${item.id}|${item.content_type}|${encodeURIComponent(item.original_filename)}]]`).join("\n");
+        const body = [draft, mediaTokens].filter(Boolean).join("\n");
+        if (!body || !rootId || !channelId || !state || state.uploadCount > 0) return;
         const requestId = sendCommand("send_message", {
-          channel_id: activeChannelId,
+          channel_id: channelId,
           parent_message_id: activeThreadRootId,
           body
         });
-        pendingThreadReplies.set(requestId, { rootId: activeThreadRootId, body });
+        if (!requestId) return;
+        pendingThreadReplies.set(requestId, { rootId, channelId, body, draft, mediaIds: media.map((item) => item.id) });
         threadBody.value = "";
+        state.draft = "";
+        threadBody.readOnly = true;
+        syncThreadComposer();
+      });
+      threadForm.addEventListener("focusin", () => {
+        const state = threadComposerState();
+        if (state) state.hasFocus = true;
+        syncThreadComposer();
+      });
+      threadForm.addEventListener("focusout", () => window.setTimeout(() => {
+        if (threadForm.contains(document.activeElement)) return;
+        const state = threadComposerState();
+        if (state) state.hasFocus = false;
+        threadEmojiPicker.open = false;
+        syncThreadComposer();
+      }, 0));
+      threadBody.addEventListener("input", () => {
+        const state = threadComposerState();
+        if (state) {
+          state.draft = threadBody.value;
+          persistThreadDraft();
+        }
+        syncThreadComposer();
+      });
+      threadBody.addEventListener("compositionstart", () => { const state = threadComposerState(); if (state) state.composing = true; });
+      threadBody.addEventListener("compositionend", () => { const state = threadComposerState(); if (state) { state.composing = false; state.draft = threadBody.value; persistThreadDraft(); } syncThreadComposer(); });
+      threadBody.addEventListener("keydown", (event) => {
+        const state = threadComposerState();
+        if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !state?.composing && usesDesktopComposerKeys.matches) {
+          event.preventDefault();
+          threadForm.requestSubmit();
+        }
       });
       mediaLightbox.addEventListener("click", (event) => {
         if (event.target === mediaLightbox) mediaLightbox.close();
@@ -4107,6 +4314,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const end = input.selectionEnd ?? start;
         input.setRangeText(emoji, start, end, "end");
         if (input === bodyInput) { persistActiveDraft(); syncComposerState(); }
+        if (input === threadBody) { const state = threadComposerState(); if (state) { state.draft = threadBody.value; persistThreadDraft(); } syncThreadComposer(); }
         input.focus();
       }
 
@@ -4120,6 +4328,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         button.addEventListener("click", () => {
           insertEmoji(threadBody, button.dataset.emoji);
           threadEmojiPicker.open = false;
+          syncThreadComposer();
         });
       });
       document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((button) => {
@@ -4608,6 +4817,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
           for (const requestId of pendingMessages.keys()) {
             failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
           }
+          for (const requestId of [...pendingThreadReplies.keys()]) {
+            failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
+          }
           if (connectionSupervisor.state.heartbeatTimer !== null) {
             window.clearInterval(connectionSupervisor.state.heartbeatTimer);
             connectionSupervisor.state.heartbeatTimer = null;
@@ -4726,13 +4938,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const pending = requestId ? pendingThreadReplies.get(requestId) : undefined;
         if (!pending) return false;
         pendingThreadReplies.delete(requestId);
-        if (message?.parent_message_id !== pending.rootId || message?.body !== pending.body) {
+        const state = threadComposerState(pending.rootId);
+        if (message?.parent_message_id !== pending.rootId || message?.channel_id !== pending.channelId || message?.body !== pending.body) {
           if (activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
-            threadBody.value = pending.body;
+            threadBody.value = pending.draft;
           }
+          if (state) state.draft = pending.draft;
+          if (activeThreadRootId === pending.rootId) threadBody.readOnly = false;
+          persistThreadDraft(pending.rootId, pending.channelId);
           setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tråden fekk ei ugyldig sendekvittering; svaret er bevart");
+          syncThreadComposer();
           return true;
         }
+        if (state) state.media = state.media.filter((media) => !pending.mediaIds.includes(media.id));
+        if (state) state.draft = "";
+        clearThreadDraft(pending.rootId, pending.channelId);
+        if (activeThreadRootId === pending.rootId) { threadBody.readOnly = false; renderThreadMediaPreviews(); }
         return true;
       }
 
@@ -4740,10 +4961,15 @@ const INDEX_HTML: &str = r##"<!doctype html>
         const pending = requestId ? pendingThreadReplies.get(requestId) : undefined;
         if (!pending) return false;
         pendingThreadReplies.delete(requestId);
+        const state = threadComposerState(pending.rootId);
         if (activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
-          threadBody.value = pending.body;
+          threadBody.value = pending.draft;
         }
+        if (state) state.draft = pending.draft;
+        if (activeThreadRootId === pending.rootId) threadBody.readOnly = false;
+        persistThreadDraft(pending.rootId, pending.channelId);
         setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, `Trådsvaret vart ikkje sendt: ${message}`);
+        syncThreadComposer();
         return true;
       }
 
@@ -4757,6 +4983,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
         sendButton.disabled = !writableChannel || pendingMessages.size > 0;
         attachMediaButton.disabled = !writableChannel || pendingMessages.size > 0;
         messageEmojiPicker.setAttribute("aria-disabled", String(!writableChannel || pendingMessages.size > 0));
+        syncThreadComposer();
         circleButtons.forEach((button) => { button.disabled = !connected; });
         exportButton.disabled = !connected;
         processButtons.forEach((button) => { button.disabled = !connected; });
@@ -6508,7 +6735,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
             latest_sequence: message.sequence
           });
           if (activeThreadRootId === message.parent_message_id) {
-            renderThread();
+            renderThread({ revealOwn: message.sender_id === currentParticipantId });
             sendCommand("mark_thread_read", { root_message_id: message.parent_message_id, sequence: message.sequence });
           }
           return;
@@ -6524,7 +6751,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
           else replies.push(message);
           replies.sort((left, right) => left.sequence - right.sequence);
           threadReplies.set(message.parent_message_id, replies);
-          if (activeThreadRootId === message.parent_message_id) renderThread();
+          if (activeThreadRootId === message.parent_message_id) renderThread({ revealOwn: message.sender_id === currentParticipantId });
           return;
         }
         if (threadRoots.has(message.id)) {
@@ -6554,14 +6781,28 @@ const INDEX_HTML: &str = r##"<!doctype html>
       }
 
       function openThread(messageId) {
+        persistThreadDraft();
+        const wasKnown = threadComposerStates.has(messageId);
         activeThreadRootId = messageId;
+        const state = threadComposerState(messageId);
+        if (!wasKnown && state) state.draft = restoreThreadDraft(messageId, activeChannelId);
+        threadBody.value = state?.draft || "";
+        threadUploadStatus.textContent = state?.status || "";
+        threadUploadStatus.dataset.kind = state?.statusKind || "progress";
+        threadBody.readOnly = false;
         if (!threadPanel.open) threadPanel.showModal();
         threadMessages.innerHTML = '<div class="empty-state"><p>Lastar tråden …</p></div>';
+        renderThreadMediaPreviews();
+        syncThreadComposer();
         sendCommand("load_thread", { root_message_id: messageId });
       }
 
-      function renderThread() {
+      function renderThread({ revealOwn = false } = {}) {
         if (!activeThreadRootId) return;
+        const previousHeight = threadMessages.scrollHeight;
+        const previousTop = threadMessages.scrollTop;
+        const distanceFromBottom = previousHeight - previousTop - threadMessages.clientHeight;
+        const wasNearBottom = distanceFromBottom <= 80;
         const root = timeline.find((item) => item.type === "message" && item.message.id === activeThreadRootId)?.message
           || threadRoots.get(activeThreadRootId);
         if (!root) return;
@@ -6574,7 +6815,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
         for (const reply of threadReplies.get(activeThreadRootId) || []) {
           appendMessage(reply, threadMessages, false);
         }
-        settleThreadAtBottom();
+        if (revealOwn || wasNearBottom) settleThreadAtBottom();
+        else threadMessages.scrollTop = threadMessages.scrollHeight - previousHeight + previousTop;
       }
 
       function settleThreadAtBottom() {
@@ -8381,6 +8623,10 @@ mod protocol_capacity_tests {
     #[test]
     fn browser_exposes_compact_durable_message_threads() {
         assert!(INDEX_HTML.contains("id=\"thread-panel\""));
+        assert!(INDEX_HTML.contains("grid-template-rows: auto minmax(0, 1fr) auto"));
+        assert!(INDEX_HTML.contains("height: min(760px, calc(var(--app-height) - 24px))"));
+        assert!(INDEX_HTML.contains(".thread-messages { display: grid; min-height: 0;"));
+        assert!(INDEX_HTML.contains(".thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-self: end;"));
         assert!(INDEX_HTML.contains("parent_message_id: activeThreadRootId"));
         assert!(INDEX_HTML.contains("function openThread(messageId)"));
         assert!(INDEX_HTML.contains("id=\"thread-emoji-picker\""));
@@ -8398,6 +8644,15 @@ mod protocol_capacity_tests {
         assert!(INDEX_HTML.contains("threadMessages.scrollTop = threadMessages.scrollHeight"));
         assert!(!INDEX_HTML.contains("sendCommand(\"load_thread\", { root_message_id: messageId });\n        threadBody.focus();"));
         assert!(INDEX_HTML.contains("const threadReplies = new Map()"));
+        assert!(INDEX_HTML.contains("const threadDraftPrefix = \"sproyt.thread-draft.v1.\""));
+        assert!(INDEX_HTML.contains(
+            "function persistThreadDraft(rootId = activeThreadRootId, channelId = activeChannelId)"
+        ));
+        assert!(INDEX_HTML.contains("function restoreThreadDraft(rootId, channelId)"));
+        assert!(INDEX_HTML.contains("clearThreadDraft(pending.rootId, pending.channelId)"));
+        assert!(!INDEX_HTML.contains(
+            "localStorage.setItem(threadDraftKey(channelId, rootId), JSON.stringify(state.media))"
+        ));
         assert!(INDEX_HTML.contains("thread.textContent = replyCount === 0 ? \"🧵\""));
         assert!(INDEX_HTML.contains("footer.append(thread);"));
         assert!(INDEX_HTML.contains("message.parent_message_id"));
