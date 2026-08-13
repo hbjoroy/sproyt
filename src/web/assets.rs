@@ -1,0 +1,117 @@
+use axum::{
+    extract::Path,
+    http::{
+        HeaderName, HeaderValue,
+        header::{CACHE_CONTROL, CONTENT_TYPE},
+    },
+    response::{Html, IntoResponse},
+};
+use sha2::{Digest, Sha256};
+
+pub(crate) const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION") {
+    Some(revision) => revision,
+    None => "unknown",
+};
+pub(crate) const PWA_MANIFEST: &str = include_str!("../../assets/manifest.webmanifest");
+pub(crate) const CLIENT_STORE: &str = include_str!("../../assets/client-store.js");
+pub(crate) const SERVICE_WORKER: &str = include_str!("../../assets/service-worker.js");
+pub(crate) const OFFLINE_HTML: &str = include_str!("../../assets/offline.html");
+pub(crate) const INDEX_HTML: &str = include_str!("../../assets/index.html");
+const WAVE_LOGO_SVG: &str = include_str!("../../assets/sproyt-wave.svg");
+pub(crate) const WAVE_LOGO_192: &[u8] = include_bytes!("../../assets/sproyt-wave-192.png");
+pub(crate) const WAVE_LOGO_512: &[u8] = include_bytes!("../../assets/sproyt-wave-512.png");
+
+pub(crate) async fn pwa_manifest() -> axum::response::Response {
+    (
+        [
+            (CONTENT_TYPE, "application/manifest+json"),
+            (CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        PWA_MANIFEST,
+    )
+        .into_response()
+}
+
+pub(crate) fn client_store_fingerprint(build_revision: &str, client_store: &[u8]) -> String {
+    let revision_is_safe = (7..=64).contains(&build_revision.len())
+        && build_revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
+    if revision_is_safe {
+        return build_revision.to_owned();
+    }
+    format!("{:x}", Sha256::digest(client_store))
+}
+
+pub(crate) async fn client_store_legacy() -> axum::response::Response {
+    (
+        [
+            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "no-cache"),
+        ],
+        CLIENT_STORE,
+    )
+        .into_response()
+}
+
+pub(crate) async fn client_store(Path(fingerprint): Path<String>) -> axum::response::Response {
+    if fingerprint != client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes()) {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [
+            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        CLIENT_STORE,
+    )
+        .into_response()
+}
+
+pub(crate) async fn service_worker() -> axum::response::Response {
+    (
+        [
+            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "no-cache"),
+            (HeaderName::from_static("service-worker-allowed"), "/"),
+            (
+                HeaderName::from_static("content-security-policy"),
+                "default-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+            ),
+        ],
+        SERVICE_WORKER,
+    )
+        .into_response()
+}
+
+pub(crate) async fn offline_page() -> axum::response::Response {
+    let mut response = Html(OFFLINE_HTML).into_response();
+    response.headers_mut().insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("default-src 'self'; img-src 'self'; style-src 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
+    );
+    response
+}
+
+pub(crate) async fn wave_logo_svg() -> axum::response::Response {
+    static_asset("image/svg+xml", WAVE_LOGO_SVG.as_bytes())
+}
+
+pub(crate) async fn wave_logo_192() -> axum::response::Response {
+    static_asset("image/png", WAVE_LOGO_192)
+}
+
+pub(crate) async fn wave_logo_512() -> axum::response::Response {
+    static_asset("image/png", WAVE_LOGO_512)
+}
+
+fn static_asset(content_type: &'static str, content: &'static [u8]) -> axum::response::Response {
+    (
+        [
+            (CONTENT_TYPE, content_type),
+            (CACHE_CONTROL, "public, max-age=604800, immutable"),
+        ],
+        content,
+    )
+        .into_response()
+}

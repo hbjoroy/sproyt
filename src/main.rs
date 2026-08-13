@@ -9,11 +9,13 @@ mod operations;
 mod process;
 mod protocol;
 mod server;
+mod web;
 mod ws;
 
 use server::AppState;
 #[cfg(test)]
 use server::build_router;
+use web::assets::{BUILD_REVISION, CLIENT_STORE, INDEX_HTML, client_store_fingerprint};
 
 use std::{io::Cursor, time::Duration};
 
@@ -22,10 +24,7 @@ use axum::{
     extract::{Multipart, Path, Query, Request, State, ws::WebSocketUpgrade},
     http::{
         HeaderMap, HeaderName, HeaderValue,
-        header::{
-            ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, LOCATION, ORIGIN,
-            SET_COOKIE,
-        },
+        header::{ACCEPT, AUTHORIZATION, COOKIE, LOCATION, ORIGIN, SET_COOKIE},
     },
     middleware,
     response::{Html, IntoResponse},
@@ -34,7 +33,6 @@ use axum::{
 use axum::{Router, routing::post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use crate::{
@@ -60,17 +58,8 @@ use crate::{
     process::{HeartGateway, SharedProcessGateway},
 };
 
-const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION") {
-    Some(revision) => revision,
-    None => "unknown",
-};
-const PWA_MANIFEST: &str = include_str!("../assets/manifest.webmanifest");
-const CLIENT_STORE: &str = include_str!("../assets/client-store.js");
-const SERVICE_WORKER: &str = include_str!("../assets/service-worker.js");
-const OFFLINE_HTML: &str = include_str!("../assets/offline.html");
-const WAVE_LOGO_SVG: &str = include_str!("../assets/sproyt-wave.svg");
-const WAVE_LOGO_192: &[u8] = include_bytes!("../assets/sproyt-wave-192.png");
-const WAVE_LOGO_512: &[u8] = include_bytes!("../assets/sproyt-wave-512.png");
+#[cfg(test)]
+use web::assets::{PWA_MANIFEST, SERVICE_WORKER, WAVE_LOGO_192, WAVE_LOGO_512};
 
 #[derive(Serialize)]
 struct VersionInfo {
@@ -129,101 +118,6 @@ async fn record_client_event(
     };
     state.operations.record_client_event(event);
     axum::http::StatusCode::NO_CONTENT.into_response()
-}
-
-async fn pwa_manifest() -> axum::response::Response {
-    (
-        [
-            (CONTENT_TYPE, "application/manifest+json"),
-            (CACHE_CONTROL, "public, max-age=3600"),
-        ],
-        PWA_MANIFEST,
-    )
-        .into_response()
-}
-
-fn client_store_fingerprint(build_revision: &str, client_store: &[u8]) -> String {
-    let revision_is_safe = (7..=64).contains(&build_revision.len())
-        && build_revision
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
-    if revision_is_safe {
-        return build_revision.to_owned();
-    }
-    format!("{:x}", Sha256::digest(client_store))
-}
-
-async fn client_store_legacy() -> axum::response::Response {
-    (
-        [
-            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
-            (CACHE_CONTROL, "no-cache"),
-        ],
-        CLIENT_STORE,
-    )
-        .into_response()
-}
-
-async fn client_store(Path(fingerprint): Path<String>) -> axum::response::Response {
-    if fingerprint != client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes()) {
-        return axum::http::StatusCode::NOT_FOUND.into_response();
-    }
-    (
-        [
-            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
-            (CACHE_CONTROL, "public, max-age=31536000, immutable"),
-        ],
-        CLIENT_STORE,
-    )
-        .into_response()
-}
-
-async fn service_worker() -> axum::response::Response {
-    (
-        [
-            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
-            (CACHE_CONTROL, "no-cache"),
-            (HeaderName::from_static("service-worker-allowed"), "/"),
-            (
-                HeaderName::from_static("content-security-policy"),
-                "default-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
-            ),
-        ],
-        SERVICE_WORKER,
-    )
-        .into_response()
-}
-
-async fn offline_page() -> axum::response::Response {
-    let mut response = Html(OFFLINE_HTML).into_response();
-    response.headers_mut().insert(
-        HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static("default-src 'self'; img-src 'self'; style-src 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
-    );
-    response
-}
-
-async fn wave_logo_svg() -> axum::response::Response {
-    static_asset("image/svg+xml", WAVE_LOGO_SVG.as_bytes())
-}
-
-async fn wave_logo_192() -> axum::response::Response {
-    static_asset("image/png", WAVE_LOGO_192)
-}
-
-async fn wave_logo_512() -> axum::response::Response {
-    static_asset("image/png", WAVE_LOGO_512)
-}
-
-fn static_asset(content_type: &'static str, content: &'static [u8]) -> axum::response::Response {
-    (
-        [
-            (CONTENT_TYPE, content_type),
-            (CACHE_CONTROL, "public, max-age=604800, immutable"),
-        ],
-        content,
-    )
-        .into_response()
 }
 
 async fn add_security_headers(
@@ -1920,8 +1814,6 @@ fn redirect_with_cookies(location: &str, cookies: &[String]) -> axum::response::
 struct WsQuery {
     participant: Option<String>,
 }
-
-const INDEX_HTML: &str = include_str!("../assets/index.html");
 
 #[cfg(test)]
 #[path = "main_tests/mcp.rs"]
