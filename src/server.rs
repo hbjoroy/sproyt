@@ -16,7 +16,7 @@ use tracing_subscriber::EnvFilter;
 
 use super::{
     add_security_headers, app_readyz, auth_callback, auth_login, auth_logout, auth_refresh,
-    auth_session, healthz, index, mcp_handler, metrics, record_metrics, versionz, ws_handler,
+    auth_session, healthz, index, metrics, record_metrics, versionz, ws_handler,
 };
 use crate::{
     agent::AgentService,
@@ -38,6 +38,7 @@ use crate::{
         client_store, client_store_legacy, offline_page, pwa_manifest, service_worker,
         wave_logo_192, wave_logo_512, wave_logo_svg,
     },
+    web::mcp::mcp_handler,
     web::media::{download_media, download_media_preview, upload_media},
     web::processes::{
         correlate_process, get_process, inspect_process, set_heart_feature, start_process,
