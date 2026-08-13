@@ -1,7 +1,11 @@
 pub(crate) mod account;
 pub(crate) mod agents;
 pub(crate) mod assets;
+pub(crate) mod auth;
+pub(crate) mod browser;
 pub(crate) mod http;
 pub(crate) mod mcp;
 pub(crate) mod media;
 pub(crate) mod processes;
+pub(crate) mod socket;
+pub(crate) mod system;
