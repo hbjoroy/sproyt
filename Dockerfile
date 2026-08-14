@@ -4,6 +4,14 @@ ARG BUILDPLATFORM
 ARG BUILD_VARIANT=zig
 FROM --platform=$BUILDPLATFORM rust:1.96.0-alpine3.23@sha256:5dc2af9dd547c33f64d5fc1d299ab93b51f39eaa16c426c476b990ce6caf5b3e AS build-base
 WORKDIR /src
+ENV SPROYT_FRONTEND_PREBUILT=1
+
+FROM --platform=$BUILDPLATFORM node:24.19.0-alpine3.23@sha256:244cc2b53f46f9e876304391d17682b0ddae9ac33491f4857e25e35a36ba7995 AS frontend-builder
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build
 
 FROM build-base AS zig-builder
 RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry \
@@ -21,8 +29,10 @@ RUN case "$TARGETARCH" in \
     && printf 'fn main() {}\n' > src/main.rs \
     && cargo zigbuild --locked --release --target "$rust_target"
 COPY src ./src
+COPY build.rs ./
 COPY migrations ./migrations
 COPY assets ./assets
+COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
 ARG VCS_REF=unknown
 RUN case "$TARGETARCH" in \
       amd64) rust_target=x86_64-unknown-linux-musl ;; \
@@ -40,8 +50,10 @@ RUN mkdir -p src \
     && printf 'fn main() {}\n' > src/main.rs \
     && cargo build --locked --release
 COPY src ./src
+COPY build.rs ./
 COPY migrations ./migrations
 COPY assets ./assets
+COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
 ARG VCS_REF=unknown
 RUN cargo clean --package sproyt --release \
     && SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release --bin sproyt \

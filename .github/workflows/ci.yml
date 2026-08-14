@@ -40,6 +40,19 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
+      - name: Install pinned Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Check and build frontend
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run check
+          npm --prefix frontend run build
+
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
@@ -57,9 +70,13 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Lint all targets and features
+        env:
+          SPROYT_FRONTEND_PREBUILT: "1"
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run tests
+        env:
+          SPROYT_FRONTEND_PREBUILT: "1"
         run: cargo test --all-targets --all-features --locked
 
       - name: Validate local Compose profile
@@ -98,6 +115,18 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
+      - name: Install pinned Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
@@ -112,6 +141,8 @@ jobs:
           restore-keys: ${{ runner.os }}-postgres-cargo-
 
       - name: Run PostgreSQL repository contract
+        env:
+          SPROYT_FRONTEND_PREBUILT: "1"
         run: cargo test db::postgres::tests --locked
 
       - name: Verify expected tables
@@ -179,7 +210,19 @@ jobs:
       SPROYT_AUTH_MODE: development
     steps:
       - uses: actions/checkout@v6
+      - name: Install pinned Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
       - name: Migrate source database
+        env:
+          SPROYT_FRONTEND_PREBUILT: "1"
         run: cargo run --locked -- migrate
       - name: Seed durable chat evidence
         run: |
@@ -203,6 +246,7 @@ jobs:
       - name: Apply forward migrations and verify integrity
         env:
           DATABASE_URL: postgres://sproyt:sproyt-recovery@127.0.0.1:5432/sproyt_restore
+          SPROYT_FRONTEND_PREBUILT: "1"
         run: |
           cargo run --locked -- migrate
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"

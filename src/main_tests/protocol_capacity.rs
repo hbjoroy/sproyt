@@ -392,19 +392,26 @@ fn browser_routes_session_connection_and_events_through_supervisors() {
         "import { createApplicationStore, createServerEventMailbox } from \"{{CLIENT_STORE_URL}}\";"
     ));
     assert!(INDEX_HTML.contains("const applicationStore = createApplicationStore();"));
-    assert!(CLIENT_STORE.contains("export function createApplicationStore()"));
+    assert!(CLIENT_STORE.contains("function createApplicationStore()"));
     assert!(CLIENT_STORE.contains("updateSession(patch)"));
     assert!(CLIENT_STORE.contains("updateConnection(patch)"));
     assert!(CLIENT_STORE.contains("reduceServerEvent(event)"));
-    assert!(CLIENT_STORE.contains("export function createServerEventMailbox({ reduce, deliver })"));
-    assert!(CLIENT_STORE.contains("deliver(reduce(queue.shift()));"));
+    assert!(CLIENT_STORE.contains("function createServerEventMailbox({"));
+    assert!(
+        CLIENT_STORE
+            .contains("export {\n  createApplicationStore,\n  createServerEventMailbox\n};")
+    );
+    assert!(
+        CLIENT_STORE
+            .contains("const nextEvent = queue.shift();\n          deliver(reduce(nextEvent));")
+    );
     let mailbox = CLIENT_STORE
-        .split("export function createServerEventMailbox({ reduce, deliver }) {")
+        .split("function createServerEventMailbox({")
         .nth(1)
         .expect("serialized mailbox factory");
     let queued = mailbox.find("queue.push(event);").expect("enqueue event");
     let reduce_then_deliver = mailbox
-        .find("deliver(reduce(queue.shift()));")
+        .find("deliver(reduce(nextEvent));")
         .expect("reduce before delivery");
     assert!(queued < reduce_then_deliver);
     assert!(INDEX_HTML.contains("const serverEventMailbox = createServerEventMailbox({"));
@@ -1005,9 +1012,11 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         "public, max-age=31536000, immutable"
     );
     let client_store_body = client_store.text().await.unwrap();
-    assert!(client_store_body.contains("export function createApplicationStore()"));
+    assert!(client_store_body.contains("function createApplicationStore()"));
+    assert!(client_store_body.contains("function createServerEventMailbox({"));
     assert!(
-        client_store_body.contains("export function createServerEventMailbox({ reduce, deliver })")
+        client_store_body
+            .contains("export {\n  createApplicationStore,\n  createServerEventMailbox\n};")
     );
     let legacy_client_store = reqwest::get(format!("http://{address}/assets/client-store.js"))
         .await

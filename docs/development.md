@@ -3,6 +3,33 @@
 Sproyt uses the Rust toolchain pinned in `rust-toolchain.toml`. `rustup` selects
 it automatically from the repository root.
 
+## Frontend build
+
+The browser client is written in TypeScript under `frontend/` and is compiled
+to a local, generated asset before Rust embeds it. Install the pinned Node
+major version from `.node-version`, then run:
+
+```powershell
+npm --prefix frontend ci
+npm --prefix frontend run check
+npm --prefix frontend run build
+```
+
+`frontend/dist/` is generated only for explicit frontend builds and is
+deliberately not committed. Cargo directs its automatic frontend build into its
+private `OUT_DIR`, avoiding generated files and parallel-build races in the
+working tree. When developing locally, install the exact Node.js and npm
+versions declared by the frontend once before starting the Rust server:
+
+```powershell
+npm --prefix frontend ci
+cargo run
+```
+
+Cargo runs the local frontend build automatically whenever its TypeScript
+sources or lockfile change. Run the explicit TypeScript check before sharing a
+change; it gives clearer diagnostics than the bundler.
+
 ## Fast local quality gate
 
 Run before opening a pull request:

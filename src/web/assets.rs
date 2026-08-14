@@ -13,7 +13,7 @@ pub(crate) const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION
     None => "unknown",
 };
 pub(crate) const PWA_MANIFEST: &str = include_str!("../../assets/manifest.webmanifest");
-pub(crate) const CLIENT_STORE: &str = include_str!("../../assets/client-store.js");
+pub(crate) const CLIENT_STORE: &str = include_str!(concat!(env!("OUT_DIR"), "/client-store.js"));
 pub(crate) const SERVICE_WORKER: &str = include_str!("../../assets/service-worker.js");
 pub(crate) const OFFLINE_HTML: &str = include_str!("../../assets/offline.html");
 pub(crate) const INDEX_HTML: &str = include_str!("../../assets/index.html");
