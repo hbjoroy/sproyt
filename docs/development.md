@@ -30,6 +30,26 @@ Cargo runs the local frontend build automatically whenever its TypeScript
 sources or lockfile change. Run the explicit TypeScript check before sharing a
 change; it gives clearer diagnostics than the bundler.
 
+## Browser contracts
+
+The Playwright smoke contract starts the ordinary Rust server with development
+authentication and a dedicated local SQLite database. It verifies that the
+browser receives the CSP-protected module, establishes a real WebSocket
+connection, and sends a message through the rendered UI.
+
+Install Chromium once, then run the contract:
+
+```powershell
+npx --prefix frontend playwright install chromium
+npm --prefix frontend run test:e2e
+```
+
+Each run reserves a free local port and creates an isolated database below
+`frontend/.playwright/run-*/sproyt.sqlite`. The harness stops its complete
+server process tree and removes that directory after success or failure. CI
+installs Chromium with its Linux dependencies and uploads trace/report material
+only after a failing browser contract.
+
 ## Fast local quality gate
 
 Run before opening a pull request:

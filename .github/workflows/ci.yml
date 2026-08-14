@@ -79,6 +79,28 @@ jobs:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: cargo test --all-targets --all-features --locked
 
+      - name: Cache Playwright browser binaries
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Chromium for browser contracts
+        run: npx --prefix frontend playwright install --with-deps chromium
+
+      - name: Run browser smoke contracts
+        run: npm --prefix frontend run test:e2e
+
+      - name: Upload browser test evidence
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+
       - name: Validate local Compose profile
         run: docker compose config --quiet
 

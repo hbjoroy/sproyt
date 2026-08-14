@@ -12,9 +12,12 @@
     "build": "npm run check-node && node scripts/build.mjs",
     "check": "npm run check-node && tsc --noEmit",
     "check-node": "node scripts/check-runtime.mjs",
-    "test": "npm run check && npm run build"
+    "test": "npm run check && npm run build",
+    "test:e2e": "npm run check && npm run build && node scripts/test-e2e.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "1.57.0",
+    "@types/node": "26.2.0",
     "esbuild": "0.25.12",
     "typescript": "5.9.3"
   }
