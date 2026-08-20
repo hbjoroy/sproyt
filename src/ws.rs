@@ -11,7 +11,10 @@ use crate::{
         ChannelId, ChannelSequence, ChannelSlug, DisplayName, MessageBody, MessageLimit,
         RepositoryError, UserId,
     },
-    protocol::{ClientCommand, ClientEnvelope, PROTOCOL_ID, ServerEnvelope, ServerEvent},
+    protocol::{
+        ClientCommand, ClientEnvelope, PROTOCOL_ID, ProtocolVersion, ServerEnvelope, ServerEvent,
+        check_protocol,
+    },
 };
 
 pub struct SocketAuthentication {
@@ -117,7 +120,7 @@ pub async fn handle_socket(
                             Ok(envelope) => envelope,
                             Err(_) => {
                                 let message = ServerEnvelope::event(ServerEvent::Error {
-                                    code: "invalid_envelope",
+                                    code: "invalid_envelope".to_owned(),
                                     message: "invalid JSON command envelope".to_owned(),
                                 });
                                 if send(&mut socket, &message).await.is_err() {
@@ -127,16 +130,18 @@ pub async fn handle_socket(
                             }
                         };
                         let request_id = envelope.request_id.clone();
-                        let response = if envelope.protocol != PROTOCOL_ID {
+                        let response = if check_protocol(&envelope.protocol)
+                            != ProtocolVersion::Supported
+                        {
                             ServerEnvelope::response(request_id, ServerEvent::Error {
-                                code: "unsupported_protocol",
+                                code: "unsupported_protocol".to_owned(),
                                 message: format!("expected {PROTOCOL_ID}"),
                             })
                         } else if envelope.request_id.trim().is_empty()
                             || envelope.request_id.len() > 128
                         {
                             ServerEnvelope::response(request_id, ServerEvent::Error {
-                                code: "invalid_request_id",
+                                code: "invalid_request_id".to_owned(),
                                 message: "request_id must contain 1 to 128 bytes".to_owned(),
                             })
                         } else {
@@ -626,7 +631,7 @@ fn spawn_subscription(
                         last_seen_sequence,
                         latest_known_sequence,
                         skipped,
-                        hint: "load_recent_messages_after",
+                        hint: "load_recent_messages_after".to_owned(),
                     })
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
@@ -648,7 +653,7 @@ fn error_event(error: ChatError) -> ServerEvent {
         ChatError::Validation(_) => "validation_error",
     };
     ServerEvent::Error {
-        code,
+        code: code.to_owned(),
         message: error.public_message(),
     }
 }

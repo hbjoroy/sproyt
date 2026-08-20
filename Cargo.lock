@@ -2755,6 +2755,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sproyt-protocol",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
@@ -2765,6 +2766,16 @@ dependencies = [
  "unicode-segmentation",
  "uuid",
  "web-push-native",
+]
+
+[[package]]
+name = "sproyt-protocol"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

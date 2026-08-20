@@ -290,7 +290,7 @@ pub struct MessageReactionChange {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MediaObject {
-    pub id: crate::domain::MediaId,
+    pub id: super::MediaId,
     pub owner_id: UserId,
     pub channel_id: ChannelId,
     pub original_filename: String,

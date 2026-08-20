@@ -1,0 +1,15 @@
+[package]
+name = "sproyt-protocol"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Portable WebSocket wire envelopes for Sprøyt"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1"
+uuid = { version = "1", features = ["js", "serde", "v5", "v7"] }
+
+[dev-dependencies]
