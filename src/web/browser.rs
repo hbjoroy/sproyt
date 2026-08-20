@@ -2,7 +2,7 @@ use crate::{
     auth::AuthError,
     server::AppState,
     web::{
-        assets::{BUILD_REVISION, CLIENT_STORE, INDEX_HTML, client_store_fingerprint},
+        assets::{APP_BUNDLE, BUILD_REVISION, INDEX_HTML, app_bundle_fingerprint},
         http::auth_error_response,
     },
 };
@@ -65,11 +65,11 @@ pub(crate) async fn index(
         return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let nonce = URL_SAFE_NO_PAD.encode(random);
-    let client_store_revision = client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes());
-    let client_store_url = format!("/assets/client-store/{client_store_revision}/client-store.js");
+    let app_revision = app_bundle_fingerprint(BUILD_REVISION, APP_BUNDLE.as_bytes());
+    let app_url = format!("/assets/app/{app_revision}/app.js");
     let html = INDEX_HTML
         .replace("{{NONCE}}", &nonce)
-        .replace("{{CLIENT_STORE_URL}}", &client_store_url)
+        .replace("{{APP_URL}}", &app_url)
         .replace(
             "{{DISPLAY_NAME}}",
             &escape_html(&principal.user.display_name.to_string()),

@@ -18,6 +18,16 @@ use tokio_tungstenite::{
 
 type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
+struct BrowserClient;
+
+impl BrowserClient {
+    fn contains(&self, needle: &str) -> bool {
+        APP_SOURCE.contains(needle) || APP_BUNDLE.contains(needle) || INDEX_HTML.contains(needle)
+    }
+}
+
+const BROWSER_CLIENT: BrowserClient = BrowserClient;
+
 #[test]
 fn media_signatures_override_untrusted_declared_types() {
     assert_eq!(
@@ -37,119 +47,127 @@ fn media_signatures_override_untrusted_declared_types() {
 
 #[test]
 fn browser_exposes_paste_upload_and_safe_media_rendering() {
-    assert!(INDEX_HTML.contains("bodyInput.addEventListener(\"paste\""));
-    assert!(INDEX_HTML.contains("accept=\"image/*,video/*,.heic,.heif,.mov\""));
-    assert!(INDEX_HTML.contains("/api/v1/channels/${activeChannelId}/media"));
-    assert!(INDEX_HTML.contains("response.status === 401 && await refreshSession(true)"));
-    assert!(INDEX_HTML.contains("element.loading = \"lazy\""));
-    assert!(INDEX_HTML.contains("element.controls = true"));
-    assert!(INDEX_HTML.contains("/api/v1/media/${media.id}/preview"));
-    assert!(INDEX_HTML.contains("function openMediaLightbox(url, name)"));
-    assert!(INDEX_HTML.contains("mediaLightbox.showModal()"));
-    assert!(INDEX_HTML.contains("max-height: min(48dvh, 420px)"));
-    assert!(INDEX_HTML.contains("max-width: calc(100vw - 24px)"));
-    assert!(INDEX_HTML.contains("id=\"upload-status\""));
-    assert!(INDEX_HTML.contains("request.upload.addEventListener(\"progress\""));
-    assert!(INDEX_HTML.contains("Behandlar fila"));
-    assert!(INDEX_HTML.contains("className = \"media-preview-remove\""));
+    assert!(BROWSER_CLIENT.contains("bodyInput.addEventListener(\"paste\""));
+    assert!(BROWSER_CLIENT.contains("accept=\"image/*,video/*,.heic,.heif,.mov\""));
+    assert!(BROWSER_CLIENT.contains("/api/v1/channels/${activeChannelId}/media"));
+    assert!(BROWSER_CLIENT.contains("response.status === 401 && await refreshSession(true)"));
+    assert!(BROWSER_CLIENT.contains("element.loading = \"lazy\""));
+    assert!(BROWSER_CLIENT.contains("element.controls = true"));
+    assert!(BROWSER_CLIENT.contains("/api/v1/media/${media.id}/preview"));
+    assert!(BROWSER_CLIENT.contains("function openMediaLightbox(url, name)"));
+    assert!(BROWSER_CLIENT.contains("mediaLightbox.showModal()"));
+    assert!(BROWSER_CLIENT.contains("max-height: min(48dvh, 420px)"));
+    assert!(BROWSER_CLIENT.contains("max-width: calc(100vw - 24px)"));
+    assert!(BROWSER_CLIENT.contains("id=\"upload-status\""));
+    assert!(BROWSER_CLIENT.contains("request.upload.addEventListener(\"progress\""));
+    assert!(BROWSER_CLIENT.contains("Behandlar fila"));
+    assert!(BROWSER_CLIENT.contains("className = \"media-preview-remove\""));
     assert!(
-        INDEX_HTML
+        BROWSER_CLIENT
             .contains("remove.setAttribute(\"aria-label\", `Fjern ${media.original_filename}`)")
     );
     assert!(
-        INDEX_HTML.contains(
+        BROWSER_CLIENT.contains(
             "pendingMedia = pendingMedia.filter((candidate) => candidate.id !== media.id)"
         )
     );
-    assert!(INDEX_HTML.contains("if (pendingMessages.size > 0) return"));
-    assert!(INDEX_HTML.contains("bodyInput.focus({ preventScroll: true })"));
+    assert!(BROWSER_CLIENT.contains("if (pendingMessages.size > 0) return"));
+    assert!(BROWSER_CLIENT.contains("bodyInput.focus({ preventScroll: true })"));
 }
 
 #[test]
 fn browser_uses_a_compact_composer_with_safe_keyboard_semantics() {
-    assert!(INDEX_HTML.contains("--composer-rest-height: 44px"));
-    assert!(INDEX_HTML.contains("--composer-max-height: 126px"));
-    assert!(INDEX_HTML.contains("height: 44px; min-width: 44px; min-height: 44px"));
-    assert!(INDEX_HTML.contains("resize: none; overflow-y: hidden"));
-    assert!(INDEX_HTML.contains("function resizeComposer()"));
-    assert!(INDEX_HTML.contains("bodyInput.value.length === 0\n          ? minimum"));
-    assert!(INDEX_HTML.contains("bodyInput.value.length > 0 && bodyInput.scrollHeight > maximum"));
-    assert!(INDEX_HTML.contains("form.send.is-expanded #media-previews:not(:empty)"));
-    assert!(INDEX_HTML.contains("form.send.is-expanded #upload-status:not(:empty)"));
-    assert!(INDEX_HTML.contains("min-width: 44px; min-height: 44px"));
-    assert!(INDEX_HTML.contains("composer-icon\" id=\"attach-media\""));
-    assert!(INDEX_HTML.contains("id=\"composer-tools\" aria-label=\"Meldingsverktøy\" hidden"));
-    assert!(INDEX_HTML.contains("composerTools.hidden = !composerHasFocus"));
-    assert!(INDEX_HTML.contains("sendForm.addEventListener(\"focusin\""));
+    assert!(BROWSER_CLIENT.contains("--composer-rest-height: 44px"));
+    assert!(BROWSER_CLIENT.contains("--composer-max-height: 126px"));
+    assert!(BROWSER_CLIENT.contains("height: 44px; min-width: 44px; min-height: 44px"));
+    assert!(BROWSER_CLIENT.contains("resize: none; overflow-y: hidden"));
+    assert!(BROWSER_CLIENT.contains("function resizeComposer()"));
+    assert!(BROWSER_CLIENT.contains("bodyInput.value.length === 0\n          ? minimum"));
     assert!(
-        INDEX_HTML.contains(
+        BROWSER_CLIENT.contains("bodyInput.value.length > 0 && bodyInput.scrollHeight > maximum")
+    );
+    assert!(BROWSER_CLIENT.contains("form.send.is-expanded #media-previews:not(:empty)"));
+    assert!(BROWSER_CLIENT.contains("form.send.is-expanded #upload-status:not(:empty)"));
+    assert!(BROWSER_CLIENT.contains("min-width: 44px; min-height: 44px"));
+    assert!(BROWSER_CLIENT.contains("composer-icon\" id=\"attach-media\""));
+    assert!(BROWSER_CLIENT.contains("id=\"composer-tools\" aria-label=\"Meldingsverktøy\" hidden"));
+    assert!(BROWSER_CLIENT.contains("composerTools.hidden = !composerHasFocus"));
+    assert!(BROWSER_CLIENT.contains("sendForm.addEventListener(\"focusin\""));
+    assert!(
+        BROWSER_CLIENT.contains(
             "sendForm.addEventListener(\"focusout\", closeComposerToolsAfterFocusLeaves)"
         )
     );
-    assert!(INDEX_HTML.contains("document.addEventListener(\"pointerdown\""));
-    assert!(INDEX_HTML.contains("if (sendForm.contains(event.target)) return"));
-    assert!(INDEX_HTML.contains("if (sendForm.contains(document.activeElement)) return"));
-    assert!(INDEX_HTML.contains("messageEmojiPicker.open = false"));
-    assert!(INDEX_HTML.contains("aria-label=\"Send melding\" title=\"Send melding\""));
-    assert!(!INDEX_HTML.contains(">Send</button>"));
-    assert!(INDEX_HTML.contains("compositionstart"));
-    assert!(INDEX_HTML.contains("compositionend"));
-    assert!(INDEX_HTML.contains("event.keyCode !== 229"));
-    assert!(INDEX_HTML.contains("!event.isComposing"));
-    assert!(INDEX_HTML.contains("usesDesktopComposerKeys.matches"));
-    assert!(INDEX_HTML.contains("sendForm.requestSubmit()"));
-    assert!(INDEX_HTML.contains("@media (prefers-reduced-motion: no-preference)"));
-    assert!(INDEX_HTML.contains("attachMediaButton.disabled = !writableChannel"));
-    assert!(INDEX_HTML.contains("syncComposerState();"));
+    assert!(BROWSER_CLIENT.contains("document.addEventListener(\"pointerdown\""));
+    assert!(BROWSER_CLIENT.contains("if (sendForm.contains(event.target)) return"));
+    assert!(BROWSER_CLIENT.contains("if (sendForm.contains(document.activeElement)) return"));
+    assert!(BROWSER_CLIENT.contains("messageEmojiPicker.open = false"));
+    assert!(BROWSER_CLIENT.contains("aria-label=\"Send melding\" title=\"Send melding\""));
+    assert!(!BROWSER_CLIENT.contains(">Send</button>"));
+    assert!(BROWSER_CLIENT.contains("compositionstart"));
+    assert!(BROWSER_CLIENT.contains("compositionend"));
+    assert!(BROWSER_CLIENT.contains("event.keyCode !== 229"));
+    assert!(BROWSER_CLIENT.contains("!event.isComposing"));
+    assert!(BROWSER_CLIENT.contains("usesDesktopComposerKeys.matches"));
+    assert!(BROWSER_CLIENT.contains("sendForm.requestSubmit()"));
+    assert!(BROWSER_CLIENT.contains("@media (prefers-reduced-motion: no-preference)"));
+    assert!(BROWSER_CLIENT.contains("attachMediaButton.disabled = !writableChannel"));
+    assert!(BROWSER_CLIENT.contains("syncComposerState();"));
 }
 
 #[test]
 fn browser_keeps_compact_status_controls_and_saves_the_complete_draft() {
-    assert!(INDEX_HTML.contains("class=\"status-fields\""));
-    assert!(INDEX_HTML.contains("class=\"status-emoji-options\""));
-    assert!(INDEX_HTML.contains("class=\"secondary-button\" id=\"clear-status\""));
-    assert!(INDEX_HTML.contains(">Nullstill</button>"));
-    assert!(INDEX_HTML.contains(">Slå på varsling</button>"));
-    assert!(INDEX_HTML.contains("class=\"logout-link\""));
-    assert!(INDEX_HTML.contains("class=\"logout-icon\" aria-hidden=\"true\""));
-    assert!(INDEX_HTML.contains(".inbox-icon { display: grid; width: 26px; height: 26px"));
-    assert!(INDEX_HTML.contains("letter-spacing: .01em"));
-    assert!(INDEX_HTML.contains("const statusDraft = { emoji: \"\", text: \"\", dirty: false }"));
-    assert!(INDEX_HTML.contains("statusDraft.emoji = statusEmoji.value"));
-    assert!(INDEX_HTML.contains("statusDraft.text = statusText.value"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("class=\"status-fields\""));
+    assert!(BROWSER_CLIENT.contains("class=\"status-emoji-options\""));
+    assert!(BROWSER_CLIENT.contains("class=\"secondary-button\" id=\"clear-status\""));
+    assert!(BROWSER_CLIENT.contains(">Nullstill</button>"));
+    assert!(BROWSER_CLIENT.contains(">Slå på varsling</button>"));
+    assert!(BROWSER_CLIENT.contains("class=\"logout-link\""));
+    assert!(BROWSER_CLIENT.contains("class=\"logout-icon\" aria-hidden=\"true\""));
+    assert!(BROWSER_CLIENT.contains(".inbox-icon { display: grid; width: 26px; height: 26px"));
+    assert!(BROWSER_CLIENT.contains("letter-spacing: .01em"));
+    assert!(
+        BROWSER_CLIENT.contains("const statusDraft = { emoji: \"\", text: \"\", dirty: false }")
+    );
+    assert!(BROWSER_CLIENT.contains("statusDraft.emoji = statusEmoji.value"));
+    assert!(BROWSER_CLIENT.contains("statusDraft.text = statusText.value"));
+    assert!(BROWSER_CLIENT.contains(
             "sendCommand(\"set_status\", { text: statusDraft.text, emoji: statusDraft.emoji, expires_at: null })"
         ));
-    assert!(INDEX_HTML.contains("if (!statusDraft.dirty)"));
+    assert!(BROWSER_CLIENT.contains("if (!statusDraft.dirty)"));
     assert!(
-        INDEX_HTML
+        BROWSER_CLIENT
             .contains("if (payload.profile.id === currentParticipantId) statusDraft.dirty = false")
     );
 }
 
 #[test]
 fn browser_keeps_desktop_sidebar_controls_compact_and_reachable() {
-    assert!(INDEX_HTML.contains("id=\"desktop-sidebar-toggle\""));
-    assert!(INDEX_HTML.contains("sproyt.desktop-sidebar-collapsed.v1"));
-    assert!(INDEX_HTML.contains("main.desktop-sidebar-collapsed { grid-template-columns: 56px"));
-    assert!(INDEX_HTML.contains("main.desktop-sidebar-expanded { grid-template-columns: 280px"));
-    assert!(INDEX_HTML.contains("id=\"desktop-advanced-entry\""));
+    assert!(BROWSER_CLIENT.contains("id=\"desktop-sidebar-toggle\""));
+    assert!(BROWSER_CLIENT.contains("sproyt.desktop-sidebar-collapsed.v1"));
     assert!(
-        INDEX_HTML.contains(
+        BROWSER_CLIENT.contains("main.desktop-sidebar-collapsed { grid-template-columns: 56px")
+    );
+    assert!(
+        BROWSER_CLIENT.contains("main.desktop-sidebar-expanded { grid-template-columns: 280px")
+    );
+    assert!(BROWSER_CLIENT.contains("id=\"desktop-advanced-entry\""));
+    assert!(
+        BROWSER_CLIENT.contains(
             ".advanced-tools button:not([disabled]), .advanced-tools input:not([disabled])"
         )
     );
-    assert!(INDEX_HTML.contains("processTitle.tabIndex = -1"));
-    assert!(INDEX_HTML.contains("[data-tooltip]:hover::after, .sidebar.desktop-collapsed [data-tooltip]:focus-visible::after"));
-    assert!(INDEX_HTML.contains("data-tooltip=\"Kollaps menyen\""));
-    assert!(INDEX_HTML.contains("data-tooltip=\"Set status\""));
-    assert!(INDEX_HTML.contains("data-tooltip=\"Varsel\""));
-    assert!(INDEX_HTML.contains("data-tooltip=\"Ulest\""));
-    assert!(INDEX_HTML.contains("data-tooltip=\"Omtalar\""));
-    assert!(INDEX_HTML.contains("data-tooltip=\"Oppgåver\""));
-    assert!(INDEX_HTML.contains("button.dataset.tooltip = buttonLabel"));
-    assert!(INDEX_HTML.contains("currentStatus.dataset.tooltip = statusLabel"));
-    assert!(INDEX_HTML.contains("notificationSummary.dataset.tooltip = notificationLabel"));
+    assert!(BROWSER_CLIENT.contains("processTitle.tabIndex = -1"));
+    assert!(BROWSER_CLIENT.contains("[data-tooltip]:hover::after, .sidebar.desktop-collapsed [data-tooltip]:focus-visible::after"));
+    assert!(BROWSER_CLIENT.contains("data-tooltip=\"Kollaps menyen\""));
+    assert!(BROWSER_CLIENT.contains("data-tooltip=\"Set status\""));
+    assert!(BROWSER_CLIENT.contains("data-tooltip=\"Varsel\""));
+    assert!(BROWSER_CLIENT.contains("data-tooltip=\"Ulest\""));
+    assert!(BROWSER_CLIENT.contains("data-tooltip=\"Omtalar\""));
+    assert!(BROWSER_CLIENT.contains("data-tooltip=\"Oppgåver\""));
+    assert!(BROWSER_CLIENT.contains("button.dataset.tooltip = buttonLabel"));
+    assert!(BROWSER_CLIENT.contains("currentStatus.dataset.tooltip = statusLabel"));
+    assert!(BROWSER_CLIENT.contains("notificationSummary.dataset.tooltip = notificationLabel"));
 }
 
 #[test]
@@ -163,18 +181,18 @@ fn browser_is_an_installable_pwa_with_bounded_offline_caching() {
             .as_array()
             .is_some_and(|icons| icons.len() >= 3)
     );
-    assert!(INDEX_HTML.contains("rel=\"manifest\" href=\"/manifest.webmanifest\""));
-    assert!(INDEX_HTML.contains("navigator.serviceWorker.register"));
-    assert!(INDEX_HTML.contains("/assets/sproyt-wave.svg"));
-    assert!(INDEX_HTML.contains("viewport-fit=cover"));
-    assert!(INDEX_HTML.contains("--app-height: 100dvh"));
-    assert!(INDEX_HTML.contains("env(safe-area-inset-bottom)"));
-    assert!(INDEX_HTML.contains("const height = viewport?.height || window.innerHeight"));
-    assert!(INDEX_HTML.contains("--app-offset-top: 0px"));
-    assert!(INDEX_HTML.contains("height: var(--app-height)"));
-    assert!(!INDEX_HTML.contains("width: min(1120px, 100%)"));
-    assert!(!INDEX_HTML.contains("height: min(760px, calc(100dvh - 48px));"));
-    assert!(INDEX_HTML.contains("overflow-y: auto;\n        overscroll-behavior: contain;\n        scrollbar-gutter: stable;"));
+    assert!(BROWSER_CLIENT.contains("rel=\"manifest\" href=\"/manifest.webmanifest\""));
+    assert!(BROWSER_CLIENT.contains("navigator.serviceWorker.register"));
+    assert!(BROWSER_CLIENT.contains("/assets/sproyt-wave.svg"));
+    assert!(BROWSER_CLIENT.contains("viewport-fit=cover"));
+    assert!(BROWSER_CLIENT.contains("--app-height: 100dvh"));
+    assert!(BROWSER_CLIENT.contains("env(safe-area-inset-bottom)"));
+    assert!(BROWSER_CLIENT.contains("const height = viewport?.height || window.innerHeight"));
+    assert!(BROWSER_CLIENT.contains("--app-offset-top: 0px"));
+    assert!(BROWSER_CLIENT.contains("height: var(--app-height)"));
+    assert!(!BROWSER_CLIENT.contains("width: min(1120px, 100%)"));
+    assert!(!BROWSER_CLIENT.contains("height: min(760px, calc(100dvh - 48px));"));
+    assert!(BROWSER_CLIENT.contains("overflow-y: auto;\n        overscroll-behavior: contain;\n        scrollbar-gutter: stable;"));
     assert!(SERVICE_WORKER.contains("request.mode === \"navigate\""));
     assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/api/\")"));
     assert!(SERVICE_WORKER.contains("url.pathname.startsWith(\"/auth/\")"));
@@ -253,55 +271,56 @@ async fn image_upload_creates_a_bounded_preview_and_rejects_truncation() {
 
 #[test]
 fn browser_exposes_circle_scoped_mention_autocomplete() {
-    assert!(INDEX_HTML.contains("id=\"mention-suggestions\""));
-    assert!(INDEX_HTML.contains("aria-autocomplete=\"list\""));
-    assert!(INDEX_HTML.contains("sendCommand(\"list_circle_users\""));
-    assert!(INDEX_HTML.contains("knownCircleUsers.get(channel.circle_id)"));
-    assert!(INDEX_HTML.contains("mentionHandle(user).startsWith(query)"));
-    assert!(INDEX_HTML.contains("event.key === \"ArrowDown\""));
-    assert!(INDEX_HTML.contains("event.key === \"Enter\""));
-    assert!(INDEX_HTML.contains("selectMention(selectedMentionIndex)"));
+    assert!(BROWSER_CLIENT.contains("id=\"mention-suggestions\""));
+    assert!(BROWSER_CLIENT.contains("aria-autocomplete=\"list\""));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"list_circle_users\""));
+    assert!(BROWSER_CLIENT.contains("knownCircleUsers.get(channel.circle_id)"));
+    assert!(BROWSER_CLIENT.contains("mentionHandle(user).startsWith(query)"));
+    assert!(BROWSER_CLIENT.contains("event.key === \"ArrowDown\""));
+    assert!(BROWSER_CLIENT.contains("event.key === \"Enter\""));
+    assert!(BROWSER_CLIENT.contains("selectMention(selectedMentionIndex)"));
 }
 
 #[test]
 fn browser_exposes_durable_reaction_badges() {
-    assert!(INDEX_HTML.contains("className = \"reaction-badge\""));
-    assert!(INDEX_HTML.contains("`${emoji} ${reaction.count}`"));
-    assert!(INDEX_HTML.contains("aria-pressed"));
-    assert!(INDEX_HTML.contains("sendCommand(\"toggle_message_reaction\""));
-    assert!(INDEX_HTML.contains("sendCommand(\"list_channel_reactions\""));
-    assert!(INDEX_HTML.contains("event.type === \"message_reaction_changed\""));
-    assert!(INDEX_HTML.contains("chatEvent.type === \"message_reaction_changed\""));
-    assert!(INDEX_HTML.contains("className = \"message-reaction-details\""));
-    assert!(INDEX_HTML.contains("reactionHeading.textContent = \"Reaksjonar\""));
-    assert!(INDEX_HTML.contains("reaction.user_ids || []"));
-    assert!(INDEX_HTML.contains("activeProfile(userId)?.display_name"));
-    assert!(INDEX_HTML.contains("id=\"reaction-emoji-catalog\""));
-    assert!(INDEX_HTML.contains("Søk eller lim inn Unicode-emoji"));
-    assert!(INDEX_HTML.contains("submitCustomReaction"));
+    assert!(BROWSER_CLIENT.contains("className = \"reaction-badge\""));
+    assert!(BROWSER_CLIENT.contains("`${emoji} ${reaction.count}`"));
+    assert!(BROWSER_CLIENT.contains("aria-pressed"));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"toggle_message_reaction\""));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"list_channel_reactions\""));
+    assert!(BROWSER_CLIENT.contains("event.type === \"message_reaction_changed\""));
+    assert!(BROWSER_CLIENT.contains("chatEvent.type === \"message_reaction_changed\""));
+    assert!(BROWSER_CLIENT.contains("className = \"message-reaction-details\""));
+    assert!(BROWSER_CLIENT.contains("reactionHeading.textContent = \"Reaksjonar\""));
+    assert!(BROWSER_CLIENT.contains("reaction.user_ids || []"));
+    assert!(BROWSER_CLIENT.contains("activeProfile(userId)?.display_name"));
+    assert!(BROWSER_CLIENT.contains("id=\"reaction-emoji-catalog\""));
+    assert!(BROWSER_CLIENT.contains("Søk eller lim inn Unicode-emoji"));
+    assert!(BROWSER_CLIENT.contains("submitCustomReaction"));
 }
 
 #[test]
 fn browser_patches_only_affected_reaction_card_with_timeline_fallback() {
-    assert!(INDEX_HTML.contains("function patchMessageReactions(messageId)"));
-    assert!(INDEX_HTML.contains("|| [...threadReplies.values()].flat().find"));
-    assert!(INDEX_HTML.contains("for (const container of [messagesEl, threadMessages])"));
+    assert!(BROWSER_CLIENT.contains("function patchMessageReactions(messageId)"));
+    assert!(BROWSER_CLIENT.contains("|| [...threadReplies.values()].flat().find"));
+    assert!(BROWSER_CLIENT.contains("for (const container of [messagesEl, threadMessages])"));
     assert!(
-        INDEX_HTML.contains("const nextReactions = renderMessageReactions(message, (open) => {")
+        BROWSER_CLIENT
+            .contains("const nextReactions = renderMessageReactions(message, (open) => {")
     );
-    assert!(INDEX_HTML.contains("card.classList.toggle(\"reaction-picker-requested\", open)"));
-    assert!(INDEX_HTML.contains("const thread = reactions.querySelector(\".thread-link\");"));
-    assert!(INDEX_HTML.contains("const menu = card.querySelector(\".message-menu\");"));
-    assert!(INDEX_HTML.contains("if (thread) nextReactions.append(thread);"));
+    assert!(BROWSER_CLIENT.contains("card.classList.toggle(\"reaction-picker-requested\", open)"));
+    assert!(BROWSER_CLIENT.contains("const thread = reactions.querySelector(\".thread-link\");"));
+    assert!(BROWSER_CLIENT.contains("const menu = card.querySelector(\".message-menu\");"));
+    assert!(BROWSER_CLIENT.contains("if (thread) nextReactions.append(thread);"));
     assert!(
-        INDEX_HTML
+        BROWSER_CLIENT
             .contains("if (menu) placeMessageMenu(card, nextReactions, menu, thread, messageId);")
     );
-    assert!(INDEX_HTML.contains("reactions.replaceWith(nextReactions);"));
-    assert!(!INDEX_HTML.contains("reactions.replaceWith(renderMessageReactions(message));"));
-    assert!(INDEX_HTML.contains("if (!card || !reactions) continue;"));
+    assert!(BROWSER_CLIENT.contains("reactions.replaceWith(nextReactions);"));
+    assert!(!BROWSER_CLIENT.contains("reactions.replaceWith(renderMessageReactions(message));"));
+    assert!(BROWSER_CLIENT.contains("if (!card || !reactions) continue;"));
 
-    let patch = INDEX_HTML
+    let patch = APP_BUNDLE
         .split("function patchMessageReactions(messageId) {")
         .nth(1)
         .and_then(|value| value.split("\n      function appendMessage").next())
@@ -321,13 +340,13 @@ fn browser_patches_only_affected_reaction_card_with_timeline_fallback() {
         "if (event.type === \"message_reaction_changed\") {\n          if (payload.change.channel_id === activeChannelId) {\n            applyReactionChange(payload.change);\n            if (!patchMessageReactions(payload.change.message_id)) {\n              renderTimeline({ preserveScroll: true });\n            }",
         "} else if (chatEvent.type === \"message_reaction_changed\") {\n            if (chatEvent.change.channel_id === activeChannelId) {\n              applyReactionChange(chatEvent.change);\n              if (!patchMessageReactions(chatEvent.change.message_id)) {\n                renderTimeline({ preserveScroll: true });\n              }",
     ] {
-        assert!(INDEX_HTML.contains(reaction_event));
+        assert!(BROWSER_CLIENT.contains(reaction_event));
     }
 }
 
 #[test]
 fn browser_keepalive_does_not_rebuild_interactive_message_views() {
-    let heartbeat = INDEX_HTML
+    let heartbeat = APP_SOURCE
         .split("connectionSupervisor.state.heartbeatTimer = window.setInterval(() => {")
         .nth(1)
         .and_then(|value| value.split("}, 20_000);").next())
@@ -337,28 +356,30 @@ fn browser_keepalive_does_not_rebuild_interactive_message_views() {
     assert!(!heartbeat.contains("list_my_channels"));
     assert!(!heartbeat.contains("list_mentions"));
     assert!(!heartbeat.contains("list_tasks"));
-    assert!(INDEX_HTML.contains("function refreshVisibleProfileStatuses(userId = null)"));
-    assert!(INDEX_HTML.contains("senderLabel.dataset.profileUserId = message.sender_id"));
-    assert!(INDEX_HTML.contains("refreshVisibleProfileStatuses(payload.profile.id)"));
-    assert!(INDEX_HTML.contains("const interaction = captureMessageInteraction(messagesEl)"));
-    assert!(INDEX_HTML.contains("restoreMessageInteraction(messagesEl, interaction)"));
-    assert!(INDEX_HTML.contains(".reaction-picker[open]"));
-    assert!(INDEX_HTML.contains("focus({ preventScroll: true })"));
+    assert!(BROWSER_CLIENT.contains("function refreshVisibleProfileStatuses(userId = null)"));
+    assert!(BROWSER_CLIENT.contains("senderLabel.dataset.profileUserId = message.sender_id"));
+    assert!(BROWSER_CLIENT.contains("refreshVisibleProfileStatuses(payload.profile.id)"));
+    assert!(BROWSER_CLIENT.contains("const interaction = captureMessageInteraction(messagesEl)"));
+    assert!(BROWSER_CLIENT.contains("restoreMessageInteraction(messagesEl, interaction)"));
+    assert!(BROWSER_CLIENT.contains(".reaction-picker[open]"));
+    assert!(BROWSER_CLIENT.contains("focus({ preventScroll: true })"));
 }
 
 #[test]
 fn browser_rotates_sockets_only_for_real_session_changes() {
-    assert!(INDEX_HTML.contains("event.data?.type === \"session_rotated\""));
-    assert!(INDEX_HTML.contains("type: \"session_rotated\""));
-    assert!(INDEX_HTML.contains("if (connectionSupervisor.state.socketHandoff) return"));
-    assert!(INDEX_HTML.contains("const handoff = { previousSocket, nextSocket, timeoutId: null }"));
-    assert!(INDEX_HTML.contains("}, 10_000);"));
-    assert!(INDEX_HTML.contains("session handoff timed out"));
+    assert!(BROWSER_CLIENT.contains("event.data?.type === \"session_rotated\""));
+    assert!(BROWSER_CLIENT.contains("type: \"session_rotated\""));
+    assert!(BROWSER_CLIENT.contains("if (connectionSupervisor.state.socketHandoff) return"));
     assert!(
-        INDEX_HTML
+        BROWSER_CLIENT.contains("const handoff = { previousSocket, nextSocket, timeoutId: null }")
+    );
+    assert!(BROWSER_CLIENT.contains("}, 10_000);"));
+    assert!(BROWSER_CLIENT.contains("session handoff timed out"));
+    assert!(
+        BROWSER_CLIENT
             .contains("if (handoff.timeoutId !== null) window.clearTimeout(handoff.timeoutId)")
     );
-    let handoff_open = INDEX_HTML
+    let handoff_open = APP_SOURCE
         .split("if (previousSocket) {")
         .nth(1)
         .and_then(|value| {
@@ -369,29 +390,29 @@ fn browser_rotates_sockets_only_for_real_session_changes() {
         .expect("socket handoff open block");
     assert!(!handoff_open.contains("subscribedChannelId = null"));
     assert!(handoff_open.contains("setConnectionStatus(\"Gjenopprettar samtalen …\")"));
-    assert!(INDEX_HTML.contains("finishSocketHandoff(connectionSupervisor.state.socket)"));
+    assert!(BROWSER_CLIENT.contains("finishSocketHandoff(connectionSupervisor.state.socket)"));
     assert!(
-        INDEX_HTML.contains("connectionSupervisor.state.socketHandoff?.nextSocket === nextSocket")
+        BROWSER_CLIENT
+            .contains("connectionSupervisor.state.socketHandoff?.nextSocket === nextSocket")
     );
-    assert!(INDEX_HTML.contains("connectionSupervisor.state.socket = fallbackSocket"));
-    assert!(!INDEX_HTML.contains("}, 500);"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.recover(false)"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.state.socket = fallbackSocket"));
+    assert!(!BROWSER_CLIENT.contains("}, 500);"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.recover(false)"));
+    assert!(BROWSER_CLIENT.contains(
             ".catch(() => connectionSupervisor.scheduleReconnect(1006, \"kunne ikkje gjenopprette sambandet\"))"
         ));
-    assert!(!INDEX_HTML.contains(
+    assert!(!BROWSER_CLIENT.contains(
             "recoverConnection(true).catch(() => scheduleReconnect(1006, \"kunne ikkje gjenopprette sambandet\"))"
         ));
 }
 
 #[test]
 fn browser_routes_session_connection_and_events_through_supervisors() {
-    assert!(INDEX_HTML.contains("const sessionSupervisor = (() => {"));
-    assert!(INDEX_HTML.contains("const connectionSupervisor = (() => {"));
-    assert!(INDEX_HTML.contains(
-        "import { createApplicationStore, createServerEventMailbox } from \"{{CLIENT_STORE_URL}}\";"
-    ));
-    assert!(INDEX_HTML.contains("const applicationStore = createApplicationStore();"));
+    assert!(BROWSER_CLIENT.contains("const sessionSupervisor = (() => {"));
+    assert!(BROWSER_CLIENT.contains("const connectionSupervisor = (() => {"));
+    assert!(INDEX_HTML.contains("{{APP_URL}}"));
+    assert!(!INDEX_HTML.contains("{{CLIENT_STORE_URL}}"));
+    assert!(BROWSER_CLIENT.contains("const applicationStore = createApplicationStore();"));
     assert!(CLIENT_STORE.contains("function createApplicationStore()"));
     assert!(CLIENT_STORE.contains("updateSession(patch)"));
     assert!(CLIENT_STORE.contains("updateConnection(patch)"));
@@ -414,34 +435,34 @@ fn browser_routes_session_connection_and_events_through_supervisors() {
         .find("deliver(reduce(nextEvent));")
         .expect("reduce before delivery");
     assert!(queued < reduce_then_deliver);
-    assert!(INDEX_HTML.contains("const serverEventMailbox = createServerEventMailbox({"));
-    assert!(INDEX_HTML.contains("reduce: applicationStore.reduceServerEvent,"));
-    assert!(INDEX_HTML.contains("deliver: renderServerEvent"));
-    assert!(!INDEX_HTML.contains("const applicationStore = (() => {"));
-    assert!(!INDEX_HTML.contains("const serverEventMailbox = (() => {"));
-    assert!(!INDEX_HTML.contains("let sessionRefreshTimer"));
-    assert!(!INDEX_HTML.contains("let sessionRefreshPromise"));
-    assert!(!INDEX_HTML.contains("let authenticationRecoveryPromise"));
-    assert!(!INDEX_HTML.contains("let connectionRecoveryPromise"));
-    assert!(!INDEX_HTML.contains("let reconnectTimer"));
-    assert!(!INDEX_HTML.contains("let reconnectAttempt"));
-    assert!(!INDEX_HTML.contains("let heartbeatTimer"));
-    assert!(!INDEX_HTML.contains("let stableConnectionTimer"));
-    assert!(!INDEX_HTML.contains("let socket = null"));
-    assert!(!INDEX_HTML.contains("let socketHandoff = null"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.state.recoveryPromise"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.state.reconnectTimer"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.state.reconnectAttempt"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.state.heartbeatTimer"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.state.stableConnectionTimer"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.state.socket"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.state.socketHandoff"));
-    assert!(INDEX_HTML.contains("sessionSupervisor.start();"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.start();"));
-    assert!(INDEX_HTML.contains("sessionSupervisor.schedule(seconds)"));
-    assert!(INDEX_HTML.contains("connectionSupervisor.replaceAfterSessionRefresh()"));
-    assert!(INDEX_HTML.contains("serverEventMailbox.enqueue(JSON.parse(event.data))"));
-    assert!(!INDEX_HTML.contains("renderServerEvent(JSON.parse(event.data))"));
+    assert!(BROWSER_CLIENT.contains("const serverEventMailbox = createServerEventMailbox({"));
+    assert!(BROWSER_CLIENT.contains("reduce: applicationStore.reduceServerEvent,"));
+    assert!(BROWSER_CLIENT.contains("deliver: renderServerEvent"));
+    assert!(!BROWSER_CLIENT.contains("const applicationStore = (() => {"));
+    assert!(!BROWSER_CLIENT.contains("const serverEventMailbox = (() => {"));
+    assert!(!BROWSER_CLIENT.contains("let sessionRefreshTimer"));
+    assert!(!BROWSER_CLIENT.contains("let sessionRefreshPromise"));
+    assert!(!BROWSER_CLIENT.contains("let authenticationRecoveryPromise"));
+    assert!(!BROWSER_CLIENT.contains("let connectionRecoveryPromise"));
+    assert!(!BROWSER_CLIENT.contains("let reconnectTimer"));
+    assert!(!BROWSER_CLIENT.contains("let reconnectAttempt"));
+    assert!(!BROWSER_CLIENT.contains("let heartbeatTimer"));
+    assert!(!BROWSER_CLIENT.contains("let stableConnectionTimer"));
+    assert!(!BROWSER_CLIENT.contains("let socket = null"));
+    assert!(!BROWSER_CLIENT.contains("let socketHandoff = null"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.state.recoveryPromise"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.state.reconnectTimer"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.state.reconnectAttempt"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.state.heartbeatTimer"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.state.stableConnectionTimer"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.state.socket"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.state.socketHandoff"));
+    assert!(BROWSER_CLIENT.contains("sessionSupervisor.start();"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.start();"));
+    assert!(BROWSER_CLIENT.contains("sessionSupervisor.schedule(seconds)"));
+    assert!(BROWSER_CLIENT.contains("connectionSupervisor.replaceAfterSessionRefresh()"));
+    assert!(BROWSER_CLIENT.contains("serverEventMailbox.enqueue(JSON.parse(event.data))"));
+    assert!(!BROWSER_CLIENT.contains("renderServerEvent(JSON.parse(event.data))"));
 }
 
 #[test]
@@ -470,236 +491,252 @@ fn client_store_fingerprint_uses_safe_revisions_or_asset_hashes() {
 
 #[test]
 fn browser_exposes_author_owned_message_editing() {
-    assert!(INDEX_HTML.contains("sendCommand(\"edit_message\""));
-    assert!(INDEX_HTML.contains("message.sender_id === currentParticipantId"));
-    assert!(INDEX_HTML.contains("chatEvent.type === \"message_edited\""));
-    assert!(INDEX_HTML.contains("event.type === \"message_edited\""));
-    assert!(INDEX_HTML.contains("· redigert"));
-    assert!(INDEX_HTML.contains("className = \"message-editor\""));
-    assert!(INDEX_HTML.contains("const mediaTokens = message.body.match(mediaTokenPattern) || []"));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"edit_message\""));
+    assert!(BROWSER_CLIENT.contains("message.sender_id === currentParticipantId"));
+    assert!(BROWSER_CLIENT.contains("chatEvent.type === \"message_edited\""));
+    assert!(BROWSER_CLIENT.contains("event.type === \"message_edited\""));
+    assert!(BROWSER_CLIENT.contains("· redigert"));
+    assert!(BROWSER_CLIENT.contains("className = \"message-editor\""));
+    assert!(
+        BROWSER_CLIENT.contains("const mediaTokens = message.body.match(mediaTokenPattern) || []")
+    );
 }
 
 #[test]
 fn browser_exposes_author_owned_soft_deletion() {
-    assert!(INDEX_HTML.contains("sendCommand(\"delete_message\""));
-    assert!(INDEX_HTML.contains("chatEvent.type === \"message_deleted\""));
-    assert!(INDEX_HTML.contains("event.type === \"message_deleted\""));
-    assert!(INDEX_HTML.contains("Meldinga er sletta."));
-    assert!(INDEX_HTML.contains("window.confirm(\"Vil du slette meldinga?"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"delete_message\""));
+    assert!(BROWSER_CLIENT.contains("chatEvent.type === \"message_deleted\""));
+    assert!(BROWSER_CLIENT.contains("event.type === \"message_deleted\""));
+    assert!(BROWSER_CLIENT.contains("Meldinga er sletta."));
+    assert!(BROWSER_CLIENT.contains("window.confirm(\"Vil du slette meldinga?"));
+    assert!(BROWSER_CLIENT.contains(
         "if (!message.deleted_at) {\n          footer = renderMessageReactions(message, (open) => {"
     ));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains(
         "if (!message.deleted_at) {\n          const menu = document.createElement(\"details\");"
     ));
 }
 
 #[test]
 fn browser_exposes_compact_durable_message_threads() {
-    assert!(INDEX_HTML.contains("id=\"thread-panel\""));
-    assert!(INDEX_HTML.contains("grid-template-rows: auto minmax(0, 1fr) auto"));
-    assert!(INDEX_HTML.contains("height: min(760px, calc(var(--app-height) - 24px))"));
-    assert!(INDEX_HTML.contains(".thread-messages { display: grid; min-height: 0;"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("id=\"thread-panel\""));
+    assert!(BROWSER_CLIENT.contains("grid-template-rows: auto minmax(0, 1fr) auto"));
+    assert!(BROWSER_CLIENT.contains("height: min(760px, calc(var(--app-height) - 24px))"));
+    assert!(BROWSER_CLIENT.contains(".thread-messages { display: grid; min-height: 0;"));
+    assert!(BROWSER_CLIENT.contains(
         ".thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-self: end;"
     ));
-    assert!(INDEX_HTML.contains("parent_message_id: activeThreadRootId"));
-    assert!(INDEX_HTML.contains("function openThread(messageId)"));
-    assert!(INDEX_HTML.contains("id=\"thread-emoji-picker\""));
-    assert!(INDEX_HTML.contains("#thread-emoji-options [data-emoji]"));
-    assert!(INDEX_HTML.contains("insertEmoji(threadBody, button.dataset.emoji)"));
-    assert!(INDEX_HTML.contains("if (event.key === \"Escape\" && threadEmojiPicker.open)"));
+    assert!(BROWSER_CLIENT.contains("parent_message_id: activeThreadRootId"));
+    assert!(BROWSER_CLIENT.contains("function openThread(messageId)"));
+    assert!(BROWSER_CLIENT.contains("id=\"thread-emoji-picker\""));
+    assert!(BROWSER_CLIENT.contains("#thread-emoji-options [data-emoji]"));
+    assert!(BROWSER_CLIENT.contains("insertEmoji(threadBody, button.dataset.emoji)"));
+    assert!(BROWSER_CLIENT.contains("if (event.key === \"Escape\" && threadEmojiPicker.open)"));
     assert!(
-        INDEX_HTML.contains(
+        BROWSER_CLIENT.contains(
             "threadEmojiPicker.querySelector(\"summary\")?.focus({ preventScroll: true })"
         )
     );
     assert!(
-        INDEX_HTML.contains("if (threadPanel.open && !threadEmojiPicker.contains(event.target))")
+        BROWSER_CLIENT
+            .contains("if (threadPanel.open && !threadEmojiPicker.contains(event.target))")
     );
-    assert!(INDEX_HTML.contains("function settleThreadAtBottom()"));
-    assert!(INDEX_HTML.contains("threadMessages.scrollTop = threadMessages.scrollHeight"));
-    assert!(!INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("function settleThreadAtBottom()"));
+    assert!(BROWSER_CLIENT.contains("threadMessages.scrollTop = threadMessages.scrollHeight"));
+    assert!(!BROWSER_CLIENT.contains(
         "sendCommand(\"load_thread\", { root_message_id: messageId });\n        threadBody.focus();"
     ));
-    assert!(INDEX_HTML.contains("const threadReplies = new Map()"));
-    assert!(INDEX_HTML.contains("const threadDraftPrefix = \"sproyt.thread-draft.v1.\""));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("const threadReplies = new Map()"));
+    assert!(BROWSER_CLIENT.contains("const threadDraftPrefix = \"sproyt.thread-draft.v1.\""));
+    assert!(BROWSER_CLIENT.contains(
         "function persistThreadDraft(rootId = activeThreadRootId, channelId = activeChannelId)"
     ));
-    assert!(INDEX_HTML.contains("function restoreThreadDraft(rootId, channelId)"));
-    assert!(INDEX_HTML.contains("clearThreadDraft(pending.rootId, pending.channelId)"));
-    assert!(!INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("function restoreThreadDraft(rootId, channelId)"));
+    assert!(BROWSER_CLIENT.contains("clearThreadDraft(pending.rootId, pending.channelId)"));
+    assert!(!BROWSER_CLIENT.contains(
         "localStorage.setItem(threadDraftKey(channelId, rootId), JSON.stringify(state.media))"
     ));
-    assert!(INDEX_HTML.contains("thread.textContent = replyCount === 0 ? \"🧵\""));
-    assert!(INDEX_HTML.contains("footer.append(thread);"));
-    assert!(INDEX_HTML.contains("message.parent_message_id"));
-    assert!(INDEX_HTML.contains(".thread-panel { width: 100vw"));
-    assert!(INDEX_HTML.contains("sendCommand(\"load_thread\""));
-    assert!(INDEX_HTML.contains("sendCommand(\"list_thread_summaries\""));
-    assert!(INDEX_HTML.contains("sendCommand(\"mark_thread_read\""));
-    assert!(INDEX_HTML.contains("event.type === \"thread_loaded\""));
-    assert!(INDEX_HTML.contains("summary?.unread_count"));
-    assert!(INDEX_HTML.contains("pendingThreadToOpen = mention.message.parent_message_id"));
+    assert!(BROWSER_CLIENT.contains("thread.textContent = replyCount === 0 ? \"🧵\""));
+    assert!(BROWSER_CLIENT.contains("footer.append(thread);"));
+    assert!(BROWSER_CLIENT.contains("message.parent_message_id"));
+    assert!(BROWSER_CLIENT.contains(".thread-panel { width: 100vw"));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"load_thread\""));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"list_thread_summaries\""));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"mark_thread_read\""));
+    assert!(BROWSER_CLIENT.contains("event.type === \"thread_loaded\""));
+    assert!(BROWSER_CLIENT.contains("summary?.unread_count"));
+    assert!(BROWSER_CLIENT.contains("pendingThreadToOpen = mention.message.parent_message_id"));
 }
 
 #[test]
 fn browser_uses_compact_accessible_mobile_conversation_bar() {
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains(
         "<div class=\"mobile-app-mark\"><img src=\"/assets/sproyt-wave.svg\" alt=\"\"></div>"
     ));
-    assert!(INDEX_HTML.contains("class=\"conversation-circle\" id=\"conversation-circle\" hidden"));
     assert!(
-        INDEX_HTML.contains("class=\"conversation-context\" id=\"conversation-context\" hidden")
+        BROWSER_CLIENT.contains("class=\"conversation-circle\" id=\"conversation-circle\" hidden")
     );
-    assert!(INDEX_HTML.contains(
+    assert!(
+        BROWSER_CLIENT
+            .contains("class=\"conversation-context\" id=\"conversation-context\" hidden")
+    );
+    assert!(BROWSER_CLIENT.contains(
             "id=\"connection-status-toggle\" type=\"button\" aria-expanded=\"false\" aria-controls=\"status\""
         ));
-    assert!(INDEX_HTML.contains("aria-label=\"Opne menyen\""));
-    assert!(INDEX_HTML.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("aria-label=\"Opne menyen\""));
+    assert!(BROWSER_CLIENT.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
+    assert!(BROWSER_CLIENT.contains(
         ".composer-area { position: relative; z-index: 4; grid-column: 2; grid-row: 3; }"
     ));
-    assert!(INDEX_HTML.contains(".composer-area { grid-column: 1; grid-row: 3; }"));
-    assert!(INDEX_HTML.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
-    assert!(INDEX_HTML.contains(".conversation-header { position: sticky; top: 0;"));
-    assert!(INDEX_HTML.contains("grid-template-columns: 32px minmax(0, 1fr) 44px 44px 44px;"));
-    assert!(INDEX_HTML.contains("width: 44px; min-width: 44px; min-height: 44px;"));
-    assert!(INDEX_HTML.contains("connectionStatusToggle.setAttribute(\"aria-label\", `Sambandsstatus: ${connection.status}`)"));
-    assert!(INDEX_HTML.contains("conversationCircle.textContent = channel.circle_id"));
-    assert!(INDEX_HTML.contains("connectionStatusDot.dataset.reconnecting = String(reconnecting)"));
-    assert!(INDEX_HTML.contains(".connection-status-dot[data-reconnecting=\"true\"]"));
-    assert!(INDEX_HTML.contains("(channel.direct_user_id ? \"Direktemelding\" : \"Felles\")"));
-    assert!(INDEX_HTML.contains("sidebar.setAttribute(\"aria-label\", \"Sprøyt-meny\")"));
-    assert!(INDEX_HTML.contains("firstControl?.focus()"));
+    assert!(BROWSER_CLIENT.contains(".composer-area { grid-column: 1; grid-row: 3; }"));
+    assert!(BROWSER_CLIENT.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
+    assert!(BROWSER_CLIENT.contains(".conversation-header { position: sticky; top: 0;"));
+    assert!(BROWSER_CLIENT.contains("grid-template-columns: 32px minmax(0, 1fr) 44px 44px 44px;"));
+    assert!(BROWSER_CLIENT.contains("width: 44px; min-width: 44px; min-height: 44px;"));
+    assert!(BROWSER_CLIENT.contains("connectionStatusToggle.setAttribute(\"aria-label\", `Sambandsstatus: ${connection.status}`)"));
+    assert!(BROWSER_CLIENT.contains("conversationCircle.textContent = channel.circle_id"));
     assert!(
-        INDEX_HTML.contains("event.key === \"Tab\" && sidebar.classList.contains(\"mobile-open\")")
+        BROWSER_CLIENT.contains("connectionStatusDot.dataset.reconnecting = String(reconnecting)")
     );
-    assert!(INDEX_HTML.contains("messagesEl.inert = open"));
+    assert!(BROWSER_CLIENT.contains(".connection-status-dot[data-reconnecting=\"true\"]"));
+    assert!(BROWSER_CLIENT.contains("(channel.direct_user_id ? \"Direktemelding\" : \"Felles\")"));
+    assert!(BROWSER_CLIENT.contains("sidebar.setAttribute(\"aria-label\", \"Sprøyt-meny\")"));
+    assert!(BROWSER_CLIENT.contains("firstControl?.focus()"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("event.key === \"Tab\" && sidebar.classList.contains(\"mobile-open\")")
+    );
+    assert!(BROWSER_CLIENT.contains("messagesEl.inert = open"));
 }
 
 #[test]
 fn browser_keeps_conversation_dense_with_accessible_message_actions() {
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains(
             ".conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 50px; padding: 6px 12px; }"
         ));
-    assert!(INDEX_HTML.contains(".messages {\n        align-content: start;\n        display: grid;\n        gap: 8px;\n        padding: 12px;"));
-    assert!(INDEX_HTML.contains("padding: 7px 9px;"));
-    assert!(INDEX_HTML.contains(".rendered {\n        display: grid;\n        gap: 7px;"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains(".messages {\n        align-content: start;\n        display: grid;\n        gap: 8px;\n        padding: 12px;"));
+    assert!(BROWSER_CLIENT.contains("padding: 7px 9px;"));
+    assert!(BROWSER_CLIENT.contains(".rendered {\n        display: grid;\n        gap: 7px;"));
+    assert!(BROWSER_CLIENT.contains(
             ".message-menu > summary,\n        .message-menu button,\n        .thread-link,\n        .reaction-badge,\n        .reaction-picker summary { min-height: 44px; }"
         ));
-    assert!(INDEX_HTML.contains("className = \"message-menu\""));
+    assert!(BROWSER_CLIENT.contains("className = \"message-menu\""));
     assert!(
-        INDEX_HTML.contains("function placeMessageMenu(card, footer, menu, thread, messageId)")
+        BROWSER_CLIENT.contains("function placeMessageMenu(card, footer, menu, thread, messageId)")
     );
-    assert!(INDEX_HTML.contains("menu.classList.add(\"footer-menu\")"));
-    assert!(INDEX_HTML.contains("footer.insertBefore(menu, thread || null)"));
-    assert!(INDEX_HTML.contains(".message-menu.footer-menu + .thread-link { margin-left: 0; }"));
-    assert!(INDEX_HTML.contains("Fleire handlingar for meldinga"));
-    assert!(INDEX_HTML.contains("Legg til reaksjon"));
-    assert!(INDEX_HTML.contains("message.sender_id === currentParticipantId"));
-    assert!(INDEX_HTML.contains("reaction-picker-requested"));
+    assert!(BROWSER_CLIENT.contains("menu.classList.add(\"footer-menu\")"));
+    assert!(BROWSER_CLIENT.contains("footer.insertBefore(menu, thread || null)"));
+    assert!(
+        BROWSER_CLIENT.contains(".message-menu.footer-menu + .thread-link { margin-left: 0; }")
+    );
+    assert!(BROWSER_CLIENT.contains("Fleire handlingar for meldinga"));
+    assert!(BROWSER_CLIENT.contains("Legg til reaksjon"));
+    assert!(BROWSER_CLIENT.contains("message.sender_id === currentParticipantId"));
+    assert!(BROWSER_CLIENT.contains("reaction-picker-requested"));
 }
 
 #[test]
 fn browser_exposes_channel_members_and_owner_managed_markdown_description() {
-    assert!(INDEX_HTML.contains("id=\"channel-people\""));
-    assert!(INDEX_HTML.contains(".conversation-header .channel-people { order: 3; }"));
+    assert!(BROWSER_CLIENT.contains("id=\"channel-people\""));
+    assert!(BROWSER_CLIENT.contains(".conversation-header .channel-people { order: 3; }"));
     assert!(
-        INDEX_HTML.contains(".channel-people { width: 36px; min-width: 36px; min-height: 36px;")
+        BROWSER_CLIENT
+            .contains(".channel-people { width: 36px; min-width: 36px; min-height: 36px;")
     );
-    assert!(INDEX_HTML.contains(".channel-people { width: 44px; min-width: 44px;"));
-    assert!(INDEX_HTML.contains(".channel-details-dialog > header { display: flex; align-items: center; justify-content: space-between;"));
-    assert!(INDEX_HTML.contains(".channel-details-dialog > header button { width: 40px; min-width: 40px; min-height: 40px; padding: 0;"));
-    assert!(INDEX_HTML.contains(".channel-details-dialog-body { display: grid; gap: 14px; padding: 14px; overflow-y: auto; }"));
-    assert!(INDEX_HTML.contains("id=\"channel-member-search\" type=\"search\""));
-    assert!(INDEX_HTML.contains("max-height: min(454px, 45dvh)"));
-    assert!(INDEX_HTML.contains("overscroll-behavior: contain"));
-    assert!(INDEX_HTML.contains("channelMemberSearch.addEventListener(\"input\""));
-    assert!(INDEX_HTML.contains(".normalize(\"NFKD\")"));
-    assert!(INDEX_HTML.contains("`Viser ${visibleUsers.length} av ${users.length}`"));
-    assert!(INDEX_HTML.contains("function requestChannelMembers(channelId)"));
-    assert!(INDEX_HTML.contains("sendCommand(\"list_channel_users\", { channel_id: channelId })"));
-    assert!(INDEX_HTML.contains("showChannelMemberLoadError(channelId"));
-    assert!(INDEX_HTML.contains("retry.textContent = \"Prøv igjen\""));
-    assert!(INDEX_HTML.contains("requestChannelMembers(channel.id)"));
-    assert!(INDEX_HTML.contains("event.type === \"channel_users_listed\""));
-    assert!(INDEX_HTML.contains("id=\"channel-member-add\" hidden"));
-    assert!(INDEX_HTML.contains("<strong>Legg til i kanalen</strong>"));
+    assert!(BROWSER_CLIENT.contains(".channel-people { width: 44px; min-width: 44px;"));
+    assert!(BROWSER_CLIENT.contains(".channel-details-dialog > header { display: flex; align-items: center; justify-content: space-between;"));
+    assert!(BROWSER_CLIENT.contains(".channel-details-dialog > header button { width: 40px; min-width: 40px; min-height: 40px; padding: 0;"));
+    assert!(BROWSER_CLIENT.contains(".channel-details-dialog-body { display: grid; gap: 14px; padding: 14px; overflow-y: auto; }"));
+    assert!(BROWSER_CLIENT.contains("id=\"channel-member-search\" type=\"search\""));
+    assert!(BROWSER_CLIENT.contains("max-height: min(454px, 45dvh)"));
+    assert!(BROWSER_CLIENT.contains("overscroll-behavior: contain"));
+    assert!(BROWSER_CLIENT.contains("channelMemberSearch.addEventListener(\"input\""));
+    assert!(BROWSER_CLIENT.contains(".normalize(\"NFKD\")"));
+    assert!(BROWSER_CLIENT.contains("`Viser ${visibleUsers.length} av ${users.length}`"));
+    assert!(BROWSER_CLIENT.contains("function requestChannelMembers(channelId)"));
     assert!(
-        INDEX_HTML
+        BROWSER_CLIENT.contains("sendCommand(\"list_channel_users\", { channel_id: channelId })")
+    );
+    assert!(BROWSER_CLIENT.contains("showChannelMemberLoadError(channelId"));
+    assert!(BROWSER_CLIENT.contains("retry.textContent = \"Prøv igjen\""));
+    assert!(BROWSER_CLIENT.contains("requestChannelMembers(channel.id)"));
+    assert!(BROWSER_CLIENT.contains("event.type === \"channel_users_listed\""));
+    assert!(BROWSER_CLIENT.contains("id=\"channel-member-add\" hidden"));
+    assert!(BROWSER_CLIENT.contains("<strong>Legg til i kanalen</strong>"));
+    assert!(
+        BROWSER_CLIENT
             .contains("id=\"invite-channel-member\" type=\"button\" disabled>Inviter</button>")
     );
-    assert!(INDEX_HTML.contains("const pendingChannelInvitationRecipients = new Map()"));
-    assert!(INDEX_HTML.contains("pendingDirectInvitationMessages.set(directRequestId"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("const pendingChannelInvitationRecipients = new Map()"));
+    assert!(BROWSER_CLIENT.contains("pendingDirectInvitationMessages.set(directRequestId"));
+    assert!(BROWSER_CLIENT.contains(
         "sendCommand(\"send_message\", { channel_id: channel.id, body: directInvitationMessage })"
     ));
-    assert!(INDEX_HTML.contains("`[[invite:${payload.invitation.token}]]`"));
+    assert!(BROWSER_CLIENT.contains("`[[invite:${payload.invitation.token}]]`"));
     assert!(
-        INDEX_HTML.contains(
+        BROWSER_CLIENT.contains(
             "channelMemberAdd.hidden = ![\"owner\", \"moderator\"].includes(channel.role)"
         )
     );
-    assert!(INDEX_HTML.contains("function refreshChannelMemberOptions(channelId)"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("function refreshChannelMemberOptions(channelId)"));
+    assert!(BROWSER_CLIENT.contains(
             "const eligibleUsers = channel?.circle_id ? (knownCircleUsers.get(channel.circle_id) || []) : knownUsers"
         ));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains(
             "if (channel.circle_id) sendCommand(\"list_circle_users\", { circle_id: channel.circle_id })"
         ));
-    assert!(INDEX_HTML.contains("!memberIds.has(user.id)"));
-    assert!(INDEX_HTML.contains("channelDetailsDialog.dataset.channelId"));
-    assert!(!INDEX_HTML.contains("Bli med i kanal"));
-    assert!(!INDEX_HTML.contains("Legg til i vald kanal"));
-    assert!(INDEX_HTML.contains("channelDescriptionForm.hidden = channel.role !== \"owner\""));
-    assert!(INDEX_HTML.contains("sendCommand(\"update_channel_description\""));
-    assert!(INDEX_HTML.contains("renderMarkdown(channel.description, conversationContext)"));
-    assert!(INDEX_HTML.contains("maxlength=\"2000\""));
+    assert!(BROWSER_CLIENT.contains("!memberIds.has(user.id)"));
+    assert!(BROWSER_CLIENT.contains("channelDetailsDialog.dataset.channelId"));
+    assert!(!BROWSER_CLIENT.contains("Bli med i kanal"));
+    assert!(!BROWSER_CLIENT.contains("Legg til i vald kanal"));
+    assert!(BROWSER_CLIENT.contains("channelDescriptionForm.hidden = channel.role !== \"owner\""));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"update_channel_description\""));
+    assert!(BROWSER_CLIENT.contains("renderMarkdown(channel.description, conversationContext)"));
+    assert!(BROWSER_CLIENT.contains("maxlength=\"2000\""));
 }
 
 #[test]
 fn browser_uses_one_complete_theme_contract_for_dark_mode_controls() {
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains(
         "<meta name=\"theme-color\" content=\"#111613\" media=\"(prefers-color-scheme: dark)\">"
     ));
-    assert!(INDEX_HTML.contains("color-scheme: light dark;"));
-    assert!(INDEX_HTML.contains("accent-color: var(--accent);"));
-    assert!(INDEX_HTML.contains("input,\n      textarea,\n      select {\n        width: 100%;"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("color-scheme: light dark;"));
+    assert!(BROWSER_CLIENT.contains("accent-color: var(--accent);"));
+    assert!(
+        BROWSER_CLIENT.contains("input,\n      textarea,\n      select {\n        width: 100%;")
+    );
+    assert!(BROWSER_CLIENT.contains(
             "select option,\n      select optgroup {\n        background-color: var(--control);\n        color: var(--ink);"
         ));
-    assert!(INDEX_HTML.contains("@media (prefers-color-scheme: dark)"));
-    assert!(INDEX_HTML.contains("--control: #111713;"));
-    assert!(INDEX_HTML.contains("--ink: #f2f6f2;"));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains("@media (prefers-color-scheme: dark)"));
+    assert!(BROWSER_CLIENT.contains("--control: #111713;"));
+    assert!(BROWSER_CLIENT.contains("--ink: #f2f6f2;"));
+    assert!(BROWSER_CLIENT.contains(
             ".bottom-navigation-list button[aria-current=\"page\"] { background: var(--surface-hover); color: var(--ink); }"
         ));
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains(
             ".channel-button:hover, .channel-button[aria-current=\"page\"] { background: var(--surface-hover); color: var(--ink); }"
         ));
 }
 
 #[test]
 fn browser_refreshes_unread_summaries_when_a_background_tab_returns() {
-    assert!(INDEX_HTML.contains(
+    assert!(BROWSER_CLIENT.contains(
             "if (document.visibilityState !== \"visible\") return;\n        resumeAfterBackground();\n        sendCommand(\"list_my_channels\");"
         ));
 }
 
 #[test]
 fn browser_linkifies_safe_web_urls_without_expanding_messages() {
-    assert!(INDEX_HTML.contains("function appendLinkedText(parent, text)"));
-    assert!(INDEX_HTML.contains("const urlPattern = /https?:\\/\\/[^\\s<>]+/gi"));
-    assert!(INDEX_HTML.contains("link.rel = \"noopener noreferrer\""));
-    assert!(INDEX_HTML.contains("link.referrerPolicy = \"no-referrer\""));
-    assert!(INDEX_HTML.contains("function readableLinkLabel(href)"));
+    assert!(BROWSER_CLIENT.contains("function appendLinkedText(parent, text)"));
+    assert!(BROWSER_CLIENT.contains("const urlPattern = /https?:\\/\\/[^\\s<>]+/gi"));
+    assert!(BROWSER_CLIENT.contains("link.rel = \"noopener noreferrer\""));
+    assert!(BROWSER_CLIENT.contains("link.referrerPolicy = \"no-referrer\""));
+    assert!(BROWSER_CLIENT.contains("function readableLinkLabel(href)"));
     assert!(
-        INDEX_HTML.contains(".rendered a { overflow-wrap: anywhere; word-break: break-word; }")
+        BROWSER_CLIENT.contains(".rendered a { overflow-wrap: anywhere; word-break: break-word; }")
     );
-    assert!(INDEX_HTML.contains("min-width: 0;\n        max-width: 100%;"));
+    assert!(BROWSER_CLIENT.contains("min-width: 0;\n        max-width: 100%;"));
 }
 
 async fn start_test_server(
@@ -953,40 +990,43 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         .unwrap()
         .to_owned();
     let body = first.text().await.unwrap();
-    assert!(body.contains(&format!("<script type=\"module\" nonce=\"{nonce}\">")));
-    let client_store_fingerprint =
-        client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes());
+    let app_fingerprint = app_bundle_fingerprint(BUILD_REVISION, APP_BUNDLE.as_bytes());
+    assert!(body.contains(&format!(
+        "<script type=\"module\" nonce=\"{nonce}\" src=\"/assets/app/{app_fingerprint}/app.js\"></script>"
+    )));
+    assert_eq!(body.matches("<script").count(), 1);
     assert!(
-            body.find(&format!(
-                "import {{ createApplicationStore, createServerEventMailbox }} from \"/assets/client-store/{client_store_fingerprint}/client-store.js\";"
-            ))
-                .unwrap()
-            < body
-                    .find("function syncAppViewportHeight() {")
-                    .unwrap()
-        );
+        INDEX_HTML
+            .contains("<script type=\"module\" nonce=\"{{NONCE}}\" src=\"{{APP_URL}}\"></script>")
+    );
+    assert!(!body.contains("function syncAppViewportHeight() {"));
     assert!(body.contains(&format!("<style nonce=\"{nonce}\">")));
-    assert!(body.contains("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs"));
-    assert!(!body.contains("import mermaid from"));
-    assert!(body.contains("mermaidPromise = import("));
-    assert!(!body.contains("npm/mermaid@11/dist/"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs")
+    );
+    assert!(!BROWSER_CLIENT.contains("import mermaid from"));
+    assert!(BROWSER_CLIENT.contains("mermaidPromise = import("));
+    assert!(!BROWSER_CLIENT.contains("npm/mermaid@11/dist/"));
     assert!(!body.contains("{{NONCE}}"));
-    assert!(!body.contains("{{CLIENT_STORE_URL}}"));
+    assert!(!body.contains("{{APP_URL}}"));
     assert!(!body.contains("{{DISPLAY_NAME}}"));
     assert!(!body.contains("{{AGENT_HIDDEN}}"));
     assert!(body.contains("Innlogga som <strong>guest</strong>"));
     assert!(!body.contains("id=\"participant\""));
     assert!(
-        body.contains("const websocketUrl = new URL(`${protocol}://${window.location.host}/ws`)")
+        BROWSER_CLIENT
+            .contains("const websocketUrl = new URL(`${protocol}://${window.location.host}/ws`)")
     );
-    assert!(body.contains("const nextSocket = new WebSocket(websocketUrl)"));
-    assert!(!body.contains("let subscribedChannelId = null"));
-    assert!(body.contains("connectionSupervisor.state.subscribedChannelId === activeChannelId"));
+    assert!(BROWSER_CLIENT.contains("const nextSocket = new WebSocket(websocketUrl)"));
+    assert!(!BROWSER_CLIENT.contains("let subscribedChannelId = null"));
     assert!(
-            body.contains("channel.id === activeChannelId && channel.id === connectionSupervisor.state.subscribedChannelId")
-        );
-    assert!(body.contains("payload.channel_id !== activeChannelId"));
-    assert!(body.contains("const pendingMessages = new Map()"));
+        BROWSER_CLIENT
+            .contains("connectionSupervisor.state.subscribedChannelId === activeChannelId")
+    );
+    assert!(BROWSER_CLIENT.contains("channel.id === activeChannelId && channel.id === connectionSupervisor.state.subscribedChannelId"));
+    assert!(BROWSER_CLIENT.contains("payload.channel_id !== activeChannelId"));
+    assert!(BROWSER_CLIENT.contains("const pendingMessages = new Map()"));
 
     let service_worker = reqwest::get(format!("http://{address}/service-worker.js"))
         .await
@@ -999,6 +1039,30 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(worker_policy.contains("default-src 'none'"));
     assert!(worker_policy.contains("connect-src 'self'"));
 
+    let app_url = format!("http://{address}/assets/app/{app_fingerprint}/app.js");
+    let app = reqwest::get(&app_url).await.unwrap();
+    assert_eq!(app.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        app.headers()["content-type"],
+        "text/javascript; charset=utf-8"
+    );
+    assert_eq!(
+        app.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    assert!(
+        app.text()
+            .await
+            .unwrap()
+            .contains("function syncAppViewportHeight()")
+    );
+    let stale_app = reqwest::get(format!("http://{address}/assets/app/stale-revision/app.js"))
+        .await
+        .unwrap();
+    assert_eq!(stale_app.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let client_store_fingerprint =
+        client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes());
     let client_store_url =
         format!("http://{address}/assets/client-store/{client_store_fingerprint}/client-store.js");
     let client_store = reqwest::get(&client_store_url).await.unwrap();
@@ -1033,318 +1097,373 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     .await
     .unwrap();
     assert_eq!(stale_client_store.status(), reqwest::StatusCode::NOT_FOUND);
-    assert!(!body.contains("id=\"channel-kind\""));
-    assert!(!body.contains("id=\"create-circle-channel\""));
-    assert!(!body.contains("id=\"create-channel-invitation\""));
-    assert!(body.contains("id=\"circle-joinable-list\""));
-    assert!(!body.contains("id=\"joinable-channel\""));
-    assert!(body.contains("id=\"add-channel-member\""));
-    assert!(body.contains("function scopedCircleChannelSlug(circleId, value)"));
-    assert!(body.contains("scopedCircleChannelSlug(managedCircleId, name)"));
-    assert!(body.contains("scopedCircleChannelSlug(payload.circle.id, \"prat\")"));
+    assert!(!BROWSER_CLIENT.contains("id=\"channel-kind\""));
+    assert!(!BROWSER_CLIENT.contains("id=\"create-circle-channel\""));
+    assert!(!BROWSER_CLIENT.contains("id=\"create-channel-invitation\""));
+    assert!(BROWSER_CLIENT.contains("id=\"circle-joinable-list\""));
+    assert!(!BROWSER_CLIENT.contains("id=\"joinable-channel\""));
+    assert!(BROWSER_CLIENT.contains("id=\"add-channel-member\""));
+    assert!(BROWSER_CLIENT.contains("function scopedCircleChannelSlug(circleId, value)"));
+    assert!(BROWSER_CLIENT.contains("scopedCircleChannelSlug(managedCircleId, name)"));
+    assert!(BROWSER_CLIENT.contains("scopedCircleChannelSlug(payload.circle.id, \"prat\")"));
     assert!(
-        body.contains(
+        BROWSER_CLIENT.contains(
             "knownCircles.set(payload.circle.id, { ...payload.circle, role: \"owner\" })"
         )
     );
-    assert!(body.contains("const activeCircleKey = \"sproyt.active-circle.v1\""));
-    assert!(body.contains("function restoreActiveCircle()"));
-    assert!(body.contains(".find((circleId) => circleId && knownCircles.has(circleId))"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("const activeCircleKey = \"sproyt.active-circle.v1\""));
+    assert!(BROWSER_CLIENT.contains("function restoreActiveCircle()"));
+    assert!(BROWSER_CLIENT.contains(".find((circleId) => circleId && knownCircles.has(circleId))"));
+    assert!(BROWSER_CLIENT.contains(
         "try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}"
     ));
-    assert!(body.contains("const restoredCircle = restoreActiveCircle();"));
-    assert!(body.contains("if (restoredCircle) sendCommand(\"list_joinable_channels\", { circle_id: restoredCircle });"));
-    assert!(body.contains("clearActiveCircle(deletedCircleId);"));
-    assert!(body.contains("clearActiveCircle(departedCircleId);"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("const restoredCircle = restoreActiveCircle();"));
+    assert!(BROWSER_CLIENT.contains("if (restoredCircle) sendCommand(\"list_joinable_channels\", { circle_id: restoredCircle });"));
+    assert!(BROWSER_CLIENT.contains("clearActiveCircle(deletedCircleId);"));
+    assert!(BROWSER_CLIENT.contains("clearActiveCircle(departedCircleId);"));
+    assert!(BROWSER_CLIENT.contains(
             "if (channel.circle_id) {\n          rememberCircleChannel(channel);\n          setActiveCircle(channel.circle_id);\n          circleSelect.value = channel.circle_id;\n        }"
         ));
-    assert!(body.contains("Kanalen kunne ikkje opprettast."));
-    assert!(body.contains("sendCommand(\"list_joinable_channels\""));
-    assert!(body.contains("sendCommand(\"add_channel_member\""));
-    assert!(body.contains("const browserSessionId = `browser-${crypto.randomUUID()}`"));
-    assert!(body.contains("request_id: `${browserSessionId}-${requestNumber}`"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("Kanalen kunne ikkje opprettast."));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"list_joinable_channels\""));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"add_channel_member\""));
+    assert!(BROWSER_CLIENT.contains("const browserSessionId = `browser-${crypto.randomUUID()}`"));
+    assert!(BROWSER_CLIENT.contains("request_id: `${browserSessionId}-${requestNumber}`"));
+    assert!(BROWSER_CLIENT.contains(
         "if (type === \"list_my_channels\") latestChannelListRequestId = command.request_id;"
     ));
-    assert!(body.contains("if (event.request_id !== latestChannelListRequestId) return;"));
-    assert!(body.contains("if (event.request_id !== latestCircleListRequestId) return;"));
-    assert!(!body.contains("request_id: `browser-${requestNumber}`"));
-    assert!(body.contains("if (event.type === \"message_accepted\")"));
-    assert!(body.contains("finishPendingMessage(event.request_id, payload.message)"));
-    assert!(body.contains("message?.channel_id !== pending.channelId"));
-    assert!(body.contains("message?.body !== pending.body"));
-    assert!(body.contains("failPendingMessage(event.request_id"));
-    assert!(body.contains(
+    assert!(
+        BROWSER_CLIENT.contains("if (event.request_id !== latestChannelListRequestId) return;")
+    );
+    assert!(BROWSER_CLIENT.contains("if (event.request_id !== latestCircleListRequestId) return;"));
+    assert!(!BROWSER_CLIENT.contains("request_id: `browser-${requestNumber}`"));
+    assert!(BROWSER_CLIENT.contains("if (event.type === \"message_accepted\")"));
+    assert!(BROWSER_CLIENT.contains("finishPendingMessage(event.request_id, payload.message)"));
+    assert!(BROWSER_CLIENT.contains("message?.channel_id !== pending.channelId"));
+    assert!(BROWSER_CLIENT.contains("message?.body !== pending.body"));
+    assert!(BROWSER_CLIENT.contains("failPendingMessage(event.request_id"));
+    assert!(BROWSER_CLIENT.contains(
             "pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });\n        bodyInput.value = \"\";"
         ));
-    assert!(body.contains("bodyInput.value = pending.draft"));
-    assert!(body.contains("const channelDraftPrefix = \"sproyt.channel-draft.v1.\""));
-    assert!(body.contains("function persistActiveDraft()"));
-    assert!(body.contains("function restoreActiveDraft()"));
-    assert!(body.contains("window.localStorage.setItem(key, bodyInput.value)"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("bodyInput.value = pending.draft"));
+    assert!(BROWSER_CLIENT.contains("const channelDraftPrefix = \"sproyt.channel-draft.v1.\""));
+    assert!(BROWSER_CLIENT.contains("function persistActiveDraft()"));
+    assert!(BROWSER_CLIENT.contains("function restoreActiveDraft()"));
+    assert!(BROWSER_CLIENT.contains("window.localStorage.setItem(key, bodyInput.value)"));
+    assert!(BROWSER_CLIENT.contains(
             "if (channel.id === activeChannelId && channel.id === connectionSupervisor.state.subscribedChannelId) return;\n        persistActiveDraft();"
         ));
-    assert!(body.contains("activeChannelId = channel.id;\n        restoreActiveDraft();"));
+    assert!(
+        BROWSER_CLIENT.contains("activeChannelId = channel.id;\n        restoreActiveDraft();")
+    );
     assert!(body.contains("class=\"advanced-tools\" hidden"));
     assert!(body.contains("<details class=\"agent-access\" hidden>"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains(
         "<summary data-tooltip=\"Agenttilgang\" title=\"Agenttilgang\">Agenttilgang</summary>"
     ));
-    assert!(body.contains("id=\"create-agent-access\""));
-    assert!(body.contains("function createTemporaryAgentAccess()"));
-    assert!(body.contains("[\"read_history\", \"send_messages\"]"));
-    assert!(body.contains("function revokeTemporaryAgentAccess()"));
-    assert!(body.contains("channel?.role === \"owner\" || channel?.role === \"moderator\""));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("id=\"create-agent-access\""));
+    assert!(BROWSER_CLIENT.contains("function createTemporaryAgentAccess()"));
+    assert!(BROWSER_CLIENT.contains("[\"read_history\", \"send_messages\"]"));
+    assert!(BROWSER_CLIENT.contains("function revokeTemporaryAgentAccess()"));
+    assert!(
+        BROWSER_CLIENT.contains("channel?.role === \"owner\" || channel?.role === \"moderator\"")
+    );
+    assert!(BROWSER_CLIENT.contains(
             "agentAccessNotice.textContent = \"Klar til å lage kortliva agenttilgang for denne samtalen.\""
         ));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains(
             "updateAgentAccessControls();\n          agentAccessNotice.textContent = \"Agenttilgangen er trekt tilbake.\";"
         ));
-    assert!(body.contains("connect();"));
-    assert!(body.contains("function scheduleReconnect(closeCode"));
-    assert!(body.contains("connectionSupervisor.state.stableConnectionTimer = window.setTimeout"));
-    assert!(body.contains("event.code === 1008"));
-    assert!(body.contains("recoverAuthentication().catch"));
-    assert!(body.contains("async function recoverConnection(replaceOpenSocket = false)"));
-    assert!(body.contains("response.status === 401"));
-    assert!(body.contains("connect(true, currentSocket)"));
-    assert!(body.contains("recoverConnection().catch(() => scheduleReconnect"));
-    assert!(body.contains("fetch(\"/auth/session\""));
-    assert!(body.contains("scheduleInitialSessionRefresh()"));
-    assert!(body.contains("sessionSupervisor.state.refreshDueAt = Date.now() + delay"));
-    assert!(body.contains("window.addEventListener(\"pageshow\", resumeAfterBackground)"));
-    assert!(body.contains("window.addEventListener(\"online\", resumeAfterBackground)"));
-    assert!(body.contains("reconnectAfterSessionRefresh()"));
-    assert!(body.contains("setConnectionStatus(\"Fornyar økta …\")"));
-    assert!(body.contains("let lastUserActivityAt = Date.now()"));
-    assert!(body.contains("function noteUserActivity()"));
-    assert!(body.contains("window.addEventListener(\"pointerdown\", noteUserActivity"));
-    assert!(body.contains("if (await useCurrentSessionIfAnotherTabRenewed())"));
-    assert!(body.contains("Date.now() - lastUserActivityAt < 120_000"));
-    assert!(body.contains("vi ventar så du ikkje mistar arbeidet ditt"));
-    assert!(body.contains("connect(true)"));
-    assert!(body.contains("connect(true, currentSocket)"));
+    assert!(BROWSER_CLIENT.contains("connect();"));
+    assert!(BROWSER_CLIENT.contains("function scheduleReconnect(closeCode"));
     assert!(
-        body.contains(
+        BROWSER_CLIENT
+            .contains("connectionSupervisor.state.stableConnectionTimer = window.setTimeout")
+    );
+    assert!(BROWSER_CLIENT.contains("event.code === 1008"));
+    assert!(BROWSER_CLIENT.contains("recoverAuthentication().catch"));
+    assert!(BROWSER_CLIENT.contains("async function recoverConnection(replaceOpenSocket = false)"));
+    assert!(BROWSER_CLIENT.contains("response.status === 401"));
+    assert!(BROWSER_CLIENT.contains("connect(true, currentSocket)"));
+    assert!(BROWSER_CLIENT.contains("recoverConnection().catch(() => scheduleReconnect"));
+    assert!(BROWSER_CLIENT.contains("fetch(\"/auth/session\""));
+    assert!(BROWSER_CLIENT.contains("scheduleInitialSessionRefresh()"));
+    assert!(BROWSER_CLIENT.contains("sessionSupervisor.state.refreshDueAt = Date.now() + delay"));
+    assert!(
+        BROWSER_CLIENT.contains("window.addEventListener(\"pageshow\", resumeAfterBackground)")
+    );
+    assert!(BROWSER_CLIENT.contains("window.addEventListener(\"online\", resumeAfterBackground)"));
+    assert!(BROWSER_CLIENT.contains("reconnectAfterSessionRefresh()"));
+    assert!(BROWSER_CLIENT.contains("setConnectionStatus(\"Fornyar økta …\")"));
+    assert!(BROWSER_CLIENT.contains("let lastUserActivityAt = Date.now()"));
+    assert!(BROWSER_CLIENT.contains("function noteUserActivity()"));
+    assert!(BROWSER_CLIENT.contains("window.addEventListener(\"pointerdown\", noteUserActivity"));
+    assert!(BROWSER_CLIENT.contains("if (await useCurrentSessionIfAnotherTabRenewed())"));
+    assert!(BROWSER_CLIENT.contains("Date.now() - lastUserActivityAt < 120_000"));
+    assert!(BROWSER_CLIENT.contains("vi ventar så du ikkje mistar arbeidet ditt"));
+    assert!(BROWSER_CLIENT.contains("connect(true)"));
+    assert!(BROWSER_CLIENT.contains("connect(true, currentSocket)"));
+    assert!(
+        BROWSER_CLIENT.contains(
             "const next = invited || current || restored || requested || knownChannels[0]"
         )
     );
-    assert!(body.contains("[[invite:${payload.invitation.token}]]"));
-    assert!(body.contains("function renderInvitationCard(token, target)"));
-    assert!(body.contains("const invitationInspectionCache = new Map()"));
-    assert!(body.contains("if (cached?.status === \"pending\" || cached?.status === \"missing\")"));
-    assert!(body.contains("pendingInvitationInspections.set(requestId, token)"));
-    assert!(body.contains("if (requestedCommand === \"inspect_invitation\")"));
-    assert!(body.contains("showInvitationError(inspectedInvitationToken, message)"));
+    assert!(BROWSER_CLIENT.contains("[[invite:${payload.invitation.token}]]"));
+    assert!(BROWSER_CLIENT.contains("function renderInvitationCard(token, target)"));
+    assert!(BROWSER_CLIENT.contains("const invitationInspectionCache = new Map()"));
     assert!(
-        body.contains(
+        BROWSER_CLIENT
+            .contains("if (cached?.status === \"pending\" || cached?.status === \"missing\")")
+    );
+    assert!(BROWSER_CLIENT.contains("pendingInvitationInspections.set(requestId, token)"));
+    assert!(BROWSER_CLIENT.contains("if (requestedCommand === \"inspect_invitation\")"));
+    assert!(BROWSER_CLIENT.contains("showInvitationError(inspectedInvitationToken, message)"));
+    assert!(
+        BROWSER_CLIENT.contains(
             "respondToInvitation(token, \"accept_invitation\", \"Godtek invitasjonen …\")"
         )
     );
-    assert!(!body.contains("sendCommand(\"accept_circle_invitation\", { token })"));
-    assert!(body.contains(
+    assert!(!BROWSER_CLIENT.contains("sendCommand(\"accept_circle_invitation\", { token })"));
+    assert!(BROWSER_CLIENT.contains(
         "respondToInvitation(token, \"decline_invitation\", \"Avviser invitasjonen …\")"
     ));
-    assert!(body.contains("const authoredByMe = invitation.invited_by === currentParticipantId"));
-    assert!(body.contains("Du må først vere medlem i vennekretsen"));
-    assert!(body.contains("window.addEventListener(\"focus\", refreshVisibleInvitationCards)"));
-    assert!(body.contains(
+    assert!(
+        BROWSER_CLIENT
+            .contains("const authoredByMe = invitation.invited_by === currentParticipantId")
+    );
+    assert!(BROWSER_CLIENT.contains("Du må først vere medlem i vennekretsen"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("window.addEventListener(\"focus\", refreshVisibleInvitationCards)")
+    );
+    assert!(BROWSER_CLIENT.contains(
         "historyHasMore = false;\n            console.error(\"Kunne ikkje laste eldre meldingar\""
     ));
-    assert!(body.contains("window.localStorage.setItem(activeConversationKey, channel.id)"));
-    assert!(body.contains("let reconnectScrollOffset = null"));
-    assert!(body.contains("restoreConversationScrollOffset(scrollOffset)"));
-    assert!(body.contains("previousSocket.close(4000, \"session refreshed\")"));
-    assert!(!body.contains("sessionRefreshReconnect"));
-    assert!(!body.contains("if (response.status === 401) {\n          window.location.assign"));
-    assert!(!body.contains("window.location.reload()"));
-    assert!(body.contains("Fråkopla (${detail})"));
-    assert!(body.contains("function acknowledgeLatest(channelId, messages)"));
-    assert!(body.contains("function loadOlderHistory()"));
-    assert!(body.contains("before: oldest.sequence"));
-    assert!(body.contains("renderTimeline({ preserveScroll: true })"));
     assert!(
-        body.contains(
+        BROWSER_CLIENT.contains("window.localStorage.setItem(activeConversationKey, channel.id)")
+    );
+    assert!(BROWSER_CLIENT.contains("let reconnectScrollOffset = null"));
+    assert!(BROWSER_CLIENT.contains("restoreConversationScrollOffset(scrollOffset)"));
+    assert!(BROWSER_CLIENT.contains("previousSocket.close(4000, \"session refreshed\")"));
+    assert!(!BROWSER_CLIENT.contains("sessionRefreshReconnect"));
+    assert!(
+        !BROWSER_CLIENT
+            .contains("if (response.status === 401) {\n          window.location.assign")
+    );
+    assert!(!BROWSER_CLIENT.contains("window.location.reload()"));
+    assert!(BROWSER_CLIENT.contains("Fråkopla (${detail})"));
+    assert!(BROWSER_CLIENT.contains("function acknowledgeLatest(channelId, messages)"));
+    assert!(BROWSER_CLIENT.contains("function loadOlderHistory()"));
+    assert!(BROWSER_CLIENT.contains("before: oldest.sequence"));
+    assert!(BROWSER_CLIENT.contains("renderTimeline({ preserveScroll: true })"));
+    assert!(
+        BROWSER_CLIENT.contains(
             "renderTimeline({ forceBottom: scrollOffset === null || scrollOffset < 80 })"
         )
     );
-    assert!(body.contains("function settleConversationAtBottom()"));
-    assert!(!body.contains("sendForm.scrollIntoView"));
-    assert!(body.contains("const offsetTop = viewport?.offsetTop || 0"));
+    assert!(BROWSER_CLIENT.contains("function settleConversationAtBottom()"));
+    assert!(!BROWSER_CLIENT.contains("sendForm.scrollIntoView"));
+    assert!(BROWSER_CLIENT.contains("const offsetTop = viewport?.offsetTop || 0"));
     assert!(
-        body.contains("window.visualViewport?.addEventListener(\"scroll\", syncAppViewportHeight")
+        BROWSER_CLIENT
+            .contains("window.visualViewport?.addEventListener(\"scroll\", syncAppViewportHeight")
     );
-    assert!(body.contains("transform: translateY(var(--app-offset-top))"));
-    assert!(body.contains("function formatMessageTimestamp(sentAt, now = new Date())"));
-    assert!(body.contains("dateStyle: \"full\", timeStyle: \"short\""));
-    assert!(body.contains("appendProfileStatus(senderLabel, message.sender_id)"));
-    assert!(body.contains("channel.direct_user_id"));
-    assert!(body.contains("function approximateUnreadCount(count)"));
-    assert!(body.contains("if (count < 50) return \"25+\""));
-    assert!(body.contains("if (count < 100) return \"50+\""));
-    assert!(body.contains("button.classList.add(\"has-unread\")"));
-    assert!(body.contains("if (unreadCount > 0) {"));
-    assert!(body.contains("class=\"inbox-navigation\""));
-    assert!(body.contains("id=\"unread-count\""));
-    assert!(body.contains("id=\"mention-count\""));
-    assert!(body.contains("id=\"task-count\""));
-    assert!(body.contains("activeInboxKind = kind"));
-    assert!(body.contains("className = \"unread-inbox\""));
-    assert!(body.contains("className = \"unread-card\""));
-    assert!(body.contains("function openChannelManagement(circleId)"));
-    assert!(!body.contains("Samtalar og vennekretsar"));
-    assert!(!body.contains("id=\"channel-list\""));
-    assert!(body.contains("leave.textContent = `Forlat # ${activeChannel.name}`"));
-    assert!(body.contains("sendCommand(\"leave_channel\""));
-    assert!(body.contains("event.type === \"membership_left\""));
-    assert!(body.contains("activeChannel.name.trim().toLocaleLowerCase() !== \"prat\""));
-    assert!(body.contains("id=\"circle-channel-dialog\""));
-    assert!(body.contains("function renderManagedJoinableChannels(channels)"));
-    assert!(body.contains("+ Finn fleire kanalar"));
-    assert!(body.contains("className = \"joinable-channel-description\""));
-    assert!(body.contains("renderMarkdown(channel.description, description)"));
-    assert!(body.contains("sendCommand(\"leave_circle\""));
-    assert!(body.contains("event.type === \"circle_left\""));
-    assert!(body.contains("circle.role === \"owner\""));
-    assert!(body.contains("document.addEventListener(\"visibilitychange\""));
-    assert!(body.contains(":focus-visible"));
-    assert!(body.contains("id=\"mobile-navigation-toggle\""));
-    assert!(body.contains("aria-controls=\"mobile-navigation\""));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("transform: translateY(var(--app-offset-top))"));
+    assert!(BROWSER_CLIENT.contains("function formatMessageTimestamp(sentAt, now = new Date())"));
+    assert!(BROWSER_CLIENT.contains("dateStyle: \"full\", timeStyle: \"short\""));
+    assert!(BROWSER_CLIENT.contains("appendProfileStatus(senderLabel, message.sender_id)"));
+    assert!(BROWSER_CLIENT.contains("channel.direct_user_id"));
+    assert!(BROWSER_CLIENT.contains("function approximateUnreadCount(count)"));
+    assert!(BROWSER_CLIENT.contains("if (count < 50) return \"25+\""));
+    assert!(BROWSER_CLIENT.contains("if (count < 100) return \"50+\""));
+    assert!(BROWSER_CLIENT.contains("button.classList.add(\"has-unread\")"));
+    assert!(BROWSER_CLIENT.contains("if (unreadCount > 0) {"));
+    assert!(BROWSER_CLIENT.contains("class=\"inbox-navigation\""));
+    assert!(BROWSER_CLIENT.contains("id=\"unread-count\""));
+    assert!(BROWSER_CLIENT.contains("id=\"mention-count\""));
+    assert!(BROWSER_CLIENT.contains("id=\"task-count\""));
+    assert!(BROWSER_CLIENT.contains("activeInboxKind = kind"));
+    assert!(BROWSER_CLIENT.contains("className = \"unread-inbox\""));
+    assert!(BROWSER_CLIENT.contains("className = \"unread-card\""));
+    assert!(BROWSER_CLIENT.contains("function openChannelManagement(circleId)"));
+    assert!(!BROWSER_CLIENT.contains("Samtalar og vennekretsar"));
+    assert!(!BROWSER_CLIENT.contains("id=\"channel-list\""));
+    assert!(BROWSER_CLIENT.contains("leave.textContent = `Forlat # ${activeChannel.name}`"));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"leave_channel\""));
+    assert!(BROWSER_CLIENT.contains("event.type === \"membership_left\""));
+    assert!(BROWSER_CLIENT.contains("activeChannel.name.trim().toLocaleLowerCase() !== \"prat\""));
+    assert!(BROWSER_CLIENT.contains("id=\"circle-channel-dialog\""));
+    assert!(BROWSER_CLIENT.contains("function renderManagedJoinableChannels(channels)"));
+    assert!(BROWSER_CLIENT.contains("+ Finn fleire kanalar"));
+    assert!(BROWSER_CLIENT.contains("className = \"joinable-channel-description\""));
+    assert!(BROWSER_CLIENT.contains("renderMarkdown(channel.description, description)"));
+    assert!(BROWSER_CLIENT.contains("sendCommand(\"leave_circle\""));
+    assert!(BROWSER_CLIENT.contains("event.type === \"circle_left\""));
+    assert!(BROWSER_CLIENT.contains("circle.role === \"owner\""));
+    assert!(BROWSER_CLIENT.contains("document.addEventListener(\"visibilitychange\""));
+    assert!(BROWSER_CLIENT.contains(":focus-visible"));
+    assert!(BROWSER_CLIENT.contains("id=\"mobile-navigation-toggle\""));
+    assert!(BROWSER_CLIENT.contains("aria-controls=\"mobile-navigation\""));
+    assert!(BROWSER_CLIENT.contains(
         "id=\"view-mode-toggle\" type=\"button\" role=\"switch\" aria-checked=\"false\""
     ));
-    assert!(body.contains("class=\"view-mode-switch-icon\" aria-hidden=\"true\"><svg"));
-    assert!(body.contains("setRenderMode(renderMode === \"raw\" ? \"view\" : \"raw\")"));
-    assert!(body.contains("viewModeToggle.setAttribute(\"aria-checked\", String(showsSource))"));
-    assert!(body.contains(".conversation-header .view-controls { display: none; }"));
-    assert!(!body.contains("id=\"view-mode\""));
-    assert!(!body.contains("id=\"raw-mode\""));
-    assert!(body.contains("class=\"bottom-navigation\" aria-label=\"Område- og kanalveljar\""));
-    assert!(body.contains("</form>\n        <nav class=\"bottom-navigation\""));
-    assert!(body.contains("id=\"bottom-channel-panel\""));
-    assert!(body.contains("id=\"bottom-circle-panel\""));
-    assert!(body.contains(".bottom-navigation-panel { position: relative; min-width: 0; }"));
-    assert!(body.contains("bottom: calc(100% + 5px);"));
-    assert!(body.contains("if (bottomNavigation.contains(event.target)) return;"));
+    assert!(BROWSER_CLIENT.contains("class=\"view-mode-switch-icon\" aria-hidden=\"true\"><svg"));
+    assert!(BROWSER_CLIENT.contains("setRenderMode(renderMode === \"raw\" ? \"view\" : \"raw\")"));
     assert!(
-        body.contains("bottomChannelPanel.open = false;\n        bottomCirclePanel.open = false;")
+        BROWSER_CLIENT
+            .contains("viewModeToggle.setAttribute(\"aria-checked\", String(showsSource))")
     );
-    assert!(body.contains("function pendingMessageToReveal(message, requestId = null)"));
-    assert!(body.contains("message.sender_id !== currentParticipantId"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains(".conversation-header .view-controls { display: none; }"));
+    assert!(!BROWSER_CLIENT.contains("id=\"view-mode\""));
+    assert!(!BROWSER_CLIENT.contains("id=\"raw-mode\""));
+    assert!(
+        BROWSER_CLIENT
+            .contains("class=\"bottom-navigation\" aria-label=\"Område- og kanalveljar\"")
+    );
+    assert!(BROWSER_CLIENT.contains("</form>\n        <nav class=\"bottom-navigation\""));
+    assert!(BROWSER_CLIENT.contains("id=\"bottom-channel-panel\""));
+    assert!(BROWSER_CLIENT.contains("id=\"bottom-circle-panel\""));
+    assert!(
+        BROWSER_CLIENT.contains(".bottom-navigation-panel { position: relative; min-width: 0; }")
+    );
+    assert!(BROWSER_CLIENT.contains("bottom: calc(100% + 5px);"));
+    assert!(BROWSER_CLIENT.contains("if (bottomNavigation.contains(event.target)) return;"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("bottomChannelPanel.open = false;\n        bottomCirclePanel.open = false;")
+    );
+    assert!(BROWSER_CLIENT.contains("function pendingMessageToReveal(message, requestId = null)"));
+    assert!(BROWSER_CLIENT.contains("message.sender_id !== currentParticipantId"));
+    assert!(BROWSER_CLIENT.contains(
         "renderTimeline({ revealMessageId: revealOwnMessage ? payload.message.id : null })"
     ));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains(
         "renderTimeline({ revealMessageId: revealOwnMessage ? chatEvent.message.id : null })"
     ));
-    assert!(body.contains("function revealTimelineMessage(messageId)"));
-    assert!(body.contains("const cardRect = card.getBoundingClientRect()"));
-    assert!(body.contains("const viewportRect = messagesEl.getBoundingClientRect()"));
-    assert!(body.contains("if (delta > 0) messagesEl.scrollTop += delta"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("function revealTimelineMessage(messageId)"));
+    assert!(BROWSER_CLIENT.contains("const cardRect = card.getBoundingClientRect()"));
+    assert!(BROWSER_CLIENT.contains("const viewportRect = messagesEl.getBoundingClientRect()"));
+    assert!(BROWSER_CLIENT.contains("if (delta > 0) messagesEl.scrollTop += delta"));
+    assert!(BROWSER_CLIENT.contains(
         "aria-label=\"Vel kanal\"><span class=\"bottom-navigation-label\"># Kanal</span>"
     ));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains(
         "aria-label=\"Vel område\"><span class=\"bottom-navigation-label\">◎ Felles</span>"
     ));
-    assert!(body.contains("height: 40px;\n        min-height: 40px"));
-    assert!(body.contains("function renderBottomNavigation()"));
-    assert!(body.contains("const channelLabel = activeChannel"));
-    assert!(body.contains("bottomCircleToggle.querySelector(\".bottom-navigation-label\").textContent = `◎ ${circleLabel}`"));
-    assert!(body.contains(".message-menu:not([open]) > div { display: none; }"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("height: 40px;\n        min-height: 40px"));
+    assert!(BROWSER_CLIENT.contains("function renderBottomNavigation()"));
+    assert!(BROWSER_CLIENT.contains("const channelLabel = activeChannel"));
+    assert!(BROWSER_CLIENT.contains("bottomCircleToggle.querySelector(\".bottom-navigation-label\").textContent = `◎ ${circleLabel}`"));
+    assert!(BROWSER_CLIENT.contains(".message-menu:not([open]) > div { display: none; }"));
+    assert!(BROWSER_CLIENT.contains(
         ".message .reaction-picker[open] { visibility: visible; pointer-events: auto; }"
     ));
-    assert!(body.contains("card.classList.add(\"reaction-picker-requested\")"));
-    assert!(body.contains("const scopedChannels = activeCircleId"));
-    assert!(!body.contains("sharedButton.textContent = \"(Felles)\""));
-    assert!(!body.contains("directButton.textContent = \"(Direkte)\""));
-    assert!(body.contains("class=\"circle-tool-rail\" role=\"toolbar\""));
-    assert!(body.contains(".circle-tool-rail { display: grid; justify-items: center;"));
-    assert!(body.contains("font-size: 1.22rem; line-height: 1; text-align: center;"));
-    assert!(body.contains("content: attr(aria-label)"));
+    assert!(BROWSER_CLIENT.contains("card.classList.add(\"reaction-picker-requested\")"));
+    assert!(BROWSER_CLIENT.contains("const scopedChannels = activeCircleId"));
+    assert!(!BROWSER_CLIENT.contains("sharedButton.textContent = \"(Felles)\""));
+    assert!(!BROWSER_CLIENT.contains("directButton.textContent = \"(Direkte)\""));
+    assert!(BROWSER_CLIENT.contains("class=\"circle-tool-rail\" role=\"toolbar\""));
+    assert!(BROWSER_CLIENT.contains(".circle-tool-rail { display: grid; justify-items: center;"));
+    assert!(BROWSER_CLIENT.contains("font-size: 1.22rem; line-height: 1; text-align: center;"));
+    assert!(BROWSER_CLIENT.contains("content: attr(aria-label)"));
     assert!(
-        body.contains(
+        BROWSER_CLIENT.contains(
             ".circle-tool-button:hover::before, .circle-tool-button:focus-visible::before"
         )
     );
-    assert!(!body.contains("id=\"circle-tool-circles\""));
+    assert!(!BROWSER_CLIENT.contains("id=\"circle-tool-circles\""));
     let shared_tool = body.find("id=\"circle-tool-shared\"").unwrap();
     let direct_tool = body.find("id=\"circle-tool-direct\"").unwrap();
     let settings_tool = body.find("id=\"circle-tool-settings\"").unwrap();
     assert!(shared_tool < direct_tool && direct_tool < settings_tool);
-    assert!(body.contains("aria-label=\"Direkte samtalar\""));
-    assert!(body.contains("aria-label=\"Felles\""));
-    assert!(body.contains("id=\"circle-tool-settings\""));
-    assert!(!body.contains("circleToolMode"));
-    assert!(!body.contains("function setCircleToolMode(mode)"));
-    assert!(body.contains("function activateRootScope(scope)"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("aria-label=\"Direkte samtalar\""));
+    assert!(BROWSER_CLIENT.contains("aria-label=\"Felles\""));
+    assert!(BROWSER_CLIENT.contains("id=\"circle-tool-settings\""));
+    assert!(!BROWSER_CLIENT.contains("circleToolMode"));
+    assert!(!BROWSER_CLIENT.contains("function setCircleToolMode(mode)"));
+    assert!(BROWSER_CLIENT.contains("function activateRootScope(scope)"));
+    assert!(BROWSER_CLIENT.contains(
         "circleToolDirect.addEventListener(\"click\", () => activateRootScope(\"direct\"))"
     ));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains(
         "circleToolShared.addEventListener(\"click\", () => activateRootScope(\"shared\"))"
     ));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains(
             "circleToolShared.setAttribute(\"aria-pressed\", String(!activeCircleId && activeRootScope === \"shared\"))"
         ));
-    assert!(body.contains("if (circleAdminDialog.open) return"));
-    assert!(body.contains("id=\"circle-admin-dialog\""));
-    assert!(body.contains("if (!circleAdminDialog.open) circleAdminDialog.showModal()"));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("if (circleAdminDialog.open) return"));
+    assert!(BROWSER_CLIENT.contains("id=\"circle-admin-dialog\""));
+    assert!(BROWSER_CLIENT.contains("if (!circleAdminDialog.open) circleAdminDialog.showModal()"));
+    assert!(BROWSER_CLIENT.contains(
         "const directChannels = knownChannels.filter((channel) => channel.direct_user_id)"
     ));
-    assert!(!body.contains("const primaryChannels = knownChannels.filter"));
+    assert!(!BROWSER_CLIENT.contains("const primaryChannels = knownChannels.filter"));
     assert!(
-        body.contains("const circleChannelHistoryKey = \"sproyt.active-channel-by-circle.v1\"")
+        BROWSER_CLIENT
+            .contains("const circleChannelHistoryKey = \"sproyt.active-channel-by-circle.v1\"")
     );
-    assert!(body.contains("function rememberCircleChannel(channel)"));
-    assert!(body.contains("function preferredCircleChannel(circleId, channels = knownChannels)"));
-    assert!(body.contains("const remembered = available.find"));
-    assert!(body.contains("channel.name.trim().toLocaleLowerCase() === \"prat\""));
-    assert!(body.contains("return remembered || primary || available[0] || null"));
-    assert!(body.contains("const preferredChannel = preferredCircleChannel(circleId, channels)"));
-    assert!(body.contains("if (preferredChannel) selectChannel(preferredChannel)"));
-    assert!(body.contains("rememberCircleChannel(channel)"));
-    assert!(body.contains("forgetCircleChannel(departedCircleId)"));
-    assert!(body.contains("activeRootScope = channel.direct_user_id ? \"direct\" : \"shared\""));
-    assert!(body.contains("id=\"direct-message-dialog\""));
-    assert!(body.contains("id=\"direct-message-status\" role=\"status\" aria-live=\"polite\""));
-    assert!(body.contains("startDirect.textContent = \"+ Ny samtale …\""));
-    assert!(body.contains("function openDirectMessageDialog()"));
-    assert!(body.contains("directMessageStatus.textContent = \"Hentar fersk personliste …\""));
-    assert!(body.contains("if (!sendCommand(\"list_users\"))"));
-    assert!(body.contains("if (requestedCommand === \"open_direct_channel\")"));
-    assert!(body.contains("Brukaren finst ikkje lenger. Lukk dialogen og prøv på nytt."));
-    assert!(body.contains("activeProfile(channel?.direct_user_id)?.display_name"));
-    assert!(body.contains("if (knownChannels.length > 0) renderChannels()"));
-    assert!(!body.contains("heading.textContent = \"Andre samtalar\""));
-    assert!(body.contains(
+    assert!(BROWSER_CLIENT.contains("function rememberCircleChannel(channel)"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("function preferredCircleChannel(circleId, channels = knownChannels)")
+    );
+    assert!(BROWSER_CLIENT.contains("const remembered = available.find"));
+    assert!(BROWSER_CLIENT.contains("channel.name.trim().toLocaleLowerCase() === \"prat\""));
+    assert!(BROWSER_CLIENT.contains("return remembered || primary || available[0] || null"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("const preferredChannel = preferredCircleChannel(circleId, channels)")
+    );
+    assert!(BROWSER_CLIENT.contains("if (preferredChannel) selectChannel(preferredChannel)"));
+    assert!(BROWSER_CLIENT.contains("rememberCircleChannel(channel)"));
+    assert!(BROWSER_CLIENT.contains("forgetCircleChannel(departedCircleId)"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("activeRootScope = channel.direct_user_id ? \"direct\" : \"shared\"")
+    );
+    assert!(BROWSER_CLIENT.contains("id=\"direct-message-dialog\""));
+    assert!(
+        BROWSER_CLIENT
+            .contains("id=\"direct-message-status\" role=\"status\" aria-live=\"polite\"")
+    );
+    assert!(BROWSER_CLIENT.contains("startDirect.textContent = \"+ Ny samtale …\""));
+    assert!(BROWSER_CLIENT.contains("function openDirectMessageDialog()"));
+    assert!(
+        BROWSER_CLIENT.contains("directMessageStatus.textContent = \"Hentar fersk personliste …\"")
+    );
+    assert!(BROWSER_CLIENT.contains("if (!sendCommand(\"list_users\"))"));
+    assert!(BROWSER_CLIENT.contains("if (requestedCommand === \"open_direct_channel\")"));
+    assert!(BROWSER_CLIENT.contains("Brukaren finst ikkje lenger. Lukk dialogen og prøv på nytt."));
+    assert!(BROWSER_CLIENT.contains("activeProfile(channel?.direct_user_id)?.display_name"));
+    assert!(BROWSER_CLIENT.contains("if (knownChannels.length > 0) renderChannels()"));
+    assert!(!BROWSER_CLIENT.contains("heading.textContent = \"Andre samtalar\""));
+    assert!(BROWSER_CLIENT.contains(
         "button.setAttribute(\"aria-current\", circleId === activeCircleId ? \"page\" : \"false\")"
     ));
-    assert!(body.contains("button.classList.add(\"has-unread\")"));
-    assert!(body.contains("function closeBottomNavigation(panel, toggle)"));
-    assert!(body.contains("if (event.key === \"Escape\" && bottomChannelPanel.open)"));
-    assert!(body.contains("padding-bottom: 6px;"));
-    assert!(!body.contains("<summary>Administrer kretsar</summary>"));
-    assert!(body.contains("<h2 id=\"circle-admin-title\">Administrer vennekretsar</h2>"));
-    assert!(body.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .agent-access"));
-    assert!(body.contains(".sidebar.mobile-open .identity { display: grid;"));
-    assert!(body.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
-    assert!(body.contains("overflow-y: auto; overscroll-behavior: contain;"));
-    assert!(body.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
-    assert!(body.contains("form.send { grid-template-columns: minmax(0, 1fr) auto"));
-    assert!(body.contains(".connection-status-toggle[aria-expanded=\"true\"] + .status"));
-    assert!(body.contains("setConnectionStatus(\"Tilkopla\")"));
-    assert!(body.contains("mobileNavigationToggle.setAttribute(\"aria-expanded\", String(open))"));
-    assert!(body.contains("event.key === \"Escape\""));
-    assert!(body.contains("message.sender_display_name || \"Ein ven\""));
-    assert!(body.contains("Invitasjonslenkje"));
-    assert!(body.contains("Invitasjonen finst ikkje eller er ikkje gyldig lenger"));
+    assert!(BROWSER_CLIENT.contains("button.classList.add(\"has-unread\")"));
+    assert!(BROWSER_CLIENT.contains("function closeBottomNavigation(panel, toggle)"));
+    assert!(BROWSER_CLIENT.contains("if (event.key === \"Escape\" && bottomChannelPanel.open)"));
+    assert!(BROWSER_CLIENT.contains("padding-bottom: 6px;"));
+    assert!(!BROWSER_CLIENT.contains("<summary>Administrer kretsar</summary>"));
+    assert!(BROWSER_CLIENT.contains("<h2 id=\"circle-admin-title\">Administrer vennekretsar</h2>"));
+    assert!(
+        BROWSER_CLIENT.contains(".sidebar.mobile-open nav, .sidebar.mobile-open .agent-access")
+    );
+    assert!(BROWSER_CLIENT.contains(".sidebar.mobile-open .identity { display: grid;"));
+    assert!(BROWSER_CLIENT.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
+    assert!(BROWSER_CLIENT.contains("overflow-y: auto; overscroll-behavior: contain;"));
+    assert!(BROWSER_CLIENT.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
+    assert!(BROWSER_CLIENT.contains("form.send { grid-template-columns: minmax(0, 1fr) auto"));
+    assert!(BROWSER_CLIENT.contains(".connection-status-toggle[aria-expanded=\"true\"] + .status"));
+    assert!(BROWSER_CLIENT.contains("setConnectionStatus(\"Tilkopla\")"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("mobileNavigationToggle.setAttribute(\"aria-expanded\", String(open))")
+    );
+    assert!(BROWSER_CLIENT.contains("event.key === \"Escape\""));
+    assert!(BROWSER_CLIENT.contains("message.sender_display_name || \"Ein ven\""));
+    assert!(BROWSER_CLIENT.contains("Invitasjonslenkje"));
+    assert!(BROWSER_CLIENT.contains("Invitasjonen finst ikkje eller er ikkje gyldig lenger"));
 
     let second = reqwest::get(format!("http://{address}/")).await.unwrap();
     let second_policy = second.headers()["content-security-policy"]

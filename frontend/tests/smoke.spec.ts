@@ -8,7 +8,8 @@ declare global {
 }
 
 test("development client loads through CSP, connects, and sends a message", async ({ page }) => {
-  const moduleRequests: string[] = [];
+  const appModuleRequests: string[] = [];
+  const legacyStoreRequests: string[] = [];
   const consoleErrors: Array<{ text: string; observedAt: number }> = [];
   const pageErrors: string[] = [];
   const cspViolations: string[] = [];
@@ -16,7 +17,8 @@ test("development client loads through CSP, connects, and sends a message", asyn
   let offlineStartedAt = 0;
   let offlineFinishedAt = 0;
   page.on("request", (request) => {
-    if (request.url().includes("/assets/client-store/")) moduleRequests.push(request.url());
+    if (request.url().includes("/assets/app/")) appModuleRequests.push(request.url());
+    if (request.url().includes("/assets/client-store/")) legacyStoreRequests.push(request.url());
   });
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push({ text: message.text(), observedAt: Date.now() });
@@ -60,7 +62,9 @@ test("development client loads through CSP, connects, and sends a message", asyn
 
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
   await expect(page.locator("#body")).toBeEnabled();
-  await expect.poll(() => moduleRequests.length).toBe(1);
+  await expect.poll(() => appModuleRequests.length).toBe(1);
+  expect(appModuleRequests[0]).toMatch(/\/assets\/app\/[a-f0-9]{7,64}\/app\.js$/);
+  expect(legacyStoreRequests).toEqual([]);
   await page.locator("#body").fill("draft overlever kontrollert øktfornying");
   const socketBeforeSessionRefresh = currentSocket;
   expect(socketBeforeSessionRefresh).toBeDefined();

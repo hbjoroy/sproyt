@@ -45,7 +45,10 @@ use crate::{
 use axum::http::header::{ACCEPT, AUTHORIZATION, ORIGIN};
 
 #[cfg(test)]
-use web::assets::{BUILD_REVISION, CLIENT_STORE, INDEX_HTML, client_store_fingerprint};
+use web::assets::{
+    APP_BUNDLE, APP_SOURCE, BUILD_REVISION, CLIENT_STORE, INDEX_HTML, app_bundle_fingerprint,
+    client_store_fingerprint,
+};
 #[cfg(test)]
 use web::assets::{PWA_MANIFEST, SERVICE_WORKER, WAVE_LOGO_192, WAVE_LOGO_512};
 

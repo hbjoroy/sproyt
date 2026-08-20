@@ -13,6 +13,10 @@ pub(crate) const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION
     None => "unknown",
 };
 pub(crate) const PWA_MANIFEST: &str = include_str!("../../assets/manifest.webmanifest");
+pub(crate) const APP_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
+#[cfg(test)]
+pub(crate) const APP_SOURCE: &str = include_str!("../../frontend/src/app.ts");
+// Compatibility endpoint for already-open pages during the app bundle rollout.
 pub(crate) const CLIENT_STORE: &str = include_str!(concat!(env!("OUT_DIR"), "/client-store.js"));
 pub(crate) const SERVICE_WORKER: &str = include_str!("../../assets/service-worker.js");
 pub(crate) const OFFLINE_HTML: &str = include_str!("../../assets/offline.html");
@@ -32,7 +36,7 @@ pub(crate) async fn pwa_manifest() -> axum::response::Response {
         .into_response()
 }
 
-pub(crate) fn client_store_fingerprint(build_revision: &str, client_store: &[u8]) -> String {
+pub(crate) fn asset_fingerprint(build_revision: &str, asset: &[u8]) -> String {
     let revision_is_safe = (7..=64).contains(&build_revision.len())
         && build_revision
             .bytes()
@@ -40,7 +44,15 @@ pub(crate) fn client_store_fingerprint(build_revision: &str, client_store: &[u8]
     if revision_is_safe {
         return build_revision.to_owned();
     }
-    format!("{:x}", Sha256::digest(client_store))
+    format!("{:x}", Sha256::digest(asset))
+}
+
+pub(crate) fn client_store_fingerprint(build_revision: &str, client_store: &[u8]) -> String {
+    asset_fingerprint(build_revision, client_store)
+}
+
+pub(crate) fn app_bundle_fingerprint(build_revision: &str, app_bundle: &[u8]) -> String {
+    asset_fingerprint(build_revision, app_bundle)
 }
 
 pub(crate) async fn client_store_legacy() -> axum::response::Response {
@@ -64,6 +76,20 @@ pub(crate) async fn client_store(Path(fingerprint): Path<String>) -> axum::respo
             (CACHE_CONTROL, "public, max-age=31536000, immutable"),
         ],
         CLIENT_STORE,
+    )
+        .into_response()
+}
+
+pub(crate) async fn app_bundle(Path(fingerprint): Path<String>) -> axum::response::Response {
+    if fingerprint != app_bundle_fingerprint(BUILD_REVISION, APP_BUNDLE.as_bytes()) {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [
+            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        APP_BUNDLE,
     )
         .into_response()
 }

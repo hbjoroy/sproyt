@@ -6,9 +6,12 @@ const outputDirectory = process.env.SPROYT_FRONTEND_OUT_DIR ?? `${frontendRoot}/
 
 await build({
   bundle: true,
-  entryPoints: [`${frontendRoot}/src/client-store.ts`],
+  entryPoints: {
+    app: `${frontendRoot}/src/app.ts`,
+    "client-store": `${frontendRoot}/src/client-store.ts`
+  },
   format: "esm",
-  outfile: `${outputDirectory}/client-store.js`,
+  outdir: outputDirectory,
   platform: "browser",
   sourcemap: false,
   target: "es2022"

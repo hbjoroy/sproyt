@@ -19,15 +19,18 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR");
     let frontend_dir = Path::new(&manifest_dir).join("frontend");
     let output_dir = PathBuf::from(env::var("OUT_DIR").expect("Cargo sets OUT_DIR"));
-    let output_asset = output_dir.join("client-store.js");
+    let app_bundle = output_dir.join("app.js");
+    let client_store = output_dir.join("client-store.js");
     if env::var_os("SPROYT_FRONTEND_PREBUILT").is_some() {
-        let generated_asset = frontend_dir.join("dist/client-store.js");
+        let generated_app = frontend_dir.join("dist/app.js");
+        let generated_client_store = frontend_dir.join("dist/client-store.js");
         assert!(
-            generated_asset.is_file(),
-            "SPROYT_FRONTEND_PREBUILT requires frontend/dist/client-store.js"
+            generated_app.is_file() && generated_client_store.is_file(),
+            "SPROYT_FRONTEND_PREBUILT requires frontend/dist/app.js and frontend/dist/client-store.js"
         );
-        fs::copy(generated_asset, output_asset)
-            .expect("copy prebuilt frontend asset into Cargo OUT_DIR");
+        fs::copy(generated_app, app_bundle).expect("copy prebuilt app bundle into Cargo OUT_DIR");
+        fs::copy(generated_client_store, client_store)
+            .expect("copy prebuilt legacy client-store into Cargo OUT_DIR");
         return;
     }
     if !frontend_dir.join("node_modules").is_dir() {
@@ -48,7 +51,7 @@ fn main() {
         "frontend build failed; run `npm --prefix frontend run check` for TypeScript diagnostics"
     );
     assert!(
-        output_asset.is_file(),
-        "frontend build did not create client-store.js in Cargo OUT_DIR"
+        app_bundle.is_file() && client_store.is_file(),
+        "frontend build did not create app.js and client-store.js in Cargo OUT_DIR"
     );
 }

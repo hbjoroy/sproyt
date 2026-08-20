@@ -30,6 +30,13 @@ Cargo runs the local frontend build automatically whenever its TypeScript
 sources or lockfile change. Run the explicit TypeScript check before sharing a
 change; it gives clearer diagnostics than the bundler.
 
+The browser page loads only the fingerprinted `app.js` module. `client-store.js`
+is built and served temporarily only for pages that were already open during
+the rollout; new pages do not request it. `app.ts` is a deliberately
+behaviour-preserving extraction of the former inline module. The next frontend
+stage splits it into typed state, transport, and DOM modules; do not add new
+behaviour to the transitional file.
+
 ## Browser contracts
 
 The Playwright smoke contract starts the ordinary Rust server with development
