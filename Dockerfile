@@ -18,6 +18,7 @@ RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry
     apk add --no-cache zig=0.15.2-r0 \
     && cargo install --locked --version 0.23.0 cargo-zigbuild
 COPY Cargo.toml Cargo.lock ./
+COPY crates/sproyt-protocol/Cargo.toml crates/sproyt-protocol/Cargo.toml
 ARG TARGETARCH
 RUN case "$TARGETARCH" in \
       amd64) rust_target=x86_64-unknown-linux-musl ;; \
@@ -25,10 +26,12 @@ RUN case "$TARGETARCH" in \
       *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
     && rustup target add "$rust_target" \
-    && mkdir -p src \
+    && mkdir -p src crates/sproyt-protocol/src \
     && printf 'fn main() {}\n' > src/main.rs \
+    && printf 'pub fn placeholder() {}\n' > crates/sproyt-protocol/src/lib.rs \
     && cargo zigbuild --locked --release --target "$rust_target"
 COPY src ./src
+COPY crates ./crates
 COPY build.rs ./
 COPY migrations ./migrations
 COPY assets ./assets
@@ -46,10 +49,13 @@ RUN case "$TARGETARCH" in \
 
 FROM build-base AS native-builder
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src \
+COPY crates/sproyt-protocol/Cargo.toml crates/sproyt-protocol/Cargo.toml
+RUN mkdir -p src crates/sproyt-protocol/src \
     && printf 'fn main() {}\n' > src/main.rs \
+    && printf 'pub fn placeholder() {}\n' > crates/sproyt-protocol/src/lib.rs \
     && cargo build --locked --release
 COPY src ./src
+COPY crates ./crates
 COPY build.rs ./
 COPY migrations ./migrations
 COPY assets ./assets
