@@ -30,12 +30,14 @@ RUN case "$TARGETARCH" in \
     && printf 'fn main() {}\n' > src/main.rs \
     && printf 'pub fn placeholder() {}\n' > crates/sproyt-protocol/src/lib.rs \
     && cargo zigbuild --locked --release --target "$rust_target"
-COPY src ./src
-COPY crates ./crates
+COPY src/. ./src/
+COPY crates/sproyt-protocol/src/. ./crates/sproyt-protocol/src/
 COPY build.rs ./
 COPY migrations ./migrations
 COPY assets ./assets
 COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
+RUN test -f src/domain/mod.rs \
+    && grep -q '^mod commands;$' crates/sproyt-protocol/src/lib.rs
 ARG VCS_REF=unknown
 RUN case "$TARGETARCH" in \
       amd64) rust_target=x86_64-unknown-linux-musl ;; \
@@ -54,12 +56,14 @@ RUN mkdir -p src crates/sproyt-protocol/src \
     && printf 'fn main() {}\n' > src/main.rs \
     && printf 'pub fn placeholder() {}\n' > crates/sproyt-protocol/src/lib.rs \
     && cargo build --locked --release
-COPY src ./src
-COPY crates ./crates
+COPY src/. ./src/
+COPY crates/sproyt-protocol/src/. ./crates/sproyt-protocol/src/
 COPY build.rs ./
 COPY migrations ./migrations
 COPY assets ./assets
 COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
+RUN test -f src/domain/mod.rs \
+    && grep -q '^mod commands;$' crates/sproyt-protocol/src/lib.rs
 ARG VCS_REF=unknown
 RUN cargo clean --package sproyt --release \
     && SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release --bin sproyt \
