@@ -45,7 +45,7 @@ RUN case "$TARGETARCH" in \
       *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
     && rustup target add "$rust_target" \
-    && cargo clean --package sproyt --release --target "$rust_target" \
+    && cargo clean --package sproyt --package sproyt-protocol --release --target "$rust_target" \
     && SPROYT_BUILD_REVISION="$VCS_REF" cargo zigbuild --locked --release --target "$rust_target" --bin sproyt \
     && install -D "target/$rust_target/release/sproyt" /out/sproyt
 
@@ -65,7 +65,7 @@ COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
 RUN test -f src/domain/mod.rs \
     && grep -q '^mod commands;$' crates/sproyt-protocol/src/lib.rs
 ARG VCS_REF=unknown
-RUN cargo clean --package sproyt --release \
+RUN cargo clean --package sproyt --package sproyt-protocol --release \
     && SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release --bin sproyt \
     && install -D target/release/sproyt /out/sproyt
 
