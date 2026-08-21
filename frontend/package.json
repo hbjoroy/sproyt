@@ -12,7 +12,7 @@
     "build": "npm run check-node && node scripts/build.mjs",
     "check": "npm run check-node && tsc --noEmit",
     "check-node": "node scripts/check-runtime.mjs",
-    "test": "npm run check && npm run build",
+    "test": "npm run check && npm run build && node scripts/test-boundaries.mjs",
     "test:e2e": "npm run check && npm run build && node scripts/test-e2e.mjs"
   },
   "devDependencies": {

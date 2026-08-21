@@ -1,8 +1,32 @@
-// @ts-nocheck
-// Transitional extraction: this is deliberately a behavior-preserving move of the former inline
-// module. It is kept untyped only until the next migration stage splits DOM handles, transport,
-// and state into typed modules. Do not add new application behaviour here.
       import { createApplicationStore, createServerEventMailbox } from "./client-store";
+      import { AgentApi, HttpClient, NotificationApi, ProcessApi, type CreatedAgent, type ProcessView } from "./api";
+      import { requireElement, requireElements } from "./dom";
+      import { createConnectionController, resetTransientRequestsAfterDisconnect } from "./connection";
+      import { NavigationController } from "./navigation";
+      import { createSessionController, sessionRefreshAfterSeconds, type SessionController } from "./session";
+      import { isJsonObject, isRecord, mediaFromUpload } from "./types";
+      import type { Channel, ChatMessage, Circle, ClientCommand, ClientCommandArguments, JsonObject, MediaObject, Mention, MermaidApi, ThreadComposerState, ThreadSummary, UploadResponse, UserProfile, UserTask, WireEvent } from "./types";
+
+      type TimelineItem =
+        | Readonly<{ type: "message"; message: ChatMessage }>
+        | Readonly<{ type: "system"; text: string }>;
+      type Invitation = Readonly<{ response?: "accepted" | "declined" | null; invited_by: string; invited_by_name: string; channel_name?: string | null; circle_name?: string | null; accepted_count: number; declined_count: number }>;
+      type InvitationCache =
+        | Readonly<{ status: "pending" }>
+        | Readonly<{ status: "missing" | "failed"; message: string }>
+        | Readonly<{ status: "resolved"; invitation: Invitation }>;
+      type PendingInvitationResponse = Readonly<{ token: string; command: "accept_invitation" | "decline_invitation" }>;
+      type PendingMessage = Readonly<{ channelId: string; body: string; draft: string; mediaIds: string[] }>;
+      type MessageInteraction = Readonly<{ messageId: string; customReaction: string; focusCustomReaction: boolean; focusReactionSummary: boolean }>;
+      function isMermaidApi(value: unknown): value is MermaidApi {
+        return isRecord(value) && typeof value.initialize === "function" && typeof value.run === "function";
+      }
+      function channelFromBase(channel: Readonly<{ id: string; slug: string; name: string; kind: Channel["kind"]; circle_id: string | null }>, role: Channel["role"], description = "", directUserId: string | null = null): Channel {
+        return { ...channel, role, description, direct_user_id: directUserId, latest_sequence: 0, last_read_sequence: 0 };
+      }
+      function errorMessage(error: unknown): string {
+        return error instanceof Error ? error.message : "ukjend feil";
+      }
 
       function syncAppViewportHeight() {
         const viewport = window.visualViewport;
@@ -19,285 +43,311 @@
       const serviceWorkerReady = "serviceWorker" in navigator
         ? navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(() => navigator.serviceWorker.ready)
         : Promise.resolve(null);
-      const connectForm = document.querySelector("#connect-form");
-      const sendForm = document.querySelector("#send-form");
-      const composerTools = document.querySelector("#composer-tools");
-      const channelInput = document.querySelector("#channel");
-      const bodyInput = document.querySelector("#body");
-      const mentionSuggestions = document.querySelector("#mention-suggestions");
-      const sendButton = document.querySelector("#send");
-      const attachMediaButton = document.querySelector("#attach-media");
-      const messageEmojiPicker = document.querySelector(".emoji-picker");
-      const statusText = document.querySelector("#status-text");
-      const statusEmoji = document.querySelector("#status-emoji");
-      const currentStatus = document.querySelector("#current-status");
-      const notificationSummary = document.querySelector("#notification-summary");
-      const notificationMode = document.querySelector("#notification-mode");
-      const notificationDirect = document.querySelector("#notification-direct");
-      const notificationMentions = document.querySelector("#notification-mentions");
-      const notificationNotice = document.querySelector("#notification-notice");
-      const enableNotifications = document.querySelector("#enable-notifications");
-      const mediaInput = document.querySelector("#media-input");
-      const mediaPreviews = document.querySelector("#media-previews");
-      const uploadStatus = document.querySelector("#upload-status");
-      const mediaLightbox = document.querySelector("#media-lightbox");
-      const mediaLightboxImage = document.querySelector("#media-lightbox-image");
-      const mediaLightboxCaption = document.querySelector("#media-lightbox-caption");
-      const threadPanel = document.querySelector("#thread-panel");
-      const threadMessages = document.querySelector("#thread-messages");
-      const threadForm = document.querySelector("#thread-form");
-      const threadBody = document.querySelector("#thread-body");
-      const threadEmojiPicker = document.querySelector("#thread-emoji-picker");
-      const threadComposerTools = document.querySelector("#thread-composer-tools");
-      const threadAttachMediaButton = document.querySelector("#thread-attach-media");
-      const threadMediaInput = document.querySelector("#thread-media-input");
-      const threadMediaPreviews = document.querySelector("#thread-media-previews");
-      const threadUploadStatus = document.querySelector("#thread-upload-status");
-      const threadSendButton = document.querySelector("#thread-send");
-      const circleChannelDialog = document.querySelector("#circle-channel-dialog");
-      const circleChannelTitle = document.querySelector("#circle-channel-title");
-      const circleJoinableList = document.querySelector("#circle-joinable-list");
-      const circleChannelCreate = document.querySelector("#circle-channel-create");
-      const managedChannelName = document.querySelector("#managed-channel-name");
-      const managedChannelKind = document.querySelector("#managed-channel-kind");
-      const leaveCircleButton = document.querySelector("#leave-circle");
-      const circleMembershipNotice = document.querySelector("#circle-membership-notice");
-      const viewModeToggle = document.querySelector("#view-mode-toggle");
-      const statusEl = document.querySelector("#status");
-      const connectionStatusToggle = document.querySelector("#connection-status-toggle");
-      const connectionStatusDot = document.querySelector("#connection-status-dot");
-      const messagesEl = document.querySelector("#messages");
-      const bottomChannelPanel = document.querySelector("#bottom-channel-panel");
-      const bottomCirclePanel = document.querySelector("#bottom-circle-panel");
-      const bottomChannelToggle = document.querySelector("#bottom-channel-toggle");
-      const bottomCircleToggle = document.querySelector("#bottom-circle-toggle");
-      const bottomNavigation = document.querySelector(".bottom-navigation");
-      const bottomChannelList = document.querySelector("#bottom-channel-list");
-      const bottomCircleList = document.querySelector("#bottom-circle-list");
-      const bottomCircleContent = document.querySelector("#bottom-circle-content");
-      const circleToolDirect = document.querySelector("#circle-tool-direct");
-      const circleToolShared = document.querySelector("#circle-tool-shared");
-      const circleToolSettings = document.querySelector("#circle-tool-settings");
-      const circleAdminDialog = document.querySelector("#circle-admin-dialog");
-      const circleAdminClose = document.querySelector("#circle-admin-close");
-      const directMessageDialog = document.querySelector("#direct-message-dialog");
-      const directUser = document.querySelector("#direct-user");
-      const directMessageStatus = document.querySelector("#direct-message-status");
-      const openDirect = document.querySelector("#open-direct");
-      const conversationTitle = document.querySelector("#conversation-title");
-      const conversationCircle = document.querySelector("#conversation-circle");
-      const conversationContext = document.querySelector("#conversation-context");
-      const conversationPeerStatus = document.querySelector("#conversation-peer-status");
-      const channelPeopleButton = document.querySelector("#channel-people");
-      const channelDetailsDialog = document.querySelector("#channel-details-dialog");
-      const channelDetailsClose = document.querySelector("#channel-details-close");
-      const channelMemberSearch = document.querySelector("#channel-member-search");
-      const channelMemberCount = document.querySelector("#channel-member-count");
-      const channelMemberList = document.querySelector("#channel-member-list");
-      const channelDescriptionForm = document.querySelector("#channel-description-form");
-      const channelDescriptionInput = document.querySelector("#channel-description-input");
-      const channelDescriptionStatus = document.querySelector("#channel-description-status");
-      const circleSelect = document.querySelector("#circle-select");
-      const circleName = document.querySelector("#circle-name");
-      const circleSlug = document.querySelector("#circle-slug");
-      const channelMemberAdd = document.querySelector("#channel-member-add");
-      const channelMember = document.querySelector("#channel-member");
-      const addChannelMember = document.querySelector("#add-channel-member");
-      const inviteChannelMember = document.querySelector("#invite-channel-member");
-      const channelMemberStatus = document.querySelector("#channel-member-status");
-      const invitationToken = document.querySelector("#invitation-token");
-      const copyInvitation = document.querySelector("#copy-invitation");
-      const createAgentAccessButton = document.querySelector("#create-agent-access");
-      const copyAgentCredentialButton = document.querySelector("#copy-agent-credential");
-      const revokeAgentAccessButton = document.querySelector("#revoke-agent-access");
-      const agentCredential = document.querySelector("#agent-credential");
-      const agentAccessNotice = document.querySelector("#agent-access-notice");
-      const onboardingNotice = document.querySelector("#onboarding-notice");
-      const createCircleButton = document.querySelector("#create-circle");
-      const createCircleInvitationButton = document.querySelector("#create-invitation");
-      const acceptInvitationButton = document.querySelector("#accept-invitation");
-      const deleteCircleButton = document.querySelector("#delete-circle");
+      const connectForm = requireElement("#connect-form", HTMLFormElement);
+      const sendForm = requireElement("#send-form", HTMLFormElement);
+      const composerTools = requireElement("#composer-tools", HTMLElement);
+      const channelInput = requireElement("#channel", HTMLInputElement);
+      const bodyInput = requireElement("#body", HTMLTextAreaElement);
+      const mentionSuggestions = requireElement("#mention-suggestions", HTMLElement);
+      const sendButton = requireElement("#send", HTMLButtonElement);
+      const attachMediaButton = requireElement("#attach-media", HTMLButtonElement);
+      const messageEmojiPicker = requireElement(".emoji-picker", HTMLDetailsElement);
+      const statusText = requireElement("#status-text", HTMLInputElement);
+      const statusEmoji = requireElement("#status-emoji", HTMLInputElement);
+      const currentStatus = requireElement("#current-status", HTMLElement);
+      const notificationSummary = requireElement("#notification-summary", HTMLElement);
+      const notificationMode = requireElement("#notification-mode", HTMLSelectElement);
+      const notificationDirect = requireElement("#notification-direct", HTMLInputElement);
+      const notificationMentions = requireElement("#notification-mentions", HTMLInputElement);
+      const notificationNotice = requireElement("#notification-notice", HTMLElement);
+      const enableNotifications = requireElement("#enable-notifications", HTMLButtonElement);
+      const mediaInput = requireElement("#media-input", HTMLInputElement);
+      const mediaPreviews = requireElement("#media-previews", HTMLElement);
+      const uploadStatus = requireElement("#upload-status", HTMLElement);
+      const mediaLightbox = requireElement("#media-lightbox", HTMLDialogElement);
+      const mediaLightboxImage = requireElement("#media-lightbox-image", HTMLImageElement);
+      const mediaLightboxCaption = requireElement("#media-lightbox-caption", HTMLElement);
+      const threadPanel = requireElement("#thread-panel", HTMLDialogElement);
+      const threadMessages = requireElement("#thread-messages", HTMLElement);
+      const threadForm = requireElement("#thread-form", HTMLFormElement);
+      const threadBody = requireElement("#thread-body", HTMLTextAreaElement);
+      const threadEmojiPicker = requireElement("#thread-emoji-picker", HTMLDetailsElement);
+      const threadComposerTools = requireElement("#thread-composer-tools", HTMLElement);
+      const threadAttachMediaButton = requireElement("#thread-attach-media", HTMLButtonElement);
+      const threadMediaInput = requireElement("#thread-media-input", HTMLInputElement);
+      const threadMediaPreviews = requireElement("#thread-media-previews", HTMLElement);
+      const threadUploadStatus = requireElement("#thread-upload-status", HTMLElement);
+      const threadSendButton = requireElement("#thread-send", HTMLButtonElement);
+      const circleChannelDialog = requireElement("#circle-channel-dialog", HTMLDialogElement);
+      const circleChannelTitle = requireElement("#circle-channel-title", HTMLElement);
+      const circleChannelClose = requireElement("#circle-channel-close", HTMLButtonElement);
+      const circleJoinableList = requireElement("#circle-joinable-list", HTMLElement);
+      const circleChannelCreate = requireElement("#circle-channel-create", HTMLFormElement);
+      const managedChannelName = requireElement("#managed-channel-name", HTMLInputElement);
+      const managedChannelKind = requireElement("#managed-channel-kind", HTMLSelectElement);
+      const leaveCircleButton = requireElement("#leave-circle", HTMLButtonElement);
+      const circleMembershipNotice = requireElement("#circle-membership-notice", HTMLElement);
+      const viewModeToggle = requireElement("#view-mode-toggle", HTMLButtonElement);
+      const statusEl = requireElement("#status", HTMLElement);
+      const connectionStatusText = requireElement("#connection-status-text", HTMLElement);
+      const reauthenticateNowButton = requireElement("#reauthenticate-now", HTMLButtonElement);
+      const connectionStatusToggle = requireElement("#connection-status-toggle", HTMLButtonElement);
+      const connectionStatusDot = requireElement("#connection-status-dot", HTMLElement);
+      const messagesEl = requireElement("#messages", HTMLElement);
+      const bottomChannelPanel = requireElement("#bottom-channel-panel", HTMLDetailsElement);
+      const bottomCirclePanel = requireElement("#bottom-circle-panel", HTMLDetailsElement);
+      const bottomChannelToggle = requireElement("#bottom-channel-toggle", HTMLElement);
+      const bottomCircleToggle = requireElement("#bottom-circle-toggle", HTMLElement);
+      const bottomNavigation = requireElement(".bottom-navigation", HTMLElement);
+      const bottomChannelList = requireElement("#bottom-channel-list", HTMLElement);
+      const bottomCircleList = requireElement("#bottom-circle-list", HTMLElement);
+      const bottomCircleContent = requireElement("#bottom-circle-content", HTMLElement);
+      const circleToolDirect = requireElement("#circle-tool-direct", HTMLButtonElement);
+      const circleToolShared = requireElement("#circle-tool-shared", HTMLButtonElement);
+      const circleToolSettings = requireElement("#circle-tool-settings", HTMLButtonElement);
+      const circleAdminDialog = requireElement("#circle-admin-dialog", HTMLDialogElement);
+      const circleAdminClose = requireElement("#circle-admin-close", HTMLButtonElement);
+      const directMessageDialog = requireElement("#direct-message-dialog", HTMLDialogElement);
+      const directUser = requireElement("#direct-user", HTMLSelectElement);
+      const directMessageStatus = requireElement("#direct-message-status", HTMLElement);
+      const openDirect = requireElement("#open-direct", HTMLButtonElement);
+      const conversationTitle = requireElement("#conversation-title", HTMLElement);
+      const conversationCircle = requireElement("#conversation-circle", HTMLElement);
+      const conversationContext = requireElement("#conversation-context", HTMLElement);
+      const conversationPeerStatus = requireElement("#conversation-peer-status", HTMLElement);
+      const channelPeopleButton = requireElement("#channel-people", HTMLButtonElement);
+      const channelDetailsDialog = requireElement("#channel-details-dialog", HTMLDialogElement);
+      const channelDetailsClose = requireElement("#channel-details-close", HTMLButtonElement);
+      const channelMemberSearch = requireElement("#channel-member-search", HTMLInputElement);
+      const channelMemberCount = requireElement("#channel-member-count", HTMLElement);
+      const channelMemberList = requireElement("#channel-member-list", HTMLElement);
+      const channelDescriptionForm = requireElement("#channel-description-form", HTMLFormElement);
+      const channelDescriptionInput = requireElement("#channel-description-input", HTMLTextAreaElement);
+      const channelDescriptionStatus = requireElement("#channel-description-status", HTMLElement);
+      const circleSelect = requireElement("#circle-select", HTMLSelectElement);
+      const circleName = requireElement("#circle-name", HTMLInputElement);
+      const circleSlug = requireElement("#circle-slug", HTMLInputElement);
+      const channelMemberAdd = requireElement("#channel-member-add", HTMLElement);
+      const channelMember = requireElement("#channel-member", HTMLSelectElement);
+      const addChannelMember = requireElement("#add-channel-member", HTMLButtonElement);
+      const inviteChannelMember = requireElement("#invite-channel-member", HTMLButtonElement);
+      const channelMemberStatus = requireElement("#channel-member-status", HTMLElement);
+      const invitationToken = requireElement("#invitation-token", HTMLInputElement);
+      const copyInvitation = requireElement("#copy-invitation", HTMLButtonElement);
+      const createAgentAccessButton = requireElement("#create-agent-access", HTMLButtonElement);
+      const copyAgentCredentialButton = requireElement("#copy-agent-credential", HTMLButtonElement);
+      const revokeAgentAccessButton = requireElement("#revoke-agent-access", HTMLButtonElement);
+      const agentCredential = requireElement("#agent-credential", HTMLTextAreaElement);
+      const agentAccessNotice = requireElement("#agent-access-notice", HTMLElement);
+      const onboardingNotice = requireElement("#onboarding-notice", HTMLElement);
+      const createCircleButton = requireElement("#create-circle", HTMLButtonElement);
+      const createCircleInvitationButton = requireElement("#create-invitation", HTMLButtonElement);
+      const acceptInvitationButton = requireElement("#accept-invitation", HTMLButtonElement);
+      const deleteCircleButton = requireElement("#delete-circle", HTMLButtonElement);
       const circleButtons = [createCircleButton, createCircleInvitationButton, acceptInvitationButton, deleteCircleButton];
-      const exportButton = document.querySelector("#export-data");
-      const processTitle = document.querySelector("#process-title");
-      const processId = document.querySelector("#process-id");
-      const processView = document.querySelector("#process-view");
-      const processButtons = ["#enable-heart", "#start-process", "#refresh-process", "#inspect-process", "#process-yes", "#process-no"].map((id) => document.querySelector(id));
-      const sidebar = document.querySelector("#sidebar-panel");
-      const appMain = document.querySelector("main");
-      const desktopSidebarToggle = document.querySelector("#desktop-sidebar-toggle");
-      const desktopAdvancedEntry = document.querySelector("#desktop-advanced-entry");
-      const statusEditor = document.querySelector("#status-editor");
-      const notificationEditor = document.querySelector("#notification-editor");
-      const currentStatusIcon = document.querySelector(".status-compact-icon");
-      const currentStatusLabel = document.querySelector(".status-summary-label");
-      const notificationSummaryLabel = document.querySelector(".notification-summary-label");
-      const mobileNavigationToggle = document.querySelector("#mobile-navigation-toggle");
-      const composerArea = document.querySelector(".composer-area");
+      const exportButton = requireElement("#export-data", HTMLButtonElement);
+      const processTitle = requireElement("#process-title", HTMLInputElement);
+      const processId = requireElement("#process-id", HTMLInputElement);
+      const processView = requireElement("#process-view", HTMLElement);
+      const processButtons = ["#enable-heart", "#start-process", "#refresh-process", "#inspect-process", "#process-yes", "#process-no"].map((id) => requireElement(id, HTMLButtonElement));
+      const sidebar = requireElement("#sidebar-panel", HTMLElement);
+      const appMain = requireElement("main", HTMLElement);
+      const desktopSidebarToggle = requireElement("#desktop-sidebar-toggle", HTMLButtonElement);
+      const desktopAdvancedEntry = requireElement("#desktop-advanced-entry", HTMLButtonElement);
+      const statusEditor = requireElement("#status-editor", HTMLDetailsElement);
+      const notificationEditor = requireElement("#notification-editor", HTMLDetailsElement);
+      const currentStatusIcon = requireElement(".status-compact-icon", HTMLElement);
+      const currentStatusLabel = requireElement(".status-summary-label", HTMLElement);
+      const notificationSummaryLabel = requireElement(".notification-summary-label", HTMLElement);
+      const mobileNavigationToggle = requireElement("#mobile-navigation-toggle", HTMLButtonElement);
+      const composerArea = requireElement(".composer-area", HTMLElement);
 
-      const connectionSupervisor = (() => {
-        const state = {
-          socket: null,
-          socketHandoff: null,
-          subscribedChannelId: null,
-          recoveryPromise: null,
-          reconnectTimer: null,
-          reconnectAttempt: 0,
-          heartbeatTimer: null,
-          stableConnectionTimer: null
-        };
-        return Object.freeze({
-          state,
-          start() { connect(); },
-          recover: recoverConnection,
-          replaceAfterSessionRefresh: reconnectAfterSessionRefresh,
-          scheduleReconnect,
-          send: sendCommand
-        });
-      })();
+      let sessionController: SessionController;
+      const connectionSupervisor = createConnectionController({
+        websocketUrl: () => {
+          const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+          const url = new URL(`${protocol}://${window.location.host}/ws`);
+          const participant = new URLSearchParams(window.location.search).get("participant");
+          if (participant) url.searchParams.set("participant", participant);
+          return url.toString();
+        },
+        createRequestId: () => { requestNumber += 1; return `${browserSessionId}-${requestNumber}`; },
+        onCommandSent: (requestId, command) => {
+          pendingCommands.set(requestId, command.type);
+          if (command.type === "list_my_channels") latestChannelListRequestId = requestId;
+          if (command.type === "list_my_circles") latestCircleListRequestId = requestId;
+        },
+        onBeforeConnect: () => {
+          catchUpTargets.clear();
+          if (activeChannelId && messagesEl.childElementCount > 0) reconnectScrollOffset = Math.max(0, messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight);
+          if (!activeChannelId) requestedChannelSlug = (channelInput.value.trim() || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+        },
+        onOpen: (send) => {
+          reportClientEvent("websocket_connected");
+          if (connectionSupervisor.snapshot().handoffActive && activeChannelId) setConnectionStatus("Gjenopprettar samtalen …");
+          send("hello"); send("list_users"); send("list_my_channels"); send("list_my_circles"); send("list_mentions"); send("list_tasks");
+          if (activeChannelId) send("subscribe_channel", { channel_id: activeChannelId });
+        },
+        onEvent: (event) => serverEventMailbox.enqueue(event),
+        onUnsupportedProtocol: () => pushSystem("Serveren svarte med ein ukjend protokoll."),
+        onStatus: setConnected,
+        onConnected: () => {},
+        onDisconnected: () => reportClientEvent("websocket_disconnected"),
+        onSocketError: () => reportClientEvent("websocket_error"),
+        onConnectionLost: () => {
+          for (const requestId of pendingMessages.keys()) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
+          for (const requestId of [...pendingThreadReplies.keys()]) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
+          resetTransientRequestsAfterDisconnect({ historyRequestIds, pendingCommands, pendingInvitationResponses, pendingInvitationInspections, pendingChannelInvitationRecipients, pendingDirectInvitationMessages }, {
+            setHistoryLoading: (loading) => { historyLoading = loading; },
+            failInspection: (token) => {
+              const message = "Invitasjonen kunne ikkje hentast fordi sambandet vart brote. Prøv igjen.";
+              invitationInspectionCache.set(token, { status: "failed", message });
+              showInvitationError(token, message);
+            },
+            failInvitationResponse: (token) => showInvitationError(token, "Sambandet vart brote før svaret vart stadfesta. Prøv igjen."),
+            failChannelInvitation: () => { channelMemberStatus.textContent = "Sambandet vart brote. Prøv invitasjonen igjen."; }
+          });
+        },
+        onRequestsLost: (requestIds) => {
+          for (const requestId of requestIds) {
+            if (pendingMessages.has(requestId)) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
+            if (pendingThreadReplies.has(requestId)) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
+            historyRequestIds.delete(requestId);
+            pendingCommands.delete(requestId);
+          }
+        },
+        onAuthenticationFailure: () => sessionController.recoverAuthentication(),
+        recover: recoverConnection,
+        onHandoffFallback: () => sessionController.schedule(30),
+        setTimeout: (callback, milliseconds) => window.setTimeout(callback, milliseconds),
+        clearTimeout: (timer) => window.clearTimeout(timer),
+        setInterval: (callback, milliseconds) => window.setInterval(callback, milliseconds),
+        clearInterval: (timer) => window.clearInterval(timer)
+      });
+      function sendCommand<Type extends ClientCommand["type"]>(type: Type, ...args: ClientCommandArguments<Type>): string | null {
+        return connectionSupervisor.send(type, ...args);
+      }
       let lastBackgroundRecoveryAt = 0;
       let lastUserActivityAt = Date.now();
       let renderMode = "view";
       let requestNumber = 0;
       const browserSessionId = `browser-${crypto.randomUUID()}`;
-      const sessionRefreshLeaseKey = "sproyt.session-refresh-lease.v1";
-      const sessionRefreshBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
-      let activeChannelId = null;
-      let activeCircleId = null;
-      let activeRootScope = "shared";
-      let activeInboxKind = null;
-      let managedCircleId = null;
-      let reconnectScrollOffset = null;
-      const activeConversationKey = "sproyt.active-channel.v1";
-      const activeCircleKey = "sproyt.active-circle.v1";
-      const circleChannelHistoryKey = "sproyt.active-channel-by-circle.v1";
-      const channelDraftPrefix = "sproyt.channel-draft.v1.";
-      const threadDraftPrefix = "sproyt.thread-draft.v1.";
-      const linkedChannelId = new URL(window.location.href).searchParams.get("channel");
-      let restoredChannelId = linkedChannelId;
-      if (!restoredChannelId) try { restoredChannelId = window.localStorage.getItem(activeConversationKey); } catch (_) {}
-      let restoredCircleId = null;
-      try { restoredCircleId = window.localStorage.getItem(activeCircleKey); } catch (_) {}
-      let lastChannelByCircle = {};
-      try {
-        const storedCircleChannels = JSON.parse(window.localStorage.getItem(circleChannelHistoryKey) || "{}");
-        if (storedCircleChannels && typeof storedCircleChannels === "object" && !Array.isArray(storedCircleChannels)) {
-          lastChannelByCircle = Object.fromEntries(Object.entries(storedCircleChannels)
-            .filter(([circleId, channelId]) => typeof circleId === "string" && circleId.length <= 128 && typeof channelId === "string" && channelId.length <= 128));
-        }
-      } catch (_) {}
-      let currentParticipantId = null;
+      let activeChannelId: string | null = null;
+      let activeCircleId: string | null = null;
+      let activeRootScope: "shared" | "circle" | "direct" = "shared";
+      let activeInboxKind: "unread" | "mentions" | "tasks" | null = null;
+      let managedCircleId: string | null = null;
+      let reconnectScrollOffset: number | null = null;
+      const navigation = new NavigationController(window.localStorage, window.location);
+      // This is a render cache only. NavigationController is the sole state and
+      // persistence owner; UI code refreshes this snapshot after an intent.
+      let restoredChannelId = navigation.restoredChannelId;
+      let restoredCircleId = navigation.restoredCircleId;
+      let currentParticipantId: string | null = null;
       let requestedChannelSlug = "general";
-      const timeline = [];
-      const threadReplies = new Map();
-      const threadRoots = new Map();
-      const threadSummaries = new Map();
-      const pendingThreadReplies = new Map();
-      let activeThreadRootId = null;
-      let pendingThreadToOpen = null;
-      const seenMessageIds = new Set();
-      const catchUpTargets = new Map();
-      const pendingCommands = new Map();
-      const pendingInvitationResponses = new Map();
-      const pendingInvitationInspections = new Map();
-      const pendingChannelInvitationRecipients = new Map();
-      const pendingDirectInvitationMessages = new Map();
-      const invitationInspectionCache = new Map();
-      let latestChannelListRequestId = null;
-      let latestCircleListRequestId = null;
-      const pendingMessages = new Map();
+      const timeline: TimelineItem[] = [];
+      const threadReplies = new Map<string, ChatMessage[]>();
+      const threadRoots = new Map<string, ChatMessage>();
+      const threadSummaries = new Map<string, ThreadSummary>();
+      const pendingThreadReplies = new Map<string, Readonly<{ rootId: string; channelId: string; body: string; draft: string; mediaIds: string[] }>>();
+      let activeThreadRootId: string | null = null;
+      let pendingThreadToOpen: string | null = null;
+      const seenMessageIds = new Set<string>();
+      const catchUpTargets = new Map<string, number>();
+      const pendingCommands = new Map<string, string>();
+      const pendingInvitationResponses = new Map<string, PendingInvitationResponse>();
+      const pendingInvitationInspections = new Map<string, string>();
+      const pendingChannelInvitationRecipients = new Map<string, string>();
+      const pendingDirectInvitationMessages = new Map<string, string>();
+      const invitationInspectionCache = new Map<string, InvitationCache>();
+      let latestChannelListRequestId: string | null = null;
+      let latestCircleListRequestId: string | null = null;
+      const pendingMessages = new Map<string, PendingMessage>();
       const historyRequestIds = new Set();
       const historyPageSize = 50;
       let historyHasMore = false;
       let historyLoading = false;
-      let mermaidPromise = null;
-      let knownChannels = [];
-      let knownUsers = [];
-      const knownCircleUsers = new Map();
-      const knownChannelUsers = new Map();
-      let knownMentions = [];
-      let knownTasks = [];
-      const knownCircles = new Map();
-      let temporaryAgentId = null;
-      let pendingMedia = [];
-      const threadComposerStates = new Map();
-      const messageReactions = new Map();
-      const reactionEmojis = [...document.querySelectorAll("#message-emoji-options [data-emoji]")].map((button) => button.dataset.emoji);
-      let mentionMatches = [];
+      let mermaidPromise: Promise<MermaidApi> | null = null;
+      let knownChannels: Channel[] = [];
+      let knownUsers: UserProfile[] = [];
+      const knownCircleUsers = new Map<string, UserProfile[]>();
+      const knownChannelUsers = new Map<string, UserProfile[]>();
+      let knownMentions: Mention[] = [];
+      let knownTasks: UserTask[] = [];
+      const knownCircles = new Map<string, Circle>();
+      let temporaryAgentId: string | null = null;
+      let pendingMedia: MediaObject[] = [];
+      const threadComposerStates = new Map<string, ThreadComposerState>();
+      const messageReactions = new Map<string, Map<string, ReactionSummary>>();
+      const reactionEmojis = [...document.querySelectorAll("#message-emoji-options [data-emoji]")]
+        .filter((button): button is HTMLButtonElement => button instanceof HTMLButtonElement)
+        .map((button) => button.dataset.emoji).filter((emoji): emoji is string => emoji !== undefined);
+      let mentionMatches: UserProfile[] = [];
       let selectedMentionIndex = 0;
-      let activeMention = null;
+      let activeMention: Readonly<{ start: number; end: number }> | null = null;
       let composerHasFocus = false;
       let composerComposing = false;
       const statusDraft = { emoji: "", text: "", dirty: false };
       const usesDesktopComposerKeys = window.matchMedia("(any-hover: hover) and (any-pointer: fine)");
 
-      const applicationStore = createApplicationStore();
+      function syncRenderedNavigation(): void {
+        const snapshot = navigation.snapshot;
+        activeChannelId = snapshot.activeChannelId;
+        activeCircleId = snapshot.activeCircleId;
+        activeRootScope = snapshot.activeRootScope;
+        restoredChannelId = snapshot.restoredChannelId;
+        restoredCircleId = snapshot.restoredCircleId;
+      }
 
-      const sessionSupervisor = (() => {
-        const state = {
-          refreshTimer: null,
-          refreshDueAt: 0,
-          refreshPromise: null,
-          refreshRejected: false,
-          authenticationRecoveryPromise: null
-        };
-        return Object.freeze({
-          state,
-          start() {
-            scheduleInitialSessionRefresh().catch(() => scheduleSessionRefresh(30));
-          },
-          schedule: scheduleSessionRefresh,
-          refresh: refreshSession,
-          recoverAuthentication
-        });
-      })();
+      const applicationStore = createApplicationStore();
+      const sessionBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
+      sessionController = createSessionController({
+        fetch: window.fetch.bind(window), storage: window.localStorage, broadcast: sessionBroadcast,
+        now: () => Date.now(), setTimeout: (callback, milliseconds) => window.setTimeout(callback, milliseconds), clearTimeout: (timer) => window.clearTimeout(timer),
+        withLock: navigator.locks ? async (wait, operation) => navigator.locks.request("sproyt-session-refresh", wait ? {} : { ifAvailable: true }, async (lock) => lock ? operation() : "busy") : null,
+        visibility: () => document.visibilityState, isConnectionOpen: () => connectionSupervisor.snapshot().connected,
+        lastUserActivityAt: () => lastUserActivityAt, onRefreshDueAt: (refreshDueAt) => applicationStore.updateSession({ refreshDueAt }), onStatus: setConnectionStatus,
+        onSessionRotated: () => connectionSupervisor.replaceAfterSessionRefresh(), onReconnectNeeded: (reason) => connectionSupervisor.scheduleReconnect(1006, reason),
+        onLoginRequired: () => window.location.assign("/auth/login"), onReauthenticationRequired: (required) => { reauthenticateNowButton.hidden = !required; }, reportClientEvent, browserSessionId
+      });
+      reauthenticateNowButton.addEventListener("click", () => { persistActiveDraft(); persistThreadDraft(); sessionController.reauthenticateNow(); });
+      const http = new HttpClient({
+        fetch: window.fetch.bind(window),
+        refreshSession: () => sessionController.refresh(true),
+        participant: () => new URLSearchParams(window.location.search).get("participant")
+      });
+      const notificationsApi = new NotificationApi(http);
+      const processesApi = new ProcessApi(http);
+      const agentsApi = new AgentApi(http);
 
       const serverEventMailbox = createServerEventMailbox({
         reduce: applicationStore.reduceServerEvent,
         deliver: renderServerEvent
       });
 
-      function channelDraftKey(channelId) {
-        return `${channelDraftPrefix}${channelId}`;
-      }
-
       function persistActiveDraft() {
-        if (!activeChannelId) return;
-        try {
-          const key = channelDraftKey(activeChannelId);
-          if (bodyInput.value) window.localStorage.setItem(key, bodyInput.value);
-          else window.localStorage.removeItem(key);
-        } catch (_) {}
+        navigation.persistChannelDraft(activeChannelId, bodyInput.value);
       }
 
       function restoreActiveDraft() {
-        try { bodyInput.value = window.localStorage.getItem(channelDraftKey(activeChannelId)) || ""; }
-        catch (_) { bodyInput.value = ""; }
+        bodyInput.value = navigation.restoreChannelDraft(activeChannelId);
         syncComposerState();
       }
 
-      function threadDraftKey(channelId, rootId) {
-        return `${threadDraftPrefix}${channelId}.${rootId}`;
-      }
-
-      function persistThreadDraft(rootId = activeThreadRootId, channelId = activeChannelId) {
-        const state = threadComposerStates.get(rootId);
-        if (!rootId || !channelId || !state) return;
-        try {
-          const key = threadDraftKey(channelId, rootId);
-          if (state.draft) window.localStorage.setItem(key, state.draft);
-          else window.localStorage.removeItem(key);
-        } catch (_) {}
-      }
-
-      function restoreThreadDraft(rootId, channelId) {
-        try { return window.localStorage.getItem(threadDraftKey(channelId, rootId)) || ""; }
-        catch (_) { return ""; }
-      }
-
-      function clearThreadDraft(rootId, channelId) {
+      function persistThreadDraft(rootId: string | null = activeThreadRootId, channelId: string | null = activeChannelId) {
         if (!rootId || !channelId) return;
-        try { window.localStorage.removeItem(threadDraftKey(channelId, rootId)); } catch (_) {}
+        const state = threadComposerStates.get(rootId);
+        if (!state) return;
+        navigation.persistThreadDraft(channelId, rootId, state.draft);
+      }
+
+      function restoreThreadDraft(rootId: string, channelId: string): string {
+        return navigation.restoreThreadDraft(channelId, rootId);
+      }
+
+      function clearThreadDraft(rootId: string | null, channelId: string | null): void {
+        if (!rootId || !channelId) return;
+        navigation.clearThreadDraft(channelId, rootId);
       }
 
       function activeChannelMedia() {
@@ -339,61 +389,41 @@
         }, 0);
       }
 
-      function setActiveCircle(circleId) {
-        activeCircleId = circleId || null;
-        if (activeCircleId) {
-          activeRootScope = "circle";
-          restoredCircleId = activeCircleId;
-          try { window.localStorage.setItem(activeCircleKey, activeCircleId); } catch (_) {}
-        }
+      function setActiveCircle(circleId: string | null): void {
+        if (!circleId) return;
+        navigation.setActiveCircle(circleId);
+        syncRenderedNavigation();
       }
 
-      function clearActiveCircle(circleId = null) {
-        if (circleId && activeCircleId !== circleId && restoredCircleId !== circleId) return;
-        activeCircleId = null;
-        restoredCircleId = null;
-        try { window.localStorage.removeItem(activeCircleKey); } catch (_) {}
+      function clearActiveCircle(circleId: string | null = null): void {
+        navigation.clearActiveCircle(circleId);
+        syncRenderedNavigation();
       }
 
       function restoreActiveCircle() {
-        const selected = [activeCircleId, restoredCircleId, circleSelect.value]
-          .find((circleId) => circleId && knownCircles.has(circleId));
-        const fallback = selected || knownCircles.keys().next().value || null;
+        const fallback = navigation.restoreActiveCircle(knownCircles.keys(), circleSelect.value || null);
+        syncRenderedNavigation();
         if (!fallback) {
-          clearActiveCircle();
           circleSelect.value = "";
           return null;
         }
-        setActiveCircle(fallback);
         circleSelect.value = fallback;
         return fallback;
       }
 
-      function persistCircleChannelHistory() {
-        try { window.localStorage.setItem(circleChannelHistoryKey, JSON.stringify(lastChannelByCircle)); } catch (_) {}
+      function rememberCircleChannel(channel: Channel): void {
+        navigation.rememberCircleChannel(channel);
       }
 
-      function rememberCircleChannel(channel) {
-        if (!channel?.circle_id) return;
-        lastChannelByCircle[channel.circle_id] = channel.id;
-        persistCircleChannelHistory();
+      function forgetCircleChannel(circleId: string): void {
+        navigation.forgetCircleChannel(circleId);
       }
 
-      function forgetCircleChannel(circleId) {
-        if (!circleId || !(circleId in lastChannelByCircle)) return;
-        delete lastChannelByCircle[circleId];
-        persistCircleChannelHistory();
+      function preferredCircleChannel(circleId: string, channels: Channel[] = knownChannels): Channel | undefined {
+        return navigation.preferredCircleChannel(circleId, channels);
       }
 
-      function preferredCircleChannel(circleId, channels = knownChannels) {
-        const available = channels.filter((channel) => channel.circle_id === circleId);
-        const remembered = available.find((channel) => channel.id === lastChannelByCircle[circleId]);
-        const primary = available.find((channel) => channel.name.trim().toLocaleLowerCase() === "prat"
-          || channel.slug === scopedCircleChannelSlug(circleId, "prat"));
-        return remembered || primary || available[0] || null;
-      }
-
-      function reportClientEvent(event) {
+      function reportClientEvent(event: string): void {
         const participant = new URL(window.location.href).searchParams.get("participant");
         const query = participant ? `?participant=${encodeURIComponent(participant)}` : "";
         fetch(`/api/v1/client-events${query}`, {
@@ -406,216 +436,8 @@
         }).catch(() => {});
       }
 
-      function scheduleSessionRefresh(seconds) {
-        if (sessionSupervisor.state.refreshTimer !== null) {
-          window.clearTimeout(sessionSupervisor.state.refreshTimer);
-        }
-        const delay = Math.max(1, Number(seconds) || 1) * 1000;
-        sessionSupervisor.state.refreshDueAt = Date.now() + delay;
-        applicationStore.updateSession({ refreshDueAt: sessionSupervisor.state.refreshDueAt });
-        sessionSupervisor.state.refreshTimer = window.setTimeout(
-          () => refreshSession().catch(() => scheduleSessionRefresh(30)),
-          delay
-        );
-      }
-
-      sessionRefreshBroadcast?.addEventListener("message", (event) => {
-        const seconds = Number(event.data?.refreshAfterSeconds);
-        if (Number.isFinite(seconds) && seconds > 0) sessionSupervisor.schedule(seconds);
-        if (event.data?.type === "session_rotated") connectionSupervisor.replaceAfterSessionRefresh();
-      });
-
-      function reconnectAfterSessionRefresh() {
-        const currentSocket = connectionSupervisor.state.socket;
-        if (connectionSupervisor.state.socketHandoff) return;
-        if (!currentSocket || currentSocket.readyState === WebSocket.CLOSED || currentSocket.readyState === WebSocket.CLOSING) {
-          connect(true);
-          return;
-        }
-        if (currentSocket.readyState === WebSocket.OPEN) connect(true, currentSocket);
-      }
-
-      async function performSessionRefresh() {
-        const showRefreshIndicator = document.visibilityState === "visible"
-          && connectionSupervisor.state.socket?.readyState === WebSocket.OPEN;
-        if (showRefreshIndicator) setConnectionStatus("Fornyar økta …");
-        let response;
-        try {
-          response = await fetch("/auth/refresh", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "accept": "application/json" }
-          });
-        } catch (_) {
-          reportClientEvent("session_refresh_failed");
-          sessionSupervisor.state.refreshRejected = false;
-          scheduleSessionRefresh(30);
-          if (showRefreshIndicator) setConnectionStatus("Tilkopla");
-          return false;
-        }
-        if (response.status === 401) {
-          // The active WebSocket revalidates the session and redirects on a
-          // real authentication expiry. A refresh token is optional at some
-          // OIDC providers, so a failed proactive refresh must not create an
-          // Authentik callback/reload loop while the session is still valid.
-          reportClientEvent("session_refresh_failed");
-          sessionSupervisor.state.refreshRejected = true;
-          scheduleSessionRefresh(30);
-          if (showRefreshIndicator) setConnectionStatus("Tilkopla");
-          return false;
-        }
-        if (!response.ok) {
-          reportClientEvent("session_refresh_failed");
-          sessionSupervisor.state.refreshRejected = false;
-          scheduleSessionRefresh(30);
-          if (showRefreshIndicator) setConnectionStatus("Tilkopla");
-          return false;
-        }
-        sessionSupervisor.state.refreshRejected = false;
-        const result = await response.json();
-        const verification = await fetch("/auth/session", {
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { "accept": "application/json" }
-        });
-        if (!verification.ok) {
-          reportClientEvent("session_refresh_failed");
-          sessionSupervisor.state.refreshRejected = verification.status === 401;
-          scheduleSessionRefresh(30);
-          if (showRefreshIndicator) setConnectionStatus("Tilkopla");
-          return false;
-        }
-        scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
-        sessionRefreshBroadcast?.postMessage({
-          type: "session_rotated",
-          refreshAfterSeconds: Number(result.refresh_after_seconds) || 300
-        });
-        reportClientEvent("session_refresh_succeeded");
-        reconnectAfterSessionRefresh();
-        return true;
-      }
-
-      async function refreshWithLocalStorageLease() {
-        const now = Date.now();
-        const lease = { owner: browserSessionId, expiresAt: now + 15000 };
-        try {
-          const current = JSON.parse(window.localStorage.getItem(sessionRefreshLeaseKey) || "null");
-          if (current?.owner !== browserSessionId && Number(current?.expiresAt) > now) {
-            scheduleSessionRefresh(Math.max(2, Math.ceil((current.expiresAt - now) / 1000)));
-            return false;
-          }
-          window.localStorage.setItem(sessionRefreshLeaseKey, JSON.stringify(lease));
-          const acquired = JSON.parse(window.localStorage.getItem(sessionRefreshLeaseKey) || "null");
-          if (acquired?.owner !== browserSessionId) {
-            scheduleSessionRefresh(5);
-            return false;
-          }
-        } catch (_) {
-          return performSessionRefresh();
-        }
-        try {
-          return await performSessionRefresh();
-        } finally {
-          try {
-            const current = JSON.parse(window.localStorage.getItem(sessionRefreshLeaseKey) || "null");
-            if (current?.owner === browserSessionId) window.localStorage.removeItem(sessionRefreshLeaseKey);
-          } catch (_) {}
-        }
-      }
-
-      async function useCurrentSessionIfAnotherTabRenewed() {
-        try {
-          const response = await fetch("/auth/session", { credentials: "same-origin", cache: "no-store", headers: { "accept": "application/json" } });
-          if (!response.ok) return false;
-          const result = await response.json();
-          const seconds = Number(result.refresh_after_seconds) || 300;
-          scheduleSessionRefresh(seconds);
-          return true;
-        } catch (_) {
-          return false;
-        }
-      }
-
-      async function refreshSession(waitForLock = false) {
-        if (sessionSupervisor.state.refreshPromise) return sessionSupervisor.state.refreshPromise;
-        sessionSupervisor.state.refreshPromise = (async () => {
-          if (navigator.locks) {
-            const options = waitForLock ? {} : { ifAvailable: true };
-            return navigator.locks.request("sproyt-session-refresh", options, async (lock) => {
-              if (lock) {
-                if (waitForLock && await useCurrentSessionIfAnotherTabRenewed()) return true;
-                return performSessionRefresh();
-              }
-              scheduleSessionRefresh(30);
-              return false;
-            });
-          }
-          return refreshWithLocalStorageLease();
-        })();
-        try {
-          return await sessionSupervisor.state.refreshPromise;
-        } finally {
-          sessionSupervisor.state.refreshPromise = null;
-        }
-      }
-
-      async function scheduleInitialSessionRefresh() {
-        const response = await fetch("/auth/session", {
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { "accept": "application/json" }
-        });
-        if (!response.ok) {
-          if (response.status === 401 && await refreshSession(true)) return;
-          scheduleSessionRefresh(30);
-          return;
-        }
-        const result = await response.json();
-        scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
-      }
-
-      async function recoverAuthentication() {
-        if (sessionSupervisor.state.authenticationRecoveryPromise) {
-          return sessionSupervisor.state.authenticationRecoveryPromise;
-        }
-        sessionSupervisor.state.authenticationRecoveryPromise = (async () => {
-          setConnectionStatus("Fornyar økta …");
-          const refreshed = await refreshSession(true);
-          if (refreshed) {
-            const currentSocket = connectionSupervisor.state.socket;
-            if (!currentSocket || currentSocket.readyState === WebSocket.CLOSED || currentSocket.readyState === WebSocket.CLOSING) connect(true);
-            return;
-          }
-          if (sessionSupervisor.state.refreshRejected) {
-            // A second tab may have rotated the shared cookies while this tab
-            // received a losing 401. Verify once more before any navigation.
-            if (await useCurrentSessionIfAnotherTabRenewed()) {
-              reconnectAfterSessionRefresh();
-              return;
-            }
-            if (document.visibilityState === "visible" && Date.now() - lastUserActivityAt < 120_000) {
-              setConnectionStatus("Økta må stadfestast – vi ventar så du ikkje mistar arbeidet ditt");
-              scheduleSessionRefresh(30);
-              return;
-            }
-            setConnectionStatus("Økta må stadfestast på nytt …");
-            window.location.assign("/auth/login");
-            return;
-          }
-          scheduleReconnect(1006, "ventar på nett for å fornye økta");
-        })();
-        try {
-          return await sessionSupervisor.state.authenticationRecoveryPromise;
-        } finally {
-          sessionSupervisor.state.authenticationRecoveryPromise = null;
-        }
-      }
-
       async function recoverConnection(replaceOpenSocket = false) {
-        if (connectionSupervisor.state.recoveryPromise) {
-          return connectionSupervisor.state.recoveryPromise;
-        }
-        connectionSupervisor.state.recoveryPromise = (async () => {
+        return connectionSupervisor.recover(async (connection) => {
           let response;
           try {
             response = await fetch("/auth/session", {
@@ -624,31 +446,24 @@
               headers: { "accept": "application/json" }
             });
           } catch (_) {
-            scheduleReconnect(1006, "ventar på nett");
+            connectionSupervisor.scheduleReconnect(1006, "ventar på nett");
             return;
           }
           if (response.status === 401) {
-            await recoverAuthentication();
+            await sessionController.recoverAuthentication();
             return;
           }
           if (!response.ok) {
-            scheduleReconnect(response.status, "kunne ikkje kontrollere økta");
+            connectionSupervisor.scheduleReconnect(response.status, "kunne ikkje kontrollere økta");
             return;
           }
-          const result = await response.json();
-          scheduleSessionRefresh(Number(result.refresh_after_seconds) || 300);
-          const currentSocket = connectionSupervisor.state.socket;
-          if (!currentSocket || currentSocket.readyState === WebSocket.CLOSED || currentSocket.readyState === WebSocket.CLOSING) {
-            connect(true);
-          } else if (replaceOpenSocket && currentSocket.readyState === WebSocket.OPEN) {
-            connect(true, currentSocket);
+          sessionController.schedule(sessionRefreshAfterSeconds(await response.json()));
+          if (!connection.connected || connection.closing) {
+            connectionSupervisor.connect(true);
+          } else if (replaceOpenSocket) {
+            connectionSupervisor.connect(true, true);
           }
-        })();
-        try {
-          return await connectionSupervisor.state.recoveryPromise;
-        } finally {
-          connectionSupervisor.state.recoveryPromise = null;
-        }
+        });
       }
 
       function resumeAfterBackground() {
@@ -656,7 +471,7 @@
         const now = Date.now();
         if (now - lastBackgroundRecoveryAt < 5_000) return;
         lastBackgroundRecoveryAt = now;
-        connectionSupervisor.recover(false)
+        recoverConnection(false)
           .catch(() => connectionSupervisor.scheduleReconnect(1006, "kunne ikkje gjenopprette sambandet"));
       }
 
@@ -702,14 +517,14 @@
         syncComposerState();
       }
 
-      function setUploadStatus(message, kind = "progress") {
+      function setUploadStatus(message: string, kind: string = "progress"): void {
         uploadStatus.textContent = message;
         uploadStatus.dataset.kind = kind;
         uploadStatus.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
         syncComposerState();
       }
 
-      async function uploadFailureMessage(response, filename) {
+      async function uploadFailureMessage(response: UploadResponse, filename: string): Promise<string> {
         let detail = "";
         try { detail = (await response.text()).trim(); } catch (_) {}
         const trace = response.headers.get("cf-ray") || response.headers.get("x-request-id");
@@ -718,7 +533,7 @@
         return `Opplasting av ${filename} feila (HTTP ${response.status})${reason}.${reference}`;
       }
 
-      function postMedia(url, form, filename, setStatus = setUploadStatus) {
+      function postMedia(url: string, form: FormData, filename: string, setStatus: (message: string, kind?: string) => void = setUploadStatus): Promise<UploadResponse> {
         return new Promise((resolve, reject) => {
           const request = new XMLHttpRequest();
           request.open("POST", url);
@@ -734,7 +549,7 @@
           request.addEventListener("load", () => resolve({
             status: request.status,
             ok: request.status >= 200 && request.status < 300,
-            headers: { get: (name) => request.getResponseHeader(name) },
+            headers: { get: (name: string) => request.getResponseHeader(name) },
             text: async () => request.responseText,
             json: async () => JSON.parse(request.responseText)
           }));
@@ -744,7 +559,7 @@
         });
       }
 
-      async function uploadMediaFiles(files) {
+      async function uploadMediaFiles(files: Iterable<File>): Promise<void> {
         if (!activeChannelId) return;
         for (const file of files) {
           if (!file.size || file.size > 35 * 1024 * 1024) {
@@ -761,13 +576,13 @@
           let response;
           try {
             response = await postMedia(url, form, filename);
-            if (response.status === 401 && await refreshSession(true)) {
+            if (response.status === 401 && await sessionController.refresh(true)) {
               response = await postMedia(url, form, filename);
             }
           } catch (error) {
             reportClientEvent("upload_failed");
             const online = navigator.onLine ? "Nettlesaren fekk ikkje noko HTTP-svar frå tenesta" : "Eininga er fråkopla nettet";
-            setUploadStatus(`Opplasting av ${file.name || "fila"} feila: ${online}. ${error?.message || "Ukjend nettverksfeil"}.`, "error");
+            setUploadStatus(`Opplasting av ${file.name || "fila"} feila: ${online}. ${error instanceof Error ? error.message : "Ukjend nettverksfeil"}.`, "error");
             continue;
           }
           if (response.status === 401) {
@@ -776,13 +591,15 @@
             continue;
           }
           if (!response.ok) { reportClientEvent("upload_failed"); setUploadStatus(await uploadFailureMessage(response, file.name || "fila"), "error"); continue; }
-          const result = await response.json();
-          pendingMedia.push(result.media);
+          let media: MediaObject | null;
+          try { media = mediaFromUpload(await response.json()); } catch { media = null; }
+          if (media === null) { reportClientEvent("upload_failed"); setUploadStatus("Opplastinga var ferdig, men tenesta svarte med ugyldige mediedata. Prøv igjen.", "error"); continue; }
+          pendingMedia.push(media);
           renderMediaPreviews();
           reportClientEvent("upload_succeeded");
           setUploadStatus(`${file.name || "Fila"} er behandla og klar til å sendast.`, "success");
         }
-        setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tilkopla");
+        setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
       }
 
       function threadComposerState(rootId = activeThreadRootId) {
@@ -813,7 +630,8 @@
         const expanded = state.hasFocus || threadBody.value.length > 0 || state.media.length > 0 || state.status.length > 0 || state.uploadCount > 0 || threadEmojiPicker.open;
         threadForm.classList.toggle("is-expanded", expanded);
         threadComposerTools.hidden = !state.hasFocus;
-        const writable = Boolean(activeThreadRootId && activeChannelId && connectionSupervisor.state.subscribedChannelId === activeChannelId && connectionSupervisor.state.socket?.readyState === WebSocket.OPEN);
+        const connection = connectionSupervisor.snapshot();
+        const writable = Boolean(activeThreadRootId && activeChannelId && connection.subscribedChannelId === activeChannelId && connection.connected);
         threadBody.disabled = !writable;
         threadAttachMediaButton.disabled = !writable || state.uploadCount > 0;
         threadSendButton.disabled = !writable || state.uploadCount > 0 || hasPendingThreadReply();
@@ -821,7 +639,7 @@
         resizeThreadComposer();
       }
 
-      function setThreadUploadStatus(message, kind = "progress", rootId = activeThreadRootId) {
+      function setThreadUploadStatus(message: string, kind: string = "progress", rootId: string | null = activeThreadRootId): void {
         const state = threadComposerState(rootId);
         if (!state) return;
         state.status = message;
@@ -861,7 +679,7 @@
         syncThreadComposer();
       }
 
-      async function uploadThreadMediaFiles(files) {
+      async function uploadThreadMediaFiles(files: Iterable<File>): Promise<void> {
         const channelId = activeChannelId;
         const rootId = activeThreadRootId;
         const state = threadComposerState(rootId);
@@ -881,17 +699,18 @@
           const url = `/api/v1/channels/${channelId}/media${authQuery}`;
           try {
             let response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
-            if (response.status === 401 && await refreshSession(true)) response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
+            if (response.status === 401 && await sessionController.refresh(true)) response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
             if (response.status === 401) throw new Error("Økta kunne ikkje fornyast. Logg inn på nytt.");
             if (!response.ok) throw new Error(await uploadFailureMessage(response, filename));
-            const result = await response.json();
+            const media = mediaFromUpload(await response.json());
+            if (media === null) throw new Error("Serveren svarte med ugyldige mediedata.");
             // The upload belongs to the channel and root that were active when it started.
-            state.media.push({ ...result.media, channel_id: channelId, parent_message_id: rootId });
+            state.media.push({ ...media, channel_id: channelId, parent_message_id: rootId });
             reportClientEvent("upload_succeeded");
             setThreadUploadStatus(`${filename} er behandla og klar til å sendast.`, "success", rootId);
           } catch (error) {
             reportClientEvent("upload_failed");
-            setThreadUploadStatus(`Opplasting av ${filename} feila: ${error?.message || "Ukjend feil"}`, "error", rootId);
+            setThreadUploadStatus(`Opplasting av ${filename} feila: ${error instanceof Error ? error.message : "Ukjend feil"}`, "error", rootId);
           } finally {
             state.uploadCount = Math.max(0, state.uploadCount - 1);
             if (rootId === activeThreadRootId) syncThreadComposer();
@@ -903,46 +722,47 @@
         if (!attachMediaButton.disabled) mediaInput.click();
       });
       mediaInput.addEventListener("change", () => {
-        uploadMediaFiles([...mediaInput.files]);
+        uploadMediaFiles(mediaInput.files ? [...mediaInput.files] : []);
         mediaInput.value = "";
         bodyInput.focus();
       });
       bodyInput.addEventListener("paste", (event) => {
-        const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
+        const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
         if (files.length) { event.preventDefault(); uploadMediaFiles(files); }
       });
       threadAttachMediaButton.addEventListener("click", () => {
         if (!threadAttachMediaButton.disabled) threadMediaInput.click();
       });
       threadMediaInput.addEventListener("change", () => {
-        uploadThreadMediaFiles([...threadMediaInput.files]);
+        uploadThreadMediaFiles(threadMediaInput.files ? [...threadMediaInput.files] : []);
         threadMediaInput.value = "";
         threadBody.focus({ preventScroll: true });
       });
       threadBody.addEventListener("paste", (event) => {
-        const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
+        const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
         if (files.length) { event.preventDefault(); uploadThreadMediaFiles(files); }
       });
-      document.querySelector("#media-lightbox-close").addEventListener("click", () => mediaLightbox.close());
-      document.querySelector("#thread-close").addEventListener("click", () => threadPanel.close());
+      requireElement("#media-lightbox-close", HTMLButtonElement).addEventListener("click", () => mediaLightbox.close());
+      requireElement("#thread-close", HTMLButtonElement).addEventListener("click", () => threadPanel.close());
       threadPanel.addEventListener("close", () => {
         persistThreadDraft();
         activeThreadRootId = null;
         threadEmojiPicker.open = false;
       });
-      document.querySelector("#circle-channel-close").addEventListener("click", () => circleChannelDialog.close());
+      circleChannelClose.addEventListener("click", () => circleChannelDialog.close());
       circleAdminClose.addEventListener("click", () => circleAdminDialog.close());
       circleAdminDialog.addEventListener("close", () => {
         if (bottomCirclePanel.open) circleToolSettings.focus({ preventScroll: true });
       });
-      document.querySelector("#direct-message-close").addEventListener("click", () => directMessageDialog.close());
+      requireElement("#direct-message-close", HTMLButtonElement).addEventListener("click", () => directMessageDialog.close());
       channelPeopleButton.addEventListener("click", () => openChannelDetails(false));
       connectionStatusToggle.addEventListener("click", () => {
         connectionStatusToggle.setAttribute("aria-expanded", String(connectionStatusToggle.getAttribute("aria-expanded") !== "true"));
       });
       document.addEventListener("pointerdown", (event) => {
-        if (!event.target.closest(".connection-status")) connectionStatusToggle.setAttribute("aria-expanded", "false");
-        if (threadPanel.open && !threadEmojiPicker.contains(event.target)) threadEmojiPicker.open = false;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target?.closest(".connection-status")) connectionStatusToggle.setAttribute("aria-expanded", "false");
+        if (threadPanel.open && !threadEmojiPicker.contains(target)) threadEmojiPicker.open = false;
       });
       channelDetailsClose.addEventListener("click", () => channelDetailsDialog.close());
       channelMemberSearch.addEventListener("input", () => {
@@ -964,18 +784,21 @@
         event.preventDefault();
         const name = managedChannelName.value.trim();
         if (!managedCircleId || !name) return;
+        const kind = managedChannelKind.value;
+        if (kind !== "public" && kind !== "local" && kind !== "private") return;
         sendCommand("create_channel", {
           slug: scopedCircleChannelSlug(managedCircleId, name),
           name,
-          kind: managedChannelKind.value,
+          kind,
           circle_id: managedCircleId
         });
       });
       leaveCircleButton.addEventListener("click", () => {
+        if (!managedCircleId) return;
         const circle = knownCircles.get(managedCircleId);
         if (!circle || circle.role === "owner") return;
         if (!window.confirm(`Vil du forlate vennekretsen ${circle.name}? Du mistar tilgang til alle kanalane i kretsen.`)) return;
-        sendCommand("leave_circle", { circle_id: managedCircleId });
+        sendCommand("leave_circle", { circle_id: circle.id });
       });
       threadForm.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -1035,7 +858,7 @@
         mediaLightboxImage.removeAttribute("src");
       });
 
-      function mentionHandle(user) {
+      function mentionHandle(user: UserProfile): string {
         return user.display_name.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "");
       }
 
@@ -1054,7 +877,7 @@
         return channel?.circle_id ? (knownCircleUsers.get(channel.circle_id) || []) : knownUsers;
       }
 
-      function selectMention(index) {
+      function selectMention(index: number): void {
         const user = mentionMatches[index];
         if (!user || !activeMention) return;
         const replacement = `@${mentionHandle(user)} `;
@@ -1082,7 +905,8 @@
         mentionSuggestions.hidden = mentionMatches.length === 0;
         bodyInput.setAttribute("aria-expanded", String(mentionMatches.length > 0));
         if (mentionMatches.length > 0) {
-          bodyInput.setAttribute("aria-activedescendant", `mention-option-${mentionMatches[selectedMentionIndex].id}`);
+          const selected = mentionMatches[selectedMentionIndex];
+          if (selected) bodyInput.setAttribute("aria-activedescendant", `mention-option-${selected.id}`);
         } else {
           bodyInput.removeAttribute("aria-activedescendant");
         }
@@ -1100,7 +924,8 @@
           closeMentionSuggestions();
           return;
         }
-        const query = match[1].toLocaleLowerCase();
+        const query = match[1]?.toLocaleLowerCase();
+        if (query === undefined) return;
         activeMention = { start: caret - query.length - 1, end: caret };
         mentionMatches = mentionCandidates()
           .filter((user) => mentionHandle(user).startsWith(query))
@@ -1118,7 +943,7 @@
       sendForm.addEventListener("focusin", () => { composerHasFocus = true; syncComposerState(); });
       sendForm.addEventListener("focusout", closeComposerToolsAfterFocusLeaves);
       document.addEventListener("pointerdown", (event) => {
-        if (sendForm.contains(event.target)) return;
+        if (event.target instanceof Node && sendForm.contains(event.target)) return;
         composerHasFocus = false;
         messageEmojiPicker.open = false;
         closeMentionSuggestions();
@@ -1155,10 +980,10 @@
         const channelMedia = pendingMedia.filter((media) => media.channel_id === activeChannelId);
         const mediaTokens = channelMedia.map((media) => `[[media:${media.id}|${media.content_type}|${encodeURIComponent(media.original_filename)}]]`).join("\n");
         const body = [draft, mediaTokens].filter(Boolean).join("\n");
-        if (!connectionSupervisor.state.socket || connectionSupervisor.state.socket.readyState !== WebSocket.OPEN || !activeChannelId || body.length === 0) {
+        if (!connectionSupervisor.snapshot().connected || !activeChannelId || body.length === 0) {
           return;
         }
-        if (connectionSupervisor.state.subscribedChannelId !== activeChannelId) return;
+        if (connectionSupervisor.snapshot().subscribedChannelId !== activeChannelId) return;
         const requestId = sendCommand("send_message", { channel_id: activeChannelId, body });
         if (!requestId) return;
         pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });
@@ -1170,7 +995,7 @@
         setConnected(true, "Sender meldinga …");
       });
 
-      function insertEmoji(input, emoji) {
+      function insertEmoji(input: HTMLInputElement | HTMLTextAreaElement, emoji: string): void {
         const start = input.selectionStart ?? input.value.length;
         const end = input.selectionEnd ?? start;
         input.setRangeText(emoji, start, end, "end");
@@ -1179,26 +1004,32 @@
         input.focus();
       }
 
-      document.querySelectorAll("#message-emoji-options [data-emoji]").forEach((button) => {
+      requireElements("#message-emoji-options [data-emoji]", HTMLButtonElement).forEach((button) => {
         button.addEventListener("click", () => {
-          insertEmoji(bodyInput, button.dataset.emoji);
+          const emoji = button.dataset.emoji;
+          if (!emoji) return;
+          insertEmoji(bodyInput, emoji);
           messageEmojiPicker.open = false;
         });
       });
-      document.querySelectorAll("#thread-emoji-options [data-emoji]").forEach((button) => {
+      requireElements("#thread-emoji-options [data-emoji]", HTMLButtonElement).forEach((button) => {
         button.addEventListener("click", () => {
-          insertEmoji(threadBody, button.dataset.emoji);
+          const emoji = button.dataset.emoji;
+          if (!emoji) return;
+          insertEmoji(threadBody, emoji);
           threadEmojiPicker.open = false;
           syncThreadComposer();
         });
       });
-      document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((button) => {
+      requireElements("#status-emoji-options [data-emoji]", HTMLButtonElement).forEach((button) => {
         button.addEventListener("click", () => {
-          statusEmoji.value = button.dataset.emoji;
+          const emoji = button.dataset.emoji;
+          if (!emoji) return;
+          statusEmoji.value = emoji;
           statusDraft.emoji = statusEmoji.value;
           statusDraft.text = statusText.value;
           statusDraft.dirty = true;
-          document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((option) => {
+          requireElements("#status-emoji-options [data-emoji]", HTMLButtonElement).forEach((option) => {
             option.setAttribute("aria-pressed", String(option === button));
           });
           statusText.focus();
@@ -1211,13 +1042,13 @@
           statusDraft.dirty = true;
         });
       });
-      document.querySelector("#save-status").addEventListener("click", () => {
+      requireElement("#save-status", HTMLButtonElement).addEventListener("click", () => {
         statusDraft.emoji = statusEmoji.value;
         statusDraft.text = statusText.value;
         statusDraft.dirty = true;
         sendCommand("set_status", { text: statusDraft.text, emoji: statusDraft.emoji, expires_at: null });
       });
-      document.querySelector("#clear-status").addEventListener("click", () => {
+      requireElement("#clear-status", HTMLButtonElement).addEventListener("click", () => {
         statusText.value = "";
         statusEmoji.value = "";
         statusDraft.text = "";
@@ -1226,30 +1057,17 @@
         sendCommand("set_status", { text: "", emoji: "", expires_at: null });
       });
 
-      function vapidKeyBytes(value) {
+      function vapidKeyBytes(value: string): Uint8Array<ArrayBuffer> {
         const padding = "=".repeat((4 - value.length % 4) % 4);
         const raw = atob((value + padding).replace(/-/g, "+").replace(/_/g, "/"));
         return Uint8Array.from(raw, (character) => character.charCodeAt(0));
       }
 
-      async function notificationRequest(path, options = {}) {
-        const participant = new URL(window.location.href).searchParams.get("participant");
-        const separator = path.includes("?") ? "&" : "?";
-        const url = participant ? `${path}${separator}participant=${encodeURIComponent(participant)}` : path;
-        let response = await fetch(url, { credentials: "same-origin", cache: "no-store", ...options });
-        if (response.status === 401 && await refreshSession(true)) {
-          response = await fetch(url, { credentials: "same-origin", cache: "no-store", ...options });
-        }
-        return response;
-      }
-
       async function loadNotificationSettings() {
         try {
-          const response = await notificationRequest("/api/v1/me/notifications", { headers: { accept: "application/json" } });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const settings = await response.json();
+          const settings = await notificationsApi.get();
           notificationMode.value = settings.preferences.mode;
-          notificationDirect.checked = settings.preferences.direct_messages;
+          notificationDirect.checked = settings.preferences.directMessages;
           notificationMentions.checked = settings.preferences.mentions;
           const notificationLabel = settings.preferences.mode === "muted" ? "Varsel: ingen" : settings.preferences.mode === "weekly" ? "Varsel: kvar veke" : "Varsel: direkte";
           notificationSummaryLabel.textContent = notificationLabel;
@@ -1257,21 +1075,22 @@
           notificationSummary.title = notificationLabel;
           notificationSummary.dataset.tooltip = notificationLabel;
           enableNotifications.disabled = !settings.enabled || !("PushManager" in window) || !("Notification" in window) || Notification.permission === "denied";
-          enableNotifications.dataset.publicKey = settings.public_key || "";
+          enableNotifications.dataset.publicKey = settings.publicKey;
           notificationNotice.textContent = !settings.enabled ? "Push er ikkje konfigurert på serveren enno." : settings.subscriptions ? `${settings.subscriptions} eining(ar) tek imot varsel.` : "Varsel er ikkje slått på på denne eininga.";
         } catch (error) {
-          notificationNotice.textContent = `Kunne ikkje hente varselinnstillingar: ${error.message}`;
+          notificationNotice.textContent = `Kunne ikkje hente varselinnstillingar: ${errorMessage(error)}`;
         }
       }
 
-      document.querySelector("#save-notifications").addEventListener("click", async () => {
-        const response = await notificationRequest("/api/v1/me/notifications", {
-          method: "PUT",
-          headers: { "content-type": "application/json", accept: "application/json" },
-          body: JSON.stringify({ mode: notificationMode.value, direct_messages: notificationDirect.checked, mentions: notificationMentions.checked, weekly_weekday: 1 })
-        });
-        notificationNotice.textContent = response.ok ? "Varselinnstillingane er lagra." : `Kunne ikkje lagre (HTTP ${response.status}).`;
-        if (response.ok) loadNotificationSettings();
+      requireElement("#save-notifications", HTMLButtonElement).addEventListener("click", async () => {
+        try {
+          if (notificationMode.value !== "instant" && notificationMode.value !== "weekly" && notificationMode.value !== "muted") throw new Error("Ugyldig varselmodus.");
+          await notificationsApi.save({ mode: notificationMode.value, directMessages: notificationDirect.checked, mentions: notificationMentions.checked });
+          notificationNotice.textContent = "Varselinnstillingane er lagra.";
+          void loadNotificationSettings();
+        } catch (error) {
+          notificationNotice.textContent = `Kunne ikkje lagre: ${errorMessage(error)}`;
+        }
       });
 
       enableNotifications.addEventListener("click", async () => {
@@ -1282,18 +1101,15 @@
           if (permission !== "granted") throw new Error("Varsel vart ikkje tillate");
           let subscription = await registration.pushManager.getSubscription();
           if (!subscription) {
-            subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyBytes(enableNotifications.dataset.publicKey) });
+            const publicKey = enableNotifications.dataset.publicKey;
+            if (!publicKey) throw new Error("Serveren manglar offentleg Push-nøkkel");
+            subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyBytes(publicKey) });
           }
-          const response = await notificationRequest("/api/v1/me/push-subscriptions", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(subscription.toJSON())
-          });
-          if (!response.ok) throw new Error(`serveren svarte HTTP ${response.status}`);
+          await notificationsApi.registerPush(subscription.toJSON());
           notificationNotice.textContent = "Varsel er slått på på denne eininga.";
           loadNotificationSettings();
         } catch (error) {
-          notificationNotice.textContent = `Kunne ikkje slå på varsel: ${error.message}`;
+          notificationNotice.textContent = `Kunne ikkje slå på varsel: ${errorMessage(error)}`;
         }
       });
 
@@ -1313,16 +1129,16 @@
           openDirect.disabled = false;
         }
       });
-      document.querySelector("#show-unread").addEventListener("click", () => showInbox("unread"));
-      document.querySelector("#show-mentions").addEventListener("click", () => showInbox("mentions"));
-      document.querySelector("#show-tasks").addEventListener("click", () => showInbox("tasks"));
+      requireElement("#show-unread", HTMLButtonElement).addEventListener("click", () => showInbox("unread"));
+      requireElement("#show-mentions", HTMLButtonElement).addEventListener("click", () => showInbox("mentions"));
+      requireElement("#show-tasks", HTMLButtonElement).addEventListener("click", () => showInbox("tasks"));
 
       const desktopSidebarStorageKey = "sproyt.desktop-sidebar-collapsed.v1";
       const compactDesktopViewport = window.matchMedia("(min-width: 641px) and (max-width: 900px)");
       function sidebarIsCollapsed() {
         return sidebar.classList.contains("desktop-collapsed");
       }
-      function setDesktopSidebarCollapsed(collapsed, persist = true) {
+      function setDesktopSidebarCollapsed(collapsed: boolean, persist: boolean = true): void {
         const effectiveCollapsed = collapsed;
         sidebar.classList.toggle("desktop-collapsed", effectiveCollapsed);
         sidebar.classList.toggle("desktop-expanded", !effectiveCollapsed);
@@ -1344,7 +1160,7 @@
       setDesktopSidebarCollapsed(storedDesktopSidebarCollapsed || compactDesktopViewport.matches, false);
       desktopSidebarToggle.addEventListener("click", () => setDesktopSidebarCollapsed(!sidebarIsCollapsed()));
       compactDesktopViewport.addEventListener("change", () => setDesktopSidebarCollapsed(compactDesktopViewport.matches || storedDesktopSidebarCollapsed, false));
-      function expandDesktopSidebarAndFocus(control) {
+      function expandDesktopSidebarAndFocus(control: HTMLDetailsElement): boolean {
         if (!sidebarIsCollapsed()) return false;
         setDesktopSidebarCollapsed(false, false);
         control.open = true;
@@ -1352,15 +1168,15 @@
         return true;
       }
       statusEditor.addEventListener("click", (event) => {
-        if (event.target.closest("summary") && expandDesktopSidebarAndFocus(statusEditor)) event.preventDefault();
+        if (event.target instanceof Element && event.target.closest("summary") && expandDesktopSidebarAndFocus(statusEditor)) event.preventDefault();
       });
       notificationEditor.addEventListener("click", (event) => {
-        if (event.target.closest("summary") && expandDesktopSidebarAndFocus(notificationEditor)) event.preventDefault();
+        if (event.target instanceof Element && event.target.closest("summary") && expandDesktopSidebarAndFocus(notificationEditor)) event.preventDefault();
       });
       desktopAdvancedEntry?.addEventListener("click", () => {
         setDesktopSidebarCollapsed(false, false);
         window.requestAnimationFrame(() => {
-          const control = document.querySelector(".advanced-tools button:not([disabled]), .advanced-tools input:not([disabled])");
+          const control = document.querySelector<HTMLElement>(".advanced-tools button:not([disabled]), .advanced-tools input:not([disabled])");
           if (control) control.focus();
           else {
             processTitle.tabIndex = -1;
@@ -1370,7 +1186,7 @@
       });
 
       viewModeToggle.addEventListener("click", () => setRenderMode(renderMode === "raw" ? "view" : "raw"));
-      function setMobileNavigationOpen(open, restoreFocus = false) {
+      function setMobileNavigationOpen(open: boolean, restoreFocus: boolean = false): void {
         if (open) {
           bottomChannelPanel.open = false;
           bottomCirclePanel.open = false;
@@ -1389,7 +1205,7 @@
         composerArea.inert = open;
         mobileNavigationToggle.setAttribute("aria-expanded", String(open));
         if (open) {
-          const firstControl = sidebar.querySelector("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary");
+          const firstControl = sidebar.querySelector<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary");
           firstControl?.focus();
         }
         if (restoreFocus) mobileNavigationToggle.focus();
@@ -1415,7 +1231,7 @@
       });
       document.addEventListener("pointerdown", (event) => {
         if (circleAdminDialog.open) return;
-        if (bottomNavigation.contains(event.target)) return;
+        if (event.target instanceof Node && bottomNavigation.contains(event.target)) return;
         bottomChannelPanel.open = false;
         bottomCirclePanel.open = false;
       });
@@ -1427,7 +1243,7 @@
           return;
         }
         if (event.key === "Escape" && threadPanel.open) {
-          const threadReactionPicker = threadMessages.querySelector(".reaction-picker[open]");
+          const threadReactionPicker = threadMessages.querySelector<HTMLDetailsElement>(".reaction-picker[open]");
           if (threadReactionPicker) {
             event.preventDefault();
             threadReactionPicker.open = false;
@@ -1446,7 +1262,7 @@
           return;
         }
         if (event.key === "Escape") {
-          const reactionPicker = messagesEl.querySelector(".reaction-picker[open]");
+          const reactionPicker = messagesEl.querySelector<HTMLDetailsElement>(".reaction-picker[open]");
           if (reactionPicker) {
             event.preventDefault();
             reactionPicker.open = false;
@@ -1454,7 +1270,7 @@
             reactionPicker.querySelector("summary")?.focus({ preventScroll: true });
             return;
           }
-          const messageMenu = messagesEl.querySelector(".message-menu[open]");
+          const messageMenu = messagesEl.querySelector<HTMLDetailsElement>(".message-menu[open]");
           if (messageMenu) {
             event.preventDefault();
             messageMenu.open = false;
@@ -1463,17 +1279,17 @@
           }
         }
         if (event.key === "Tab" && sidebar.classList.contains("mobile-open")) {
-          const controls = Array.from(sidebar.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary"))
+          const controls = Array.from(sidebar.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary"))
             .filter((control) => !control.hidden && control.offsetParent !== null);
           if (controls.length > 0) {
             const first = controls[0];
-            const last = controls[controls.length - 1];
-            if (event.shiftKey && document.activeElement === first) {
+            const last = controls.at(-1);
+            if (event.shiftKey && first && last && document.activeElement === first) {
               event.preventDefault();
               last.focus();
-            } else if (!event.shiftKey && document.activeElement === last) {
+            } else if (!event.shiftKey && last && document.activeElement === last) {
               event.preventDefault();
-              first.focus();
+              if (first) first.focus();
             }
           }
         }
@@ -1582,31 +1398,35 @@
           URL.revokeObjectURL(url);
           pushSystem("Dataeksporten er laga.");
         } catch (error) {
-          pushSystem(`Kunne ikkje eksportere data: ${error.message}`);
+          pushSystem(`Kunne ikkje eksportere data: ${errorMessage(error)}`);
         }
       });
-      processButtons[0].addEventListener("click", () => setHeartFeature(true));
-      processButtons[1].addEventListener("click", startEventPlanning);
-      processButtons[2].addEventListener("click", refreshProcess);
-      processButtons[3].addEventListener("click", inspectProcess);
-      processButtons[4].addEventListener("click", () => answerProcess("yes"));
-      processButtons[5].addEventListener("click", () => answerProcess("no"));
+      const [enableHeartButton, startProcessButton, refreshProcessButton, inspectProcessButton, processYesButton, processNoButton] = processButtons;
+      if (!enableHeartButton || !startProcessButton || !refreshProcessButton || !inspectProcessButton || !processYesButton || !processNoButton) {
+        throw new Error("Manglar påkravde prosesskontrollar");
+      }
+      enableHeartButton.addEventListener("click", () => setHeartFeature(true));
+      startProcessButton.addEventListener("click", startEventPlanning);
+      refreshProcessButton.addEventListener("click", refreshProcess);
+      inspectProcessButton.addEventListener("click", inspectProcess);
+      processYesButton.addEventListener("click", () => answerProcess("yes"));
+      processNoButton.addEventListener("click", () => answerProcess("no"));
 
-      function slugify(value) {
+      function slugify(value: string): string {
         return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
       }
 
-      function scopedCircleChannelSlug(circleId, value) {
+      function scopedCircleChannelSlug(circleId: string, value: string): string {
         const scope = circleId.replace(/-/g, "");
         const base = slugify(value).replace(/^-+|-+$/g, "") || "kanal";
         return `${scope}-${base.slice(0, 47)}`;
       }
 
-      function invitationValueToToken(value) {
+      function invitationValueToToken(value: string): string {
         const candidate = value.trim();
         if (!candidate) return "";
         const meta = candidate.match(/^\[\[invite:([A-Za-z0-9_-]{32,128})\]\]$/);
-        if (meta) return meta[1];
+        if (meta?.[1]) return meta[1];
         try {
           const url = new URL(candidate, window.location.origin);
           return url.searchParams.get("invite") || candidate;
@@ -1615,197 +1435,9 @@
         }
       }
 
-      function connect(silent = false, previousSocket = null) {
-        if (connectionSupervisor.state.reconnectTimer !== null) {
-          window.clearTimeout(connectionSupervisor.state.reconnectTimer);
-          connectionSupervisor.state.reconnectTimer = null;
-        }
-        if (!previousSocket && connectionSupervisor.state.heartbeatTimer !== null) {
-          window.clearInterval(connectionSupervisor.state.heartbeatTimer);
-          connectionSupervisor.state.heartbeatTimer = null;
-        }
-        if (!previousSocket && connectionSupervisor.state.stableConnectionTimer !== null) {
-          window.clearTimeout(connectionSupervisor.state.stableConnectionTimer);
-          connectionSupervisor.state.stableConnectionTimer = null;
-        }
-        const currentSocket = connectionSupervisor.state.socket;
-        if (!previousSocket && currentSocket && (currentSocket.readyState === WebSocket.OPEN || currentSocket.readyState === WebSocket.CONNECTING)) {
-          return;
-        }
-
-        catchUpTargets.clear();
-        if (activeChannelId && messagesEl.childElementCount > 0) {
-          reconnectScrollOffset = Math.max(0, messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight);
-        }
-        if (!activeChannelId) {
-          requestedChannelSlug = (channelInput.value.trim() || "")
-            .toLowerCase()
-            .replace(/[^a-z0-9_-]+/g, "-");
-        }
-        const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-        const websocketUrl = new URL(`${protocol}://${window.location.host}/ws`);
-        const developmentParticipant = new URLSearchParams(window.location.search).get("participant");
-        if (developmentParticipant) websocketUrl.searchParams.set("participant", developmentParticipant);
-        const nextSocket = new WebSocket(websocketUrl);
-        if (!previousSocket) {
-          connectionSupervisor.state.socket = nextSocket;
-          connectionSupervisor.state.subscribedChannelId = null;
-        }
-        if (!silent) setConnected(false, "Koplar til ...");
-
-        nextSocket.addEventListener("open", () => {
-          if (previousSocket && connectionSupervisor.state.socket !== previousSocket) {
-            nextSocket.close(4000, "superseded session refresh");
-            return;
-          }
-          if (!previousSocket && connectionSupervisor.state.socket !== nextSocket) return;
-          connectionSupervisor.state.socket = nextSocket;
-          if (previousSocket) {
-            const handoff = { previousSocket, nextSocket, timeoutId: null };
-            handoff.timeoutId = window.setTimeout(() => {
-              if (connectionSupervisor.state.socketHandoff !== handoff) return;
-              connectionSupervisor.state.socketHandoff = null;
-              if (previousSocket.readyState === WebSocket.OPEN) {
-                connectionSupervisor.state.socket = previousSocket;
-                connectionSupervisor.state.subscribedChannelId = activeChannelId;
-                setConnected(true, "Tilkopla");
-                nextSocket.close(4001, "session handoff timed out");
-                scheduleSessionRefresh(30);
-                return;
-              }
-              nextSocket.close(4001, "session handoff timed out");
-              connect(true);
-            }, 10_000);
-            connectionSupervisor.state.socketHandoff = handoff;
-            if (activeChannelId) {
-              setConnectionStatus("Gjenopprettar samtalen …");
-            }
-          }
-          reportClientEvent("websocket_connected");
-          if (connectionSupervisor.state.heartbeatTimer !== null) {
-            window.clearInterval(connectionSupervisor.state.heartbeatTimer);
-          }
-          setConnected(true, "Tilkopla");
-          connectionSupervisor.state.stableConnectionTimer = window.setTimeout(() => {
-            if (connectionSupervisor.state.socket === nextSocket && nextSocket.readyState === WebSocket.OPEN) {
-              connectionSupervisor.state.reconnectAttempt = 0;
-            }
-          }, 10_000);
-          sendCommand("hello");
-          sendCommand("list_users");
-          sendCommand("list_my_channels");
-          sendCommand("list_my_circles");
-          sendCommand("list_mentions");
-          sendCommand("list_tasks");
-          if (activeChannelId) sendCommand("subscribe_channel", { channel_id: activeChannelId });
-          connectionSupervisor.state.heartbeatTimer = window.setInterval(() => {
-            sendCommand("ping");
-          }, 20_000);
-          if (previousSocket && !activeChannelId) finishSocketHandoff(nextSocket);
-        });
-
-        nextSocket.addEventListener("message", (event) => {
-          if (connectionSupervisor.state.socket !== nextSocket) return;
-          serverEventMailbox.enqueue(JSON.parse(event.data));
-        });
-
-        nextSocket.addEventListener("close", (event) => {
-          if (connectionSupervisor.state.socketHandoff?.nextSocket === nextSocket) {
-            const handoff = connectionSupervisor.state.socketHandoff;
-            const fallbackSocket = handoff.previousSocket;
-            if (handoff.timeoutId !== null) window.clearTimeout(handoff.timeoutId);
-            connectionSupervisor.state.socketHandoff = null;
-            if (fallbackSocket.readyState === WebSocket.OPEN) {
-              connectionSupervisor.state.socket = fallbackSocket;
-              connectionSupervisor.state.subscribedChannelId = activeChannelId;
-              setConnected(true, "Tilkopla");
-              scheduleSessionRefresh(30);
-              return;
-            }
-          }
-          if (previousSocket && connectionSupervisor.state.socket === previousSocket) {
-            scheduleSessionRefresh(30);
-            return;
-          }
-          if (connectionSupervisor.state.socket !== nextSocket) return;
-          reportClientEvent("websocket_disconnected");
-          connectionSupervisor.state.subscribedChannelId = null;
-          for (const requestId of pendingMessages.keys()) {
-            failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
-          }
-          for (const requestId of [...pendingThreadReplies.keys()]) {
-            failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
-          }
-          if (connectionSupervisor.state.heartbeatTimer !== null) {
-            window.clearInterval(connectionSupervisor.state.heartbeatTimer);
-            connectionSupervisor.state.heartbeatTimer = null;
-          }
-          if (connectionSupervisor.state.stableConnectionTimer !== null) {
-            window.clearTimeout(connectionSupervisor.state.stableConnectionTimer);
-            connectionSupervisor.state.stableConnectionTimer = null;
-          }
-          if (event.code === 1008) {
-            recoverAuthentication().catch(() => scheduleReconnect(event.code, event.reason));
-            return;
-          }
-          scheduleReconnect(event.code, event.reason);
-        });
-
-        nextSocket.addEventListener("error", () => {
-          if (previousSocket && connectionSupervisor.state.socket === previousSocket) return;
-          if (connectionSupervisor.state.socket === nextSocket) {
-            reportClientEvent("websocket_error");
-            setConnected(false, "Mista sambandet");
-          }
-        });
-      }
-
-      function finishSocketHandoff(nextSocket) {
-        if (connectionSupervisor.state.socketHandoff?.nextSocket !== nextSocket || connectionSupervisor.state.socket !== nextSocket) return;
-        const handoff = connectionSupervisor.state.socketHandoff;
-        const previousSocket = handoff.previousSocket;
-        if (handoff.timeoutId !== null) window.clearTimeout(handoff.timeoutId);
-        connectionSupervisor.state.socketHandoff = null;
-        if (previousSocket.readyState === WebSocket.OPEN) {
-          previousSocket.close(4000, "session refreshed");
-        }
-      }
-
-      function scheduleReconnect(closeCode = 1006, closeReason = "") {
-        connectionSupervisor.state.reconnectAttempt += 1;
-        const delay = Math.min(
-          15_000,
-          500 * (2 ** Math.min(connectionSupervisor.state.reconnectAttempt - 1, 5))
-        );
-        const detail = closeReason ? `kode ${closeCode}: ${closeReason}` : `kode ${closeCode}`;
-        setConnected(false, `Fråkopla (${detail}) – prøver igjen om ${Math.ceil(delay / 1000)} sekund`);
-        connectionSupervisor.state.reconnectTimer = window.setTimeout(() => {
-          connectionSupervisor.state.reconnectTimer = null;
-          recoverConnection().catch(() => scheduleReconnect(closeCode, closeReason));
-        }, delay);
-      }
-
-      function sendCommand(type, payload) {
-        const currentSocket = connectionSupervisor.state.socket;
-        if (!currentSocket || currentSocket.readyState !== WebSocket.OPEN) return null;
-        requestNumber += 1;
-        const command = {
-          protocol: "sproyt.chat.v1",
-          request_id: `${browserSessionId}-${requestNumber}`,
-          type
-        };
-        if (payload !== undefined) {
-          command.payload = payload;
-        }
-        currentSocket.send(JSON.stringify(command));
-        pendingCommands.set(command.request_id, type);
-        if (type === "list_my_channels") latestChannelListRequestId = command.request_id;
-        if (type === "list_my_circles") latestCircleListRequestId = command.request_id;
-        return command.request_id;
-      }
-
-      function finishPendingMessage(requestId, message) {
-        const pending = requestId ? pendingMessages.get(requestId) : undefined;
+      function finishPendingMessage(requestId: string | undefined, message: ChatMessage): void {
+        if (!requestId) return;
+        const pending = pendingMessages.get(requestId);
         if (!pending) return;
         if (message?.channel_id !== pending.channelId || message?.body !== pending.body) {
           console.warn("Sendekvitteringa samsvarar ikkje med kommandoen", {
@@ -1826,11 +1458,11 @@
           bodyInput.focus();
         }
         syncComposerState();
-        setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tilkopla");
+        setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
       }
 
-      function pendingMessageToReveal(message, requestId = null) {
-        if (!message || message.sender_id !== currentParticipantId) return null;
+      function pendingMessageToReveal(message: ChatMessage, requestId: string | null = null): PendingMessage | null {
+        if (message.sender_id !== currentParticipantId) return null;
         const requested = requestId ? pendingMessages.get(requestId) : null;
         if (requested?.channelId === message.channel_id && requested.body === message.body) return requested;
         return [...pendingMessages.values()].find((pending) =>
@@ -1838,21 +1470,23 @@
         ) || null;
       }
 
-      function failPendingMessage(requestId, message) {
-        const pending = requestId ? pendingMessages.get(requestId) : undefined;
+      function failPendingMessage(requestId: string | undefined, message: string): void {
+        if (!requestId) return;
+        const pending = pendingMessages.get(requestId);
         if (!pending) return;
         pendingMessages.delete(requestId);
         bodyInput.readOnly = false;
         if (bodyInput.value.trim().length === 0) bodyInput.value = pending.draft;
         persistActiveDraft();
         syncComposerState();
-        setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, `Meldinga vart ikkje sendt: ${message}`);
+        setConnected(connectionSupervisor.snapshot().connected, `Meldinga vart ikkje sendt: ${message}`);
         bodyInput.focus();
       }
 
-      function finishPendingThreadReply(requestId, message) {
-        const pending = requestId ? pendingThreadReplies.get(requestId) : undefined;
-        if (!pending) return false;
+      function finishPendingThreadReply(requestId: string | undefined, message: ChatMessage): void {
+        if (!requestId) return;
+        const pending = pendingThreadReplies.get(requestId);
+        if (!pending) return;
         pendingThreadReplies.delete(requestId);
         const state = threadComposerState(pending.rootId);
         if (message?.parent_message_id !== pending.rootId || message?.channel_id !== pending.channelId || message?.body !== pending.body) {
@@ -1862,19 +1496,20 @@
           if (state) state.draft = pending.draft;
           if (activeThreadRootId === pending.rootId) threadBody.readOnly = false;
           persistThreadDraft(pending.rootId, pending.channelId);
-          setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Tråden fekk ei ugyldig sendekvittering; svaret er bevart");
+          setConnected(connectionSupervisor.snapshot().connected, "Tråden fekk ei ugyldig sendekvittering; svaret er bevart");
           syncThreadComposer();
-          return true;
+          return;
         }
         if (state) state.media = state.media.filter((media) => !pending.mediaIds.includes(media.id));
         if (state) state.draft = "";
         clearThreadDraft(pending.rootId, pending.channelId);
         if (activeThreadRootId === pending.rootId) { threadBody.readOnly = false; renderThreadMediaPreviews(); }
-        return true;
+        return;
       }
 
-      function failPendingThreadReply(requestId, message) {
-        const pending = requestId ? pendingThreadReplies.get(requestId) : undefined;
+      function failPendingThreadReply(requestId: string | undefined, message: string): boolean {
+        if (!requestId) return false;
+        const pending = pendingThreadReplies.get(requestId);
         if (!pending) return false;
         pendingThreadReplies.delete(requestId);
         const state = threadComposerState(pending.rootId);
@@ -1884,17 +1519,17 @@
         if (state) state.draft = pending.draft;
         if (activeThreadRootId === pending.rootId) threadBody.readOnly = false;
         persistThreadDraft(pending.rootId, pending.channelId);
-        setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, `Trådsvaret vart ikkje sendt: ${message}`);
+        setConnected(connectionSupervisor.snapshot().connected, `Trådsvaret vart ikkje sendt: ${message}`);
         syncThreadComposer();
         return true;
       }
 
-      function setConnected(connected, status) {
+      function setConnected(connected: boolean, status: string): void {
         applicationStore.updateConnection({ connected, status });
         setConnectionStatus(status);
         const writableChannel = connected
           && activeChannelId !== null
-          && connectionSupervisor.state.subscribedChannelId === activeChannelId;
+          && connectionSupervisor.snapshot().subscribedChannelId === activeChannelId;
         bodyInput.disabled = !writableChannel;
         sendButton.disabled = !writableChannel || pendingMessages.size > 0;
         attachMediaButton.disabled = !writableChannel || pendingMessages.size > 0;
@@ -1906,10 +1541,10 @@
         updateOnboardingButtons();
       }
 
-      function setConnectionStatus(status) {
+      function setConnectionStatus(status: string): void {
         applicationStore.updateConnection({ status });
         const connection = applicationStore.snapshot.connection;
-        statusEl.textContent = connection.status;
+        connectionStatusText.textContent = connection.status;
         const routine = connection.status === "Tilkopla";
         const reconnecting = /^(Fornyar økta|Gjenopprettar samtalen|Koplar til)/.test(connection.status);
         statusEl.dataset.routine = String(routine);
@@ -1920,7 +1555,7 @@
       }
 
       function updateOnboardingButtons() {
-        const connected = connectionSupervisor.state.socket?.readyState === WebSocket.OPEN;
+        const connected = connectionSupervisor.snapshot().connected;
         createCircleButton.disabled = !connected || circleName.value.trim().length < 2;
         createCircleInvitationButton.disabled = !connected || !circleSelect.value;
         acceptInvitationButton.disabled = !connected || !invitationValueToToken(invitationToken.value);
@@ -1933,28 +1568,16 @@
         inviteChannelMember.disabled = !canManageMember || !memberChannel.circle_id;
       }
 
-      async function processApi(path, method = "GET", body = undefined) {
-        const response = await fetch(path, {
-          method,
-          credentials: "same-origin",
-          headers: body === undefined ? {} : { "content-type": "application/json" },
-          body: body === undefined ? undefined : JSON.stringify(body)
-        });
-        const text = await response.text();
-        if (!response.ok) throw new Error(text || `HTTP ${response.status}`);
-        return text ? JSON.parse(text) : null;
-      }
-
-      async function setHeartFeature(enabled) {
+      async function setHeartFeature(enabled: boolean): Promise<void> {
         if (!circleSelect.value) {
           pushSystem("Vel ein vennekrets før event-planlegging blir slått på.");
           return;
         }
         try {
-          await processApi(`/api/v1/circles/${circleSelect.value}/features/heart-event-planning`, "POST", { enabled });
+          await processesApi.setHeartFeature(circleSelect.value, enabled);
           pushSystem(enabled ? "Event-planlegging er slått på for kretsen." : "Event-planlegging er slått av.");
         } catch (error) {
-          pushSystem(`Kunne ikkje endre event-planlegging: ${error.message}`);
+          pushSystem(`Kunne ikkje endre event-planlegging: ${error instanceof Error ? error.message : "ukjend feil"}`);
         }
       }
 
@@ -1964,18 +1587,10 @@
           return;
         }
         try {
-          const result = await processApi("/api/v1/processes", "POST", {
-            channel_id: activeChannelId,
-            request_id: crypto.randomUUID(),
-            namespace: "sproyt",
-            definition_name: "event-planning",
-            definition_version: "1",
-            metadata: { title: processTitle.value.trim() || "Event-planlegging" }
-          });
-          processId.value = result.process_link_id;
+          processId.value = await processesApi.startEventPlanning({ channelId: activeChannelId, requestId: crypto.randomUUID(), title: processTitle.value.trim() || "Event-planlegging" });
           await refreshProcess();
         } catch (error) {
-          pushSystem(`Kunne ikkje starte planlegging: ${error.message}`);
+          pushSystem(`Kunne ikkje starte planlegging: ${error instanceof Error ? error.message : "ukjend feil"}`);
         }
       }
 
@@ -1983,9 +1598,9 @@
         const id = processId.value.trim();
         if (!id) return;
         try {
-          renderProcess(await processApi(`/api/v1/processes/${id}`));
+          renderProcess(await processesApi.get(id));
         } catch (error) {
-          pushSystem(`Kunne ikkje hente prosess: ${error.message}`);
+          pushSystem(`Kunne ikkje hente prosess: ${error instanceof Error ? error.message : "ukjend feil"}`);
         }
       }
 
@@ -1993,38 +1608,36 @@
         const id = processId.value.trim();
         if (!id) return;
         try {
-          await processApi(`/api/v1/processes/${id}/inspect`, "POST", { request_id: crypto.randomUUID() });
+          await processesApi.inspect(id, crypto.randomUUID());
           pushSystem("Heart-status er lagd i den varige køen. Oppdater status om litt.");
         } catch (error) {
-          pushSystem(`Kunne ikkje hente Heart-status: ${error.message}`);
+          pushSystem(`Kunne ikkje hente Heart-status: ${error instanceof Error ? error.message : "ukjend feil"}`);
         }
       }
 
-      async function answerProcess(answer) {
+      async function answerProcess(answer: "yes" | "no"): Promise<void> {
         const id = processId.value.trim();
         if (!id) return;
         try {
-          await processApi(`/api/v1/processes/${id}/messages`, "POST", {
-            request_id: crypto.randomUUID(), payload: { answer }
-          });
+          await processesApi.answer(id, crypto.randomUUID(), answer);
           pushSystem(`Svaret «${answer}» er lagd i den varige køen.`);
         } catch (error) {
-          pushSystem(`Kunne ikkje svare på prosessen: ${error.message}`);
+          pushSystem(`Kunne ikkje svare på prosessen: ${error instanceof Error ? error.message : "ukjend feil"}`);
         }
       }
 
-      function renderProcess(view) {
+      function renderProcess(view: ProcessView): void {
         processView.replaceChildren();
         processView.hidden = false;
         const heading = document.createElement("strong");
-        heading.textContent = `${view.process.definition_name}: ${view.process.status}`;
+        heading.textContent = `${view.process.definitionName}: ${view.process.status}`;
         processView.append(heading);
         for (const event of view.events) {
           const article = document.createElement("article");
           article.className = "process-event";
           const meta = document.createElement("span");
           meta.className = "meta";
-          meta.textContent = `${event.event_type} · ${event.actor_id}`;
+          meta.textContent = `${event.eventType} · ${event.actorId}`;
           const payload = document.createElement("pre");
           payload.textContent = JSON.stringify(event.payload, null, 2);
           article.append(meta, payload);
@@ -2032,7 +1645,7 @@
         }
       }
 
-      function setRenderMode(mode) {
+      function setRenderMode(mode: "view" | "raw"): void {
         renderMode = mode;
         const showsSource = mode === "raw";
         viewModeToggle.setAttribute("aria-checked", String(showsSource));
@@ -2063,7 +1676,7 @@
             statusEmoji.value = statusDraft.emoji;
             statusText.value = statusDraft.text;
           }
-          document.querySelectorAll("#status-emoji-options [data-emoji]").forEach((button) => {
+          document.querySelectorAll<HTMLElement>("#status-emoji-options [data-emoji]").forEach((button) => {
             button.setAttribute("aria-pressed", String(button.dataset.emoji === statusEmoji.value));
           });
           const statusLabel = own.status_text || own.status_emoji
@@ -2094,15 +1707,15 @@
         }
       }
 
-      function activeProfile(userId) {
+      function activeProfile(userId: string | null | undefined): UserProfile | undefined {
         return knownUsers.find((user) => user.id === userId);
       }
 
-      function directChannelLabel(channel) {
+      function directChannelLabel(channel: Channel | null | undefined): string {
         return activeProfile(channel?.direct_user_id)?.display_name || channel?.name || "Direktesamtale";
       }
 
-      function profileStatus(profile) {
+      function profileStatus(profile: UserProfile | null | undefined): Readonly<{ symbol: string; text: string; label: string }> | null {
         if (!profile || (!profile.status_emoji && !profile.status_text)) return null;
         return {
           symbol: profile.status_emoji || "●",
@@ -2111,7 +1724,7 @@
         };
       }
 
-      function appendProfileStatus(target, userId) {
+      function appendProfileStatus(target: HTMLElement, userId: string | null | undefined): void {
         const status = profileStatus(activeProfile(userId));
         if (!status) return;
         const indicator = document.createElement("span");
@@ -2122,8 +1735,8 @@
         target.append(indicator);
       }
 
-      function refreshVisibleProfileStatuses(userId = null) {
-        document.querySelectorAll("[data-profile-user-id]").forEach((target) => {
+      function refreshVisibleProfileStatuses(userId: string | null = null): void {
+        document.querySelectorAll<HTMLElement>("[data-profile-user-id]").forEach((target) => {
           if (userId && target.dataset.profileUserId !== userId) return;
           target.querySelector(".profile-status")?.remove();
           appendProfileStatus(target, target.dataset.profileUserId);
@@ -2166,7 +1779,7 @@
         if (status.text) conversationPeerStatus.append(document.createTextNode(` ${status.text}`));
       }
 
-      function renderChannelMembers(channelId) {
+      function renderChannelMembers(channelId: string): void {
         const users = knownChannelUsers.get(channelId) || [];
         const query = channelMemberSearch.value
           .normalize("NFKD")
@@ -2213,7 +1826,8 @@
         refreshChannelMemberOptions(channelId);
       }
 
-      function refreshChannelMemberOptions(channelId) {
+      function refreshChannelMemberOptions(channelId: string | null | undefined): void {
+        if (!channelId) return;
         const channel = knownChannels.find((item) => item.id === channelId);
         const memberIds = new Set((knownChannelUsers.get(channelId) || []).map((user) => user.id));
         const eligibleUsers = channel?.circle_id ? (knownCircleUsers.get(channel.circle_id) || []) : knownUsers;
@@ -2227,7 +1841,7 @@
         updateOnboardingButtons();
       }
 
-      function showChannelMemberLoadError(channelId, message) {
+      function showChannelMemberLoadError(channelId: string, message: string): void {
         channelMemberSearch.disabled = false;
         channelMemberCount.textContent = "";
         channelMemberList.replaceChildren();
@@ -2242,7 +1856,7 @@
         channelMemberList.append(item);
       }
 
-      function requestChannelMembers(channelId) {
+      function requestChannelMembers(channelId: string): void {
         channelMemberSearch.disabled = true;
         channelMemberCount.textContent = "";
         channelMemberList.replaceChildren(Object.assign(document.createElement("li"), { textContent: "Lastar …" }));
@@ -2268,12 +1882,12 @@
         if (editDescription && channel.role === "owner") channelDescriptionInput.focus();
       }
 
-      function renderServerEvent(event) {
+      function renderServerEvent(event: WireEvent) {
         if (event.protocol !== "sproyt.chat.v1") {
           pushSystem("Serveren svarte med ein ukjend protokoll.");
           return;
         }
-        const payload = event.payload || {};
+        if (event.type === "pong") return;
         const requestedCommand = event.request_id ? pendingCommands.get(event.request_id) : undefined;
         const pendingInvitation = event.request_id ? pendingInvitationResponses.get(event.request_id) : undefined;
         const inspectedInvitationToken = event.request_id ? pendingInvitationInspections.get(event.request_id) : undefined;
@@ -2286,12 +1900,12 @@
         if (event.request_id) pendingDirectInvitationMessages.delete(event.request_id);
 
         if (event.type === "hello") {
-          currentParticipantId = payload.participant_id;
+          currentParticipantId = event.payload.participant_id;
           return;
         }
 
         if (event.type === "users_listed") {
-          knownUsers = payload.users;
+          knownUsers = event.payload.users;
           renderKnownUsers();
           if (knownChannels.length > 0) renderChannels();
           renderConversationIdentity();
@@ -2301,9 +1915,9 @@
         }
 
         if (event.type === "circle_users_listed") {
-          knownCircleUsers.set(payload.circle_id, payload.users);
+          knownCircleUsers.set(event.payload.circle_id, event.payload.users);
           const memberChannel = knownChannels.find((channel) => channel.id === channelDetailsDialog.dataset.channelId);
-          if (channelDetailsDialog.open && memberChannel?.circle_id === payload.circle_id) {
+          if (channelDetailsDialog.open && memberChannel?.circle_id === event.payload.circle_id) {
             refreshChannelMemberOptions(memberChannel.id);
           }
           updateMentionSuggestions();
@@ -2311,52 +1925,53 @@
         }
 
         if (event.type === "channel_users_listed") {
-          knownChannelUsers.set(payload.channel_id, payload.users);
-          if (channelDetailsDialog.open && channelDetailsDialog.dataset.channelId === payload.channel_id) {
-            renderChannelMembers(payload.channel_id);
+          knownChannelUsers.set(event.payload.channel_id, event.payload.users);
+          if (channelDetailsDialog.open && channelDetailsDialog.dataset.channelId === event.payload.channel_id) {
+            renderChannelMembers(event.payload.channel_id);
           }
           return;
         }
 
         if (event.type === "channel_description_updated") {
-          const channel = knownChannels.find((item) => item.id === payload.channel_id);
-          if (channel) channel.description = payload.description;
+          const channel = knownChannels.find((item) => item.id === event.payload.channel_id);
+          if (channel) channel.description = event.payload.description;
           channelDescriptionStatus.textContent = "Omtalen er lagra.";
           renderConversationIdentity();
           return;
         }
 
         if (event.type === "status_updated") {
-          knownUsers = [payload.profile, ...knownUsers.filter((user) => user.id !== payload.profile.id)];
+          knownUsers = [event.payload.profile, ...knownUsers.filter((user) => user.id !== event.payload.profile.id)];
           for (const [circleId, users] of knownCircleUsers) {
-            if (users.some((user) => user.id === payload.profile.id)) {
-              knownCircleUsers.set(circleId, [payload.profile, ...users.filter((user) => user.id !== payload.profile.id)]);
+            if (users.some((user) => user.id === event.payload.profile.id)) {
+              knownCircleUsers.set(circleId, [event.payload.profile, ...users.filter((user) => user.id !== event.payload.profile.id)]);
             }
           }
           for (const [channelId, users] of knownChannelUsers) {
-            if (users.some((user) => user.id === payload.profile.id)) {
-              knownChannelUsers.set(channelId, [payload.profile, ...users.filter((user) => user.id !== payload.profile.id)]);
+            if (users.some((user) => user.id === event.payload.profile.id)) {
+              knownChannelUsers.set(channelId, [event.payload.profile, ...users.filter((user) => user.id !== event.payload.profile.id)]);
             }
           }
-          if (payload.profile.id === currentParticipantId) statusDraft.dirty = false;
+          if (event.payload.profile.id === currentParticipantId) statusDraft.dirty = false;
           renderKnownUsers();
           renderConversationIdentity();
-          refreshVisibleProfileStatuses(payload.profile.id);
-          if (payload.profile.id === currentParticipantId) {
-            document.querySelector("#status-editor").open = false;
+          refreshVisibleProfileStatuses(event.payload.profile.id);
+          if (event.payload.profile.id === currentParticipantId) {
+            const statusEditor = document.querySelector("#status-editor");
+            if (statusEditor instanceof HTMLDetailsElement) statusEditor.open = false;
           }
           return;
         }
 
         if (event.type === "mentions_listed") {
-          knownMentions = payload.mentions;
+          knownMentions = event.payload.mentions;
           renderPrimaryNavigation();
           renderMentionInbox();
           return;
         }
 
         if (event.type === "mention_read") {
-          const mention = knownMentions.find((item) => item.message.id === payload.message_id);
+          const mention = knownMentions.find((item) => item.message.id === event.payload.message_id);
           if (mention) mention.read = true;
           renderPrimaryNavigation();
           renderMentionInbox();
@@ -2364,20 +1979,20 @@
         }
 
         if (event.type === "tasks_listed") {
-          knownTasks = payload.tasks;
+          knownTasks = event.payload.tasks;
           renderPrimaryNavigation();
           renderTaskInbox();
           return;
         }
 
         if (event.type === "task_created") {
-          knownTasks = [payload.task, ...knownTasks.filter((task) => task.id !== payload.task.id)];
+          knownTasks = [event.payload.task, ...knownTasks.filter((task) => task.id !== event.payload.task.id)];
           showInbox("tasks");
           return;
         }
 
         if (event.type === "task_updated") {
-          knownTasks = knownTasks.map((task) => task.id === payload.task.id ? payload.task : task);
+          knownTasks = knownTasks.map((task) => task.id === event.payload.task.id ? event.payload.task : task);
           renderPrimaryNavigation();
           renderTaskInbox();
           return;
@@ -2388,7 +2003,7 @@
           latestCircleListRequestId = null;
           knownCircles.clear();
           circleSelect.replaceChildren(new Option("Ingen", ""));
-          payload.circles.forEach(([circle, role]) => {
+          event.payload.circles.forEach(([circle, role]) => {
             knownCircles.set(circle.id, { ...circle, role });
             circleSelect.add(new Option(`${circle.name} (${role})`, circle.id));
           });
@@ -2399,28 +2014,27 @@
           return;
         }
         if (event.type === "circle_created") {
-          knownCircles.set(payload.circle.id, { ...payload.circle, role: "owner" });
-          circleSelect.add(new Option(`${payload.circle.name} (owner)`, payload.circle.id));
-          circleSelect.value = payload.circle.id;
-          setActiveCircle(payload.circle.id);
-          pushSystem(`Vennekretsen ${payload.circle.name} er oppretta.`);
-          onboardingNotice.textContent = `${payload.circle.name} er klar. No kan du invitere vener.`;
+          knownCircles.set(event.payload.circle.id, { ...event.payload.circle, role: "owner" });
+          circleSelect.add(new Option(`${event.payload.circle.name} (owner)`, event.payload.circle.id));
+          circleSelect.value = event.payload.circle.id;
+          setActiveCircle(event.payload.circle.id);
+          pushSystem(`Vennekretsen ${event.payload.circle.name} er oppretta.`);
+          onboardingNotice.textContent = `${event.payload.circle.name} er klar. No kan du invitere vener.`;
           circleName.value = "";
           updateOnboardingButtons();
           sendCommand("create_channel", {
-            slug: scopedCircleChannelSlug(payload.circle.id, "prat"), name: "Prat", kind: "private", circle_id: payload.circle.id
+            slug: scopedCircleChannelSlug(event.payload.circle.id, "prat"), name: "Prat", kind: "private", circle_id: event.payload.circle.id
           });
           return;
         }
         if (event.type === "circle_deleted") {
-          const deletedCircleId = payload.circle_id;
+          const deletedCircleId = event.payload.circle_id;
           forgetCircleChannel(deletedCircleId);
           const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
           if (activeChannel?.circle_id === deletedCircleId) {
-            activeChannelId = null;
-            connectionSupervisor.state.subscribedChannelId = null;
-            restoredChannelId = null;
-            try { window.localStorage.removeItem(activeConversationKey); } catch (_) {}
+            navigation.clearActiveChannel(activeChannelId);
+            syncRenderedNavigation();
+            connectionSupervisor.clearSubscribedChannel();
           }
           clearActiveCircle(deletedCircleId);
           sendCommand("list_my_circles");
@@ -2429,17 +2043,16 @@
           return;
         }
         if (event.type === "circle_left") {
-          const departedCircleId = payload.circle_id;
+          const departedCircleId = event.payload.circle_id;
           forgetCircleChannel(departedCircleId);
           if (circleChannelDialog.open) circleChannelDialog.close();
           knownCircles.delete(departedCircleId);
           knownChannels = knownChannels.filter((channel) => channel.circle_id !== departedCircleId);
           clearActiveCircle(departedCircleId);
           if (activeChannelId && !knownChannels.some((channel) => channel.id === activeChannelId)) {
-            activeChannelId = null;
-            connectionSupervisor.state.subscribedChannelId = null;
-            restoredChannelId = null;
-            try { window.localStorage.removeItem(activeConversationKey); } catch (_) {}
+            navigation.clearActiveChannel(activeChannelId);
+            syncRenderedNavigation();
+            connectionSupervisor.clearSubscribedChannel();
           }
           onboardingNotice.textContent = "Du har forlate vennekretsen.";
           sendCommand("list_my_circles");
@@ -2447,7 +2060,7 @@
           return;
         }
         if (event.type === "circle_invitation_created") {
-          invitationToken.value = `${window.location.origin}/?invite=${encodeURIComponent(payload.invitation.token)}`;
+          invitationToken.value = `${window.location.origin}/?invite=${encodeURIComponent(event.payload.invitation.token)}`;
           copyInvitation.hidden = false;
           onboardingNotice.textContent = "Invitasjonslenkja er klar. Kopier og send henne til venen din.";
           updateOnboardingButtons();
@@ -2457,31 +2070,30 @@
           if (invitationRecipient) {
             const directRequestId = sendCommand("open_direct_channel", { user_id: invitationRecipient });
             if (directRequestId) {
-              pendingDirectInvitationMessages.set(directRequestId, `[[invite:${payload.invitation.token}]]`);
+              pendingDirectInvitationMessages.set(directRequestId, `[[invite:${event.payload.invitation.token}]]`);
               channelMemberStatus.textContent = "Opnar direktemeldinga …";
             }
             return;
           }
-          invitationToken.value = `[[invite:${payload.invitation.token}]]`;
+          invitationToken.value = `[[invite:${event.payload.invitation.token}]]`;
           copyInvitation.hidden = false;
           onboardingNotice.textContent = "Invitasjonsmeldinga er klar. Kopier henne inn i ein samtale.";
           updateOnboardingButtons();
           return;
         }
         if (event.type === "invitation_inspected" || event.type === "invitation_declined") {
-          invitationInspectionCache.set(payload.token, { status: "resolved", invitation: payload.invitation });
-          updateInvitationCards(payload.token, payload.invitation);
+          invitationInspectionCache.set(event.payload.token, { status: "resolved", invitation: { ...event.payload.invitation, response: event.payload.invitation.response ?? undefined } });
+          updateInvitationCards(event.payload.token, event.payload.invitation);
           return;
         }
         if (event.type === "invitation_accepted") {
-          invitationInspectionCache.set(payload.token, { status: "resolved", invitation: payload.invitation });
-          markInvitationAccepted(payload.token);
+          markInvitationAccepted(event.payload.token);
           onboardingNotice.textContent = "Du er med i vennekretsen. Samtalane blir lasta inn no.";
           invitationToken.value = "";
           copyInvitation.hidden = true;
           sendCommand("list_my_circles");
           sendCommand("list_my_channels");
-          pendingInvitationChannel = payload.invitation.channel.id;
+          pendingInvitationChannel = event.payload.invitation.channel.id;
           return;
         }
         if (event.type === "circle_invitation_accepted") {
@@ -2499,7 +2111,7 @@
         if (event.type === "channels_listed") {
           if (event.request_id !== latestChannelListRequestId) return;
           latestChannelListRequestId = null;
-          knownChannels = payload.channels;
+          knownChannels = event.payload.channels;
           renderChannels();
           renderConversationIdentity();
           updateAgentAccessControls();
@@ -2516,19 +2128,20 @@
         }
 
         if (event.type === "channel_created") {
-          knownChannels.push({ ...payload.channel, role: "owner", latest_sequence: 0, last_read_sequence: 0 });
+          const channel = channelFromBase(event.payload.channel, "owner");
+          knownChannels.push(channel);
           renderChannels();
-          selectChannel(payload.channel);
+          selectChannel(channel);
           managedChannelName.value = "";
           if (circleChannelDialog.open) circleChannelDialog.close();
-          onboardingNotice.textContent = `Kanalen ${payload.channel.name} er klar.`;
+          onboardingNotice.textContent = `Kanalen ${event.payload.channel.name} er klar.`;
           updateOnboardingButtons();
           if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
           return;
         }
 
         if (event.type === "joinable_channels_listed") {
-          const channels = payload.channels.map((item) => ({ ...item.channel, description: item.description || "" }));
+          const channels = event.payload.channels.map((item) => channelFromBase(item.channel, "member", item.description));
           if (managedCircleId && channels.every((channel) => channel.circle_id === managedCircleId)) {
             renderManagedJoinableChannels(channels);
           }
@@ -2537,7 +2150,7 @@
         }
 
         if (event.type === "membership_joined") {
-          pendingInvitationChannel = payload.membership.channel_id;
+          pendingInvitationChannel = event.payload.membership.channel_id;
           if (circleChannelDialog.open) circleChannelDialog.close();
           sendCommand("list_my_channels");
           if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
@@ -2545,11 +2158,10 @@
         }
 
         if (event.type === "membership_left") {
-          if (payload.channel_id === activeChannelId) {
-            activeChannelId = null;
-            connectionSupervisor.state.subscribedChannelId = null;
-            restoredChannelId = null;
-            try { window.localStorage.removeItem(activeConversationKey); } catch (_) {}
+          if (event.payload.channel_id === activeChannelId) {
+            navigation.clearActiveChannel(activeChannelId);
+            syncRenderedNavigation();
+            connectionSupervisor.clearSubscribedChannel();
           }
           onboardingNotice.textContent = "Du har forlate kanalen. Du kan bli med igjen dersom han er open.";
           sendCommand("list_my_channels");
@@ -2560,17 +2172,17 @@
         if (event.type === "channel_member_added") {
           channelMemberStatus.textContent = "Brukaren er lagd til i kanalen.";
           channelMember.value = "";
-          if (channelDetailsDialog.open && channelDetailsDialog.dataset.channelId === payload.membership.channel_id) {
-            sendCommand("list_channel_users", { channel_id: payload.membership.channel_id });
+          if (channelDetailsDialog.open && channelDetailsDialog.dataset.channelId === event.payload.membership.channel_id) {
+            sendCommand("list_channel_users", { channel_id: event.payload.membership.channel_id });
           }
           updateOnboardingButtons();
           return;
         }
 
         if (event.type === "direct_channel_opened") {
-          let channel = knownChannels.find((item) => item.id === payload.channel.id);
+          let channel = knownChannels.find((item) => item.id === event.payload.channel.id);
           if (!channel) {
-            channel = { ...payload.channel, latest_sequence: 0, last_read_sequence: 0, role: "member" };
+            channel = channelFromBase(event.payload.channel, "member");
             knownChannels.push(channel);
           }
           renderChannels();
@@ -2586,18 +2198,18 @@
         }
 
         if (event.type === "subscription_started") {
-          if (payload.channel_id !== activeChannelId) {
-            sendCommand("unsubscribe_channel", { channel_id: payload.channel_id });
+          if (event.payload.channel_id !== activeChannelId) {
+            sendCommand("unsubscribe_channel", { channel_id: event.payload.channel_id });
             return;
           }
-          connectionSupervisor.state.subscribedChannelId = payload.channel_id;
+          connectionSupervisor.setSubscribedChannel(event.payload.channel_id);
           setConnectionStatus("Tilkopla");
           renderConversationIdentity();
-          payload.history.forEach(appendTimelineMessage);
-          sendCommand("list_thread_summaries", { channel_id: payload.channel_id });
-          historyHasMore = payload.history.length === historyPageSize;
+          event.payload.history.forEach(appendTimelineMessage);
+          sendCommand("list_thread_summaries", { channel_id: event.payload.channel_id });
+          historyHasMore = event.payload.history.length === historyPageSize;
           historyLoading = false;
-          acknowledgeLatest(payload.channel_id, payload.history);
+          acknowledgeLatest(event.payload.channel_id, event.payload.history);
           bodyInput.disabled = false;
           sendButton.disabled = false;
           attachMediaButton.disabled = false;
@@ -2614,30 +2226,29 @@
           }
           if (scrollOffset !== null && scrollOffset >= 80) restoreConversationScrollOffset(scrollOffset);
           updateAgentAccessControls();
-          finishSocketHandoff(connectionSupervisor.state.socket);
           return;
         }
 
         if (event.type === "subscription_ended") {
-          if (payload.channel_id === connectionSupervisor.state.subscribedChannelId) {
-            connectionSupervisor.state.subscribedChannelId = null;
-            setConnected(connectionSupervisor.state.socket?.readyState === WebSocket.OPEN, "Koplar til samtalen …");
+          if (event.payload.channel_id === connectionSupervisor.snapshot().subscribedChannelId) {
+            connectionSupervisor.clearSubscribedChannel(event.payload.channel_id);
+            setConnected(connectionSupervisor.snapshot().connected, "Koplar til samtalen …");
           }
           return;
         }
 
         if (event.type === "channel_reactions_listed") {
-          if (payload.channel_id === activeChannelId) {
-            replaceChannelReactions(payload.reactions);
+          if (event.payload.channel_id === activeChannelId) {
+            replaceChannelReactions(event.payload.reactions);
             renderTimeline({ preserveScroll: true });
           }
           return;
         }
 
         if (event.type === "message_reaction_changed") {
-          if (payload.change.channel_id === activeChannelId) {
-            applyReactionChange(payload.change);
-            if (!patchMessageReactions(payload.change.message_id)) {
+          if (event.payload.change.channel_id === activeChannelId) {
+            applyReactionChange(event.payload.change);
+            if (!patchMessageReactions(event.payload.change.message_id)) {
               renderTimeline({ preserveScroll: true });
             }
           }
@@ -2645,40 +2256,40 @@
         }
 
         if (event.type === "thread_summaries_listed") {
-          if (payload.channel_id !== activeChannelId) return;
+          if (event.payload.channel_id !== activeChannelId) return;
           threadSummaries.clear();
-          for (const summary of payload.summaries) threadSummaries.set(summary.root_message_id, summary);
+          for (const summary of event.payload.summaries) threadSummaries.set(summary.root_message_id, summary);
           renderTimeline({ preserveScroll: true });
           return;
         }
 
         if (event.type === "thread_loaded") {
-          const root = payload.messages.find((message) => message.id === payload.root_message_id);
-          const replies = payload.messages.filter((message) => message.parent_message_id === payload.root_message_id);
-          if (root) threadRoots.set(payload.root_message_id, root);
-          threadReplies.set(payload.root_message_id, replies);
-          if (activeThreadRootId === payload.root_message_id) {
+          const root = event.payload.messages.find((message) => message.id === event.payload.root_message_id);
+          const replies = event.payload.messages.filter((message) => message.parent_message_id === event.payload.root_message_id);
+          if (root) threadRoots.set(event.payload.root_message_id, root);
+          threadReplies.set(event.payload.root_message_id, replies);
+          if (activeThreadRootId === event.payload.root_message_id) {
             renderThread();
             const latest = replies.at(-1)?.sequence;
-            if (latest !== undefined) sendCommand("mark_thread_read", { root_message_id: payload.root_message_id, sequence: latest });
+            if (latest !== undefined) sendCommand("mark_thread_read", { root_message_id: event.payload.root_message_id, sequence: latest });
           }
           return;
         }
 
         if (event.type === "thread_read_updated") {
-          threadSummaries.set(payload.summary.root_message_id, payload.summary);
+          threadSummaries.set(event.payload.summary.root_message_id, event.payload.summary);
           renderTimeline({ preserveScroll: true });
           return;
         }
 
         if (event.type === "chat") {
-          const chatEvent = payload.event;
+          const chatEvent = event.payload.event;
           if (chatEvent.type === "message_accepted") {
             updateLatestSequence(chatEvent.message.channel_id, chatEvent.message.sequence);
             if (chatEvent.message.channel_id === activeChannelId) {
               const revealOwnMessage = pendingMessageToReveal(chatEvent.message);
               appendTimelineMessage(chatEvent.message);
-              acknowledgeLatest(activeChannelId, [chatEvent.message]);
+              acknowledgeLatest(chatEvent.message.channel_id, [chatEvent.message]);
               renderTimeline({ revealMessageId: revealOwnMessage ? chatEvent.message.id : null });
             } else {
               renderChannels();
@@ -2706,43 +2317,43 @@
         }
 
         if (event.type === "message_accepted") {
-          updateLatestSequence(payload.message.channel_id, payload.message.sequence);
-          if (payload.message.channel_id === activeChannelId) {
-            const revealOwnMessage = pendingMessageToReveal(payload.message, event.request_id);
-            appendTimelineMessage(payload.message);
-            acknowledgeLatest(activeChannelId, [payload.message]);
-            renderTimeline({ revealMessageId: revealOwnMessage ? payload.message.id : null });
+          updateLatestSequence(event.payload.message.channel_id, event.payload.message.sequence);
+          if (event.payload.message.channel_id === activeChannelId) {
+            const revealOwnMessage = pendingMessageToReveal(event.payload.message, event.request_id);
+            appendTimelineMessage(event.payload.message);
+            acknowledgeLatest(event.payload.message.channel_id, [event.payload.message]);
+              renderTimeline({ revealMessageId: revealOwnMessage ? event.payload.message.id : null });
           } else {
             renderChannels();
           }
-          finishPendingMessage(event.request_id, payload.message);
-          finishPendingThreadReply(event.request_id, payload.message);
+          finishPendingMessage(event.request_id, event.payload.message);
+          finishPendingThreadReply(event.request_id, event.payload.message);
           return;
         }
 
         if (event.type === "message_edited") {
-          if (payload.message.channel_id === activeChannelId) {
-            replaceTimelineMessage(payload.message);
+          if (event.payload.message.channel_id === activeChannelId) {
+            replaceTimelineMessage(event.payload.message);
             renderTimeline({ preserveScroll: true });
           }
           return;
         }
 
         if (event.type === "message_deleted") {
-          messageReactions.delete(payload.message.id);
-          if (payload.message.channel_id === activeChannelId) {
-            replaceTimelineMessage(payload.message);
+          messageReactions.delete(event.payload.message.id);
+          if (event.payload.message.channel_id === activeChannelId) {
+            replaceTimelineMessage(event.payload.message);
             renderTimeline({ preserveScroll: true });
           }
           return;
         }
 
         if (event.type === "lagged") {
-          pushSystem(`Klienten låg etter og hoppa over ${payload.skipped} event; lastar inn att.`);
-          catchUpTargets.set(payload.channel_id, payload.latest_known_sequence);
+          pushSystem(`Klienten låg etter og hoppa over ${event.payload.skipped} event; lastar inn att.`);
+          catchUpTargets.set(event.payload.channel_id, event.payload.latest_known_sequence);
           sendCommand("load_recent_messages", {
-            channel_id: payload.channel_id,
-            after: payload.last_seen_sequence,
+            channel_id: event.payload.channel_id,
+            after: event.payload.last_seen_sequence,
             limit: 200
           });
           return;
@@ -2752,32 +2363,32 @@
           const olderHistory = historyRequestIds.delete(event.request_id);
           if (olderHistory) {
             historyLoading = false;
-            if (payload.channel_id !== activeChannelId) return;
-            historyHasMore = payload.messages.length === historyPageSize;
-            prependTimelineMessages(payload.messages);
+            if (event.payload.channel_id !== activeChannelId) return;
+            historyHasMore = event.payload.messages.length === historyPageSize;
+            prependTimelineMessages(event.payload.messages);
             renderTimeline({ preserveScroll: true });
             return;
           }
-          payload.messages.forEach(appendTimelineMessage);
-          acknowledgeLatest(payload.channel_id, payload.messages);
+          event.payload.messages.forEach(appendTimelineMessage);
+          acknowledgeLatest(event.payload.channel_id, event.payload.messages);
           renderTimeline();
-          const target = catchUpTargets.get(payload.channel_id);
-          const last = payload.messages.at(-1);
+          const target = catchUpTargets.get(event.payload.channel_id);
+          const last = event.payload.messages.at(-1);
           if (target !== undefined && last && last.sequence < target) {
             sendCommand("load_recent_messages", {
-              channel_id: payload.channel_id,
+              channel_id: event.payload.channel_id,
               after: last.sequence,
               limit: 200
             });
           } else if (target !== undefined) {
-            catchUpTargets.delete(payload.channel_id);
+            catchUpTargets.delete(event.payload.channel_id);
           }
           return;
         }
 
         if (event.type === "read_marker_updated") {
-          const channel = knownChannels.find((item) => item.id === payload.membership.channel_id);
-          if (channel) channel.last_read_sequence = payload.membership.last_read_sequence;
+          const channel = knownChannels.find((item) => item.id === event.payload.membership.channel_id);
+          if (channel) channel.last_read_sequence = event.payload.membership.last_read_sequence;
           renderChannels();
           return;
         }
@@ -2790,25 +2401,25 @@
             console.error("Kunne ikkje laste eldre meldingar", {
               requestId: event.request_id,
               command: requestedCommand,
-              code: payload.code,
-              message: payload.message,
+              code: event.payload.code,
+              message: event.payload.message,
               channelId: activeChannelId
             });
             setConnectionStatus("Kunne ikkje laste eldre meldingar. Nyare meldingar er framleis tilgjengelege.");
             return;
           }
           if (requestedCommand === "send_message") {
-            const message = payload.message || payload.code || "ukjend feil";
+            const message = event.payload.message || event.payload.code || "ukjend feil";
             if (!failPendingThreadReply(event.request_id, message)) {
               failPendingMessage(event.request_id, message);
             }
-            pushSystem(payload.message || payload.code);
+            pushSystem(event.payload.message || event.payload.code);
             return;
           }
           if (requestedCommand === "accept_invitation") {
-            const message = payload.code === "not_found"
+            const message = event.payload.code === "not_found"
               ? "Invitasjonen finst ikkje eller er ikkje gyldig lenger. Be venen din lage ei ny lenkje."
-              : payload.code === "permission_denied"
+              : event.payload.code === "permission_denied"
                 ? "Du må først vere medlem i vennekretsen før du kan bli med i denne kanalen."
                 : "Du kunne ikkje bli med med denne invitasjonen. Kontroller lenkja eller be om ei ny.";
             onboardingNotice.textContent = message;
@@ -2821,12 +2432,12 @@
             return;
           }
           if (requestedCommand === "inspect_invitation") {
-            const message = payload.code === "not_found"
+            const message = event.payload.code === "not_found"
               ? "Invitasjonen finst ikkje eller er ikkje gyldig lenger."
               : "Invitasjonen kunne ikkje hentast no.";
             if (inspectedInvitationToken) {
               invitationInspectionCache.set(inspectedInvitationToken, {
-                status: payload.code === "not_found" ? "missing" : "failed",
+                status: event.payload.code === "not_found" ? "missing" : "failed",
                 message
               });
               showInvitationError(inspectedInvitationToken, message);
@@ -2844,18 +2455,18 @@
             return;
           }
           if (requestedCommand === "update_channel_description") {
-            channelDescriptionStatus.textContent = payload.code === "permission_denied"
+            channelDescriptionStatus.textContent = event.payload.code === "permission_denied"
               ? "Berre eigaren kan endre kanalomtalen."
               : "Kanalomtalen kunne ikkje lagrast. Prøv igjen.";
             return;
           }
           if (requestedCommand === "list_channel_users") {
             const channelId = channelDetailsDialog.dataset.channelId;
-            showChannelMemberLoadError(channelId, "Medlemslista kunne ikkje lastast.");
+            if (channelId) showChannelMemberLoadError(channelId, "Medlemslista kunne ikkje lastast.");
             return;
           }
           if (requestedCommand === "add_channel_member") {
-            channelMemberStatus.textContent = payload.code === "permission_denied"
+            channelMemberStatus.textContent = event.payload.code === "permission_denied"
               ? "Brukaren må vere medlem av kretsen, og du må ha tilgang til å leggje til medlemmer."
               : "Brukaren kunne ikkje leggjast til. Prøv igjen.";
             return;
@@ -2868,9 +2479,9 @@
             if (directInvitationMessage) {
               channelMemberStatus.textContent = "Direktemeldinga kunne ikkje opnast. Prøv igjen.";
             } else {
-              directMessageStatus.textContent = payload.code === "not_found"
+              directMessageStatus.textContent = event.payload.code === "not_found"
                 ? "Brukaren finst ikkje lenger. Lukk dialogen og prøv på nytt."
-                : payload.code === "conflict"
+                : event.payload.code === "conflict"
                   ? "Du kan ikkje starte ei direktesamtale med deg sjølv."
                   : "Samtalen kunne ikkje opnast. Prøv igjen.";
               openDirect.disabled = !directUser.value;
@@ -2882,7 +2493,7 @@
             return;
           }
           if (requestedCommand === "leave_channel") {
-            onboardingNotice.textContent = payload.code === "permission_denied"
+            onboardingNotice.textContent = event.payload.code === "permission_denied"
               ? "Standardkanalen Prat kan ikkje forlatast."
               : "Kanalen kunne ikkje forlatast. Prøv igjen.";
             return;
@@ -2890,19 +2501,19 @@
           console.error("Sprøyt-kommando feila", {
             requestId: event.request_id,
             command: requestedCommand || "ukjend",
-            code: payload.code,
-            message: payload.message,
+            code: event.payload.code,
+            message: event.payload.message,
             channelId: activeChannelId
           });
           const passiveCommands = new Set([
             "list_channel_reactions", "list_thread_summaries", "mark_read",
             "list_users", "list_my_channels", "list_my_circles", "list_mentions", "list_tasks"
           ]);
-          if (passiveCommands.has(requestedCommand)) {
+          if (passiveCommands.has(requestedCommand ?? "")) {
             setConnectionStatus(`Kunne ikkje oppdatere samtalen (${requestedCommand || "ukjend"}).`);
             return;
           }
-          pushSystem(`${requestedCommand || "Kommando"}: ${payload.message || payload.code}`);
+          pushSystem(`${requestedCommand || "Kommando"}: ${event.payload.message || event.payload.code}`);
         }
       }
 
@@ -2914,7 +2525,7 @@
       function renderBottomNavigation() {
         bottomChannelList.replaceChildren();
         bottomCircleContent.replaceChildren();
-        const activeCircle = knownCircles.get(activeCircleId);
+        const activeCircle = activeCircleId ? knownCircles.get(activeCircleId) : undefined;
         const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
         const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.direct_user_id);
         const directChannels = knownChannels.filter((channel) => channel.direct_user_id);
@@ -2927,9 +2538,13 @@
           ? (activeChannel.direct_user_id ? directChannelLabel(activeChannel) : `# ${activeChannel.name}`)
           : (showingDirect ? "Direktesamtalar" : "# Kanal");
         const circleLabel = activeCircle?.name || (showingDirect ? "Direkte" : "Felles");
-        bottomChannelToggle.querySelector(".bottom-navigation-label").textContent = channelLabel;
+        const bottomChannelLabel = bottomChannelToggle.querySelector(".bottom-navigation-label");
+        if (!(bottomChannelLabel instanceof HTMLElement)) throw new Error("Manglar kanalmerke i botnnavigasjonen");
+        bottomChannelLabel.textContent = channelLabel;
         bottomChannelToggle.setAttribute("aria-label", `Vel kanal. Aktiv kanal: ${activeChannelInScope ? (activeChannel.direct_user_id ? directChannelLabel(activeChannel) : activeChannel.name) : "ingen"}`);
-        bottomCircleToggle.querySelector(".bottom-navigation-label").textContent = `◎ ${circleLabel}`;
+        const bottomCircleLabel = bottomCircleToggle.querySelector(".bottom-navigation-label");
+        if (!(bottomCircleLabel instanceof HTMLElement)) throw new Error("Manglar områdemerke i botnnavigasjonen");
+        bottomCircleLabel.textContent = `◎ ${circleLabel}`;
         bottomCircleToggle.setAttribute("aria-label", `Vel område. Aktivt område: ${circleLabel}`);
 
         const sharedUnreadCount = sharedChannels.reduce(
@@ -2985,14 +2600,15 @@
           ? "Ingen direktesamtalar enno."
           : (activeCircleId ? "Ingen kanalar i den valde kretsen." : "Ingen felleskanalar enno.");
         appendBottomChannelButtons(scopedChannels, bottomChannelList, emptyText);
-        if (activeCircleId) {
+        const selectedCircleId = activeCircleId;
+        if (selectedCircleId) {
           const discover = document.createElement("button");
           discover.type = "button";
           discover.className = "channel-group-action";
           discover.textContent = "+ Finn fleire kanalar";
           discover.addEventListener("click", () => {
             closeBottomNavigation(bottomChannelPanel, bottomChannelToggle);
-            openChannelManagement(activeCircleId);
+            openChannelManagement(selectedCircleId);
           });
           bottomChannelList.append(discover);
           if (activeChannel?.circle_id === activeCircleId && activeChannel.name.trim().toLocaleLowerCase() !== "prat") {
@@ -3020,12 +2636,12 @@
         }
       }
 
-      function activateRootScope(scope) {
+      function activateRootScope(scope: "shared" | "direct"): void {
         const channels = knownChannels.filter((channel) => scope === "direct"
           ? Boolean(channel.direct_user_id)
           : (!channel.circle_id && !channel.direct_user_id));
-        clearActiveCircle();
-        activeRootScope = scope;
+        navigation.activateRootScope(scope);
+        syncRenderedNavigation();
         circleSelect.value = "";
         closeBottomNavigation(bottomCirclePanel, bottomCircleToggle);
         const current = channels.find((channel) => channel.id === activeChannelId);
@@ -3034,7 +2650,7 @@
         else renderChannels();
       }
 
-      function updateCircleToolButtons(sharedUnreadCount, directUnreadCount) {
+      function updateCircleToolButtons(sharedUnreadCount: number, directUnreadCount: number): void {
         circleToolDirect.setAttribute("aria-pressed", String(!activeCircleId && activeRootScope === "direct"));
         circleToolShared.setAttribute("aria-pressed", String(!activeCircleId && activeRootScope === "shared"));
         circleToolDirect.classList.toggle("has-unread", directUnreadCount > 0);
@@ -3047,7 +2663,7 @@
           : "Felles");
       }
 
-      function appendBottomChannelButtons(channels, target, emptyText = "", panel = bottomChannelPanel, toggle = bottomChannelToggle) {
+      function appendBottomChannelButtons(channels: Channel[], target: HTMLElement, emptyText = "", panel: HTMLDetailsElement = bottomChannelPanel, toggle: HTMLElement = bottomChannelToggle): void {
         if (channels.length === 0 && emptyText) {
           const empty = document.createElement("p");
           empty.className = "status";
@@ -3077,12 +2693,12 @@
         }
       }
 
-      function closeBottomNavigation(panel, toggle) {
+      function closeBottomNavigation(panel: HTMLDetailsElement, toggle: HTMLElement): void {
         panel.open = false;
         toggle.focus();
       }
 
-      function openChannelManagement(circleId) {
+      function openChannelManagement(circleId: string): void {
         const circle = knownCircles.get(circleId);
         if (!circle) return;
         managedCircleId = circleId;
@@ -3101,7 +2717,7 @@
         window.setTimeout(() => circleChannelClose.focus(), 0);
       }
 
-      function renderManagedJoinableChannels(channels) {
+      function renderManagedJoinableChannels(channels: Channel[]): void {
         circleJoinableList.replaceChildren();
         if (channels.length === 0) {
           const empty = document.createElement("p");
@@ -3131,13 +2747,14 @@
         }
       }
 
-      function updateNavigationCount(id, count, label) {
-        const badge = document.querySelector(`#${id}`);
+      function updateNavigationCount(id: string, count: number, label: string): void {
+        const badge = requireElement(`#${id}`, HTMLElement);
         const button = badge.closest("button");
+        if (!(button instanceof HTMLButtonElement)) return;
         badge.hidden = count === 0;
         badge.textContent = count === 0 ? "" : approximateUnreadCount(count);
         badge.setAttribute("aria-label", `${count} ${label}`);
-        const navigationLabel = button.dataset.navigationLabel;
+        const navigationLabel = button.dataset.navigationLabel || button.textContent || "Navigasjon";
         const buttonLabel = count === 0 ? navigationLabel : `${navigationLabel}: ${count} ${label}`;
         button.setAttribute("aria-label", buttonLabel);
         button.title = buttonLabel;
@@ -3153,26 +2770,29 @@
         updateNavigationCount("unread-count", unreadCount, "uleste meldingar");
         updateNavigationCount("mention-count", knownMentions.filter((mention) => !mention.read).length, "uleste omtalar");
         updateNavigationCount("task-count", knownTasks.filter((task) => task.status !== "done").length, "opne oppgåver");
-        for (const kind of ["unread", "mentions", "tasks"]) {
-          document.querySelector(`#show-${kind}`).setAttribute("aria-current", activeInboxKind === kind ? "page" : "false");
+        const inboxKinds: Array<"unread" | "mentions" | "tasks"> = ["unread", "mentions", "tasks"];
+        for (const kind of inboxKinds) {
+          const navigationButton = document.querySelector(`#show-${kind}`);
+          if (navigationButton instanceof HTMLButtonElement) navigationButton.setAttribute("aria-current", activeInboxKind === kind ? "page" : "false");
         }
       }
 
-      function approximateUnreadCount(count) {
+      function approximateUnreadCount(count: number): string {
         if (count < 25) return String(count);
         if (count < 50) return "25+";
         if (count < 100) return "50+";
         return "100+";
       }
 
-      function showInbox(kind) {
-        if (connectionSupervisor.state.subscribedChannelId) {
+      function showInbox(kind: "unread" | "mentions" | "tasks"): void {
+        const subscribedChannelId = connectionSupervisor.takeSubscribedChannel();
+        if (subscribedChannelId) {
           sendCommand("unsubscribe_channel", {
-            channel_id: connectionSupervisor.state.subscribedChannelId
+            channel_id: subscribedChannelId
           });
         }
-        connectionSupervisor.state.subscribedChannelId = null;
-        activeChannelId = null;
+        navigation.deactivateChannel();
+        syncRenderedNavigation();
         activeInboxKind = kind;
         setMobileNavigationOpen(false);
         reconnectScrollOffset = null;
@@ -3290,7 +2910,7 @@
         }
       }
 
-      function createTaskFromMention(mention, card) {
+      function createTaskFromMention(mention: Mention, card: HTMLElement): void {
         if (card.querySelector(".task-editor")) return;
         const editor = document.createElement("form");
         editor.className = "task-editor";
@@ -3309,6 +2929,7 @@
         editor.addEventListener("submit", (event) => {
           event.preventDefault();
           if (!title.value.trim()) return;
+          if (!currentParticipantId) return;
           sendCommand("create_task", {
             source_message_id: mention.message.id,
             assignee_id: currentParticipantId,
@@ -3346,15 +2967,14 @@
         }
       }
 
-      function selectChannel(channel) {
+      function selectChannel(channel: Channel): void {
         if (!channel) return;
-        if (channel.id === activeChannelId && channel.id === connectionSupervisor.state.subscribedChannelId) return;
+        if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;
         persistActiveDraft();
         setMobileNavigationOpen(false);
         activeInboxKind = null;
-        const previousChannelId = connectionSupervisor.state.subscribedChannelId;
+        const previousChannelId = connectionSupervisor.takeSubscribedChannel();
         if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
-        connectionSupervisor.state.subscribedChannelId = null;
         timeline.length = 0;
         threadReplies.clear();
         threadRoots.clear();
@@ -3365,17 +2985,12 @@
         historyHasMore = false;
         historyLoading = false;
         messagesEl.replaceChildren();
-        activeChannelId = channel.id;
+        navigation.setActiveChannel(channel);
+        syncRenderedNavigation();
         restoreActiveDraft();
-        restoredChannelId = channel.id;
-        try { window.localStorage.setItem(activeConversationKey, channel.id); } catch (_) {}
         if (channel.circle_id) {
-          rememberCircleChannel(channel);
-          setActiveCircle(channel.circle_id);
           circleSelect.value = channel.circle_id;
         } else {
-          clearActiveCircle();
-          activeRootScope = channel.direct_user_id ? "direct" : "shared";
           circleSelect.value = "";
         }
         reconnectScrollOffset = null;
@@ -3410,52 +3025,28 @@
         }
       }
 
-      async function agentApi(path, body) {
-        const response = await fetch(path, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "accept": "application/json", "content-type": "application/json" },
-          body: body === undefined ? undefined : JSON.stringify(body)
-        });
-        if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
-        if (response.status === 204) return null;
-        return response.json();
-      }
-
       async function createTemporaryAgentAccess() {
         if (!activeChannelId || temporaryAgentId !== null) return;
         createAgentAccessButton.disabled = true;
         agentAccessNotice.textContent = "Lagar kortliva agenttilgang …";
         const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
-        let created = null;
+        let created: CreatedAgent | null = null;
         try {
-          created = await agentApi("/api/v1/agents", {
-            display_name: "Kortliva MCP-agent",
-            provider: "sproyt-owner-ui",
-            service_identity: crypto.randomUUID(),
-            purpose: `Kortliva MCP-tilgang til kanal ${activeChannelId}`,
-            rate_limit_per_minute: 30,
-            expires_at: expiresAt
-          });
-          for (const scope of ["read_history", "send_messages"]) {
-            await agentApi(`/api/v1/agents/${created.agent_id}/grants`, {
-              circle_id: null,
-              channel_id: activeChannelId,
-              scope,
-              expires_at: expiresAt
-            });
+          created = await agentsApi.create({ displayName: "Kortliva MCP-agent", provider: "sproyt-owner-ui", serviceIdentity: crypto.randomUUID(), purpose: `Kortliva MCP-tilgang til kanal ${activeChannelId}`, rateLimitPerMinute: 30, expiresAt });
+          for (const scope of ["read_history", "send_messages"] as const) {
+            await agentsApi.grant(created.agentId, activeChannelId, scope, expiresAt);
           }
-          temporaryAgentId = created.agent_id;
+          temporaryAgentId = created.agentId;
           agentCredential.value = created.credential;
           agentCredential.hidden = false;
           copyAgentCredentialButton.hidden = false;
           revokeAgentAccessButton.hidden = false;
-          agentAccessNotice.textContent = `Tilgangen ${created.agent_id} er klar i 30 minutt. Kopier credentialen no, og trekk han tilbake når testen er ferdig.`;
+          agentAccessNotice.textContent = `Tilgangen ${created.agentId} er klar i 30 minutt. Kopier credentialen no, og trekk han tilbake når testen er ferdig.`;
         } catch (error) {
-          if (created?.agent_id) {
-            await agentApi(`/api/v1/agents/${created.agent_id}/revoke`).catch(() => {});
+          if (created) {
+            await agentsApi.revoke(created.agentId).catch(() => {});
           }
-          agentAccessNotice.textContent = `Kunne ikkje lage agenttilgang: ${error.message}`;
+          agentAccessNotice.textContent = `Kunne ikkje lage agenttilgang: ${error instanceof Error ? error.message : "ukjend feil"}`;
           updateAgentAccessControls();
         }
       }
@@ -3464,7 +3055,7 @@
         if (!temporaryAgentId) return;
         revokeAgentAccessButton.disabled = true;
         try {
-          await agentApi(`/api/v1/agents/${temporaryAgentId}/revoke`);
+          await agentsApi.revoke(temporaryAgentId);
           temporaryAgentId = null;
           agentCredential.value = "";
           agentCredential.hidden = true;
@@ -3475,18 +3066,20 @@
           agentAccessNotice.textContent = "Agenttilgangen er trekt tilbake.";
         } catch (error) {
           revokeAgentAccessButton.disabled = false;
-          agentAccessNotice.textContent = `Kunne ikkje trekkje tilbake agenttilgangen: ${error.message}`;
+          agentAccessNotice.textContent = `Kunne ikkje trekkje tilbake agenttilgangen: ${error instanceof Error ? error.message : "ukjend feil"}`;
         }
       }
 
-      function updateLatestSequence(channelId, sequence) {
+      function updateLatestSequence(channelId: string, sequence: number): void {
         const channel = knownChannels.find((item) => item.id === channelId);
         if (channel) channel.latest_sequence = Math.max(channel.latest_sequence || 0, sequence);
       }
 
-      function acknowledgeLatest(channelId, messages) {
+      function acknowledgeLatest(channelId: string, messages: ChatMessage[]): void {
         if (channelId !== activeChannelId || messages.length === 0 || document.visibilityState === "hidden") return;
-        const sequence = messages.at(-1).sequence;
+        const latestMessage = messages.at(-1);
+        if (!latestMessage) return;
+        const sequence = latestMessage.sequence;
         updateLatestSequence(channelId, sequence);
         sendCommand("mark_read", { channel_id: channelId, sequence });
       }
@@ -3497,19 +3090,21 @@
         sendCommand("list_my_channels");
         if (!activeChannelId) return;
         const visibleMessages = timeline
-          .filter((item) => item.type === "message" && item.message.channel_id === activeChannelId)
+          .filter((item): item is Readonly<{ type: "message"; message: ChatMessage }> => item.type === "message")
+          .filter((item) => item.message.channel_id === activeChannelId)
           .map((item) => item.message);
         acknowledgeLatest(activeChannelId, visibleMessages);
       });
 
-      function pushSystem(text) {
+      function pushSystem(text: string): void {
         timeline.push({ type: "system", text });
         renderTimeline();
       }
 
       function loadOlderHistory() {
-        if (!activeChannelId || !historyHasMore || historyLoading || connectionSupervisor.state.subscribedChannelId !== activeChannelId) return;
-        const oldest = timeline.find((item) => item.type === "message")?.message;
+        if (!activeChannelId || !historyHasMore || historyLoading || connectionSupervisor.snapshot().subscribedChannelId !== activeChannelId) return;
+        const oldestItem = timeline.find((item): item is Readonly<{ type: "message"; message: ChatMessage }> => item.type === "message");
+        const oldest = oldestItem?.message;
         if (!oldest) return;
         historyLoading = true;
         const requestId = sendCommand("load_recent_messages", {
@@ -3521,7 +3116,7 @@
         else historyLoading = false;
       }
 
-      function renderTimeline({ preserveScroll = false, forceBottom = false, revealMessageId = null } = {}) {
+      function renderTimeline({ preserveScroll = false, forceBottom = false, revealMessageId = null }: Readonly<{ preserveScroll?: boolean; forceBottom?: boolean; revealMessageId?: string | null }> = {}): void {
         const previousHeight = messagesEl.scrollHeight;
         const previousTop = messagesEl.scrollTop;
         const wasNearBottom = previousHeight - previousTop - messagesEl.clientHeight < 80;
@@ -3547,10 +3142,10 @@
         }
       }
 
-      function revealTimelineMessage(messageId) {
+      function revealTimelineMessage(messageId: string): void {
         const reveal = () => {
           const card = [...messagesEl.querySelectorAll("[data-message-id]")]
-            .find((candidate) => candidate.dataset.messageId === messageId);
+            .find((candidate): candidate is HTMLElement => candidate instanceof HTMLElement && candidate.dataset.messageId === messageId);
           if (!card) return;
           const cardRect = card.getBoundingClientRect();
           const viewportRect = messagesEl.getBoundingClientRect();
@@ -3571,10 +3166,11 @@
         });
       }
 
-      function captureMessageInteraction(container) {
+      function captureMessageInteraction(container: HTMLElement): MessageInteraction | null {
         const picker = container.querySelector(".reaction-picker[open]");
-        if (!picker) return null;
-        const messageId = picker.closest("[data-message-id]")?.dataset.messageId;
+        if (!(picker instanceof HTMLDetailsElement)) return null;
+        const card = picker.closest("[data-message-id]");
+        const messageId = card instanceof HTMLElement ? card.dataset.messageId : undefined;
         if (!messageId) return null;
         const input = picker.querySelector("input");
         return {
@@ -3585,12 +3181,12 @@
         };
       }
 
-      function restoreMessageInteraction(container, interaction) {
+      function restoreMessageInteraction(container: HTMLElement, interaction: MessageInteraction | null): void {
         if (!interaction) return;
         const card = [...container.querySelectorAll("[data-message-id]")]
-          .find((candidate) => candidate.dataset.messageId === interaction.messageId);
+          .find((candidate): candidate is HTMLElement => candidate instanceof HTMLElement && candidate.dataset.messageId === interaction.messageId);
         const picker = card?.querySelector(".reaction-picker");
-        if (!picker) return;
+        if (!card || !(picker instanceof HTMLDetailsElement)) return;
         card.classList.add("reaction-picker-requested");
         picker.open = true;
         const input = picker.querySelector("input");
@@ -3615,7 +3211,7 @@
         });
       }
 
-      function restoreConversationScrollOffset(offset) {
+      function restoreConversationScrollOffset(offset: number): void {
         const restore = () => {
           messagesEl.scrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight - offset);
         };
@@ -3629,12 +3225,12 @@
         });
       }
 
-      function renderMessage(message) {
+      function renderMessage(message: ChatMessage): void {
         appendTimelineMessage(message);
         renderTimeline();
       }
 
-      function appendTimelineMessage(message) {
+      function appendTimelineMessage(message: ChatMessage): void {
         if (seenMessageIds.has(message.id)) return;
         seenMessageIds.add(message.id);
         if (message.parent_message_id) {
@@ -3660,7 +3256,7 @@
         timeline.push({ type: "message", message });
       }
 
-      function replaceTimelineMessage(message) {
+      function replaceTimelineMessage(message: ChatMessage): void {
         if (message.parent_message_id) {
           const replies = threadReplies.get(message.parent_message_id) || [];
           const index = replies.findIndex((candidate) => candidate.id === message.id);
@@ -3675,13 +3271,16 @@
           threadRoots.set(message.id, message);
           if (activeThreadRootId === message.id) renderThread();
         }
-        const item = timeline.find((candidate) => candidate.type === "message" && candidate.message.id === message.id);
-        if (item) item.message = message;
+        const item = timeline.find((candidate): candidate is Readonly<{ type: "message"; message: ChatMessage }> => candidate.type === "message" && candidate.message.id === message.id);
+        if (item) {
+          const index = timeline.indexOf(item);
+          if (index >= 0) timeline[index] = { type: "message", message };
+        }
         else if (!threadRoots.has(message.id)) appendTimelineMessage(message);
       }
 
-      function prependTimelineMessages(messages) {
-        const older = [];
+      function prependTimelineMessages(messages: ChatMessage[]): void {
+        const older: TimelineItem[] = [];
         for (const message of messages) {
           if (seenMessageIds.has(message.id)) continue;
           seenMessageIds.add(message.id);
@@ -3697,12 +3296,12 @@
         timeline.unshift(...older);
       }
 
-      function openThread(messageId) {
+      function openThread(messageId: string): void {
         persistThreadDraft();
         const wasKnown = threadComposerStates.has(messageId);
         activeThreadRootId = messageId;
         const state = threadComposerState(messageId);
-        if (!wasKnown && state) state.draft = restoreThreadDraft(messageId, activeChannelId);
+        if (!wasKnown && state && activeChannelId) state.draft = restoreThreadDraft(messageId, activeChannelId);
         threadBody.value = state?.draft || "";
         threadUploadStatus.textContent = state?.status || "";
         threadUploadStatus.dataset.kind = state?.statusKind || "progress";
@@ -3720,7 +3319,8 @@
         const previousTop = threadMessages.scrollTop;
         const distanceFromBottom = previousHeight - previousTop - threadMessages.clientHeight;
         const wasNearBottom = distanceFromBottom <= 80;
-        const root = timeline.find((item) => item.type === "message" && item.message.id === activeThreadRootId)?.message
+        const rootItem = timeline.find((item): item is Readonly<{ type: "message"; message: ChatMessage }> => item.type === "message" && item.message.id === activeThreadRootId);
+        const root = rootItem?.message
           || threadRoots.get(activeThreadRootId);
         if (!root) return;
         threadForm.hidden = Boolean(root.deleted_at);
@@ -3752,11 +3352,16 @@
         });
       }
 
-      function replaceChannelReactions(reactions) {
+      type ReactionSummary = { count: number; reactedByMe: boolean; userIds: string[] };
+      type ServerReaction = Readonly<{ message_id: string; emoji: string; count: number; reacted_by_me: boolean; user_ids?: string[] }>;
+      type ReactionChange = Readonly<{ message_id: string; emoji: string; user_id: string; channel_id: string; count: number; added: boolean }>;
+      function replaceChannelReactions(reactions: ReadonlyArray<ServerReaction>): void {
         messageReactions.clear();
         for (const reaction of reactions) {
           if (!messageReactions.has(reaction.message_id)) messageReactions.set(reaction.message_id, new Map());
-          messageReactions.get(reaction.message_id).set(reaction.emoji, {
+          const reactionMap = messageReactions.get(reaction.message_id);
+          if (!reactionMap) continue;
+          reactionMap.set(reaction.emoji, {
             count: reaction.count,
             reactedByMe: reaction.reacted_by_me,
             userIds: reaction.user_ids || []
@@ -3764,9 +3369,10 @@
         }
       }
 
-      function applyReactionChange(change) {
+      function applyReactionChange(change: ReactionChange): void {
         if (!messageReactions.has(change.message_id)) messageReactions.set(change.message_id, new Map());
         const reactions = messageReactions.get(change.message_id);
+        if (!reactions) return;
         const current = reactions.get(change.emoji) || { count: 0, reactedByMe: false, userIds: [] };
         current.count = change.count;
         current.userIds = current.userIds.filter((userId) => userId !== change.user_id);
@@ -3777,7 +3383,7 @@
         if (reactions.size === 0) messageReactions.delete(change.message_id);
       }
 
-      function reactionButton(messageId, emoji, reaction) {
+      function reactionButton(messageId: string, emoji: string, reaction: ReactionSummary): HTMLButtonElement {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "reaction-badge";
@@ -3790,7 +3396,7 @@
         return button;
       }
 
-      function renderMessageReactions(message, onPickerToggle) {
+      function renderMessageReactions(message: ChatMessage, onPickerToggle: (open: boolean) => void): HTMLElement {
         const bar = document.createElement("div");
         bar.className = "message-reactions";
         const reactions = messageReactions.get(message.id) || new Map();
@@ -3849,19 +3455,21 @@
         return bar;
       }
 
-      function messageHasReactions(messageId) {
+      function messageHasReactions(messageId: string): boolean {
         return [...(messageReactions.get(messageId)?.values() || [])]
           .some((reaction) => reaction.count > 0);
       }
 
-      function syncMessageReactionDetails(menu, messageId) {
+      function syncMessageReactionDetails(menu: HTMLElement, messageId: string): void {
         const details = menu.querySelector(".message-reaction-details");
+        if (!(details instanceof HTMLElement)) return;
         const list = details.querySelector("ul");
+        if (!(list instanceof HTMLUListElement)) return;
         list.replaceChildren();
         const reactions = messageReactions.get(messageId) || new Map();
         for (const [emoji, reaction] of reactions) {
           if (reaction.count === 0) continue;
-          const names = reaction.userIds.map((userId) => userId === currentParticipantId
+          const names = reaction.userIds.map((userId: string) => userId === currentParticipantId
             ? "Du"
             : (activeProfile(userId)?.display_name || "Ein ven"));
           const item = document.createElement("li");
@@ -3871,36 +3479,37 @@
         details.hidden = list.childElementCount === 0;
       }
 
-      function placeMessageMenu(card, footer, menu, thread, messageId) {
+      function placeMessageMenu(card: HTMLElement, footer: HTMLElement, menu: HTMLElement, thread: boolean, messageId: string): void {
         syncMessageReactionDetails(menu, messageId);
         if (messageHasReactions(messageId) || thread) {
           menu.classList.add("footer-menu");
-          footer.insertBefore(menu, thread || null);
+          footer.insertBefore(menu, null);
           return;
         }
         menu.classList.remove("footer-menu");
         card.querySelector(".meta")?.append(menu);
       }
 
-      function patchMessageReactions(messageId) {
-        const message = timeline.find((item) => item.type === "message" && item.message.id === messageId)?.message
+      function patchMessageReactions(messageId: string): boolean {
+        const timelineItem = timeline.find((item): item is Readonly<{ type: "message"; message: ChatMessage }> => item.type === "message" && item.message.id === messageId);
+        const message = timelineItem?.message
           || threadRoots.get(messageId)
           || [...threadReplies.values()].flat().find((candidate) => candidate.id === messageId);
         if (!message) return false;
         let patched = false;
         for (const container of [messagesEl, threadMessages]) {
           const card = [...container.querySelectorAll("[data-message-id]")]
-            .find((candidate) => candidate.dataset.messageId === messageId);
+            .find((candidate): candidate is HTMLElement => candidate instanceof HTMLElement && candidate.dataset.messageId === messageId);
           const reactions = card?.querySelector(".message-reactions");
-          if (!card || !reactions) continue;
+          if (!card || !(reactions instanceof HTMLElement)) continue;
           const interaction = captureMessageInteraction(container);
           const nextReactions = renderMessageReactions(message, (open) => {
             card.classList.toggle("reaction-picker-requested", open);
           });
           const thread = reactions.querySelector(".thread-link");
           const menu = card.querySelector(".message-menu");
-          if (thread) nextReactions.append(thread);
-          if (menu) placeMessageMenu(card, nextReactions, menu, thread, messageId);
+          if (thread instanceof HTMLElement) nextReactions.append(thread);
+          if (menu instanceof HTMLElement) placeMessageMenu(card, nextReactions, menu, thread instanceof HTMLElement, messageId);
           reactions.replaceWith(nextReactions);
           restoreMessageInteraction(container, interaction);
           patched = true;
@@ -3908,7 +3517,7 @@
         return patched;
       }
 
-      function appendMessage(message, target = messagesEl, includeThread = true) {
+      function appendMessage(message: ChatMessage, target: HTMLElement = messagesEl, includeThread: boolean = true): void {
         const wrapper = document.createElement("article");
         wrapper.className = "message";
         wrapper.dataset.messageId = message.id;
@@ -3981,8 +3590,9 @@
           thread.type = "button";
           thread.className = "thread-link";
           thread.textContent = replyCount === 0 ? "🧵" : `🧵 ${replyCount}`;
-          if (summary?.unread_count > 0) thread.textContent += ` · ${summary.unread_count}`;
-          thread.title = replyCount === 0 ? "Start ein tråd" : `${replyCount} svar${summary?.unread_count > 0 ? `, ${summary.unread_count} uleste` : ""}`;
+          const unreadCount = summary?.unread_count ?? 0;
+          if (unreadCount > 0) thread.textContent += ` · ${unreadCount}`;
+          thread.title = replyCount === 0 ? "Start ein tråd" : `${replyCount} svar${unreadCount > 0 ? `, ${unreadCount} uleste` : ""}`;
           thread.setAttribute("aria-label", replyCount === 0 ? "Start ein tråd" : `Opne tråd med ${replyCount} svar`);
           thread.addEventListener("click", () => openThread(message.id));
           footer.append(thread);
@@ -4008,7 +3618,7 @@
           addReaction.addEventListener("click", () => {
             menu.open = false;
             const picker = wrapper.querySelector(".reaction-picker");
-            if (!picker) return;
+            if (!(picker instanceof HTMLDetailsElement)) return;
             wrapper.classList.add("reaction-picker-requested");
             picker.open = true;
             picker.querySelector("summary")?.focus({ preventScroll: true });
@@ -4071,33 +3681,33 @@
             menuItems.append(edit, remove);
           }
           menu.append(menuSummary, menuItems);
-          placeMessageMenu(wrapper, footer, menu, thread, message.id);
+          if (footer) placeMessageMenu(wrapper, footer, menu, thread !== null, message.id);
         }
         target.append(wrapper);
       }
 
-      function formatMessageTimestamp(sentAt, now = new Date()) {
+      function formatMessageTimestamp(sentAt: Date, now: Date = new Date()): string {
         const sameDay = sentAt.getFullYear() === now.getFullYear()
           && sentAt.getMonth() === now.getMonth()
           && sentAt.getDate() === now.getDate();
         if (sameDay) return sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        const options = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+        const options: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
         if (sentAt.getFullYear() !== now.getFullYear()) options.year = "numeric";
         return sentAt.toLocaleString([], options);
       }
 
-      function renderSystem(text) {
+      function renderSystem(text: string): void {
         pushSystem(text);
       }
 
-      function appendSystem(text) {
+      function appendSystem(text: string): void {
         const line = document.createElement("div");
         line.className = "system";
         line.textContent = text;
         messagesEl.append(line);
       }
 
-      sessionSupervisor.start();
+      sessionController.start().catch(() => sessionController.schedule(30));
       connectionSupervisor.start();
       const invitationFromUrl = new URL(window.location.href).searchParams.get("invite");
       if (invitationFromUrl) {
@@ -4106,17 +3716,17 @@
         updateOnboardingButtons();
       }
 
-      let pendingInvitationChannel = null;
+      let pendingInvitationChannel: string | null = null;
 
-      function renderMessageBody(source, target) {
+      function renderMessageBody(source: string, target: HTMLElement): void {
         const token = /\[\[media:([0-9a-f-]{36})\|([^|\]]+)\|([^\]]*)\]\]/gi;
-        const attachments = [];
-        const invitations = [];
-        const withoutInvitations = source.replace(/\[\[invite:([A-Za-z0-9_-]{32,128})\]\]/g, (_, invitationToken) => {
+        const attachments: Array<{ id: string; contentType: string; name: string }> = [];
+        const invitations: string[] = [];
+        const withoutInvitations = source.replace(/\[\[invite:([A-Za-z0-9_-]{32,128})\]\]/g, (_match: string, invitationToken: string) => {
           invitations.push(invitationToken);
           return "";
         });
-        const text = withoutInvitations.replace(token, (_, id, contentType, encodedName) => {
+        const text = withoutInvitations.replace(token, (_match: string, id: string, contentType: string, encodedName: string) => {
           let name = "media";
           try { name = decodeURIComponent(encodedName || "media"); } catch (_) {}
           attachments.push({ id, contentType, name });
@@ -4154,7 +3764,7 @@
         });
       }
 
-      function renderInvitationCard(token, target) {
+      function renderInvitationCard(token: string, target: HTMLElement): void {
         const card = document.createElement("section");
         card.className = "invitation-card";
         card.dataset.invitationToken = token;
@@ -4163,18 +3773,17 @@
         requestInvitationInspection(token);
       }
 
-      function requestInvitationInspection(token, force = false) {
+      function requestInvitationInspection(token: string, force: boolean = false): void {
         const cached = invitationInspectionCache.get(token);
-        if (cached?.status === "pending" || cached?.status === "missing") {
+        if (cached?.status === "pending") {
+          return;
+        }
+        if (cached?.status === "missing" || cached?.status === "failed") {
           if (cached.message) showInvitationError(token, cached.message);
           return;
         }
         if (!force && cached?.status === "resolved") {
           updateInvitationCards(token, cached.invitation);
-          return;
-        }
-        if (!force && cached?.status === "failed") {
-          showInvitationError(token, cached.message);
           return;
         }
         const requestId = sendCommand("inspect_invitation", { token });
@@ -4190,15 +3799,17 @@
         if (document.visibilityState === "hidden") return;
         const tokens = new Set(
           [...document.querySelectorAll(".invitation-card")]
+            .filter((card): card is HTMLElement => card instanceof HTMLElement)
             .map((card) => card.dataset.invitationToken)
-            .filter(Boolean)
+            .filter((token): token is string => typeof token === "string")
             .slice(0, 20)
         );
         tokens.forEach((token) => requestInvitationInspection(token, true));
       }
 
-      function updateInvitationCards(token, invitation) {
+      function updateInvitationCards(token: string, invitation: Invitation): void {
         document.querySelectorAll(".invitation-card").forEach((card) => {
+          if (!(card instanceof HTMLElement)) return;
           if (card.dataset.invitationToken !== token) return;
           const accepted = invitation.response === "accepted";
           const declined = invitation.response === "declined";
@@ -4232,7 +3843,7 @@
         });
       }
 
-      function respondToInvitation(token, command, pendingText) {
+      function respondToInvitation(token: string, command: "accept_invitation" | "decline_invitation", pendingText: string): void {
         const requestId = sendCommand(command, { token });
         if (!requestId) {
           showInvitationError(token, "Vent til sambandet er tilbake, og prøv igjen.");
@@ -4240,27 +3851,30 @@
         }
         pendingInvitationResponses.set(requestId, { token, command });
         document.querySelectorAll(".invitation-card").forEach((card) => {
+          if (!(card instanceof HTMLElement)) return;
           if (card.dataset.invitationToken !== token) return;
           card.setAttribute("aria-busy", "true");
           const detail = card.querySelector("p");
           if (detail) detail.textContent = pendingText;
-          card.querySelectorAll(".invitation-actions button").forEach((button) => { button.disabled = true; });
+          card.querySelectorAll(".invitation-actions button").forEach((button) => { if (button instanceof HTMLButtonElement) button.disabled = true; });
         });
       }
 
-      function showInvitationError(token, message) {
+      function showInvitationError(token: string, message: string): void {
         document.querySelectorAll(".invitation-card").forEach((card) => {
+          if (!(card instanceof HTMLElement)) return;
           if (card.dataset.invitationToken !== token) return;
           card.removeAttribute("aria-busy");
           const detail = card.querySelector("p");
           if (detail) detail.textContent = message;
           detail?.setAttribute("role", "alert");
-          card.querySelectorAll(".invitation-actions button").forEach((button) => { button.disabled = false; });
+          card.querySelectorAll(".invitation-actions button").forEach((button) => { if (button instanceof HTMLButtonElement) button.disabled = false; });
         });
       }
 
-      function markInvitationAccepted(token) {
+      function markInvitationAccepted(token: string): void {
         document.querySelectorAll(".invitation-card").forEach((card) => {
+          if (!(card instanceof HTMLElement)) return;
           if (card.dataset.invitationToken !== token) return;
           card.removeAttribute("aria-busy");
           card.classList.remove("declined");
@@ -4270,20 +3884,20 @@
         });
       }
 
-      function openMediaLightbox(url, name) {
+      function openMediaLightbox(url: string, name: string): void {
         mediaLightboxImage.src = url;
         mediaLightboxImage.alt = name;
         mediaLightboxCaption.textContent = name;
         mediaLightbox.showModal();
       }
 
-      function renderMarkdown(source, target) {
+      function renderMarkdown(source: string, target: HTMLElement): void {
         const lines = source.replace(/\r\n/g, "\n").split("\n");
-        let paragraph = [];
-        let list = null;
+        let paragraph: string[] = [];
+        let list: { kind: "ol" | "ul"; element: HTMLOListElement | HTMLUListElement } | null = null;
         let inFence = false;
         let fenceLanguage = "";
-        let fenceLines = [];
+        let fenceLines: string[] = [];
 
         const flushParagraph = () => {
           if (paragraph.length === 0) {
@@ -4358,9 +3972,12 @@
           if (heading) {
             flushParagraph();
             flushList();
-            const level = String(heading[1].length);
+            const marker = heading[1];
+            const content = heading[2];
+            if (!marker || !content) continue;
+            const level = String(marker.length);
             const h = document.createElement(`h${level}`);
-            appendInline(h, heading[2]);
+            appendInline(h, content);
             target.append(h);
             continue;
           }
@@ -4370,7 +3987,8 @@
             flushParagraph();
             flushList();
             const blockquote = document.createElement("blockquote");
-            appendInline(blockquote, quote[1]);
+            const content = quote[1];
+            if (content) appendInline(blockquote, content);
             target.append(blockquote);
             continue;
           }
@@ -4378,15 +3996,24 @@
           const unordered = line.match(/^\s*[-*]\s+(.+)$/);
           const ordered = line.match(/^\s*\d+\.\s+(.+)$/);
           if (unordered || ordered) {
+            const match = unordered ?? ordered;
+            if (!match) continue;
             flushParagraph();
             const kind = ordered ? "ol" : "ul";
-            if (!list || list.kind !== kind) {
+            let listElement: HTMLOListElement | HTMLUListElement;
+            const currentList = list;
+            if (!currentList || currentList.kind !== kind) {
               flushList();
-              list = { kind, element: document.createElement(kind) };
+              const nextList: { kind: "ol" | "ul"; element: HTMLOListElement | HTMLUListElement } = { kind, element: document.createElement(kind) };
+              list = nextList;
+              listElement = nextList.element;
+            } else {
+              listElement = currentList.element;
             }
             const li = document.createElement("li");
-            appendInline(li, (unordered || ordered)[1]);
-            list.element.append(li);
+            const content = match[1];
+            if (content) appendInline(li, content);
+            listElement.append(li);
             continue;
           }
 
@@ -4401,7 +4028,7 @@
         flushList();
       }
 
-      function appendInline(parent, text) {
+      function appendInline(parent: HTMLElement, text: string): void {
         const parts = text.split(/(`[^`]+`)/g);
         for (const part of parts) {
           if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
@@ -4414,7 +4041,7 @@
         }
       }
 
-      function appendLinkedText(parent, text) {
+      function appendLinkedText(parent: HTMLElement, text: string): void {
         const urlPattern = /https?:\/\/[^\s<>]+/gi;
         let offset = 0;
         for (const match of text.matchAll(urlPattern)) {
@@ -4440,7 +4067,7 @@
         if (offset < text.length) parent.append(document.createTextNode(text.slice(offset)));
       }
 
-      function readableLinkLabel(href) {
+      function readableLinkLabel(href: string): string {
         try {
           const url = new URL(href);
           const host = url.hostname.replace(/^www\./i, "");
@@ -4456,18 +4083,21 @@
         if (renderMode !== "view") {
           return;
         }
-        const diagrams = [...messagesEl.querySelectorAll(".mermaid")];
+        const diagrams = [...messagesEl.querySelectorAll(".mermaid")].filter((diagram): diagram is HTMLElement => diagram instanceof HTMLElement);
         if (diagrams.length === 0) return;
         if (mermaidPromise === null) {
-          mermaidPromise = import("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs")
-            .then(({ default: mermaid }) => {
-              mermaid.initialize({
-                startOnLoad: false,
-                securityLevel: "strict",
-                theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default"
-              });
-              return mermaid;
+          const mermaidUrl = new URL("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs");
+          mermaidPromise = import(mermaidUrl.href).then((module: unknown) => {
+            if (!isRecord(module)) throw new Error("Mermaid-modulen manglar standardeksport");
+            const api = module.default;
+            if (!isMermaidApi(api)) throw new Error("Mermaid-modulen har ugyldig API");
+            api.initialize({
+              startOnLoad: false,
+              securityLevel: "strict",
+              theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default"
             });
+            return api;
+          });
         }
         let mermaid;
         try {
@@ -4484,7 +4114,7 @@
           try {
             await mermaid.run({ nodes: [diagram] });
           } catch (error) {
-            diagram.textContent = `Mermaid-feil: ${error.message || error}`;
+            diagram.textContent = `Mermaid-feil: ${errorMessage(error)}`;
           }
         }
       }

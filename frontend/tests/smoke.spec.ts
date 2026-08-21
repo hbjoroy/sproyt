@@ -29,16 +29,14 @@ test("development client loads through CSP, connects, and sends a message", asyn
   await page.addInitScript(() => {
     const NativeWebSocket = window.WebSocket;
     const sockets: globalThis.WebSocket[] = [];
-    function TrackingWebSocket(url: string | URL, protocols?: string | string[]): globalThis.WebSocket {
-      const socket = protocols === undefined
-        ? new NativeWebSocket(url)
-        : new NativeWebSocket(url, protocols);
-      sockets.push(socket);
-      return socket;
+    class TrackingWebSocket extends NativeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        if (protocols === undefined) super(url);
+        else super(url, protocols);
+        sockets.push(this);
+      }
     }
-    TrackingWebSocket.prototype = NativeWebSocket.prototype;
-    Object.setPrototypeOf(TrackingWebSocket, NativeWebSocket);
-    window.WebSocket = TrackingWebSocket as unknown as typeof WebSocket;
+    window.WebSocket = TrackingWebSocket;
     window.__sproytE2eSockets = sockets;
     window.addEventListener("securitypolicyviolation", (event) => {
       void window.__sproytRecordCspViolation(`${event.violatedDirective}: ${event.blockedURI}`);

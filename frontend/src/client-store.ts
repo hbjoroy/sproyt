@@ -1,12 +1,10 @@
+import type { ServerEvent } from "./types";
+
 type ApplicationState = Readonly<{
   session: Readonly<{ refreshDueAt: number }>;
   connection: Readonly<{ connected: boolean; status: string }>;
-  transport: Readonly<{ lastEventType: unknown; processedEvents: number }>;
+  transport: Readonly<{ lastEventType: ServerEvent["type"] | null; processedEvents: number }>;
 }>;
-
-type StateSlice = "session" | "connection" | "transport";
-
-type ServerEvent = Readonly<{ type?: unknown }>;
 
 type ApplicationStore = Readonly<{
   readonly snapshot: ApplicationState;
@@ -22,29 +20,16 @@ export function createApplicationStore(): ApplicationStore {
     transport: Object.freeze({ lastEventType: null, processedEvents: 0 })
   });
 
-  const replaceSlice = <TSlice extends StateSlice>(
-    slice: TSlice,
-    patch: Partial<ApplicationState[TSlice]>
-  ): void => {
-    state = Object.freeze({
-      ...state,
-      [slice]: Object.freeze({ ...state[slice], ...patch })
-    }) as ApplicationState;
-  };
-
   return Object.freeze({
     get snapshot(): ApplicationState { return state; },
     updateSession(patch: Partial<ApplicationState["session"]>): void {
-      replaceSlice("session", patch);
+      state = Object.freeze({ ...state, session: Object.freeze({ ...state.session, ...patch }) });
     },
     updateConnection(patch: Partial<ApplicationState["connection"]>): void {
-      replaceSlice("connection", patch);
+      state = Object.freeze({ ...state, connection: Object.freeze({ ...state.connection, ...patch }) });
     },
     reduceServerEvent(event: ServerEvent): ServerEvent {
-      replaceSlice("transport", {
-        lastEventType: event.type || null,
-        processedEvents: state.transport.processedEvents + 1
-      });
+      state = Object.freeze({ ...state, transport: Object.freeze({ lastEventType: event.type, processedEvents: state.transport.processedEvents + 1 }) });
       return event;
     }
   });
@@ -73,7 +58,8 @@ export function createServerEventMailbox<TEvent>({
       draining = true;
       try {
         while (queue.length > 0) {
-          const nextEvent = queue.shift() as TEvent;
+          const nextEvent = queue.shift();
+          if (nextEvent === undefined) break;
           deliver(reduce(nextEvent));
         }
       } finally {

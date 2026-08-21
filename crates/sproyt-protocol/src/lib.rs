@@ -164,6 +164,84 @@ mod tests {
     }
 
     #[test]
+    fn shared_joinable_channels_fixture_round_trips_through_rust_serde() {
+        let fixture = include_str!(
+            "../../../frontend/tests/fixtures/rust-serde-joinable-channels-listed.json"
+        );
+        let frame = serde_json::from_str::<ServerEnvelope<crate::ServerEvent>>(fixture)
+            .expect("the shared browser fixture must be a Rust server envelope");
+        let expected: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        let serialized = serde_json::to_value(frame).unwrap();
+        assert_eq!(serialized, expected);
+    }
+
+    #[test]
+    fn shared_client_command_fixture_round_trips_every_concrete_variant() {
+        fn discriminant(command: &crate::ClientCommand) -> &'static str {
+            match command {
+                crate::ClientCommand::Hello => "hello",
+                crate::ClientCommand::ListUsers => "list_users",
+                crate::ClientCommand::ListCircleUsers { .. } => "list_circle_users",
+                crate::ClientCommand::SetStatus { .. } => "set_status",
+                crate::ClientCommand::OpenDirectChannel { .. } => "open_direct_channel",
+                crate::ClientCommand::CreateChannel { .. } => "create_channel",
+                crate::ClientCommand::JoinChannel { .. } => "join_channel",
+                crate::ClientCommand::LeaveChannel { .. } => "leave_channel",
+                crate::ClientCommand::ListMyChannels => "list_my_channels",
+                crate::ClientCommand::ListChannelUsers { .. } => "list_channel_users",
+                crate::ClientCommand::UpdateChannelDescription { .. } => {
+                    "update_channel_description"
+                }
+                crate::ClientCommand::ListJoinableChannels { .. } => "list_joinable_channels",
+                crate::ClientCommand::AddChannelMember { .. } => "add_channel_member",
+                crate::ClientCommand::LoadRecentMessages { .. } => "load_recent_messages",
+                crate::ClientCommand::LoadThread { .. } => "load_thread",
+                crate::ClientCommand::ListThreadSummaries { .. } => "list_thread_summaries",
+                crate::ClientCommand::MarkThreadRead { .. } => "mark_thread_read",
+                crate::ClientCommand::SubscribeChannel { .. } => "subscribe_channel",
+                crate::ClientCommand::UnsubscribeChannel { .. } => "unsubscribe_channel",
+                crate::ClientCommand::SendMessage { .. } => "send_message",
+                crate::ClientCommand::EditMessage { .. } => "edit_message",
+                crate::ClientCommand::DeleteMessage { .. } => "delete_message",
+                crate::ClientCommand::ListChannelReactions { .. } => "list_channel_reactions",
+                crate::ClientCommand::ToggleMessageReaction { .. } => "toggle_message_reaction",
+                crate::ClientCommand::MarkRead { .. } => "mark_read",
+                crate::ClientCommand::ListMentions => "list_mentions",
+                crate::ClientCommand::MarkMentionRead { .. } => "mark_mention_read",
+                crate::ClientCommand::CreateTask { .. } => "create_task",
+                crate::ClientCommand::ListTasks => "list_tasks",
+                crate::ClientCommand::SetTaskDone { .. } => "set_task_done",
+                crate::ClientCommand::Ping => "ping",
+                crate::ClientCommand::CreateCircle { .. } => "create_circle",
+                crate::ClientCommand::ListMyCircles => "list_my_circles",
+                crate::ClientCommand::DeleteCircle { .. } => "delete_circle",
+                crate::ClientCommand::LeaveCircle { .. } => "leave_circle",
+                crate::ClientCommand::CreateCircleInvitation { .. } => "create_circle_invitation",
+                crate::ClientCommand::AcceptCircleInvitation { .. } => "accept_circle_invitation",
+                crate::ClientCommand::CreateInvitation { .. } => "create_invitation",
+                crate::ClientCommand::InspectInvitation { .. } => "inspect_invitation",
+                crate::ClientCommand::DeclineInvitation { .. } => "decline_invitation",
+                crate::ClientCommand::AcceptInvitation { .. } => "accept_invitation",
+            }
+        }
+        let fixture =
+            include_str!("../../../frontend/tests/fixtures/rust-serde-client-commands.json");
+        let frames = serde_json::from_str::<Vec<ClientEnvelope<crate::ClientCommand>>>(fixture)
+            .expect("the shared browser fixture must contain concrete Rust client envelopes");
+        let variants = frames
+            .iter()
+            .map(|frame| discriminant(&frame.command))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            variants.len(),
+            frames.len(),
+            "the shared fixture must contain every variant exactly once"
+        );
+        let expected: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        assert_eq!(serde_json::to_value(frames).unwrap(), expected);
+    }
+
+    #[test]
     fn unknown_versions_and_events_are_rejected() {
         assert_eq!(
             check_protocol("sproyt.chat.v2"),

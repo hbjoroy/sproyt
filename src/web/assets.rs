@@ -16,6 +16,12 @@ pub(crate) const PWA_MANIFEST: &str = include_str!("../../assets/manifest.webman
 pub(crate) const APP_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
 #[cfg(test)]
 pub(crate) const APP_SOURCE: &str = include_str!("../../frontend/src/app.ts");
+#[cfg(test)]
+pub(crate) const CONNECTION_SOURCE: &str = include_str!("../../frontend/src/connection.ts");
+#[cfg(test)]
+pub(crate) const SESSION_SOURCE: &str = include_str!("../../frontend/src/session.ts");
+#[cfg(test)]
+pub(crate) const NAVIGATION_SOURCE: &str = include_str!("../../frontend/src/navigation.ts");
 // Compatibility endpoint for already-open pages during the app bundle rollout.
 pub(crate) const CLIENT_STORE: &str = include_str!(concat!(env!("OUT_DIR"), "/client-store.js"));
 pub(crate) const SERVICE_WORKER: &str = include_str!("../../assets/service-worker.js");

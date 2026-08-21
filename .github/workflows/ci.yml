@@ -47,11 +47,10 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Check and build frontend
+      - name: Check, build, and test frontend boundaries
         run: |
           npm --prefix frontend ci
-          npm --prefix frontend run check
-          npm --prefix frontend run build
+          npm --prefix frontend test
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
