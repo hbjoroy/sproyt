@@ -352,6 +352,9 @@ pub struct PortableUserExport {
     pub format: String,
     pub exported_at: DateTime<Utc>,
     pub user: User,
+    /// The exported account's own early-adopter number. It is intentionally
+    /// absent from public profile DTOs.
+    pub signup_ordinal: Option<u64>,
     pub circles: Vec<ExportedCircle>,
     pub channels: Vec<ExportedChannel>,
 }

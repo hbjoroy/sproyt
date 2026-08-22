@@ -124,6 +124,79 @@ where
         })
         .await
         .unwrap();
+    let actor_ordinal = repository
+        .signup_ordinal(actor.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let badge_agent = UserId::named(format!("chat-contract-badge-agent-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: badge_agent.clone(),
+            kind: PrincipalKind::Agent,
+            display_name: DisplayName::new("Badge contract agent").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(repository.signup_ordinal(badge_agent).await.unwrap(), None);
+    let later_human = UserId::named(format!("chat-contract-badge-human-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: later_human.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Badge contract human").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.signup_ordinal(later_human).await.unwrap(),
+        Some(actor_ordinal + 1)
+    );
+    repository
+        .upsert_user(User {
+            id: actor.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Chat contract actor renamed").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.signup_ordinal(actor.clone()).await.unwrap(),
+        Some(actor_ordinal)
+    );
+    repository
+        .upsert_user(User {
+            id: actor.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Chat contract actor").unwrap(),
+            external_provider: None,
+            external_subject: None,
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        !serde_json::to_string(&repository.list_user_profiles(actor.clone()).await.unwrap())
+            .unwrap()
+            .contains("signup_ordinal")
+    );
+    assert_eq!(
+        repository
+            .export_user_data(actor.clone())
+            .await
+            .unwrap()
+            .signup_ordinal,
+        Some(actor_ordinal)
+    );
     let thread_circle = repository
         .create_circle(CreateCircle {
             actor: actor.clone(),

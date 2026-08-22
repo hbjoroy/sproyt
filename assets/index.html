@@ -131,6 +131,7 @@
       #status-editor > summary, #notification-editor > summary { padding: 5px 0; cursor: pointer; }
       .status-settings, .notification-settings { display: grid; gap: 8px; padding: 7px 0 3px; }
       .status-fields { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 6px; }
+      .signup-badge { display: inline-flex; align-items: center; margin-top: 3px; padding: 2px 6px; border-radius: 999px; background: var(--surface-hover); color: var(--ink); font-size: .76rem; font-weight: 650; }
       .status-fields label { gap: 3px; }
       .status-fields label:first-child { width: 44px; }
       #status-emoji { width: 44px; padding-inline: 4px; text-align: center; }
@@ -1067,6 +1068,7 @@
         <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave.svg" alt=""><h1>Sprøyt</h1><button class="desktop-sidebar-toggle" id="desktop-sidebar-toggle" type="button" aria-expanded="true" aria-label="Kollaps menyen" data-tooltip="Kollaps menyen" title="Kollaps menyen">‹</button></div>
         <div class="identity">
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
+          <span id="signup-badge" class="signup-badge" hidden></span>
           <details id="status-editor">
             <summary id="current-status" aria-label="Set status" data-tooltip="Set status" title="Set status"><span class="status-compact-icon" aria-hidden="true">🙂</span><span class="status-summary-label">Set status</span></summary>
             <div class="status-settings">

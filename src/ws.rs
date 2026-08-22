@@ -209,9 +209,14 @@ async fn execute_command(
         _ => "other",
     };
     let result: Result<ServerEvent, ChatError> = match envelope.command {
-        ClientCommand::Hello => Ok(ServerEvent::Hello {
-            participant_id: participant_id.clone(),
-        }),
+        ClientCommand::Hello => {
+            chat.signup_ordinal(participant_id.clone())
+                .await
+                .map(|signup_ordinal| ServerEvent::Hello {
+                    participant_id: participant_id.clone(),
+                    signup_ordinal,
+                })
+        }
         ClientCommand::ListUsers => chat
             .list_users(participant_id.clone())
             .await

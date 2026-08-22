@@ -83,6 +83,25 @@ impl ChatRepository for SqliteChatRepository {
             .execute(&mut *transaction)
             .await
             .map_err(sql_error)?;
+            if user.kind == crate::domain::PrincipalKind::Human {
+                let existing = sqlx::query_scalar::<_, i64>(
+                    "select ordinal from signup_ordinals where user_id = ?",
+                )
+                .bind(user.id.to_string())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                if existing.is_none() {
+                    let ordinal = sqlx::query_scalar::<_, i64>("update signup_ordinal_counter set next_ordinal = next_ordinal + 1 where singleton = 1 returning next_ordinal - 1")
+                        .fetch_one(&mut *transaction).await.map_err(sql_error)?;
+                    sqlx::query("insert into signup_ordinals(user_id, ordinal) values (?, ?)")
+                        .bind(user.id.to_string())
+                        .bind(ordinal)
+                        .execute(&mut *transaction)
+                        .await
+                        .map_err(sql_error)?;
+                }
+            }
             sqlx::query("insert into channel_memberships (channel_id, user_id, role) select id, ?, 'member' from channels where slug = 'general' and circle_id is null on conflict(channel_id, user_id) do nothing")
                 .bind(user.id.to_string())
                 .execute(&mut *transaction)
@@ -90,6 +109,24 @@ impl ChatRepository for SqliteChatRepository {
                 .map_err(sql_error)?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(user)
+        })
+    }
+
+    fn signup_ordinal<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Option<u64>> {
+        Box::pin(async move {
+            let value = sqlx::query_scalar::<_, i64>(
+                "select ordinal from signup_ordinals where user_id = ?",
+            )
+            .bind(actor.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            value
+                .map(|ordinal| {
+                    u64::try_from(ordinal)
+                        .map_err(|_| RepositoryError::Storage("invalid signup ordinal".to_owned()))
+                })
+                .transpose()
         })
     }
 
@@ -397,6 +434,15 @@ impl ChatRepository for SqliteChatRepository {
                 external_subject: row.try_get("external_subject").map_err(storage)?,
                 created_at: row.try_get("created_at").map_err(storage)?,
             };
+            let signup_ordinal = sqlx::query_scalar::<_, i64>(
+                "select ordinal from signup_ordinals where user_id = ?",
+            )
+            .bind(actor.to_string())
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(sql_error)?
+            .map(|ordinal| u64::try_from(ordinal).map_err(|_| storage("invalid signup ordinal")))
+            .transpose()?;
             let circle_rows = sqlx::query("select c.id, c.slug, c.name, c.created_by, c.created_at, m.role from circles c join circle_memberships m on m.circle_id = c.id where m.user_id = ? order by c.slug")
                 .bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
             let circles = circle_rows
@@ -427,6 +473,7 @@ impl ChatRepository for SqliteChatRepository {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
                 exported_at: Utc::now(),
                 user,
+                signup_ordinal,
                 circles,
                 channels,
             })
@@ -2760,6 +2807,92 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(channels, 1, "opposite-direction losers must be removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sqlite_signup_ordinals_are_contiguous_under_parallel_first_logins() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:?cache=shared")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let calls = 8;
+        let suffix = Uuid::now_v7().simple().to_string();
+        let barrier = Arc::new(Barrier::new(calls));
+        let mut tasks = tokio::task::JoinSet::new();
+        let mut users = Vec::new();
+        for index in 0..calls {
+            let repository = Arc::clone(&repository);
+            let barrier = Arc::clone(&barrier);
+            let user = UserId::named(format!("signup-race-{suffix}-{index}"));
+            users.push(user.clone());
+            tasks.spawn(async move {
+                barrier.wait().await;
+                repository
+                    .upsert_user(User {
+                        id: user,
+                        kind: PrincipalKind::Human,
+                        display_name: DisplayName::new(format!("Signup {index}")).unwrap(),
+                        external_provider: None,
+                        external_subject: None,
+                        created_at: Utc::now(),
+                    })
+                    .await
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap().unwrap();
+        }
+        let mut ordinals = Vec::new();
+        for user in &users {
+            ordinals.push(
+                repository
+                    .signup_ordinal(user.clone())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        ordinals.sort_unstable();
+        assert_eq!(ordinals, (1..=calls as u64).collect::<Vec<_>>());
+        // Repeated login/name update does not consume a slot.
+        repository
+            .upsert_user(User {
+                id: users[0].clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Renamed signup").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            ordinals.contains(
+                &repository
+                    .signup_ordinal(users[0].clone())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            )
+        );
+        let next = UserId::named(format!("signup-race-next-{suffix}"));
+        repository
+            .upsert_user(User {
+                id: next.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Next signup").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.signup_ordinal(next).await.unwrap(),
+            Some((calls + 1) as u64)
+        );
     }
 
     #[tokio::test]

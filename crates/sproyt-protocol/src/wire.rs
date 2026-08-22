@@ -146,6 +146,8 @@ pub enum ClientCommand {
 pub enum ServerEvent {
     Hello {
         participant_id: crate::UserId,
+        /// Private to the authenticated participant; never included in profiles.
+        signup_ordinal: Option<u64>,
     },
     UsersListed {
         users: Vec<crate::UserProfile>,

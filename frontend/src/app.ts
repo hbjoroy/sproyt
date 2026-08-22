@@ -55,6 +55,7 @@
       const statusText = requireElement("#status-text", HTMLInputElement);
       const statusEmoji = requireElement("#status-emoji", HTMLInputElement);
       const currentStatus = requireElement("#current-status", HTMLElement);
+      const signupBadge = requireElement("#signup-badge", HTMLElement);
       const notificationSummary = requireElement("#notification-summary", HTMLElement);
       const notificationMode = requireElement("#notification-mode", HTMLSelectElement);
       const notificationDirect = requireElement("#notification-direct", HTMLInputElement);
@@ -2040,6 +2041,11 @@
 
         if (event.type === "hello") {
           currentParticipantId = event.payload.participant_id;
+          const ordinal = event.payload.signup_ordinal;
+          signupBadge.hidden = ordinal === null;
+          signupBadge.textContent = ordinal === null ? "" : `✨ Sprøyt #${ordinal}`;
+          signupBadge.setAttribute("aria-label", ordinal === null ? "" : `Du var nummer ${ordinal} på Sprøyt`);
+          signupBadge.title = ordinal === null ? "" : `Du var nummer ${ordinal} på Sprøyt`;
           return;
         }
 

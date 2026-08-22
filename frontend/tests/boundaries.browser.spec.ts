@@ -57,6 +57,9 @@ test("unsupported WebSocket protocol is reported visibly", async ({ page }) => {
 
   await page.goto("/?participant=boundary-protocol", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
+  // Let the initial subscription finish before asserting a system message.
+  // Its history render replaces the message list by design.
+  await page.waitForTimeout(250);
   await page.evaluate(() => {
     const socket = window.__sproytBoundarySockets.at(-1);
     if (!socket) throw new Error("expected connected socket");

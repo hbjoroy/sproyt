@@ -120,6 +120,9 @@ An authenticated user can request `GET /api/v1/me/export` or use **Eksporter
 mine data** in the browser. The non-cacheable `sproyt.user-export.v1` JSON file
 contains their profile, circle memberships, channel metadata/read markers and
 complete ordered history for channels they are currently authorized to read.
+It also includes their private, stable Sprøyt signup number when they have one.
+The number is never included in public profiles or people lists; deleted
+accounts leave an anonymous historical slot so numbers are never reused.
 It deliberately excludes channels the user has not joined and other users'
 profile/identity-provider fields. Export is produced from one database snapshot
 so concurrent sends cannot create internally inconsistent cursors. These

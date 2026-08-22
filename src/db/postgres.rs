@@ -207,6 +207,32 @@ impl ChatRepository for PostgresChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
+            if user.kind == crate::domain::PrincipalKind::Human {
+                // Locking this single counter serialises first human creation.
+                // The counter update and ledger insert are in this transaction,
+                // therefore failed signups cannot consume a number.
+                sqlx::query("select next_ordinal from signup_ordinal_counter where singleton = true for update")
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                let existing = sqlx::query_scalar::<_, i64>(
+                    "select ordinal from signup_ordinals where user_id = $1",
+                )
+                .bind(*user.id.as_uuid())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                if existing.is_none() {
+                    let ordinal = sqlx::query_scalar::<_, i64>("update signup_ordinal_counter set next_ordinal = next_ordinal + 1 where singleton = true returning next_ordinal - 1")
+                        .fetch_one(&mut *transaction).await.map_err(sql_error)?;
+                    sqlx::query("insert into signup_ordinals(user_id, ordinal) values ($1, $2)")
+                        .bind(*user.id.as_uuid())
+                        .bind(ordinal)
+                        .execute(&mut *transaction)
+                        .await
+                        .map_err(sql_error)?;
+                }
+            }
             sqlx::query("insert into channel_memberships (channel_id, user_id, role) select id, $1, 'member' from channels where slug = 'general' and circle_id is null on conflict(channel_id, user_id) do nothing")
                 .bind(*user.id.as_uuid())
                 .execute(&mut *transaction)
@@ -271,6 +297,24 @@ impl ChatRepository for PostgresChatRepository {
             let rows = sqlx::query("select u.id,u.kind,u.display_name,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join circle_memberships m on m.user_id=u.id where m.circle_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
                 .bind(*circle_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
+        })
+    }
+
+    fn signup_ordinal<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Option<u64>> {
+        Box::pin(async move {
+            let value = sqlx::query_scalar::<_, i64>(
+                "select ordinal from signup_ordinals where user_id = $1",
+            )
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            value
+                .map(|ordinal| {
+                    u64::try_from(ordinal)
+                        .map_err(|_| RepositoryError::Storage("invalid signup ordinal".to_owned()))
+                })
+                .transpose()
         })
     }
 
@@ -507,6 +551,15 @@ impl ChatRepository for PostgresChatRepository {
                 external_subject: row.try_get("external_subject").map_err(storage)?,
                 created_at: row.try_get("created_at").map_err(storage)?,
             };
+            let signup_ordinal = sqlx::query_scalar::<_, i64>(
+                "select ordinal from signup_ordinals where user_id = $1",
+            )
+            .bind(*actor.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?
+            .map(|ordinal| u64::try_from(ordinal).map_err(|_| storage("invalid signup ordinal")))
+            .transpose()?;
             let circle_rows = sqlx::query("select c.id,c.slug,c.name,c.created_by,c.created_at,m.role from circles c join circle_memberships m on m.circle_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
             let circles = circle_rows
@@ -537,6 +590,7 @@ impl ChatRepository for PostgresChatRepository {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
                 exported_at: Utc::now(),
                 user,
+                signup_ordinal,
                 circles,
                 channels,
             })
@@ -2901,6 +2955,94 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(candidates, 1, "opposite-direction losers must be removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn postgres_signup_ordinals_are_unique_and_monotonic_under_parallel_first_logins() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            eprintln!("skipping postgres signup ordinal race: SPROYT_POSTGRES_TEST_URL is unset");
+            return;
+        };
+        let repository = Arc::new(PostgresChatRepository::connect(&url).await.unwrap());
+        repository.migrate().await.unwrap();
+        let calls = 8;
+        let suffix = Uuid::now_v7().simple().to_string();
+        let barrier = Arc::new(Barrier::new(calls));
+        let mut tasks = tokio::task::JoinSet::new();
+        let mut users = Vec::new();
+        for index in 0..calls {
+            let repository = Arc::clone(&repository);
+            let barrier = Arc::clone(&barrier);
+            let user = UserId::named(format!("signup-race-{suffix}-{index}"));
+            users.push(user.clone());
+            tasks.spawn(async move {
+                barrier.wait().await;
+                repository
+                    .upsert_user(User {
+                        id: user,
+                        kind: PrincipalKind::Human,
+                        display_name: DisplayName::new(format!("Signup {index}")).unwrap(),
+                        external_provider: None,
+                        external_subject: None,
+                        created_at: Utc::now(),
+                    })
+                    .await
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap().unwrap();
+        }
+        let mut ordinals = Vec::new();
+        for user in &users {
+            ordinals.push(
+                repository
+                    .signup_ordinal(user.clone())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        ordinals.sort_unstable();
+        // PostgreSQL tests share one CI database, so unrelated test accounts
+        // may legitimately take slots between these writers.
+        assert_eq!(ordinals.len(), calls);
+        assert!(ordinals.iter().all(|ordinal| *ordinal > 0));
+        assert!(ordinals.windows(2).all(|pair| pair[0] < pair[1]));
+        repository
+            .upsert_user(User {
+                id: users[0].clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Renamed signup").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            ordinals.contains(
+                &repository
+                    .signup_ordinal(users[0].clone())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            )
+        );
+        let next = UserId::named(format!("signup-race-next-{suffix}"));
+        repository
+            .upsert_user(User {
+                id: next.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Next signup").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            repository.signup_ordinal(next).await.unwrap().unwrap() > *ordinals.last().unwrap()
+        );
     }
 
     async fn receive_presence_for(

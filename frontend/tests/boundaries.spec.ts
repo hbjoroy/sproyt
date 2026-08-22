@@ -10,7 +10,11 @@ test("wire events reject malformed and unsupported frames", () => {
     type: "hello",
     payload: { participant_id: "u1" }
   };
-  expect(asWireEvent(valid)).toEqual(valid);
+  // A cached/new client may briefly talk to an old pod while it rolls out.
+  expect(asWireEvent(valid)).toEqual({ ...valid, payload: { participant_id: "u1", signup_ordinal: null } });
+  const numberedHello = asWireEvent({ ...valid, payload: { participant_id: "u1", signup_ordinal: 5 } });
+  expect(numberedHello?.type).toBe("hello");
+  if (numberedHello?.type === "hello") expect(numberedHello.payload).toEqual({ participant_id: "u1", signup_ordinal: 5 });
   expect(asWireEvent({ ...valid, protocol: "sproyt.chat.v2" })).toBeNull();
   expect(hasUnsupportedProtocol(JSON.stringify({ ...valid, protocol: "sproyt.chat.v2" }))).toBe(true);
   expect(hasUnsupportedProtocol("not json")).toBe(false);

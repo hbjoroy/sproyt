@@ -193,6 +193,13 @@ impl ChatEngine {
         Ok(())
     }
 
+    pub async fn signup_ordinal(&self, actor: UserId) -> Result<Option<u64>, ChatError> {
+        self.repository
+            .signup_ordinal(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn list_users(&self, actor: UserId) -> Result<Vec<UserProfile>, ChatError> {
         self.repository
             .list_user_profiles(actor)

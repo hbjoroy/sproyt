@@ -93,7 +93,7 @@ type Frame<T extends string, P = never> = T extends T
     : { protocol: typeof protocolId; type: T; request_id?: string; payload: P }
   : never;
 export type ServerEvent =
- | Frame<"hello", { participant_id: string }> | Frame<"users_listed", { users: UserProfile[] }> | Frame<"circle_users_listed", { circle_id: string; users: UserProfile[] }> | Frame<"status_updated", { profile: UserProfile }>
+ | Frame<"hello", { participant_id: string; signup_ordinal: number | null }> | Frame<"users_listed", { users: UserProfile[] }> | Frame<"circle_users_listed", { circle_id: string; users: UserProfile[] }> | Frame<"status_updated", { profile: UserProfile }>
  | Frame<"direct_channel_opened" | "channel_created", { channel: ChannelBase }> | Frame<"membership_joined" | "channel_member_added" | "read_marker_updated", { membership: Membership }> | Frame<"membership_left" | "subscription_ended", { channel_id: string }>
  | Frame<"channels_listed", { channels: Channel[] }> | Frame<"channel_users_listed", { channel_id: string; users: UserProfile[] }> | Frame<"channel_description_updated", { channel_id: string; description: string }> | Frame<"joinable_channels_listed", { channels: { channel: ChannelBase; description: string }[] }>
  | Frame<"messages_loaded", { channel_id: string; messages: ChatMessage[] }> | Frame<"thread_loaded", { root_message_id: string; messages: ChatMessage[] }> | Frame<"thread_summaries_listed", { channel_id: string; summaries: ThreadSummary[] }> | Frame<"thread_read_updated", { summary: ThreadSummary }> | Frame<"subscription_started", { channel_id: string; history: ChatMessage[] }>
@@ -158,7 +158,9 @@ export function asWireEvent(value: unknown): ServerEvent | null {
   if (value.type === "pong") return payload === undefined ? { protocol: protocolId, type: "pong", request_id } : null;
   if (!isRecord(payload)) return null;
   switch (value.type) {
-    case "hello": return isString(payload.participant_id) ? { protocol: protocolId, type: "hello", request_id, payload: { participant_id: payload.participant_id } } : null;
+    // New clients must tolerate an older pod during a rolling deployment.
+    // Missing is normalised to null; malformed supplied values are rejected.
+    case "hello": return isString(payload.participant_id) && (payload.signup_ordinal === undefined || payload.signup_ordinal === null || (isCount(payload.signup_ordinal) && payload.signup_ordinal > 0)) ? { protocol: protocolId, type: "hello", request_id, payload: { participant_id: payload.participant_id, signup_ordinal: payload.signup_ordinal ?? null } } : null;
     case "users_listed": return listOf(isUser)(payload.users) ? { protocol: protocolId, type: "users_listed", request_id, payload: { users: payload.users } } : null;
     case "circle_users_listed": return isString(payload.circle_id) && listOf(isUser)(payload.users) ? { protocol: protocolId, type: "circle_users_listed", request_id, payload: { circle_id: payload.circle_id, users: payload.users } } : null;
     case "status_updated": return isUser(payload.profile) ? { protocol: protocolId, type: "status_updated", request_id, payload: { profile: payload.profile } } : null;

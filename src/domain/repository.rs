@@ -41,6 +41,10 @@ pub type RepositoryFuture<'a, T> =
 pub trait ChatRepository: Send + Sync + 'static {
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
+    /// The private, never-reused position assigned to a human account.  This
+    /// deliberately is not part of `UserProfile`: other people must not be
+    /// able to enumerate early adopters through people lists.
+    fn signup_ordinal<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Option<u64>>;
     #[allow(dead_code)] // Kept during the profile-protocol rollout for repository compatibility.
     fn list_human_users<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<User>>;
     fn list_user_profiles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserProfile>>;
@@ -307,6 +311,13 @@ impl ChatRepository for InMemoryChatRepository {
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
+            if user.kind == crate::domain::PrincipalKind::Human
+                && !state.signup_ordinals.contains_key(&user.id)
+            {
+                state.next_signup_ordinal += 1;
+                let ordinal = state.next_signup_ordinal;
+                state.signup_ordinals.insert(user.id.clone(), ordinal);
+            }
             state.users.insert(user.id.clone(), user.clone());
             let general_channel = state
                 .channels
@@ -325,6 +336,16 @@ impl ChatRepository for InMemoryChatRepository {
                     });
             }
             Ok(user)
+        })
+    }
+
+    fn signup_ordinal<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Option<u64>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            if !state.users.contains_key(&actor) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(state.signup_ordinals.get(&actor).copied())
         })
     }
 
@@ -650,6 +671,7 @@ impl ChatRepository for InMemoryChatRepository {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
                 exported_at: Utc::now(),
                 user,
+                signup_ordinal: state.signup_ordinals.get(&actor).copied(),
                 circles,
                 channels,
             })
@@ -1673,6 +1695,8 @@ struct RepositoryState {
     messages: HashMap<ChannelId, Vec<ChatMessage>>,
     next_sequences: HashMap<ChannelId, ChannelSequence>,
     users: HashMap<UserId, User>,
+    signup_ordinals: HashMap<UserId, u64>,
+    next_signup_ordinal: u64,
     user_statuses: HashMap<UserId, (String, String, Option<chrono::DateTime<chrono::Utc>>)>,
     media: HashMap<MediaId, (MediaObject, Vec<u8>)>,
     media_previews: HashMap<MediaId, MediaVariant>,
@@ -1741,6 +1765,58 @@ mod tests {
             .await
             .unwrap();
         id
+    }
+
+    #[tokio::test]
+    async fn signup_numbers_are_private_stable_and_skip_agents() {
+        let repository = InMemoryChatRepository::default();
+        let first = add_human(&repository, "first adopter").await;
+        let agent = UserId::named("badge-agent");
+        repository
+            .upsert_user(User {
+                id: agent.clone(),
+                kind: PrincipalKind::Agent,
+                display_name: DisplayName::new("Badge agent").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        let second = add_human(&repository, "second adopter").await;
+        assert_eq!(
+            repository.signup_ordinal(first.clone()).await.unwrap(),
+            Some(1)
+        );
+        assert_eq!(repository.signup_ordinal(agent).await.unwrap(), None);
+        assert_eq!(
+            repository.signup_ordinal(second.clone()).await.unwrap(),
+            Some(2)
+        );
+        // A later profile/login upsert retains the original slot.
+        repository
+            .upsert_user(User {
+                id: first.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Renamed adopter").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.signup_ordinal(first.clone()).await.unwrap(),
+            Some(1)
+        );
+        let profiles = repository.list_user_profiles(first.clone()).await.unwrap();
+        assert!(
+            !serde_json::to_string(&profiles)
+                .unwrap()
+                .contains("signup_ordinal")
+        );
+        let export = repository.export_user_data(first).await.unwrap();
+        assert_eq!(export.signup_ordinal, Some(1));
     }
 
     #[tokio::test]
