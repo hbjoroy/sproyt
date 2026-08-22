@@ -357,7 +357,12 @@
       .channel-member-search input { width: 100%; min-height: 40px; }
       .channel-member-count { min-height: 1.2em; margin: 0; color: var(--subtle); font-size: .78rem; }
       .channel-member-list { display: grid; gap: 6px; max-height: min(454px, 45dvh); margin: 0; padding: 0 4px 0 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; list-style: none; }
-      .channel-member-list li { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; }
+      .channel-member-list li { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; }
+      .channel-member-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .channel-member-direct { width: 44px; min-width: 44px; min-height: 44px; margin-left: auto; padding: 0; border-color: var(--border); background: var(--surface-raised); color: var(--ink); font-size: 1.05rem; line-height: 1; }
+      .channel-member-direct:hover:not(:disabled), .channel-member-direct:focus-visible { background: var(--surface-hover); color: var(--ink); }
+      .channel-member-direct-status { flex-basis: 100%; color: var(--subtle); font-size: .78rem; line-height: 1.2; }
+      .channel-member-list li.has-direct-status { flex-wrap: wrap; }
       .channel-member-add { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
       .channel-member-add[hidden] { display: none; }
       .channel-member-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

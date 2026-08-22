@@ -25,6 +25,9 @@ enum ClientEventInput {
     SessionRefreshFailed,
     UploadSucceeded,
     UploadFailed,
+    ResumeRecovery,
+    ConnectTimeout,
+    LivenessTimeout,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +52,9 @@ pub(crate) async fn record_client_event(
         ClientEventInput::SessionRefreshFailed => ClientEvent::SessionRefreshFailed,
         ClientEventInput::UploadSucceeded => ClientEvent::UploadSucceeded,
         ClientEventInput::UploadFailed => ClientEvent::UploadFailed,
+        ClientEventInput::ResumeRecovery => ClientEvent::ResumeRecovery,
+        ClientEventInput::ConnectTimeout => ClientEvent::ConnectTimeout,
+        ClientEventInput::LivenessTimeout => ClientEvent::LivenessTimeout,
     };
     state.operations.record_client_event(event);
     axum::http::StatusCode::NO_CONTENT.into_response()

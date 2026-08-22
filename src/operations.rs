@@ -33,6 +33,9 @@ struct OperationalStateInner {
     client_session_refresh_failed: AtomicU64,
     client_upload_succeeded: AtomicU64,
     client_upload_failed: AtomicU64,
+    client_resume_recovery: AtomicU64,
+    client_connect_timeout: AtomicU64,
+    client_liveness_timeout: AtomicU64,
     shutdown: watch::Sender<bool>,
 }
 
@@ -52,6 +55,9 @@ impl Default for OperationalState {
                 client_session_refresh_failed: AtomicU64::new(0),
                 client_upload_succeeded: AtomicU64::new(0),
                 client_upload_failed: AtomicU64::new(0),
+                client_resume_recovery: AtomicU64::new(0),
+                client_connect_timeout: AtomicU64::new(0),
+                client_liveness_timeout: AtomicU64::new(0),
                 shutdown: watch::channel(false).0,
             }),
         }
@@ -68,6 +74,9 @@ impl OperationalState {
             ClientEvent::SessionRefreshFailed => &self.inner.client_session_refresh_failed,
             ClientEvent::UploadSucceeded => &self.inner.client_upload_succeeded,
             ClientEvent::UploadFailed => &self.inner.client_upload_failed,
+            ClientEvent::ResumeRecovery => &self.inner.client_resume_recovery,
+            ClientEvent::ConnectTimeout => &self.inner.client_connect_timeout,
+            ClientEvent::LivenessTimeout => &self.inner.client_liveness_timeout,
         };
         counter.fetch_add(1, Ordering::Relaxed);
     }
@@ -156,6 +165,18 @@ impl OperationalState {
                 "upload_failed",
                 self.inner.client_upload_failed.load(Ordering::Relaxed),
             ),
+            (
+                "resume_recovery",
+                self.inner.client_resume_recovery.load(Ordering::Relaxed),
+            ),
+            (
+                "connect_timeout",
+                self.inner.client_connect_timeout.load(Ordering::Relaxed),
+            ),
+            (
+                "liveness_timeout",
+                self.inner.client_liveness_timeout.load(Ordering::Relaxed),
+            ),
         ] {
             writeln!(
                 output,
@@ -176,6 +197,9 @@ pub enum ClientEvent {
     SessionRefreshFailed,
     UploadSucceeded,
     UploadFailed,
+    ResumeRecovery,
+    ConnectTimeout,
+    LivenessTimeout,
 }
 
 pub async fn record_metrics(

@@ -3,7 +3,7 @@ import type { ClientCommand, WireCommand } from "./types";
 export interface SocketWritable { readonly readyState: number; send(data: string): void; }
 
 export type RequestTracker = Readonly<{
-  register(command: ClientCommand): WireCommand;
+  register(command: ClientCommand, requestId?: string): WireCommand;
 }>;
 
 export function createRequestTracker(
@@ -11,8 +11,8 @@ export function createRequestTracker(
   protocol: WireCommand["protocol"]
 ): RequestTracker {
   return Object.freeze({
-    register(command: ClientCommand): WireCommand {
-      const request_id = createRequestId();
+    register(command: ClientCommand, requestId?: string): WireCommand {
+      const request_id = requestId ?? createRequestId();
       return "payload" in command
         ? { protocol, request_id, type: command.type, payload: command.payload }
         : { protocol, request_id, type: command.type };

@@ -43,7 +43,12 @@ impl SqliteChatRepository {
         let options = SqliteConnectOptions::from_str(url)
             .map_err(storage)?
             .create_if_missing(true)
-            .foreign_keys(true);
+            .foreign_keys(true)
+            // A direct conversation is protected by a unique, normalized user
+            // pair.  Giving a competing writer a short chance to wait lets it
+            // observe that row and return it, rather than surfacing SQLITE_BUSY
+            // to two people who happened to start the same DM together.
+            .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePool::connect_with(options).await.map_err(sql_error)?;
         Ok(Self { pool })
     }
@@ -264,13 +269,16 @@ impl ChatRepository for SqliteChatRepository {
             } else {
                 (other.clone(), actor.clone())
             };
-            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            // This is deliberately outside the creation transaction.  It is the
+            // common, allocation-free path once a conversation exists.  A miss is
+            // only a hint: the unique pair below remains the authority when two
+            // callers race to create the first conversation.
             if let Some(channel_id) = sqlx::query_scalar::<_, String>(
                 "select channel_id from direct_conversations where user_a_id = ? and user_b_id = ?",
             )
             .bind(user_a.to_string())
             .bind(user_b.to_string())
-            .fetch_optional(&mut *transaction)
+            .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?
             {
@@ -278,7 +286,7 @@ impl ChatRepository for SqliteChatRepository {
                     "select id, slug, name, kind, circle_id, created_by from channels where id = ?",
                 )
                 .bind(channel_id)
-                .fetch_one(&mut *transaction)
+                .fetch_one(&self.pool)
                 .await
                 .map_err(sql_error)?;
                 return channel_from_row(row);
@@ -288,7 +296,7 @@ impl ChatRepository for SqliteChatRepository {
             )
             .bind(actor.to_string())
             .bind(other.to_string())
-            .fetch_all(&mut *transaction)
+            .fetch_all(&self.pool)
             .await
             .map_err(sql_error)?;
             if names.len() != 2 {
@@ -312,6 +320,10 @@ impl ChatRepository for SqliteChatRepository {
                 circle_id: None,
                 created_by: actor.clone(),
             };
+            // Do not start the transaction until after validation reads.  That
+            // keeps a competing writer from upgrading an old read snapshot and
+            // lets SQLite's writer lock serialize the unique-pair insert.
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             sqlx::query("insert into channels (id, slug, name, kind, circle_id, created_by) values (?, ?, ?, 'private', null, ?)")
                 .bind(channel.id.to_string())
                 .bind(channel.slug.as_str())
@@ -323,9 +335,36 @@ impl ChatRepository for SqliteChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
-            sqlx::query("insert into direct_conversations (channel_id, user_a_id, user_b_id) values (?, ?, ?)")
+            let inserted = sqlx::query("insert into direct_conversations (channel_id, user_a_id, user_b_id) values (?, ?, ?) on conflict(user_a_id, user_b_id) do nothing")
                 .bind(channel.id.to_string()).bind(user_a.to_string()).bind(user_b.to_string())
                 .execute(&mut *transaction).await.map_err(sql_error)?;
+            if inserted.rows_affected() == 0 {
+                // Another request committed the same normalized pair while this
+                // one waited for SQLite's writer lock.  Remove our candidate
+                // (its dependent rows cascade), then return the winner.
+                sqlx::query("delete from channels where id = ?")
+                    .bind(channel.id.to_string())
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                let channel_id = sqlx::query_scalar::<_, String>(
+                    "select channel_id from direct_conversations where user_a_id = ? and user_b_id = ?",
+                )
+                .bind(user_a.to_string())
+                .bind(user_b.to_string())
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                let row = sqlx::query(
+                    "select id, slug, name, kind, circle_id, created_by from channels where id = ?",
+                )
+                .bind(channel_id)
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return channel_from_row(row);
+            }
             sqlx::query("insert into channel_memberships (channel_id, user_id, role) values (?, ?, 'member'), (?, ?, 'member')")
                 .bind(channel.id.to_string()).bind(actor.to_string())
                 .bind(channel.id.to_string()).bind(other.to_string())
@@ -2638,8 +2677,90 @@ fn circle_with_role(row: sqlx::sqlite::SqliteRow) -> Result<(Circle, CircleRole)
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::domain::{PrincipalKind, User};
+    use tokio::sync::Barrier;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sqlite_open_direct_channel_is_idempotent_under_race() {
+        let repository = Arc::new(
+            SqliteChatRepository::connect("sqlite::memory:?cache=shared")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let suffix = Uuid::now_v7().simple().to_string();
+        let alice = UserId::named(format!("dm-race-alice-{suffix}"));
+        let bob = UserId::named(format!("dm-race-bob-{suffix}"));
+        for (id, display_name) in [(alice.clone(), "Alice"), (bob.clone(), "Bob")] {
+            repository
+                .upsert_user(User {
+                    id,
+                    kind: PrincipalKind::Human,
+                    display_name: DisplayName::new(display_name).unwrap(),
+                    external_provider: None,
+                    external_subject: None,
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+
+        let calls = 8;
+        let barrier = Arc::new(Barrier::new(calls));
+        let mut tasks = tokio::task::JoinSet::new();
+        for request in 0..calls {
+            let repository = Arc::clone(&repository);
+            let barrier = Arc::clone(&barrier);
+            let alice = alice.clone();
+            let bob = bob.clone();
+            tasks.spawn(async move {
+                barrier.wait().await;
+                if request % 2 == 0 {
+                    repository.open_direct_channel(alice, bob).await
+                } else {
+                    repository.open_direct_channel(bob, alice).await
+                }
+            });
+        }
+
+        let mut channels = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            channels.push(result.unwrap().unwrap());
+        }
+        assert!(
+            channels.iter().all(|channel| channel.id == channels[0].id),
+            "concurrent opens must return the same direct channel"
+        );
+        let conversations: i64 = sqlx::query_scalar(
+            "select count(*) from direct_conversations where user_a_id = ? and user_b_id = ?",
+        )
+        .bind(if alice < bob {
+            alice.to_string()
+        } else {
+            bob.to_string()
+        })
+        .bind(if alice < bob {
+            bob.to_string()
+        } else {
+            alice.to_string()
+        })
+        .fetch_one(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(conversations, 1);
+        let channels: i64 = sqlx::query_scalar(
+            "select count(*) from channels where kind = 'private' and circle_id is null and created_by in (?, ?)",
+        )
+        .bind(alice.to_string())
+        .bind(bob.to_string())
+        .fetch_one(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(channels, 1, "opposite-direction losers must be removed");
+    }
 
     #[tokio::test]
     async fn sqlite_passes_shared_repository_contract() {

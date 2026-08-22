@@ -387,13 +387,14 @@ impl ChatRepository for PostgresChatRepository {
             } else {
                 (other.clone(), actor.clone())
             };
-            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            // This is only a fast path.  A miss cannot establish absence: the
+            // unique normalized pair below decides concurrent first opens.
             if let Some(channel_id) = sqlx::query_scalar::<_, uuid::Uuid>(
                 "select channel_id from direct_conversations where user_a_id=$1 and user_b_id=$2",
             )
             .bind(*user_a.as_uuid())
             .bind(*user_b.as_uuid())
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?
             {
@@ -401,14 +402,14 @@ impl ChatRepository for PostgresChatRepository {
                     "select id,slug,name,kind,circle_id,created_by from channels where id=$1",
                 )
                 .bind(channel_id)
-                .fetch_one(&mut *tx)
+                .fetch_one(&self.pool)
                 .await
                 .map_err(sql_error)?;
                 return channel_from_row(row);
             }
             let names = sqlx::query("select display_name from users where id=any($1) and kind='human' order by lower(display_name)")
                 .bind(vec![*actor.as_uuid(), *other.as_uuid()])
-                .fetch_all(&mut *tx).await.map_err(sql_error)?;
+                .fetch_all(&self.pool).await.map_err(sql_error)?;
             if names.len() != 2 {
                 return Err(RepositoryError::NotFound);
             }
@@ -430,6 +431,7 @@ impl ChatRepository for PostgresChatRepository {
                 circle_id: None,
                 created_by: actor.clone(),
             };
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
             sqlx::query("insert into channels(id,slug,name,kind,circle_id,created_by) values($1,$2,$3,'private',null,$4)")
                 .bind(*channel.id.as_uuid()).bind(channel.slug.as_str()).bind(channel.name.as_str()).bind(*actor.as_uuid())
                 .execute(&mut *tx).await.map_err(sql_error)?;
@@ -438,8 +440,8 @@ impl ChatRepository for PostgresChatRepository {
                 .execute(&mut *tx)
                 .await
                 .map_err(sql_error)?;
-            sqlx::query(
-                "insert into direct_conversations(channel_id,user_a_id,user_b_id) values($1,$2,$3)",
+            let inserted = sqlx::query(
+                "insert into direct_conversations(channel_id,user_a_id,user_b_id) values($1,$2,$3) on conflict(user_a_id,user_b_id) do nothing",
             )
             .bind(*channel.id.as_uuid())
             .bind(*user_a.as_uuid())
@@ -447,6 +449,33 @@ impl ChatRepository for PostgresChatRepository {
             .execute(&mut *tx)
             .await
             .map_err(sql_error)?;
+            if inserted.rows_affected() == 0 {
+                // The concurrent creator won the pair's unique constraint.  The
+                // candidate channel was never published, so remove it and read
+                // the canonical conversation before committing this request.
+                sqlx::query("delete from channels where id=$1")
+                    .bind(*channel.id.as_uuid())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+                let channel_id = sqlx::query_scalar::<_, uuid::Uuid>(
+                    "select channel_id from direct_conversations where user_a_id=$1 and user_b_id=$2",
+                )
+                .bind(*user_a.as_uuid())
+                .bind(*user_b.as_uuid())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                let row = sqlx::query(
+                    "select id,slug,name,kind,circle_id,created_by from channels where id=$1",
+                )
+                .bind(channel_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                tx.commit().await.map_err(sql_error)?;
+                return channel_from_row(row);
+            }
             sqlx::query("insert into channel_memberships(channel_id,user_id,role) values($1,$2,'member'),($1,$3,'member')")
                 .bind(*channel.id.as_uuid()).bind(*actor.as_uuid()).bind(*other.as_uuid())
                 .execute(&mut *tx).await.map_err(sql_error)?;
@@ -2793,8 +2822,86 @@ fn circle_with_role(row: PgRow) -> Result<(Circle, CircleRole), RepositoryError>
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::domain::{PrincipalKind, User};
+    use tokio::sync::Barrier;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn postgres_open_direct_channel_is_idempotent_under_race() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let repository = Arc::new(PostgresChatRepository::connect(&url).await.unwrap());
+        repository.migrate().await.unwrap();
+        let suffix = Uuid::now_v7().simple().to_string();
+        let alice = UserId::named(format!("dm-race-alice-{suffix}"));
+        let bob = UserId::named(format!("dm-race-bob-{suffix}"));
+        for (id, display_name) in [(alice.clone(), "Alice"), (bob.clone(), "Bob")] {
+            repository
+                .upsert_user(User {
+                    id,
+                    kind: PrincipalKind::Human,
+                    display_name: DisplayName::new(display_name).unwrap(),
+                    external_provider: None,
+                    external_subject: None,
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+
+        let calls = 8;
+        let barrier = Arc::new(Barrier::new(calls));
+        let mut tasks = tokio::task::JoinSet::new();
+        for request in 0..calls {
+            let repository = Arc::clone(&repository);
+            let barrier = Arc::clone(&barrier);
+            let alice = alice.clone();
+            let bob = bob.clone();
+            tasks.spawn(async move {
+                barrier.wait().await;
+                if request % 2 == 0 {
+                    repository.open_direct_channel(alice, bob).await
+                } else {
+                    repository.open_direct_channel(bob, alice).await
+                }
+            });
+        }
+
+        let mut channels = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            channels.push(result.unwrap().unwrap());
+        }
+        assert!(
+            channels.iter().all(|channel| channel.id == channels[0].id),
+            "concurrent opens must return the same direct channel"
+        );
+        let (user_a, user_b) = if alice < bob {
+            (alice.clone(), bob.clone())
+        } else {
+            (bob.clone(), alice.clone())
+        };
+        let conversations: i64 = sqlx::query_scalar(
+            "select count(*) from direct_conversations where user_a_id=$1 and user_b_id=$2",
+        )
+        .bind(*user_a.as_uuid())
+        .bind(*user_b.as_uuid())
+        .fetch_one(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(conversations, 1);
+        let candidates: i64 = sqlx::query_scalar(
+            "select count(*) from channels where kind='private' and circle_id is null and created_by in ($1, $2)",
+        )
+        .bind(*alice.as_uuid())
+        .bind(*bob.as_uuid())
+        .fetch_one(&repository.pool)
+        .await
+        .unwrap();
+        assert_eq!(candidates, 1, "opposite-direction losers must be removed");
+    }
 
     async fn receive_presence_for(
         events: &mut broadcast::Receiver<ChatEvent>,

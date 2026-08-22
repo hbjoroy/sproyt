@@ -24,6 +24,21 @@ export interface SessionDependencies {
 const sessionHeaders = { accept: "application/json" };
 const sessionRequest: RequestInit = { credentials: "same-origin", cache: "no-store", headers: sessionHeaders };
 
+/** Authentication calls must not leave a foreground PWA permanently waiting. */
+export async function fetchWithTimeout(
+  fetcher: SessionDependencies["fetch"],
+  setTimeoutFn: SessionDependencies["setTimeout"],
+  clearTimeoutFn: SessionDependencies["clearTimeout"],
+  input: string,
+  init: RequestInit,
+  milliseconds = 8_000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeoutFn(() => controller.abort(), milliseconds);
+  try { return await fetcher(input, { ...init, signal: controller.signal }); }
+  finally { clearTimeoutFn(timer); }
+}
+
 export function createSessionController(dependencies: SessionDependencies): SessionController {
   const state: SessionState = { refreshTimer: null, refreshDueAt: 0, refreshPromise: null, refreshRejected: false, authenticationRecoveryPromise: null };
   const leaseKey = dependencies.leaseKey ?? "sproyt.session-refresh-lease.v1";
@@ -32,11 +47,11 @@ export function createSessionController(dependencies: SessionDependencies): Sess
   const restoreStatus = (): void => { if (dependencies.visibility() === "visible" && dependencies.isConnectionOpen()) dependencies.onStatus("Tilkopla"); };
   const performRefresh = async (): Promise<boolean> => {
     const visible = dependencies.visibility() === "visible" && dependencies.isConnectionOpen(); if (visible) dependencies.onStatus("Fornyar økta …");
-    let response: Response; try { response = await dependencies.fetch("/auth/refresh", { method: "POST", credentials: "same-origin", headers: sessionHeaders }); } catch { dependencies.reportClientEvent("session_refresh_failed"); state.refreshRejected = false; schedule(30); restoreStatus(); return false; }
+    let response: Response; try { response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/refresh", { method: "POST", credentials: "same-origin", headers: sessionHeaders }); } catch { dependencies.reportClientEvent("session_refresh_failed"); state.refreshRejected = false; schedule(30); restoreStatus(); return false; }
     if (!response.ok) { dependencies.reportClientEvent("session_refresh_failed"); state.refreshRejected = response.status === 401; schedule(30); restoreStatus(); return false; }
     state.refreshRejected = false;
     let seconds: number; try { seconds = sessionRefreshAfterSeconds(await response.json()); } catch { dependencies.reportClientEvent("session_refresh_failed"); schedule(30); restoreStatus(); return false; }
-    let verification: Response; try { verification = await dependencies.fetch("/auth/session", sessionRequest); } catch { dependencies.reportClientEvent("session_refresh_failed"); schedule(30); restoreStatus(); return false; }
+    let verification: Response; try { verification = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); } catch { dependencies.reportClientEvent("session_refresh_failed"); schedule(30); restoreStatus(); return false; }
     if (!verification.ok) { dependencies.reportClientEvent("session_refresh_failed"); state.refreshRejected = verification.status === 401; schedule(30); restoreStatus(); return false; }
     schedule(seconds); dependencies.onReauthenticationRequired(false); dependencies.broadcast?.postMessage({ type: "session_rotated", refreshAfterSeconds: seconds }); dependencies.reportClientEvent("session_refresh_succeeded"); dependencies.onSessionRotated(); return true;
   };
@@ -45,9 +60,9 @@ export function createSessionController(dependencies: SessionDependencies): Sess
     try { const current = parseSessionRefreshLease(dependencies.storage.getItem(leaseKey)); if (current !== null && current.owner !== lease.owner && current.expiresAt > now) { schedule(Math.max(2, Math.ceil((current.expiresAt - now) / 1_000))); return false; } dependencies.storage.setItem(leaseKey, JSON.stringify(lease)); if (parseSessionRefreshLease(dependencies.storage.getItem(leaseKey))?.owner !== lease.owner) { schedule(5); return false; } } catch { try { dependencies.storage.removeItem(leaseKey); } catch {} return performRefresh(); }
     try { return await performRefresh(); } finally { try { if (parseSessionRefreshLease(dependencies.storage.getItem(leaseKey))?.owner === lease.owner) dependencies.storage.removeItem(leaseKey); } catch {} }
   };
-  const useCurrentSession = async (): Promise<boolean> => { try { const response = await dependencies.fetch("/auth/session", sessionRequest); if (!response.ok) return false; schedule(sessionRefreshAfterSeconds(await response.json())); return true; } catch { return false; } };
+  const useCurrentSession = async (): Promise<boolean> => { try { const response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); if (!response.ok) return false; schedule(sessionRefreshAfterSeconds(await response.json())); return true; } catch { return false; } };
   const refresh = async (waitForLock = false): Promise<boolean> => { if (state.refreshPromise !== null) return state.refreshPromise; state.refreshPromise = (async () => { if (dependencies.withLock === null) return withLease(); const result = await dependencies.withLock(waitForLock, async () => { if (waitForLock && await useCurrentSession()) { dependencies.onSessionRotated(); return true; } return performRefresh(); }); if (result === "busy") { schedule(30); return false; } return result; })(); try { return await state.refreshPromise; } finally { state.refreshPromise = null; } };
   const recoverAuthentication = async (): Promise<void> => { if (state.authenticationRecoveryPromise !== null) return state.authenticationRecoveryPromise; state.authenticationRecoveryPromise = (async () => { dependencies.onStatus("Fornyar økta …"); if (await refresh(true)) return; if (state.refreshRejected) { if (await useCurrentSession()) { dependencies.onReauthenticationRequired(false); dependencies.onSessionRotated(); return; } if (dependencies.visibility() === "visible" && dependencies.now() - dependencies.lastUserActivityAt() < 120_000) { dependencies.onReauthenticationRequired(true); dependencies.onStatus("Økta må stadfestast – vi ventar så du ikkje mistar arbeidet ditt"); scheduleAuthenticationRecovery(30); return; } dependencies.onReauthenticationRequired(false); dependencies.onStatus("Økta må stadfestast på nytt …"); dependencies.onLoginRequired(); return; } dependencies.onReconnectNeeded("ventar på nett for å fornye økta"); })(); try { await state.authenticationRecoveryPromise; } finally { state.authenticationRecoveryPromise = null; } };
-  const start = async (): Promise<void> => { dependencies.broadcast?.addEventListener("message", (event) => { const message = parseSessionRefreshBroadcast(event.data); if (message !== null) { schedule(message.refreshAfterSeconds); dependencies.onSessionRotated(); } }); try { const response = await dependencies.fetch("/auth/session", sessionRequest); if (!response.ok) { if (response.status === 401 && await refresh(true)) return; schedule(30); return; } schedule(sessionRefreshAfterSeconds(await response.json())); } catch { schedule(30); } };
+  const start = async (): Promise<void> => { dependencies.broadcast?.addEventListener("message", (event) => { const message = parseSessionRefreshBroadcast(event.data); if (message !== null) { schedule(message.refreshAfterSeconds); dependencies.onSessionRotated(); } }); try { const response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); if (!response.ok) { if (response.status === 401 && await refresh(true)) return; schedule(30); return; } schedule(sessionRefreshAfterSeconds(await response.json())); } catch { schedule(30); } };
   return Object.freeze({ snapshot: (): SessionSnapshot => Object.freeze({ refreshDueAt: state.refreshDueAt, refreshRejected: state.refreshRejected, refreshing: state.refreshPromise !== null, recoveringAuthentication: state.authenticationRecoveryPromise !== null }), start, schedule, refresh, recoverAuthentication, reauthenticateNow: (): void => { dependencies.onReauthenticationRequired(false); dependencies.onLoginRequired(); }, useCurrentSession });
 }

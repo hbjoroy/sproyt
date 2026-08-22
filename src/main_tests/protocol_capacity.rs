@@ -360,9 +360,9 @@ fn browser_keepalive_does_not_rebuild_interactive_message_views() {
     let heartbeat = CONNECTION_SOURCE
         .split("state.heartbeatTimer = dependencies.setInterval(() => {")
         .nth(1)
-        .and_then(|value| value.split("}, 20_000);").next())
+        .and_then(|value| value.split("}, 10_000);").next())
         .expect("heartbeat block");
-    assert!(heartbeat.contains("send(\"ping\")"));
+    assert!(heartbeat.contains("sendVia(socket, \"ping\")"));
     assert!(!heartbeat.contains("list_users"));
     assert!(!heartbeat.contains("list_my_channels"));
     assert!(!heartbeat.contains("list_mentions"));
@@ -670,7 +670,7 @@ fn browser_exposes_channel_members_and_owner_managed_markdown_description() {
     assert!(BROWSER_CLIENT.contains("overscroll-behavior: contain"));
     assert!(BROWSER_CLIENT.contains("channelMemberSearch.addEventListener(\"input\""));
     assert!(BROWSER_CLIENT.contains(".normalize(\"NFKD\")"));
-    assert!(BROWSER_CLIENT.contains("`Viser ${visibleUsers.length} av ${users.length}`"));
+    assert!(BROWSER_CLIENT.contains("`Viser ${visibleUsers.length} av ${otherUsers.length}`"));
     assert!(BROWSER_CLIENT.contains("function requestChannelMembers(channelId)"));
     assert!(
         BROWSER_CLIENT.contains("sendCommand(\"list_channel_users\", { channel_id: channelId })")
@@ -743,7 +743,7 @@ fn browser_uses_one_complete_theme_contract_for_dark_mode_controls() {
 #[test]
 fn browser_refreshes_unread_summaries_when_a_background_tab_returns() {
     assert!(BROWSER_CLIENT.contains(
-            "if (document.visibilityState !== \"visible\") return;\n        resumeAfterBackground();\n        sendCommand(\"list_my_channels\");"
+            "if (document.visibilityState !== \"visible\") { hiddenSince = Date.now(); return; }\n        resumeAfterBackground(false);\n        hiddenSince = null;\n        sendCommand(\"list_my_channels\");"
         ));
 }
 
@@ -1206,13 +1206,17 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         CONNECTION_SOURCE
             .contains("dependencies.recover().catch(() => controller.scheduleReconnect")
     );
-    assert!(BROWSER_CLIENT.contains("fetch(\"/auth/session\""));
+    assert!(BROWSER_CLIENT.contains("fetchWithTimeout(window.fetch.bind(window)"));
+    assert!(SESSION_SOURCE.contains("export async function fetchWithTimeout"));
     assert!(BROWSER_CLIENT.contains("sessionController.start().catch"));
     assert!(SESSION_SOURCE.contains("state.refreshDueAt = dependencies.now() + delay"));
+    assert!(BROWSER_CLIENT.contains(
+        "window.addEventListener(\"pageshow\", (event) => resumeAfterBackground(event.persisted))"
+    ));
     assert!(
-        BROWSER_CLIENT.contains("window.addEventListener(\"pageshow\", resumeAfterBackground)")
+        BROWSER_CLIENT
+            .contains("window.addEventListener(\"online\", () => resumeAfterBackground(true))")
     );
-    assert!(BROWSER_CLIENT.contains("window.addEventListener(\"online\", resumeAfterBackground)"));
     assert!(
         BROWSER_CLIENT
             .contains("onSessionRotated: () => connectionSupervisor.replaceAfterSessionRefresh()")

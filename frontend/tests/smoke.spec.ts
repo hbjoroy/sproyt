@@ -4,6 +4,7 @@ declare global {
   interface Window {
     __sproytRecordCspViolation(violation: string): Promise<void>;
     __sproytE2eSockets: globalThis.WebSocket[];
+    __sproytDmCommands: string[];
   }
 }
 
@@ -104,4 +105,46 @@ test("development client loads through CSP, connects, and sends a message", asyn
   expect(cspViolations).toEqual([]);
   expect(pageErrors).toEqual([]);
   expect(unexpectedConsoleErrors).toEqual([]);
+});
+
+test("the channel member browser opens a direct conversation without showing yourself", async ({ page }) => {
+  const peer = await page.context().newPage();
+  await peer.goto("/?participant=playwright-dm-peer", { waitUntil: "domcontentloaded" });
+  await expect(peer.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
+
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    const commands: string[] = [];
+    class RecordingWebSocket extends NativeWebSocket {
+      send(data: string): void {
+        commands.push(data);
+        super.send(data);
+      }
+    }
+    window.WebSocket = RecordingWebSocket;
+    window.__sproytDmCommands = commands;
+  });
+  await page.goto("/?participant=playwright-dm-actor", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
+  await page.locator("#channel-people").click();
+  const memberList = page.locator("#channel-member-list");
+  const directAction = memberList.getByRole("button", { name: "Start direktesamtale med playwright-dm-peer" });
+  await expect(directAction).toBeVisible({ timeout: 15_000 });
+  await expect(memberList).not.toContainText("playwright-dm-actor");
+  const peerId = await directAction.locator("xpath=..").getAttribute("data-profile-user-id");
+  expect(peerId).not.toBeNull();
+  await directAction.press("Enter");
+  await expect.poll(() => page.evaluate(() => {
+    for (const serialized of window.__sproytDmCommands) {
+      const command: unknown = JSON.parse(serialized);
+      if (typeof command !== "object" || command === null || !("type" in command) || command.type !== "open_direct_channel") continue;
+      if (!("payload" in command) || typeof command.payload !== "object" || command.payload === null || !("user_id" in command.payload)) continue;
+      return typeof command.payload.user_id === "string" ? command.payload.user_id : null;
+    }
+    return null;
+  })).toBe(peerId);
+  await expect(page.locator("#channel-details-dialog")).not.toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("#conversation-circle")).toHaveText("Direktemelding");
+  await expect(page.locator("#conversation-title")).toContainText("playwright-dm-peer");
+  await peer.close();
 });

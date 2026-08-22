@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AgentApi, HttpClient, HttpError, NotificationApi, ProcessApi, readJson, sameOriginJson } from "../src/api";
-import { clientCommandTypes, createConnectionController, isClientCommand, parseSocketEvent, resetTransientRequestsAfterDisconnect, type ConnectionSocket } from "../src/connection";
+import { clientCommandTypes, createConnectionController, isClientCommand, parseSocketEvent, resetTransientRequestsAfterDisconnect, shouldForceResume, type ConnectionSocket } from "../src/connection";
 import { NavigationController, restoreNavigation } from "../src/navigation";
 import { asWireEvent, isRecord, mediaFromUpload, protocolId } from "../src/types";
-import { createSessionController, parseSessionRefreshBroadcast, parseSessionRefreshLease, refreshDelayMilliseconds, sessionRefreshAfterSeconds } from "../src/session";
+import { createSessionController, fetchWithTimeout, parseSessionRefreshBroadcast, parseSessionRefreshLease, refreshDelayMilliseconds, sessionRefreshAfterSeconds } from "../src/session";
 
 class MemoryStorage implements Storage {
   #values = new Map<string, string>();
@@ -54,6 +54,13 @@ test("WebSocket boundary rejects malformed envelopes without changing accepted d
   assert.deepEqual(parseSocketEvent(valid), accepted);
 });
 
+test("short focus changes do not force reconnect while real suspension and online recovery do", () => {
+  assert.equal(shouldForceResume(10_000, 0, false), false);
+  assert.equal(shouldForceResume(30_000, 0, false), true);
+  assert.equal(shouldForceResume(1_000, null, false), false);
+  assert.equal(shouldForceResume(1_000, null, true), true);
+});
+
 test("connection controller serializes typed commands and keeps malformed frames out of callbacks", () => {
   const socket = new FakeSocket();
   const events: unknown[] = [];
@@ -84,7 +91,7 @@ test("connection controller serializes typed commands and keeps malformed frames
   assert.equal(controller.send("mark_read", { channel_id: "c1", sequence: -1 }), null);
   assert.equal(controller.send("load_recent_messages", { channel_id: "c1", limit: 65_536 }), null);
   assert.equal(controller.send("load_recent_messages", { channel_id: "c1", limit: 20, after: -1 }), null);
-  const heartbeat = timers.at(-1);
+  const heartbeat = timers.at(-2);
   assert.notEqual(heartbeat, undefined);
   for (let tick = 0; tick < 10; tick += 1) heartbeat?.();
   assert.equal(socket.sent.filter((frame) => JSON.parse(frame).type === "ping").length, 10);
@@ -227,7 +234,7 @@ test("candidate readiness does not replace the active subscription when handoff 
   controller.send("subscribe_channel", { channel_id: "c2" });
   candidate.emit("message", event(requestId(candidate, "subscribe_channel", "c2"), "subscription_started", { channel_id: "c2", history: [] }));
   assert.equal(controller.snapshot().subscribedChannelId, null);
-  const timeout = timers.filter((timer) => timer.milliseconds === 10_000)[1];
+  const timeout = timers.filter((timer) => timer.milliseconds === 12_000).at(-1);
   assert.notEqual(timeout, undefined);
   timeout?.callback();
   assert.equal(controller.snapshot().handoffActive, false);
@@ -412,6 +419,18 @@ test("invalid refresh delays fail closed to a short retry", () => {
   assert.equal(refreshDelayMilliseconds(2.5), 2_500);
 });
 
+test("hung authentication requests are aborted within the shared recovery deadline", async () => {
+  const timeouts: Array<() => void> = [];
+  let cleared = false;
+  const request = fetchWithTimeout((_input, init) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+  }), (callback) => { timeouts.push(callback); return 7; }, (timer) => { assert.equal(timer, 7); cleared = true; }, "/auth/session", { credentials: "same-origin" }, 8_000);
+  assert.equal(timeouts.length, 1);
+  timeouts[0]?.();
+  await assert.rejects(request, { name: "AbortError" });
+  assert.equal(cleared, true);
+});
+
 test("session and cross-tab decoders reject syntax-valid values of the wrong type", () => {
   for (const value of [null, {}, { refresh_after_seconds: "60" }, { refresh_after_seconds: 2.5 }, { refresh_after_seconds: 0 }, { refresh_after_seconds: 2 ** 53 }]) {
     assert.equal(sessionRefreshAfterSeconds(value), 300);
@@ -444,7 +463,198 @@ test("session controller owns refresh scheduling, lease competition and rotation
   assert.deepEqual(rotations, ["rotated"]);
   assert.ok(events.includes("session_refresh_succeeded"));
   assert.equal(storage.getItem("sproyt.session-refresh-lease.v1"), null);
-  assert.equal(timers.length, 1);
+  // refresh, verification and the next scheduled refresh each own a bounded timer.
+  assert.equal(timers.length, 3);
+});
+
+test("resume recovery discards a stale OPEN socket, unlocks pending requests and fences late events", () => {
+  const sockets: FakeSocket[] = [];
+  const lost: string[][] = [];
+  const events: string[] = [];
+  const telemetry: string[] = [];
+  let request = 0;
+  const controller = createConnectionController({
+    websocketUrl: () => "ws://chat.example.test/ws", createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; }, createRequestId: () => `resume-${++request}`,
+    onCommandSent: () => {}, onBeforeConnect: () => {}, onOpen: (send) => { send("hello"); }, onEvent: (event) => events.push(event.type), onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {}, onSocketError: () => {}, onConnectionLost: () => {}, onRequestsLost: (ids) => lost.push([...ids]), onAuthenticationFailure: async () => {}, recover: async () => {}, onHandoffFallback: () => {}, reportClientEvent: (event) => telemetry.push(event),
+    setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {}
+  });
+  controller.start();
+  const stale = sockets[0]; assert.notEqual(stale, undefined); if (!stale) return;
+  stale.readyState = WebSocket.OPEN; stale.emit("open", new Event("open"));
+  const pendingBody = "bevar meg\n[[media:media-1|image/jpeg|foto.jpg]]";
+  const pendingRequest = controller.send("send_message", { channel_id: "c1", body: pendingBody });
+  const pendingThreadRequest = controller.send("send_message", { channel_id: "c1", parent_message_id: "root-1", body: "trådsvar\n[[media:media-2|image/png|tråd.png]]" });
+  assert.notEqual(pendingRequest, null); assert.notEqual(pendingThreadRequest, null);
+  controller.recoverAfterResume();
+  assert.equal(stale.readyState, WebSocket.CLOSED);
+  assert.ok(lost[0]?.includes(pendingRequest ?? ""));
+  assert.ok(lost[0]?.includes(pendingThreadRequest ?? ""));
+  assert.deepEqual(telemetry, ["resume_recovery"]);
+  const fresh = sockets[1]; assert.notEqual(fresh, undefined); if (!fresh) return;
+  stale.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId, type: "hello", payload: { participant_id: "late" } }) }));
+  assert.deepEqual(events, []);
+  fresh.readyState = WebSocket.OPEN; fresh.emit("open", new Event("open"));
+  assert.equal(JSON.parse(fresh.sent[0] ?? "{}").type, "hello");
+  assert.equal(controller.resend(pendingRequest ?? "", "send_message", { channel_id: "c1", body: pendingBody }), pendingRequest);
+  assert.equal(controller.resend(pendingThreadRequest ?? "", "send_message", { channel_id: "c1", parent_message_id: "root-1", body: "trådsvar\n[[media:media-2|image/png|tråd.png]]" }), pendingThreadRequest);
+  const retried = fresh.sent.slice(-2).map((frame) => JSON.parse(frame));
+  assert.deepEqual(retried.map((frame) => frame.request_id), [pendingRequest, pendingThreadRequest]);
+  assert.equal(retried[0]?.payload.body, pendingBody);
+});
+
+test("liveness watchdog reconnects an apparently OPEN socket that stops receiving server events", () => {
+  const sockets: FakeSocket[] = [];
+  const intervals: Array<() => void> = [];
+  const timeouts: Array<() => void> = [];
+  const telemetry: string[] = [];
+  let currentTime = 0;
+  let visible = false;
+  let recoveries = 0;
+  const controller = createConnectionController({
+    websocketUrl: () => "ws://chat.example.test/ws", createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; }, createRequestId: () => crypto.randomUUID(),
+    onCommandSent: () => {}, onBeforeConnect: () => {}, onOpen: () => {}, onEvent: () => {}, onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {}, onSocketError: () => {}, onConnectionLost: () => {}, onRequestsLost: () => {}, onAuthenticationFailure: async () => {}, recover: async () => { recoveries += 1; }, onHandoffFallback: () => {}, reportClientEvent: (event) => telemetry.push(event), now: () => currentTime, isVisible: () => visible,
+    setTimeout: (callback) => { timeouts.push(callback); return timeouts.length; }, clearTimeout: () => {}, setInterval: (callback) => { intervals.push(callback); return intervals.length; }, clearInterval: () => {}
+  });
+  controller.start();
+  const socket = sockets[0]; assert.notEqual(socket, undefined); if (!socket) return;
+  socket.readyState = WebSocket.OPEN; socket.emit("open", new Event("open"));
+  currentTime = 29_000;
+  intervals[1]?.();
+  assert.equal(socket.readyState, WebSocket.OPEN);
+  assert.equal(telemetry.length, 0);
+  visible = true;
+  currentTime = 29_001;
+  intervals[1]?.();
+  assert.equal(socket.readyState, WebSocket.CLOSED);
+  assert.ok(telemetry.includes("liveness_timeout"));
+  assert.equal(sockets.length, 1);
+  timeouts.at(-1)?.();
+  assert.equal(recoveries, 1);
+});
+
+test("a refresh candidate that never opens times out once and repeated refresh requests do not create more candidates", () => {
+  const sockets: FakeSocket[] = [];
+  const timers = new Map<number, () => void>();
+  const telemetry: string[] = [];
+  let nextTimer = 0;
+  const controller = createConnectionController({
+    websocketUrl: () => "ws://chat.example.test/ws", createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; }, createRequestId: () => crypto.randomUUID(),
+    onCommandSent: () => {}, onBeforeConnect: () => {}, onOpen: () => {}, onEvent: () => {}, onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {}, onSocketError: () => {}, onConnectionLost: () => {}, onRequestsLost: () => {}, onAuthenticationFailure: async () => {}, recover: async () => {}, onHandoffFallback: () => {}, reportClientEvent: (event) => telemetry.push(event),
+    setTimeout: (callback) => { const id = ++nextTimer; timers.set(id, callback); return id; }, clearTimeout: (id) => { timers.delete(id); }, setInterval: () => ++nextTimer, clearInterval: () => {}
+  });
+  controller.start();
+  const active = sockets[0]; assert.notEqual(active, undefined); if (!active) return;
+  active.readyState = WebSocket.OPEN; active.emit("open", new Event("open"));
+  controller.replaceAfterSessionRefresh(); controller.replaceAfterSessionRefresh(); controller.replaceAfterSessionRefresh();
+  assert.equal(sockets.length, 2);
+  assert.equal(controller.snapshot().handoffActive, true);
+  for (const callback of [...timers.values()]) callback();
+  assert.equal(controller.snapshot().handoffActive, false);
+  assert.equal(active.readyState, WebSocket.OPEN);
+  assert.equal(sockets[1]?.readyState, WebSocket.CLOSED);
+  assert.deepEqual(telemetry, ["connect_timeout"]);
+});
+
+test("an unexpected active close keeps send delivery uncertain and retries with the original request id", () => {
+  const sockets: FakeSocket[] = [];
+  const uncertain: string[] = [];
+  let request = 0;
+  const controller = createConnectionController({
+    websocketUrl: () => "ws://chat.example.test/ws", createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; }, createRequestId: () => `close-${++request}`,
+    onCommandSent: () => {}, onBeforeConnect: () => {}, onOpen: () => {}, onEvent: () => {}, onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {}, onSocketError: () => {}, onConnectionLost: () => {}, onRequestsLost: () => assert.fail("active pending send must be uncertain"), onUncertainRequests: (ids) => uncertain.push(...ids), onAuthenticationFailure: async () => {}, recover: async () => {}, onHandoffFallback: () => {},
+    setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {}
+  });
+  controller.start();
+  const first = sockets[0]; assert.notEqual(first, undefined); if (!first) return;
+  first.readyState = WebSocket.OPEN; first.emit("open", new Event("open"));
+  const requestId = controller.send("send_message", { channel_id: "original-channel", body: "same body" });
+  assert.notEqual(requestId, null);
+  first.readyState = WebSocket.CLOSED;
+  first.emit("close", Object.assign(new Event("close"), { code: 1006, reason: "radio lost" }));
+  assert.deepEqual(uncertain, [requestId]);
+  controller.connect(true);
+  const second = sockets[1]; assert.notEqual(second, undefined); if (!second) return;
+  second.readyState = WebSocket.OPEN; second.emit("open", new Event("open"));
+  controller.resend(requestId ?? "", "send_message", { channel_id: "original-channel", body: "same body" });
+  const retried = JSON.parse(second.sent.at(-1) ?? "{}");
+  assert.equal(retried.request_id, requestId);
+  assert.equal(retried.payload.channel_id, "original-channel");
+});
+
+test("handoff timeout cannot strand a pending send when the previous socket is already closing", () => {
+  const sockets: FakeSocket[] = [];
+  const timers: Array<() => void> = [];
+  const uncertain: string[] = [];
+  let request = 0;
+  let lost = 0;
+  const controller = createConnectionController({
+    websocketUrl: () => "ws://chat.example.test/ws", createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; }, createRequestId: () => `race-${++request}`,
+    onCommandSent: () => {}, onBeforeConnect: () => {}, onOpen: () => {}, onEvent: () => {}, onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {}, onSocketError: () => {}, onConnectionLost: () => { lost += 1; }, onRequestsLost: () => {}, onUncertainRequests: (ids) => uncertain.push(...ids), onAuthenticationFailure: async () => {}, recover: async () => {}, onHandoffFallback: () => {},
+    setTimeout: (callback) => { timers.push(callback); return timers.length; }, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {}
+  });
+  controller.start();
+  const active = sockets[0]; assert.notEqual(active, undefined); if (!active) return;
+  active.readyState = WebSocket.OPEN; active.emit("open", new Event("open"));
+  const requestId = controller.send("send_message", { channel_id: "c1", body: "pending" });
+  controller.replaceAfterSessionRefresh();
+  active.readyState = WebSocket.CLOSING;
+  timers.at(-1)?.();
+  assert.ok(uncertain.includes(requestId ?? ""));
+  assert.equal(lost, 1);
+  assert.equal(controller.snapshot().handoffActive, false);
+  assert.equal(sockets.length, 3);
+});
+
+test("closing both handoff sockets clears stale routing before reconnect", () => {
+  const sockets: FakeSocket[] = [];
+  const uncertain: string[] = [];
+  let request = 0;
+  const controller = createConnectionController({
+    websocketUrl: () => "ws://chat.example.test/ws", createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; }, createRequestId: () => `both-${++request}`,
+    onCommandSent: () => {}, onBeforeConnect: () => {}, onOpen: () => {}, onEvent: () => {}, onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {}, onSocketError: () => {}, onConnectionLost: () => {}, onRequestsLost: () => {}, onUncertainRequests: (ids) => uncertain.push(...ids), onAuthenticationFailure: async () => {}, recover: async () => {}, onHandoffFallback: () => {},
+    setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {}
+  });
+  controller.start();
+  const active = sockets[0]; assert.notEqual(active, undefined); if (!active) return;
+  active.readyState = WebSocket.OPEN; active.emit("open", new Event("open"));
+  const requestId = controller.send("send_message", { channel_id: "c1", body: "pending" });
+  controller.replaceAfterSessionRefresh();
+  const candidate = sockets[1]; assert.notEqual(candidate, undefined); if (!candidate) return;
+  candidate.readyState = WebSocket.CLOSED;
+  active.readyState = WebSocket.CLOSED;
+  active.emit("close", Object.assign(new Event("close"), { code: 1006, reason: "both gone" }));
+  assert.equal(controller.snapshot().handoffActive, false);
+  assert.ok(uncertain.includes(requestId ?? ""));
+  controller.connect(true);
+  assert.equal(sockets.length, 3);
+});
+
+test("only the committed socket owns heartbeat and liveness intervals across rotations", () => {
+  const sockets: FakeSocket[] = [];
+  const intervals = new Set<number>();
+  let timer = 0;
+  let request = 0;
+  const controller = createConnectionController({
+    websocketUrl: () => "ws://chat.example.test/ws", createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; }, createRequestId: () => `generation-${++request}`,
+    onCommandSent: () => {}, onBeforeConnect: () => {}, onOpen: (send) => { send("hello"); }, onEvent: () => {}, onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {}, onSocketError: () => {}, onConnectionLost: () => {}, onRequestsLost: () => {}, onAuthenticationFailure: async () => {}, recover: async () => {}, onHandoffFallback: () => {},
+    setTimeout: () => ++timer, clearTimeout: () => {}, setInterval: () => { const id = ++timer; intervals.add(id); return id; }, clearInterval: (id) => { intervals.delete(id); }
+  });
+  const helloRequest = (socket: FakeSocket): string => { const value: unknown = JSON.parse(socket.sent.find((frame) => JSON.parse(frame).type === "hello") ?? "{}"); if (!isRecord(value) || typeof value.request_id !== "string") throw new Error("missing hello"); return value.request_id; };
+  const hello = (socket: FakeSocket): void => socket.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId, request_id: helloRequest(socket), type: "hello", payload: { participant_id: "u1" } }) }));
+  controller.start();
+  let active = sockets[0]; assert.notEqual(active, undefined); if (!active) return;
+  active.readyState = WebSocket.OPEN; active.emit("open", new Event("open")); hello(active);
+  assert.equal(intervals.size, 2);
+  for (let rotation = 0; rotation < 3; rotation += 1) {
+    controller.replaceAfterSessionRefresh();
+    const candidate = sockets.at(-1); assert.notEqual(candidate, undefined); if (!candidate) return;
+    candidate.readyState = WebSocket.OPEN; candidate.emit("open", new Event("open"));
+    assert.equal(intervals.size, 2);
+    hello(candidate);
+    assert.equal(controller.snapshot().handoffActive, false);
+    assert.equal(intervals.size, 2);
+    active = candidate;
+  }
 });
 
 test("auth recovery rotates a refreshed connection exactly once and retries when a lock is busy", async () => {

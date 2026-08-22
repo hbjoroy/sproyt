@@ -23,6 +23,7 @@ interface ConnectionState {
   reconnectTimer: number | null;
   reconnectAttempt: number;
   heartbeatTimer: number | null;
+  livenessTimer: number | null;
   stableConnectionTimer: number | null;
 }
 export interface ConnectionSnapshot { readonly connected: boolean; readonly closing: boolean; readonly handoffActive: boolean; readonly subscribedChannelId: string | null; }
@@ -35,8 +36,11 @@ export interface ConnectionController {
   clearSubscribedChannel(expectedChannelId?: string): void;
   takeSubscribedChannel(): string | null;
   replaceAfterSessionRefresh(): void;
+  /** Discard a potentially stale OPEN socket (not a refresh handoff). */
+  recoverAfterResume(): void;
   scheduleReconnect(closeCode?: number, closeReason?: string): void;
   send<Type extends ClientCommandType>(type: Type, ...args: ClientCommandArguments<Type>): string | null;
+  resend<Type extends ClientCommandType>(requestId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null;
 }
 export interface ConnectionDependencies {
   readonly websocketUrl: () => string;
@@ -53,9 +57,13 @@ export interface ConnectionDependencies {
   readonly onSocketError: () => void;
   readonly onConnectionLost: () => void;
   readonly onRequestsLost: (requestIds: readonly string[]) => void;
+  readonly onUncertainRequests?: (requestIds: readonly string[]) => void;
   readonly onAuthenticationFailure: () => Promise<void>;
   readonly recover: () => Promise<void>;
   readonly onHandoffFallback: () => void;
+  readonly reportClientEvent?: (event: "resume_recovery" | "connect_timeout" | "liveness_timeout") => void;
+  readonly now?: () => number;
+  readonly isVisible?: () => boolean;
   readonly setTimeout: (callback: () => void, milliseconds: number) => number;
   readonly clearTimeout: (timer: number) => void;
   readonly setInterval: (callback: () => void, milliseconds: number) => number;
@@ -93,6 +101,9 @@ export function resetTransientRequestsAfterDisconnect(
 }
 
 export function parseSocketEvent(data: unknown): ServerEvent | null { if (typeof data !== "string") return null; try { return asWireEvent(JSON.parse(data)); } catch { return null; } }
+export function shouldForceResume(now: number, hiddenSince: number | null, forcedSignal: boolean): boolean {
+  return forcedSignal || (hiddenSince !== null && now - hiddenSince >= 30_000);
+}
 export function hasUnsupportedProtocol(data: unknown): boolean { if (typeof data !== "string") return false; try { const value: unknown = JSON.parse(data); return isRecord(value) && typeof value.protocol === "string" && value.protocol !== protocolId; } catch { return false; } }
 export const clientCommandTypes = [
   "hello", "list_users", "list_my_channels", "list_thread_summaries", "list_my_circles", "list_mentions", "list_tasks", "ping", "list_circle_users", "set_status", "open_direct_channel", "create_channel", "join_channel", "leave_channel", "list_channel_users", "update_channel_description", "list_joinable_channels", "add_channel_member", "load_recent_messages", "load_thread", "mark_thread_read", "subscribe_channel", "unsubscribe_channel", "send_message", "edit_message", "delete_message", "list_channel_reactions", "toggle_message_reaction", "mark_read", "mark_mention_read", "create_task", "set_task_done", "create_circle", "delete_circle", "leave_circle", "create_circle_invitation", "accept_circle_invitation", "create_invitation", "inspect_invitation", "decline_invitation", "accept_invitation"
@@ -151,20 +162,27 @@ function hasSafeOutboundNumbers(value: unknown): boolean {
 }
 
 export function createConnectionController(dependencies: ConnectionDependencies): ConnectionController {
-  const state: ConnectionState = { socket: null, socketHandoff: null, subscribedChannelId: null, desiredChannelId: null, subscriptionGeneration: 0, recoveryPromise: null, reconnectTimer: null, reconnectAttempt: 0, heartbeatTimer: null, stableConnectionTimer: null };
+  const state: ConnectionState = { socket: null, socketHandoff: null, subscribedChannelId: null, desiredChannelId: null, subscriptionGeneration: 0, recoveryPromise: null, reconnectTimer: null, reconnectAttempt: 0, heartbeatTimer: null, livenessTimer: null, stableConnectionTimer: null };
   const createSocket = dependencies.createSocket ?? ((url: string) => new WebSocket(url));
   const requestTracker = createRequestTracker(dependencies.createRequestId, protocolId);
   const outbox = createOutbox();
   const pendingBySocket = new Map<ConnectionSocket, Set<string>>();
+  const connectTimeouts = new Map<ConnectionSocket, number>();
+  const lastServerActivity = new WeakMap<ConnectionSocket, number>();
   const clearReconnect = (): void => { if (state.reconnectTimer !== null) dependencies.clearTimeout(state.reconnectTimer); state.reconnectTimer = null; };
   const clearHeartbeat = (): void => { if (state.heartbeatTimer !== null) dependencies.clearInterval(state.heartbeatTimer); state.heartbeatTimer = null; };
+  const clearConnectTimeout = (socket: ConnectionSocket): void => { const timer = connectTimeouts.get(socket); if (timer !== undefined) dependencies.clearTimeout(timer); connectTimeouts.delete(socket); };
+  const clearLiveness = (): void => { if (state.livenessTimer !== null) dependencies.clearInterval(state.livenessTimer); state.livenessTimer = null; };
   const clearStableTimer = (): void => { if (state.stableConnectionTimer !== null) dependencies.clearTimeout(state.stableConnectionTimer); state.stableConnectionTimer = null; };
-  const loseSocketRequests = (socket: ConnectionSocket): void => { const requestIds = [...(pendingBySocket.get(socket) ?? [])]; pendingBySocket.delete(socket); if (requestIds.length > 0) dependencies.onRequestsLost(requestIds); };
-  const sendVia = <Type extends ClientCommandType>(socket: ConnectionSocket | null, type: Type, ...args: ClientCommandArguments<Type>): string | null => {
+  const now = dependencies.now ?? (() => Date.now());
+  const isVisible = dependencies.isVisible ?? (() => true);
+  const loseSocketRequests = (socket: ConnectionSocket, uncertain = false): void => { const requestIds = [...(pendingBySocket.get(socket) ?? [])]; pendingBySocket.delete(socket); if (requestIds.length > 0) (uncertain ? dependencies.onUncertainRequests ?? dependencies.onRequestsLost : dependencies.onRequestsLost)(requestIds); };
+  const sendVia = <Type extends ClientCommandType>(socket: ConnectionSocket | null, type: Type, ...args: ClientCommandArguments<Type>): string | null => sendViaRequest(socket, null, type, ...args);
+  const sendViaRequest = <Type extends ClientCommandType>(socket: ConnectionSocket | null, preservedRequestId: string | null, type: Type, ...args: ClientCommandArguments<Type>): string | null => {
     if (socket === null || socket.readyState !== WebSocket.OPEN) return null;
     const candidate: unknown = args.length === 0 ? { type } : { type, payload: args[0] };
     if (!isClientCommand(candidate)) return null;
-    const envelope = requestTracker.register(candidate);
+    const envelope = requestTracker.register(candidate, preservedRequestId ?? undefined);
     if (!outbox.send(socket, envelope)) return null;
     if (candidate.type !== "ping") { const pending = pendingBySocket.get(socket) ?? new Set<string>(); pending.add(envelope.request_id); pendingBySocket.set(socket, pending); dependencies.onCommandSent(envelope.request_id, candidate); }
     return envelope.request_id;
@@ -210,12 +228,32 @@ export function createConnectionController(dependencies: ConnectionDependencies)
     return requestId;
   };
   const send = <Type extends ClientCommandType>(type: Type, ...args: ClientCommandArguments<Type>): string | null => sendWithSubscription(state.socket, type, ...args);
+  const resend = <Type extends ClientCommandType>(requestId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null => sendViaRequest(state.socket, requestId, type, ...args);
   const reconcileDesiredSubscription = (socket: ConnectionSocket): void => {
     if (socket.readyState === WebSocket.OPEN && state.desiredChannelId !== null) {
       sendVia(socket, "subscribe_channel", { channel_id: state.desiredChannelId });
     }
   };
   let controller: ConnectionController;
+  const activateSocket = (socket: ConnectionSocket): void => {
+    clearHeartbeat(); clearLiveness(); clearStableTimer();
+    lastServerActivity.set(socket, now());
+    dependencies.onConnected(); dependencies.onStatus(true, "Tilkopla");
+    state.stableConnectionTimer = dependencies.setTimeout(() => { if (state.socket === socket && socket.readyState === WebSocket.OPEN) state.reconnectAttempt = 0; }, 10_000);
+    state.heartbeatTimer = dependencies.setInterval(() => { if (state.socket === socket && isVisible()) sendVia(socket, "ping"); }, 10_000);
+    state.livenessTimer = dependencies.setInterval(() => {
+      if (state.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+      if (!isVisible()) return;
+      if (now() - (lastServerActivity.get(socket) ?? now()) <= 20_000) return;
+      dependencies.reportClientEvent?.("liveness_timeout");
+        loseSocketRequests(socket, true);
+      state.socket = null; state.subscribedChannelId = null;
+      clearHeartbeat(); clearLiveness(); clearStableTimer();
+      socket.close(4003, "liveness timed out");
+      dependencies.onDisconnected(); dependencies.onConnectionLost();
+      controller.scheduleReconnect(1006, "sambandet svarar ikkje");
+    }, 5_000);
+  };
   const tryCommitHandoff = (): Extract<ServerEvent, Readonly<{ type: "subscription_started" }>> | null => {
     const handoff = state.socketHandoff;
     if (handoff === null || !handoff.ready || handoff.expectedChannelId !== state.desiredChannelId || handoff.expectedGeneration !== state.subscriptionGeneration || (pendingBySocket.get(handoff.previousSocket)?.size ?? 0) > 0) return null;
@@ -223,44 +261,64 @@ export function createConnectionController(dependencies: ConnectionDependencies)
     state.socketHandoff = null;
     state.socket = handoff.nextSocket;
     if (handoff.readySubscriptionEvent !== null) state.subscribedChannelId = handoff.readySubscriptionEvent.payload.channel_id;
+    activateSocket(handoff.nextSocket);
     if (handoff.previousSocket.readyState === WebSocket.OPEN) handoff.previousSocket.close(4000, "session refreshed");
     return handoff.readySubscriptionEvent;
   };
   const connectSocket = (silent = false, previousSocket: ConnectionSocket | null = null): void => {
     clearReconnect();
-    if (previousSocket === null) { clearHeartbeat(); clearStableTimer(); const current = state.socket; if (current !== null && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return; }
+    if (previousSocket === null) {
+      const current = state.socket;
+      if (current !== null && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return;
+      clearHeartbeat(); clearLiveness(); clearStableTimer();
+    }
     dependencies.onBeforeConnect();
     const nextSocket = createSocket(dependencies.websocketUrl());
     if (previousSocket === null) { state.socket = nextSocket; state.subscribedChannelId = null; }
+    if (previousSocket === null) {
+      const timeout = dependencies.setTimeout(() => {
+        if (state.socket !== nextSocket || nextSocket.readyState !== WebSocket.CONNECTING) return;
+        connectTimeouts.delete(nextSocket);
+        dependencies.reportClientEvent?.("connect_timeout");
+        loseSocketRequests(nextSocket, true);
+        nextSocket.close(4002, "connection timed out");
+        if (state.socket === nextSocket) {
+          state.socket = null;
+          dependencies.onDisconnected();
+          dependencies.onConnectionLost();
+          controller.scheduleReconnect(1006, "sambandet tok for lang tid");
+        }
+      }, 12_000);
+      connectTimeouts.set(nextSocket, timeout);
+    } else {
+      const handoff: SocketHandoff = { previousSocket, nextSocket, timeoutId: null, ready: false, expectedChannelId: state.desiredChannelId, expectedGeneration: state.subscriptionGeneration, expectedSubscriptionRequestId: null, readySubscriptionEvent: null };
+      handoff.timeoutId = dependencies.setTimeout(() => {
+        if (state.socketHandoff !== handoff) return;
+        state.socketHandoff = null;
+        if (nextSocket.readyState === WebSocket.CONNECTING) dependencies.reportClientEvent?.("connect_timeout");
+        loseSocketRequests(nextSocket);
+        nextSocket.close(4001, "session handoff timed out");
+        if (previousSocket.readyState === WebSocket.OPEN) {
+          dependencies.onStatus(true, "Tilkopla");
+          reconcileDesiredSubscription(previousSocket);
+          dependencies.onHandoffFallback();
+          return;
+        }
+        loseSocketRequests(previousSocket, true);
+        if (state.socket === previousSocket) state.socket = null;
+        dependencies.onDisconnected(); dependencies.onConnectionLost();
+        connectSocket(true);
+      }, 12_000);
+      state.socketHandoff = handoff;
+    }
     if (!silent) dependencies.onStatus(false, "Koplar til ...");
     nextSocket.addEventListener("open", () => {
-      if (previousSocket !== null && state.socket !== previousSocket) { nextSocket.close(4000, "superseded session refresh"); return; }
+      clearConnectTimeout(nextSocket);
+      if (previousSocket !== null && (state.socket !== previousSocket || state.socketHandoff?.nextSocket !== nextSocket)) { nextSocket.close(4000, "superseded session refresh"); return; }
       if (previousSocket === null && state.socket !== nextSocket) return;
-      if (previousSocket !== null) {
-        const handoff: SocketHandoff = { previousSocket, nextSocket, timeoutId: null, ready: false, expectedChannelId: state.desiredChannelId, expectedGeneration: state.subscriptionGeneration, expectedSubscriptionRequestId: null, readySubscriptionEvent: null };
-        handoff.timeoutId = dependencies.setTimeout(() => {
-          if (state.socketHandoff !== handoff) return;
-          state.socketHandoff = null;
-          if (previousSocket.readyState === WebSocket.OPEN) {
-            dependencies.onStatus(true, "Tilkopla");
-            loseSocketRequests(nextSocket);
-            nextSocket.close(4001, "session handoff timed out");
-            // The old socket is still valid, but may intentionally be on the
-            // previous channel while its own requests settle. Reconcile the
-            // desired channel there so the current UI can recover without
-            // waiting for another session rotation.
-            reconcileDesiredSubscription(previousSocket);
-            dependencies.onHandoffFallback();
-            return;
-          }
-          loseSocketRequests(nextSocket); nextSocket.close(4001, "session handoff timed out"); connectSocket(true);
-        }, 10_000);
-        state.socketHandoff = handoff;
-      }
-      dependencies.onConnected(); clearHeartbeat(); dependencies.onStatus(true, "Tilkopla"); clearStableTimer();
-      state.stableConnectionTimer = dependencies.setTimeout(() => { if (state.socket === nextSocket && nextSocket.readyState === WebSocket.OPEN) state.reconnectAttempt = 0; }, 10_000);
+      if (previousSocket === null) activateSocket(nextSocket);
+      lastServerActivity.set(nextSocket, now());
       dependencies.onOpen((type, ...args) => sendWithSubscription(nextSocket, type, ...args));
-      state.heartbeatTimer = dependencies.setInterval(() => { send("ping"); }, 20_000);
     });
     nextSocket.addEventListener("message", (event) => {
       if ((state.socket !== nextSocket && state.socketHandoff?.nextSocket !== nextSocket) || !hasMessageData(event)) return;
@@ -269,6 +327,7 @@ export function createConnectionController(dependencies: ConnectionDependencies)
         if (hasUnsupportedProtocol(event.data)) dependencies.onUnsupportedProtocol();
         return;
       }
+      lastServerActivity.set(nextSocket, now());
       if (serverEvent.request_id !== undefined) {
         const pending = pendingBySocket.get(nextSocket);
         pending?.delete(serverEvent.request_id);
@@ -311,20 +370,33 @@ export function createConnectionController(dependencies: ConnectionDependencies)
     nextSocket.addEventListener("close", (event) => {
       if (!isConnectionCloseEvent(event)) return;
       const closeEvent = event;
+      clearConnectTimeout(nextSocket);
       if (state.socketHandoff?.previousSocket === nextSocket) {
         const handoff = state.socketHandoff;
-        loseSocketRequests(nextSocket);
+        loseSocketRequests(nextSocket, true);
         if (handoff.nextSocket.readyState === WebSocket.OPEN || handoff.nextSocket.readyState === WebSocket.CONNECTING) {
           const committedSubscription = tryCommitHandoff();
           if (committedSubscription !== null) dependencies.onEvent(committedSubscription);
           return;
         }
+        if (handoff.timeoutId !== null) dependencies.clearTimeout(handoff.timeoutId);
+        state.socketHandoff = null;
+        loseSocketRequests(handoff.nextSocket);
       }
-      if (state.socketHandoff?.nextSocket === nextSocket) { const handoff = state.socketHandoff; if (handoff.timeoutId !== null) dependencies.clearTimeout(handoff.timeoutId); state.socketHandoff = null; if (handoff.previousSocket.readyState === WebSocket.OPEN) { dependencies.onStatus(true, "Tilkopla"); loseSocketRequests(nextSocket); reconcileDesiredSubscription(handoff.previousSocket); dependencies.onHandoffFallback(); return; } state.socket = nextSocket; }
+      if (state.socketHandoff?.nextSocket === nextSocket) {
+        const handoff = state.socketHandoff;
+        if (handoff.timeoutId !== null) dependencies.clearTimeout(handoff.timeoutId);
+        state.socketHandoff = null;
+        if (handoff.previousSocket.readyState === WebSocket.OPEN) {
+          dependencies.onStatus(true, "Tilkopla"); loseSocketRequests(nextSocket); reconcileDesiredSubscription(handoff.previousSocket); dependencies.onHandoffFallback(); return;
+        }
+        loseSocketRequests(handoff.previousSocket, true);
+        if (state.socket === handoff.previousSocket) state.socket = nextSocket;
+      }
       if (previousSocket !== null && state.socket === previousSocket && previousSocket.readyState === WebSocket.OPEN) { dependencies.onHandoffFallback(); return; }
       if (state.socket !== nextSocket) return;
-      loseSocketRequests(nextSocket);
-      dependencies.onDisconnected(); state.subscribedChannelId = null; dependencies.onConnectionLost(); clearHeartbeat(); clearStableTimer();
+      loseSocketRequests(nextSocket, true);
+      dependencies.onDisconnected(); state.subscribedChannelId = null; dependencies.onConnectionLost(); clearHeartbeat(); clearLiveness(); clearStableTimer();
       if (closeEvent.code === 1008) dependencies.onAuthenticationFailure().catch(() => controller.scheduleReconnect(closeEvent.code, closeEvent.reason)); else controller.scheduleReconnect(closeEvent.code, closeEvent.reason);
     });
     nextSocket.addEventListener("error", () => { if ((previousSocket === null || state.socket !== previousSocket) && state.socket === nextSocket) { dependencies.onSocketError(); dependencies.onStatus(false, "Mista sambandet"); } });
@@ -351,8 +423,29 @@ export function createConnectionController(dependencies: ConnectionDependencies)
     },
     takeSubscribedChannel: (): string | null => { const channelId = state.subscribedChannelId; state.subscribedChannelId = null; return channelId; },
     replaceAfterSessionRefresh: (): void => { const current = state.socket; if (state.socketHandoff !== null) return; if (current === null || current.readyState === WebSocket.CLOSED || current.readyState === WebSocket.CLOSING) connectSocket(true); else if (current.readyState === WebSocket.OPEN) connectSocket(true, current); },
+    recoverAfterResume: (): void => {
+      const current = state.socket;
+      if (state.socketHandoff !== null) {
+        const handoff = state.socketHandoff;
+        if (handoff.timeoutId !== null) dependencies.clearTimeout(handoff.timeoutId);
+        state.socketHandoff = null;
+        loseSocketRequests(handoff.nextSocket);
+        handoff.nextSocket.close(4004, "resume recovery");
+      }
+      dependencies.reportClientEvent?.("resume_recovery");
+      clearReconnect(); clearHeartbeat(); clearLiveness(); clearStableTimer();
+      state.socket = null; state.subscribedChannelId = null;
+      if (current !== null && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
+        clearConnectTimeout(current);
+        loseSocketRequests(current, true);
+        current.close(4004, "resume recovery");
+      }
+      dependencies.onDisconnected(); dependencies.onConnectionLost();
+      connectSocket(true);
+    },
     scheduleReconnect: (closeCode = 1006, closeReason = ""): void => { if (state.reconnectTimer !== null) return; state.reconnectAttempt += 1; const delay = Math.min(15_000, 500 * (2 ** Math.min(state.reconnectAttempt - 1, 5))); const detail = closeReason ? `kode ${closeCode}: ${closeReason}` : `kode ${closeCode}`; dependencies.onStatus(false, `Fråkopla (${detail}) – prøver igjen om ${Math.ceil(delay / 1000)} sekund`); state.reconnectTimer = dependencies.setTimeout(() => { state.reconnectTimer = null; dependencies.recover().catch(() => controller.scheduleReconnect(closeCode, closeReason)); }, delay); },
-    send
+    send,
+    resend
   });
   return controller;
 }

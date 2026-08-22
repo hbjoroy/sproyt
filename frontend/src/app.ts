@@ -1,9 +1,9 @@
       import { createApplicationStore, createServerEventMailbox } from "./client-store";
       import { AgentApi, HttpClient, NotificationApi, ProcessApi, type CreatedAgent, type ProcessView } from "./api";
       import { requireElement, requireElements } from "./dom";
-      import { createConnectionController, resetTransientRequestsAfterDisconnect } from "./connection";
+      import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
       import { NavigationController } from "./navigation";
-      import { createSessionController, sessionRefreshAfterSeconds, type SessionController } from "./session";
+      import { createSessionController, fetchWithTimeout, sessionRefreshAfterSeconds, type SessionController } from "./session";
       import { isJsonObject, isRecord, mediaFromUpload } from "./types";
       import type { Channel, ChatMessage, Circle, ClientCommand, ClientCommandArguments, JsonObject, MediaObject, Mention, MermaidApi, ThreadComposerState, ThreadSummary, UploadResponse, UserProfile, UserTask, WireEvent } from "./types";
 
@@ -197,6 +197,7 @@
         onConnectionLost: () => {
           for (const requestId of pendingMessages.keys()) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
           for (const requestId of [...pendingThreadReplies.keys()]) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
+          failPendingPeopleDirectRequests("Sambandet vart brote. Prøv igjen.");
           resetTransientRequestsAfterDisconnect({ historyRequestIds, pendingCommands, pendingInvitationResponses, pendingInvitationInspections, pendingChannelInvitationRecipients, pendingDirectInvitationMessages }, {
             setHistoryLoading: (loading) => { historyLoading = loading; },
             failInspection: (token) => {
@@ -214,11 +215,18 @@
             if (pendingThreadReplies.has(requestId)) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
             historyRequestIds.delete(requestId);
             pendingCommands.delete(requestId);
+            failPendingPeopleDirectRequest(requestId, "Sambandet vart brote. Prøv igjen.");
           }
+        },
+        onUncertainRequests: (requestIds) => {
+          for (const requestId of requestIds) markDeliveryUncertain(requestId);
         },
         onAuthenticationFailure: () => sessionController.recoverAuthentication(),
         recover: recoverConnection,
         onHandoffFallback: () => sessionController.schedule(30),
+        reportClientEvent: (event) => reportClientEvent(event),
+        now: () => Date.now(),
+        isVisible: () => document.visibilityState === "visible",
         setTimeout: (callback, milliseconds) => window.setTimeout(callback, milliseconds),
         clearTimeout: (timer) => window.clearTimeout(timer),
         setInterval: (callback, milliseconds) => window.setInterval(callback, milliseconds),
@@ -227,7 +235,11 @@
       function sendCommand<Type extends ClientCommand["type"]>(type: Type, ...args: ClientCommandArguments<Type>): string | null {
         return connectionSupervisor.send(type, ...args);
       }
+      function resendCommand<Type extends ClientCommand["type"]>(requestId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null {
+        return connectionSupervisor.resend(requestId, type, ...args);
+      }
       let lastBackgroundRecoveryAt = 0;
+      let hiddenSince: number | null = document.visibilityState === "hidden" ? Date.now() : null;
       let lastUserActivityAt = Date.now();
       let renderMode = "view";
       let requestNumber = 0;
@@ -259,10 +271,17 @@
       const pendingInvitationInspections = new Map<string, string>();
       const pendingChannelInvitationRecipients = new Map<string, string>();
       const pendingDirectInvitationMessages = new Map<string, string>();
+      // Requests from the member browser are independent: a slow DM open must
+      // not block another person, the composer, or the rest of the dialog.
+      const pendingPeopleDirectRequests = new Map<string, string>();
+      const peopleDirectStatuses = new Map<string, string>();
       const invitationInspectionCache = new Map<string, InvitationCache>();
       let latestChannelListRequestId: string | null = null;
       let latestCircleListRequestId: string | null = null;
       const pendingMessages = new Map<string, PendingMessage>();
+      const uncertainMessages = new Map<string, PendingMessage>();
+      const uncertainThreadReplies = new Map<string, Readonly<{ rootId: string; channelId: string; body: string; draft: string; mediaIds: string[] }>>();
+      const retriedUncertainRequests = new Set<string>();
       const historyRequestIds = new Set();
       const historyPageSize = 50;
       let historyHasMore = false;
@@ -423,7 +442,13 @@
         return navigation.preferredCircleChannel(circleId, channels);
       }
 
+      const lastRecoveryTelemetryAt = new Map<string, number>();
       function reportClientEvent(event: string): void {
+        if (event === "resume_recovery" || event === "connect_timeout" || event === "liveness_timeout") {
+          const now = Date.now();
+          if (now - (lastRecoveryTelemetryAt.get(event) ?? 0) < 30_000) return;
+          lastRecoveryTelemetryAt.set(event, now);
+        }
         const participant = new URL(window.location.href).searchParams.get("participant");
         const query = participant ? `?participant=${encodeURIComponent(participant)}` : "";
         fetch(`/api/v1/client-events${query}`, {
@@ -440,7 +465,7 @@
         return connectionSupervisor.recover(async (connection) => {
           let response;
           try {
-            response = await fetch("/auth/session", {
+            response = await fetchWithTimeout(window.fetch.bind(window), window.setTimeout.bind(window), window.clearTimeout.bind(window), "/auth/session", {
               credentials: "same-origin",
               cache: "no-store",
               headers: { "accept": "application/json" }
@@ -466,11 +491,17 @@
         });
       }
 
-      function resumeAfterBackground() {
+      function resumeAfterBackground(force = false) {
         if (document.visibilityState === "hidden") return;
         const now = Date.now();
+        if (!shouldForceResume(now, hiddenSince, force)) return;
         if (now - lastBackgroundRecoveryAt < 5_000) return;
         lastBackgroundRecoveryAt = now;
+        // iOS may retain an OPEN WebSocket after sleep although its TCP path
+        // has vanished. Do not attempt a normal token handoff in that state:
+        // discard it, unlock any pending composer request, and resubscribe on
+        // a fresh generation. The old socket can no longer mutate UI state.
+        connectionSupervisor.recoverAfterResume();
         recoverConnection(false)
           .catch(() => connectionSupervisor.scheduleReconnect(1006, "kunne ikkje gjenopprette sambandet"));
       }
@@ -483,9 +514,9 @@
       window.addEventListener("keydown", noteUserActivity, { passive: true });
       window.addEventListener("input", noteUserActivity, { passive: true });
 
-      window.addEventListener("pageshow", resumeAfterBackground);
-      window.addEventListener("focus", resumeAfterBackground);
-      window.addEventListener("online", resumeAfterBackground);
+      window.addEventListener("pageshow", (event) => resumeAfterBackground(event.persisted));
+      window.addEventListener("focus", () => resumeAfterBackground(false));
+      window.addEventListener("online", () => resumeAfterBackground(true));
       window.addEventListener("pageshow", refreshVisibleInvitationCards);
       window.addEventListener("focus", refreshVisibleInvitationCards);
 
@@ -1435,9 +1466,55 @@
         }
       }
 
+      function markDeliveryUncertain(requestId: string): void {
+        const message = pendingMessages.get(requestId);
+        if (message) {
+          pendingMessages.delete(requestId);
+          uncertainMessages.set(requestId, message);
+          navigation.persistChannelDraft(message.channelId, message.draft);
+          if (activeChannelId === message.channelId) {
+            bodyInput.readOnly = true;
+            syncComposerState();
+            setConnected(false, "Kontrollerer om meldinga kom fram …");
+          }
+        }
+        const reply = pendingThreadReplies.get(requestId);
+        if (reply) {
+          pendingThreadReplies.delete(requestId);
+          uncertainThreadReplies.set(requestId, reply);
+          navigation.persistThreadDraft(reply.channelId, reply.rootId, reply.draft);
+          if (activeChannelId === reply.channelId && activeThreadRootId === reply.rootId) {
+            threadBody.readOnly = true;
+            syncThreadComposer();
+          }
+        }
+      }
+
+      function reconcileUncertainDeliveries(channelId: string, _messages: readonly ChatMessage[]): void {
+        for (const [requestId, pending] of uncertainMessages) {
+          if (pending.channelId !== channelId) continue;
+          if (!retriedUncertainRequests.has(requestId) && activeChannelId === channelId) {
+            if (resendCommand(requestId, "send_message", { channel_id: channelId, body: pending.body })) {
+              retriedUncertainRequests.add(requestId);
+              bodyInput.readOnly = true;
+              setConnected(true, "Avklarer sendinga …");
+            }
+          }
+        }
+        for (const [requestId, pending] of uncertainThreadReplies) {
+          if (pending.channelId !== channelId) continue;
+          if (!retriedUncertainRequests.has(requestId) && activeChannelId === channelId) {
+            if (resendCommand(requestId, "send_message", { channel_id: channelId, parent_message_id: pending.rootId, body: pending.body })) {
+              retriedUncertainRequests.add(requestId);
+              if (activeThreadRootId === pending.rootId) { threadBody.readOnly = true; syncThreadComposer(); }
+            }
+          }
+        }
+      }
+
       function finishPendingMessage(requestId: string | undefined, message: ChatMessage): void {
         if (!requestId) return;
-        const pending = pendingMessages.get(requestId);
+        const pending = pendingMessages.get(requestId) ?? uncertainMessages.get(requestId);
         if (!pending) return;
         if (message?.channel_id !== pending.channelId || message?.body !== pending.body) {
           console.warn("Sendekvitteringa samsvarar ikkje med kommandoen", {
@@ -1449,21 +1526,22 @@
           failPendingMessage(requestId, "tenaren svarte med ei eldre meldingskvittering; utkastet er bevart");
           return;
         }
-        pendingMessages.delete(requestId);
-        bodyInput.readOnly = false;
+        pendingMessages.delete(requestId); uncertainMessages.delete(requestId); retriedUncertainRequests.delete(requestId);
+        navigation.persistChannelDraft(pending.channelId, "");
         pendingMedia = pendingMedia.filter((media) => !pending.mediaIds.includes(media.id));
-        renderMediaPreviews();
         if (message?.channel_id === activeChannelId) {
+          bodyInput.readOnly = false;
+          renderMediaPreviews();
           setUploadStatus("");
           bodyInput.focus();
+          syncComposerState();
         }
-        syncComposerState();
         setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
       }
 
       function pendingMessageToReveal(message: ChatMessage, requestId: string | null = null): PendingMessage | null {
         if (message.sender_id !== currentParticipantId) return null;
-        const requested = requestId ? pendingMessages.get(requestId) : null;
+        const requested = requestId ? pendingMessages.get(requestId) ?? uncertainMessages.get(requestId) : null;
         if (requested?.channelId === message.channel_id && requested.body === message.body) return requested;
         return [...pendingMessages.values()].find((pending) =>
           pending.channelId === message.channel_id && pending.body === message.body
@@ -1472,22 +1550,24 @@
 
       function failPendingMessage(requestId: string | undefined, message: string): void {
         if (!requestId) return;
-        const pending = pendingMessages.get(requestId);
+        const pending = pendingMessages.get(requestId) ?? uncertainMessages.get(requestId);
         if (!pending) return;
-        pendingMessages.delete(requestId);
-        bodyInput.readOnly = false;
-        if (bodyInput.value.trim().length === 0) bodyInput.value = pending.draft;
-        persistActiveDraft();
-        syncComposerState();
-        setConnected(connectionSupervisor.snapshot().connected, `Meldinga vart ikkje sendt: ${message}`);
-        bodyInput.focus();
+        pendingMessages.delete(requestId); uncertainMessages.delete(requestId); retriedUncertainRequests.delete(requestId);
+        navigation.persistChannelDraft(pending.channelId, pending.draft);
+        if (activeChannelId === pending.channelId) {
+          bodyInput.readOnly = false;
+          if (bodyInput.value.trim().length === 0) bodyInput.value = pending.draft;
+          persistActiveDraft(); syncComposerState();
+          setConnected(connectionSupervisor.snapshot().connected, `Meldinga vart ikkje sendt: ${message}`);
+          bodyInput.focus();
+        }
       }
 
       function finishPendingThreadReply(requestId: string | undefined, message: ChatMessage): void {
         if (!requestId) return;
-        const pending = pendingThreadReplies.get(requestId);
+        const pending = pendingThreadReplies.get(requestId) ?? uncertainThreadReplies.get(requestId);
         if (!pending) return;
-        pendingThreadReplies.delete(requestId);
+        pendingThreadReplies.delete(requestId); uncertainThreadReplies.delete(requestId); retriedUncertainRequests.delete(requestId);
         const state = threadComposerState(pending.rootId);
         if (message?.parent_message_id !== pending.rootId || message?.channel_id !== pending.channelId || message?.body !== pending.body) {
           if (activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
@@ -1500,6 +1580,7 @@
           syncThreadComposer();
           return;
         }
+        navigation.persistThreadDraft(pending.channelId, pending.rootId, "");
         if (state) state.media = state.media.filter((media) => !pending.mediaIds.includes(media.id));
         if (state) state.draft = "";
         clearThreadDraft(pending.rootId, pending.channelId);
@@ -1509,18 +1590,20 @@
 
       function failPendingThreadReply(requestId: string | undefined, message: string): boolean {
         if (!requestId) return false;
-        const pending = pendingThreadReplies.get(requestId);
+        const pending = pendingThreadReplies.get(requestId) ?? uncertainThreadReplies.get(requestId);
         if (!pending) return false;
-        pendingThreadReplies.delete(requestId);
+        pendingThreadReplies.delete(requestId); uncertainThreadReplies.delete(requestId); retriedUncertainRequests.delete(requestId);
         const state = threadComposerState(pending.rootId);
-        if (activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
+        if (activeChannelId === pending.channelId && activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
           threadBody.value = pending.draft;
         }
         if (state) state.draft = pending.draft;
-        if (activeThreadRootId === pending.rootId) threadBody.readOnly = false;
-        persistThreadDraft(pending.rootId, pending.channelId);
-        setConnected(connectionSupervisor.snapshot().connected, `Trådsvaret vart ikkje sendt: ${message}`);
-        syncThreadComposer();
+        navigation.persistThreadDraft(pending.channelId, pending.rootId, pending.draft);
+        if (activeChannelId === pending.channelId && activeThreadRootId === pending.rootId) {
+          threadBody.readOnly = false;
+          setConnected(connectionSupervisor.snapshot().connected, `Trådsvaret vart ikkje sendt: ${message}`);
+          syncThreadComposer();
+        }
         return true;
       }
 
@@ -1779,6 +1862,38 @@
         if (status.text) conversationPeerStatus.append(document.createTextNode(` ${status.text}`));
       }
 
+      function rerenderOpenChannelMembers(): void {
+        const channelId = channelDetailsDialog.dataset.channelId;
+        if (channelDetailsDialog.open && channelId) renderChannelMembers(channelId);
+      }
+
+      function failPendingPeopleDirectRequest(requestId: string, message: string): void {
+        const userId = pendingPeopleDirectRequests.get(requestId);
+        if (!userId) return;
+        pendingPeopleDirectRequests.delete(requestId);
+        peopleDirectStatuses.set(userId, message);
+        rerenderOpenChannelMembers();
+      }
+
+      function failPendingPeopleDirectRequests(message: string): void {
+        for (const requestId of [...pendingPeopleDirectRequests.keys()]) {
+          failPendingPeopleDirectRequest(requestId, message);
+        }
+      }
+
+      function openDirectFromChannelMember(profile: UserProfile): void {
+        if ([...pendingPeopleDirectRequests.values()].some((userId) => userId === profile.id)) return;
+        const requestId = sendCommand("open_direct_channel", { user_id: profile.id });
+        if (!requestId) {
+          peopleDirectStatuses.set(profile.id, "Ikkje tilkopla enno. Prøv igjen.");
+          rerenderOpenChannelMembers();
+          return;
+        }
+        pendingPeopleDirectRequests.set(requestId, profile.id);
+        peopleDirectStatuses.set(profile.id, `Opnar samtale med ${profile.display_name} …`);
+        rerenderOpenChannelMembers();
+      }
+
       function renderChannelMembers(channelId: string): void {
         const users = knownChannelUsers.get(channelId) || [];
         const query = channelMemberSearch.value
@@ -1786,25 +1901,28 @@
           .replace(/[\u0300-\u036f]/g, "")
           .toLocaleLowerCase("nb-NO")
           .trim();
+        // The signed-in person is implicit in a channel's member list.  The
+        // browser is primarily a way to reach the other people here.
+        const otherUsers = users.filter((profile) => profile.id !== currentParticipantId);
         const visibleUsers = query
-          ? users.filter((profile) => profile.display_name
+          ? otherUsers.filter((profile) => profile.display_name
             .normalize("NFKD")
             .replace(/[\u0300-\u036f]/g, "")
             .toLocaleLowerCase("nb-NO")
             .includes(query))
-          : users;
+          : otherUsers;
         if (channelId === activeChannelId) {
           channelPeopleButton.textContent = `👥 ${users.length}`;
           channelPeopleButton.setAttribute("aria-label", `Vis dei ${users.length} menneska i kanalen`);
         }
         channelMemberSearch.disabled = false;
         channelMemberCount.textContent = query
-          ? `Viser ${visibleUsers.length} av ${users.length}`
-          : `${users.length} menneske`;
+          ? `Viser ${visibleUsers.length} av ${otherUsers.length}`
+          : `${otherUsers.length} andre menneske`;
         channelMemberList.replaceChildren();
-        if (users.length === 0) {
+        if (otherUsers.length === 0) {
           const empty = document.createElement("li");
-          empty.textContent = "Ingen menneske funne.";
+          empty.textContent = "Ingen andre menneske i kanalen enno.";
           channelMemberList.append(empty);
           return;
         }
@@ -1818,9 +1936,28 @@
           const item = document.createElement("li");
           item.dataset.profileUserId = profile.id;
           const name = document.createElement("span");
+          name.className = "channel-member-name";
           name.textContent = profile.display_name;
           item.append(name);
           appendProfileStatus(item, profile.id);
+          const action = document.createElement("button");
+          action.type = "button";
+          action.className = "channel-member-direct";
+          action.textContent = "💬";
+          action.setAttribute("aria-label", `Start direktesamtale med ${profile.display_name}`);
+          action.title = `Start direktesamtale med ${profile.display_name}`;
+          action.disabled = [...pendingPeopleDirectRequests.values()].includes(profile.id);
+          action.addEventListener("click", () => openDirectFromChannelMember(profile));
+          item.append(action);
+          const status = peopleDirectStatuses.get(profile.id);
+          if (status) {
+            item.classList.add("has-direct-status");
+            const statusElement = document.createElement("span");
+            statusElement.className = "channel-member-direct-status";
+            statusElement.textContent = status;
+            statusElement.setAttribute("role", "status");
+            item.append(statusElement);
+          }
           channelMemberList.append(item);
         });
         refreshChannelMemberOptions(channelId);
@@ -1893,11 +2030,13 @@
         const inspectedInvitationToken = event.request_id ? pendingInvitationInspections.get(event.request_id) : undefined;
         const invitationRecipient = event.request_id ? pendingChannelInvitationRecipients.get(event.request_id) : undefined;
         const directInvitationMessage = event.request_id ? pendingDirectInvitationMessages.get(event.request_id) : undefined;
+        const directPersonUserId = event.request_id ? pendingPeopleDirectRequests.get(event.request_id) : undefined;
         if (event.request_id) pendingCommands.delete(event.request_id);
         if (event.request_id) pendingInvitationResponses.delete(event.request_id);
         if (event.request_id) pendingInvitationInspections.delete(event.request_id);
         if (event.request_id) pendingChannelInvitationRecipients.delete(event.request_id);
         if (event.request_id) pendingDirectInvitationMessages.delete(event.request_id);
+        if (event.request_id) pendingPeopleDirectRequests.delete(event.request_id);
 
         if (event.type === "hello") {
           currentParticipantId = event.payload.participant_id;
@@ -2186,6 +2325,10 @@
             knownChannels.push(channel);
           }
           renderChannels();
+          if (directPersonUserId) {
+            peopleDirectStatuses.delete(directPersonUserId);
+            channelDetailsDialog.close();
+          }
           directMessageStatus.textContent = "";
           directMessageDialog.close();
           selectChannel(channel);
@@ -2206,6 +2349,7 @@
           setConnectionStatus("Tilkopla");
           renderConversationIdentity();
           event.payload.history.forEach(appendTimelineMessage);
+          reconcileUncertainDeliveries(event.payload.channel_id, event.payload.history);
           sendCommand("list_thread_summaries", { channel_id: event.payload.channel_id });
           historyHasMore = event.payload.history.length === historyPageSize;
           historyLoading = false;
@@ -2268,6 +2412,8 @@
           const replies = event.payload.messages.filter((message) => message.parent_message_id === event.payload.root_message_id);
           if (root) threadRoots.set(event.payload.root_message_id, root);
           threadReplies.set(event.payload.root_message_id, replies);
+          const threadChannelId = root?.channel_id ?? replies[0]?.channel_id;
+          if (threadChannelId) reconcileUncertainDeliveries(threadChannelId, event.payload.messages);
           if (activeThreadRootId === event.payload.root_message_id) {
             renderThread();
             const latest = replies.at(-1)?.sequence;
@@ -2370,6 +2516,7 @@
             return;
           }
           event.payload.messages.forEach(appendTimelineMessage);
+          reconcileUncertainDeliveries(event.payload.channel_id, event.payload.messages);
           acknowledgeLatest(event.payload.channel_id, event.payload.messages);
           renderTimeline();
           const target = catchUpTargets.get(event.payload.channel_id);
@@ -2478,6 +2625,13 @@
           if (requestedCommand === "open_direct_channel") {
             if (directInvitationMessage) {
               channelMemberStatus.textContent = "Direktemeldinga kunne ikkje opnast. Prøv igjen.";
+            } else if (directPersonUserId) {
+              peopleDirectStatuses.set(directPersonUserId, event.payload.code === "not_found"
+                ? "Brukaren finst ikkje lenger. Oppdater lista og prøv igjen."
+                : event.payload.code === "conflict"
+                  ? "Samtalen kunne ikkje opnast. Prøv igjen."
+                  : "Kunne ikkje opne samtalen. Prøv igjen.");
+              rerenderOpenChannelMembers();
             } else {
               directMessageStatus.textContent = event.payload.code === "not_found"
                 ? "Brukaren finst ikkje lenger. Lukk dialogen og prøv på nytt."
@@ -3085,8 +3239,9 @@
       }
 
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState !== "visible") return;
-        resumeAfterBackground();
+        if (document.visibilityState !== "visible") { hiddenSince = Date.now(); return; }
+        resumeAfterBackground(false);
+        hiddenSince = null;
         sendCommand("list_my_channels");
         if (!activeChannelId) return;
         const visibleMessages = timeline
