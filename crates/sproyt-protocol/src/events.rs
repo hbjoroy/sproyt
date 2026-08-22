@@ -8,6 +8,8 @@ pub enum ChatEvent {
     ChannelCreated {
         channel_id: ChannelId,
         created_by: UserId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_channel_id: Option<ChannelId>,
     },
     ParticipantJoined {
         channel_id: ChannelId,

@@ -9,8 +9,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="icon" href="/assets/sproyt-wave.svg" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/assets/sproyt-wave-192.png">
+    <link rel="icon" href="/assets/sproyt-wave-icon-512.png" type="image/png">
+    <link rel="apple-touch-icon" href="/assets/sproyt-wave-icon-192.png">
     <title>Sprøyt</title>
     <style nonce="{{NONCE}}">
       :root {
@@ -1065,7 +1065,7 @@
   <body>
     <main>
       <aside class="sidebar" id="sidebar-panel">
-        <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave.svg" alt=""><h1>Sprøyt</h1><button class="desktop-sidebar-toggle" id="desktop-sidebar-toggle" type="button" aria-expanded="true" aria-label="Kollaps menyen" data-tooltip="Kollaps menyen" title="Kollaps menyen">‹</button></div>
+        <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave-icon-512.png" alt=""><h1>Sprøyt</h1><button class="desktop-sidebar-toggle" id="desktop-sidebar-toggle" type="button" aria-expanded="true" aria-label="Kollaps menyen" data-tooltip="Kollaps menyen" title="Kollaps menyen">‹</button></div>
         <div class="identity">
           <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
           <span id="signup-badge" class="signup-badge" hidden></span>
@@ -1123,7 +1123,7 @@
         <a class="logout-link" href="/auth/logout" aria-label="Logg ut" data-tooltip="Logg ut" title="Logg ut"><span class="logout-icon" aria-hidden="true">↪</span><span class="logout-label">Logg ut</span></a>
       </aside>
       <header class="conversation-header">
-        <div class="mobile-app-mark"><img src="/assets/sproyt-wave.svg" alt=""></div>
+        <div class="mobile-app-mark"><img src="/assets/sproyt-wave-icon-512.png" alt=""></div>
         <div class="conversation-details"><div class="conversation-heading"><h2 id="conversation-title">Samtalar</h2><span class="conversation-circle" id="conversation-circle" hidden></span></div><div class="conversation-context" id="conversation-context" hidden></div><p class="peer-status" id="conversation-peer-status" hidden></p></div>
         <div class="connection-status"><button class="connection-status-toggle" id="connection-status-toggle" type="button" aria-expanded="false" aria-controls="status" aria-label="Sambandsstatus: koplar til"><span class="connection-status-dot" id="connection-status-dot" aria-hidden="true"></span></button><div class="status" id="status" role="status" aria-live="polite"><span id="connection-status-text">Koplar til …</span><button id="reauthenticate-now" type="button" hidden>Logg inn no</button></div></div>
         <button class="channel-people" id="channel-people" type="button" aria-label="Vis menneska i kanalen" disabled>👥</button>

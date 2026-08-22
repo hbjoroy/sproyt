@@ -204,6 +204,7 @@ async fn execute_command(
         ClientCommand::MarkRead { .. } => "mark_read",
         ClientCommand::SubscribeChannel { .. } => "subscribe_channel",
         ClientCommand::OpenDirectChannel { .. } => "open_direct_channel",
+        ClientCommand::ExpandDirectChannel { .. } => "expand_direct_channel",
         ClientCommand::AcceptInvitation { .. } => "accept_invitation",
         ClientCommand::DeclineInvitation { .. } => "decline_invitation",
         _ => "other",
@@ -237,6 +238,13 @@ async fn execute_command(
             .open_direct_channel(participant_id.clone(), user_id)
             .await
             .map(|channel| ServerEvent::DirectChannelOpened { channel }),
+        ClientCommand::ExpandDirectChannel {
+            channel_id,
+            user_id,
+        } => chat
+            .expand_direct_channel(participant_id.clone(), channel_id, user_id)
+            .await
+            .map(|channel| ServerEvent::DirectChannelExpanded { channel }),
         ClientCommand::CreateChannel {
             slug,
             name,

@@ -27,9 +27,11 @@ pub(crate) const CLIENT_STORE: &str = include_str!(concat!(env!("OUT_DIR"), "/cl
 pub(crate) const SERVICE_WORKER: &str = include_str!("../../assets/service-worker.js");
 pub(crate) const OFFLINE_HTML: &str = include_str!("../../assets/offline.html");
 pub(crate) const INDEX_HTML: &str = include_str!("../../assets/index.html");
-const WAVE_LOGO_SVG: &str = include_str!("../../assets/sproyt-wave.svg");
-pub(crate) const WAVE_LOGO_192: &[u8] = include_bytes!("../../assets/sproyt-wave-192.png");
-pub(crate) const WAVE_LOGO_512: &[u8] = include_bytes!("../../assets/sproyt-wave-512.png");
+pub(crate) const WAVE_LOGO_192: &[u8] = include_bytes!("../../assets/sproyt-wave-icon-192.png");
+pub(crate) const WAVE_LOGO_512: &[u8] = include_bytes!("../../assets/sproyt-wave-icon-512.png");
+const LEGACY_WAVE_LOGO_SVG: &str = include_str!("../../assets/sproyt-wave.svg");
+const LEGACY_WAVE_LOGO_192: &[u8] = include_bytes!("../../assets/sproyt-wave-192.png");
+const LEGACY_WAVE_LOGO_512: &[u8] = include_bytes!("../../assets/sproyt-wave-512.png");
 
 pub(crate) async fn pwa_manifest() -> axum::response::Response {
     (
@@ -126,7 +128,15 @@ pub(crate) async fn offline_page() -> axum::response::Response {
 }
 
 pub(crate) async fn wave_logo_svg() -> axum::response::Response {
-    static_asset("image/svg+xml", WAVE_LOGO_SVG.as_bytes())
+    static_asset("image/svg+xml", LEGACY_WAVE_LOGO_SVG.as_bytes())
+}
+
+pub(crate) async fn legacy_wave_logo_192() -> axum::response::Response {
+    static_asset("image/png", LEGACY_WAVE_LOGO_192)
+}
+
+pub(crate) async fn legacy_wave_logo_512() -> axum::response::Response {
+    static_asset("image/png", LEGACY_WAVE_LOGO_512)
 }
 
 pub(crate) async fn wave_logo_192() -> axum::response::Response {

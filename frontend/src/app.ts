@@ -22,8 +22,8 @@
       function isMermaidApi(value: unknown): value is MermaidApi {
         return isRecord(value) && typeof value.initialize === "function" && typeof value.run === "function";
       }
-      function channelFromBase(channel: Readonly<{ id: string; slug: string; name: string; kind: Channel["kind"]; circle_id: string | null }>, role: Channel["role"], description = "", directUserId: string | null = null): Channel {
-        return { ...channel, role, description, direct_user_id: directUserId, latest_sequence: 0, last_read_sequence: 0 };
+      function channelFromBase(channel: Readonly<{ id: string; slug: string; name: string; kind: Channel["kind"]; circle_id: string | null }>, role: Channel["role"], description = "", directUserId: string | null = null, isDirect = false): Channel {
+        return { ...channel, role, description, direct_user_id: directUserId, is_direct: isDirect, latest_sequence: 0, last_read_sequence: 0 };
       }
       function errorMessage(error: unknown): string {
         return error instanceof Error ? error.message : "ukjend feil";
@@ -200,6 +200,7 @@
           for (const requestId of pendingMessages.keys()) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
           for (const requestId of [...pendingThreadReplies.keys()]) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
           failPendingPeopleDirectRequests("Sambandet vart brote. Prøv igjen.");
+          pendingDirectChannelUsers.clear();
           resetTransientRequestsAfterDisconnect({ historyRequestIds, pendingCommands, pendingInvitationResponses, pendingInvitationInspections, pendingChannelInvitationRecipients, pendingDirectInvitationMessages }, {
             setHistoryLoading: (loading) => { historyLoading = loading; },
             failInspection: (token) => {
@@ -218,6 +219,7 @@
             historyRequestIds.delete(requestId);
             pendingCommands.delete(requestId);
             failPendingPeopleDirectRequest(requestId, "Sambandet vart brote. Prøv igjen.");
+            pendingDirectChannelUsers.delete(requestId);
           }
         },
         onUncertainRequests: (requestIds) => {
@@ -239,6 +241,14 @@
       }
       function resendCommand<Type extends ClientCommand["type"]>(requestId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null {
         return connectionSupervisor.resend(requestId, type, ...args);
+      }
+      // `direct_channel_opened` carries the channel base model rather than a
+      // channel-list summary.  Keep the requested peer by request id so the
+      // first locally-created DM is immediately classified as a DM too.
+      function openDirectChannel(userId: string): string | null {
+        const requestId = sendCommand("open_direct_channel", { user_id: userId });
+        if (requestId) pendingDirectChannelUsers.set(requestId, userId);
+        return requestId;
       }
       let lastBackgroundRecoveryAt = 0;
       let hiddenSince: number | null = document.visibilityState === "hidden" ? Date.now() : null;
@@ -278,6 +288,7 @@
       const pendingInvitationInspections = new Map<string, string>();
       const pendingChannelInvitationRecipients = new Map<string, string>();
       const pendingDirectInvitationMessages = new Map<string, string>();
+      const pendingDirectChannelUsers = new Map<string, string>();
       // Requests from the member browser are independent: a slow DM open must
       // not block another person, the composer, or the rest of the dialog.
       const pendingPeopleDirectRequests = new Map<string, string>();
@@ -978,12 +989,26 @@
 
       function mentionCandidates() {
         const channel = knownChannels.find((item) => item.id === activeChannelId);
+        if (channel?.is_direct) {
+          const memberIds = new Set((knownChannelUsers.get(channel.id) || []).map((user) => user.id));
+          return memberIds.size > 0 ? knownUsers.filter((user) => !memberIds.has(user.id)) : knownUsers;
+        }
         return channel?.circle_id ? (knownCircleUsers.get(channel.circle_id) || []) : knownUsers;
       }
 
       function selectMention(index: number): void {
         const user = mentionMatches[index];
         if (!user || !activeMention) return;
+        const channel = knownChannels.find((item) => item.id === activeChannelId);
+        const memberIds = new Set((channel && knownChannelUsers.get(channel.id) || []).map((member) => member.id));
+        if (channel?.is_direct && user.id !== currentParticipantId && !memberIds.has(user.id)) {
+          if (window.confirm(`Start ei ny gruppesamtale med ${user.display_name}? Den gamle direkte samtalen held fram privat.`)) {
+            sendCommand("expand_direct_channel", { channel_id: channel.id, user_id: user.id });
+          }
+          closeMentionSuggestions();
+          bodyInput.focus();
+          return;
+        }
         const replacement = `@${mentionHandle(user)} `;
         bodyInput.setRangeText(replacement, activeMention.start, activeMention.end, "end");
         closeMentionSuggestions();
@@ -1235,7 +1260,7 @@
         const selectedName = directUser.options[directUser.selectedIndex]?.textContent || "personen";
         directMessageStatus.textContent = `Opnar samtale med ${selectedName} …`;
         openDirect.disabled = true;
-        if (!sendCommand("open_direct_channel", { user_id: directUser.value })) {
+        if (!openDirectChannel(directUser.value)) {
           directMessageStatus.textContent = "Sprøyt er ikkje tilkopla. Vent litt og prøv igjen.";
           openDirect.disabled = false;
         }
@@ -1935,7 +1960,7 @@
         conversationTitle.textContent = channel.name;
         conversationCircle.textContent = channel.circle_id
           ? (knownCircles.get(channel.circle_id)?.name || "Vennekrets")
-          : (channel.direct_user_id ? "Direktemelding" : "Felles");
+          : (channel.is_direct ? "Direktemelding" : "Felles");
         conversationCircle.hidden = false;
         const peer = channel.direct_user_id ? activeProfile(channel.direct_user_id) : null;
         const status = profileStatus(peer);
@@ -1970,7 +1995,7 @@
 
       function openDirectFromChannelMember(profile: UserProfile): void {
         if ([...pendingPeopleDirectRequests.values()].some((userId) => userId === profile.id)) return;
-        const requestId = sendCommand("open_direct_channel", { user_id: profile.id });
+        const requestId = openDirectChannel(profile.id);
         if (!requestId) {
           peopleDirectStatuses.set(profile.id, "Ikkje tilkopla enno. Prøv igjen.");
           rerenderOpenChannelMembers();
@@ -2117,12 +2142,14 @@
         const inspectedInvitationToken = event.request_id ? pendingInvitationInspections.get(event.request_id) : undefined;
         const invitationRecipient = event.request_id ? pendingChannelInvitationRecipients.get(event.request_id) : undefined;
         const directInvitationMessage = event.request_id ? pendingDirectInvitationMessages.get(event.request_id) : undefined;
+        const directPeerUserId = event.request_id ? pendingDirectChannelUsers.get(event.request_id) : undefined;
         const directPersonUserId = event.request_id ? pendingPeopleDirectRequests.get(event.request_id) : undefined;
         if (event.request_id) pendingCommands.delete(event.request_id);
         if (event.request_id) pendingInvitationResponses.delete(event.request_id);
         if (event.request_id) pendingInvitationInspections.delete(event.request_id);
         if (event.request_id) pendingChannelInvitationRecipients.delete(event.request_id);
         if (event.request_id) pendingDirectInvitationMessages.delete(event.request_id);
+        if (event.request_id) pendingDirectChannelUsers.delete(event.request_id);
         if (event.request_id) pendingPeopleDirectRequests.delete(event.request_id);
 
         if (event.type === "hello") {
@@ -2307,7 +2334,7 @@
         }
         if (event.type === "invitation_created") {
           if (invitationRecipient) {
-            const directRequestId = sendCommand("open_direct_channel", { user_id: invitationRecipient });
+            const directRequestId = openDirectChannel(invitationRecipient);
             if (directRequestId) {
               pendingDirectInvitationMessages.set(directRequestId, `[[invite:${event.payload.invitation.token}]]`);
               channelMemberStatus.textContent = "Opnar direktemeldinga …";
@@ -2418,21 +2445,23 @@
           return;
         }
 
-        if (event.type === "direct_channel_opened") {
+        if (event.type === "direct_channel_opened" || event.type === "direct_channel_expanded") {
           let channel = knownChannels.find((item) => item.id === event.payload.channel.id);
           if (!channel) {
-            channel = channelFromBase(event.payload.channel, "member");
+            channel = channelFromBase(event.payload.channel, "member", "", event.type === "direct_channel_opened" ? directPeerUserId ?? null : null, true);
             knownChannels.push(channel);
           }
           renderChannels();
-          if (directPersonUserId) {
+          if (event.type === "direct_channel_opened" && directPersonUserId) {
             peopleDirectStatuses.delete(directPersonUserId);
             channelDetailsDialog.close();
           }
-          directMessageStatus.textContent = "";
-          directMessageDialog.close();
+          if (event.type === "direct_channel_opened") {
+            directMessageStatus.textContent = "";
+            directMessageDialog.close();
+          }
           selectChannel(channel);
-          if (directInvitationMessage) {
+          if (event.type === "direct_channel_opened" && directInvitationMessage) {
             sendCommand("send_message", { channel_id: channel.id, body: directInvitationMessage });
             channelDetailsDialog.close();
           }
@@ -2534,7 +2563,12 @@
 
         if (event.type === "chat") {
           const chatEvent = event.payload.event;
-          if (chatEvent.type === "message_accepted") {
+          if (chatEvent.type === "channel_created") {
+            // Membership was committed atomically with the private group, so a
+            // normal list refresh is enough to reveal it without switching the
+            // recipient away from the conversation they are reading.
+            sendCommand("list_my_channels");
+          } else if (chatEvent.type === "message_accepted") {
             updateLatestSequence(chatEvent.message.channel_id, chatEvent.message.sequence);
             if (chatEvent.message.channel_id === activeChannelId) {
               const revealOwnMessage = pendingMessageToReveal(chatEvent.message);
@@ -2787,21 +2821,21 @@
         bottomCircleContent.replaceChildren();
         const activeCircle = activeCircleId ? knownCircles.get(activeCircleId) : undefined;
         const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
-        const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.direct_user_id);
-        const directChannels = knownChannels.filter((channel) => channel.direct_user_id);
+        const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.is_direct);
+        const directChannels = knownChannels.filter((channel) => channel.is_direct);
         const showingShared = !activeCircle && activeRootScope === "shared";
         const showingDirect = !activeCircle && activeRootScope === "direct";
         const activeChannelInScope = activeChannel && (activeCircle
           ? activeChannel.circle_id === activeCircleId
-          : (showingDirect ? Boolean(activeChannel.direct_user_id) : (!activeChannel.circle_id && !activeChannel.direct_user_id)));
+          : (showingDirect ? Boolean(activeChannel.is_direct) : (!activeChannel.circle_id && !activeChannel.is_direct)));
         const channelLabel = activeChannelInScope
-          ? (activeChannel.direct_user_id ? directChannelLabel(activeChannel) : `# ${activeChannel.name}`)
+          ? (activeChannel.is_direct ? directChannelLabel(activeChannel) : `# ${activeChannel.name}`)
           : (showingDirect ? "Direktesamtalar" : "# Kanal");
         const circleLabel = activeCircle?.name || (showingDirect ? "Direkte" : "Felles");
         const bottomChannelLabel = bottomChannelToggle.querySelector(".bottom-navigation-label");
         if (!(bottomChannelLabel instanceof HTMLElement)) throw new Error("Manglar kanalmerke i botnnavigasjonen");
         bottomChannelLabel.textContent = channelLabel;
-        bottomChannelToggle.setAttribute("aria-label", `Vel kanal. Aktiv kanal: ${activeChannelInScope ? (activeChannel.direct_user_id ? directChannelLabel(activeChannel) : activeChannel.name) : "ingen"}`);
+        bottomChannelToggle.setAttribute("aria-label", `Vel kanal. Aktiv kanal: ${activeChannelInScope ? (activeChannel.is_direct ? directChannelLabel(activeChannel) : activeChannel.name) : "ingen"}`);
         const bottomCircleLabel = bottomCircleToggle.querySelector(".bottom-navigation-label");
         if (!(bottomCircleLabel instanceof HTMLElement)) throw new Error("Manglar områdemerke i botnnavigasjonen");
         bottomCircleLabel.textContent = `◎ ${circleLabel}`;
@@ -2898,8 +2932,8 @@
 
       function activateRootScope(scope: "shared" | "direct"): void {
         const channels = knownChannels.filter((channel) => scope === "direct"
-          ? Boolean(channel.direct_user_id)
-          : (!channel.circle_id && !channel.direct_user_id));
+          ? Boolean(channel.is_direct)
+          : (!channel.circle_id && !channel.is_direct));
         navigation.activateRootScope(scope);
         syncRenderedNavigation();
         circleSelect.value = "";
@@ -2935,7 +2969,7 @@
           const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
           const button = document.createElement("button");
           button.type = "button";
-          button.textContent = channel.direct_user_id ? directChannelLabel(channel) : `# ${channel.name}`;
+          button.textContent = channel.is_direct ? directChannelLabel(channel) : `# ${channel.name}`;
           button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
           if (unreadCount > 0) {
             button.classList.add("has-unread");
@@ -3096,11 +3130,11 @@
               button.className = "unread-card";
               const identity = document.createElement("span");
               const name = document.createElement("strong");
-              name.textContent = channel.direct_user_id ? directChannelLabel(channel) : `# ${channel.name}`;
+              name.textContent = channel.is_direct ? directChannelLabel(channel) : `# ${channel.name}`;
               const context = document.createElement("small");
               context.textContent = channel.circle_id
                 ? (knownCircles.get(channel.circle_id)?.name || "Vennekrets")
-                : (channel.direct_user_id ? "Direktemelding" : "Felles");
+                : (channel.is_direct ? "Direktemelding" : "Felles");
               const count = document.createElement("span");
               count.className = "unread";
               const unreadCount = channel.latest_sequence - channel.last_read_sequence;

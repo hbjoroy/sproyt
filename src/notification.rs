@@ -340,6 +340,7 @@ impl NotificationService {
         // delivery loop's old periodic global scan.
         let mention_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,mm.mentioned_user_id,mm.message_id,'mention' from message_mentions mm join messages m on m.id=mm.message_id join push_subscriptions s on s.user_id=mm.mentioned_user_id left join notification_preferences p on p.user_id=mm.mentioned_user_id where mm.mentioned_user_id<>m.sender_id and m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.mentions,true) on conflict(subscription_id,message_id) do nothing";
         let direct_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end,m.id,'direct_message' from messages m join direct_conversations d on d.channel_id=m.channel_id join push_subscriptions s on s.user_id=case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end left join notification_preferences p on p.user_id=s.user_id where m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing";
+        let group_direct_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,cm.user_id,m.id,'direct_message' from messages m join direct_group_conversations g on g.channel_id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id join users u on u.id=cm.user_id and u.kind='human' join push_subscriptions s on s.user_id=cm.user_id left join notification_preferences p on p.user_id=s.user_id where cm.user_id<>m.sender_id and m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing";
         match &self.store {
             NotificationStore::Postgres(pool) => {
                 sqlx::query(mention_pg)
@@ -347,6 +348,10 @@ impl NotificationService {
                     .await
                     .map_err(storage)?;
                 sqlx::query(direct_pg)
+                    .execute(pool)
+                    .await
+                    .map_err(storage)?;
+                sqlx::query(group_direct_pg)
                     .execute(pool)
                     .await
                     .map_err(storage)?;
@@ -358,8 +363,16 @@ impl NotificationService {
                     "coalesce(p.direct_messages,true)",
                     "coalesce(p.direct_messages,1)",
                 );
+                let group_direct = group_direct_pg.replace(
+                    "coalesce(p.direct_messages,true)",
+                    "coalesce(p.direct_messages,1)",
+                );
                 sqlx::query(&mention).execute(pool).await.map_err(storage)?;
                 sqlx::query(&direct).execute(pool).await.map_err(storage)?;
+                sqlx::query(&group_direct)
+                    .execute(pool)
+                    .await
+                    .map_err(storage)?;
             }
         }
         Ok(())
@@ -450,6 +463,13 @@ pub(crate) async fn enqueue_message_postgres(
         .execute(&mut **transaction)
         .await
         .map_err(storage)?;
+    sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,cm.user_id,$2,'direct_message' from direct_group_conversations g join channel_memberships cm on cm.channel_id=g.channel_id join users u on u.id=cm.user_id and u.kind='human' join push_subscriptions s on s.user_id=cm.user_id left join notification_preferences p on p.user_id=s.user_id where g.channel_id=$1 and cm.user_id<>$3 and $2>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing")
+        .bind(*message.channel_id.as_uuid())
+        .bind(*message.id.as_uuid())
+        .bind(*message.sender_id.as_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(storage)?;
     Ok(())
 }
 
@@ -468,6 +488,14 @@ pub(crate) async fn enqueue_message_sqlite(
         .bind(message.id.as_uuid().to_string())
         .bind(message.sender_id.to_string())
         .bind(message.channel_id.to_string())
+        .bind(message.id.as_uuid().to_string())
+        .execute(&mut **transaction)
+        .await
+        .map_err(storage)?;
+    sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,cm.user_id,?,'direct_message' from direct_group_conversations g join channel_memberships cm on cm.channel_id=g.channel_id join users u on u.id=cm.user_id and u.kind='human' join push_subscriptions s on s.user_id=cm.user_id left join notification_preferences p on p.user_id=s.user_id where g.channel_id=? and cm.user_id<>? and ?>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,1) on conflict(subscription_id,message_id) do nothing")
+        .bind(message.id.as_uuid().to_string())
+        .bind(message.channel_id.to_string())
+        .bind(message.sender_id.to_string())
         .bind(message.id.as_uuid().to_string())
         .execute(&mut **transaction)
         .await
@@ -667,6 +695,102 @@ mod tests {
             },
         };
         assert!(validate_subscription(&input).is_err());
+    }
+
+    #[tokio::test]
+    async fn group_direct_notifies_all_other_human_members_and_keeps_mention_priority() {
+        let service = service().await;
+        let NotificationStore::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        let sender = Uuid::now_v7();
+        let mentioned = Uuid::now_v7();
+        let other = Uuid::now_v7();
+        let agent = Uuid::now_v7();
+        let channel = Uuid::now_v7();
+        let message = Uuid::now_v7();
+        for (id, kind, name) in [
+            (sender, "human", "Sender"),
+            (mentioned, "human", "Mentioned"),
+            (other, "human", "Other"),
+            (agent, "agent", "Agent"),
+        ] {
+            sqlx::query("insert into users(id,kind,display_name) values(?,?,?)")
+                .bind(id.to_string())
+                .bind(kind)
+                .bind(name)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("insert into channels(id,slug,name,kind,created_by) values(?,?,?,'private',?)")
+            .bind(channel.to_string())
+            .bind(format!("dm-group-{channel}"))
+            .bind("Group DM")
+            .bind(sender.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "insert into direct_group_conversations(channel_id,source_channel_id) values(?,?)",
+        )
+        .bind(channel.to_string())
+        .bind(channel.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+        for user in [sender, mentioned, other, agent] {
+            sqlx::query(
+                "insert into channel_memberships(channel_id,user_id,role) values(?,?,'member')",
+            )
+            .bind(channel.to_string())
+            .bind(user.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values(?,?,?,?,1,'Hei @Mentioned')")
+            .bind(message.to_string()).bind(channel.to_string()).bind(sender.to_string()).bind("Sender").execute(pool).await.unwrap();
+        sqlx::query("insert into message_mentions(message_id,mentioned_user_id) values(?,?)")
+            .bind(message.to_string())
+            .bind(mentioned.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        for user in [mentioned, other, agent] {
+            sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,notification_after_message_id) values(?,?,?,?,?,?)")
+                .bind(Uuid::now_v7().to_string()).bind(user.to_string()).bind(format!("https://push.example/{user}")).bind("p".repeat(65)).bind("a".repeat(22)).bind("00000000-0000-7000-8000-000000000000").execute(pool).await.unwrap();
+        }
+        let chat_message = ChatMessage {
+            id: crate::domain::MessageId::from_uuid(message),
+            channel_id: crate::domain::ChannelId::from_uuid(channel),
+            parent_message_id: None,
+            sender_id: UserId::from_uuid(sender),
+            sender_display_name: crate::domain::DisplayName::new("Sender").unwrap(),
+            body: crate::domain::MessageBody::new("Hei @Mentioned").unwrap(),
+            sequence: crate::domain::ChannelSequence::first(),
+            sent_at: chrono::Utc::now(),
+            edited_at: None,
+            deleted_at: None,
+        };
+        let mut tx = pool.begin().await.unwrap();
+        enqueue_message_sqlite(&mut tx, &chat_message)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "select recipient_id,kind from notification_outbox order by recipient_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (mentioned.to_string(), "mention".into()),
+                (other.to_string(), "direct_message".into())
+            ]
+        );
     }
 
     #[tokio::test]

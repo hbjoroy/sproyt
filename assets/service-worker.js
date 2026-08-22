@@ -2,9 +2,8 @@ const CACHE = "sproyt-shell-v1";
 const SHELL = [
   "/offline",
   "/manifest.webmanifest",
-  "/assets/sproyt-wave.svg",
-  "/assets/sproyt-wave-192.png",
-  "/assets/sproyt-wave-512.png"
+  "/assets/sproyt-wave-icon-192.png",
+  "/assets/sproyt-wave-icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -44,8 +43,8 @@ self.addEventListener("push", (event) => {
     if (!notification?.title) return;
     await self.registration.showNotification(notification.title, {
       body: notification.body,
-      icon: "/assets/sproyt-wave-192.png",
-      badge: "/assets/sproyt-wave-192.png",
+      icon: "/assets/sproyt-wave-icon-192.png",
+      badge: "/assets/sproyt-wave-icon-192.png",
       tag: notification.tag,
       data: { navigate: notification.navigate || "/" }
     });

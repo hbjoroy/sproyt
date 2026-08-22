@@ -135,6 +135,16 @@ impl ChatEngine {
                 }
             });
         }
+        if let Some(mut notifications) = repository.subscribe_channel_updates() {
+            let notification_mailbox = mailbox.clone();
+            tokio::spawn(async move {
+                while let Ok(event) = notifications.recv().await {
+                    let _ = notification_mailbox
+                        .send(Command::ExternalChannel { event })
+                        .await;
+                }
+            });
+        }
         let distributed_presence = if let Some(mut notifications) = repository.subscribe_presence()
         {
             let notification_mailbox = mailbox.clone();
@@ -283,6 +293,31 @@ impl ChatEngine {
             .open_direct_channel(actor, other)
             .await
             .map_err(ChatError::from)
+    }
+
+    pub async fn expand_direct_channel(
+        &self,
+        actor: UserId,
+        source_channel_id: ChannelId,
+        other: UserId,
+    ) -> Result<crate::domain::Channel, ChatError> {
+        let channel = self
+            .repository
+            .expand_direct_channel(actor, source_channel_id.clone(), other)
+            .await
+            .map_err(ChatError::from)?;
+        // Existing subscribers of the source conversation learn about the
+        // derivative group immediately and refresh their private channel list.
+        // The new channel itself remains empty and has no source history.
+        let _ = self
+            .mailbox
+            .send(Command::ChannelCreated {
+                source_channel_id,
+                channel_id: channel.id.clone(),
+                created_by: channel.created_by.clone(),
+            })
+            .await;
+        Ok(channel)
     }
 
     pub async fn export_user_data(
@@ -971,6 +1006,11 @@ impl From<RepositoryError> for ChatError {
 }
 
 enum Command {
+    ChannelCreated {
+        source_channel_id: ChannelId,
+        channel_id: ChannelId,
+        created_by: UserId,
+    },
     Subscribe {
         channel_id: ChannelId,
         participant_id: UserId,
@@ -1016,6 +1056,9 @@ enum Command {
     ExternalUpdate {
         event: ChatEvent,
     },
+    ExternalChannel {
+        event: ChatEvent,
+    },
     ExternalPresence {
         event: ChatEvent,
     },
@@ -1044,6 +1087,18 @@ impl ChatActor {
     async fn run(mut self, mut receiver: mpsc::Receiver<Command>) {
         while let Some(command) = receiver.recv().await {
             match command {
+                Command::ChannelCreated {
+                    source_channel_id,
+                    channel_id,
+                    created_by,
+                } => {
+                    self.channel_mut(source_channel_id.clone())
+                        .publish(ChatEvent::ChannelCreated {
+                            channel_id,
+                            created_by,
+                            source_channel_id: Some(source_channel_id),
+                        })
+                }
                 Command::Subscribe {
                     channel_id,
                     participant_id,
@@ -1156,6 +1211,15 @@ impl ChatActor {
                     | ChatEvent::MessageDeleted { message } = &event
                     {
                         self.channel_mut(message.channel_id.clone()).publish(event);
+                    }
+                }
+                Command::ExternalChannel { event } => {
+                    if let ChatEvent::ChannelCreated {
+                        source_channel_id: Some(source),
+                        ..
+                    } = &event
+                    {
+                        self.channel_mut(source.clone()).publish(event);
                     }
                 }
                 Command::ExternalPresence { event } => self.publish_presence(event),

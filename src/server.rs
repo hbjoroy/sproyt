@@ -31,8 +31,8 @@ use crate::{
         approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
     },
     web::assets::{
-        app_bundle, client_store, client_store_legacy, offline_page, pwa_manifest, service_worker,
-        wave_logo_192, wave_logo_512, wave_logo_svg,
+        app_bundle, client_store, client_store_legacy, legacy_wave_logo_192, legacy_wave_logo_512,
+        offline_page, pwa_manifest, service_worker, wave_logo_192, wave_logo_512, wave_logo_svg,
     },
     web::auth::{auth_callback, auth_login, auth_logout, auth_refresh, auth_session},
     web::browser::index,
@@ -134,9 +134,13 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route("/assets/app/{revision}/app.js", get(app_bundle))
         .route("/service-worker.js", get(service_worker))
         .route("/offline", get(offline_page))
+        // Keep the former paths available for already-open PWA pages while
+        // their service worker and document cache update.
         .route("/assets/sproyt-wave.svg", get(wave_logo_svg))
-        .route("/assets/sproyt-wave-192.png", get(wave_logo_192))
-        .route("/assets/sproyt-wave-512.png", get(wave_logo_512))
+        .route("/assets/sproyt-wave-192.png", get(legacy_wave_logo_192))
+        .route("/assets/sproyt-wave-512.png", get(legacy_wave_logo_512))
+        .route("/assets/sproyt-wave-icon-192.png", get(wave_logo_192))
+        .route("/assets/sproyt-wave-icon-512.png", get(wave_logo_512))
         .route("/metrics", get(metrics))
         .route("/auth/login", get(auth_login))
         .route("/auth/callback", get(auth_callback))

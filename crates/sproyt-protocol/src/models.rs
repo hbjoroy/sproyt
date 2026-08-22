@@ -220,6 +220,10 @@ pub struct ChannelSummary {
     pub circle_id: Option<CircleId>,
     #[serde(default)]
     pub direct_user_id: Option<UserId>,
+    /// True for both one-to-one and group direct conversations.  `direct_user_id`
+    /// remains populated only for one-to-one conversations.
+    #[serde(default)]
+    pub is_direct: bool,
     #[serde(default)]
     pub description: String,
     pub role: MembershipRole,

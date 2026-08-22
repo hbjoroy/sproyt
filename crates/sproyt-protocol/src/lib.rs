@@ -184,6 +184,7 @@ mod tests {
                 crate::ClientCommand::ListCircleUsers { .. } => "list_circle_users",
                 crate::ClientCommand::SetStatus { .. } => "set_status",
                 crate::ClientCommand::OpenDirectChannel { .. } => "open_direct_channel",
+                crate::ClientCommand::ExpandDirectChannel { .. } => "expand_direct_channel",
                 crate::ClientCommand::CreateChannel { .. } => "create_channel",
                 crate::ClientCommand::JoinChannel { .. } => "join_channel",
                 crate::ClientCommand::LeaveChannel { .. } => "leave_channel",

@@ -412,6 +412,119 @@ impl ChatRepository for SqliteChatRepository {
         })
     }
 
+    fn expand_direct_channel<'a>(
+        &'a self,
+        actor: UserId,
+        source_channel_id: ChannelId,
+        other: UserId,
+    ) -> RepositoryFuture<'a, Channel> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let permitted: i64 = sqlx::query_scalar("select case when exists(select 1 from channel_memberships where channel_id=? and user_id=?) and (exists(select 1 from direct_conversations where channel_id=?) or exists(select 1 from direct_group_conversations where channel_id=?)) then 1 else 0 end")
+                .bind(source_channel_id.to_string()).bind(actor.to_string())
+                .bind(source_channel_id.to_string()).bind(source_channel_id.to_string())
+                .fetch_one(&mut *tx).await.map_err(sql_error)?;
+            if permitted == 0 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            // The unique source/target row makes retries and concurrent clicks
+            // return the same empty derivative conversation.
+            if let Some(existing) = sqlx::query_scalar::<_, String>("select channel_id from direct_group_expansions where source_channel_id=? and added_user_id=?")
+                .bind(source_channel_id.to_string()).bind(other.to_string()).fetch_optional(&mut *tx).await.map_err(sql_error)? {
+                let row = sqlx::query("select id,slug,name,kind,circle_id,created_by from channels where id=?").bind(existing).fetch_one(&mut *tx).await.map_err(sql_error)?;
+                tx.commit().await.map_err(sql_error)?;
+                return channel_from_row(row);
+            }
+            let target_human: Option<i64> =
+                sqlx::query_scalar("select 1 from users where id=? and kind='human'")
+                    .bind(other.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+            if target_human.is_none() || other == actor {
+                return Err(RepositoryError::NotFound);
+            }
+            let already_member: Option<i64> = sqlx::query_scalar(
+                "select 1 from channel_memberships where channel_id=? and user_id=?",
+            )
+            .bind(source_channel_id.to_string())
+            .bind(other.to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            if already_member.is_some() {
+                return Err(RepositoryError::Conflict);
+            }
+            let mut participants = sqlx::query("select u.id,u.display_name from users u join channel_memberships m on m.user_id=u.id where m.channel_id=? and u.kind='human' union all select id,display_name from users where id=? and kind='human' order by display_name collate nocase,id")
+                .bind(source_channel_id.to_string()).bind(other.to_string()).fetch_all(&mut *tx).await.map_err(sql_error)?;
+            if participants.len() < 3 {
+                return Err(RepositoryError::Conflict);
+            }
+            let names = participants
+                .iter()
+                .map(|row| row.try_get::<String, _>("display_name").map_err(storage))
+                .collect::<Result<Vec<_>, _>>()?;
+            let group_name = if names.len() > 3 {
+                format!("{}, + {}", names[..3].join(", "), names.len() - 3)
+            } else {
+                names.join(", ")
+            };
+            let channel = Channel {
+                id: ChannelId::generate(),
+                slug: ChannelSlug::new(format!("dm-group-{}", Uuid::new_v4().simple()))
+                    .map_err(storage)?,
+                name: DisplayName::new(group_name).map_err(storage)?,
+                kind: ChannelKind::Private,
+                circle_id: None,
+                created_by: actor.clone(),
+            };
+            sqlx::query("insert into channels(id,slug,name,kind,circle_id,created_by) values(?,?,?,'private',null,?)").bind(channel.id.to_string()).bind(channel.slug.as_str()).bind(channel.name.as_str()).bind(actor.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into channel_sequences(channel_id) values(?)")
+                .bind(channel.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query(
+                "insert into direct_group_conversations(channel_id,source_channel_id) values(?,?)",
+            )
+            .bind(channel.id.to_string())
+            .bind(source_channel_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let created = sqlx::query("insert into direct_group_expansions(source_channel_id,added_user_id,channel_id) values(?,?,?) on conflict(source_channel_id,added_user_id) do nothing").bind(source_channel_id.to_string()).bind(other.to_string()).bind(channel.id.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+            if created.rows_affected() == 0 {
+                sqlx::query("delete from channels where id=?")
+                    .bind(channel.id.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+                let existing: String = sqlx::query_scalar("select channel_id from direct_group_expansions where source_channel_id=? and added_user_id=?").bind(source_channel_id.to_string()).bind(other.to_string()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+                let row = sqlx::query(
+                    "select id,slug,name,kind,circle_id,created_by from channels where id=?",
+                )
+                .bind(existing)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                tx.commit().await.map_err(sql_error)?;
+                return channel_from_row(row);
+            }
+            for row in participants.drain(..) {
+                sqlx::query(
+                    "insert into channel_memberships(channel_id,user_id,role) values(?,?,'member')",
+                )
+                .bind(channel.id.to_string())
+                .bind(row.try_get::<String, _>("id").map_err(storage)?)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            }
+            tx.commit().await.map_err(sql_error)?;
+            Ok(channel)
+        })
+    }
+
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
@@ -451,7 +564,7 @@ impl ChatRepository for SqliteChatRepository {
                 .map(circle_with_role)
                 .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
                 .collect::<Result<Vec<_>, _>>()?;
-            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
+            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,case when exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id) then 1 else 0 end as is_direct,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
                 .bind(actor.to_string()).bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
             let summaries = channel_rows
                 .into_iter()
@@ -978,7 +1091,7 @@ impl ChatRepository for SqliteChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,case when exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id) then 1 else 0 end as is_direct,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
                 .bind(actor.to_string()).bind(actor.to_string())
                 .fetch_all(&self.pool)
                 .await
@@ -2327,6 +2440,7 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
     let role: String = row.try_get("role").map_err(storage)?;
     let circle_id: Option<String> = row.try_get("circle_id").map_err(storage)?;
     let direct_user_id: Option<String> = row.try_get("direct_user_id").map_err(storage)?;
+    let is_direct: i64 = row.try_get("is_direct").map_err(storage)?;
     let description: String = row.try_get("description").map_err(storage)?;
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
@@ -2343,6 +2457,7 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
             .map(UserId::new)
             .transpose()
             .map_err(storage)?,
+        is_direct: is_direct != 0,
         description,
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,
@@ -2731,8 +2846,91 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::domain::{PrincipalKind, User};
+    use crate::domain::{MessageLimit, PrincipalKind, User};
     use tokio::sync::Barrier;
+
+    #[tokio::test]
+    async fn sqlite_expanding_a_direct_conversation_creates_an_empty_group_direct() {
+        let repository = SqliteChatRepository::connect("sqlite::memory:?cache=shared")
+            .await
+            .unwrap();
+        repository.migrate().await.unwrap();
+        let suffix = Uuid::now_v7().simple().to_string();
+        let alice = UserId::named(format!("group-alice-{suffix}"));
+        let bob = UserId::named(format!("group-bob-{suffix}"));
+        let cara = UserId::named(format!("group-cara-{suffix}"));
+        for (id, name) in [
+            (alice.clone(), "Alice"),
+            (bob.clone(), "Bob"),
+            (cara.clone(), "Cara"),
+        ] {
+            repository
+                .upsert_user(User {
+                    id,
+                    kind: PrincipalKind::Human,
+                    display_name: DisplayName::new(name).unwrap(),
+                    external_provider: None,
+                    external_subject: None,
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+        let source = repository
+            .open_direct_channel(alice.clone(), bob.clone())
+            .await
+            .unwrap();
+        repository
+            .append_message(SendMessage {
+                actor: alice.clone(),
+                channel_id: source.id.clone(),
+                parent_message_id: None,
+                body: MessageBody::new("private history").unwrap(),
+            })
+            .await
+            .unwrap();
+        let group = repository
+            .expand_direct_channel(alice.clone(), source.id.clone(), cara.clone())
+            .await
+            .unwrap();
+        let retry = repository
+            .expand_direct_channel(alice.clone(), source.id.clone(), cara.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            group.id, retry.id,
+            "retries return the same derived conversation"
+        );
+        assert!(
+            repository
+                .load_recent_messages(LoadRecentMessages {
+                    actor: cara.clone(),
+                    channel_id: group.id.clone(),
+                    limit: MessageLimit::new(20),
+                    after: None,
+                    before: None
+                })
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            repository
+                .load_recent_messages(LoadRecentMessages {
+                    actor: cara,
+                    channel_id: source.id,
+                    limit: MessageLimit::new(20),
+                    after: None,
+                    before: None
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        let listed = repository.list_channels_for_user(alice).await.unwrap();
+        assert!(listed.iter().any(|summary| summary.id == group.id
+            && summary.is_direct
+            && summary.direct_user_id.is_none()));
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sqlite_open_direct_channel_is_idempotent_under_race() {

@@ -16,8 +16,9 @@ use super::{
 };
 #[cfg(test)]
 use super::{
-    ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, ExportedChannel, ExportedCircle,
-    InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT, Policy, RepositoryError::NotFound,
+    ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, DisplayName, ExportedChannel,
+    ExportedCircle, InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT, Policy,
+    RepositoryError::NotFound,
 };
 #[cfg(test)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -78,6 +79,12 @@ pub trait ChatRepository: Send + Sync + 'static {
     fn open_direct_channel<'a>(
         &'a self,
         actor: UserId,
+        other: UserId,
+    ) -> RepositoryFuture<'a, Channel>;
+    fn expand_direct_channel<'a>(
+        &'a self,
+        actor: UserId,
+        source_channel_id: ChannelId,
         other: UserId,
     ) -> RepositoryFuture<'a, Channel>;
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
@@ -229,6 +236,9 @@ pub trait ChatRepository: Send + Sync + 'static {
         None
     }
     fn subscribe_message_updates(&self) -> Option<broadcast::Receiver<ChatEvent>> {
+        None
+    }
+    fn subscribe_channel_updates(&self) -> Option<broadcast::Receiver<ChatEvent>> {
         None
     }
     fn subscribe_presence(&self) -> Option<broadcast::Receiver<ChatEvent>> {
@@ -601,6 +611,104 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn expand_direct_channel<'a>(
+        &'a self,
+        actor: UserId,
+        source_channel_id: ChannelId,
+        other: UserId,
+    ) -> RepositoryFuture<'a, Channel> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            if !state.users.contains_key(&other) || other == actor {
+                return Err(RepositoryError::NotFound);
+            }
+            if !state
+                .memberships
+                .contains_key(&(source_channel_id.clone(), actor.clone()))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let is_direct = state
+                .direct_conversations
+                .values()
+                .any(|id| id == &source_channel_id)
+                || state
+                    .direct_group_conversations
+                    .contains_key(&source_channel_id);
+            if !is_direct {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if state
+                .memberships
+                .contains_key(&(source_channel_id.clone(), other.clone()))
+            {
+                return Err(RepositoryError::Conflict);
+            }
+            if let Some(channel_id) = state
+                .direct_expansions
+                .get(&(source_channel_id.clone(), other.clone()))
+            {
+                return state.channels.get(channel_id).cloned().ok_or_else(|| {
+                    RepositoryError::Storage("expanded direct channel is missing".into())
+                });
+            }
+            let mut participants = state
+                .memberships
+                .values()
+                .filter(|m| m.channel_id == source_channel_id)
+                .map(|m| m.user_id.clone())
+                .collect::<Vec<_>>();
+            participants.push(other.clone());
+            participants.sort();
+            let names = participants
+                .iter()
+                .map(|id| {
+                    state
+                        .users
+                        .get(id)
+                        .map(|user| user.display_name.as_str().to_owned())
+                        .ok_or(RepositoryError::NotFound)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let channel = Channel {
+                id: ChannelId::generate(),
+                slug: ChannelSlug::new(format!("dm-group-{}", uuid::Uuid::new_v4().simple()))
+                    .map_err(|error| RepositoryError::Storage(error.to_string()))?,
+                name: DisplayName::new(if names.len() > 3 {
+                    format!("{}, + {}", names[..3].join(", "), names.len() - 3)
+                } else {
+                    names.join(", ")
+                })
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?,
+                kind: crate::domain::ChannelKind::Private,
+                circle_id: None,
+                created_by: actor.clone(),
+            };
+            state
+                .channels_by_slug
+                .insert(channel.slug.clone(), channel.id.clone());
+            state.channels.insert(channel.id.clone(), channel.clone());
+            state
+                .direct_group_conversations
+                .insert(channel.id.clone(), source_channel_id.clone());
+            state
+                .direct_expansions
+                .insert((source_channel_id, other), channel.id.clone());
+            for user_id in participants {
+                state.memberships.insert(
+                    (channel.id.clone(), user_id.clone()),
+                    Membership {
+                        channel_id: channel.id.clone(),
+                        user_id,
+                        role: MembershipRole::Member,
+                        last_read_sequence: ChannelSequence::new(0),
+                    },
+                );
+            }
+            Ok(channel)
+        })
+    }
+
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let state = self.lock_state()?;
@@ -651,6 +759,11 @@ impl ChatRepository for InMemoryChatRepository {
                                     })
                                 },
                             ),
+                            is_direct: state
+                                .direct_conversations
+                                .values()
+                                .any(|id| id == &channel.id)
+                                || state.direct_group_conversations.contains_key(&channel.id),
                             description: state
                                 .channel_descriptions
                                 .get(&channel.id)
@@ -1102,6 +1215,11 @@ impl ChatRepository for InMemoryChatRepository {
                                 })
                             },
                         ),
+                        is_direct: state
+                            .direct_conversations
+                            .values()
+                            .any(|id| id == &channel.id)
+                            || state.direct_group_conversations.contains_key(&channel.id),
                         description: state
                             .channel_descriptions
                             .get(&channel.id)
@@ -1691,6 +1809,8 @@ struct RepositoryState {
     channels_by_slug: HashMap<super::ChannelSlug, ChannelId>,
     channel_descriptions: HashMap<ChannelId, String>,
     direct_conversations: HashMap<(UserId, UserId), ChannelId>,
+    direct_group_conversations: HashMap<ChannelId, ChannelId>,
+    direct_expansions: HashMap<(ChannelId, UserId), ChannelId>,
     memberships: HashMap<(ChannelId, UserId), Membership>,
     messages: HashMap<ChannelId, Vec<ChatMessage>>,
     next_sequences: HashMap<ChannelId, ChannelSequence>,

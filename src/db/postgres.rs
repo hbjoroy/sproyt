@@ -46,6 +46,7 @@ pub struct PostgresChatRepository {
     presence: broadcast::Sender<ChatEvent>,
     reactions: broadcast::Sender<ChatEvent>,
     message_updates: broadcast::Sender<ChatEvent>,
+    channel_updates: broadcast::Sender<ChatEvent>,
 }
 
 impl PostgresChatRepository {
@@ -68,14 +69,20 @@ impl PostgresChatRepository {
             .listen("sproyt_message_updates")
             .await
             .map_err(sql_error)?;
+        listener
+            .listen("sproyt_channel_updates")
+            .await
+            .map_err(sql_error)?;
         let (messages, _) = broadcast::channel(1024);
         let (presence, _) = broadcast::channel(1024);
         let (reactions, _) = broadcast::channel(1024);
         let (message_updates, _) = broadcast::channel(1024);
+        let (channel_updates, _) = broadcast::channel(1024);
         let message_publisher = messages.clone();
         let presence_publisher = presence.clone();
         let reaction_publisher = reactions.clone();
         let update_publisher = message_updates.clone();
+        let channel_publisher = channel_updates.clone();
         let listener_url = url.to_owned();
         tokio::spawn(async move {
             loop {
@@ -128,6 +135,22 @@ impl PostgresChatRepository {
                             ),
                         }
                     }
+                    Ok(notification) if notification.channel() == "sproyt_channel_updates" => {
+                        match serde_json::from_str::<ChatEvent>(notification.payload()) {
+                            Ok(
+                                event @ ChatEvent::ChannelCreated {
+                                    source_channel_id: Some(_),
+                                    ..
+                                },
+                            ) => {
+                                let _ = channel_publisher.send(event);
+                            }
+                            _ => tracing::warn!(
+                                error_kind = "invalid_channel_update",
+                                "ignored invalid sproyt_channel_updates notification"
+                            ),
+                        }
+                    }
                     Ok(_) => {}
                     Err(error) => {
                         tracing::warn!(
@@ -147,10 +170,13 @@ impl PostgresChatRepository {
                                         replacement.listen("sproyt_reactions").await;
                                     let updates_ready =
                                         replacement.listen("sproyt_message_updates").await;
+                                    let channels_ready =
+                                        replacement.listen("sproyt_channel_updates").await;
                                     if messages_ready.is_ok()
                                         && presence_ready.is_ok()
                                         && reactions_ready.is_ok()
                                         && updates_ready.is_ok()
+                                        && channels_ready.is_ok()
                                     {
                                         listener = replacement;
                                         tracing::info!(
@@ -177,6 +203,7 @@ impl PostgresChatRepository {
             presence,
             reactions,
             message_updates,
+            channel_updates,
         })
     }
 
@@ -529,6 +556,111 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn expand_direct_channel<'a>(
+        &'a self,
+        actor: UserId,
+        source_channel_id: ChannelId,
+        other: UserId,
+    ) -> RepositoryFuture<'a, Channel> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let permitted: bool = sqlx::query_scalar("select exists(select 1 from channel_memberships where channel_id=$1 and user_id=$2) and (exists(select 1 from direct_conversations where channel_id=$1) or exists(select 1 from direct_group_conversations where channel_id=$1))")
+                .bind(*source_channel_id.as_uuid()).bind(*actor.as_uuid()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+            if !permitted {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if let Some(existing) = sqlx::query_scalar::<_, uuid::Uuid>("select channel_id from direct_group_expansions where source_channel_id=$1 and added_user_id=$2")
+                .bind(*source_channel_id.as_uuid()).bind(*other.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)? {
+                let row = sqlx::query("select id,slug,name,kind,circle_id,created_by from channels where id=$1").bind(existing).fetch_one(&mut *tx).await.map_err(sql_error)?;
+                tx.commit().await.map_err(sql_error)?; return channel_from_row(row);
+            }
+            let target_human: Option<i32> =
+                sqlx::query_scalar("select 1 from users where id=$1 and kind='human'")
+                    .bind(*other.as_uuid())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+            if target_human.is_none() || other == actor {
+                return Err(RepositoryError::NotFound);
+            }
+            let already_member: Option<i32> = sqlx::query_scalar(
+                "select 1 from channel_memberships where channel_id=$1 and user_id=$2",
+            )
+            .bind(*source_channel_id.as_uuid())
+            .bind(*other.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            if already_member.is_some() {
+                return Err(RepositoryError::Conflict);
+            }
+            let mut participants = sqlx::query("select u.id,u.display_name from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human' union all select id,display_name from users where id=$2 and kind='human' order by display_name,id")
+                .bind(*source_channel_id.as_uuid()).bind(*other.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
+            if participants.len() < 3 {
+                return Err(RepositoryError::Conflict);
+            }
+            let names = participants
+                .iter()
+                .map(|row| row.try_get::<String, _>("display_name").map_err(storage))
+                .collect::<Result<Vec<_>, _>>()?;
+            let group_name = if names.len() > 3 {
+                format!("{}, + {}", names[..3].join(", "), names.len() - 3)
+            } else {
+                names.join(", ")
+            };
+            let channel = Channel {
+                id: ChannelId::generate(),
+                slug: ChannelSlug::new(format!("dm-group-{}", Uuid::new_v4().simple()))
+                    .map_err(storage)?,
+                name: DisplayName::new(group_name).map_err(storage)?,
+                kind: ChannelKind::Private,
+                circle_id: None,
+                created_by: actor.clone(),
+            };
+            sqlx::query("insert into channels(id,slug,name,kind,circle_id,created_by) values($1,$2,$3,'private',null,$4)").bind(*channel.id.as_uuid()).bind(channel.slug.as_str()).bind(channel.name.as_str()).bind(*actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into channel_sequences(channel_id) values($1)")
+                .bind(*channel.id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("insert into direct_group_conversations(channel_id,source_channel_id) values($1,$2)").bind(*channel.id.as_uuid()).bind(*source_channel_id.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            let created = sqlx::query("insert into direct_group_expansions(source_channel_id,added_user_id,channel_id) values($1,$2,$3) on conflict(source_channel_id,added_user_id) do nothing").bind(*source_channel_id.as_uuid()).bind(*other.as_uuid()).bind(*channel.id.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            if created.rows_affected() == 0 {
+                sqlx::query("delete from channels where id=$1")
+                    .bind(*channel.id.as_uuid())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+                let existing: uuid::Uuid = sqlx::query_scalar("select channel_id from direct_group_expansions where source_channel_id=$1 and added_user_id=$2").bind(*source_channel_id.as_uuid()).bind(*other.as_uuid()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+                let row = sqlx::query(
+                    "select id,slug,name,kind,circle_id,created_by from channels where id=$1",
+                )
+                .bind(existing)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                tx.commit().await.map_err(sql_error)?;
+                return channel_from_row(row);
+            }
+            for row in participants.drain(..) {
+                sqlx::query("insert into channel_memberships(channel_id,user_id,role) values($1,$2,'member')").bind(*channel.id.as_uuid()).bind(row.try_get::<uuid::Uuid,_>("id").map_err(storage)?).execute(&mut *tx).await.map_err(sql_error)?;
+            }
+            tx.commit().await.map_err(sql_error)?;
+            let event = serde_json::to_string(&ChatEvent::ChannelCreated {
+                channel_id: channel.id.clone(),
+                created_by: actor,
+                source_channel_id: Some(source_channel_id),
+            })
+            .map_err(storage)?;
+            sqlx::query("select pg_notify('sproyt_channel_updates',$1)")
+                .bind(event)
+                .execute(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            Ok(channel)
+        })
+    }
+
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
@@ -568,7 +700,7 @@ impl ChatRepository for PostgresChatRepository {
                 .map(circle_with_role)
                 .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
                 .collect::<Result<Vec<_>, _>>()?;
-            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
             let summaries = channel_rows
                 .into_iter()
@@ -1075,7 +1207,7 @@ impl ChatRepository for PostgresChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
                 .await
@@ -1775,6 +1907,9 @@ impl ChatRepository for PostgresChatRepository {
 
     fn subscribe_message_updates(&self) -> Option<broadcast::Receiver<ChatEvent>> {
         Some(self.message_updates.subscribe())
+    }
+    fn subscribe_channel_updates(&self) -> Option<broadcast::Receiver<ChatEvent>> {
+        Some(self.channel_updates.subscribe())
     }
 
     fn subscribe_presence(&self) -> Option<broadcast::Receiver<ChatEvent>> {
@@ -2528,6 +2663,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let role: String = row.try_get("role").map_err(storage)?;
     let circle_id: Option<uuid::Uuid> = row.try_get("circle_id").map_err(storage)?;
     let direct_user_id: Option<uuid::Uuid> = row.try_get("direct_user_id").map_err(storage)?;
+    let is_direct: bool = row.try_get("is_direct").map_err(storage)?;
     let description: String = row.try_get("description").map_err(storage)?;
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
@@ -2538,6 +2674,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
         kind: ChannelKind::parse(&kind).ok_or_else(|| storage("invalid channel kind"))?,
         circle_id: circle_id.map(CircleId::from_uuid),
         direct_user_id: direct_user_id.map(UserId::from_uuid),
+        is_direct,
         description,
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,

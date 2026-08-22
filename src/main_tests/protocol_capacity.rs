@@ -190,11 +190,11 @@ fn browser_is_an_installable_pwa_with_bounded_offline_caching() {
     assert!(
         manifest["icons"]
             .as_array()
-            .is_some_and(|icons| icons.len() >= 3)
+            .is_some_and(|icons| icons.len() >= 2)
     );
     assert!(BROWSER_CLIENT.contains("rel=\"manifest\" href=\"/manifest.webmanifest\""));
     assert!(BROWSER_CLIENT.contains("navigator.serviceWorker.register"));
-    assert!(BROWSER_CLIENT.contains("/assets/sproyt-wave.svg"));
+    assert!(BROWSER_CLIENT.contains("/assets/sproyt-wave-icon-512.png"));
     assert!(BROWSER_CLIENT.contains("viewport-fit=cover"));
     assert!(BROWSER_CLIENT.contains("--app-height: 100dvh"));
     assert!(BROWSER_CLIENT.contains("env(safe-area-inset-bottom)"));
@@ -598,7 +598,7 @@ fn browser_exposes_compact_durable_message_threads() {
 #[test]
 fn browser_uses_compact_accessible_mobile_conversation_bar() {
     assert!(BROWSER_CLIENT.contains(
-        "<div class=\"mobile-app-mark\"><img src=\"/assets/sproyt-wave.svg\" alt=\"\"></div>"
+        "<div class=\"mobile-app-mark\"><img src=\"/assets/sproyt-wave-icon-512.png\" alt=\"\"></div>"
     ));
     assert!(
         BROWSER_CLIENT.contains("class=\"conversation-circle\" id=\"conversation-circle\" hidden")
@@ -626,7 +626,7 @@ fn browser_uses_compact_accessible_mobile_conversation_bar() {
         BROWSER_CLIENT.contains("connectionStatusDot.dataset.reconnecting = String(reconnecting)")
     );
     assert!(BROWSER_CLIENT.contains(".connection-status-dot[data-reconnecting=\"true\"]"));
-    assert!(BROWSER_CLIENT.contains("(channel.direct_user_id ? \"Direktemelding\" : \"Felles\")"));
+    assert!(BROWSER_CLIENT.contains("(channel.is_direct ? \"Direktemelding\" : \"Felles\")"));
     assert!(BROWSER_CLIENT.contains("sidebar.setAttribute(\"aria-label\", \"Sprøyt-meny\")"));
     assert!(BROWSER_CLIENT.contains("firstControl?.focus()"));
     assert!(
@@ -1455,9 +1455,11 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("if (circleAdminDialog.open) return"));
     assert!(BROWSER_CLIENT.contains("id=\"circle-admin-dialog\""));
     assert!(BROWSER_CLIENT.contains("if (!circleAdminDialog.open) circleAdminDialog.showModal()"));
-    assert!(BROWSER_CLIENT.contains(
-        "const directChannels = knownChannels.filter((channel) => channel.direct_user_id)"
-    ));
+    assert!(
+        BROWSER_CLIENT.contains(
+            "const directChannels = knownChannels.filter((channel) => channel.is_direct)"
+        )
+    );
     assert!(!BROWSER_CLIENT.contains("const primaryChannels = knownChannels.filter"));
     assert!(
         NAVIGATION_SOURCE

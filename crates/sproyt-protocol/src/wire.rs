@@ -21,6 +21,12 @@ pub enum ClientCommand {
     OpenDirectChannel {
         user_id: crate::UserId,
     },
+    /// Start a fresh private group conversation from an existing direct
+    /// conversation.  The source history is intentionally never shared.
+    ExpandDirectChannel {
+        channel_id: ChannelId,
+        user_id: crate::UserId,
+    },
     CreateChannel {
         slug: String,
         name: String,
@@ -160,6 +166,9 @@ pub enum ServerEvent {
         profile: crate::UserProfile,
     },
     DirectChannelOpened {
+        channel: Channel,
+    },
+    DirectChannelExpanded {
         channel: Channel,
     },
     ChannelCreated {
