@@ -129,8 +129,10 @@ test("conversation-first navigation collapses on desktop and behaves as a modal 
 
   await page.setViewportSize({ width: 375, height: 667 });
   await expect(headerToggle).toBeHidden();
+  await expect(page.locator(".conversation-header #channel-people")).toBeHidden();
   const mobileShortcut = page.locator("#mobile-conversations-shortcut");
   await expect(mobileShortcut).toBeVisible();
+  await expect(page.locator("#mobile-people-shortcut")).toBeVisible();
   await mobileShortcut.click();
   await expect(drawer).toHaveAttribute("role", "dialog");
   await expect(drawer).toHaveAttribute("aria-modal", "true");
