@@ -246,13 +246,16 @@ impl NotificationService {
         user_agent: Option<String>,
     ) -> Result<(), RepositoryError> {
         validate_subscription(&input)?;
+        // The database supplies the initial high-water mark. This is shared
+        // across pods and avoids timestamp precision gaps (SQLite's database
+        // clock is second-granular).
         let id = Uuid::now_v7();
         match &self.store {
             NotificationStore::Postgres(pool) => {
-                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent) values($1,$2,$3,$4,$5,$6) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id).bind(user_id.as_uuid()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
+                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id) values($1,$2,$3,$4,$5,$6,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid)) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id).bind(user_id.as_uuid()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
             }
             NotificationStore::Sqlite(pool) => {
-                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent) values(?,?,?,?,?,?) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id.to_string()).bind(user_id.to_string()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
+                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id) values(?,?,?,?,?,?,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000')) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id.to_string()).bind(user_id.to_string()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
             }
         }
         Ok(())
@@ -323,8 +326,12 @@ impl NotificationService {
     }
 
     async fn enqueue_pending(&self) -> Result<(), RepositoryError> {
-        let mention_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,mm.mentioned_user_id,mm.message_id,'mention' from message_mentions mm join messages m on m.id=mm.message_id join push_subscriptions s on s.user_id=mm.mentioned_user_id left join notification_preferences p on p.user_id=mm.mentioned_user_id where mm.mentioned_user_id<>m.sender_id and coalesce(p.mode,'instant')='instant' and coalesce(p.mentions,true) on conflict(subscription_id,message_id) do nothing";
-        let direct_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end,m.id,'direct_message' from messages m join direct_conversations d on d.channel_id=m.channel_id join push_subscriptions s on s.user_id=case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end left join notification_preferences p on p.user_id=s.user_id where coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing";
+        // The cursor is set once, when a device first opts in. Re-registering
+        // the same endpoint keeps it intact, so outstanding notifications are
+        // not discarded. Outbox rows created before a migration also remain
+        // eligible; this predicate only controls new enqueueing.
+        let mention_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,mm.mentioned_user_id,mm.message_id,'mention' from message_mentions mm join messages m on m.id=mm.message_id join push_subscriptions s on s.user_id=mm.mentioned_user_id left join notification_preferences p on p.user_id=mm.mentioned_user_id where mm.mentioned_user_id<>m.sender_id and m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.mentions,true) on conflict(subscription_id,message_id) do nothing";
+        let direct_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end,m.id,'direct_message' from messages m join direct_conversations d on d.channel_id=m.channel_id join push_subscriptions s on s.user_id=case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end left join notification_preferences p on p.user_id=s.user_id where m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing";
         match &self.store {
             NotificationStore::Postgres(pool) => {
                 sqlx::query(mention_pg)
@@ -660,13 +667,14 @@ mod tests {
             .unwrap();
         for user in [&recipient, &muted] {
             sqlx::query(
-                "insert into push_subscriptions(id,user_id,endpoint,p256dh,auth) values(?,?,?,?,?)",
+                "insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,notification_after_message_id) values(?,?,?,?,?,?)",
             )
             .bind(Uuid::now_v7().to_string())
             .bind(user.to_string())
             .bind(format!("https://push.example/{user}"))
             .bind("p".repeat(65))
             .bind("a".repeat(22))
+            .bind("00000000-0000-7000-8000-000000000000")
             .execute(pool)
             .await
             .unwrap();
@@ -700,5 +708,170 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(rows, vec![(recipient.to_string(), "mention".into())]);
+    }
+
+    #[tokio::test]
+    async fn a_new_device_does_not_enqueue_historical_notifications() {
+        let service = service().await;
+        let NotificationStore::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        let sender = UserId::named("sender");
+        let recipient = UserId::named("recipient");
+        let channel = Uuid::now_v7();
+        let historical = Uuid::now_v7();
+        for (id, name) in [(&sender, "Sender"), (&recipient, "Recipient")] {
+            sqlx::query("insert into users(id,kind,display_name) values(?, 'human', ?)")
+                .bind(id.to_string())
+                .bind(name)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "insert into channels(id,slug,name,kind,created_by) values(?,?,'DM','private',?)",
+        )
+        .bind(channel.to_string())
+        .bind(format!("dm-{channel}"))
+        .bind(sender.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "insert into direct_conversations(channel_id,user_a_id,user_b_id) values(?,?,?)",
+        )
+        .bind(channel.to_string())
+        .bind(sender.to_string().min(recipient.to_string()))
+        .bind(sender.to_string().max(recipient.to_string()))
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at) values(?,?,?,?,1,'before opt-in',?)")
+            .bind(historical.to_string())
+            .bind(channel.to_string())
+            .bind(sender.to_string())
+            .bind("Sender")
+            .bind("2000-01-01T00:00:00.000000Z")
+            .execute(pool)
+            .await
+            .unwrap();
+
+        service.subscribe(recipient.clone(), PushSubscriptionInput {
+            endpoint: "https://fcm.googleapis.com/new-device".into(),
+            keys: PushSubscriptionKeys { p256dh: "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU".into(), auth: "AAECAwQFBgcICQoLDA0ODw".into() },
+        }, None).await.unwrap();
+        let cursor: String = sqlx::query_scalar(
+            "select notification_after_message_id from push_subscriptions where endpoint=?",
+        )
+        .bind("https://fcm.googleapis.com/new-device")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(cursor, historical.to_string());
+        service.enqueue_pending().await.unwrap();
+        let queued: i64 = sqlx::query_scalar("select count(*) from notification_outbox")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(queued, 0);
+
+        // `current_timestamp` intentionally has the same second-level
+        // precision as the subscription on SQLite. The UUIDv7 cursor still
+        // includes this message because it was generated after opt-in.
+        let future = Uuid::now_v7();
+        sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at) values(?,?,?,?,2,'after opt-in',current_timestamp)")
+            .bind(future.to_string())
+            .bind(channel.to_string())
+            .bind(sender.to_string())
+            .bind("Sender")
+            .execute(pool)
+            .await
+            .unwrap();
+        service.enqueue_pending().await.unwrap();
+        let queued: Vec<String> = sqlx::query_scalar("select message_id from notification_outbox")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        assert_eq!(queued, vec![future.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn renewing_a_device_keeps_its_notification_cursor_and_pending_work() {
+        let service = service().await;
+        let NotificationStore::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        let user = UserId::named("recipient");
+        let sender = UserId::named("sender");
+        sqlx::query("insert into users(id,kind,display_name) values(?, 'human', 'Recipient')")
+            .bind(user.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("insert into users(id,kind,display_name) values(?, 'human', 'Sender')")
+            .bind(sender.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        let input = PushSubscriptionInput {
+            endpoint: "https://fcm.googleapis.com/existing-device".into(),
+            keys: PushSubscriptionKeys { p256dh: "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU".into(), auth: "AAECAwQFBgcICQoLDA0ODw".into() },
+        };
+        service
+            .subscribe(user.clone(), input.clone(), None)
+            .await
+            .unwrap();
+        let before: String = sqlx::query_scalar(
+            "select notification_after_message_id from push_subscriptions where endpoint=?",
+        )
+        .bind(&input.endpoint)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let subscription_id: String =
+            sqlx::query_scalar("select id from push_subscriptions where endpoint=?")
+                .bind(&input.endpoint)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let channel = Uuid::now_v7();
+        let pending_message = Uuid::now_v7();
+        sqlx::query(
+            "insert into channels(id,slug,name,kind,created_by) values(?,?,'Channel','private',?)",
+        )
+        .bind(channel.to_string())
+        .bind(format!("channel-{channel}"))
+        .bind(sender.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values(?,?,?,?,1,'pending')")
+            .bind(pending_message.to_string()).bind(channel.to_string()).bind(sender.to_string()).bind("Sender")
+            .execute(pool).await.unwrap();
+        sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) values(?,?,?,'mention')")
+            .bind(&subscription_id).bind(user.to_string()).bind(pending_message.to_string())
+            .execute(pool).await.unwrap();
+
+        service
+            .subscribe(user, input.clone(), Some("renewed".into()))
+            .await
+            .unwrap();
+        let after: String = sqlx::query_scalar(
+            "select notification_after_message_id from push_subscriptions where endpoint=?",
+        )
+        .bind(&input.endpoint)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let pending: i64 = sqlx::query_scalar(
+            "select count(*) from notification_outbox where subscription_id=? and message_id=?",
+        )
+        .bind(subscription_id)
+        .bind(pending_message.to_string())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(after, before);
+        assert_eq!(pending, 1);
     }
 }
