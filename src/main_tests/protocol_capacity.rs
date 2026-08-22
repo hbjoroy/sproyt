@@ -618,7 +618,7 @@ fn browser_uses_compact_accessible_mobile_conversation_bar() {
     assert!(BROWSER_CLIENT.contains(".composer-area { grid-column: 1; grid-row: 3; }"));
     assert!(BROWSER_CLIENT.contains(".sidebar.mobile-open { position: absolute; top: 52px;"));
     assert!(BROWSER_CLIENT.contains(".conversation-header { position: sticky; top: 0;"));
-    assert!(BROWSER_CLIENT.contains("grid-template-columns: 32px minmax(0, 1fr) 44px 44px 44px;"));
+    assert!(BROWSER_CLIENT.contains("grid-template-columns: 32px minmax(0, 1fr) 44px 44px;"));
     assert!(BROWSER_CLIENT.contains("width: 44px; min-width: 44px; min-height: 44px;"));
     assert!(BROWSER_CLIENT.contains("connectionStatusToggle.setAttribute(\"aria-label\", `Sambandsstatus: ${connection.status}`)"));
     assert!(BROWSER_CLIENT.contains("conversationCircle.textContent = channel.circle_id"));
