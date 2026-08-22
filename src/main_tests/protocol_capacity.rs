@@ -77,7 +77,9 @@ fn browser_exposes_paste_upload_and_safe_media_rendering() {
             "pendingMedia = pendingMedia.filter((candidate) => candidate.id !== media.id)"
         )
     );
-    assert!(BROWSER_CLIENT.contains("if (pendingMessages.size > 0) return"));
+    assert!(BROWSER_CLIENT.contains(
+        "if ([...pendingMessages.values()].some((pending) => pending.channelId === activeChannelId)) return"
+    ));
     assert!(BROWSER_CLIENT.contains("bodyInput.focus({ preventScroll: true })"));
 }
 
@@ -545,7 +547,14 @@ fn browser_exposes_compact_durable_message_threads() {
     assert!(BROWSER_CLIENT.contains(
         ".thread-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-self: end;"
     ));
-    assert!(BROWSER_CLIENT.contains("parent_message_id: activeThreadRootId"));
+    assert!(
+        BROWSER_CLIENT.contains(
+            "persistThenSend({ channelId, parentMessageId: rootId, body, draft, media })"
+        )
+    );
+    assert!(BROWSER_CLIENT.contains(
+        "threadScopeGeneration === scopeGeneration && activeChannelId === channelId && activeThreadRootId === rootId"
+    ));
     assert!(BROWSER_CLIENT.contains("function openThread(messageId)"));
     assert!(BROWSER_CLIENT.contains("id=\"thread-emoji-picker\""));
     assert!(BROWSER_CLIENT.contains("#thread-emoji-options [data-emoji]"));
@@ -1163,15 +1172,23 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("message?.body !== pending.body"));
     assert!(BROWSER_CLIENT.contains("failPendingMessage(event.request_id"));
     assert!(BROWSER_CLIENT.contains(
-            "pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });\n        bodyInput.value = \"\";"
+            "const channelId = activeChannelId;\n        const scopeGeneration = composerScopeGeneration;"
         ));
+    assert!(BROWSER_CLIENT.contains(
+            "pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId });"
+        ));
+    assert!(
+        BROWSER_CLIENT.contains(
+            "composerScopeGeneration === scopeGeneration && activeChannelId === channelId"
+        )
+    );
     assert!(BROWSER_CLIENT.contains("bodyInput.value = pending.draft"));
     assert!(BROWSER_CLIENT.contains("const channelDraftPrefix = \"sproyt.channel-draft.v1.\""));
     assert!(BROWSER_CLIENT.contains("function persistActiveDraft()"));
     assert!(BROWSER_CLIENT.contains("function restoreActiveDraft()"));
     assert!(NAVIGATION_SOURCE.contains("writeStorage(this.storage, key, draft)"));
     assert!(BROWSER_CLIENT.contains(
-            "if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;\n        persistActiveDraft();"
+            "if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;\n        composerScopeGeneration += 1;\n        persistActiveDraft();"
         ));
     assert!(BROWSER_CLIENT.contains(
         "navigation.setActiveChannel(channel);\n        syncRenderedNavigation();\n        restoreActiveDraft();"

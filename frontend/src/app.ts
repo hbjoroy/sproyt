@@ -2,6 +2,7 @@
       import { AgentApi, HttpClient, NotificationApi, ProcessApi, type CreatedAgent, type ProcessView } from "./api";
       import { requireElement, requireElements } from "./dom";
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
+      import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
       import { NavigationController } from "./navigation";
       import { createSessionController, fetchWithTimeout, sessionRefreshAfterSeconds, type SessionController } from "./session";
       import { isJsonObject, isRecord, mediaFromUpload } from "./types";
@@ -172,7 +173,7 @@
           if (participant) url.searchParams.set("participant", participant);
           return url.toString();
         },
-        createRequestId: () => { requestNumber += 1; return `${browserSessionId}-${requestNumber}`; },
+        createRequestId: () => nextRequestId(),
         onCommandSent: (requestId, command) => {
           pendingCommands.set(requestId, command.type);
           if (command.type === "list_my_channels") latestChannelListRequestId = requestId;
@@ -245,6 +246,7 @@
       let renderMode = "view";
       let requestNumber = 0;
       const browserSessionId = `browser-${crypto.randomUUID()}`;
+      const nextRequestId = (): string => { requestNumber += 1; return `${browserSessionId}-${requestNumber}`; };
       let activeChannelId: string | null = null;
       let activeCircleId: string | null = null;
       let activeRootScope: "shared" | "circle" | "direct" = "shared";
@@ -257,6 +259,10 @@
       let restoredChannelId = navigation.restoredChannelId;
       let restoredCircleId = navigation.restoredCircleId;
       let currentParticipantId: string | null = null;
+      let composerScopeGeneration = 0;
+      let threadScopeGeneration = 0;
+      const durableOutbox = createDurableOutbox();
+      let durableJournalReady: Promise<readonly DurableSend[]> = Promise.resolve([]);
       let requestedChannelSlug = "general";
       const timeline: TimelineItem[] = [];
       const threadReplies = new Map<string, ChatMessage[]>();
@@ -372,6 +378,72 @@
 
       function activeChannelMedia() {
         return pendingMedia.filter((media) => media.channel_id === activeChannelId);
+      }
+
+      function durableMedia(media: readonly MediaObject[]): readonly DurableMedia[] {
+        return media.map((item) => ({ id: item.id, contentType: item.content_type, originalFilename: item.original_filename }));
+      }
+
+      function rememberedMedia(channelId: string, parentMessageId: string | null, media: readonly DurableMedia[]): MediaObject[] {
+        return media.map((item) => ({ id: item.id, name: item.originalFilename, original_filename: item.originalFilename, content_type: item.contentType, channel_id: channelId, ...(parentMessageId ? { parent_message_id: parentMessageId } : {}) }));
+      }
+
+      function rememberRecoveredSend(entry: DurableSend): void {
+        const mediaIds = entry.media.map((item) => item.id);
+        if (entry.parentMessageId) {
+          if (!pendingThreadReplies.has(entry.requestId) && !uncertainThreadReplies.has(entry.requestId)) {
+            uncertainThreadReplies.set(entry.requestId, { rootId: entry.parentMessageId, channelId: entry.channelId, body: entry.body, draft: entry.draft, mediaIds });
+          }
+          const state = threadComposerState(entry.parentMessageId);
+          if (state && state.media.length === 0) state.media = rememberedMedia(entry.channelId, entry.parentMessageId, entry.media);
+          return;
+        }
+        if (!pendingMessages.has(entry.requestId) && !uncertainMessages.has(entry.requestId)) {
+          uncertainMessages.set(entry.requestId, { channelId: entry.channelId, body: entry.body, draft: entry.draft, mediaIds });
+        }
+        if (!pendingMedia.some((item) => mediaIds.includes(item.id))) pendingMedia.push(...rememberedMedia(entry.channelId, null, entry.media));
+      }
+
+      function replayDurableSends(channelId: string): void {
+        let replayedActiveMessage = false;
+        for (const entry of durableOutbox.pending()) {
+          if (entry.channelId !== channelId) continue;
+          rememberRecoveredSend(entry);
+          const payload = entry.parentMessageId
+            ? { channel_id: entry.channelId, parent_message_id: entry.parentMessageId, body: entry.body }
+            : { channel_id: entry.channelId, body: entry.body };
+          if (resendCommand(entry.requestId, "send_message", payload)) {
+            retriedUncertainRequests.add(entry.requestId);
+            if (entry.parentMessageId === null && activeChannelId === channelId) { bodyInput.readOnly = true; replayedActiveMessage = true; }
+            if (entry.parentMessageId && activeThreadRootId === entry.parentMessageId) threadBody.readOnly = true;
+          }
+        }
+        if (replayedActiveMessage) setConnected(connectionSupervisor.snapshot().connected, "Avklarer sendinga …");
+        syncComposerState();
+      }
+
+      async function persistThenSend(input: Readonly<{ channelId: string; parentMessageId: string | null; body: string; draft: string; media: readonly MediaObject[] }>): Promise<string | null> {
+        const requestId = nextRequestId();
+        try {
+          await durableOutbox.enqueue({ requestId, channelId: input.channelId, parentMessageId: input.parentMessageId, body: input.body, draft: input.draft, media: durableMedia(input.media) });
+        } catch (error) {
+          const detail = error instanceof DurableOutboxError ? error.message : "Kunne ikkje lagre meldinga trygt.";
+          if (error instanceof DurableOutboxError && (error.problem === "capacity" || error.problem === "identity")) {
+            setConnected(connectionSupervisor.snapshot().connected, `Meldinga er ikkje send: ${detail}`);
+            return null;
+          }
+          // IndexedDB can be unavailable or evicted in installed iOS PWAs. Do
+          // not turn that into a hard composer lock: send with the same id and
+          // state the reduced recovery guarantee visibly.
+          setConnectionStatus(`Mellombels lagring feila (${detail}). Sender utan gjenoppretting etter app-avslutting.`);
+        }
+        const payload = input.parentMessageId
+          ? { channel_id: input.channelId, parent_message_id: input.parentMessageId, body: input.body }
+          : { channel_id: input.channelId, body: input.body };
+        // Once the id has been chosen it is never replaced. If the socket has
+        // just died, keeping this pending lets the reconnect path use that id.
+        resendCommand(requestId, "send_message", payload);
+        return requestId;
       }
 
       function resizeComposer() {
@@ -534,7 +606,7 @@
           remove.textContent = "×";
           remove.setAttribute("aria-label", `Fjern ${media.original_filename}`);
           remove.addEventListener("click", () => {
-            if (pendingMessages.size > 0) return;
+            if ([...pendingMessages.values()].some((pending) => pending.channelId === activeChannelId)) return;
             pendingMedia = pendingMedia.filter((candidate) => candidate.id !== media.id);
             renderMediaPreviews();
             setUploadStatus(`${media.original_filename} er fjerna.`);
@@ -643,7 +715,8 @@
       }
 
       function hasPendingThreadReply(rootId = activeThreadRootId) {
-        return [...pendingThreadReplies.values()].some((pending) => pending.rootId === rootId);
+        return [...pendingThreadReplies.values()].some((pending) => pending.rootId === rootId)
+          || [...uncertainThreadReplies.values()].some((pending) => pending.rootId === rootId);
       }
 
       function resizeThreadComposer() {
@@ -778,6 +851,7 @@
       requireElement("#thread-close", HTMLButtonElement).addEventListener("click", () => threadPanel.close());
       threadPanel.addEventListener("close", () => {
         persistThreadDraft();
+        threadScopeGeneration += 1;
         activeThreadRootId = null;
         threadEmojiPicker.open = false;
       });
@@ -832,27 +906,25 @@
         if (!window.confirm(`Vil du forlate vennekretsen ${circle.name}? Du mistar tilgang til alle kanalane i kretsen.`)) return;
         sendCommand("leave_circle", { circle_id: circle.id });
       });
-      threadForm.addEventListener("submit", (event) => {
+      threadForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         const rootId = activeThreadRootId;
         const channelId = activeChannelId;
         const state = threadComposerState(rootId);
         const draft = threadBody.value.trim();
         const media = state?.media || [];
+        const scopeGeneration = threadScopeGeneration;
         const mediaTokens = media.map((item) => `[[media:${item.id}|${item.content_type}|${encodeURIComponent(item.original_filename)}]]`).join("\n");
         const body = [draft, mediaTokens].filter(Boolean).join("\n");
         if (!body || !rootId || !channelId || !state || state.uploadCount > 0) return;
-        const requestId = sendCommand("send_message", {
-          channel_id: channelId,
-          parent_message_id: activeThreadRootId,
-          body
-        });
-        if (!requestId) return;
-        pendingThreadReplies.set(requestId, { rootId, channelId, body, draft, mediaIds: media.map((item) => item.id) });
-        threadBody.value = "";
-        state.draft = "";
         threadBody.readOnly = true;
         syncThreadComposer();
+        const requestId = await persistThenSend({ channelId, parentMessageId: rootId, body, draft, media });
+        const stillActive = threadScopeGeneration === scopeGeneration && activeChannelId === channelId && activeThreadRootId === rootId;
+        if (!requestId) { if (stillActive) { threadBody.readOnly = false; syncThreadComposer(); } return; }
+        pendingThreadReplies.set(requestId, { rootId, channelId, body, draft, mediaIds: media.map((item) => item.id) });
+        state.draft = "";
+        if (stillActive) { threadBody.value = ""; threadBody.readOnly = true; syncThreadComposer(); }
       });
       threadForm.addEventListener("focusin", () => {
         const state = threadComposerState();
@@ -1006,7 +1078,7 @@
         connectionSupervisor.start();
       });
 
-      sendForm.addEventListener("submit", (event) => {
+      sendForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         const draft = bodyInput.value.trim();
         const channelMedia = pendingMedia.filter((media) => media.channel_id === activeChannelId);
@@ -1016,15 +1088,22 @@
           return;
         }
         if (connectionSupervisor.snapshot().subscribedChannelId !== activeChannelId) return;
-        const requestId = sendCommand("send_message", { channel_id: activeChannelId, body });
-        if (!requestId) return;
-        pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId: activeChannelId });
-        bodyInput.value = "";
-        persistActiveDraft();
-        closeMentionSuggestions();
+        const channelId = activeChannelId;
+        const scopeGeneration = composerScopeGeneration;
         bodyInput.readOnly = true;
         syncComposerState();
-        setConnected(true, "Sender meldinga …");
+        const requestId = await persistThenSend({ channelId, parentMessageId: null, body, draft, media: channelMedia });
+        const stillActive = composerScopeGeneration === scopeGeneration && activeChannelId === channelId;
+        if (!requestId) { if (stillActive) { bodyInput.readOnly = false; syncComposerState(); } return; }
+        pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId });
+        if (stillActive) {
+          bodyInput.value = "";
+          persistActiveDraft();
+          closeMentionSuggestions();
+          bodyInput.readOnly = true;
+          syncComposerState();
+          setConnected(true, "Sender meldinga …");
+        }
       });
 
       function insertEmoji(input: HTMLInputElement | HTMLTextAreaElement, emoji: string): void {
@@ -1528,6 +1607,7 @@
           return;
         }
         pendingMessages.delete(requestId); uncertainMessages.delete(requestId); retriedUncertainRequests.delete(requestId);
+        void durableOutbox.acknowledge(requestId).catch(() => {});
         navigation.persistChannelDraft(pending.channelId, "");
         pendingMedia = pendingMedia.filter((media) => !pending.mediaIds.includes(media.id));
         if (message?.channel_id === activeChannelId) {
@@ -1549,11 +1629,12 @@
         ) || null;
       }
 
-      function failPendingMessage(requestId: string | undefined, message: string): void {
+      function failPendingMessage(requestId: string | undefined, message: string, permanent = false): void {
         if (!requestId) return;
         const pending = pendingMessages.get(requestId) ?? uncertainMessages.get(requestId);
         if (!pending) return;
         pendingMessages.delete(requestId); uncertainMessages.delete(requestId); retriedUncertainRequests.delete(requestId);
+        if (permanent) void durableOutbox.permanentFailure(requestId).catch(() => {});
         navigation.persistChannelDraft(pending.channelId, pending.draft);
         if (activeChannelId === pending.channelId) {
           bodyInput.readOnly = false;
@@ -1581,6 +1662,7 @@
           syncThreadComposer();
           return;
         }
+        void durableOutbox.acknowledge(requestId).catch(() => {});
         navigation.persistThreadDraft(pending.channelId, pending.rootId, "");
         if (state) state.media = state.media.filter((media) => !pending.mediaIds.includes(media.id));
         if (state) state.draft = "";
@@ -1589,11 +1671,12 @@
         return;
       }
 
-      function failPendingThreadReply(requestId: string | undefined, message: string): boolean {
+      function failPendingThreadReply(requestId: string | undefined, message: string, permanent = false): boolean {
         if (!requestId) return false;
         const pending = pendingThreadReplies.get(requestId) ?? uncertainThreadReplies.get(requestId);
         if (!pending) return false;
         pendingThreadReplies.delete(requestId); uncertainThreadReplies.delete(requestId); retriedUncertainRequests.delete(requestId);
+        if (permanent) void durableOutbox.permanentFailure(requestId).catch(() => {});
         const state = threadComposerState(pending.rootId);
         if (activeChannelId === pending.channelId && activeThreadRootId === pending.rootId && threadBody.value.trim().length === 0) {
           threadBody.value = pending.draft;
@@ -1614,10 +1697,13 @@
         const writableChannel = connected
           && activeChannelId !== null
           && connectionSupervisor.snapshot().subscribedChannelId === activeChannelId;
+        const activeMessagePending = [...pendingMessages.values()].some((pending) => pending.channelId === activeChannelId)
+          || [...uncertainMessages.values()].some((pending) => pending.channelId === activeChannelId);
         bodyInput.disabled = !writableChannel;
-        sendButton.disabled = !writableChannel || pendingMessages.size > 0;
-        attachMediaButton.disabled = !writableChannel || pendingMessages.size > 0;
-        messageEmojiPicker.setAttribute("aria-disabled", String(!writableChannel || pendingMessages.size > 0));
+        bodyInput.readOnly = activeMessagePending;
+        sendButton.disabled = !writableChannel || activeMessagePending;
+        attachMediaButton.disabled = !writableChannel || activeMessagePending;
+        messageEmojiPicker.setAttribute("aria-disabled", String(!writableChannel || activeMessagePending));
         syncThreadComposer();
         circleButtons.forEach((button) => { button.disabled = !connected; });
         exportButton.disabled = !connected;
@@ -2040,7 +2126,15 @@
         if (event.request_id) pendingPeopleDirectRequests.delete(event.request_id);
 
         if (event.type === "hello") {
+          const changedUser = currentParticipantId !== null && currentParticipantId !== event.payload.participant_id;
           currentParticipantId = event.payload.participant_id;
+          if (changedUser) {
+            pendingMessages.clear(); uncertainMessages.clear(); pendingThreadReplies.clear(); uncertainThreadReplies.clear(); retriedUncertainRequests.clear();
+          }
+          durableJournalReady = durableOutbox.setUser(currentParticipantId).catch(() => {
+            setConnectionStatus("Mellombels meldingslagring er ikkje tilgjengeleg. Nye meldingar kan bli sende, men kan ikkje gjenopprettast etter app-avslutting.");
+            return [];
+          });
           const ordinal = event.payload.signup_ordinal;
           signupBadge.hidden = ordinal === null;
           signupBadge.textContent = ordinal === null ? "" : `✨ Sprøyt #${ordinal}`;
@@ -2365,6 +2459,10 @@
           attachMediaButton.disabled = false;
           messageEmojiPicker.setAttribute("aria-disabled", "false");
           syncComposerState();
+          setConnected(true, "Tilkopla");
+          // A journal entry is replayed only after both identity (hello) and
+          // this channel subscription exist.  It retains the same request id.
+          void durableJournalReady.then(() => replayDurableSends(event.payload.channel_id));
           renderChannels();
           const scrollOffset = reconnectScrollOffset;
           reconnectScrollOffset = null;
@@ -2563,8 +2661,10 @@
           }
           if (requestedCommand === "send_message") {
             const message = event.payload.message || event.payload.code || "ukjend feil";
-            if (!failPendingThreadReply(event.request_id, message)) {
-              failPendingMessage(event.request_id, message);
+            // A structured Error is an explicit non-delivery result. Only a
+            // transport loss without an Error stays journalled/same-id.
+            if (!failPendingThreadReply(event.request_id, message, true)) {
+              failPendingMessage(event.request_id, message, true);
             }
             pushSystem(event.payload.message || event.payload.code);
             return;
@@ -3130,6 +3230,7 @@
       function selectChannel(channel: Channel): void {
         if (!channel) return;
         if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;
+        composerScopeGeneration += 1;
         persistActiveDraft();
         setMobileNavigationOpen(false);
         activeInboxKind = null;
@@ -3459,6 +3560,7 @@
 
       function openThread(messageId: string): void {
         persistThreadDraft();
+        threadScopeGeneration += 1;
         const wasKnown = threadComposerStates.has(messageId);
         activeThreadRootId = messageId;
         const state = threadComposerState(messageId);

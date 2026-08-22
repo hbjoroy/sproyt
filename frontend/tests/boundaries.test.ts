@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { AgentApi, HttpClient, HttpError, NotificationApi, ProcessApi, readJson, sameOriginJson } from "../src/api";
 import { clientCommandTypes, createConnectionController, isClientCommand, parseSocketEvent, resetTransientRequestsAfterDisconnect, shouldForceResume, type ConnectionSocket } from "../src/connection";
 import { NavigationController, restoreNavigation } from "../src/navigation";
+import { createDurableOutbox, type DurableOutboxStorage, type DurableSend } from "../src/durable-outbox";
 import { asWireEvent, isRecord, mediaFromUpload, protocolId } from "../src/types";
 import { createSessionController, fetchWithTimeout, parseSessionRefreshBroadcast, parseSessionRefreshLease, refreshDelayMilliseconds, sessionRefreshAfterSeconds } from "../src/session";
 
@@ -18,6 +19,117 @@ class MemoryStorage implements Storage {
   removeItem(key: string): void { this.#values.delete(key); }
   setItem(key: string, value: string): void { this.#values.set(key, value); }
 }
+
+class MemoryDurableOutboxStorage implements DurableOutboxStorage {
+  readonly entries = new Map<string, DurableSend>();
+  failPut = false;
+  failDelete = false;
+  failList = false;
+  async list(userId: string): Promise<readonly DurableSend[]> { if (this.failList) throw new Error("list stalled"); return [...this.entries.values()].filter((entry) => entry.userId === userId); }
+  async put(entry: DurableSend): Promise<void> { if (this.failPut) throw new Error("stalled storage"); this.entries.set(`${entry.userId}:${entry.requestId}`, entry); }
+  async delete(userId: string, requestId: string): Promise<void> { if (this.failDelete) throw new Error("delete stalled"); this.entries.delete(`${userId}:${requestId}`); }
+}
+
+class DeferredDurableOutboxStorage extends MemoryDurableOutboxStorage {
+  #resolve: ((entries: readonly DurableSend[]) => void) | null = null;
+  readonly listed = new Promise<readonly DurableSend[]>((resolve) => { this.#resolve = resolve; });
+  override async list(_userId: string): Promise<readonly DurableSend[]> { return this.listed; }
+  resolveList(entries: readonly DurableSend[]): void { this.#resolve?.(entries); }
+}
+
+class DeferredPutDurableOutboxStorage extends MemoryDurableOutboxStorage {
+  #resolve: (() => void) | null = null;
+  readonly writing = new Promise<void>((resolve) => { this.#resolve = resolve; });
+  override async put(entry: DurableSend): Promise<void> { await this.writing; await super.put(entry); }
+  resolvePut(): void { this.#resolve?.(); }
+}
+
+test("durable message journal persists before send, survives restart, isolates users, and removes only on receipt", async () => {
+  const storage = new MemoryDurableOutboxStorage();
+  let clock = 10_000;
+  const first = createDurableOutbox(storage, () => clock);
+  await first.setUser("u1");
+  const saved = await first.enqueue({ requestId: "request-1", channelId: "c1", parentMessageId: "root-1", body: "hei [[media:m1|image/png|bilete.png]]", draft: "hei", media: [{ id: "m1", contentType: "image/png", originalFilename: "bilete.png" }] });
+  assert.equal(storage.entries.size, 1, "the journal is committed before any socket send can occur");
+  assert.equal(saved.requestId, "request-1");
+  const restarted = createDurableOutbox(storage, () => clock);
+  assert.deepEqual((await restarted.setUser("u1")).map((entry) => entry.requestId), ["request-1"], "server receipt, not body matching, decides delivery after a kill");
+  const differentUser = createDurableOutbox(storage, () => clock);
+  assert.deepEqual(await differentUser.setUser("u2"), [], "a pending send is never replayed into another account");
+  await restarted.acknowledge("request-1");
+  assert.equal(storage.entries.size, 0, "receipt deletes the durable entry");
+  storage.failPut = true;
+  await assert.rejects(() => restarted.enqueue({ requestId: "request-2", channelId: "c1", parentMessageId: null, body: "ikkje send", draft: "ikkje send", media: [] }));
+  assert.equal(storage.entries.size, 0, "a failed pre-send write never creates a sendable phantom");
+  storage.failPut = false;
+  storage.failDelete = true;
+  const deletionFailure = createDurableOutbox(storage, () => clock);
+  await deletionFailure.setUser("u1");
+  await deletionFailure.enqueue({ requestId: "request-3", channelId: "c1", parentMessageId: null, body: "framleis trygg", draft: "framleis trygg", media: [] });
+  await assert.rejects(() => deletionFailure.acknowledge("request-3"));
+  assert.equal(deletionFailure.pending().at(0)?.requestId, "request-3", "a failed journal delete retains the exact id for a deduplicated later replay");
+  storage.failDelete = false;
+  await deletionFailure.acknowledge("request-3");
+  await deletionFailure.enqueue({ requestId: "rejected-delete-fails", channelId: "c1", parentMessageId: null, body: "ikkje send", draft: "ikkje send", media: [] });
+  storage.failDelete = true;
+  await assert.rejects(() => deletionFailure.permanentFailure("rejected-delete-fails"));
+  assert.deepEqual(deletionFailure.pending(), [], "an explicit server rejection tombstones the old id before a failing local delete");
+  storage.failDelete = false;
+  await deletionFailure.enqueue({ requestId: "rejected-old", channelId: "c1", parentMessageId: null, body: "prøv", draft: "prøv", media: [] });
+  await deletionFailure.permanentFailure("rejected-old");
+  await deletionFailure.enqueue({ requestId: "retry-new", channelId: "c1", parentMessageId: null, body: "prøv", draft: "prøv", media: [] });
+  assert.deepEqual(deletionFailure.pending().map((entry) => entry.requestId), ["retry-new"], "an explicit server rejection removes the old id before a manual retry");
+  await deletionFailure.acknowledge("retry-new");
+  clock += 8 * 24 * 60 * 60 * 1000;
+  storage.entries.set("u1:old", { ...saved, requestId: "old", createdAt: 10_000 });
+  const expired = createDurableOutbox(storage, () => clock);
+  assert.deepEqual(await expired.setUser("u1"), [], "old journals are not replayed indefinitely");
+});
+
+test("durable journal fences a delayed identity load and an acknowledgement race", async () => {
+  const storage = new DeferredDurableOutboxStorage();
+  const outbox = createDurableOutbox(storage);
+  const loadingA = outbox.setUser("u1");
+  const repeatedHello = outbox.setUser("u1");
+  await outbox.enqueue({ requestId: "r1", channelId: "c1", parentMessageId: null, body: "hei", draft: "hei", media: [] });
+  await outbox.acknowledge("r1");
+  storage.resolveList([{ version: 1, userId: "u1", requestId: "r1", channelId: "c1", parentMessageId: null, body: "hei", draft: "hei", media: [], createdAt: 1, attempts: 0 }]);
+  assert.deepEqual(await loadingA, [], "a stale IDB list cannot resurrect an acknowledged request");
+  assert.deepEqual(await repeatedHello, [], "a repeated hello waits for the original user-scoped load");
+  assert.deepEqual(await outbox.setUser("u1"), [], "repeated hello for the same account does not reload stale rows");
+});
+
+test("durable journal never lets a delayed user A load cross into user B", async () => {
+  const storage = new DeferredDurableOutboxStorage();
+  const outbox = createDurableOutbox(storage);
+  const loadingA = outbox.setUser("u1");
+  const loadingB = outbox.setUser("u2");
+  storage.resolveList([{ version: 1, userId: "u1", requestId: "a1", channelId: "c1", parentMessageId: null, body: "A", draft: "A", media: [], createdAt: 1, attempts: 0 }]);
+  assert.deepEqual(await loadingA, []);
+  assert.deepEqual(await loadingB, [], "user A's delayed rows are fenced after an account change");
+  assert.deepEqual(outbox.pending(), []);
+});
+
+test("a failed identity load is retried for the same user without a reload", async () => {
+  const storage = new MemoryDurableOutboxStorage();
+  storage.failList = true;
+  const outbox = createDurableOutbox(storage);
+  await assert.rejects(() => outbox.setUser("u1"));
+  storage.failList = false;
+  storage.entries.set("u1:r1", { version: 1, userId: "u1", requestId: "r1", channelId: "c1", parentMessageId: null, body: "hei", draft: "hei", media: [], createdAt: Date.now(), attempts: 0 });
+  assert.deepEqual((await outbox.setUser("u1")).map((entry) => entry.requestId), ["r1"]);
+});
+
+test("a delayed user A write cannot enter user B's in-memory replay set", async () => {
+  const storage = new DeferredPutDurableOutboxStorage();
+  const outbox = createDurableOutbox(storage);
+  await outbox.setUser("u1");
+  const writingA = outbox.enqueue({ requestId: "a1", channelId: "c1", parentMessageId: null, body: "A", draft: "A", media: [] });
+  await outbox.setUser("u2");
+  storage.resolvePut();
+  await assert.rejects(() => writingA);
+  assert.deepEqual(outbox.pending(), [], "the delayed A write remains partitioned on disk and is never replayed as B");
+});
 
 class FakeSocket implements ConnectionSocket {
   readyState = 0;

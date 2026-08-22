@@ -57,6 +57,16 @@ Server response or event:
 ```
 
 `request_id` is important for agents because they may issue several commands concurrently and need deterministic correlation.
+For `send_message`, it is also the idempotency key: a browser may retain a
+bounded, user-scoped journal of an unacknowledged command and replay the exact
+same envelope after a PWA restart, dvale, or network change. The server receipt
+is authoritative; clients must never guess delivery by comparing message text.
+The journal contains only the canonical body, uploaded media identifiers and
+composer metadata (never credentials or blobs), is capped at 20 entries / 1
+MiB / seven days, and is loaded only after `hello` establishes the same user.
+An explicit server `send_message` error restores the draft and removes that
+entry; only transport loss without a server response leaves it available for
+same-ID replay.
 `sender_display_name` is persisted with the message as an audit-safe historical
 snapshot. A later profile rename affects new messages, not existing history.
 
