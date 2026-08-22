@@ -17,6 +17,7 @@
         | Readonly<{ status: "missing" | "failed"; message: string }>
         | Readonly<{ status: "resolved"; invitation: Invitation }>;
       type PendingInvitationResponse = Readonly<{ token: string; command: "accept_invitation" | "decline_invitation" }>;
+      type PendingCircleInvitationRecipient = Readonly<{ circleId: string; userId: string }>;
       type PendingMessage = Readonly<{ channelId: string; body: string; draft: string; mediaIds: string[] }>;
       type MessageInteraction = Readonly<{ messageId: string; customReaction: string; focusCustomReaction: boolean; focusReactionSummary: boolean }>;
       function isMermaidApi(value: unknown): value is MermaidApi {
@@ -109,6 +110,18 @@
       const circleToolSettings = requireElement("#circle-tool-settings", HTMLButtonElement);
       const circleAdminDialog = requireElement("#circle-admin-dialog", HTMLDialogElement);
       const circleAdminClose = requireElement("#circle-admin-close", HTMLButtonElement);
+      const circleInviteDialog = requireElement("#circle-invite-dialog", HTMLDialogElement);
+      const circleInviteTitle = requireElement("#circle-invite-title", HTMLElement);
+      const circleInviteClose = requireElement("#circle-invite-close", HTMLButtonElement);
+      const circleInviteSearch = requireElement("#circle-invite-search", HTMLInputElement);
+      const circleInviteCount = requireElement("#circle-invite-count", HTMLElement);
+      const circleInviteList = requireElement("#circle-invite-list", HTMLElement);
+      const createCircleShareLink = requireElement("#create-circle-share-link", HTMLButtonElement);
+      const circleInviteLinkActions = requireElement("#circle-invite-link-actions", HTMLElement);
+      const circleInviteLink = requireElement("#circle-invite-link", HTMLInputElement);
+      const shareCircleInviteLink = requireElement("#share-circle-invite-link", HTMLButtonElement);
+      const copyCircleInviteLink = requireElement("#copy-circle-invite-link", HTMLButtonElement);
+      const circleInviteStatus = requireElement("#circle-invite-status", HTMLElement);
       const directMessageDialog = requireElement("#direct-message-dialog", HTMLDialogElement);
       const directUser = requireElement("#direct-user", HTMLSelectElement);
       const directMessageStatus = requireElement("#direct-message-status", HTMLElement);
@@ -211,6 +224,7 @@
           for (const requestId of [...pendingThreadReplies.keys()]) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
           failPendingPeopleDirectRequests("Sambandet vart brote. Prøv igjen.");
           pendingDirectChannelUsers.clear();
+          failPendingCircleInvitations("Sambandet vart brote. Prøv invitasjonen igjen.");
           resetTransientRequestsAfterDisconnect({ historyRequestIds, pendingCommands, pendingInvitationResponses, pendingInvitationInspections, pendingChannelInvitationRecipients, pendingDirectInvitationMessages }, {
             setHistoryLoading: (loading) => { historyLoading = loading; },
             failInspection: (token) => {
@@ -229,6 +243,7 @@
             historyRequestIds.delete(requestId);
             pendingCommands.delete(requestId);
             failPendingPeopleDirectRequest(requestId, "Sambandet vart brote. Prøv igjen.");
+            failPendingCircleInvitationRequest(requestId, "Sambandet vart brote. Prøv invitasjonen igjen.");
             pendingDirectChannelUsers.delete(requestId);
           }
         },
@@ -297,12 +312,16 @@
       const pendingInvitationResponses = new Map<string, PendingInvitationResponse>();
       const pendingInvitationInspections = new Map<string, string>();
       const pendingChannelInvitationRecipients = new Map<string, string>();
+      const pendingCircleInvitationRecipients = new Map<string, PendingCircleInvitationRecipient>();
+      const pendingCircleShareInvitations = new Map<string, string>();
+      const pendingCircleDirectInvitations = new Map<string, PendingCircleInvitationRecipient>();
       const pendingDirectInvitationMessages = new Map<string, string>();
       const pendingDirectChannelUsers = new Map<string, string>();
       // Requests from the member browser are independent: a slow DM open must
       // not block another person, the composer, or the rest of the dialog.
       const pendingPeopleDirectRequests = new Map<string, string>();
       const peopleDirectStatuses = new Map<string, string>();
+      const circleInvitePersonStatuses = new Map<string, string>();
       const invitationInspectionCache = new Map<string, InvitationCache>();
       let latestChannelListRequestId: string | null = null;
       let latestCircleListRequestId: string | null = null;
@@ -878,8 +897,56 @@
       });
       circleChannelClose.addEventListener("click", () => circleChannelDialog.close());
       circleAdminClose.addEventListener("click", () => circleAdminDialog.close());
+      circleInviteClose.addEventListener("click", () => circleInviteDialog.close());
       circleAdminDialog.addEventListener("close", () => {
         if (bottomCirclePanel.open) circleToolSettings.focus({ preventScroll: true });
+      });
+      circleInviteDialog.addEventListener("close", () => {
+        if (window.matchMedia("(max-width: 640px)").matches) {
+          mobileConversationsShortcut.focus({ preventScroll: true });
+          return;
+        }
+        const circleId = circleInviteDialog.dataset.circleId;
+        if (!circleId) return;
+        const trigger = conversationList.querySelector<HTMLButtonElement>(`[data-invite-circle-id="${CSS.escape(circleId)}"]`);
+        trigger?.focus({ preventScroll: true });
+      });
+      circleInviteSearch.addEventListener("input", renderCircleInviteUsers);
+      createCircleShareLink.addEventListener("click", () => {
+        const circleId = circleInviteDialog.dataset.circleId;
+        if (!circleId) return;
+        createCircleShareLink.disabled = true;
+        circleInviteStatus.textContent = "Lagar ei trygg invitasjonslenkje …";
+        const requestId = sendCommand("create_invitation", { target: { type: "circle", circle_id: circleId } });
+        if (requestId) pendingCircleShareInvitations.set(requestId, circleId);
+        else {
+          createCircleShareLink.disabled = false;
+          circleInviteStatus.textContent = "Sprøyt er ikkje tilkopla. Vent litt og prøv igjen.";
+        }
+      });
+      copyCircleInviteLink.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(circleInviteLink.value);
+          circleInviteStatus.textContent = "Invitasjonslenkja er kopiert.";
+        } catch (_) {
+          circleInviteLink.select();
+          circleInviteStatus.textContent = "Merk og kopier lenkja manuelt.";
+        }
+      });
+      shareCircleInviteLink.addEventListener("click", async () => {
+        const circle = knownCircles.get(circleInviteDialog.dataset.circleId || "");
+        if (!circleInviteLink.value) return;
+        if (!navigator.share) {
+          copyCircleInviteLink.click();
+          return;
+        }
+        try {
+          await navigator.share({ title: `Invitasjon til ${circle?.name || "Sprøyt"}`, text: `Bli med i ${circle?.name || "vennekretsen"} på Sprøyt`, url: circleInviteLink.value });
+          circleInviteStatus.textContent = "Invitasjonslenkja er delt.";
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          circleInviteStatus.textContent = "Kunne ikkje opne deling. Du kan kopiere lenkja i staden.";
+        }
       });
       requireElement("#direct-message-close", HTMLButtonElement).addEventListener("click", () => directMessageDialog.close());
       channelPeopleButton.addEventListener("click", () => openChannelDetails(false));
@@ -1471,7 +1538,7 @@
           setMobileConversationDrawerOpen(false, true);
           return;
         }
-        if (event.key === "Escape" && (circleChannelDialog.open || circleAdminDialog.open || threadPanel.open || mediaLightbox.open)) {
+        if (event.key === "Escape" && (circleChannelDialog.open || circleAdminDialog.open || circleInviteDialog.open || threadPanel.open || mediaLightbox.open)) {
           return;
         }
         if (event.key === "Escape" && connectionStatusToggle.getAttribute("aria-expanded") === "true") {
@@ -1944,6 +2011,130 @@
         renderTimeline();
       }
 
+      function circleInvitePersonKey(circleId: string, userId: string): string {
+        return `${circleId}:${userId}`;
+      }
+
+      function circleInviteInitials(name: string): string {
+        const parts = name.trim().split(/\s+/).filter(Boolean);
+        return (parts.length > 1 ? `${parts[0]?.[0] || ""}${parts.at(-1)?.[0] || ""}` : parts[0]?.slice(0, 2) || "?").toLocaleUpperCase();
+      }
+
+      function eligibleCircleInviteUsers(circleId: string): UserProfile[] | null {
+        const circleUsers = knownCircleUsers.get(circleId);
+        if (!circleUsers) return null;
+        const memberIds = new Set(circleUsers.map((user) => user.id));
+        return knownUsers
+          .filter((user) => user.kind === "human" && user.id !== currentParticipantId && !memberIds.has(user.id))
+          .sort((left, right) => left.display_name.localeCompare(right.display_name));
+      }
+
+      function renderCircleInviteUsers(): void {
+        const circleId = circleInviteDialog.dataset.circleId;
+        if (!circleId) return;
+        const users = eligibleCircleInviteUsers(circleId);
+        circleInviteList.replaceChildren();
+        if (!users) {
+          const loading = document.createElement("li");
+          loading.textContent = "Hentar menneske i kretsen …";
+          circleInviteList.append(loading);
+          circleInviteCount.textContent = "";
+          return;
+        }
+        const query = circleInviteSearch.value.trim().toLocaleLowerCase();
+        const visible = users.filter((user) => `${user.display_name} ${mentionHandle(user)}`.toLocaleLowerCase().includes(query));
+        circleInviteCount.textContent = query
+          ? `${visible.length} av ${users.length} kan inviterast`
+          : `${users.length} ${users.length === 1 ? "person kan" : "personar kan"} inviterast`;
+        if (visible.length === 0) {
+          const empty = document.createElement("li");
+          empty.textContent = query ? "Ingen personar passar søket." : "Alle registrerte Sprøyt-brukarar er allereie med.";
+          circleInviteList.append(empty);
+          return;
+        }
+        for (const user of visible) {
+          const item = document.createElement("li");
+          item.className = "circle-invite-person";
+          const avatar = document.createElement("span");
+          avatar.className = "circle-invite-avatar";
+          avatar.textContent = circleInviteInitials(user.display_name);
+          avatar.setAttribute("aria-hidden", "true");
+          const identity = document.createElement("span");
+          identity.className = "circle-invite-person-name";
+          identity.textContent = user.display_name;
+          const key = circleInvitePersonKey(circleId, user.id);
+          const progress = circleInvitePersonStatuses.get(key);
+          const detail = document.createElement("small");
+          detail.textContent = progress || `@${mentionHandle(user)} · ikkje i kretsen`;
+          identity.append(detail);
+          const invite = document.createElement("button");
+          invite.type = "button";
+          const sent = progress === "Sendt i DM";
+          const pending = progress === "Lagar invitasjonen …" || progress === "Opnar direktemeldinga …";
+          invite.textContent = sent ? "Sendt ✓" : "Inviter";
+          invite.disabled = sent || pending || !connectionSupervisor.snapshot().connected;
+          invite.setAttribute("aria-label", sent ? `Invitasjonen til ${user.display_name} er sendt` : `Inviter ${user.display_name} til kretsen`);
+          invite.addEventListener("click", () => {
+            circleInvitePersonStatuses.set(key, "Lagar invitasjonen …");
+            renderCircleInviteUsers();
+            const requestId = sendCommand("create_invitation", { target: { type: "circle", circle_id: circleId } });
+            if (requestId) pendingCircleInvitationRecipients.set(requestId, { circleId, userId: user.id });
+            else {
+              circleInvitePersonStatuses.set(key, "Sprøyt er ikkje tilkopla. Prøv igjen.");
+              renderCircleInviteUsers();
+            }
+          });
+          item.append(avatar, identity, invite);
+          circleInviteList.append(item);
+        }
+      }
+
+      function openCircleInviteDialog(circleId: string): void {
+        const circle = knownCircles.get(circleId);
+        if (!circle || circle.role !== "owner") return;
+        circleInviteDialog.dataset.circleId = circleId;
+        circleInviteTitle.textContent = `Inviter til ${circle.name}`;
+        circleInviteSearch.value = "";
+        circleInviteStatus.textContent = "Hentar ferske personlister …";
+        circleInviteLink.value = "";
+        circleInviteLinkActions.hidden = true;
+        createCircleShareLink.disabled = false;
+        createCircleShareLink.textContent = "Del invitasjonslenkje";
+        renderCircleInviteUsers();
+        if (window.matchMedia("(max-width: 640px)").matches) setMobileConversationDrawerOpen(false);
+        circleInviteDialog.showModal();
+        circleInviteSearch.focus();
+        const usersRequest = sendCommand("list_users");
+        const membersRequest = sendCommand("list_circle_users", { circle_id: circleId });
+        if (!usersRequest || !membersRequest) circleInviteStatus.textContent = "Sprøyt er ikkje tilkopla. Vent litt og prøv igjen.";
+      }
+
+      function failPendingCircleInvitationRequest(requestId: string, message: string): void {
+        const invitation = pendingCircleInvitationRecipients.get(requestId) || pendingCircleDirectInvitations.get(requestId);
+        if (invitation) {
+          circleInvitePersonStatuses.set(circleInvitePersonKey(invitation.circleId, invitation.userId), message);
+          pendingCircleInvitationRecipients.delete(requestId);
+          pendingCircleDirectInvitations.delete(requestId);
+          pendingDirectInvitationMessages.delete(requestId);
+        }
+        const sharedCircleId = pendingCircleShareInvitations.get(requestId);
+        if (sharedCircleId) {
+          pendingCircleShareInvitations.delete(requestId);
+          createCircleShareLink.disabled = false;
+          if (circleInviteDialog.dataset.circleId === sharedCircleId) circleInviteStatus.textContent = message;
+        }
+        if (invitation && circleInviteDialog.open && circleInviteDialog.dataset.circleId === invitation.circleId) renderCircleInviteUsers();
+      }
+
+      function failPendingCircleInvitations(message: string): void {
+        const requestIds = new Set([
+          ...pendingCircleInvitationRecipients.keys(),
+          ...pendingCircleDirectInvitations.keys(),
+          ...pendingCircleShareInvitations.keys()
+        ]);
+        requestIds.forEach((requestId) => failPendingCircleInvitationRequest(requestId, message));
+      }
+
       function renderKnownUsers() {
         const selectedUserId = directUser.value;
         directUser.replaceChildren(new Option("Vel brukar", ""));
@@ -1957,6 +2148,7 @@
           directUser.value = selectedUserId;
         }
         refreshChannelMemberOptions(channelDetailsDialog.dataset.channelId);
+        if (circleInviteDialog.open) renderCircleInviteUsers();
         const own = knownUsers.find((user) => user.id === currentParticipantId);
         if (own) {
           if (!statusDraft.dirty) {
@@ -2236,14 +2428,20 @@
         const pendingInvitation = event.request_id ? pendingInvitationResponses.get(event.request_id) : undefined;
         const inspectedInvitationToken = event.request_id ? pendingInvitationInspections.get(event.request_id) : undefined;
         const invitationRecipient = event.request_id ? pendingChannelInvitationRecipients.get(event.request_id) : undefined;
+        const circleInvitationRecipient = event.request_id ? pendingCircleInvitationRecipients.get(event.request_id) : undefined;
+        const circleShareInvitation = event.request_id ? pendingCircleShareInvitations.get(event.request_id) : undefined;
         const directInvitationMessage = event.request_id ? pendingDirectInvitationMessages.get(event.request_id) : undefined;
+        const directCircleInvitation = event.request_id ? pendingCircleDirectInvitations.get(event.request_id) : undefined;
         const directPeerUserId = event.request_id ? pendingDirectChannelUsers.get(event.request_id) : undefined;
         const directPersonUserId = event.request_id ? pendingPeopleDirectRequests.get(event.request_id) : undefined;
         if (event.request_id) pendingCommands.delete(event.request_id);
         if (event.request_id) pendingInvitationResponses.delete(event.request_id);
         if (event.request_id) pendingInvitationInspections.delete(event.request_id);
         if (event.request_id) pendingChannelInvitationRecipients.delete(event.request_id);
+        if (event.request_id) pendingCircleInvitationRecipients.delete(event.request_id);
+        if (event.request_id) pendingCircleShareInvitations.delete(event.request_id);
         if (event.request_id) pendingDirectInvitationMessages.delete(event.request_id);
+        if (event.request_id) pendingCircleDirectInvitations.delete(event.request_id);
         if (event.request_id) pendingDirectChannelUsers.delete(event.request_id);
         if (event.request_id) pendingPeopleDirectRequests.delete(event.request_id);
 
@@ -2280,6 +2478,10 @@
           const memberChannel = knownChannels.find((channel) => channel.id === channelDetailsDialog.dataset.channelId);
           if (channelDetailsDialog.open && memberChannel?.circle_id === event.payload.circle_id) {
             refreshChannelMemberOptions(memberChannel.id);
+          }
+          if (circleInviteDialog.open && circleInviteDialog.dataset.circleId === event.payload.circle_id) {
+            circleInviteStatus.textContent = "";
+            renderCircleInviteUsers();
           }
           updateMentionSuggestions();
           return;
@@ -2428,6 +2630,29 @@
           return;
         }
         if (event.type === "invitation_created") {
+          if (circleInvitationRecipient) {
+            const key = circleInvitePersonKey(circleInvitationRecipient.circleId, circleInvitationRecipient.userId);
+            circleInvitePersonStatuses.set(key, "Opnar direktemeldinga …");
+            const directRequestId = openDirectChannel(circleInvitationRecipient.userId);
+            if (directRequestId) {
+              pendingDirectInvitationMessages.set(directRequestId, `[[invite:${event.payload.invitation.token}]]`);
+              pendingCircleDirectInvitations.set(directRequestId, circleInvitationRecipient);
+            } else {
+              circleInvitePersonStatuses.set(key, "Sprøyt er ikkje tilkopla. Prøv igjen.");
+            }
+            if (circleInviteDialog.open && circleInviteDialog.dataset.circleId === circleInvitationRecipient.circleId) renderCircleInviteUsers();
+            return;
+          }
+          if (circleShareInvitation) {
+            if (circleInviteDialog.dataset.circleId === circleShareInvitation) {
+              circleInviteLink.value = `${window.location.origin}/?invite=${encodeURIComponent(event.payload.invitation.token)}`;
+              circleInviteLinkActions.hidden = false;
+              createCircleShareLink.disabled = false;
+              createCircleShareLink.textContent = "Lag ny lenkje";
+              circleInviteStatus.textContent = "Invitasjonslenkja er klar. Del eller kopier henne.";
+            }
+            return;
+          }
           if (invitationRecipient) {
             const directRequestId = openDirectChannel(invitationRecipient);
             if (directRequestId) {
@@ -2557,8 +2782,17 @@
           }
           selectChannel(channel);
           if (event.type === "direct_channel_opened" && directInvitationMessage) {
-            sendCommand("send_message", { channel_id: channel.id, body: directInvitationMessage });
-            channelDetailsDialog.close();
+            const messageRequestId = sendCommand("send_message", { channel_id: channel.id, body: directInvitationMessage });
+            if (directCircleInvitation) {
+              const key = circleInvitePersonKey(directCircleInvitation.circleId, directCircleInvitation.userId);
+              circleInvitePersonStatuses.set(key, messageRequestId ? "Sendt i DM" : "Kunne ikkje sende invitasjonen. Prøv igjen.");
+              if (circleInviteDialog.open) {
+                if (messageRequestId) circleInviteDialog.close();
+                else renderCircleInviteUsers();
+              }
+            } else {
+              channelDetailsDialog.close();
+            }
           }
           sendCommand("list_my_channels");
           return;
@@ -2853,12 +3087,33 @@
               : "Brukaren kunne ikkje leggjast til. Prøv igjen.";
             return;
           }
+          if (requestedCommand === "create_invitation" && circleInvitationRecipient) {
+            circleInvitePersonStatuses.set(
+              circleInvitePersonKey(circleInvitationRecipient.circleId, circleInvitationRecipient.userId),
+              event.payload.code === "permission_denied" ? "Berre eigaren kan invitere til kretsen." : "Invitasjonen kunne ikkje lagast. Prøv igjen."
+            );
+            if (circleInviteDialog.open) renderCircleInviteUsers();
+            return;
+          }
+          if (requestedCommand === "create_invitation" && circleShareInvitation) {
+            createCircleShareLink.disabled = false;
+            circleInviteStatus.textContent = event.payload.code === "permission_denied"
+              ? "Berre eigaren kan invitere til kretsen."
+              : "Invitasjonslenkja kunne ikkje lagast. Prøv igjen.";
+            return;
+          }
           if (requestedCommand === "create_invitation" && invitationRecipient) {
             channelMemberStatus.textContent = "Invitasjonen kunne ikkje lagast. Prøv igjen.";
             return;
           }
           if (requestedCommand === "open_direct_channel") {
-            if (directInvitationMessage) {
+            if (directCircleInvitation) {
+              circleInvitePersonStatuses.set(
+                circleInvitePersonKey(directCircleInvitation.circleId, directCircleInvitation.userId),
+                event.payload.code === "not_found" ? "Brukaren finst ikkje lenger." : "Direktemeldinga kunne ikkje opnast. Prøv igjen."
+              );
+              if (circleInviteDialog.open) renderCircleInviteUsers();
+            } else if (directInvitationMessage) {
               channelMemberStatus.textContent = "Direktemeldinga kunne ikkje opnast. Prøv igjen.";
             } else if (directPersonUserId) {
               peopleDirectStatuses.set(directPersonUserId, event.payload.code === "not_found"
@@ -2922,7 +3177,26 @@
         mobilePeopleShortcut.disabled = channelPeopleButton.disabled;
         const query = conversationSearch.value.trim().toLocaleLowerCase();
         const matches = (value: string) => !query || value.toLocaleLowerCase().includes(query);
-        const appendHeading = (text: string) => {
+        const appendHeading = (text: string, circle?: Circle) => {
+          if (circle) {
+            const row = document.createElement("div");
+            row.className = "conversation-circle-heading";
+            const heading = document.createElement("h3");
+            heading.textContent = text;
+            row.append(heading);
+            if (circle.role === "owner") {
+              const invite = document.createElement("button");
+              invite.type = "button";
+              invite.className = "conversation-circle-invite";
+              invite.dataset.inviteCircleId = circle.id;
+              invite.textContent = "＋ Inviter";
+              invite.setAttribute("aria-label", `Inviter til ${circle.name}`);
+              invite.addEventListener("click", () => openCircleInviteDialog(circle.id));
+              row.append(invite);
+            }
+            conversationList.append(row);
+            return;
+          }
           const heading = document.createElement("h3");
           heading.textContent = text;
           conversationList.append(heading);
@@ -2968,7 +3242,7 @@
         for (const [circleId, circle] of knownCircles) {
           const channels = personal.filter((channel) => channel.circle_id === circleId);
           if (!matches(circle.name) && !channels.some((channel) => matches(channel.name))) continue;
-          appendHeading(circle.name);
+          appendHeading(circle.name, circle);
           channels.forEach((channel) => { if (appendConversation(channel, `# ${channel.name}`, circle.name)) rendered += 1; });
         }
         if (direct.some((channel) => matches(directChannelLabel(channel)))) {

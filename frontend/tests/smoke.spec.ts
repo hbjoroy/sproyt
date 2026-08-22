@@ -5,6 +5,7 @@ declare global {
     __sproytRecordCspViolation(violation: string): Promise<void>;
     __sproytE2eSockets: globalThis.WebSocket[];
     __sproytDmCommands: string[];
+    __sproytCircleInviteCommands: string[];
   }
 }
 
@@ -141,6 +142,64 @@ test("conversation-first navigation collapses on desktop and behaves as a modal 
   await page.keyboard.press("Escape");
   await expect(drawer).toBeHidden();
   await expect(mobileShortcut).toBeFocused();
+});
+
+test("a circle owner invites an existing user from the conversation drawer", async ({ page }) => {
+  const peerName = "playwright-circle-invite-peer";
+  const peer = await page.context().newPage();
+  await peer.goto(`/?participant=${peerName}`, { waitUntil: "domcontentloaded" });
+  await expect(peer.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
+
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    const commands: string[] = [];
+    class RecordingWebSocket extends NativeWebSocket {
+      send(data: string): void {
+        commands.push(data);
+        super.send(data);
+      }
+    }
+    window.WebSocket = RecordingWebSocket;
+    window.__sproytCircleInviteCommands = commands;
+  });
+  await page.goto("/?participant=playwright-circle-invite-owner", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
+
+  const circleName = `Invitasjon ${crypto.randomUUID().slice(0, 8)}`;
+  await page.locator("#circle-admin-dialog").evaluate((dialog: HTMLDialogElement) => dialog.showModal());
+  await page.locator("#circle-name").fill(circleName);
+  await page.locator("#create-circle").click();
+  await expect(page.locator("#onboarding-notice")).toContainText("klar", { timeout: 15_000 });
+  await page.locator("#circle-admin-close").click();
+
+  await page.setViewportSize({ width: 375, height: 667 });
+  const conversationShortcut = page.locator("#mobile-conversations-shortcut");
+  await conversationShortcut.click();
+  const inviteCircle = page.getByRole("button", { name: `Inviter til ${circleName}` });
+  await expect(inviteCircle).toBeVisible({ timeout: 15_000 });
+  await inviteCircle.click();
+  const dialog = page.locator("#circle-invite-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#conversation-drawer")).toBeHidden();
+  await expect(page.locator("#circle-invite-title")).toHaveText(`Inviter til ${circleName}`);
+  await page.locator("#create-circle-share-link").click();
+  await expect(page.locator("#circle-invite-link")).toHaveValue(/^http:\/\/127\.0\.0\.1:\d+\/\?invite=[A-Za-z0-9_-]{32,128}$/, { timeout: 15_000 });
+  await page.locator("#circle-invite-search").fill(peerName);
+  const invitePeer = page.getByRole("button", { name: `Inviter ${peerName} til kretsen` });
+  await expect(invitePeer).toBeVisible({ timeout: 15_000 });
+  await invitePeer.click();
+
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(conversationShortcut).toBeFocused();
+  await expect(page.locator("#conversation-circle")).toHaveText("Direktemelding");
+  await expect(page.locator("#conversation-title")).toContainText(peerName);
+  await expect.poll(() => page.evaluate(() => window.__sproytCircleInviteCommands.some((serialized) => {
+    const command: unknown = JSON.parse(serialized);
+    if (typeof command !== "object" || command === null || !("type" in command) || command.type !== "send_message") return false;
+    if (!("payload" in command) || typeof command.payload !== "object" || command.payload === null || !("body" in command.payload)) return false;
+    return typeof command.payload.body === "string" && /^\[\[invite:[A-Za-z0-9_-]{32,128}\]\]$/.test(command.payload.body);
+  })), { timeout: 15_000 }).toBe(true);
+  await peer.close();
 });
 
 test("a dropped send survives a real IndexedDB reload with one request id and clears on receipt", async ({ page }) => {

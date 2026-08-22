@@ -726,6 +726,30 @@ fn browser_exposes_channel_members_and_owner_managed_markdown_description() {
 }
 
 #[test]
+fn browser_exposes_owner_circle_invitations_from_the_conversation_drawer() {
+    assert!(BROWSER_CLIENT.contains("id=\"circle-invite-dialog\""));
+    assert!(
+        BROWSER_CLIENT.contains("Inviter ein Sprøyt-brukar i DM, eller del ei lenkje med andre.")
+    );
+    assert!(BROWSER_CLIENT.contains("invite.className = \"conversation-circle-invite\""));
+    assert!(BROWSER_CLIENT.contains("invite.dataset.inviteCircleId = circle.id"));
+    assert!(BROWSER_CLIENT.contains("if (circle.role === \"owner\")"));
+    assert!(BROWSER_CLIENT.contains("function eligibleCircleInviteUsers(circleId"));
+    assert!(BROWSER_CLIENT.contains("user.kind === \"human\""));
+    assert!(BROWSER_CLIENT.contains("!memberIds.has(user.id)"));
+    assert!(BROWSER_CLIENT.contains("pendingCircleInvitationRecipients.set(requestId"));
+    assert!(BROWSER_CLIENT.contains("pendingCircleDirectInvitations.set(directRequestId"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("circleInvitePersonStatuses.set(key, messageRequestId ? \"Sendt i DM\"")
+    );
+    assert!(BROWSER_CLIENT.contains("id=\"create-circle-share-link\""));
+    assert!(BROWSER_CLIENT.contains(
+        "`${window.location.origin}/?invite=${encodeURIComponent(event.payload.invitation.token)}`"
+    ));
+}
+
+#[test]
 fn browser_uses_one_complete_theme_contract_for_dark_mode_controls() {
     assert!(BROWSER_CLIENT.contains(
         "<meta name=\"theme-color\" content=\"#111613\" media=\"(prefers-color-scheme: dark)\">"
