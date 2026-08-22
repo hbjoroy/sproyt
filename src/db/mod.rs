@@ -154,10 +154,15 @@ where
         })
         .await
         .unwrap();
-    assert_eq!(
-        repository.signup_ordinal(later_human).await.unwrap(),
-        Some(actor_ordinal + 1)
-    );
+    let later_human_ordinal = repository
+        .signup_ordinal(later_human)
+        .await
+        .unwrap()
+        .unwrap();
+    // Repository-contract implementations may share a database with concurrent
+    // tests.  The durable promise is strictly increasing allocation, not that
+    // no other human can be assigned a number between these two sign-ins.
+    assert!(later_human_ordinal > actor_ordinal);
     repository
         .upsert_user(User {
             id: actor.clone(),
