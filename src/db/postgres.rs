@@ -28,6 +28,7 @@ use crate::domain::{
     PortableUserExport, PresenceLease, RepositoryError, RepositoryFuture, SendMessage,
     UpdateChannelDescription, User, UserId, UserProfile, UserTask,
 };
+use crate::notification::enqueue_message_postgres;
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
     OutboxOperation, ProcessError, ProcessEvent, ProcessLink, ProcessLinkId, ProcessRepository,
@@ -1222,6 +1223,7 @@ impl ChatRepository for PostgresChatRepository {
                 .map_err(sql_error)?;
             persist_mentions_postgres(&mut transaction, &message).await?;
             persist_attachments_postgres(&mut transaction, &message).await?;
+            enqueue_message_postgres(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())
@@ -1262,6 +1264,7 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_postgres(&mut transaction, &message).await?;
+            enqueue_message_postgres(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             let event = ChatEvent::MessageEdited {
                 message: message.clone(),
@@ -1435,6 +1438,7 @@ impl ChatRepository for PostgresChatRepository {
                 .map_err(sql_error)?;
             persist_mentions_postgres(&mut transaction, &message).await?;
             persist_attachments_postgres(&mut transaction, &message).await?;
+            enqueue_message_postgres(&mut transaction, &message).await?;
             sqlx::query("update command_receipts set message_id = $1 where principal_id = $2 and request_id = $3")
                 .bind(*message.id.as_uuid())
                 .bind(*message.sender_id.as_uuid())

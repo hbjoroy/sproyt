@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row, SqlitePool};
+use sqlx::{PgPool, Postgres, Row, Sqlite, SqlitePool, Transaction};
 use tokio::sync::watch;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -12,7 +12,7 @@ use web_push_native::{
 
 use crate::{
     config::{DatabaseConfig, DatabaseKind},
-    domain::{RepositoryError, UserId},
+    domain::{ChatMessage, RepositoryError, UserId},
 };
 
 #[derive(Clone)]
@@ -181,6 +181,14 @@ impl NotificationService {
                 info!("web push is disabled because VAPID is not configured");
                 return;
             }
+            // A rolling deployment can leave a very small hand-off interval
+            // where the previous binary persisted a message just before its
+            // next periodic scan. Reconcile that interval once; every row is
+            // still constrained by the per-subscription cursor, and the
+            // outbox primary key makes replica start-up races harmless.
+            if let Err(error) = service.backfill_current_cursors_once().await {
+                warn!(error_kind = %error.kind(), "web push start-up backfill failed");
+            }
             loop {
                 tokio::select! {
                     _ = shutdown.changed() => break,
@@ -312,7 +320,6 @@ impl NotificationService {
     }
 
     async fn run_once(&self) -> Result<(), RepositoryError> {
-        self.enqueue_pending().await?;
         let Some(job) = self.claim().await? else {
             return Ok(());
         };
@@ -325,11 +332,12 @@ impl NotificationService {
         self.complete(job, result).await
     }
 
-    async fn enqueue_pending(&self) -> Result<(), RepositoryError> {
+    async fn backfill_current_cursors_once(&self) -> Result<(), RepositoryError> {
         // The cursor is set once, when a device first opts in. Re-registering
         // the same endpoint keeps it intact, so outstanding notifications are
-        // not discarded. Outbox rows created before a migration also remain
-        // eligible; this predicate only controls new enqueueing.
+        // not discarded. This is intentionally called only during worker
+        // start-up to bridge a mixed-version rolling deployment; it is not the
+        // delivery loop's old periodic global scan.
         let mention_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,mm.mentioned_user_id,mm.message_id,'mention' from message_mentions mm join messages m on m.id=mm.message_id join push_subscriptions s on s.user_id=mm.mentioned_user_id left join notification_preferences p on p.user_id=mm.mentioned_user_id where mm.mentioned_user_id<>m.sender_id and m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.mentions,true) on conflict(subscription_id,message_id) do nothing";
         let direct_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end,m.id,'direct_message' from messages m join direct_conversations d on d.channel_id=m.channel_id join push_subscriptions s on s.user_id=case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end left join notification_preferences p on p.user_id=s.user_id where m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing";
         match &self.store {
@@ -344,9 +352,8 @@ impl NotificationService {
                     .map_err(storage)?;
             }
             NotificationStore::Sqlite(pool) => {
-                let mention = mention_pg
-                    .replace("coalesce(p.mentions,true)", "coalesce(p.mentions,1)")
-                    .replace("$1", "?");
+                let mention =
+                    mention_pg.replace("coalesce(p.mentions,true)", "coalesce(p.mentions,1)");
                 let direct = direct_pg.replace(
                     "coalesce(p.direct_messages,true)",
                     "coalesce(p.direct_messages,1)",
@@ -419,6 +426,53 @@ impl NotificationService {
         }
         Ok(())
     }
+}
+
+/// Adds web-push work while the message transaction is still open.  A fresh
+/// subscription's database UUIDv7 high-water cursor is the boundary: historical messages never
+/// enter the outbox. Mentions deliberately go first; the outbox primary key
+/// then gives a message that is both a DM and an @mention one, more specific
+/// notification instead of two.
+pub(crate) async fn enqueue_message_postgres(
+    transaction: &mut Transaction<'_, Postgres>,
+    message: &ChatMessage,
+) -> Result<(), RepositoryError> {
+    sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,mm.mentioned_user_id,mm.message_id,'mention' from message_mentions mm join push_subscriptions s on s.user_id=mm.mentioned_user_id left join notification_preferences p on p.user_id=mm.mentioned_user_id where mm.message_id=$1 and mm.mentioned_user_id<>$2 and mm.message_id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.mentions,true) on conflict(subscription_id,message_id) do nothing")
+        .bind(*message.id.as_uuid())
+        .bind(*message.sender_id.as_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(storage)?;
+    sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,case when d.user_a_id=$2 then d.user_b_id else d.user_a_id end,$3,'direct_message' from direct_conversations d join push_subscriptions s on s.user_id=case when d.user_a_id=$2 then d.user_b_id else d.user_a_id end left join notification_preferences p on p.user_id=s.user_id where d.channel_id=$1 and $3>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing")
+        .bind(*message.channel_id.as_uuid())
+        .bind(*message.sender_id.as_uuid())
+        .bind(*message.id.as_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(storage)?;
+    Ok(())
+}
+
+pub(crate) async fn enqueue_message_sqlite(
+    transaction: &mut Transaction<'_, Sqlite>,
+    message: &ChatMessage,
+) -> Result<(), RepositoryError> {
+    sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,mm.mentioned_user_id,mm.message_id,'mention' from message_mentions mm join push_subscriptions s on s.user_id=mm.mentioned_user_id left join notification_preferences p on p.user_id=mm.mentioned_user_id where mm.message_id=? and mm.mentioned_user_id<>? and mm.message_id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.mentions,1) on conflict(subscription_id,message_id) do nothing")
+        .bind(message.id.as_uuid().to_string())
+        .bind(message.sender_id.to_string())
+        .execute(&mut **transaction)
+        .await
+        .map_err(storage)?;
+    sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,case when d.user_a_id=? then d.user_b_id else d.user_a_id end,?,'direct_message' from direct_conversations d join push_subscriptions s on s.user_id=case when d.user_a_id=? then d.user_b_id else d.user_a_id end left join notification_preferences p on p.user_id=s.user_id where d.channel_id=? and ?>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,1) on conflict(subscription_id,message_id) do nothing")
+        .bind(message.sender_id.to_string())
+        .bind(message.id.as_uuid().to_string())
+        .bind(message.sender_id.to_string())
+        .bind(message.channel_id.to_string())
+        .bind(message.id.as_uuid().to_string())
+        .execute(&mut **transaction)
+        .await
+        .map_err(storage)?;
+    Ok(())
 }
 
 impl PushSender {
@@ -698,8 +752,26 @@ mod tests {
             .await
             .unwrap();
 
-        service.enqueue_pending().await.unwrap();
-        service.enqueue_pending().await.unwrap();
+        let chat_message = ChatMessage {
+            id: crate::domain::MessageId::from_uuid(message),
+            channel_id: crate::domain::ChannelId::from_uuid(channel),
+            parent_message_id: None,
+            sender_id: sender.clone(),
+            sender_display_name: crate::domain::DisplayName::new("Sender").unwrap(),
+            body: crate::domain::MessageBody::new("Hei @recipient").unwrap(),
+            sequence: crate::domain::ChannelSequence::first(),
+            sent_at: chrono::Utc::now(),
+            edited_at: None,
+            deleted_at: None,
+        };
+        let mut transaction = pool.begin().await.unwrap();
+        enqueue_message_sqlite(&mut transaction, &chat_message)
+            .await
+            .unwrap();
+        enqueue_message_sqlite(&mut transaction, &chat_message)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
 
         let rows: Vec<(String, String)> = sqlx::query_as(
             "select recipient_id,kind from notification_outbox order by recipient_id",
@@ -768,7 +840,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cursor, historical.to_string());
-        service.enqueue_pending().await.unwrap();
+        // Start-up reconciliation is cursor-bounded too: opting in now does
+        // not resurrect the old DM.
+        service.backfill_current_cursors_once().await.unwrap();
         let queued: i64 = sqlx::query_scalar("select count(*) from notification_outbox")
             .fetch_one(pool)
             .await
@@ -787,12 +861,117 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
-        service.enqueue_pending().await.unwrap();
+        let chat_message = ChatMessage {
+            id: crate::domain::MessageId::from_uuid(future),
+            channel_id: crate::domain::ChannelId::from_uuid(channel),
+            parent_message_id: None,
+            sender_id: sender.clone(),
+            sender_display_name: crate::domain::DisplayName::new("Sender").unwrap(),
+            body: crate::domain::MessageBody::new("after opt-in").unwrap(),
+            sequence: crate::domain::ChannelSequence::new(2),
+            sent_at: chrono::Utc::now(),
+            edited_at: None,
+            deleted_at: None,
+        };
+        let mut transaction = pool.begin().await.unwrap();
+        enqueue_message_sqlite(&mut transaction, &chat_message)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
         let queued: Vec<String> = sqlx::query_scalar("select message_id from notification_outbox")
             .fetch_all(pool)
             .await
             .unwrap();
         assert_eq!(queued, vec![future.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn editing_a_message_to_add_a_mention_enqueues_it_once() {
+        let service = service().await;
+        let NotificationStore::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        let sender = UserId::named("sender");
+        let recipient = UserId::named("recipient");
+        let channel = Uuid::now_v7();
+        let message_id = Uuid::now_v7();
+        for (id, name) in [(&sender, "Sender"), (&recipient, "Recipient")] {
+            sqlx::query("insert into users(id,kind,display_name) values(?, 'human', ?)")
+                .bind(id.to_string())
+                .bind(name)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "insert into channels(id,slug,name,kind,created_by) values(?,?,'Open','public',?)",
+        )
+        .bind(channel.to_string())
+        .bind(format!("open-{channel}"))
+        .bind(sender.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values(?,?,?,?,1,'first draft')")
+            .bind(message_id.to_string())
+            .bind(channel.to_string())
+            .bind(sender.to_string())
+            .bind("Sender")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,notification_after_message_id) values(?,?,?,?,?,?)")
+            .bind(Uuid::now_v7().to_string())
+            .bind(recipient.to_string())
+            .bind("https://push.example/recipient")
+            .bind("p".repeat(65))
+            .bind("a".repeat(22))
+            .bind("00000000-0000-7000-8000-000000000000")
+            .execute(pool)
+            .await
+            .unwrap();
+        let edited = ChatMessage {
+            id: crate::domain::MessageId::from_uuid(message_id),
+            channel_id: crate::domain::ChannelId::from_uuid(channel),
+            parent_message_id: None,
+            sender_id: sender.clone(),
+            sender_display_name: crate::domain::DisplayName::new("Sender").unwrap(),
+            body: crate::domain::MessageBody::new("Hei @recipient").unwrap(),
+            sequence: crate::domain::ChannelSequence::first(),
+            sent_at: chrono::Utc::now(),
+            edited_at: Some(chrono::Utc::now()),
+            deleted_at: None,
+        };
+        let mut transaction = pool.begin().await.unwrap();
+        enqueue_message_sqlite(&mut transaction, &edited)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+        let before: i64 = sqlx::query_scalar("select count(*) from notification_outbox")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(before, 0);
+
+        sqlx::query("insert into message_mentions(message_id,mentioned_user_id) values(?,?)")
+            .bind(message_id.to_string())
+            .bind(recipient.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        let mut transaction = pool.begin().await.unwrap();
+        enqueue_message_sqlite(&mut transaction, &edited)
+            .await
+            .unwrap();
+        enqueue_message_sqlite(&mut transaction, &edited)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+        let rows: Vec<String> = sqlx::query_scalar("select kind from notification_outbox")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, vec!["mention"]);
     }
 
     #[tokio::test]

@@ -23,6 +23,7 @@ use crate::domain::{
     PortableUserExport, RepositoryError, RepositoryFuture, SendMessage, UpdateChannelDescription,
     User, UserId, UserProfile, UserTask,
 };
+use crate::notification::enqueue_message_sqlite;
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
     OutboxOperation, ProcessError, ProcessEvent, ProcessLink, ProcessLinkId, ProcessRepository,
@@ -1125,6 +1126,7 @@ impl ChatRepository for SqliteChatRepository {
                 .map_err(sql_error)?;
             persist_mentions_sqlite(&mut transaction, &message).await?;
             persist_attachments_sqlite(&mut transaction, &message).await?;
+            enqueue_message_sqlite(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(message)
         })
@@ -1157,6 +1159,7 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_sqlite(&mut transaction, &message).await?;
+            enqueue_message_sqlite(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(message)
         })
@@ -1304,6 +1307,7 @@ impl ChatRepository for SqliteChatRepository {
                 .map_err(sql_error)?;
             persist_mentions_sqlite(&mut transaction, &message).await?;
             persist_attachments_sqlite(&mut transaction, &message).await?;
+            enqueue_message_sqlite(&mut transaction, &message).await?;
             sqlx::query("update command_receipts set message_id = ? where principal_id = ? and request_id = ?")
                 .bind(message.id.as_uuid().to_string())
                 .bind(message.sender_id.to_string())
