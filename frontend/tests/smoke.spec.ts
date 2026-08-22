@@ -107,6 +107,40 @@ test("development client loads through CSP, connects, and sends a message", asyn
   expect(unexpectedConsoleErrors).toEqual([]);
 });
 
+test("conversation-first navigation collapses on desktop and behaves as a modal drawer on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?participant=playwright-conversation-layout", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
+
+  const sidebar = page.locator("#sidebar-panel");
+  const drawer = page.locator("#conversation-drawer");
+  const drawerSearch = page.locator("#conversation-search");
+  const headerToggle = page.locator("#conversation-drawer-header-toggle");
+  await expect(sidebar).toHaveClass(/desktop-collapsed/);
+  await expect(drawer).toBeVisible();
+  await expect(page.locator(".bottom-navigation")).toBeHidden();
+
+  await page.locator("#conversation-drawer-toggle").click();
+  await expect(drawer).toBeHidden();
+  await expect(headerToggle).toBeFocused();
+  await headerToggle.click();
+  await expect(drawer).toBeVisible();
+  await expect(drawerSearch).toBeFocused();
+
+  await page.setViewportSize({ width: 375, height: 667 });
+  await expect(headerToggle).toBeHidden();
+  const mobileShortcut = page.locator("#mobile-conversations-shortcut");
+  await expect(mobileShortcut).toBeVisible();
+  await mobileShortcut.click();
+  await expect(drawer).toHaveAttribute("role", "dialog");
+  await expect(drawer).toHaveAttribute("aria-modal", "true");
+  await expect(drawerSearch).toBeFocused();
+  await expect(page.locator(".conversation-header")).toHaveAttribute("inert", "");
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+  await expect(mobileShortcut).toBeFocused();
+});
+
 test("a dropped send survives a real IndexedDB reload with one request id and clears on receipt", async ({ page }) => {
   await page.addInitScript(() => {
     const NativeWebSocket = window.WebSocket;

@@ -163,6 +163,16 @@
       const notificationSummaryLabel = requireElement(".notification-summary-label", HTMLElement);
       const mobileNavigationToggle = requireElement("#mobile-navigation-toggle", HTMLButtonElement);
       const composerArea = requireElement(".composer-area", HTMLElement);
+      const conversationHeader = requireElement(".conversation-header", HTMLElement);
+      const mobileConversationsShortcut = requireElement("#mobile-conversations-shortcut", HTMLButtonElement);
+      const mobileActiveConversation = requireElement("#mobile-active-conversation", HTMLButtonElement);
+      const mobileActiveConversationLabel = requireElement("#mobile-active-conversation-label", HTMLElement);
+      const mobilePeopleShortcut = requireElement("#mobile-people-shortcut", HTMLButtonElement);
+      const conversationDrawer = requireElement("#conversation-drawer", HTMLElement);
+      const conversationDrawerToggle = requireElement("#conversation-drawer-toggle", HTMLButtonElement);
+      const conversationDrawerHeaderToggle = requireElement("#conversation-drawer-header-toggle", HTMLButtonElement);
+      const conversationSearch = requireElement("#conversation-search", HTMLInputElement);
+      const conversationList = requireElement("#conversation-list", HTMLElement);
 
       let sessionController: SessionController;
       const connectionSupervisor = createConnectionController({
@@ -1291,8 +1301,11 @@
           try { window.localStorage.setItem(desktopSidebarStorageKey, String(collapsed)); } catch (_) {}
         }
       }
-      let storedDesktopSidebarCollapsed = false;
-      try { storedDesktopSidebarCollapsed = window.localStorage.getItem(desktopSidebarStorageKey) === "true"; } catch (_) {}
+      let storedDesktopSidebarCollapsed = true;
+      try {
+        const storedValue = window.localStorage.getItem(desktopSidebarStorageKey);
+        storedDesktopSidebarCollapsed = storedValue === null ? true : storedValue === "true";
+      } catch (_) {}
       setDesktopSidebarCollapsed(storedDesktopSidebarCollapsed || compactDesktopViewport.matches, false);
       desktopSidebarToggle.addEventListener("click", () => setDesktopSidebarCollapsed(!sidebarIsCollapsed()));
       compactDesktopViewport.addEventListener("change", () => setDesktopSidebarCollapsed(compactDesktopViewport.matches || storedDesktopSidebarCollapsed, false));
@@ -1349,6 +1362,71 @@
       mobileNavigationToggle.addEventListener("click", () => {
         setMobileNavigationOpen(!sidebar.classList.contains("mobile-open"));
       });
+      function setMobileConversationDrawerOpen(open: boolean, restoreFocus: boolean = false): void {
+        conversationDrawer.classList.toggle("mobile-open", open);
+        if (open) {
+          setMobileNavigationOpen(false);
+          conversationDrawer.setAttribute("role", "dialog");
+          conversationDrawer.setAttribute("aria-modal", "true");
+          conversationDrawer.setAttribute("aria-label", "Samtalar");
+          sidebar.inert = true;
+          conversationHeader.inert = true;
+          messagesEl.inert = true;
+          composerArea.inert = true;
+          conversationDrawerToggle.setAttribute("aria-label", "Lukk samtalelista");
+          conversationDrawerToggle.title = "Lukk samtalelista";
+          conversationDrawerToggle.textContent = "×";
+          window.requestAnimationFrame(() => conversationSearch.focus());
+        } else {
+          conversationDrawer.removeAttribute("role");
+          conversationDrawer.removeAttribute("aria-modal");
+          conversationDrawer.removeAttribute("aria-label");
+          sidebar.inert = false;
+          conversationHeader.inert = false;
+          messagesEl.inert = false;
+          composerArea.inert = false;
+          const collapsed = conversationDrawer.classList.contains("is-collapsed");
+          const label = collapsed ? "Utvid samtalelista" : "Kollaps samtalelista";
+          conversationDrawerToggle.setAttribute("aria-label", label);
+          conversationDrawerToggle.title = label;
+          conversationDrawerToggle.textContent = collapsed ? "›" : "‹";
+          if (restoreFocus) mobileConversationsShortcut.focus();
+        }
+        mobileConversationsShortcut.setAttribute("aria-expanded", String(open));
+      }
+      mobileConversationsShortcut.addEventListener("click", () => {
+        setMobileConversationDrawerOpen(!conversationDrawer.classList.contains("mobile-open"));
+      });
+      mobileActiveConversation.addEventListener("click", () => {
+        setMobileNavigationOpen(false);
+        if (!bodyInput.disabled) bodyInput.focus({ preventScroll: true });
+      });
+      mobilePeopleShortcut.addEventListener("click", () => channelPeopleButton.click());
+      function setConversationDrawerCollapsed(collapsed: boolean): void {
+        conversationDrawer.classList.toggle("is-collapsed", collapsed);
+        appMain.classList.toggle("conversation-drawer-collapsed", collapsed);
+        conversationDrawerToggle.setAttribute("aria-expanded", String(!collapsed));
+        conversationDrawerHeaderToggle.setAttribute("aria-expanded", String(!collapsed));
+        const label = collapsed ? "Utvid samtalelista" : "Kollaps samtalelista";
+        conversationDrawerToggle.setAttribute("aria-label", label);
+        conversationDrawerToggle.title = label;
+        conversationDrawerToggle.textContent = collapsed ? "›" : "‹";
+        conversationDrawerHeaderToggle.setAttribute("aria-label", label);
+        conversationDrawerHeaderToggle.title = label;
+        if (collapsed) window.requestAnimationFrame(() => conversationDrawerHeaderToggle.focus());
+      }
+      conversationDrawerToggle.addEventListener("click", () => {
+        if (window.matchMedia("(max-width: 640px)").matches) {
+          setMobileConversationDrawerOpen(false, true);
+          return;
+        }
+        setConversationDrawerCollapsed(!conversationDrawer.classList.contains("is-collapsed"));
+      });
+      conversationDrawerHeaderToggle.addEventListener("click", () => {
+        setConversationDrawerCollapsed(!conversationDrawer.classList.contains("is-collapsed"));
+        if (!conversationDrawer.classList.contains("is-collapsed")) window.requestAnimationFrame(() => conversationSearch.focus());
+      });
+      conversationSearch.addEventListener("input", () => renderConversationDrawer());
       bottomChannelPanel.addEventListener("toggle", () => {
         if (bottomChannelPanel.open) bottomCirclePanel.open = false;
       });
@@ -1387,6 +1465,11 @@
             threadReactionPicker.querySelector("summary")?.focus({ preventScroll: true });
             return;
           }
+        }
+        if (event.key === "Escape" && conversationDrawer.classList.contains("mobile-open")) {
+          event.preventDefault();
+          setMobileConversationDrawerOpen(false, true);
+          return;
         }
         if (event.key === "Escape" && (circleChannelDialog.open || circleAdminDialog.open || threadPanel.open || mediaLightbox.open)) {
           return;
@@ -1427,6 +1510,17 @@
               event.preventDefault();
               if (first) first.focus();
             }
+          }
+        }
+        if (event.key === "Tab" && conversationDrawer.classList.contains("mobile-open")) {
+          const controls = Array.from(conversationDrawer.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"))
+            .filter((control) => !control.hidden && control.offsetParent !== null);
+          const first = controls[0];
+          const last = controls.at(-1);
+          if (first && last && event.shiftKey && document.activeElement === first) {
+            event.preventDefault(); last.focus();
+          } else if (first && last && !event.shiftKey && document.activeElement === last) {
+            event.preventDefault(); first.focus();
           }
         }
         if (event.key === "Escape" && sidebar.classList.contains("mobile-open")) {
@@ -1947,6 +2041,7 @@
         conversationPeerStatus.hidden = true;
         conversationPeerStatus.replaceChildren();
         channelPeopleButton.disabled = !channel;
+        mobilePeopleShortcut.disabled = !channel;
         const channelUsers = channel ? knownChannelUsers.get(channel.id) : null;
         channelPeopleButton.textContent = channelUsers ? `👥 ${channelUsers.length}` : "👥";
         channelPeopleButton.setAttribute("aria-label", channelUsers
@@ -2814,6 +2909,89 @@
       function renderChannels() {
         renderPrimaryNavigation();
         renderBottomNavigation();
+        renderConversationDrawer();
+      }
+
+      function renderConversationDrawer(): void {
+        conversationList.replaceChildren();
+        const active = knownChannels.find((channel) => channel.id === activeChannelId);
+        mobileActiveConversationLabel.textContent = active
+          ? (active.is_direct ? directChannelLabel(active) : `# ${active.name}`)
+          : "Prat";
+        mobileActiveConversation.setAttribute("aria-current", active ? "page" : "false");
+        mobilePeopleShortcut.disabled = channelPeopleButton.disabled;
+        const query = conversationSearch.value.trim().toLocaleLowerCase();
+        const matches = (value: string) => !query || value.toLocaleLowerCase().includes(query);
+        const appendHeading = (text: string) => {
+          const heading = document.createElement("h3");
+          heading.textContent = text;
+          conversationList.append(heading);
+        };
+        const appendConversation = (channel: Channel, label: string, context = "") => {
+          if (!matches(`${label} ${context}`)) return false;
+          const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
+          const button = document.createElement("button");
+          button.type = "button";
+          button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
+          if (unreadCount > 0) button.classList.add("has-unread");
+          const name = document.createElement("span");
+          name.className = "conversation-label";
+          name.textContent = label;
+          button.append(name);
+          if (unreadCount > 0) {
+            const unread = document.createElement("span");
+            unread.className = "unread";
+            unread.textContent = approximateUnreadCount(unreadCount);
+            unread.setAttribute("aria-label", `${unreadCount} uleste meldingar`);
+            button.append(unread);
+          } else if (context) {
+            const meta = document.createElement("span");
+            meta.className = "conversation-meta";
+            meta.textContent = context;
+            button.append(meta);
+          }
+          button.addEventListener("click", () => {
+            selectChannel(channel);
+            if (window.matchMedia("(max-width: 640px)").matches) setMobileConversationDrawerOpen(false, true);
+          });
+          conversationList.append(button);
+          return true;
+        };
+        let rendered = 0;
+        const shared = knownChannels.filter((channel) => !channel.circle_id && !channel.is_direct);
+        const direct = knownChannels.filter((channel) => channel.is_direct);
+        const personal = knownChannels.filter((channel) => !channel.is_direct && channel.circle_id);
+        if (shared.some((channel) => matches(channel.name))) {
+          appendHeading("Felles");
+          shared.forEach((channel) => { if (appendConversation(channel, `# ${channel.name}`, "Felles")) rendered += 1; });
+        }
+        for (const [circleId, circle] of knownCircles) {
+          const channels = personal.filter((channel) => channel.circle_id === circleId);
+          if (!matches(circle.name) && !channels.some((channel) => matches(channel.name))) continue;
+          appendHeading(circle.name);
+          channels.forEach((channel) => { if (appendConversation(channel, `# ${channel.name}`, circle.name)) rendered += 1; });
+        }
+        if (direct.some((channel) => matches(directChannelLabel(channel)))) {
+          appendHeading("Direkte");
+          direct.forEach((channel) => { if (appendConversation(channel, directChannelLabel(channel), "Direkte")) rendered += 1; });
+        }
+        if (!query || matches("ny samtale")) {
+          const start = document.createElement("button");
+          start.type = "button";
+          start.className = "conversation-action";
+          start.textContent = "+ Ny samtale …";
+          start.addEventListener("click", () => {
+            if (window.matchMedia("(max-width: 640px)").matches) setMobileConversationDrawerOpen(false);
+            openDirectMessageDialog();
+          });
+          conversationList.append(start);
+        }
+        if (rendered === 0) {
+          const empty = document.createElement("p");
+          empty.className = "conversation-empty";
+          empty.textContent = query ? "Ingen samtalar passar søket." : "Ingen samtalar enno.";
+          conversationList.prepend(empty);
+        }
       }
 
       function renderBottomNavigation() {

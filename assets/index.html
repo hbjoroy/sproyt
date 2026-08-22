@@ -230,6 +230,8 @@
         .message.reaction-picker-requested .reaction-picker, .message .reaction-picker[open] { display: block; }
       }
       .mobile-navigation-toggle { display: none; }
+      .mobile-bottom-action { display: none; }
+      .conversation-drawer-header-toggle { display: none; }
       .bottom-navigation {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -310,6 +312,24 @@
       .navigation-heading { margin: 0 8px 5px; color: var(--muted); font-size: .8rem; font-weight: 700; letter-spacing: .01em; }
       .task-editor { display: grid; gap: 8px; margin-top: 12px; }
       .inbox-navigation { display: grid; gap: 3px; margin-bottom: 10px; }
+      .conversation-drawer { display: grid; min-height: 0; gap: 6px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+      .conversation-drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 6px; color: var(--muted); font-size: .8rem; }
+      .conversation-drawer-heading button { display: grid; width: 36px; min-width: 36px; min-height: 36px; padding: 0; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 1.15rem; }
+      .conversation-drawer-heading button:hover, .conversation-drawer-heading button:focus-visible { background: var(--surface-hover); color: var(--ink); }
+      .conversation-search-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+      #conversation-search { width: 100%; min-height: 40px; padding: 7px 9px; font-size: .88rem; }
+      .conversation-list { display: grid; align-content: start; gap: 3px; min-height: 0; max-height: min(48dvh, 520px); padding-right: 2px; overflow-y: auto; overscroll-behavior: contain; }
+      .conversation-list > h3 { margin: 8px 7px 2px; color: var(--subtle); font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; }
+      .conversation-list > h3:first-child { margin-top: 1px; }
+      .conversation-list button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; min-height: 44px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }
+      .conversation-list button:hover, .conversation-list button:focus-visible, .conversation-list button[aria-current="page"] { background: var(--surface-hover); color: var(--ink); }
+      .conversation-list button.has-unread { font-weight: 800; }
+      .conversation-list .conversation-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .conversation-list .conversation-meta { color: var(--subtle); font-size: .76rem; font-weight: 500; }
+      .conversation-list .conversation-action { color: var(--accent); font-weight: 700; }
+      .conversation-list .conversation-empty { margin: 5px 8px; color: var(--subtle); font-size: .85rem; }
+      .conversation-drawer.is-collapsed #conversation-search, .conversation-drawer.is-collapsed .conversation-list { display: none; }
+      .conversation-drawer.is-collapsed { min-height: auto; }
       .inbox-button { display: flex; min-height: 40px; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; }
       .inbox-button:hover, .inbox-button[aria-current="page"] { background: var(--surface-hover); color: var(--ink); }
       .inbox-icon { display: grid; width: 26px; height: 26px; flex: none; place-items: center; border-radius: 7px; background: var(--surface-hover); color: var(--muted); font-size: .86rem; font-weight: 800; text-align: center; }
@@ -751,7 +771,7 @@
         .sidebar.desktop-collapsed .status-summary-label,
         .sidebar.desktop-collapsed .notification-summary-label,
         .sidebar.desktop-collapsed .logout-label,
-        .sidebar.desktop-collapsed .navigation-heading { display: none; }
+        .sidebar.desktop-collapsed .navigation-heading, .sidebar.desktop-collapsed .conversation-drawer { display: none; }
         .sidebar.desktop-collapsed .desktop-sidebar-toggle { margin: 0; }
         .sidebar.desktop-collapsed .identity { width: 100%; justify-items: center; }
         .sidebar.desktop-collapsed #status-editor,
@@ -798,7 +818,7 @@
         main { grid-template-columns: 56px minmax(0, 1fr); }
         .sidebar { justify-items: center; gap: 12px; padding: 12px 7px; overflow-x: visible; }
         .sidebar .brand { width: 100%; display: grid; grid-template-columns: 1fr; justify-items: center; gap: 8px; }
-        .sidebar .brand h1, .sidebar .identity > span, .sidebar .status-summary-label, .sidebar .notification-summary-label, .sidebar .logout-label, .sidebar .navigation-heading { display: none; }
+        .sidebar .brand h1, .sidebar .identity > span, .sidebar .status-summary-label, .sidebar .notification-summary-label, .sidebar .logout-label, .sidebar .navigation-heading, .sidebar .conversation-drawer { display: none; }
         .sidebar .desktop-sidebar-toggle { margin: 0; }
         .sidebar .identity { width: 100%; justify-items: center; }
         .sidebar #status-editor, .sidebar #notification-editor { width: 100%; padding: 0; }
@@ -828,6 +848,7 @@
         .sidebar.desktop-expanded { justify-items: stretch; gap: 18px; padding: 20px 16px; overflow-x: hidden; }
         .sidebar.desktop-expanded .brand { display: flex; width: auto; justify-items: initial; gap: 10px; }
         .sidebar.desktop-expanded .brand h1, .sidebar.desktop-expanded .identity > span, .sidebar.desktop-expanded .status-summary-label, .sidebar.desktop-expanded .notification-summary-label, .sidebar.desktop-expanded .logout-label, .sidebar.desktop-expanded .navigation-heading { display: initial; }
+        .sidebar.desktop-expanded .conversation-drawer { display: grid; }
         .sidebar.desktop-expanded .desktop-sidebar-toggle { margin-left: auto; }
         .sidebar.desktop-expanded .identity { width: auto; justify-items: initial; }
         .sidebar.desktop-expanded #status-editor, .sidebar.desktop-expanded #notification-editor { width: auto; padding: 2px 0; }
@@ -846,6 +867,22 @@
         .sidebar.desktop-expanded .agent-access > :not(summary) { display: initial; }
         .sidebar.desktop-expanded .advanced-tools { display: grid; }
         .sidebar.desktop-expanded .desktop-advanced-entry { display: none; }
+      }
+
+      /* Conversation-first desktop shell: settings rail, conversation drawer, then chat. */
+      @media (min-width: 641px) {
+        main { grid-template-columns: 56px minmax(240px, 280px) minmax(0, 1fr); }
+        main.desktop-sidebar-collapsed { grid-template-columns: 56px minmax(240px, 280px) minmax(0, 1fr); }
+        main.desktop-sidebar-expanded { grid-template-columns: 280px minmax(240px, 280px) minmax(0, 1fr); }
+        main.conversation-drawer-collapsed, main.desktop-sidebar-collapsed.conversation-drawer-collapsed { grid-template-columns: 56px 0 minmax(0, 1fr); }
+        main.desktop-sidebar-expanded.conversation-drawer-collapsed { grid-template-columns: 280px 0 minmax(0, 1fr); }
+        .conversation-header, .messages, .composer-area { grid-column: 3; }
+        .conversation-drawer { grid-column: 2; grid-row: 1 / -1; display: grid; align-content: start; min-height: 0; gap: 8px; margin: 0; padding: 14px 10px; border-top: 0; border-right: 1px solid var(--line); background: var(--surface); overflow: hidden; }
+        .conversation-drawer.is-collapsed { display: none; }
+        .conversation-drawer-header-toggle { display: grid; width: 40px; min-width: 40px; min-height: 40px; padding: 0; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 1rem; }
+        .conversation-drawer-header-toggle:hover, .conversation-drawer-header-toggle:focus-visible { background: var(--surface-hover); color: var(--ink); }
+        .conversation-list { max-height: none; height: 100%; }
+        .bottom-navigation { display: none; }
       }
 
       @media (max-width: 640px) {
@@ -876,11 +913,13 @@
           grid-template-rows: 52px minmax(0, 1fr) auto;
         }
 
-        .sidebar { display: none; }
+        .sidebar, .conversation-drawer { display: none; }
         .conversation-header { grid-column: 1; grid-row: 1; }
         .messages { grid-column: 1; grid-row: 2; }
         .composer-area { grid-column: 1; grid-row: 3; }
         .sidebar.mobile-open { position: absolute; top: 52px; right: 0; left: 0; z-index: 5; display: grid; max-height: min(68dvh, calc(var(--app-height) - 132px)); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 8px; min-height: 0; padding: 8px 10px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; touch-action: pan-y; border-right: 0; border-bottom: 1px solid var(--line); box-shadow: 0 12px 24px rgb(24 32 29 / 16%); }
+        .conversation-drawer.mobile-open { position: absolute; inset: 0; z-index: 8; display: grid; align-content: start; gap: 10px; padding: 14px 12px; border: 0; background: var(--paper); overflow-y: auto; overscroll-behavior: contain; box-shadow: 0 12px 28px rgb(24 32 29 / 20%); }
+        .conversation-drawer.mobile-open .conversation-list { max-height: none; }
         .sidebar .brand, .sidebar .mobile-navigation-toggle { display: none; }
         .sidebar .identity { display: none; grid-column: 1 / -1; }
         .sidebar.mobile-open .identity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; }
@@ -912,11 +951,17 @@
         .conversation-header #connect-form { display: none !important; }
 
         .bottom-navigation {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
           padding-right: max(8px, env(safe-area-inset-right));
           padding-bottom: 6px;
           padding-left: max(8px, env(safe-area-inset-left));
         }
         .bottom-navigation-list { max-height: min(36dvh, calc(var(--app-height) - 210px)); }
+        .bottom-navigation > .bottom-navigation-panel { display: none; }
+        .mobile-bottom-action { display: grid; min-height: 44px; padding: 4px; place-items: center; gap: 1px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: .68rem; font-weight: 700; }
+        .mobile-bottom-action > span:first-child { font-size: 1.12rem; line-height: 1; }
+        .mobile-bottom-action:hover, .mobile-bottom-action:focus-visible, .mobile-bottom-action[aria-current="page"] { background: var(--surface-hover); color: var(--ink); }
+        .mobile-bottom-action:disabled { opacity: .48; }
         .bottom-navigation-panel > summary,
         .bottom-navigation-list button { min-height: 40px; }
 
@@ -1122,9 +1167,16 @@
         <section class="process-view" id="process-view" aria-live="polite" hidden></section>
         <a class="logout-link" href="/auth/logout" aria-label="Logg ut" data-tooltip="Logg ut" title="Logg ut"><span class="logout-icon" aria-hidden="true">↪</span><span class="logout-label">Logg ut</span></a>
       </aside>
+      <aside class="conversation-drawer" id="conversation-drawer" aria-label="Samtalar">
+        <div class="conversation-drawer-heading"><strong>Samtalar</strong><button id="conversation-drawer-toggle" type="button" aria-expanded="true" aria-controls="conversation-list" aria-label="Kollaps samtalelista" title="Kollaps samtalelista">‹</button></div>
+        <label class="conversation-search-label" for="conversation-search">Søk i samtalar</label>
+        <input id="conversation-search" type="search" autocomplete="off" placeholder="Søk samtalar …" aria-controls="conversation-list">
+        <div class="conversation-list" id="conversation-list" role="navigation" aria-label="Samtaleliste"><p class="status">Lastar samtalar …</p></div>
+      </aside>
       <header class="conversation-header">
         <div class="mobile-app-mark"><img src="/assets/sproyt-wave-icon-512.png" alt=""></div>
         <div class="conversation-details"><div class="conversation-heading"><h2 id="conversation-title">Samtalar</h2><span class="conversation-circle" id="conversation-circle" hidden></span></div><div class="conversation-context" id="conversation-context" hidden></div><p class="peer-status" id="conversation-peer-status" hidden></p></div>
+        <button class="conversation-drawer-header-toggle" id="conversation-drawer-header-toggle" type="button" aria-expanded="true" aria-controls="conversation-drawer" aria-label="Kollaps samtalelista" title="Kollaps samtalelista">☰</button>
         <div class="connection-status"><button class="connection-status-toggle" id="connection-status-toggle" type="button" aria-expanded="false" aria-controls="status" aria-label="Sambandsstatus: koplar til"><span class="connection-status-dot" id="connection-status-dot" aria-hidden="true"></span></button><div class="status" id="status" role="status" aria-live="polite"><span id="connection-status-text">Koplar til …</span><button id="reauthenticate-now" type="button" hidden>Logg inn no</button></div></div>
         <button class="channel-people" id="channel-people" type="button" aria-label="Vis menneska i kanalen" disabled>👥</button>
         <button class="mobile-navigation-toggle" id="mobile-navigation-toggle" type="button" aria-label="Opne menyen" aria-expanded="false" aria-controls="mobile-navigation">Meny</button>
@@ -1133,7 +1185,7 @@
         </div>
         <form id="connect-form" hidden><input id="channel" value="general"><button id="connect" type="submit">Kople til</button></form>
       </header>
-      <section class="messages" id="messages" aria-live="polite"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
+      <section class="messages" id="messages" aria-live="polite" tabindex="-1"><div class="empty-state"><h2>Vel ei samtale</h2><p>Samtalane dine kjem fram her når tilkoplinga er klar.</p></div></section>
       <div class="composer-area">
         <form class="send" id="send-form">
         <div class="composer-tools" id="composer-tools" aria-label="Meldingsverktøy" hidden><details class="emoji-picker"><summary aria-label="Legg til emoji">😊</summary><div id="message-emoji-options"><button type="button" data-emoji="😀">😀</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="🤔">🤔</button><button type="button" data-emoji="🙏">🙏</button><button type="button" data-emoji="🔥">🔥</button></div></details><button class="composer-icon" id="attach-media" type="button" aria-label="Last opp bilete eller video" title="Last opp bilete eller video">📎</button></div><input id="media-input" type="file" accept="image/*,video/*,.heic,.heif,.mov" multiple hidden><div id="media-previews"></div><p id="upload-status" role="status" aria-live="polite"></p>
@@ -1141,6 +1193,9 @@
         <button id="send" type="submit" aria-label="Send melding" title="Send melding" disabled><span aria-hidden="true">➤</span></button>
         </form>
         <nav class="bottom-navigation" aria-label="Område- og kanalveljar">
+          <button class="mobile-bottom-action" id="mobile-conversations-shortcut" type="button" aria-label="Opne samtalelista" aria-expanded="false" aria-controls="conversation-drawer"><span aria-hidden="true">☰</span><span>Samtalar</span></button>
+          <button class="mobile-bottom-action mobile-active-conversation" id="mobile-active-conversation" type="button" aria-label="Gå til aktiv samtale"><span aria-hidden="true">💬</span><span id="mobile-active-conversation-label">Prat</span></button>
+          <button class="mobile-bottom-action" id="mobile-people-shortcut" type="button" aria-label="Vis menneska i kanalen" disabled><span aria-hidden="true">👥</span><span>Menneske</span></button>
           <details class="bottom-navigation-panel" id="bottom-channel-panel">
             <summary id="bottom-channel-toggle" aria-controls="bottom-channel-list" aria-label="Vel kanal"><span class="bottom-navigation-label"># Kanal</span></summary>
             <div class="bottom-navigation-list" id="bottom-channel-list"><p class="status">Lastar …</p></div>
