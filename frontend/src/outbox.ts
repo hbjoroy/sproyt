@@ -28,8 +28,14 @@ export function createOutbox(): Outbox {
   return Object.freeze({
     send(socket: SocketWritable | null, command: WireCommand): boolean {
       if (socket === null || socket.readyState !== WebSocket.OPEN) return false;
-      socket.send(JSON.stringify(command));
-      return true;
+      try {
+        socket.send(JSON.stringify(command));
+        return true;
+      } catch {
+        // The socket can close between readyState and send(). Keep the durable
+        // id so the caller can replay it after the channel is subscribed.
+        return false;
+      }
     }
   });
 }

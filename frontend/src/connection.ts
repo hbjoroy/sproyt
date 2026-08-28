@@ -41,6 +41,8 @@ export interface ConnectionController {
   scheduleReconnect(closeCode?: number, closeReason?: string): void;
   send<Type extends ClientCommandType>(type: Type, ...args: ClientCommandArguments<Type>): string | null;
   resend<Type extends ClientCommandType>(requestId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null;
+  /** Atomically check the active subscription immediately before an idempotent resend. */
+  resendIfSubscribed<Type extends ClientCommandType>(requestId: string, channelId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null;
 }
 export interface ConnectionDependencies {
   readonly websocketUrl: () => string;
@@ -230,6 +232,10 @@ export function createConnectionController(dependencies: ConnectionDependencies)
   };
   const send = <Type extends ClientCommandType>(type: Type, ...args: ClientCommandArguments<Type>): string | null => sendWithSubscription(state.socket, type, ...args);
   const resend = <Type extends ClientCommandType>(requestId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null => sendViaRequest(state.socket, requestId, type, ...args);
+  const resendIfSubscribed = <Type extends ClientCommandType>(requestId: string, channelId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null => {
+    if (state.socketHandoff !== null || state.subscribedChannelId !== channelId) return null;
+    return sendViaRequest(state.socket, requestId, type, ...args);
+  };
   const reconcileDesiredSubscription = (socket: ConnectionSocket): void => {
     if (socket.readyState === WebSocket.OPEN && state.desiredChannelId !== null) {
       sendVia(socket, "subscribe_channel", { channel_id: state.desiredChannelId });
@@ -446,7 +452,8 @@ export function createConnectionController(dependencies: ConnectionDependencies)
     },
     scheduleReconnect: (closeCode = 1006, closeReason = ""): void => { if (state.reconnectTimer !== null) return; state.reconnectAttempt += 1; const delay = Math.min(15_000, 500 * (2 ** Math.min(state.reconnectAttempt - 1, 5))); const detail = closeReason ? `kode ${closeCode}: ${closeReason}` : `kode ${closeCode}`; dependencies.onStatus(false, `Fråkopla (${detail}) – prøver igjen om ${Math.ceil(delay / 1000)} sekund`); state.reconnectTimer = dependencies.setTimeout(() => { state.reconnectTimer = null; dependencies.recover().catch(() => controller.scheduleReconnect(closeCode, closeReason)); }, delay); },
     send,
-    resend
+    resend,
+    resendIfSubscribed
   });
   return controller;
 }

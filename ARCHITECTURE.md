@@ -67,6 +67,36 @@ with its nonce, client asset revision and feature visibility. A future client
 split must retain the same HTTP, WebSocket and typed-service contracts rather
 than duplicate domain logic.
 
+### Browser client migration to Rust/WASM
+
+The browser is split at the browser capability boundary. TypeScript owns DOM,
+focus, fetch, WebSocket objects, HttpOnly-cookie requests, IndexedDB, browser
+locks, broadcasts, timers and PWA lifecycle events. Rust owns deterministic
+policy and state transitions. Credentials are never passed into WASM.
+
+`crates/sproyt-client-core` is the first portable client-policy slice. It owns
+the durable-send admission and lifecycle model and builds both natively and for
+`wasm32-unknown-unknown`. The current TypeScript adapter mirrors that finite
+contract against shared JSON scenarios. It re-checks transport, subscription
+and session-handoff state after the asynchronous IndexedDB write, so a message
+is either dispatched with its original request id or remains durably queued;
+the composer is never left waiting for a request that did not reach a socket.
+
+The migration is deliberately staged:
+
+1. Add a fingerprinted, CSP-safe WASM asset and binding pipeline, then replace
+   the TypeScript admission mirror with the Rust export.
+2. Move refresh/recovery policy into the Rust state machine. TypeScript keeps
+   executing `/auth/session`, `/auth/refresh`, locks and broadcasts as effects.
+3. Move reconnect, socket-generation, handoff and desired-subscription policy
+   into the same core while TypeScript retains the concrete WebSocket handles.
+4. Move durable-command lifecycle and selected protocol validation only after
+   browser/PWA tests prove resume, token rotation and idempotent replay.
+
+DOM rendering and browser capability adapters are not migration targets unless
+measurements show a concrete benefit. The goal is one testable owner for client
+state, not a maximal WASM bundle.
+
 `assets/client-store.js` owns the application-state/mailbox boundary, while
 `assets/index.html` contains the current view and interaction layer. The
 fingerprinted client module is immutable; the compatibility URL and service

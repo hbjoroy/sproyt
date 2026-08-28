@@ -17,6 +17,10 @@ try {
     fileURLToPath(new URL("../tests/fixtures/rust-serde-client-commands.json", import.meta.url)),
     path.join(outputDirectory, "fixtures", "rust-serde-client-commands.json")
   );
+  await copyFile(
+    fileURLToPath(new URL("../tests/fixtures/durable-send-admission.json", import.meta.url)),
+    path.join(outputDirectory, "fixtures", "durable-send-admission.json")
+  );
   await build({
     bundle: true,
     entryPoints: [fileURLToPath(new URL("../tests/boundaries.test.ts", import.meta.url))],

@@ -1,0 +1,30 @@
+[
+  {
+    "channel_id": "c1",
+    "connected": true,
+    "subscribed_channel_id": "c1",
+    "handoff_active": false,
+    "admission": "dispatch_now"
+  },
+  {
+    "channel_id": "c1",
+    "connected": true,
+    "subscribed_channel_id": "c2",
+    "handoff_active": false,
+    "admission": "queue_until_subscribed"
+  },
+  {
+    "channel_id": "c1",
+    "connected": true,
+    "subscribed_channel_id": "c1",
+    "handoff_active": true,
+    "admission": "queue_until_subscribed"
+  },
+  {
+    "channel_id": "c1",
+    "connected": false,
+    "subscribed_channel_id": "c1",
+    "handoff_active": false,
+    "admission": "queue_until_subscribed"
+  }
+]

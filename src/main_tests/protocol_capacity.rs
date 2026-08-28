@@ -1199,8 +1199,12 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
             "const channelId = activeChannelId;\n        const scopeGeneration = composerScopeGeneration;"
         ));
     assert!(BROWSER_CLIENT.contains(
-            "pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId });"
+            "pendingMessages.set(outcome.requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId });"
         ));
+    assert!(BROWSER_CLIENT.contains(
+        "resendCommandIfSubscribed(requestId, input.channelId, \"send_message\", payload)"
+    ));
+    assert!(BROWSER_CLIENT.contains("Meldinga er lagra og blir sendt når samtalen er klar."));
     assert!(
         BROWSER_CLIENT.contains(
             "composerScopeGeneration === scopeGeneration && activeChannelId === channelId"

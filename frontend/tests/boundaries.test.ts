@@ -6,6 +6,8 @@ import { AgentApi, HttpClient, HttpError, NotificationApi, ProcessApi, readJson,
 import { clientCommandTypes, createConnectionController, isClientCommand, parseSocketEvent, resetTransientRequestsAfterDisconnect, shouldForceResume, type ConnectionSocket } from "../src/connection";
 import { NavigationController, restoreNavigation } from "../src/navigation";
 import { createDurableOutbox, type DurableOutboxStorage, type DurableSend } from "../src/durable-outbox";
+import { createOutbox } from "../src/outbox";
+import { admitPersistedSend } from "../src/send-admission";
 import { asWireEvent, isRecord, mediaFromUpload, protocolId } from "../src/types";
 import { createSessionController, fetchWithTimeout, parseSessionRefreshBroadcast, parseSessionRefreshLease, refreshDelayMilliseconds, sessionRefreshAfterSeconds } from "../src/session";
 
@@ -173,6 +175,40 @@ test("short focus changes do not force reconnect while real suspension and onlin
   assert.equal(shouldForceResume(1_000, null, true), true);
 });
 
+test("a persisted send re-checks the current subscription before dispatch", () => {
+  // This models the await in IndexedDB: the composer began in c1, then the
+  // user switched channel or a session handoff changed the active transport.
+  const fixturePath = fileURLToPath(new URL("./fixtures/durable-send-admission.json", import.meta.url));
+  const scenarios: unknown = JSON.parse(readFileSync(fixturePath, "utf8"));
+  assert.ok(Array.isArray(scenarios));
+  for (const scenario of scenarios) {
+    assert.ok(isRecord(scenario));
+    assert.equal(typeof scenario.channel_id, "string");
+    assert.equal(typeof scenario.connected, "boolean");
+    assert.ok(scenario.subscribed_channel_id === null || typeof scenario.subscribed_channel_id === "string");
+    assert.equal(typeof scenario.handoff_active, "boolean");
+    const channelId = scenario.channel_id;
+    const connected = scenario.connected;
+    const subscribedChannelId = scenario.subscribed_channel_id;
+    const handoffActive = scenario.handoff_active;
+    if (typeof channelId !== "string" || typeof connected !== "boolean" || (subscribedChannelId !== null && typeof subscribedChannelId !== "string") || typeof handoffActive !== "boolean") throw new Error("invalid durable send fixture");
+    assert.equal(admitPersistedSend(channelId, {
+      connected,
+      subscribedChannelId,
+      handoffActive
+    }), scenario.admission);
+  }
+});
+
+test("a socket closing during dispatch reports failure without losing the durable id", () => {
+  const outbox = createOutbox();
+  const socket = {
+    readyState: WebSocket.OPEN,
+    send: () => { throw new DOMException("closing", "InvalidStateError"); }
+  };
+  assert.equal(outbox.send(socket, { protocol: protocolId, request_id: "durable-race", type: "send_message", payload: { channel_id: "c1", body: "hei" } }), false);
+});
+
 test("connection controller serializes typed commands and keeps malformed frames out of callbacks", () => {
   const socket = new FakeSocket();
   const events: unknown[] = [];
@@ -234,6 +270,7 @@ test("socket handoff keeps active acknowledgements routed and settles candidate 
   active.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId, request_id: "handoff-2", type: "subscription_started", payload: { channel_id: "c1", history: [] } }) }));
   assert.notEqual(controller.send("send_message", { channel_id: "c1", body: "main" }), null);
   controller.replaceAfterSessionRefresh();
+  assert.equal(controller.resendIfSubscribed("durable-handoff", "c1", "send_message", { channel_id: "c1", body: "queued" }), null, "a durable send waits for the refreshed socket instead of using the old cookie");
   const candidate = sockets[1]; assert.notEqual(candidate, undefined); if (!candidate) return;
   candidate.readyState = WebSocket.OPEN; candidate.emit("open", new Event("open"));
   assert.equal(JSON.parse(candidate.sent[0] ?? "{}").type, "hello");
@@ -243,6 +280,9 @@ test("socket handoff keeps active acknowledgements routed and settles candidate 
   assert.ok(events.includes("message_accepted"));
   assert.equal(pendingUserRequests.size, 0);
   assert.equal(active.readyState, WebSocket.CLOSED);
+  assert.equal(controller.resendIfSubscribed("durable-handoff", "c1", "send_message", { channel_id: "c1", body: "queued" }), "durable-handoff", "the same id is dispatched once the candidate owns the subscription");
+  candidate.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId, request_id: "durable-handoff", type: "message_accepted", payload: { message: { id: "durable", channel_id: "c1", sender_id: "u1", sender_display_name: "Ada", body: "queued", sequence: 2, sent_at: "2026-08-20T08:00:30Z" } } }) }));
+  assert.equal(pendingUserRequests.size, 0);
   assert.notEqual(controller.send("send_message", { channel_id: "c1", parent_message_id: "m1", body: "thread" }), null);
   controller.replaceAfterSessionRefresh();
   const failedCandidate = sockets[2]; assert.notEqual(failedCandidate, undefined); if (!failedCandidate) return;

@@ -4,6 +4,7 @@
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
       import { NavigationController } from "./navigation";
+      import { admitPersistedSend } from "./send-admission";
       import { createSessionController, fetchWithTimeout, sessionRefreshAfterSeconds, type SessionController } from "./session";
       import { isJsonObject, isRecord, mediaFromUpload } from "./types";
       import type { Channel, ChatMessage, Circle, ClientCommand, ClientCommandArguments, JsonObject, MediaObject, Mention, MermaidApi, ThreadComposerState, ThreadSummary, UploadResponse, UserProfile, UserTask, WireEvent } from "./types";
@@ -267,6 +268,9 @@
       function resendCommand<Type extends ClientCommand["type"]>(requestId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null {
         return connectionSupervisor.resend(requestId, type, ...args);
       }
+      function resendCommandIfSubscribed<Type extends ClientCommand["type"]>(requestId: string, channelId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null {
+        return connectionSupervisor.resendIfSubscribed(requestId, channelId, type, ...args);
+      }
       // `direct_channel_opened` carries the channel base model rather than a
       // channel-list summary.  Keep the requested peer by request id so the
       // first locally-created DM is immediately classified as a DM too.
@@ -462,8 +466,9 @@
         syncComposerState();
       }
 
-      async function persistThenSend(input: Readonly<{ channelId: string; parentMessageId: string | null; body: string; draft: string; media: readonly MediaObject[] }>): Promise<string | null> {
+      async function persistThenSend(input: Readonly<{ channelId: string; parentMessageId: string | null; body: string; draft: string; media: readonly MediaObject[] }>): Promise<Readonly<{ requestId: string; dispatched: boolean; durable: boolean }> | null> {
         const requestId = nextRequestId();
+        let durable = true;
         try {
           await durableOutbox.enqueue({ requestId, channelId: input.channelId, parentMessageId: input.parentMessageId, body: input.body, draft: input.draft, media: durableMedia(input.media) });
         } catch (error) {
@@ -475,15 +480,22 @@
           // IndexedDB can be unavailable or evicted in installed iOS PWAs. Do
           // not turn that into a hard composer lock: send with the same id and
           // state the reduced recovery guarantee visibly.
+          durable = false;
           setConnectionStatus(`Mellombels lagring feila (${detail}). Sender utan gjenoppretting etter app-avslutting.`);
         }
         const payload = input.parentMessageId
           ? { channel_id: input.channelId, parent_message_id: input.parentMessageId, body: input.body }
           : { channel_id: input.channelId, body: input.body };
-        // Once the id has been chosen it is never replaced. If the socket has
-        // just died, keeping this pending lets the reconnect path use that id.
-        resendCommand(requestId, "send_message", payload);
-        return requestId;
+        // Read readiness after persistence. The earlier check made before the
+        // IndexedDB await could become stale during a channel switch, resume,
+        // or session socket handoff.
+        const transport = connectionSupervisor.snapshot();
+        const dispatched = admitPersistedSend(input.channelId, {
+          connected: transport.connected,
+          subscribedChannelId: transport.subscribedChannelId,
+          handoffActive: transport.handoffActive
+        }) === "dispatch_now" && resendCommandIfSubscribed(requestId, input.channelId, "send_message", payload) !== null;
+        return { requestId, dispatched, durable };
       }
 
       function resizeComposer() {
@@ -1007,10 +1019,27 @@
         if (!body || !rootId || !channelId || !state || state.uploadCount > 0) return;
         threadBody.readOnly = true;
         syncThreadComposer();
-        const requestId = await persistThenSend({ channelId, parentMessageId: rootId, body, draft, media });
+        const outcome = await persistThenSend({ channelId, parentMessageId: rootId, body, draft, media });
         const stillActive = threadScopeGeneration === scopeGeneration && activeChannelId === channelId && activeThreadRootId === rootId;
-        if (!requestId) { if (stillActive) { threadBody.readOnly = false; syncThreadComposer(); } return; }
-        pendingThreadReplies.set(requestId, { rootId, channelId, body, draft, mediaIds: media.map((item) => item.id) });
+        if (!outcome) { if (stillActive) { threadBody.readOnly = false; syncThreadComposer(); } return; }
+        if (!outcome.dispatched) {
+          if (outcome.durable) {
+            // A definitely queued entry must not restore its draft: replaying
+            // the same durable id after subscribe would otherwise duplicate a
+            // message the user sends again. It stays out of pending maps until
+            // replay actually dispatches it, so this composer remains usable.
+            state.draft = "";
+            state.media = [];
+            clearThreadDraft(rootId, channelId);
+            if (stillActive) { threadBody.value = ""; threadBody.readOnly = false; renderThreadMediaPreviews(); syncThreadComposer(); }
+            setConnected(connectionSupervisor.snapshot().connected, "Svaret er lagra og blir sendt når samtalen er klar.");
+            return;
+          }
+          if (stillActive) { threadBody.readOnly = false; syncThreadComposer(); }
+          setConnected(connectionSupervisor.snapshot().connected, "Svaret vart ikkje sendt; prøv igjen.");
+          return;
+        }
+        pendingThreadReplies.set(outcome.requestId, { rootId, channelId, body, draft, mediaIds: media.map((item) => item.id) });
         state.draft = "";
         if (stillActive) { threadBody.value = ""; threadBody.readOnly = true; syncThreadComposer(); }
       });
@@ -1194,10 +1223,31 @@
         const scopeGeneration = composerScopeGeneration;
         bodyInput.readOnly = true;
         syncComposerState();
-        const requestId = await persistThenSend({ channelId, parentMessageId: null, body, draft, media: channelMedia });
+        const outcome = await persistThenSend({ channelId, parentMessageId: null, body, draft, media: channelMedia });
         const stillActive = composerScopeGeneration === scopeGeneration && activeChannelId === channelId;
-        if (!requestId) { if (stillActive) { bodyInput.readOnly = false; syncComposerState(); } return; }
-        pendingMessages.set(requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId });
+        if (!outcome) { if (stillActive) { bodyInput.readOnly = false; syncComposerState(); } return; }
+        if (!outcome.dispatched) {
+          if (outcome.durable) {
+            // Queue without a pending-map lock. The durable replay owns this
+            // id; putting the same draft back would let a new submit duplicate
+            // it before the connection returns.
+            navigation.persistChannelDraft(channelId, "");
+            if (stillActive) {
+              bodyInput.value = "";
+              pendingMedia = pendingMedia.filter((media) => !channelMedia.some((queued) => queued.id === media.id));
+              closeMentionSuggestions();
+              renderMediaPreviews();
+              bodyInput.readOnly = false;
+              syncComposerState();
+            }
+            setConnected(connectionSupervisor.snapshot().connected, "Meldinga er lagra og blir sendt når samtalen er klar.");
+            return;
+          }
+          if (stillActive) { bodyInput.readOnly = false; syncComposerState(); }
+          setConnected(connectionSupervisor.snapshot().connected, "Meldinga vart ikkje sendt; prøv igjen.");
+          return;
+        }
+        pendingMessages.set(outcome.requestId, { body, draft, mediaIds: channelMedia.map((media) => media.id), channelId });
         if (stillActive) {
           bodyInput.value = "";
           persistActiveDraft();
