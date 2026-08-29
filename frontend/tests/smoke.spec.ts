@@ -128,6 +128,15 @@ test("conversation-first navigation collapses on desktop and behaves as a modal 
   await expect(drawer).toBeVisible();
   await expect(drawerSearch).toBeFocused();
 
+  const channelNotifications = drawer.getByRole("button", { name: /Slå på varsel for/ }).first();
+  await expect(channelNotifications).toBeVisible({ timeout: 15_000 });
+  const channelName = (await channelNotifications.getAttribute("aria-label"))?.replace("Slå på varsel for ", "");
+  expect(channelName).toBeTruthy();
+  await channelNotifications.click();
+  await expect(drawer.getByRole("button", { name: `Slå av varsel for ${channelName}` })).toBeVisible();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#conversation-drawer").getByRole("button", { name: `Slå av varsel for ${channelName}` })).toBeVisible({ timeout: 15_000 });
+
   await page.setViewportSize({ width: 375, height: 667 });
   await expect(headerToggle).toBeHidden();
   await expect(page.locator(".conversation-header #channel-people")).toBeHidden();

@@ -1,12 +1,13 @@
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, HeaderName, HeaderValue},
     response::IntoResponse,
 };
 use serde::Deserialize;
 
 use crate::{
+    domain::ChannelId,
     notification::{NotificationPreferences, PushSubscriptionInput},
     operations::ClientEvent,
     server::AppState,
@@ -14,6 +15,49 @@ use crate::{
         WsQuery, auth_error_response, authenticate_http, chat_error_response, repository_response,
     },
 };
+
+pub(crate) async fn enable_channel_notifications(
+    State(state): State<AppState>,
+    Path(channel): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    set_channel_notifications(state, channel, query, headers, true).await
+}
+
+pub(crate) async fn disable_channel_notifications(
+    State(state): State<AppState>,
+    Path(channel): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    set_channel_notifications(state, channel, query, headers, false).await
+}
+
+async fn set_channel_notifications(
+    state: AppState,
+    channel: String,
+    query: WsQuery,
+    headers: HeaderMap,
+    enabled: bool,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    let channel_id = match ChannelId::new(channel) {
+        Ok(channel_id) => channel_id,
+        Err(_) => return axum::http::StatusCode::BAD_REQUEST.into_response(),
+    };
+    match state
+        .notifications
+        .set_channel_subscription(principal.user.id, channel_id, enabled)
+        .await
+    {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => repository_response(error),
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

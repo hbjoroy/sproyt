@@ -327,9 +327,14 @@
       .conversation-circle-heading h3 { min-width: 0; margin: 0; overflow: hidden; color: var(--subtle); font-size: .72rem; letter-spacing: .06em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
       .conversation-circle-invite { display: inline-flex; width: auto; min-height: 36px; align-items: center; gap: 5px; padding: 4px 7px; border: 0; border-radius: 7px; background: transparent; color: var(--accent); font-size: .78rem; font-weight: 700; }
       .conversation-circle-invite:hover, .conversation-circle-invite:focus-visible { background: var(--surface-hover); color: var(--accent); }
-      .conversation-list > button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; min-height: 44px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }
-      .conversation-list > button:hover, .conversation-list > button:focus-visible, .conversation-list > button[aria-current="page"] { background: var(--surface-hover); color: var(--ink); }
-      .conversation-list > button.has-unread { font-weight: 800; }
+      .conversation-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 2px; min-width: 0; }
+      .conversation-row.has-notification-toggle { grid-template-columns: minmax(0, 1fr) 38px; }
+      .conversation-list > button, .conversation-row > .conversation-select { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; min-height: 44px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }
+      .conversation-list > button:hover, .conversation-list > button:focus-visible, .conversation-list > button[aria-current="page"], .conversation-row > .conversation-select:hover, .conversation-row > .conversation-select:focus-visible, .conversation-row > .conversation-select[aria-current="page"] { background: var(--surface-hover); color: var(--ink); }
+      .conversation-list > button.has-unread, .conversation-row > .conversation-select.has-unread { font-weight: 800; }
+      .channel-notification-toggle { display: grid; width: 38px; min-width: 38px; min-height: 38px; padding: 0; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 1rem; }
+      .channel-notification-toggle:hover, .channel-notification-toggle:focus-visible { background: var(--surface-hover); color: var(--ink); }
+      .channel-notification-toggle[aria-pressed="true"] { color: var(--accent); }
       .conversation-list .conversation-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .conversation-list .conversation-meta { color: var(--subtle); font-size: .76rem; font-weight: 500; }
       .conversation-list .conversation-action { color: var(--accent); font-weight: 700; }

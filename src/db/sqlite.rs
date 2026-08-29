@@ -682,6 +682,12 @@ impl ChatRepository for SqliteChatRepository {
             if !Policy::can_leave_circle(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
+            sqlx::query("delete from channel_notification_subscriptions where user_id = ? and channel_id in (select id from channels where circle_id = ?)")
+                .bind(command.actor.to_string())
+                .bind(command.circle_id.to_string())
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
             sqlx::query("delete from channel_memberships where user_id = ? and channel_id in (select id from channels where circle_id = ?)")
                 .bind(command.actor.to_string())
                 .bind(command.circle_id.to_string())
@@ -1082,6 +1088,14 @@ impl ChatRepository for SqliteChatRepository {
             if result.rows_affected() == 0 {
                 return Err(RepositoryError::NotFound);
             }
+            sqlx::query(
+                "delete from channel_notification_subscriptions where channel_id=? and user_id=?",
+            )
+            .bind(command.channel_id.to_string())
+            .bind(command.actor.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(sql_error)?;
             Ok(())
         })
     }

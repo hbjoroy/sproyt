@@ -12,7 +12,7 @@ use web_push_native::{
 
 use crate::{
     config::{DatabaseConfig, DatabaseKind},
-    domain::{ChatMessage, RepositoryError, UserId},
+    domain::{ChannelId, ChatMessage, RepositoryError, UserId},
 };
 
 #[derive(Clone)]
@@ -88,6 +88,7 @@ pub struct NotificationSettings {
     pub public_key: Option<String>,
     pub preferences: NotificationPreferences,
     pub subscriptions: i64,
+    pub channel_ids: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -99,6 +100,7 @@ struct PushJob {
     auth: String,
     sender: String,
     channel: String,
+    channel_name: String,
     body: String,
     kind: String,
 }
@@ -220,12 +222,103 @@ impl NotificationService {
             .await
             .map_err(storage)?,
         };
+        let channel_ids = match &self.store {
+            NotificationStore::Postgres(pool) => sqlx::query_scalar::<_, uuid::Uuid>(
+                "select channel_id from channel_notification_subscriptions where user_id=$1 order by channel_id",
+            )
+            .bind(user_id.as_uuid())
+            .fetch_all(pool)
+            .await
+            .map_err(storage)?
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect(),
+            NotificationStore::Sqlite(pool) => sqlx::query_scalar::<_, String>(
+                "select channel_id from channel_notification_subscriptions where user_id=? order by channel_id",
+            )
+            .bind(user_id.to_string())
+            .fetch_all(pool)
+            .await
+            .map_err(storage)?,
+        };
         Ok(NotificationSettings {
             enabled: self.sender.is_some(),
             public_key: self.public_key.clone(),
             preferences,
             subscriptions,
+            channel_ids,
         })
+    }
+
+    pub async fn set_channel_subscription(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+        enabled: bool,
+    ) -> Result<(), RepositoryError> {
+        let affected = match (&self.store, enabled) {
+            (NotificationStore::Postgres(pool), true) => sqlx::query(
+                "insert into channel_notification_subscriptions(user_id,channel_id,notification_after_message_id) select $1,c.id,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid) from channels c join channel_memberships cm on cm.channel_id=c.id and cm.user_id=$1 where c.id=$2 and not exists(select 1 from direct_conversations d where d.channel_id=c.id) and not exists(select 1 from direct_group_conversations g where g.channel_id=c.id) on conflict(user_id,channel_id) do nothing",
+            )
+            .bind(user_id.as_uuid())
+            .bind(channel_id.as_uuid())
+            .execute(pool)
+            .await
+            .map_err(storage)?
+            .rows_affected(),
+            (NotificationStore::Sqlite(pool), true) => sqlx::query(
+                "insert into channel_notification_subscriptions(user_id,channel_id,notification_after_message_id) select ?,c.id,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000') from channels c join channel_memberships cm on cm.channel_id=c.id and cm.user_id=? where c.id=? and not exists(select 1 from direct_conversations d where d.channel_id=c.id) and not exists(select 1 from direct_group_conversations g where g.channel_id=c.id) on conflict(user_id,channel_id) do nothing",
+            )
+            .bind(user_id.to_string())
+            .bind(user_id.to_string())
+            .bind(channel_id.to_string())
+            .execute(pool)
+            .await
+            .map_err(storage)?
+            .rows_affected(),
+            (NotificationStore::Postgres(pool), false) => sqlx::query(
+                "delete from channel_notification_subscriptions where user_id=$1 and channel_id=$2",
+            )
+            .bind(user_id.as_uuid())
+            .bind(channel_id.as_uuid())
+            .execute(pool)
+            .await
+            .map_err(storage)?
+            .rows_affected(),
+            (NotificationStore::Sqlite(pool), false) => sqlx::query(
+                "delete from channel_notification_subscriptions where user_id=? and channel_id=?",
+            )
+            .bind(user_id.to_string())
+            .bind(channel_id.to_string())
+            .execute(pool)
+            .await
+            .map_err(storage)?
+            .rows_affected(),
+        };
+        if enabled && affected == 0 {
+            let already_enabled = match &self.store {
+                NotificationStore::Postgres(pool) => sqlx::query_scalar::<_, bool>(
+                    "select exists(select 1 from channel_notification_subscriptions where user_id=$1 and channel_id=$2)",
+                )
+                .bind(user_id.as_uuid())
+                .bind(channel_id.as_uuid())
+                .fetch_one(pool)
+                .await
+                .map_err(storage)?,
+                NotificationStore::Sqlite(pool) => sqlx::query_scalar::<_, bool>(
+                    "select exists(select 1 from channel_notification_subscriptions where user_id=? and channel_id=?)",
+                )
+                .bind(user_id.to_string())
+                .bind(channel_id.to_string())
+                .fetch_one(pool)
+                .await
+                .map_err(storage)?,
+            };
+            if !already_enabled {
+                return Err(RepositoryError::PermissionDenied);
+            }
+        }
+        Ok(())
     }
 
     pub async fn save_preferences(
@@ -260,10 +353,10 @@ impl NotificationService {
         let id = Uuid::now_v7();
         match &self.store {
             NotificationStore::Postgres(pool) => {
-                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id) values($1,$2,$3,$4,$5,$6,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid)) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id).bind(user_id.as_uuid()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
+                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id,thread_notification_after_message_id) values($1,$2,$3,$4,$5,$6,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid),coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid)) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id).bind(user_id.as_uuid()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
             }
             NotificationStore::Sqlite(pool) => {
-                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id) values(?,?,?,?,?,?,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000')) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id.to_string()).bind(user_id.to_string()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
+                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id,thread_notification_after_message_id) values(?,?,?,?,?,?,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'),coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000')) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id.to_string()).bind(user_id.to_string()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
             }
         }
         Ok(())
@@ -341,6 +434,9 @@ impl NotificationService {
         let mention_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,mm.mentioned_user_id,mm.message_id,'mention' from message_mentions mm join messages m on m.id=mm.message_id join push_subscriptions s on s.user_id=mm.mentioned_user_id left join notification_preferences p on p.user_id=mm.mentioned_user_id where mm.mentioned_user_id<>m.sender_id and m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.mentions,true) on conflict(subscription_id,message_id) do nothing";
         let direct_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end,m.id,'direct_message' from messages m join direct_conversations d on d.channel_id=m.channel_id join push_subscriptions s on s.user_id=case when d.user_a_id=m.sender_id then d.user_b_id else d.user_a_id end left join notification_preferences p on p.user_id=s.user_id where m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing";
         let group_direct_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,cm.user_id,m.id,'direct_message' from messages m join direct_group_conversations g on g.channel_id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id join users u on u.id=cm.user_id and u.kind='human' join push_subscriptions s on s.user_id=cm.user_id left join notification_preferences p on p.user_id=s.user_id where cm.user_id<>m.sender_id and m.id>s.notification_after_message_id and coalesce(p.mode,'instant')='instant' and coalesce(p.direct_messages,true) on conflict(subscription_id,message_id) do nothing";
+        let thread_root_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,root.sender_id,m.id,'thread_reply' from messages m join messages root on root.id=m.parent_message_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=root.sender_id join push_subscriptions s on s.user_id=root.sender_id left join notification_preferences p on p.user_id=s.user_id where root.sender_id<>m.sender_id and m.id>s.thread_notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing";
+        let thread_participant_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select distinct s.id,prior.sender_id,m.id,'thread_reply' from messages m join messages root on root.id=m.parent_message_id join messages prior on prior.parent_message_id=root.id and prior.sequence<m.sequence join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=prior.sender_id join push_subscriptions s on s.user_id=prior.sender_id left join notification_preferences p on p.user_id=s.user_id where prior.sender_id<>m.sender_id and m.id>s.thread_notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing";
+        let channel_pg = "insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,cs.user_id,m.id,'channel_message' from messages m join channel_notification_subscriptions cs on cs.channel_id=m.channel_id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=cs.user_id join push_subscriptions s on s.user_id=cs.user_id left join notification_preferences p on p.user_id=s.user_id where cs.user_id<>m.sender_id and m.id>s.notification_after_message_id and m.id>cs.notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing";
         match &self.store {
             NotificationStore::Postgres(pool) => {
                 sqlx::query(mention_pg)
@@ -352,6 +448,18 @@ impl NotificationService {
                     .await
                     .map_err(storage)?;
                 sqlx::query(group_direct_pg)
+                    .execute(pool)
+                    .await
+                    .map_err(storage)?;
+                sqlx::query(thread_root_pg)
+                    .execute(pool)
+                    .await
+                    .map_err(storage)?;
+                sqlx::query(thread_participant_pg)
+                    .execute(pool)
+                    .await
+                    .map_err(storage)?;
+                sqlx::query(channel_pg)
                     .execute(pool)
                     .await
                     .map_err(storage)?;
@@ -373,13 +481,25 @@ impl NotificationService {
                     .execute(pool)
                     .await
                     .map_err(storage)?;
+                sqlx::query(thread_root_pg)
+                    .execute(pool)
+                    .await
+                    .map_err(storage)?;
+                sqlx::query(thread_participant_pg)
+                    .execute(pool)
+                    .await
+                    .map_err(storage)?;
+                sqlx::query(channel_pg)
+                    .execute(pool)
+                    .await
+                    .map_err(storage)?;
             }
         }
         Ok(())
     }
 
     async fn claim(&self) -> Result<Option<PushJob>, RepositoryError> {
-        let select_pg = "select o.subscription_id,o.message_id,s.endpoint,s.p256dh,s.auth,m.sender_display_name,c.id,m.body,o.kind from notification_outbox o join push_subscriptions s on s.id=o.subscription_id join messages m on m.id=o.message_id join channels c on c.id=m.channel_id where o.delivered_at is null and o.available_at<=now() and (o.leased_until is null or o.leased_until<now()) order by o.created_at limit 1";
+        let select_pg = "select o.subscription_id,o.message_id,s.endpoint,s.p256dh,s.auth,m.sender_display_name,c.id,c.name,m.body,o.kind from notification_outbox o join push_subscriptions s on s.id=o.subscription_id join messages m on m.id=o.message_id join channels c on c.id=m.channel_id where o.delivered_at is null and o.available_at<=now() and (o.leased_until is null or o.leased_until<now()) order by o.created_at limit 1";
         let row = match &self.store {
             NotificationStore::Postgres(pool) => sqlx::query(select_pg)
                 .fetch_optional(pool)
@@ -470,6 +590,25 @@ pub(crate) async fn enqueue_message_postgres(
         .execute(&mut **transaction)
         .await
         .map_err(storage)?;
+    if message.parent_message_id.is_some() {
+        sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,root.sender_id,reply.id,'thread_reply' from messages reply join messages root on root.id=reply.parent_message_id join channel_memberships cm on cm.channel_id=reply.channel_id and cm.user_id=root.sender_id join push_subscriptions s on s.user_id=root.sender_id left join notification_preferences p on p.user_id=s.user_id where reply.id=$1 and root.sender_id<>reply.sender_id and reply.id>s.thread_notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing")
+            .bind(*message.id.as_uuid())
+            .execute(&mut **transaction)
+            .await
+            .map_err(storage)?;
+        sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select distinct s.id,prior.sender_id,reply.id,'thread_reply' from messages reply join messages root on root.id=reply.parent_message_id join messages prior on prior.parent_message_id=root.id and prior.sequence<reply.sequence join channel_memberships cm on cm.channel_id=reply.channel_id and cm.user_id=prior.sender_id join push_subscriptions s on s.user_id=prior.sender_id left join notification_preferences p on p.user_id=s.user_id where reply.id=$1 and prior.sender_id<>reply.sender_id and reply.id>s.thread_notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing")
+            .bind(*message.id.as_uuid())
+            .execute(&mut **transaction)
+            .await
+            .map_err(storage)?;
+    }
+    sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,cs.user_id,$1,'channel_message' from channel_notification_subscriptions cs join channel_memberships cm on cm.channel_id=cs.channel_id and cm.user_id=cs.user_id join push_subscriptions s on s.user_id=cs.user_id left join notification_preferences p on p.user_id=s.user_id where cs.channel_id=$2 and cs.user_id<>$3 and $1>s.notification_after_message_id and $1>cs.notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing")
+        .bind(*message.id.as_uuid())
+        .bind(*message.channel_id.as_uuid())
+        .bind(*message.sender_id.as_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(storage)?;
     Ok(())
 }
 
@@ -500,6 +639,27 @@ pub(crate) async fn enqueue_message_sqlite(
         .execute(&mut **transaction)
         .await
         .map_err(storage)?;
+    if message.parent_message_id.is_some() {
+        sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,root.sender_id,reply.id,'thread_reply' from messages reply join messages root on root.id=reply.parent_message_id join channel_memberships cm on cm.channel_id=reply.channel_id and cm.user_id=root.sender_id join push_subscriptions s on s.user_id=root.sender_id left join notification_preferences p on p.user_id=s.user_id where reply.id=? and root.sender_id<>reply.sender_id and reply.id>s.thread_notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing")
+            .bind(message.id.as_uuid().to_string())
+            .execute(&mut **transaction)
+            .await
+            .map_err(storage)?;
+        sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select distinct s.id,prior.sender_id,reply.id,'thread_reply' from messages reply join messages root on root.id=reply.parent_message_id join messages prior on prior.parent_message_id=root.id and prior.sequence<reply.sequence join channel_memberships cm on cm.channel_id=reply.channel_id and cm.user_id=prior.sender_id join push_subscriptions s on s.user_id=prior.sender_id left join notification_preferences p on p.user_id=s.user_id where reply.id=? and prior.sender_id<>reply.sender_id and reply.id>s.thread_notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing")
+            .bind(message.id.as_uuid().to_string())
+            .execute(&mut **transaction)
+            .await
+            .map_err(storage)?;
+    }
+    sqlx::query("insert into notification_outbox(subscription_id,recipient_id,message_id,kind) select s.id,cs.user_id,?,'channel_message' from channel_notification_subscriptions cs join channel_memberships cm on cm.channel_id=cs.channel_id and cm.user_id=cs.user_id join push_subscriptions s on s.user_id=cs.user_id left join notification_preferences p on p.user_id=s.user_id where cs.channel_id=? and cs.user_id<>? and ?>s.notification_after_message_id and ?>cs.notification_after_message_id and coalesce(p.mode,'instant')='instant' on conflict(subscription_id,message_id) do nothing")
+        .bind(message.id.as_uuid().to_string())
+        .bind(message.channel_id.to_string())
+        .bind(message.sender_id.to_string())
+        .bind(message.id.as_uuid().to_string())
+        .bind(message.id.as_uuid().to_string())
+        .execute(&mut **transaction)
+        .await
+        .map_err(storage)?;
     Ok(())
 }
 
@@ -525,10 +685,11 @@ impl PushSender {
                 Auth::clone_from_slice(&auth),
             )
             .with_vapid(&key_pair, &self.subject);
-            let title = if job.kind == "mention" {
-                format!("{} omtalte deg", job.sender)
-            } else {
-                format!("Melding frå {}", job.sender)
+            let title = match job.kind.as_str() {
+                "mention" => format!("{} omtalte deg", job.sender),
+                "thread_reply" => format!("Svar i tråd frå {}", job.sender),
+                "channel_message" => format!("{} i #{}", job.sender, job.channel_name),
+                _ => format!("Melding frå {}", job.sender),
             };
             let payload = serde_json::to_vec(&serde_json::json!({"web_push":8030,"notification":{"title":title,"body":notification_body(&job.body),"navigate":format!("/?channel={}&message={}",job.channel,job.message_id),"tag":format!("message-{}",job.message_id)}})).map_err(|error| error.to_string())?;
             builder.build(payload).map_err(|error| error.to_string())
@@ -599,8 +760,9 @@ fn push_job_pg(row: sqlx::postgres::PgRow) -> Result<PushJob, RepositoryError> {
         auth: row.try_get(4).map_err(storage)?,
         sender: row.try_get(5).map_err(storage)?,
         channel: row.try_get::<Uuid, _>(6).map_err(storage)?.to_string(),
-        body: row.try_get(7).map_err(storage)?,
-        kind: row.try_get(8).map_err(storage)?,
+        channel_name: row.try_get(7).map_err(storage)?,
+        body: row.try_get(8).map_err(storage)?,
+        kind: row.try_get(9).map_err(storage)?,
     })
 }
 fn push_job_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<PushJob, RepositoryError> {
@@ -614,8 +776,9 @@ fn push_job_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<PushJob, RepositoryEr
         auth: row.try_get(4).map_err(storage)?,
         sender: row.try_get(5).map_err(storage)?,
         channel: row.try_get(6).map_err(storage)?,
-        body: row.try_get(7).map_err(storage)?,
-        kind: row.try_get(8).map_err(storage)?,
+        channel_name: row.try_get(7).map_err(storage)?,
+        body: row.try_get(8).map_err(storage)?,
+        kind: row.try_get(9).map_err(storage)?,
     })
 }
 fn redact_error(error: String) -> String {
@@ -1176,5 +1339,217 @@ mod tests {
         .unwrap();
         assert_eq!(after, before);
         assert_eq!(pending, 1);
+    }
+
+    #[tokio::test]
+    async fn thread_participants_and_channel_followers_receive_one_prioritized_notification() {
+        let service = service().await;
+        let NotificationStore::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        let root_author = UserId::named("root-author");
+        let participant = UserId::named("participant");
+        let follower = UserId::named("follower");
+        let sender = UserId::named("reply-sender");
+        for (user, name) in [
+            (&root_author, "Root author"),
+            (&participant, "Participant"),
+            (&follower, "Follower"),
+            (&sender, "Reply sender"),
+        ] {
+            sqlx::query("insert into users(id,kind,display_name) values(?,'human',?)")
+                .bind(user.to_string())
+                .bind(name)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        let channel = Uuid::now_v7();
+        sqlx::query(
+            "insert into channels(id,slug,name,kind,created_by) values(?,?,'Prat','local',?)",
+        )
+        .bind(channel.to_string())
+        .bind(format!("channel-{channel}"))
+        .bind(root_author.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+        for user in [&root_author, &participant, &follower, &sender] {
+            sqlx::query(
+                "insert into channel_memberships(channel_id,user_id,role) values(?,?,'member')",
+            )
+            .bind(channel.to_string())
+            .bind(user.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        for user in [&root_author, &participant, &follower] {
+            sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,notification_after_message_id) values(?,?,?,?,?,?)")
+                .bind(Uuid::now_v7().to_string())
+                .bind(user.to_string())
+                .bind(format!("https://push.example/{user}"))
+                .bind("p".repeat(65))
+                .bind("a".repeat(22))
+                .bind("00000000-0000-7000-8000-000000000000")
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("insert into channel_notification_subscriptions(user_id,channel_id,notification_after_message_id) values(?,?,?)")
+            .bind(follower.to_string())
+            .bind(channel.to_string())
+            .bind("00000000-0000-7000-8000-000000000000")
+            .execute(pool)
+            .await
+            .unwrap();
+
+        let root = Uuid::now_v7();
+        let prior = Uuid::now_v7();
+        let reply = Uuid::now_v7();
+        sqlx::query("insert into messages(id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body) values(?,?,null,?,?,1,'Root')")
+            .bind(root.to_string()).bind(channel.to_string()).bind(root_author.to_string()).bind("Root author").execute(pool).await.unwrap();
+        sqlx::query("insert into messages(id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body) values(?,?,?,?,?,2,'Prior reply')")
+            .bind(prior.to_string()).bind(channel.to_string()).bind(root.to_string()).bind(participant.to_string()).bind("Participant").execute(pool).await.unwrap();
+        sqlx::query("insert into messages(id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body) values(?,?,?,?,?,3,'Reply @Root')")
+            .bind(reply.to_string()).bind(channel.to_string()).bind(root.to_string()).bind(sender.to_string()).bind("Reply sender").execute(pool).await.unwrap();
+        sqlx::query("insert into message_mentions(message_id,mentioned_user_id) values(?,?)")
+            .bind(reply.to_string())
+            .bind(root_author.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        let message = ChatMessage {
+            id: crate::domain::MessageId::from_uuid(reply),
+            channel_id: ChannelId::from_uuid(channel),
+            parent_message_id: Some(crate::domain::MessageId::from_uuid(root)),
+            sender_id: sender,
+            sender_display_name: crate::domain::DisplayName::new("Reply sender").unwrap(),
+            body: crate::domain::MessageBody::new("Reply @Root").unwrap(),
+            sequence: crate::domain::ChannelSequence::new(3),
+            sent_at: chrono::Utc::now(),
+            edited_at: None,
+            deleted_at: None,
+        };
+        let mut transaction = pool.begin().await.unwrap();
+        enqueue_message_sqlite(&mut transaction, &message)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "select recipient_id,kind from notification_outbox order by recipient_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.contains(&(root_author.to_string(), "mention".into())));
+        assert!(rows.contains(&(participant.to_string(), "thread_reply".into())));
+        assert!(rows.contains(&(follower.to_string(), "channel_message".into())));
+    }
+
+    #[tokio::test]
+    async fn channel_opt_in_requires_membership_and_starts_after_existing_messages() {
+        let service = service().await;
+        let NotificationStore::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        let sender = UserId::named("channel-sender");
+        let follower = UserId::named("channel-follower");
+        let outsider = UserId::named("channel-outsider");
+        for (user, name) in [
+            (&sender, "Sender"),
+            (&follower, "Follower"),
+            (&outsider, "Outsider"),
+        ] {
+            sqlx::query("insert into users(id,kind,display_name) values(?,'human',?)")
+                .bind(user.to_string())
+                .bind(name)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        let channel = Uuid::now_v7();
+        sqlx::query(
+            "insert into channels(id,slug,name,kind,created_by) values(?,?,'Prat','local',?)",
+        )
+        .bind(channel.to_string())
+        .bind(format!("channel-{channel}"))
+        .bind(sender.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+        for user in [&sender, &follower] {
+            sqlx::query(
+                "insert into channel_memberships(channel_id,user_id,role) values(?,?,'member')",
+            )
+            .bind(channel.to_string())
+            .bind(user.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,notification_after_message_id) values(?,?,?,?,?,?)")
+            .bind(Uuid::now_v7().to_string()).bind(follower.to_string()).bind("https://push.example/follower").bind("p".repeat(65)).bind("a".repeat(22)).bind("00000000-0000-7000-8000-000000000000").execute(pool).await.unwrap();
+        let historical = Uuid::now_v7();
+        sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values(?,?,?,?,1,'Historical')")
+            .bind(historical.to_string()).bind(channel.to_string()).bind(sender.to_string()).bind("Sender").execute(pool).await.unwrap();
+
+        assert_eq!(
+            service
+                .set_channel_subscription(outsider, ChannelId::from_uuid(channel), true)
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
+        service
+            .set_channel_subscription(follower.clone(), ChannelId::from_uuid(channel), true)
+            .await
+            .unwrap();
+        let settings = service.settings(follower.clone()).await.unwrap();
+        assert_eq!(settings.channel_ids, vec![channel.to_string()]);
+
+        let historical_message = ChatMessage {
+            id: crate::domain::MessageId::from_uuid(historical),
+            channel_id: ChannelId::from_uuid(channel),
+            parent_message_id: None,
+            sender_id: sender.clone(),
+            sender_display_name: crate::domain::DisplayName::new("Sender").unwrap(),
+            body: crate::domain::MessageBody::new("Historical").unwrap(),
+            sequence: crate::domain::ChannelSequence::first(),
+            sent_at: chrono::Utc::now(),
+            edited_at: None,
+            deleted_at: None,
+        };
+        let mut transaction = pool.begin().await.unwrap();
+        enqueue_message_sqlite(&mut transaction, &historical_message)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+        let queued: i64 = sqlx::query_scalar("select count(*) from notification_outbox")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(queued, 0);
+
+        let future = Uuid::now_v7();
+        sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values(?,?,?,?,2,'Future')")
+            .bind(future.to_string()).bind(channel.to_string()).bind(sender.to_string()).bind("Sender").execute(pool).await.unwrap();
+        let future_message = ChatMessage {
+            id: crate::domain::MessageId::from_uuid(future),
+            body: crate::domain::MessageBody::new("Future").unwrap(),
+            sequence: crate::domain::ChannelSequence::new(2),
+            ..historical_message
+        };
+        let mut transaction = pool.begin().await.unwrap();
+        enqueue_message_sqlite(&mut transaction, &future_message)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+        let kind: String = sqlx::query_scalar("select kind from notification_outbox")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(kind, "channel_message");
     }
 }

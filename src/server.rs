@@ -24,8 +24,9 @@ use crate::{
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{HeartGateway, ProcessService, SharedProcessGateway},
     web::account::{
-        export_my_data, notification_settings, record_client_event, save_notification_preferences,
-        subscribe_push, unsubscribe_push,
+        disable_channel_notifications, enable_channel_notifications, export_my_data,
+        notification_settings, record_client_event, save_notification_preferences, subscribe_push,
+        unsubscribe_push,
     },
     web::agents::{
         approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
@@ -156,6 +157,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route(
             "/api/v1/me/push-subscriptions",
             post(subscribe_push).delete(unsubscribe_push),
+        )
+        .route(
+            "/api/v1/channels/{id}/notifications",
+            axum::routing::put(enable_channel_notifications).delete(disable_channel_notifications),
         )
         .route("/api/v1/channels/{id}/media", post(upload_media))
         .route("/api/v1/media/{id}", get(download_media))

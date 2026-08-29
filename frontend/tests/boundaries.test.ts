@@ -526,7 +526,7 @@ test("typed HTTP endpoints decode Rust-shaped responses and keep participant plu
   const calls: Array<Readonly<{ input: string; init: RequestInit | undefined }>> = [];
   const responses = [
     new Response("expired", { status: 401 }),
-    new Response(JSON.stringify({ enabled: true, public_key: "key", subscriptions: 2, preferences: { mode: "instant", direct_messages: true, mentions: false } })),
+    new Response(JSON.stringify({ enabled: true, public_key: "key", subscriptions: 2, channel_ids: ["channel-1"], preferences: { mode: "instant", direct_messages: true, mentions: false } })),
     new Response(JSON.stringify({ process_link_id: "process-1" })),
     new Response(JSON.stringify({ process: { definition_name: "event-planning", status: "waiting" }, events: [{ event_type: "asked", actor_id: "agent-1", payload: { question: "when" } }] })),
     new Response(JSON.stringify({ agent_id: "agent-1", credential: "secret" })),
@@ -540,6 +540,7 @@ test("typed HTTP endpoints decode Rust-shaped responses and keep participant plu
   });
   const settings = await new NotificationApi(http).get();
   assert.equal(settings.preferences.directMessages, true);
+  assert.deepEqual(settings.channelIds, ["channel-1"]);
   const processes = new ProcessApi(http);
   assert.equal(await processes.startEventPlanning({ channelId: "channel/1", requestId: "request-1", title: "Test" }), "process-1");
   assert.deepEqual(await processes.get("process/1"), { process: { definitionName: "event-planning", status: "waiting" }, events: [{ eventType: "asked", actorId: "agent-1", payload: { question: "when" } }] });

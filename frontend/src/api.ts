@@ -13,6 +13,7 @@ export type NotificationSettings = Readonly<{
   enabled: boolean;
   publicKey: string;
   subscriptions: number;
+  channelIds: ReadonlyArray<string>;
   preferences: Readonly<{ mode: "instant" | "weekly" | "muted"; directMessages: boolean; mentions: boolean }>;
 }>;
 
@@ -88,6 +89,9 @@ export class NotificationApi {
     if (serialized === undefined) throw new Error("Ugyldig Push-abonnement");
     return this.http.empty("/api/v1/me/push-subscriptions", { method: "POST", headers: jsonHeaders(), body: serialized });
   }
+  setChannel(channelId: string, enabled: boolean): Promise<void> {
+    return this.http.empty(`/api/v1/channels/${encodeURIComponent(channelId)}/notifications`, { method: enabled ? "PUT" : "DELETE" });
+  }
 }
 
 export class ProcessApi {
@@ -122,6 +126,7 @@ export function decodeNotificationSettings(value: unknown): NotificationSettings
     enabled: value.enabled,
     publicKey: typeof value.public_key === "string" ? value.public_key : "",
     subscriptions: typeof value.subscriptions === "number" && Number.isFinite(value.subscriptions) ? value.subscriptions : 0,
+    channelIds: Array.isArray(value.channel_ids) ? value.channel_ids.filter((id): id is string => typeof id === "string") : [],
     preferences: { mode, directMessages: value.preferences.direct_messages, mentions: value.preferences.mentions }
   };
 }

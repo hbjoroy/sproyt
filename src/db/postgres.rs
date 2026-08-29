@@ -812,6 +812,12 @@ impl ChatRepository for PostgresChatRepository {
             if !Policy::can_leave_circle(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
+            sqlx::query("delete from channel_notification_subscriptions where user_id=$1 and channel_id in (select id from channels where circle_id=$2)")
+                .bind(*command.actor.as_uuid())
+                .bind(*command.circle_id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
             sqlx::query("delete from channel_memberships where user_id=$1 and channel_id in (select id from channels where circle_id=$2)")
                 .bind(*command.actor.as_uuid())
                 .bind(*command.circle_id.as_uuid())
@@ -1198,6 +1204,14 @@ impl ChatRepository for PostgresChatRepository {
             if result.rows_affected() == 0 {
                 return Err(RepositoryError::NotFound);
             }
+            sqlx::query(
+                "delete from channel_notification_subscriptions where channel_id=$1 and user_id=$2",
+            )
+            .bind(*command.channel_id.as_uuid())
+            .bind(*command.actor.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(sql_error)?;
             Ok(())
         })
     }

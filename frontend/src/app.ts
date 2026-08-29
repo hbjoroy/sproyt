@@ -362,6 +362,8 @@
       let knownUsers: UserProfile[] = [];
       const knownCircleUsers = new Map<string, UserProfile[]>();
       const knownChannelUsers = new Map<string, UserProfile[]>();
+      const channelNotificationIds = new Set<string>();
+      const pendingChannelNotificationIds = new Set<string>();
       let knownMentions: Mention[] = [];
       let knownTasks: UserTask[] = [];
       const knownCircles = new Map<string, Circle>();
@@ -1376,6 +1378,9 @@
           notificationMode.value = settings.preferences.mode;
           notificationDirect.checked = settings.preferences.directMessages;
           notificationMentions.checked = settings.preferences.mentions;
+          channelNotificationIds.clear();
+          settings.channelIds.forEach((channelId) => channelNotificationIds.add(channelId));
+          renderConversationDrawer();
           const notificationLabel = settings.preferences.mode === "muted" ? "Varsel: ingen" : settings.preferences.mode === "weekly" ? "Varsel: kvar veke" : "Varsel: direkte";
           notificationSummaryLabel.textContent = notificationLabel;
           notificationSummary.setAttribute("aria-label", notificationLabel);
@@ -3360,8 +3365,11 @@
         const appendConversation = (channel: Channel, label: string, context = "") => {
           if (!matches(`${label} ${context}`)) return false;
           const unreadCount = Math.max(0, channel.latest_sequence - channel.last_read_sequence);
+          const row = document.createElement("div");
+          row.className = "conversation-row";
           const button = document.createElement("button");
           button.type = "button";
+          button.className = "conversation-select";
           button.setAttribute("aria-current", channel.id === activeChannelId ? "page" : "false");
           if (unreadCount > 0) button.classList.add("has-unread");
           const name = document.createElement("span");
@@ -3384,7 +3392,38 @@
             selectChannel(channel);
             if (window.matchMedia("(max-width: 640px)").matches) setMobileConversationDrawerOpen(false, true);
           });
-          conversationList.append(button);
+          row.append(button);
+          if (!channel.is_direct) {
+            row.classList.add("has-notification-toggle");
+            const subscribed = channelNotificationIds.has(channel.id);
+            const notification = document.createElement("button");
+            notification.type = "button";
+            notification.className = "channel-notification-toggle";
+            notification.disabled = pendingChannelNotificationIds.has(channel.id);
+            notification.setAttribute("aria-pressed", String(subscribed));
+            notification.setAttribute("aria-label", subscribed
+              ? `Slå av varsel for ${channel.name}`
+              : `Slå på varsel for ${channel.name}`);
+            notification.title = subscribed ? "Slå av kanalvarsel" : "Slå på kanalvarsel";
+            notification.textContent = subscribed ? "🔔" : "🔕";
+            notification.addEventListener("click", async () => {
+              const enable = !channelNotificationIds.has(channel.id);
+              pendingChannelNotificationIds.add(channel.id);
+              renderConversationDrawer();
+              try {
+                await notificationsApi.setChannel(channel.id, enable);
+                if (enable) channelNotificationIds.add(channel.id);
+                else channelNotificationIds.delete(channel.id);
+              } catch (error) {
+                notificationNotice.textContent = `Kunne ikkje endre kanalvarsel: ${errorMessage(error)}`;
+              } finally {
+                pendingChannelNotificationIds.delete(channel.id);
+                renderConversationDrawer();
+              }
+            });
+            row.append(notification);
+          }
+          conversationList.append(row);
           return true;
         };
         let rendered = 0;
