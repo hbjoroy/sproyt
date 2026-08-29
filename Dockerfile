@@ -18,6 +18,7 @@ RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry
     apk add --no-cache zig=0.15.2-r0 \
     && cargo install --locked --version 0.23.0 cargo-zigbuild
 COPY Cargo.toml Cargo.lock ./
+COPY crates/sproyt-client-core/Cargo.toml crates/sproyt-client-core/Cargo.toml
 COPY crates/sproyt-protocol/Cargo.toml crates/sproyt-protocol/Cargo.toml
 ARG TARGETARCH
 RUN case "$TARGETARCH" in \
@@ -26,11 +27,13 @@ RUN case "$TARGETARCH" in \
       *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
     && rustup target add "$rust_target" \
-    && mkdir -p src crates/sproyt-protocol/src \
+    && mkdir -p src crates/sproyt-client-core/src crates/sproyt-protocol/src \
     && printf 'fn main() {}\n' > src/main.rs \
+    && printf 'pub fn placeholder() {}\n' > crates/sproyt-client-core/src/lib.rs \
     && printf 'pub fn placeholder() {}\n' > crates/sproyt-protocol/src/lib.rs \
     && cargo zigbuild --locked --release --target "$rust_target"
 COPY src/. ./src/
+COPY crates/sproyt-client-core/src/. ./crates/sproyt-client-core/src/
 COPY crates/sproyt-protocol/src/. ./crates/sproyt-protocol/src/
 COPY build.rs ./
 COPY migrations ./migrations
@@ -45,18 +48,21 @@ RUN case "$TARGETARCH" in \
       *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
     && rustup target add "$rust_target" \
-    && cargo clean --package sproyt --package sproyt-protocol --release --target "$rust_target" \
+    && cargo clean --package sproyt --package sproyt-client-core --package sproyt-protocol --release --target "$rust_target" \
     && SPROYT_BUILD_REVISION="$VCS_REF" cargo zigbuild --locked --release --target "$rust_target" --bin sproyt \
     && install -D "target/$rust_target/release/sproyt" /out/sproyt
 
 FROM build-base AS native-builder
 COPY Cargo.toml Cargo.lock ./
+COPY crates/sproyt-client-core/Cargo.toml crates/sproyt-client-core/Cargo.toml
 COPY crates/sproyt-protocol/Cargo.toml crates/sproyt-protocol/Cargo.toml
-RUN mkdir -p src crates/sproyt-protocol/src \
+RUN mkdir -p src crates/sproyt-client-core/src crates/sproyt-protocol/src \
     && printf 'fn main() {}\n' > src/main.rs \
+    && printf 'pub fn placeholder() {}\n' > crates/sproyt-client-core/src/lib.rs \
     && printf 'pub fn placeholder() {}\n' > crates/sproyt-protocol/src/lib.rs \
     && cargo build --locked --release
 COPY src/. ./src/
+COPY crates/sproyt-client-core/src/. ./crates/sproyt-client-core/src/
 COPY crates/sproyt-protocol/src/. ./crates/sproyt-protocol/src/
 COPY build.rs ./
 COPY migrations ./migrations
@@ -65,7 +71,7 @@ COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
 RUN test -f src/domain/mod.rs \
     && grep -q '^mod commands;$' crates/sproyt-protocol/src/lib.rs
 ARG VCS_REF=unknown
-RUN cargo clean --package sproyt --package sproyt-protocol --release \
+RUN cargo clean --package sproyt --package sproyt-client-core --package sproyt-protocol --release \
     && SPROYT_BUILD_REVISION="$VCS_REF" cargo build --locked --release --bin sproyt \
     && install -D target/release/sproyt /out/sproyt
 

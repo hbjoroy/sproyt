@@ -1564,6 +1564,22 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     server.abort();
 }
 
+#[test]
+fn container_build_cache_includes_every_workspace_crate() {
+    let dockerfile = include_str!("../../Dockerfile");
+    for path in [
+        "crates/sproyt-client-core/Cargo.toml",
+        "crates/sproyt-client-core/src",
+        "crates/sproyt-protocol/Cargo.toml",
+        "crates/sproyt-protocol/src",
+    ] {
+        assert!(
+            dockerfile.matches(path).count() >= 2,
+            "both container builders must include {path}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn authenticated_client_events_are_bounded_and_exported_without_payload_data() {
     let repository = Arc::new(
