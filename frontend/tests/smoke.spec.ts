@@ -166,16 +166,26 @@ test("a circle owner invites an existing user from the conversation drawer", asy
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
 
   const circleName = `Invitasjon ${crypto.randomUUID().slice(0, 8)}`;
-  await page.locator("#circle-admin-dialog").evaluate((dialog: HTMLDialogElement) => dialog.showModal());
-  await page.locator("#circle-name").fill(circleName);
-  await page.locator("#create-circle").click();
+  await page.locator("#create-circle-from-drawer").click();
+  await expect(page.locator("#create-circle-dialog")).toBeVisible();
+  await page.locator("#create-circle-name").fill(circleName);
+  await page.locator("#create-circle-from-dialog").click();
   await expect(page.locator("#onboarding-notice")).toContainText("klar", { timeout: 15_000 });
-  await page.locator("#circle-admin-close").click();
+  await expect(page.locator("#create-circle-dialog")).toBeHidden();
+
+  await page.getByLabel(`Val for ${circleName}`).click();
+  await page.getByRole("button", { name: "Ny kanal" }).click();
+  await expect(page.locator("#circle-channel-dialog")).toBeVisible();
+  const channelName = `Plan ${crypto.randomUUID().slice(0, 6)}`;
+  await page.locator("#managed-channel-name").fill(channelName);
+  await page.locator("#circle-channel-create").getByRole("button", { name: "Lag kanal" }).click();
+  await expect(page.locator("#onboarding-notice")).toContainText(channelName, { timeout: 15_000 });
 
   await page.setViewportSize({ width: 375, height: 667 });
   const conversationShortcut = page.locator("#mobile-conversations-shortcut");
   await conversationShortcut.click();
-  const inviteCircle = page.getByRole("button", { name: `Inviter til ${circleName}` });
+  await page.getByLabel(`Val for ${circleName}`).click();
+  const inviteCircle = page.getByRole("button", { name: "Inviter person" });
   await expect(inviteCircle).toBeVisible({ timeout: 15_000 });
   await inviteCircle.click();
   const dialog = page.locator("#circle-invite-dialog");

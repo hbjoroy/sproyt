@@ -89,6 +89,8 @@
       const circleChannelCreate = requireElement("#circle-channel-create", HTMLFormElement);
       const managedChannelName = requireElement("#managed-channel-name", HTMLInputElement);
       const managedChannelKind = requireElement("#managed-channel-kind", HTMLSelectElement);
+      const createManagedChannel = requireElement("#create-managed-channel", HTMLButtonElement);
+      const circleChannelCreateStatus = requireElement("#circle-channel-create-status", HTMLElement);
       const leaveCircleButton = requireElement("#leave-circle", HTMLButtonElement);
       const circleMembershipNotice = requireElement("#circle-membership-notice", HTMLElement);
       const viewModeToggle = requireElement("#view-mode-toggle", HTMLButtonElement);
@@ -109,8 +111,14 @@
       const circleToolDirect = requireElement("#circle-tool-direct", HTMLButtonElement);
       const circleToolShared = requireElement("#circle-tool-shared", HTMLButtonElement);
       const circleToolSettings = requireElement("#circle-tool-settings", HTMLButtonElement);
+      const createCircleFromDrawer = requireElement("#create-circle-from-drawer", HTMLButtonElement);
       const circleAdminDialog = requireElement("#circle-admin-dialog", HTMLDialogElement);
       const circleAdminClose = requireElement("#circle-admin-close", HTMLButtonElement);
+      const createCircleDialog = requireElement("#create-circle-dialog", HTMLDialogElement);
+      const createCircleDialogClose = requireElement("#create-circle-dialog-close", HTMLButtonElement);
+      const createCircleForm = requireElement("#create-circle-form", HTMLFormElement);
+      const createCircleName = requireElement("#create-circle-name", HTMLInputElement);
+      const createCircleStatus = requireElement("#create-circle-status", HTMLElement);
       const circleInviteDialog = requireElement("#circle-invite-dialog", HTMLDialogElement);
       const circleInviteTitle = requireElement("#circle-invite-title", HTMLElement);
       const circleInviteClose = requireElement("#circle-invite-close", HTMLButtonElement);
@@ -221,6 +229,16 @@
         onDisconnected: () => reportClientEvent("websocket_disconnected"),
         onSocketError: () => reportClientEvent("websocket_error"),
         onConnectionLost: () => {
+          if (pendingCircleCreationRequestId) {
+            pendingCircleCreationRequestId = null;
+            createCircleForm.querySelector<HTMLButtonElement>("button[type=submit]")!.disabled = false;
+            if (createCircleDialog.open) createCircleStatus.textContent = "Sambandet vart brote. Namnet er bevart – prøv igjen.";
+          }
+          if (pendingManagedChannelRequestId) {
+            pendingManagedChannelRequestId = null;
+            createManagedChannel.disabled = false;
+            if (circleChannelDialog.open) circleChannelCreateStatus.textContent = "Sambandet vart brote. Namnet er bevart – prøv igjen.";
+          }
           for (const requestId of pendingMessages.keys()) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
           for (const requestId of [...pendingThreadReplies.keys()]) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
           failPendingPeopleDirectRequests("Sambandet vart brote. Prøv igjen.");
@@ -291,6 +309,8 @@
       let activeRootScope: "shared" | "circle" | "direct" = "shared";
       let activeInboxKind: "unread" | "mentions" | "tasks" | null = null;
       let managedCircleId: string | null = null;
+      let pendingCircleCreationRequestId: string | null = null;
+      let pendingManagedChannelRequestId: string | null = null;
       let reconnectScrollOffset: number | null = null;
       const navigation = new NavigationController(window.localStorage, window.location);
       // This is a render cache only. NavigationController is the sole state and
@@ -909,9 +929,16 @@
       });
       circleChannelClose.addEventListener("click", () => circleChannelDialog.close());
       circleAdminClose.addEventListener("click", () => circleAdminDialog.close());
+      createCircleDialogClose.addEventListener("click", () => createCircleDialog.close());
       circleInviteClose.addEventListener("click", () => circleInviteDialog.close());
       circleAdminDialog.addEventListener("close", () => {
         if (bottomCirclePanel.open) circleToolSettings.focus({ preventScroll: true });
+      });
+      createCircleDialog.addEventListener("close", () => {
+        const trigger = createCircleDialog.dataset.returnFocus;
+        createCircleDialog.dataset.returnFocus = "";
+        if (trigger === "mobile") mobileConversationsShortcut.focus({ preventScroll: true });
+        else createCircleFromDrawer.focus({ preventScroll: true });
       });
       circleInviteDialog.addEventListener("close", () => {
         if (window.matchMedia("(max-width: 640px)").matches) {
@@ -920,7 +947,7 @@
         }
         const circleId = circleInviteDialog.dataset.circleId;
         if (!circleId) return;
-        const trigger = conversationList.querySelector<HTMLButtonElement>(`[data-invite-circle-id="${CSS.escape(circleId)}"]`);
+        const trigger = conversationList.querySelector<HTMLElement>(`[data-circle-menu-id="${CSS.escape(circleId)}"] summary`);
         trigger?.focus({ preventScroll: true });
       });
       circleInviteSearch.addEventListener("input", renderCircleInviteUsers);
@@ -985,19 +1012,36 @@
           description: channelDescriptionInput.value
         });
       });
-      circleChannelDialog.addEventListener("close", () => { managedCircleId = null; });
+      circleChannelDialog.addEventListener("close", () => {
+        const circleId = circleChannelDialog.dataset.returnCircleId;
+        circleChannelDialog.dataset.returnCircleId = "";
+        managedCircleId = null;
+        if (window.matchMedia("(max-width: 640px)").matches) {
+          mobileConversationsShortcut.focus({ preventScroll: true });
+          return;
+        }
+        if (circleId) conversationList.querySelector<HTMLElement>(`[data-circle-menu-id="${CSS.escape(circleId)}"] summary`)?.focus({ preventScroll: true });
+      });
       circleChannelCreate.addEventListener("submit", (event) => {
         event.preventDefault();
         const name = managedChannelName.value.trim();
         if (!managedCircleId || !name) return;
         const kind = managedChannelKind.value;
         if (kind !== "public" && kind !== "local" && kind !== "private") return;
-        sendCommand("create_channel", {
+        if (pendingManagedChannelRequestId) return;
+        const requestId = sendCommand("create_channel", {
           slug: scopedCircleChannelSlug(managedCircleId, name),
           name,
           kind,
           circle_id: managedCircleId
         });
+        if (!requestId) {
+          circleChannelCreateStatus.textContent = "Sprøyt er ikkje tilkopla. Prøv igjen om litt.";
+          return;
+        }
+        pendingManagedChannelRequestId = requestId;
+        createManagedChannel.disabled = true;
+        circleChannelCreateStatus.textContent = "Lagar kanalen …";
       });
       leaveCircleButton.addEventListener("click", () => {
         if (!managedCircleId) return;
@@ -1656,9 +1700,31 @@
           return;
         }
       });
-      createCircleButton.addEventListener("click", () => sendCommand("create_circle", {
-        name: circleName.value.trim(), slug: slugify(circleSlug.value || circleName.value)
-      }));
+      const requestCircleCreation = (name: string): void => {
+        const trimmed = name.trim();
+        if (trimmed.length < 2 || pendingCircleCreationRequestId) return;
+        const requestId = sendCommand("create_circle", { name: trimmed, slug: slugify(trimmed) });
+        if (!requestId) createCircleStatus.textContent = "Sprøyt er ikkje tilkopla. Prøv igjen om litt.";
+        else {
+          pendingCircleCreationRequestId = requestId;
+          createCircleForm.querySelector<HTMLButtonElement>("button[type=submit]")!.disabled = true;
+          createCircleStatus.textContent = "Lagar kretsen …";
+        }
+      };
+      createCircleButton.addEventListener("click", () => requestCircleCreation(circleName.value));
+      createCircleFromDrawer.addEventListener("click", () => {
+        const mobile = window.matchMedia("(max-width: 640px)").matches;
+        createCircleDialog.dataset.returnFocus = mobile ? "mobile" : "drawer";
+        if (mobile) setMobileConversationDrawerOpen(false);
+        createCircleName.value = "";
+        createCircleStatus.textContent = "Prat blir laga automatisk.";
+        createCircleDialog.showModal();
+        window.setTimeout(() => createCircleName.focus(), 0);
+      });
+      createCircleForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        requestCircleCreation(createCircleName.value);
+      });
       circleName.addEventListener("input", updateOnboardingButtons);
       invitationToken.addEventListener("input", updateOnboardingButtons);
       circleSelect.addEventListener("change", updateOnboardingButtons);
@@ -1962,6 +2028,7 @@
 
       function updateOnboardingButtons() {
         const connected = connectionSupervisor.snapshot().connected;
+        createCircleFromDrawer.disabled = !connected;
         createCircleButton.disabled = !connected || circleName.value.trim().length < 2;
         createCircleInvitationButton.disabled = !connected || !circleSelect.value;
         acceptInvitationButton.disabled = !connected || !invitationValueToToken(invitationToken.value);
@@ -2627,13 +2694,22 @@
           return;
         }
         if (event.type === "circle_created") {
+          const createdByThisDialog = event.request_id !== undefined && event.request_id === pendingCircleCreationRequestId;
+          if (createdByThisDialog) {
+            pendingCircleCreationRequestId = null;
+            createCircleForm.querySelector<HTMLButtonElement>("button[type=submit]")!.disabled = false;
+          }
           knownCircles.set(event.payload.circle.id, { ...event.payload.circle, role: "owner" });
           circleSelect.add(new Option(`${event.payload.circle.name} (owner)`, event.payload.circle.id));
           circleSelect.value = event.payload.circle.id;
           setActiveCircle(event.payload.circle.id);
           pushSystem(`Vennekretsen ${event.payload.circle.name} er oppretta.`);
           onboardingNotice.textContent = `${event.payload.circle.name} er klar. No kan du invitere vener.`;
-          circleName.value = "";
+          if (createdByThisDialog) {
+            circleName.value = "";
+            createCircleName.value = "";
+            if (createCircleDialog.open) createCircleDialog.close();
+          }
           updateOnboardingButtons();
           sendCommand("create_channel", {
             slug: scopedCircleChannelSlug(event.payload.circle.id, "prat"), name: "Prat", kind: "private", circle_id: event.payload.circle.id
@@ -2764,12 +2840,20 @@
         }
 
         if (event.type === "channel_created") {
+          const createdByThisDialog = event.request_id !== undefined && event.request_id === pendingManagedChannelRequestId;
+          if (createdByThisDialog) {
+            pendingManagedChannelRequestId = null;
+            createManagedChannel.disabled = false;
+            circleChannelCreateStatus.textContent = "";
+          }
           const channel = channelFromBase(event.payload.channel, "owner");
           knownChannels.push(channel);
           renderChannels();
           selectChannel(channel);
-          managedChannelName.value = "";
-          if (circleChannelDialog.open) circleChannelDialog.close();
+          if (createdByThisDialog) {
+            managedChannelName.value = "";
+            if (circleChannelDialog.open) circleChannelDialog.close();
+          }
           onboardingNotice.textContent = `Kanalen ${event.payload.channel.name} er klar.`;
           updateOnboardingButtons();
           if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
@@ -3112,11 +3196,20 @@
           }
           if (requestedCommand === "create_circle") {
             onboardingNotice.textContent = "Vennekretsen kunne ikkje opprettast. Prøv eit anna namn.";
+            if (event.request_id === pendingCircleCreationRequestId) {
+              pendingCircleCreationRequestId = null;
+              createCircleForm.querySelector<HTMLButtonElement>("button[type=submit]")!.disabled = false;
+              if (createCircleDialog.open) createCircleStatus.textContent = "Kretsen kunne ikkje lagast. Namnet er bevart – prøv igjen.";
+            }
             return;
           }
           if (requestedCommand === "create_channel") {
             onboardingNotice.textContent = "Kanalen kunne ikkje opprettast. Prøv eit anna namn eller prøv igjen.";
-            if (circleChannelDialog.open) circleMembershipNotice.textContent = "Kanalen kunne ikkje opprettast. Prøv eit anna namn.";
+            if (event.request_id === pendingManagedChannelRequestId) {
+              pendingManagedChannelRequestId = null;
+              createManagedChannel.disabled = false;
+              if (circleChannelDialog.open) circleChannelCreateStatus.textContent = "Kanalen kunne ikkje lagast. Namnet er bevart – prøv igjen.";
+            }
             updateOnboardingButtons();
             return;
           }
@@ -3234,16 +3327,29 @@
             const heading = document.createElement("h3");
             heading.textContent = text;
             row.append(heading);
-            if (circle.role === "owner") {
-              const invite = document.createElement("button");
-              invite.type = "button";
-              invite.className = "conversation-circle-invite";
-              invite.dataset.inviteCircleId = circle.id;
-              invite.textContent = "＋ Inviter";
-              invite.setAttribute("aria-label", `Inviter til ${circle.name}`);
-              invite.addEventListener("click", () => openCircleInviteDialog(circle.id));
-              row.append(invite);
-            }
+            const menu = document.createElement("details");
+            menu.className = "conversation-circle-menu";
+            menu.dataset.circleMenuId = circle.id;
+            const summary = document.createElement("summary");
+            summary.setAttribute("aria-label", `Val for ${circle.name}`);
+            summary.title = `Val for ${circle.name}`;
+            summary.textContent = "⋯";
+            const actions = document.createElement("div");
+            actions.className = "conversation-circle-menu-actions";
+            const addAction = (label: string, action: () => void): void => {
+              const button = document.createElement("button");
+              button.type = "button";
+              button.textContent = label;
+              button.addEventListener("click", () => { menu.open = false; action(); });
+              actions.append(button);
+            };
+            // Membership policy permits every circle member to create a
+            // channel. The server remains the authorization boundary.
+            addAction("Ny kanal", () => openChannelManagement(circle.id, "create"));
+            addAction("Finn opne kanalar", () => openChannelManagement(circle.id, "discover"));
+            if (circle.role === "owner") addAction("Inviter person", () => openCircleInviteDialog(circle.id));
+            menu.append(summary, actions);
+            row.append(menu);
             conversationList.append(row);
             return;
           }
@@ -3494,10 +3600,14 @@
         toggle.focus();
       }
 
-      function openChannelManagement(circleId: string): void {
+      function openChannelManagement(circleId: string, focus: "create" | "discover" = "discover"): void {
         const circle = knownCircles.get(circleId);
         if (!circle) return;
         managedCircleId = circleId;
+        circleChannelDialog.dataset.returnCircleId = circleId;
+        pendingManagedChannelRequestId = null;
+        createManagedChannel.disabled = false;
+        circleChannelCreateStatus.textContent = "";
         circleSelect.value = circleId;
         setActiveCircle(circleId);
         updateOnboardingButtons();
@@ -3508,9 +3618,10 @@
         circleMembershipNotice.textContent = owner
           ? "Eigaren kan ikkje forlate kretsen. Kretsen kan slettast frå administrasjon."
           : "Du mistar tilgang til kanalane i kretsen, men meldingane dine blir ståande.";
+        if (window.matchMedia("(max-width: 640px)").matches) setMobileConversationDrawerOpen(false);
         if (!circleChannelDialog.open) circleChannelDialog.showModal();
         sendCommand("list_joinable_channels", { circle_id: circleId });
-        window.setTimeout(() => circleChannelClose.focus(), 0);
+        window.setTimeout(() => (focus === "create" ? managedChannelName : circleChannelClose).focus(), 0);
       }
 
       function renderManagedJoinableChannels(channels: Channel[]): void {

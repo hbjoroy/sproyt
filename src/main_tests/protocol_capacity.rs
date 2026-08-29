@@ -731,8 +731,8 @@ fn browser_exposes_owner_circle_invitations_from_the_conversation_drawer() {
     assert!(
         BROWSER_CLIENT.contains("Inviter ein Sprøyt-brukar i DM, eller del ei lenkje med andre.")
     );
-    assert!(BROWSER_CLIENT.contains("invite.className = \"conversation-circle-invite\""));
-    assert!(BROWSER_CLIENT.contains("invite.dataset.inviteCircleId = circle.id"));
+    assert!(BROWSER_CLIENT.contains("menu.className = \"conversation-circle-menu\""));
+    assert!(BROWSER_CLIENT.contains("addAction(\"Inviter person\""));
     assert!(BROWSER_CLIENT.contains("if (circle.role === \"owner\")"));
     assert!(BROWSER_CLIENT.contains("function eligibleCircleInviteUsers(circleId"));
     assert!(BROWSER_CLIENT.contains("user.kind === \"human\""));
@@ -1368,7 +1368,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("activeInboxKind = kind"));
     assert!(BROWSER_CLIENT.contains("className = \"unread-inbox\""));
     assert!(BROWSER_CLIENT.contains("className = \"unread-card\""));
-    assert!(BROWSER_CLIENT.contains("function openChannelManagement(circleId)"));
+    assert!(BROWSER_CLIENT.contains(
+        "function openChannelManagement(circleId: string, focus: \"create\" | \"discover\" = \"discover\")"
+    ));
     assert!(!BROWSER_CLIENT.contains("Samtalar og vennekretsar"));
     assert!(!BROWSER_CLIENT.contains("id=\"channel-list\""));
     assert!(BROWSER_CLIENT.contains("leave.textContent = `Forlat # ${activeChannel.name}`"));
