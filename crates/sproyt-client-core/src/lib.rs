@@ -1,8 +1,16 @@
+#![cfg_attr(target_arch = "wasm32", no_std)]
+
 //! Deterministic client-side transport decisions.
 //!
 //! TypeScript owns WebSocket, IndexedDB, timers and the DOM; this core decides
 //! whether an already durable send can safely be dispatched now. That keeps it
 //! native-testable and WASM-compatible without retaining browser handles.
+
+#[cfg(target_arch = "wasm32")]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
+    core::arch::wasm32::unreachable()
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TransportReadiness<'a> {
@@ -27,6 +35,33 @@ pub fn admit_persisted_send(channel_id: &str, readiness: TransportReadiness<'_>)
         SendAdmission::DispatchNow
     } else {
         SendAdmission::QueueUntilSubscribed
+    }
+}
+
+/// Raw WebAssembly ABI for [`admit_persisted_send`].
+///
+/// The browser retains strings and supplies whether its subscribed channel
+/// matches the durable command's channel. The return value is deliberately a
+/// stable integer rather than a Rust enum representation: `0` queues the send
+/// and `1` dispatches it now.
+#[unsafe(no_mangle)]
+pub extern "C" fn sproyt_admit_persisted_send(
+    connected: u32,
+    channel_matches: u32,
+    handoff_active: u32,
+) -> u32 {
+    match admit_persisted_send(
+        // The actual identifier is irrelevant once the browser has established
+        // the equality relation. Keep the Rust decision on its native API.
+        "channel",
+        TransportReadiness {
+            connected: connected != 0,
+            subscribed_channel_id: (channel_matches != 0).then_some("channel"),
+            handoff_active: handoff_active != 0,
+        },
+    ) {
+        SendAdmission::QueueUntilSubscribed => 0,
+        SendAdmission::DispatchNow => 1,
     }
 }
 
@@ -120,6 +155,14 @@ mod tests {
             ),
             SendAdmission::QueueUntilSubscribed
         );
+    }
+
+    #[test]
+    fn raw_wasm_admission_abi_has_a_stable_boolean_contract() {
+        assert_eq!(sproyt_admit_persisted_send(1, 1, 0), 1);
+        assert_eq!(sproyt_admit_persisted_send(0, 1, 0), 0);
+        assert_eq!(sproyt_admit_persisted_send(1, 0, 0), 0);
+        assert_eq!(sproyt_admit_persisted_send(1, 1, 1), 0);
     }
 
     #[test]

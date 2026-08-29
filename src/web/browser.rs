@@ -2,7 +2,10 @@ use crate::{
     auth::AuthError,
     server::AppState,
     web::{
-        assets::{APP_BUNDLE, BUILD_REVISION, INDEX_HTML, app_bundle_fingerprint},
+        assets::{
+            APP_BUNDLE, BUILD_REVISION, CLIENT_CORE_WASM, INDEX_HTML, app_bundle_fingerprint,
+            client_core_fingerprint,
+        },
         http::auth_error_response,
     },
 };
@@ -67,9 +70,12 @@ pub(crate) async fn index(
     let nonce = URL_SAFE_NO_PAD.encode(random);
     let app_revision = app_bundle_fingerprint(BUILD_REVISION, APP_BUNDLE.as_bytes());
     let app_url = format!("/assets/app/{app_revision}/app.js");
+    let client_core_revision = client_core_fingerprint(BUILD_REVISION, CLIENT_CORE_WASM);
+    let client_core_url = format!("/assets/client-core/{client_core_revision}/client-core.wasm");
     let html = INDEX_HTML
         .replace("{{NONCE}}", &nonce)
         .replace("{{APP_URL}}", &app_url)
+        .replace("{{CLIENT_CORE_URL}}", &client_core_url)
         .replace(
             "{{DISPLAY_NAME}}",
             &escape_html(&principal.user.display_name.to_string()),
@@ -87,7 +93,7 @@ pub(crate) async fn index(
             if state.agent_ui_enabled { "" } else { "hidden" },
         );
     let policy = format!(
-        "default-src 'self'; script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; worker-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        "default-src 'self'; script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     );
     let mut response = Html(html).into_response();
     let headers = response.headers_mut();

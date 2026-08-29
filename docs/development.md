@@ -31,25 +31,29 @@ sources or lockfile change. Run the explicit TypeScript check before sharing a
 change; it gives clearer diagnostics than the bundler.
 
 The portable browser-policy core is checked natively by the workspace tests and
-must also remain buildable for WebAssembly:
+is compiled to WebAssembly by the application build. Install the target once
+for local Rust builds and keep both targets green:
 
 ```powershell
+rustup target add wasm32-unknown-unknown
 cargo test -p sproyt-client-core
 cargo check -p sproyt-client-core --target wasm32-unknown-unknown
 ```
 
-The crate does not yet ship as a browser asset. Until the fingerprinted WASM
-route and CSP contract are implemented, `frontend/src/send-admission.ts` is a
-small staged mirror checked against the same JSON scenarios as the Rust core.
-Do not add browser APIs or credentials to the Rust crate; browser effects stay
-in typed TypeScript adapters.
+Cargo embeds the core at a fingerprinted, immutable `application/wasm` route.
+The authenticated shell publishes that URL as metadata and the TypeScript
+adapter loads it without inline script. Send admission uses the Rust export
+after initialization and retains the fixture-verified TypeScript policy only
+as a compatibility fallback if the asset or ABI cannot load. Do not add
+browser APIs or credentials to the Rust crate; browser effects stay in typed
+TypeScript adapters.
 
-The browser page loads only the fingerprinted `app.js` module. `client-store.js`
-is built and served temporarily only for pages that were already open during
-the rollout; new pages do not request it. `app.ts` is a deliberately
-behaviour-preserving extraction of the former inline module. The next frontend
-stage splits it into typed state, transport, and DOM modules; do not add new
-behaviour to the transitional file.
+The browser page loads the fingerprinted `app.js` module and client-policy WASM.
+`client-store.js` is built and served temporarily only for pages that were
+already open during the rollout; new pages do not request it. `app.ts` is a
+deliberately behaviour-preserving extraction of the former inline module. The
+next frontend stage splits it into typed state, transport, and DOM modules; do
+not add new behaviour to the transitional file.
 
 ## Browser contracts
 

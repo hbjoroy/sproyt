@@ -32,8 +32,9 @@ use crate::{
         approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
     },
     web::assets::{
-        app_bundle, client_store, client_store_legacy, legacy_wave_logo_192, legacy_wave_logo_512,
-        offline_page, pwa_manifest, service_worker, wave_logo_192, wave_logo_512, wave_logo_svg,
+        app_bundle, client_core_wasm, client_store, client_store_legacy, legacy_wave_logo_192,
+        legacy_wave_logo_512, offline_page, pwa_manifest, service_worker, wave_logo_192,
+        wave_logo_512, wave_logo_svg,
     },
     web::auth::{auth_callback, auth_login, auth_logout, auth_refresh, auth_session},
     web::browser::index,
@@ -133,6 +134,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             get(client_store),
         )
         .route("/assets/app/{revision}/app.js", get(app_bundle))
+        .route(
+            "/assets/client-core/{revision}/client-core.wasm",
+            get(client_core_wasm),
+        )
         .route("/service-worker.js", get(service_worker))
         .route("/offline", get(offline_page))
         // Keep the former paths available for already-open PWA pages while

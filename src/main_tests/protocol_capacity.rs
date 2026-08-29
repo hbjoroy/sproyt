@@ -1034,6 +1034,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(policy.contains("object-src 'none'"));
     assert!(policy.contains("frame-ancestors 'none'"));
     assert!(policy.contains("script-src 'self' 'nonce-"));
+    assert!(policy.contains("'wasm-unsafe-eval'"));
+    assert!(!policy.contains(" 'unsafe-eval'"));
     assert!(policy.contains("worker-src 'self'"));
     let nonce = policy
         .split("script-src 'self' 'nonce-")
@@ -1045,8 +1047,12 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         .to_owned();
     let body = first.text().await.unwrap();
     let app_fingerprint = app_bundle_fingerprint(BUILD_REVISION, APP_BUNDLE.as_bytes());
+    let client_core_fingerprint = client_core_fingerprint(BUILD_REVISION, CLIENT_CORE_WASM);
     assert!(body.contains(&format!(
         "<script type=\"module\" nonce=\"{nonce}\" src=\"/assets/app/{app_fingerprint}/app.js\"></script>"
+    )));
+    assert!(body.contains(&format!(
+        "<meta name=\"sproyt-client-core\" content=\"/assets/client-core/{client_core_fingerprint}/client-core.wasm\">"
     )));
     assert_eq!(body.matches("<script").count(), 1);
     assert!(
@@ -1064,6 +1070,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(!BROWSER_CLIENT.contains("npm/mermaid@11/dist/"));
     assert!(!body.contains("{{NONCE}}"));
     assert!(!body.contains("{{APP_URL}}"));
+    assert!(!body.contains("{{CLIENT_CORE_URL}}"));
     assert!(!body.contains("{{DISPLAY_NAME}}"));
     assert!(!body.contains("{{AGENT_HIDDEN}}"));
     assert!(body.contains("Innlogga som <strong>guest</strong>"));
@@ -1115,6 +1122,23 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         .await
         .unwrap();
     assert_eq!(stale_app.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let client_core_url =
+        format!("http://{address}/assets/client-core/{client_core_fingerprint}/client-core.wasm");
+    let client_core = reqwest::get(&client_core_url).await.unwrap();
+    assert_eq!(client_core.status(), reqwest::StatusCode::OK);
+    assert_eq!(client_core.headers()["content-type"], "application/wasm");
+    assert_eq!(
+        client_core.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    assert!(client_core.bytes().await.unwrap().starts_with(b"\0asm"));
+    let stale_client_core = reqwest::get(format!(
+        "http://{address}/assets/client-core/stale-revision/client-core.wasm"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(stale_client_core.status(), reqwest::StatusCode::NOT_FOUND);
 
     let client_store_fingerprint =
         client_store_fingerprint(BUILD_REVISION, CLIENT_STORE.as_bytes());

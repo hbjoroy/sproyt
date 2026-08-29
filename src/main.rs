@@ -46,8 +46,8 @@ use axum::http::header::{ACCEPT, AUTHORIZATION, ORIGIN};
 
 #[cfg(test)]
 use web::assets::{
-    APP_BUNDLE, APP_SOURCE, BUILD_REVISION, CLIENT_STORE, INDEX_HTML, app_bundle_fingerprint,
-    client_store_fingerprint,
+    APP_BUNDLE, APP_SOURCE, BUILD_REVISION, CLIENT_CORE_WASM, CLIENT_STORE, INDEX_HTML,
+    app_bundle_fingerprint, client_core_fingerprint, client_store_fingerprint,
 };
 #[cfg(test)]
 use web::assets::{PWA_MANIFEST, SERVICE_WORKER, WAVE_LOGO_192, WAVE_LOGO_512};

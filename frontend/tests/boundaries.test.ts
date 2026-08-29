@@ -8,6 +8,7 @@ import { NavigationController, restoreNavigation } from "../src/navigation";
 import { createDurableOutbox, type DurableOutboxStorage, type DurableSend } from "../src/durable-outbox";
 import { createOutbox } from "../src/outbox";
 import { admitPersistedSend } from "../src/send-admission";
+import { createSendAdmissionPolicy, sendAdmissionWasmUrl } from "../src/send-admission-wasm";
 import { asWireEvent, isRecord, mediaFromUpload, protocolId } from "../src/types";
 import { createSessionController, fetchWithTimeout, parseSessionRefreshBroadcast, parseSessionRefreshLease, refreshDelayMilliseconds, sessionRefreshAfterSeconds } from "../src/session";
 
@@ -198,6 +199,38 @@ test("a persisted send re-checks the current subscription before dispatch", () =
       handoffActive
     }), scenario.admission);
   }
+});
+
+test("the WASM admission policy becomes primary after initialization", async () => {
+  const policy = createSendAdmissionPolicy(async () => ({ exports: {
+    sproyt_admit_persisted_send: (connected: number, channelMatches: number, handoff: number) => connected === 1 && channelMatches === 1 && handoff === 0 ? 1 : 0
+  } }));
+  assert.equal(policy.usingWasm(), false);
+  assert.equal(policy.admit("c1", { connected: true, subscribedChannelId: "c1", handoffActive: false }), "dispatch_now");
+  assert.equal(await policy.ready, true);
+  assert.equal(policy.usingWasm(), true);
+  assert.equal(policy.admit("c1", { connected: true, subscribedChannelId: "c1", handoffActive: false }), "dispatch_now");
+  assert.equal(policy.admit("c1", { connected: true, subscribedChannelId: "c2", handoffActive: false }), "queue_until_subscribed");
+});
+
+test("the WASM admission policy preserves sends when loading or ABI calls fail", async () => {
+  const unavailable = createSendAdmissionPolicy(async () => { throw new Error("asset missing"); });
+  assert.equal(await unavailable.ready, false);
+  assert.equal(unavailable.admit("c1", { connected: true, subscribedChannelId: "c1", handoffActive: false }), "dispatch_now");
+  const broken = createSendAdmissionPolicy(async () => ({ exports: {} }));
+  assert.equal(await broken.ready, false);
+  assert.equal(broken.admit("c1", { connected: true, subscribedChannelId: "other", handoffActive: false }), "queue_until_subscribed");
+  const invalidResult = createSendAdmissionPolicy(async () => ({ exports: { sproyt_admit_persisted_send: () => 7 } }));
+  assert.equal(await invalidResult.ready, true);
+  assert.equal(invalidResult.admit("c1", { connected: true, subscribedChannelId: "c1", handoffActive: false }), "dispatch_now", "an unsupported ABI result falls back to the verified mirror");
+  assert.equal(invalidResult.usingWasm(), false);
+});
+
+test("the WASM admission loader uses only the fingerprinted shell metadata", () => {
+  const documentWithAsset = { querySelector: () => ({ getAttribute: () => " /assets/client-core/revision/client-core.wasm " }) } as unknown as Document;
+  assert.equal(sendAdmissionWasmUrl(documentWithAsset), "/assets/client-core/revision/client-core.wasm");
+  const documentWithoutAsset = { querySelector: () => null } as unknown as Document;
+  assert.equal(sendAdmissionWasmUrl(documentWithoutAsset), null);
 });
 
 test("a socket closing during dispatch reports failure without losing the durable id", () => {

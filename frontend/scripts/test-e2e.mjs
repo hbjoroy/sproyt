@@ -25,6 +25,19 @@ await mkdir(runDirectory, { recursive: true });
 const databaseUrl = `sqlite://frontend/.playwright/${runDirectory.split("/").at(-1)}/sproyt.sqlite`;
 const cli = `${frontendRoot}/node_modules/@playwright/test/cli.js`;
 
+async function removeRunDirectory(path) {
+  try {
+    await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch (error) {
+    if (process.platform === "win32" && error instanceof Error
+      && (error.code === "EBUSY" || error.code === "EPERM")) {
+      console.warn(`test run directory is still locked and will be left for later cleanup: ${path}`);
+      return;
+    }
+    throw error;
+  }
+}
+
 try {
   const result = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cli, "test"], {
@@ -42,5 +55,5 @@ try {
   });
   process.exitCode = Number(result);
 } finally {
-  await rm(runDirectory, { recursive: true, force: true });
+  await removeRunDirectory(runDirectory);
 }

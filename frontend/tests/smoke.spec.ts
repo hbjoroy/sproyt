@@ -11,6 +11,7 @@ declare global {
 
 test("development client loads through CSP, connects, and sends a message", async ({ page }) => {
   const appModuleRequests: string[] = [];
+  const clientCoreRequests: string[] = [];
   const legacyStoreRequests: string[] = [];
   const consoleErrors: Array<{ text: string; observedAt: number }> = [];
   const pageErrors: string[] = [];
@@ -20,6 +21,7 @@ test("development client loads through CSP, connects, and sends a message", asyn
   let offlineFinishedAt = 0;
   page.on("request", (request) => {
     if (request.url().includes("/assets/app/")) appModuleRequests.push(request.url());
+    if (request.url().includes("/assets/client-core/")) clientCoreRequests.push(request.url());
     if (request.url().includes("/assets/client-store/")) legacyStoreRequests.push(request.url());
   });
   page.on("console", (message) => {
@@ -64,6 +66,17 @@ test("development client loads through CSP, connects, and sends a message", asyn
   await expect(page.locator("#body")).toBeEnabled();
   await expect.poll(() => appModuleRequests.length).toBe(1);
   expect(appModuleRequests[0]).toMatch(/\/assets\/app\/[a-f0-9]{7,64}\/app\.js$/);
+  await expect.poll(() => clientCoreRequests.length).toBe(1);
+  expect(clientCoreRequests[0]).toMatch(/\/assets\/client-core\/[a-f0-9]{7,64}\/client-core\.wasm$/);
+  const wasmAdmission = await page.evaluate(async () => {
+    const url = document.querySelector('meta[name="sproyt-client-core"]')?.getAttribute("content");
+    if (!url) throw new Error("missing client core metadata");
+    const { instance } = await WebAssembly.instantiate(await (await fetch(url)).arrayBuffer(), {});
+    const admit = instance.exports.sproyt_admit_persisted_send;
+    if (typeof admit !== "function") throw new Error("missing send admission export");
+    return [admit(1, 1, 0), admit(1, 0, 0), admit(1, 1, 1)];
+  });
+  expect(wasmAdmission).toEqual([1, 0, 0]);
   expect(legacyStoreRequests).toEqual([]);
   await page.locator("#body").fill("draft overlever kontrollert øktfornying");
   const socketBeforeSessionRefresh = currentSocket;

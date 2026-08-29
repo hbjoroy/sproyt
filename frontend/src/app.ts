@@ -4,7 +4,7 @@
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
       import { NavigationController } from "./navigation";
-      import { admitPersistedSend } from "./send-admission";
+      import { createSendAdmissionPolicy } from "./send-admission-wasm";
       import { createSessionController, fetchWithTimeout, sessionRefreshAfterSeconds, type SessionController } from "./session";
       import { isJsonObject, isRecord, mediaFromUpload } from "./types";
       import type { Channel, ChatMessage, Circle, ClientCommand, ClientCommandArguments, JsonObject, MediaObject, Mention, MermaidApi, ThreadComposerState, ThreadSummary, UploadResponse, UserProfile, UserTask, WireEvent } from "./types";
@@ -21,6 +21,7 @@
       type PendingCircleInvitationRecipient = Readonly<{ circleId: string; userId: string }>;
       type PendingMessage = Readonly<{ channelId: string; body: string; draft: string; mediaIds: string[] }>;
       type MessageInteraction = Readonly<{ messageId: string; customReaction: string; focusCustomReaction: boolean; focusReactionSummary: boolean }>;
+      const sendAdmissionPolicy = createSendAdmissionPolicy();
       function isMermaidApi(value: unknown): value is MermaidApi {
         return isRecord(value) && typeof value.initialize === "function" && typeof value.run === "function";
       }
@@ -512,7 +513,7 @@
         // IndexedDB await could become stale during a channel switch, resume,
         // or session socket handoff.
         const transport = connectionSupervisor.snapshot();
-        const dispatched = admitPersistedSend(input.channelId, {
+        const dispatched = sendAdmissionPolicy.admit(input.channelId, {
           connected: transport.connected,
           subscribedChannelId: transport.subscribedChannelId,
           handoffActive: transport.handoffActive

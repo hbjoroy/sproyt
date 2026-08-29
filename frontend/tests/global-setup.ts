@@ -7,6 +7,19 @@ const runDirectory = process.env.SPROYT_E2E_RUN_DIRECTORY;
 const port = Number(process.env.SPROYT_E2E_PORT);
 const databaseUrl = process.env.SPROYT_E2E_DATABASE_URL;
 
+async function removeRunDirectory(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch (error) {
+    if (process.platform === "win32" && error instanceof Error && "code" in error
+      && (error.code === "EBUSY" || error.code === "EPERM")) {
+      console.warn(`test run directory is still locked and will be left for later cleanup: ${path}`);
+      return;
+    }
+    throw error;
+  }
+}
+
 function requireEnvironment(): { runDirectory: string; port: number; databaseUrl: string } {
   if (!runDirectory || !databaseUrl || !Number.isInteger(port)) {
     throw new Error("the e2e runner must provide an isolated database, directory, and port");
@@ -103,11 +116,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     await waitForReady(isolated.port, child);
   } catch (error) {
     await stopAndWait(child);
-    await rm(isolated.runDirectory, { recursive: true, force: true });
+    await removeRunDirectory(isolated.runDirectory);
     throw error;
   }
   return async () => {
     await stopAndWait(child);
-    await rm(isolated.runDirectory, { recursive: true, force: true });
+    await removeRunDirectory(isolated.runDirectory);
   };
 }

@@ -76,16 +76,19 @@ policy and state transitions. Credentials are never passed into WASM.
 
 `crates/sproyt-client-core` is the first portable client-policy slice. It owns
 the durable-send admission and lifecycle model and builds both natively and for
-`wasm32-unknown-unknown`. The current TypeScript adapter mirrors that finite
-contract against shared JSON scenarios. It re-checks transport, subscription
-and session-handoff state after the asynchronous IndexedDB write, so a message
-is either dispatched with its original request id or remains durably queued;
-the composer is never left waiting for a request that did not reach a socket.
+`wasm32-unknown-unknown`. A fingerprinted immutable WASM route exposes its
+send-admission decision through a deliberately small integer ABI. The
+TypeScript adapter retains a fixture-verified fallback for browsers that cannot
+load the asset, but Rust is the primary policy owner. It re-checks transport,
+subscription and session-handoff state after the asynchronous IndexedDB write,
+so a message is either dispatched with its original request id or remains
+durably queued; the composer is never left waiting for a request that did not
+reach a socket.
 
 The migration is deliberately staged:
 
-1. Add a fingerprinted, CSP-safe WASM asset and binding pipeline, then replace
-   the TypeScript admission mirror with the Rust export.
+1. Complete: fingerprinted, CSP-safe WASM asset and binding pipeline; send
+   admission now uses the Rust export with a bounded compatibility fallback.
 2. Move refresh/recovery policy into the Rust state machine. TypeScript keeps
    executing `/auth/session`, `/auth/refresh`, locks and broadcasts as effects.
 3. Move reconnect, socket-generation, handoff and desired-subscription policy

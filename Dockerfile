@@ -5,6 +5,7 @@ ARG BUILD_VARIANT=zig
 FROM --platform=$BUILDPLATFORM rust:1.96.0-alpine3.23@sha256:5dc2af9dd547c33f64d5fc1d299ab93b51f39eaa16c426c476b990ce6caf5b3e AS build-base
 WORKDIR /src
 ENV SPROYT_FRONTEND_PREBUILT=1
+RUN rustup target add wasm32-unknown-unknown
 
 FROM --platform=$BUILDPLATFORM node:24.19.0-alpine3.23@sha256:244cc2b53f46f9e876304391d17682b0ddae9ac33491f4857e25e35a36ba7995 AS frontend-builder
 WORKDIR /src/frontend

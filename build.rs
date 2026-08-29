@@ -7,6 +7,7 @@ use std::{
 fn main() {
     println!("cargo:rerun-if-env-changed=SPROYT_FRONTEND_PREBUILT");
     for path in [
+        "crates/sproyt-client-core/src",
         "frontend/package.json",
         "frontend/package-lock.json",
         "frontend/tsconfig.json",
@@ -19,8 +20,10 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR");
     let frontend_dir = Path::new(&manifest_dir).join("frontend");
     let output_dir = PathBuf::from(env::var("OUT_DIR").expect("Cargo sets OUT_DIR"));
+    let client_core_wasm = output_dir.join("client-core.wasm");
     let app_bundle = output_dir.join("app.js");
     let client_store = output_dir.join("client-store.js");
+    build_client_core_wasm(&manifest_dir, &client_core_wasm);
     if env::var_os("SPROYT_FRONTEND_PREBUILT").is_some() {
         let generated_app = frontend_dir.join("dist/app.js");
         let generated_client_store = frontend_dir.join("dist/client-store.js");
@@ -53,5 +56,41 @@ fn main() {
     assert!(
         app_bundle.is_file() && client_store.is_file(),
         "frontend build did not create app.js and client-store.js in Cargo OUT_DIR"
+    );
+}
+
+fn build_client_core_wasm(manifest_dir: &str, output: &Path) {
+    let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let source = Path::new(manifest_dir).join("crates/sproyt-client-core/src/lib.rs");
+    let status = Command::new(rustc)
+        .args([
+            "--crate-name",
+            "sproyt_client_core",
+            "--crate-type",
+            "cdylib",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--edition",
+            "2024",
+            "-C",
+            "opt-level=z",
+            "-C",
+            "panic=abort",
+            "-C",
+            "lto=fat",
+            "-C",
+            "codegen-units=1",
+            "-C",
+            "strip=symbols",
+            "-o",
+        ])
+        .arg(output)
+        .arg(source)
+        .current_dir(manifest_dir)
+        .status()
+        .expect("failed to start rustc for the browser client core");
+    assert!(
+        status.success() && output.is_file(),
+        "browser client core build failed; install the wasm32-unknown-unknown target"
     );
 }

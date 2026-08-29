@@ -14,6 +14,8 @@ pub(crate) const BUILD_REVISION: &str = match option_env!("SPROYT_BUILD_REVISION
 };
 pub(crate) const PWA_MANIFEST: &str = include_str!("../../assets/manifest.webmanifest");
 pub(crate) const APP_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
+pub(crate) const CLIENT_CORE_WASM: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/client-core.wasm"));
 #[cfg(test)]
 pub(crate) const APP_SOURCE: &str = include_str!("../../frontend/src/app.ts");
 #[cfg(test)]
@@ -63,6 +65,10 @@ pub(crate) fn app_bundle_fingerprint(build_revision: &str, app_bundle: &[u8]) ->
     asset_fingerprint(build_revision, app_bundle)
 }
 
+pub(crate) fn client_core_fingerprint(build_revision: &str, client_core: &[u8]) -> String {
+    asset_fingerprint(build_revision, client_core)
+}
+
 pub(crate) async fn client_store_legacy() -> axum::response::Response {
     (
         [
@@ -98,6 +104,20 @@ pub(crate) async fn app_bundle(Path(fingerprint): Path<String>) -> axum::respons
             (CACHE_CONTROL, "public, max-age=31536000, immutable"),
         ],
         APP_BUNDLE,
+    )
+        .into_response()
+}
+
+pub(crate) async fn client_core_wasm(Path(fingerprint): Path<String>) -> axum::response::Response {
+    if fingerprint != client_core_fingerprint(BUILD_REVISION, CLIENT_CORE_WASM) {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [
+            (CONTENT_TYPE, "application/wasm"),
+            (CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        CLIENT_CORE_WASM,
     )
         .into_response()
 }
