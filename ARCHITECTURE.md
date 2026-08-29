@@ -89,8 +89,11 @@ The migration is deliberately staged:
 
 1. Complete: fingerprinted, CSP-safe WASM asset and binding pipeline; send
    admission now uses the Rust export with a bounded compatibility fallback.
-2. Move refresh/recovery policy into the Rust state machine. TypeScript keeps
-   executing `/auth/session`, `/auth/refresh`, locks and broadcasts as effects.
+2. Complete: refresh, startup and recovery decisions are Rust policy. TypeScript
+   still executes `/auth/session`, `/auth/refresh`, locks, timers, broadcasts,
+   visibility checks and navigation as browser effects. A failed session probe
+   is distinct from an explicit authentication rejection, so a network outage
+   after wake cannot become an interactive login or page replacement.
 3. Move reconnect, socket-generation, handoff and desired-subscription policy
    into the same core while TypeScript retains the concrete WebSocket handles.
 4. Move durable-command lifecycle and selected protocol validation only after

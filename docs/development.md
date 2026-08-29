@@ -44,9 +44,11 @@ Cargo embeds the core at a fingerprinted, immutable `application/wasm` route.
 The authenticated shell publishes that URL as metadata and the TypeScript
 adapter loads it without inline script. Send admission uses the Rust export
 after initialization and retains the fixture-verified TypeScript policy only
-as a compatibility fallback if the asset or ABI cannot load. Do not add
-browser APIs or credentials to the Rust crate; browser effects stay in typed
-TypeScript adapters.
+as a compatibility fallback if the asset or ABI cannot load. Session startup,
+refresh classification and authentication recovery use the same shared WASM
+instance. HTTP requests, locks, storage, timers, visibility and navigation
+remain TypeScript effects. Do not add browser APIs or credentials to the Rust
+crate; browser effects stay in typed TypeScript adapters.
 
 The browser page loads the fingerprinted `app.js` module and client-policy WASM.
 `client-store.js` is built and served temporarily only for pages that were

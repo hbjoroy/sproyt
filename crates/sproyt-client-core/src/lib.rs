@@ -6,6 +6,8 @@
 //! whether an already durable send can safely be dispatched now. That keeps it
 //! native-testable and WASM-compatible without retaining browser handles.
 
+pub mod session;
+
 #[cfg(target_arch = "wasm32")]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {

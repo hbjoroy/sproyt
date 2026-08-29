@@ -74,9 +74,12 @@ test("development client loads through CSP, connects, and sends a message", asyn
     const { instance } = await WebAssembly.instantiate(await (await fetch(url)).arrayBuffer(), {});
     const admit = instance.exports.sproyt_admit_persisted_send;
     if (typeof admit !== "function") throw new Error("missing send admission export");
-    return [admit(1, 1, 0), admit(1, 0, 0), admit(1, 1, 1)];
+    const recover = instance.exports.sproyt_recovery_decision;
+    const start = instance.exports.sproyt_start_session_decision;
+    if (typeof recover !== "function" || typeof start !== "function") throw new Error("missing session policy exports");
+    return { admission: [admit(1, 1, 0), admit(1, 0, 0), admit(1, 1, 1)], recovery: [recover(2, 0, 1, 1), recover(2, 3, 0, 0)], start: start(2) };
   });
-  expect(wasmAdmission).toEqual([1, 0, 0]);
+  expect(wasmAdmission).toEqual({ admission: [1, 0, 0], recovery: [2, 1], start: 1 });
   expect(legacyStoreRequests).toEqual([]);
   await page.locator("#body").fill("draft overlever kontrollert øktfornying");
   const socketBeforeSessionRefresh = currentSocket;

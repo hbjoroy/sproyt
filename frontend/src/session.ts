@@ -1,4 +1,5 @@
 import { isRecord } from "./types";
+import { createSessionPolicy, type CurrentSessionOutcome, type RefreshOutcome } from "./session-policy-wasm";
 
 export function refreshDelayMilliseconds(seconds: number): number { return Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : 1_000; }
 export function sessionRefreshAfterSeconds(value: unknown): number { if (!isRecord(value)) return 300; const seconds = value.refresh_after_seconds; return typeof seconds === "number" && Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 300; }
@@ -41,28 +42,54 @@ export async function fetchWithTimeout(
 
 export function createSessionController(dependencies: SessionDependencies): SessionController {
   const state: SessionState = { refreshTimer: null, refreshDueAt: 0, refreshPromise: null, refreshRejected: false, authenticationRecoveryPromise: null };
+  const policy = createSessionPolicy();
   const leaseKey = dependencies.leaseKey ?? "sproyt.session-refresh-lease.v1";
   const schedule = (seconds: number): void => { if (state.refreshTimer !== null) dependencies.clearTimeout(state.refreshTimer); const delay = refreshDelayMilliseconds(seconds); state.refreshDueAt = dependencies.now() + delay; dependencies.onRefreshDueAt(state.refreshDueAt); state.refreshTimer = dependencies.setTimeout(() => { refresh().catch(() => schedule(30)); }, delay); };
   const scheduleAuthenticationRecovery = (seconds: number): void => { if (state.refreshTimer !== null) dependencies.clearTimeout(state.refreshTimer); const delay = refreshDelayMilliseconds(seconds); state.refreshDueAt = dependencies.now() + delay; dependencies.onRefreshDueAt(state.refreshDueAt); state.refreshTimer = dependencies.setTimeout(() => { recoverAuthentication().catch(() => scheduleAuthenticationRecovery(30)); }, delay); };
   const restoreStatus = (): void => { if (dependencies.visibility() === "visible" && dependencies.isConnectionOpen()) dependencies.onStatus("Tilkopla"); };
+  const failRefresh = (outcome: Exclude<RefreshOutcome, "rotated">): false => {
+    dependencies.reportClientEvent("session_refresh_failed");
+    state.refreshRejected = policy.refreshDisposition(outcome) === "retry_after_authentication_rejection";
+    schedule(30); restoreStatus(); return false;
+  };
   const performRefresh = async (): Promise<boolean> => {
     const visible = dependencies.visibility() === "visible" && dependencies.isConnectionOpen(); if (visible) dependencies.onStatus("Fornyar økta …");
-    let response: Response; try { response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/refresh", { method: "POST", credentials: "same-origin", headers: sessionHeaders }); } catch { dependencies.reportClientEvent("session_refresh_failed"); state.refreshRejected = false; schedule(30); restoreStatus(); return false; }
-    if (!response.ok) { dependencies.reportClientEvent("session_refresh_failed"); state.refreshRejected = response.status === 401; schedule(30); restoreStatus(); return false; }
+    let response: Response; try { response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/refresh", { method: "POST", credentials: "same-origin", headers: sessionHeaders }); } catch { return failRefresh("retryable_failure"); }
+    if (!response.ok) return failRefresh(response.status === 401 ? "authentication_rejected" : "retryable_failure");
     state.refreshRejected = false;
-    let seconds: number; try { seconds = sessionRefreshAfterSeconds(await response.json()); } catch { dependencies.reportClientEvent("session_refresh_failed"); schedule(30); restoreStatus(); return false; }
-    let verification: Response; try { verification = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); } catch { dependencies.reportClientEvent("session_refresh_failed"); schedule(30); restoreStatus(); return false; }
-    if (!verification.ok) { dependencies.reportClientEvent("session_refresh_failed"); state.refreshRejected = verification.status === 401; schedule(30); restoreStatus(); return false; }
+    let seconds: number; try { seconds = sessionRefreshAfterSeconds(await response.json()); } catch { return failRefresh("retryable_failure"); }
+    let verification: Response; try { verification = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); } catch { return failRefresh("retryable_failure"); }
+    if (!verification.ok) return failRefresh(verification.status === 401 ? "authentication_rejected" : "retryable_failure");
     schedule(seconds); dependencies.onReauthenticationRequired(false); dependencies.broadcast?.postMessage({ type: "session_rotated", refreshAfterSeconds: seconds }); dependencies.reportClientEvent("session_refresh_succeeded"); dependencies.onSessionRotated(); return true;
   };
   const withLease = async (): Promise<boolean> => {
     const now = dependencies.now(); const lease: SessionRefreshLease = { owner: dependencies.browserSessionId, expiresAt: now + 15_000 };
-    try { const current = parseSessionRefreshLease(dependencies.storage.getItem(leaseKey)); if (current !== null && current.owner !== lease.owner && current.expiresAt > now) { schedule(Math.max(2, Math.ceil((current.expiresAt - now) / 1_000))); return false; } dependencies.storage.setItem(leaseKey, JSON.stringify(lease)); if (parseSessionRefreshLease(dependencies.storage.getItem(leaseKey))?.owner !== lease.owner) { schedule(5); return false; } } catch { try { dependencies.storage.removeItem(leaseKey); } catch {} return performRefresh(); }
+    try { const current = parseSessionRefreshLease(dependencies.storage.getItem(leaseKey)); if (current !== null && current.owner !== lease.owner && current.expiresAt > now) { state.refreshRejected = false; schedule(Math.max(2, Math.ceil((current.expiresAt - now) / 1_000))); return false; } dependencies.storage.setItem(leaseKey, JSON.stringify(lease)); if (parseSessionRefreshLease(dependencies.storage.getItem(leaseKey))?.owner !== lease.owner) { state.refreshRejected = false; schedule(5); return false; } } catch { try { dependencies.storage.removeItem(leaseKey); } catch {} return performRefresh(); }
     try { return await performRefresh(); } finally { try { if (parseSessionRefreshLease(dependencies.storage.getItem(leaseKey))?.owner === lease.owner) dependencies.storage.removeItem(leaseKey); } catch {} }
   };
-  const useCurrentSession = async (): Promise<boolean> => { try { const response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); if (!response.ok) return false; schedule(sessionRefreshAfterSeconds(await response.json())); return true; } catch { return false; } };
-  const refresh = async (waitForLock = false): Promise<boolean> => { if (state.refreshPromise !== null) return state.refreshPromise; state.refreshPromise = (async () => { if (dependencies.withLock === null) return withLease(); const result = await dependencies.withLock(waitForLock, async () => { if (waitForLock && await useCurrentSession()) { dependencies.onSessionRotated(); return true; } return performRefresh(); }); if (result === "busy") { schedule(30); return false; } return result; })(); try { return await state.refreshPromise; } finally { state.refreshPromise = null; } };
-  const recoverAuthentication = async (): Promise<void> => { if (state.authenticationRecoveryPromise !== null) return state.authenticationRecoveryPromise; state.authenticationRecoveryPromise = (async () => { dependencies.onStatus("Fornyar økta …"); if (await refresh(true)) return; if (state.refreshRejected) { if (await useCurrentSession()) { dependencies.onReauthenticationRequired(false); dependencies.onSessionRotated(); return; } if (dependencies.visibility() === "visible" && dependencies.now() - dependencies.lastUserActivityAt() < 120_000) { dependencies.onReauthenticationRequired(true); dependencies.onStatus("Økta må stadfestast – vi ventar så du ikkje mistar arbeidet ditt"); scheduleAuthenticationRecovery(30); return; } dependencies.onReauthenticationRequired(false); dependencies.onStatus("Økta må stadfestast på nytt …"); dependencies.onLoginRequired(); return; } dependencies.onReconnectNeeded("ventar på nett for å fornye økta"); })(); try { await state.authenticationRecoveryPromise; } finally { state.authenticationRecoveryPromise = null; } };
-  const start = async (): Promise<void> => { dependencies.broadcast?.addEventListener("message", (event) => { const message = parseSessionRefreshBroadcast(event.data); if (message !== null) { schedule(message.refreshAfterSeconds); dependencies.onSessionRotated(); } }); try { const response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); if (!response.ok) { if (response.status === 401 && await refresh(true)) return; schedule(30); return; } schedule(sessionRefreshAfterSeconds(await response.json())); } catch { schedule(30); } };
+  const probeCurrentSession = async (): Promise<CurrentSessionOutcome> => { try { const response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); if (!response.ok) return response.status === 401 ? "authentication_rejected" : "retryable_failure"; schedule(sessionRefreshAfterSeconds(await response.json())); return "valid"; } catch { return "retryable_failure"; } };
+  const useCurrentSession = async (): Promise<boolean> => (await probeCurrentSession()) === "valid";
+  const refresh = async (waitForLock = false): Promise<boolean> => { if (state.refreshPromise !== null) return state.refreshPromise; state.refreshPromise = (async () => { if (dependencies.withLock === null) return withLease(); const result = await dependencies.withLock(waitForLock, async () => { if (waitForLock && await useCurrentSession()) { state.refreshRejected = false; dependencies.onSessionRotated(); return true; } return performRefresh(); }); if (result === "busy") { state.refreshRejected = false; schedule(30); return false; } return result; })(); try { return await state.refreshPromise; } finally { state.refreshPromise = null; } };
+  const recoverAuthentication = async (): Promise<void> => { if (state.authenticationRecoveryPromise !== null) return state.authenticationRecoveryPromise; state.authenticationRecoveryPromise = (async () => {
+    dependencies.onStatus("Fornyar økta …");
+    const refreshOutcome: RefreshOutcome = await refresh(true) ? "rotated" : state.refreshRejected ? "authentication_rejected" : "retryable_failure";
+    const foreground = dependencies.visibility() === "visible";
+    const recent = dependencies.now() - dependencies.lastUserActivityAt() < 120_000;
+    let current: CurrentSessionOutcome = "not_checked";
+    let decision = policy.recoveryDecision(refreshOutcome, current, foreground, recent);
+    if (decision === "probe_current_session") { current = await probeCurrentSession(); decision = policy.recoveryDecision(refreshOutcome, current, foreground, recent); }
+    if (decision === "session_rotated") return;
+    if (decision === "use_current_session") { state.refreshRejected = false; dependencies.onReauthenticationRequired(false); dependencies.onSessionRotated(); return; }
+    if (decision === "wait_for_reauthentication") { dependencies.onReauthenticationRequired(true); dependencies.onStatus("Økta må stadfestast – vi ventar så du ikkje mistar arbeidet ditt"); scheduleAuthenticationRecovery(30); return; }
+    if (decision === "require_login") { dependencies.onReauthenticationRequired(false); dependencies.onStatus("Økta må stadfestast på nytt …"); dependencies.onLoginRequired(); return; }
+    dependencies.onReconnectNeeded("ventar på nett for å fornye økta");
+  })(); try { await state.authenticationRecoveryPromise; } finally { state.authenticationRecoveryPromise = null; } };
+  const start = async (): Promise<void> => { dependencies.broadcast?.addEventListener("message", (event) => { const message = parseSessionRefreshBroadcast(event.data); if (message !== null) { schedule(message.refreshAfterSeconds); dependencies.onSessionRotated(); } });
+    let probe: RefreshOutcome = "retryable_failure";
+    try { const response = await fetchWithTimeout(dependencies.fetch, dependencies.setTimeout, dependencies.clearTimeout, "/auth/session", sessionRequest); if (response.ok) { schedule(sessionRefreshAfterSeconds(await response.json())); probe = "rotated"; } else if (response.status === 401) probe = "authentication_rejected"; } catch {}
+    const decision = policy.startDecision(probe);
+    if (decision === "refresh_now" && await refresh(true)) return;
+    if (decision !== "schedule_server_deadline") schedule(30);
+  };
   return Object.freeze({ snapshot: (): SessionSnapshot => Object.freeze({ refreshDueAt: state.refreshDueAt, refreshRejected: state.refreshRejected, refreshing: state.refreshPromise !== null, recoveringAuthentication: state.authenticationRecoveryPromise !== null }), start, schedule, refresh, recoverAuthentication, reauthenticateNow: (): void => { dependencies.onReauthenticationRequired(false); dependencies.onLoginRequired(); }, useCurrentSession });
 }

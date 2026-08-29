@@ -1,4 +1,5 @@
 import type { PersistedSendAdmission, TransportReadiness } from "./send-admission";
+import { loadClientCoreWasm, type ClientCoreWasmLoader, type RawClientCoreInstance } from "./client-core-wasm";
 
 const queueUntilSubscribed: PersistedSendAdmission = "queue_until_subscribed";
 const dispatchNow: PersistedSendAdmission = "dispatch_now";
@@ -7,15 +8,11 @@ type RawSendAdmissionExports = Readonly<{
   sproyt_admit_persisted_send(connected: number, channelMatches: number, handoffActive: number): number;
 }>;
 
-export type RawSendAdmissionInstance = Readonly<{ exports: WebAssembly.Exports }>;
-export type SendAdmissionWasmLoader = () => Promise<RawSendAdmissionInstance>;
 export type SendAdmissionPolicy = Readonly<{
   admit(channelId: string, readiness: TransportReadiness): PersistedSendAdmission;
   ready: Promise<boolean>;
   usingWasm(): boolean;
 }>;
-
-export const sendAdmissionWasmMetaName = "sproyt-client-core";
 
 function fallbackAdmission(channelId: string, readiness: TransportReadiness): PersistedSendAdmission {
   return readiness.connected && !readiness.handoffActive && readiness.subscribedChannelId === channelId
@@ -23,7 +20,7 @@ function fallbackAdmission(channelId: string, readiness: TransportReadiness): Pe
     : queueUntilSubscribed;
 }
 
-function rawExports(instance: RawSendAdmissionInstance): RawSendAdmissionExports | null {
+function rawExports(instance: RawClientCoreInstance): RawSendAdmissionExports | null {
   const exports = instance.exports;
   const admit = exports.sproyt_admit_persisted_send;
   return typeof admit === "function"
@@ -45,7 +42,7 @@ function admitWithWasm(exports: RawSendAdmissionExports, channelId: string, read
  * an optional asset. Until it is ready, and after any loader/ABI/call failure,
  * the verified TypeScript mirror fails safely to the existing behaviour.
  */
-export function createSendAdmissionPolicy(loader: SendAdmissionWasmLoader = loadSendAdmissionWasm): SendAdmissionPolicy {
+export function createSendAdmissionPolicy(loader: ClientCoreWasmLoader = loadClientCoreWasm): SendAdmissionPolicy {
   let active: ((channelId: string, readiness: TransportReadiness) => PersistedSendAdmission) | null = null;
   const ready = loader().then((instance) => {
     const exports = rawExports(instance);
@@ -65,19 +62,4 @@ export function createSendAdmissionPolicy(loader: SendAdmissionWasmLoader = load
     ready,
     usingWasm: () => active !== null
   };
-}
-
-export function sendAdmissionWasmUrl(document: Document = globalThis.document): string | null {
-  const value = document.querySelector(`meta[name="${sendAdmissionWasmMetaName}"]`)?.getAttribute("content")?.trim();
-  return value || null;
-}
-
-export async function loadSendAdmissionWasm(): Promise<RawSendAdmissionInstance> {
-  const url = sendAdmissionWasmUrl();
-  if (!url) throw new Error("WASM admission asset metadata is missing");
-  const response = await fetch(url, { credentials: "same-origin" });
-  if (!response.ok) throw new Error(`WASM admission asset failed to load (${response.status})`);
-  const bytes = await response.arrayBuffer();
-  const { instance } = await WebAssembly.instantiate(bytes, {});
-  return instance;
 }

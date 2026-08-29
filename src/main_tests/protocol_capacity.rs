@@ -1294,7 +1294,13 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("let lastUserActivityAt = Date.now()"));
     assert!(BROWSER_CLIENT.contains("function noteUserActivity()"));
     assert!(BROWSER_CLIENT.contains("window.addEventListener(\"pointerdown\", noteUserActivity"));
-    assert!(SESSION_SOURCE.contains("if (await useCurrentSession())"));
+    assert!(SESSION_SOURCE.contains("import { createSessionPolicy"));
+    assert!(SESSION_SOURCE.contains("const policy = createSessionPolicy();"));
+    assert!(SESSION_SOURCE.contains(
+        "decision = policy.recoveryDecision(refreshOutcome, current, foreground, recent);"
+    ));
+    assert!(SESSION_SOURCE.contains("current = await probeCurrentSession();"));
+    assert!(SESSION_SOURCE.contains("if (decision === \"use_current_session\")"));
     assert!(
         SESSION_SOURCE.contains("dependencies.now() - dependencies.lastUserActivityAt() < 120_000")
     );

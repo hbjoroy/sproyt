@@ -8,7 +8,9 @@ import { NavigationController, restoreNavigation } from "../src/navigation";
 import { createDurableOutbox, type DurableOutboxStorage, type DurableSend } from "../src/durable-outbox";
 import { createOutbox } from "../src/outbox";
 import { admitPersistedSend } from "../src/send-admission";
-import { createSendAdmissionPolicy, sendAdmissionWasmUrl } from "../src/send-admission-wasm";
+import { clientCoreWasmUrl } from "../src/client-core-wasm";
+import { createSendAdmissionPolicy } from "../src/send-admission-wasm";
+import { createSessionPolicy } from "../src/session-policy-wasm";
 import { asWireEvent, isRecord, mediaFromUpload, protocolId } from "../src/types";
 import { createSessionController, fetchWithTimeout, parseSessionRefreshBroadcast, parseSessionRefreshLease, refreshDelayMilliseconds, sessionRefreshAfterSeconds } from "../src/session";
 
@@ -228,9 +230,22 @@ test("the WASM admission policy preserves sends when loading or ABI calls fail",
 
 test("the WASM admission loader uses only the fingerprinted shell metadata", () => {
   const documentWithAsset = { querySelector: () => ({ getAttribute: () => " /assets/client-core/revision/client-core.wasm " }) } as unknown as Document;
-  assert.equal(sendAdmissionWasmUrl(documentWithAsset), "/assets/client-core/revision/client-core.wasm");
+  assert.equal(clientCoreWasmUrl(documentWithAsset), "/assets/client-core/revision/client-core.wasm");
   const documentWithoutAsset = { querySelector: () => null } as unknown as Document;
-  assert.equal(sendAdmissionWasmUrl(documentWithoutAsset), null);
+  assert.equal(clientCoreWasmUrl(documentWithoutAsset), null);
+});
+
+test("the WASM session policy preserves recovery decisions and rejects unknown ABI values", async () => {
+  const policy = createSessionPolicy(async () => ({ exports: {
+    sproyt_refresh_disposition: (outcome: number) => outcome,
+    sproyt_recovery_decision: (_outcome: number, current: number, foreground: number, recent: number) => current === 3 ? 1 : current === 0 ? 2 : current === 1 ? 3 : foreground === 1 && recent === 1 ? 4 : 5,
+    sproyt_start_session_decision: (probe: number) => probe === 0 ? 0 : probe === 2 ? 1 : 2
+  } }));
+  assert.equal(await policy.ready, true);
+  assert.equal(policy.recoveryDecision("authentication_rejected", "not_checked", true, true), "probe_current_session");
+  assert.equal(policy.recoveryDecision("authentication_rejected", "retryable_failure", false, false), "wait_for_network");
+  assert.equal(policy.recoveryDecision("authentication_rejected", "authentication_rejected", true, true), "wait_for_reauthentication");
+  assert.equal(policy.startDecision("authentication_rejected"), "refresh_now");
 });
 
 test("a socket closing during dispatch reports failure without losing the durable id", () => {
@@ -887,6 +902,19 @@ test("session refresh does not publish stale connected status after the socket c
   });
   assert.equal(await controller.refresh(), false);
   assert.deepEqual(statuses, ["Fornyar økta …"]);
+});
+
+test("a rejected refresh followed by a failed session probe never forces login", async () => {
+  const events: string[] = [];
+  const controller = createSessionController({
+    fetch: async (input) => input === "/auth/refresh" ? new Response("expired", { status: 401 }) : new Response("offline", { status: 503 }),
+    storage: new MemoryStorage(), broadcast: null, now: () => 1_000, setTimeout: () => 1, clearTimeout: () => {}, withLock: null,
+    visibility: () => "hidden", isConnectionOpen: () => false, lastUserActivityAt: () => 0, onRefreshDueAt: () => {}, onStatus: () => {},
+    onSessionRotated: () => events.push("rotated"), onReconnectNeeded: () => events.push("reconnect"), onLoginRequired: () => events.push("login"),
+    onReauthenticationRequired: () => {}, reportClientEvent: () => {}, browserSessionId: "sleeping-pwa"
+  });
+  await controller.recoverAuthentication();
+  assert.deepEqual(events, ["reconnect"]);
 });
 
 test("malformed refresh JSON fails closed and recent-user recovery is re-evaluated", async () => {
