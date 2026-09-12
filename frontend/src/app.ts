@@ -1,3 +1,4 @@
+      import { createImageGeneration, imagePrompt } from "./imagegen";
       import { createApplicationStore, createServerEventMailbox } from "./client-store";
       import { AgentApi, HttpClient, NotificationApi, ProcessApi, type CreatedAgent, type ProcessView } from "./api";
       import { requireElement, requireElements } from "./dom";
@@ -408,6 +409,11 @@
         fetch: window.fetch.bind(window),
         refreshSession: () => sessionController.refresh(true),
         participant: () => new URLSearchParams(window.location.search).get("participant")
+      });
+      const imageGeneration = createImageGeneration({
+        http, before: sendForm, identity: () => currentParticipantId || "", connected: () => connectionSupervisor.snapshot().connected,
+        channel: () => activeChannelId || "", channelName: (id) => knownChannels.find(channel => channel.id === id)?.name || "Opphavleg kanal",
+        attach: (media) => { if (!pendingMedia.some(item => item.id === media.id)) pendingMedia.push(media); renderMediaPreviews(); bodyInput.focus(); }
       });
       const notificationsApi = new NotificationApi(http);
       const processesApi = new ProcessApi(http);
@@ -1259,6 +1265,16 @@
       sendForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         const draft = bodyInput.value.trim();
+        try {
+          if (imagePrompt(draft) !== null) {
+            if (!activeChannelId || !connectionSupervisor.snapshot().connected) { setUploadStatus("Kople til før du lagar eit bilete.", "error"); return; }
+            const channel = activeChannelId;
+            if (await imageGeneration.submit(draft, channel) && activeChannelId === channel && bodyInput.value.trim() === draft) {
+              bodyInput.value = ""; persistActiveDraft(); syncComposerState();
+            }
+            return;
+          }
+        } catch (error) { setUploadStatus(error instanceof Error ? error.message : "Kunne ikkje leggje biletet i kø.", "error"); return; }
         const channelMedia = pendingMedia.filter((media) => media.channel_id === activeChannelId);
         const mediaTokens = channelMedia.map((media) => `[[media:${media.id}|${media.content_type}|${encodeURIComponent(media.original_filename)}]]`).join("\n");
         const body = [draft, mediaTokens].filter(Boolean).join("\n");

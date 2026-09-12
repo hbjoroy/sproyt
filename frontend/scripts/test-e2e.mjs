@@ -40,7 +40,7 @@ async function removeRunDirectory(path) {
 
 try {
   const result = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, "test"], {
+    const child = spawn(process.execPath, [cli, "test", ...process.argv.slice(2)], {
       cwd: frontendRoot,
       env: {
         ...process.env,

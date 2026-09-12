@@ -106,4 +106,12 @@ spec:
           port: {{ $.Values.networkPolicy.heartPort }}
     {{- end }}
     {{- end }}
+    {{- range .Values.networkPolicy.comfyuiCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.comfyuiPort }}
+    {{- end }}
 {{- end }}

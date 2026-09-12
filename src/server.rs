@@ -55,6 +55,7 @@ pub(super) struct AppState {
     pub(super) processes: ProcessService,
     pub(super) agents: AgentService,
     pub(super) notifications: NotificationService,
+    pub(super) imagegen: Option<crate::imagegen::ImageGeneration>,
     pub(super) websocket_idle_timeout: Duration,
     pub(super) advanced_ui_enabled: bool,
     pub(super) agent_ui_enabled: bool,
@@ -92,7 +93,12 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
             .await?
         }
     };
+    let imagegen = crate::imagegen::ImageGeneration::from_env(config.database()).await?;
+    if let Some(service) = &imagegen {
+        service.start_worker(operations.subscribe_shutdown());
+    }
     let state = AppState {
+        imagegen,
         auth,
         chat: ChatEngine::start(repositories.chat),
         operations: operations.clone(),
@@ -168,6 +174,18 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             axum::routing::put(enable_channel_notifications).delete(disable_channel_notifications),
         )
         .route("/api/v1/channels/{id}/media", post(upload_media))
+        .route(
+            "/api/v1/imagegen",
+            get(crate::web::imagegen::list).post(crate::web::imagegen::enqueue),
+        )
+        .route(
+            "/api/v1/imagegen/{id}/preview",
+            get(crate::web::imagegen::preview),
+        )
+        .route(
+            "/api/v1/imagegen/{id}/review",
+            post(crate::web::imagegen::review),
+        )
         .route("/api/v1/media/{id}", get(download_media))
         .route("/api/v1/media/{id}/preview", get(download_media_preview))
         .route("/ws", get(ws_handler))

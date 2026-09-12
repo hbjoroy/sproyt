@@ -24,3 +24,7 @@ data:
   {{- with .Values.config.mcpAllowedOrigins }}
   SPROYT_MCP_ALLOWED_ORIGINS: {{ . | quote }}
   {{- end }}
+
+  {{- with .Values.config.comfyuiUrl }}
+  SPROYT_COMFYUI_URL: {{ . | quote }}
+  {{- end }}

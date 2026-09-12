@@ -4,6 +4,7 @@ pub(crate) mod assets;
 pub(crate) mod auth;
 pub(crate) mod browser;
 pub(crate) mod http;
+pub(crate) mod imagegen;
 pub(crate) mod mcp;
 pub(crate) mod media;
 pub(crate) mod processes;

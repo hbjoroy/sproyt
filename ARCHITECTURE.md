@@ -169,3 +169,7 @@ deployment. Runtime containers are stateless apart from explicitly mounted
 local development data; PostgreSQL and explicit external services hold durable
 production state. Operational procedures, readiness, metrics, migration,
 backup/restore and rollback evidence live with the release documentation.
+
+## Private image generation
+
+The image-generation service owns durable requests, bounded admission, and a database-leased ComfyUI worker. The HTTP adapter authenticates ownership and channel access; the fixed Heartsync graph accepts only prompt text. Results appear in a private browser inbox. Accepting creates an unpublished media attachment; normal message sending publishes it. See docs/image-generation.md for configuration and retention.

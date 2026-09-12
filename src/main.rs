@@ -4,6 +4,7 @@ mod chat;
 mod config;
 mod db;
 mod domain;
+mod imagegen;
 mod notification;
 mod operations;
 mod process;

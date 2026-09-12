@@ -32,6 +32,7 @@ config:
   oidcRedirectUrl: https://sproyt.bjoroy.me/auth/callback
   oidcPostLogoutRedirectUrl: https://sproyt.bjoroy.me/
   heartUrl: ""
+  comfyuiUrl: ""
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60
   # Keep Heart/process diagnostics out of the ordinary private-beta journey.
@@ -125,3 +126,5 @@ networkPolicy:
   heartPodSelector: {}
   heartCidrs: []
   heartPort: 3000
+  comfyuiCidrs: []
+  comfyuiPort: 8188
