@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  {{- with .Values.config.vllmUrl }}
-  SPROYT_VLLM_URL: {{ . | quote }}
-  SPROYT_IMAGEGEN_WEB_RESEARCH: {{ $.Values.config.imagegenWebResearch | quote }}
-  {{- end }}
   name: {{ include "sproyt.fullname" . }}
   labels:
     {{- include "sproyt.labels" . | nindent 4 }}
 data:
+  {{- with .Values.config.vllmUrl }}
+  SPROYT_VLLM_URL: {{ . | quote }}
+  SPROYT_IMAGEGEN_WEB_RESEARCH: {{ $.Values.config.imagegenWebResearch | quote }}
+  {{- end }}
   SPROYT_ADDR: 0.0.0.0:9010
   SPROYT_ENV: {{ .Values.config.environment | quote }}
   SPROYT_LOG_FORMAT: {{ .Values.config.logFormat | quote }}
