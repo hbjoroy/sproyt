@@ -32,6 +32,118 @@ impl BrowserClient {
 
 const BROWSER_CLIENT: BrowserClient = BrowserClient;
 
+#[tokio::test]
+async fn imagegen_http_preview_review_and_unpublished_attachment_contract() {
+    use crate::domain::{ChannelKind, ChannelSlug, DisplayName};
+    use base64::Engine;
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (_, old, mut state) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    old.abort();
+    let service = crate::imagegen::ImageGeneration::test("http://unused").await;
+    state.imagegen = Some(service.clone());
+    let owner = state
+        .auth
+        .authenticate_request(Some("image-owner".into()), None)
+        .await
+        .unwrap();
+    state.chat.ensure_user(owner.user.clone()).await.unwrap();
+    let channel = state
+        .chat
+        .create_channel(
+            owner.user.id.clone(),
+            ChannelSlug::new("image-test").unwrap(),
+            DisplayName::new("Image test").unwrap(),
+            ChannelKind::Public,
+            None,
+        )
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = build_router(state.clone(), state.operations.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::new();
+    let request_id = uuid::Uuid::now_v7();
+    let response=client.post(format!("http://{address}/api/v1/imagegen?participant=image-owner"))
+        .json(&serde_json::json!({"channel_id":channel.id,"request_id":request_id,"prompt":"a blue sea"})).send().await.unwrap();
+    assert!(
+        response.status().is_success(),
+        "{}",
+        response.text().await.unwrap()
+    );
+    let mut job = service.list(owner.user.id.clone()).await.unwrap().remove(0);
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    job.image = Some(base64::engine::general_purpose::STANDARD.encode(bytes.into_inner()));
+    job.transition("ready");
+    service.save(&mut job).await.unwrap();
+    let base = format!("http://{address}/api/v1/imagegen/{}", job.id);
+    let preview = client
+        .get(format!("{base}/preview?participant=image-owner"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), 200);
+    assert!(
+        preview.headers()["cache-control"]
+            .to_str()
+            .unwrap()
+            .contains("no-store")
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}/preview?participant=other-user"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    assert_eq!(
+        client
+            .post(format!("{base}/review?participant=other-user"))
+            .json(&serde_json::json!({"decision":"accept"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let accepted = client
+        .post(format!("{base}/review?participant=image-owner"))
+        .json(&serde_json::json!({"decision":"accept"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        accepted.status().is_success(),
+        "{}",
+        accepted.text().await.unwrap()
+    );
+    let value: serde_json::Value = accepted.json().await.unwrap();
+    assert_eq!(value["media"]["owner_id"], owner.user.id.to_string());
+    assert_eq!(value["media"]["channel_id"], channel.id.to_string());
+    let again: serde_json::Value = client
+        .post(format!("{base}/review?participant=image-owner"))
+        .json(&serde_json::json!({"decision":"accept"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(again["media"]["id"], value["media"]["id"]);
+    server.abort();
+}
+
 #[test]
 fn media_signatures_override_untrusted_declared_types() {
     assert_eq!(
@@ -814,6 +926,7 @@ async fn start_test_server_with_state(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        imagegen: None,
         auth: AuthService::development(),
         chat: ChatEngine::start(chat_repository),
         operations: operations.clone(),
@@ -843,6 +956,7 @@ async fn start_postgres_test_server(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        imagegen: None,
         auth: AuthService::development(),
         chat: ChatEngine::start(chat_repository),
         operations: operations.clone(),
@@ -872,6 +986,7 @@ async fn start_test_server_with_gateway(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        imagegen: None,
         auth: AuthService::development(),
         chat: ChatEngine::start(chat_repository),
         operations: operations.clone(),

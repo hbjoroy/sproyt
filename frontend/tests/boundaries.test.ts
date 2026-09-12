@@ -993,3 +993,14 @@ test("shared Rust client-command fixture covers exactly the TypeScript discrimin
   assert.equal(isClientCommand({ type: "set_task_done", payload: { task_id: "t1", done: "yes" } }), false);
   assert.equal(isClientCommand({ type: "hello", payload: {} }), false);
 });
+
+
+import { imagePrompt } from "../src/imagegen";
+test("imagegen command distinguishes chat, strips quotes, and bounds prompt text", () => {
+  assert.equal(imagePrompt("hello"), null);
+  assert.equal(imagePrompt("/imagegeneration hello"), null);
+  assert.equal(imagePrompt('/imagegen "sea breeze"'), "sea breeze");
+  assert.equal(imagePrompt("/imagegen sea breeze"), "sea breeze");
+  assert.throws(() => imagePrompt("/imagegen"));
+  assert.throws(() => imagePrompt("/imagegen " + "a".repeat(2001)));
+});
