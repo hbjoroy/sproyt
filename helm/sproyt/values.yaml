@@ -33,6 +33,8 @@ config:
   oidcPostLogoutRedirectUrl: https://sproyt.bjoroy.me/
   heartUrl: ""
   comfyuiUrl: ""
+  vllmUrl: ""
+  imagegenWebResearch: false
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60
   # Keep Heart/process diagnostics out of the ordinary private-beta journey.
@@ -72,6 +74,8 @@ heart:
   databasePodSelector: {}
 
 secret:
+  vllmExistingSecret: ""
+  vllmApiKeyKey: api-key
   existingSecret: sproyt
   databaseUrlKey: DATABASE_URL
   oidcClientSecretKey: SPROYT_OIDC_CLIENT_SECRET
@@ -128,3 +132,5 @@ networkPolicy:
   heartPort: 3000
   comfyuiCidrs: []
   comfyuiPort: 8188
+  vllmCidrs: []
+  vllmPort: 8000

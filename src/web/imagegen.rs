@@ -247,11 +247,13 @@ pub(crate) async fn review(
             job.transition("declined");
             job.image = None;
             job.prompt.clear();
+            job.expansion = None;
         }
         Decision::Dismiss if matches!(job.state.as_str(), "accepted" | "failed" | "dismissed") => {
             job.transition("dismissed");
             job.image = None;
             job.prompt.clear();
+            job.expansion = None;
         }
         _ => {
             return (

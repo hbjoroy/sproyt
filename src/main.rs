@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod domain;
 mod imagegen;
+mod imagegen_prompt;
 mod notification;
 mod operations;
 mod process;

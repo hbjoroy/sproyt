@@ -114,4 +114,12 @@ spec:
         - protocol: TCP
           port: {{ $.Values.networkPolicy.comfyuiPort }}
     {{- end }}
+    {{- range .Values.networkPolicy.vllmCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.vllmPort }}
+    {{- end }}
 {{- end }}

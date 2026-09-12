@@ -30,6 +30,7 @@ pub(crate) struct ImageGeneration {
 }
 
 struct Gateway {
+    expander: Option<crate::imagegen_prompt::PromptExpander>,
     base: String,
     http: reqwest::Client,
 }
@@ -41,6 +42,8 @@ pub(crate) struct Job {
     pub channel_id: crate::domain::ChannelId,
     pub state: String,
     pub prompt: String,
+    #[serde(default)]
+    pub expansion: Option<crate::imagegen_prompt::Expansion>,
     pub created_at: i64,
     pub updated_at: i64,
     pub revision: i64,
@@ -54,7 +57,7 @@ impl Job {
     pub fn view(&self) -> Value {
         json!({"id":self.id,"channel_id":self.channel_id,"state":self.state,
             "prompt":self.prompt,"created_at":self.created_at,"error":self.error,
-            "media":self.media})
+            "media":self.media,"expansion":self.expansion})
     }
     pub fn transition(&mut self, state: &str) {
         self.state = state.into();
@@ -89,6 +92,7 @@ impl ImageGeneration {
         Ok(Some(Self {
             store,
             gateway: Arc::new(Gateway {
+                expander: crate::imagegen_prompt::PromptExpander::from_env()?,
                 base: base.trim_end_matches('/').into(),
                 http: reqwest::Client::builder()
                     .timeout(Duration::from_secs(20))
@@ -129,6 +133,7 @@ impl ImageGeneration {
                 job.transition("dismissed");
                 job.image = None;
                 job.prompt.clear();
+                job.expansion = None;
                 self.save(&mut job).await?;
             } else {
                 visible.push(job);
@@ -203,6 +208,7 @@ impl ImageGeneration {
             channel_id: channel.clone(),
             state: "queued".into(),
             prompt,
+            expansion: None,
             created_at: now(),
             updated_at: now(),
             revision: 0,
@@ -335,6 +341,7 @@ impl ImageGeneration {
                 job.transition("expired");
                 job.image = None;
                 job.prompt.clear();
+                job.expansion = None;
                 job.media = None;
                 self.save(&mut job).await?;
                 continue;
@@ -356,6 +363,14 @@ impl ImageGeneration {
                 job.transition("failed");
                 job.error = Some("The server restarted during submission. The image may still be in ComfyUI; it was not queued again automatically.".into());
             } else if job.state == "queued" {
+                if job.expansion.is_none()
+                    && let Some(expander) = &self.gateway.expander
+                {
+                    job.expansion = Some(expander.expand(&job.prompt).await);
+                    if !self.save(&mut job).await? {
+                        continue;
+                    }
+                }
                 job.transition("submitting");
                 if !self.save(&mut job).await? {
                     continue;
@@ -402,7 +417,7 @@ impl ImageGeneration {
 impl Gateway {
     async fn submit(&self, job: &Job) -> Result<String, Error> {
         let response: Value = self.http.post(format!("{}/prompt", self.base))
-            .json(&json!({"prompt": workflow(&job.prompt, job.created_at as u64), "client_id":job.id}))
+            .json(&json!({"prompt": workflow(job.expansion.as_ref().map(|e| e.prompt.as_str()).unwrap_or(&job.prompt), job.created_at as u64), "client_id":job.id}))
             .send().await?.error_for_status()?.json().await?;
         let id = response["prompt_id"].as_str().ok_or("missing prompt id")?;
         Uuid::parse_str(id)?;
@@ -499,6 +514,7 @@ impl ImageGeneration {
         Self {
             store: Store::Sqlite(pool),
             gateway: Arc::new(Gateway {
+                expander: None,
                 base: base.into(),
                 http: reqwest::Client::new(),
             }),
@@ -537,6 +553,7 @@ mod tests {
         let service = ImageGeneration {
             store: Store::Postgres(pool.clone()),
             gateway: Arc::new(Gateway {
+                expander: None,
                 base: "http://127.0.0.1:1".into(),
                 http: reqwest::Client::new(),
             }),

@@ -9,12 +9,20 @@ export function imagePrompt(draft: string): string | null {
   return prompt;
 }
 
-type Job = { id: string; channel_id: string; state: string; prompt: string; error: string | null };
+type Expansion = { prompt: string; model: string | null; style: string | null; sources: string[]; warning: string | null };
+type Job = { expansion: Expansion | null; id: string; channel_id: string; state: string; prompt: string; error: string | null };
 function decodeJobs(value: unknown): Job[] {
   if (!isRecord(value) || !Array.isArray(value.jobs)) throw new Error("Ugyldig biletkø");
   return value.jobs.map((job: unknown) => {
     if (!isRecord(job) || typeof job.id !== "string" || typeof job.channel_id !== "string" || typeof job.state !== "string" || typeof job.prompt !== "string") throw new Error("Ugyldig biletjobb");
-    return { id: job.id, channel_id: job.channel_id, state: job.state, prompt: job.prompt, error: typeof job.error === "string" ? job.error : null };
+    const e = job.expansion;
+    const expansion: Expansion | null = isRecord(e) && typeof e.prompt === "string" ? {
+      prompt: e.prompt, model: typeof e.model === "string" ? e.model : null,
+      style: typeof e.style === "string" ? e.style : null,
+      sources: Array.isArray(e.sources) ? e.sources.filter((source): source is string => typeof source === "string" && source.startsWith("https://en.wikipedia.org/wiki/")) : [],
+      warning: typeof e.warning === "string" ? e.warning : null
+    } : null;
+    return { expansion, id: job.id, channel_id: job.channel_id, state: job.state, prompt: job.prompt, error: typeof job.error === "string" ? job.error : null };
   });
 }
 
@@ -76,6 +84,18 @@ export function createImageGeneration(options: {
       const caption = document.createElement("p");
       caption.textContent = `${options.channelName(job.channel_id)} · ${job.prompt}`;
       card.append(caption);
+      if (job.expansion) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary"); summary.textContent = "Sjå utvida biletprompt";
+        const text = document.createElement("p"); text.textContent = job.expansion.prompt;
+        const attribution = document.createElement("p"); attribution.textContent = [job.expansion.model, job.expansion.style, job.expansion.warning].filter(Boolean).join(" · ");
+        details.append(summary, text, attribution);
+        for (const source of job.expansion.sources) {
+          const link = document.createElement("a"); link.href = source; link.textContent = "Kjelde: " + decodeURIComponent(new URL(source).pathname.slice(6)).replaceAll("_", " ");
+          link.target = "_blank"; link.rel = "noopener noreferrer"; details.append(link, document.createElement("br"));
+        }
+        card.append(details);
+      }
       if (["ready", "accepted"].includes(job.state)) {
         const preview = document.createElement("img");
         preview.src = previewUrl(job.id);
