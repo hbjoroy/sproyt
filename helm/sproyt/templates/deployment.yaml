@@ -85,6 +85,13 @@ spec:
                   name: {{ .Values.secret.existingSecret }}
                   key: {{ .Values.secret.vapidSubjectKey }}
                   optional: true
+            {{- if .Values.secret.vllmExistingSecret }}
+            - name: SPROYT_VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.vllmExistingSecret }}
+                  key: {{ .Values.secret.vllmApiKeyKey }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 9010

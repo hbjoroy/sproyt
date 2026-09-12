@@ -41,6 +41,34 @@ follow the existing chat media storage lifecycle. ComfyUI retains its own
 outputs on Santorini; declining in Sprøyt does not erase those server files.
 Only a fixed-size PNG up to 8 MiB is retrieved from the configured backend.
 
+## Prompt expansion and reference lookups
+
+Set `SPROYT_VLLM_URL` to the OpenAI-compatible base URL (including `/v1`)
+and `SPROYT_VLLM_API_KEY` to the existing vLLM credential. Sprøyt discovers
+the served model through `/models` for each job. The first inference interprets
+the request and chooses cartoon or realistic representation; the second
+produces a concise, composed image prompt. Explicit subjects, actions, media
+and locations take precedence. When no setting is given or implied, the
+default is Paroikia's seafront on Paros one hour before sunset, with the
+Artemis passenger ferry small in the distance behind the main subject.
+
+`SPROYT_IMAGEGEN_WEB_RESEARCH=true` enables up to two short public-reference
+queries through Wikipedia's REST search API. It does not send the full prompt
+to Wikipedia or fetch model-provided URLs. Retrieved excerpts are treated as
+untrusted context. These are reference lookups, not live ferry tracking or
+exhaustive web research. Lookup failure does not stop expansion. If vLLM fails,
+times out or returns malformed output, generation uses the original prompt
+and explains the fallback in the private prompt details.
+
+The expanded text, style, actual model ID and consulted references are stored
+with the private job and shown under **Sjå utvida biletprompt**. They are cleared
+with the preview on decline, dismissal or expiry. Expansion has an 80-second
+total deadline, leaving time within the worker lease for ComfyUI admission.
+
+Helm equivalents are `config.vllmUrl`, `config.imagegenWebResearch`,
+`secret.vllmExistingSecret`, `secret.vllmApiKeyKey`, and the narrowly scoped
+`networkPolicy.vllmCidrs` / `networkPolicy.vllmPort`. Do not put API keys in values.
+
 Image and video workflows share Santorini's memory with vLLM. Avoid running
 large manual video jobs simultaneously. The integration does not restart
 ComfyUI, evict other users' jobs, or stop vLLM.
