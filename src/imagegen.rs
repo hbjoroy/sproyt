@@ -45,6 +45,10 @@ pub(crate) struct Job {
     pub prompt: String,
     #[serde(default)]
     pub expansion: Option<crate::imagegen_prompt::Expansion>,
+    #[serde(default)]
+    pub reference_ids: Vec<String>,
+    #[serde(default)]
+    pub reference_images: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub revision: i64,
@@ -59,7 +63,8 @@ impl Job {
         json!({"id":self.id,"channel_id":self.channel_id,"state":self.state,
             "prompt":self.prompt,"created_at":self.created_at,"error":self.error,
             "media":self.media,"expansion":self.expansion,
-            "visual_references":visual_references(self.expansion.as_ref().map(|e| e.scene).unwrap_or_default())})
+            "reference_count":self.reference_ids.len(),
+            "visual_references":visual_references(self.expansion.as_ref().map(|e| e.scene).unwrap_or_default()).into_iter().take(3usize.saturating_sub(self.reference_ids.len())).collect::<Vec<_>>()})
     }
     pub fn transition(&mut self, state: &str) {
         self.state = state.into();
@@ -125,8 +130,8 @@ impl ImageGeneration {
 
     pub async fn list(&self, owner: UserId) -> Result<Vec<Job>, Error> {
         let projection = match &self.store {
-            Store::Postgres(_) => "(data::jsonb - 'image')::text AS data",
-            Store::Sqlite(_) => "json_remove(data, '$.image') AS data",
+            Store::Postgres(_) => "(data::jsonb - 'image' - 'reference_images')::text AS data",
+            Store::Sqlite(_) => "json_remove(data, '$.image', '$.reference_images') AS data",
         };
         let jobs = self.query_jobs(&format!("SELECT {projection} FROM image_generation_jobs WHERE owner_id=$1 AND state NOT IN ('declined','dismissed','expired') ORDER BY updated_at DESC LIMIT 20"), &owner.to_string()).await?;
         let mut visible = Vec::new();
@@ -148,18 +153,14 @@ impl ImageGeneration {
         let Some(media) = &job.media else {
             return Ok(false);
         };
+        self.media_published(&media.id.to_string()).await
+    }
+
+    pub async fn media_published(&self, id: &str) -> Result<bool, Error> {
         let sql = "SELECT 1 FROM message_attachments WHERE cast(media_id AS TEXT)=$1 LIMIT 1";
         Ok(match &self.store {
-            Store::Postgres(p) => sqlx::query(sql)
-                .bind(media.id.to_string())
-                .fetch_optional(p)
-                .await?
-                .is_some(),
-            Store::Sqlite(p) => sqlx::query(sql)
-                .bind(media.id.to_string())
-                .fetch_optional(p)
-                .await?
-                .is_some(),
+            Store::Postgres(p) => sqlx::query(sql).bind(id).fetch_optional(p).await?.is_some(),
+            Store::Sqlite(p) => sqlx::query(sql).bind(id).fetch_optional(p).await?.is_some(),
         })
     }
 
@@ -186,6 +187,7 @@ impl ImageGeneration {
             .collect()
     }
 
+    #[cfg(test)]
     pub async fn enqueue(
         &self,
         owner: UserId,
@@ -193,13 +195,32 @@ impl ImageGeneration {
         request: Uuid,
         prompt: String,
     ) -> Result<Job, Error> {
+        self.enqueue_with_references(owner, channel, request, prompt, vec![])
+            .await
+    }
+
+    pub async fn enqueue_with_references(
+        &self,
+        owner: UserId,
+        channel: crate::domain::ChannelId,
+        request: Uuid,
+        prompt: String,
+        references: Vec<(String, String)>,
+    ) -> Result<Job, Error> {
+        if references.len() > 3 {
+            return Err("too many reference images".into());
+        }
+        let (reference_ids, reference_images): (Vec<_>, Vec<_>) = references.into_iter().unzip();
         let id = Uuid::new_v5(
             &Uuid::NAMESPACE_URL,
             format!("sproyt:imagegen:{owner}:{request}").as_bytes(),
         )
         .to_string();
         if let Some(job) = self.get(&id).await? {
-            if job.channel_id != channel || job.prompt != prompt {
+            if job.channel_id != channel
+                || job.prompt != prompt
+                || job.reference_ids != reference_ids
+            {
                 return Err("request id already used for a different image".into());
             }
             return Ok(job);
@@ -211,6 +232,8 @@ impl ImageGeneration {
             state: "queued".into(),
             prompt,
             expansion: None,
+            reference_ids,
+            reference_images,
             created_at: now(),
             updated_at: now(),
             revision: 0,
@@ -341,6 +364,7 @@ impl ImageGeneration {
         for mut job in jobs {
             if now() - job.updated_at > RETENTION {
                 job.transition("expired");
+                job.reference_images.clear();
                 job.image = None;
                 job.prompt.clear();
                 job.expansion = None;
@@ -362,13 +386,18 @@ impl ImageGeneration {
                 continue;
             }
             if job.state == "submitting" {
+                job.reference_images.clear();
                 job.transition("failed");
                 job.error = Some("The server restarted during submission. The image may still be in ComfyUI; it was not queued again automatically.".into());
             } else if job.state == "queued" {
                 if job.expansion.is_none()
                     && let Some(expander) = &self.gateway.expander
                 {
-                    job.expansion = Some(expander.expand(&job.prompt).await);
+                    job.expansion = Some(
+                        expander
+                            .expand_with_references(&job.prompt, job.reference_ids.len())
+                            .await,
+                    );
                     if !self.save(&mut job).await? {
                         continue;
                     }
@@ -377,16 +406,18 @@ impl ImageGeneration {
                 if !self.save(&mut job).await? {
                     continue;
                 }
-                match self.gateway.submit(&job).await {
-                    Ok(id) => {
+                match tokio::time::timeout(Duration::from_secs(30), self.gateway.submit(&job)).await
+                {
+                    Ok(Ok(id)) => {
                         job.prompt_id = Some(id);
                         job.transition("running");
                     }
-                    Err(_) => {
+                    _ => {
                         job.transition("failed");
                         job.error = Some("Could not confirm the request with Santorini. It has not been retried automatically.".into());
                     }
                 }
+                job.reference_images.clear();
             } else {
                 match self.gateway.result(&job).await {
                     Ok(Some(image)) => {
@@ -418,9 +449,34 @@ impl ImageGeneration {
 
 impl Gateway {
     async fn submit(&self, job: &Job) -> Result<String, Error> {
+        let mut uploaded = vec![];
+        for (index, image) in job.reference_images.iter().enumerate() {
+            let filename = format!("{}-{index}.jpg", job.id);
+            let boundary = format!("sproyt-{}", job.id);
+            let mut body = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"subfolder\"\r\n\r\nsproyt-private\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{filename}\"\r\nContent-Type: image/jpeg\r\n\r\n").into_bytes();
+            body.extend(STANDARD.decode(image)?);
+            body.extend(format!("\r\n--{boundary}--\r\n").as_bytes());
+            let result: Value = self
+                .http
+                .post(format!("{}/upload/image", self.base))
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(body)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            if result["name"] != filename || result["subfolder"] != "sproyt-private" {
+                return Err("unexpected reference upload name".into());
+            }
+            uploaded.push(format!("sproyt-private/{filename}"));
+        }
         let response: Value = self.http.post(format!("{}/prompt", self.base))
-            .json(&json!({"prompt": workflow(job.expansion.as_ref().map(|e| e.prompt.as_str()).unwrap_or(&job.prompt), job.created_at as u64, job.expansion.as_ref().map(|e| e.scene).unwrap_or_default()), "client_id":job.id,
-                "extra_data":{"extra_pnginfo":{"reference_photos":visual_references(job.expansion.as_ref().map(|e| e.scene).unwrap_or_default())}}}))
+            .json(&json!({"prompt": workflow(job.expansion.as_ref().map(|e| e.prompt.as_str()).unwrap_or(&job.prompt), job.created_at as u64, job.expansion.as_ref().map(|e| e.scene).unwrap_or_default(), &uploaded), "client_id":job.id,
+                "extra_data":{"extra_pnginfo":{"reference_photos":visual_references(job.expansion.as_ref().map(|e| e.scene).unwrap_or_default()).into_iter().take(3usize.saturating_sub(uploaded.len())).collect::<Vec<_>>()}}}))
             .send().await?.error_for_status()?.json().await?;
         let id = response["prompt_id"].as_str().ok_or("missing prompt id")?;
         Uuid::parse_str(id)?;
@@ -492,7 +548,7 @@ fn visual_references(scene: Scene) -> Vec<Value> {
     refs
 }
 
-pub(crate) fn workflow(prompt: &str, seed: u64, scene: Scene) -> Value {
+pub(crate) fn workflow(prompt: &str, seed: u64, scene: Scene, uploaded: &[String]) -> Value {
     let mut graph = json!({
         "1":{"class_type":"UNETLoader","inputs":{"unet_name":"qwen_image_edit_2511_fp8mixed.safetensors","weight_dtype":"default"}},
         "2":{"class_type":"CLIPLoader","inputs":{"clip_name":"qwen_2.5_vl_7b_fp8_scaled.safetensors","type":"qwen_image","device":"default"}},
@@ -512,9 +568,13 @@ pub(crate) fn workflow(prompt: &str, seed: u64, scene: Scene) -> Value {
         Scene::Coast => &["artemis-jean-housen.jpg"],
         Scene::Other => &[],
     };
-    for (i, file) in references.iter().enumerate() {
+    let paths = uploaded
+        .iter()
+        .cloned()
+        .chain(references.iter().map(|f| format!("sproyt-references/{f}")));
+    for (i, file) in paths.take(3).enumerate() {
         let n = 20 + i * 4;
-        graph[n.to_string()] = json!({"class_type":"LoadImage","inputs":{"image":format!("sproyt-references/{file}")}});
+        graph[n.to_string()] = json!({"class_type":"LoadImage","inputs":{"image":file}});
         graph[(n + 1).to_string()] = json!({"class_type":"ImageScaleToTotalPixels","inputs":{"image":[n.to_string(),0],"upscale_method":"lanczos","megapixels":0.5,"resolution_steps":16}});
         graph["4"]["inputs"][format!("image{}", i + 1)] = json!([(n + 1).to_string(), 0]);
     }
@@ -556,9 +616,98 @@ mod tests {
     use crate::domain::ChannelId;
 
     #[test]
+    fn draft_references_take_priority_and_never_exceed_three_slots() {
+        for count in 1..=3 {
+            let uploads: Vec<String> = (0..count)
+                .map(|i| format!("sproyt-private/draft-{i}.jpg"))
+                .collect();
+            let graph = workflow("Paint these subjects", 42, Scene::Paroikia, &uploads);
+            assert_eq!(
+                graph
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .filter(|n| n["class_type"] == "LoadImage")
+                    .count(),
+                3
+            );
+            for (i, path) in uploads.iter().enumerate() {
+                assert_eq!(graph[(20 + i * 4).to_string()]["inputs"]["image"], *path);
+            }
+            if count < 3 {
+                assert_eq!(
+                    graph[(20 + count * 4).to_string()]["inputs"]["image"],
+                    "sproyt-references/artemis-jean-housen.jpg"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn draft_reference_snapshots_are_durable_private_and_part_of_idempotency() {
+        let service = ImageGeneration::test("http://unused").await;
+        let owner = UserId::named("reference-owner");
+        let channel = ChannelId::generate();
+        let request = Uuid::now_v7();
+        let references = vec![("draft-id".into(), STANDARD.encode(b"private photo"))];
+        let job = service
+            .enqueue_with_references(
+                owner.clone(),
+                channel.clone(),
+                request,
+                "Paint this".into(),
+                references.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .get(&job.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .reference_images,
+            job.reference_images
+        );
+        let listed = service.list(owner.clone()).await.unwrap();
+        assert!(listed[0].reference_images.is_empty());
+        assert_eq!(listed[0].view()["reference_count"], 1);
+        assert!(listed[0].view().get("reference_images").is_none());
+        assert_eq!(
+            service
+                .enqueue_with_references(
+                    owner.clone(),
+                    channel.clone(),
+                    request,
+                    "Paint this".into(),
+                    references
+                )
+                .await
+                .unwrap()
+                .id,
+            job.id
+        );
+        assert!(
+            service
+                .enqueue_with_references(owner, channel, request, "Paint this".into(), vec![])
+                .await
+                .is_err()
+        );
+        assert!(!service.media_published("draft-id").await.unwrap());
+        let Store::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        sqlx::query("INSERT INTO message_attachments(media_id) VALUES('draft-id')")
+            .execute(pool)
+            .await
+            .unwrap();
+        assert!(service.media_published("draft-id").await.unwrap());
+    }
+
+    #[test]
     fn scenes_route_only_appropriate_visual_references() {
         for (scene, count) in [(Scene::Other, 0), (Scene::Coast, 1), (Scene::Paroikia, 2)] {
-            let graph = workflow("Two friends", 42, scene);
+            let graph = workflow("Two friends", 42, scene, &[]);
             let nodes = graph.as_object().unwrap();
             assert_eq!(
                 nodes
@@ -733,17 +882,25 @@ mod tests {
         let app=Router::new().route("/prompt",post(move |Json(value):Json<Value>| {
             let sink=sink.clone();let id=submit_id.clone(); async move { *sink.lock().await=value; Json(json!({"prompt_id":id})) }
         })).route("/history/{id}",get(move || {let id=result_id.clone();async move {Json(json!({id:{"status":{"status_str":"success"},"outputs":{"9":{"images":[{"filename":"test.png","subfolder":"","type":"output"}]}}}}))}}))
-        .route("/view",get(|| async { b"\x89PNG\r\n\x1a\nmock".to_vec() }));
+        .route("/view",get(|| async { b"\x89PNG\r\n\x1a\nmock".to_vec() }))
+        .route("/upload/image", post(|body: axum::body::Bytes| async move {
+            let text = String::from_utf8(body.to_vec()).unwrap();
+            assert!(text.contains("\r\n\r\nsproyt-private\r\n"));
+            assert!(text.contains("\r\n\r\nprivate photo bytes\r\n"));
+            let filename = text.split("filename=\"").nth(1).unwrap().split('"').next().unwrap();
+            Json(json!({"name":filename,"subfolder":"sproyt-private","type":"input"}))
+        }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let service = ImageGeneration::test(&format!("http://{address}")).await;
         let job = service
-            .enqueue(
+            .enqueue_with_references(
                 UserId::named("alice"),
                 ChannelId::generate(),
                 Uuid::now_v7(),
                 "an oil painting of the sea".into(),
+                vec![("photo-id".into(), STANDARD.encode(b"private photo bytes"))],
             )
             .await
             .unwrap();
@@ -758,7 +915,12 @@ mod tests {
         assert!(ready.image.is_some());
         assert!(ready.view().get("image").is_none());
         assert!(ready.media.is_none());
+        assert!(ready.reference_images.is_empty());
         let submitted = captured.lock().await;
+        assert_eq!(
+            submitted["prompt"]["20"]["inputs"]["image"],
+            format!("sproyt-private/{}-0.jpg", job.id)
+        );
         assert_eq!(submitted["prompt"]["4"]["inputs"]["prompt"], job.prompt);
         assert_eq!(
             submitted["prompt"]["1"]["inputs"]["unet_name"],

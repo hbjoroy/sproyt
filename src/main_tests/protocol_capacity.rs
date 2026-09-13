@@ -141,6 +141,58 @@ async fn imagegen_http_preview_review_and_unpublished_attachment_contract() {
         .await
         .unwrap();
     assert_eq!(again["media"]["id"], value["media"]["id"]);
+    // An accepted but unpublished image can become a reference. Another channel
+    // member still cannot use it as their own draft image.
+    let other = state
+        .auth
+        .authenticate_request(Some("reference-other".into()), None)
+        .await
+        .unwrap();
+    state.chat.ensure_user(other.user.clone()).await.unwrap();
+    state
+        .chat
+        .join_channel(
+            other.user.id.clone(),
+            crate::domain::ChannelRef::Id(channel.id.clone()),
+        )
+        .await
+        .unwrap();
+    let reference_request = serde_json::json!({"channel_id": channel.id, "request_id": uuid::Uuid::now_v7(), "prompt": "Paint this reference", "reference_ids": [value["media"]["id"]]});
+    let denied = client
+        .post(format!(
+            "http://{address}/api/v1/imagegen?participant=reference-other"
+        ))
+        .json(&reference_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 404);
+    let allowed = client
+        .post(format!(
+            "http://{address}/api/v1/imagegen?participant=image-owner"
+        ))
+        .json(&reference_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), 200);
+    let result: serde_json::Value = allowed.json().await.unwrap();
+    assert_eq!(result["job"]["reference_count"], 1);
+    assert!(result["job"].get("reference_images").is_none());
+    let stored = service
+        .get(result["job"]["id"].as_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.reference_images.len(), 1);
+    assert!(
+        image::load_from_memory(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&stored.reference_images[0])
+                .unwrap()
+        )
+        .is_ok()
+    );
     server.abort();
 }
 

@@ -1,5 +1,53 @@
 import { expect, test } from "@playwright/test";
 
+test("image tool follows editor focus and hiding survives refreshed job status", async ({ page }) => {
+  let polls = 0;
+  await page.route(/\/api\/v1\/imagegen(?:\?.*)?$/, route => {
+    polls++;
+    return route.fulfill({ json: { enabled: true, jobs: [{ id: "focus-job", channel_id: "unused", state: polls > 1 ? "running" : "queued", prompt: "A sea view", error: null }] } });
+  });
+  await page.goto("/?participant=imagegen-focus-test");
+  await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15000 });
+  const tool = page.getByRole("button", { name: "Biletverkstad", exact: true });
+  const inbox = page.getByRole("region", { name: "Private biletmeldingar" });
+  await expect(inbox).toBeVisible({ timeout: 15000 });
+  await inbox.getByRole("button", { name: "Skjul", exact: true }).click();
+  await expect(tool).toBeHidden();
+  await expect.poll(() => polls, { timeout: 12000 }).toBeGreaterThan(1);
+  await expect(inbox).toBeHidden();
+  await page.locator("#body").focus();
+  await expect(tool).toBeVisible();
+  await expect(tool).toHaveText("🖼️");
+  await expect(page.locator("#composer-tools")).toContainText("🖼️");
+  await tool.click();
+  await expect(inbox).toBeVisible();
+});
+
+test("draft photos are sent as references and remain unpublished attachments", async ({ page }) => {
+  let request: {reference_ids: string[]} | null = null;
+  const ids = ["337b2426-5377-4f25-93b5-832cd8d6e201", "337b2426-5377-4f25-93b5-832cd8d6e202"];
+  let upload = 0;
+  await page.route(/\/api\/v1\/channels\/[^/]+\/media(?:\?.*)?$/, route => {
+    const channel = new URL(route.request().url()).pathname.split("/")[4];
+    return route.fulfill({ json: { media: { id: ids[upload++], channel_id: channel, original_filename: `reference-${upload}.png`, content_type: "image/png" } } });
+  });
+  await page.route(/\/api\/v1\/imagegen(?:\?.*)?$/, route => {
+    if (route.request().method() === "POST") request = route.request().postDataJSON();
+    return route.fulfill({ json: { enabled: true, jobs: [] } });
+  });
+  await page.goto("/?participant=imagegen-draft-test");
+  await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15000 });
+  for (let i = 0; i < 2; i++) {
+    await page.locator("#media-input").setInputFiles({ name: `ref-${i}.png`, mimeType: "image/png", buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) });
+    await expect(page.locator(".media-preview-label")).toHaveCount(i + 1);
+  }
+  await page.locator("#body").fill('/imagegen "Paint these two subjects"');
+  await page.locator("#send-form").evaluate((form: HTMLFormElement) => form.requestSubmit());
+  await expect.poll(() => request?.reference_ids).toEqual(ids);
+  await expect(page.locator(".media-preview-label")).toHaveCount(2);
+  await expect(page.locator("#body")).toHaveValue("");
+});
+
 test("imagegen stays private, survives reload, and accepts into a draft without sending", async ({ page }) => {
   let job: Record<string, unknown> | null = null;
   const sent: string[] = [];
