@@ -84,8 +84,10 @@ produces a concise, composed image prompt. Explicit subjects, actions, media
 and locations take precedence. When no setting is given or implied, the
 default is Paroikia's seafront on Paros one hour before sunset, with the
 Artemis passenger ferry small in the distance behind the main subject.
-Ordinary scenes use context-appropriate clothing. Non-sexual adult nudity is
-preserved only when explicitly requested, including naturism and oil painting.
+Ordinary scenes use context-appropriate clothing. Explicitly requested adult
+naturism and nude figure art retain the requested clothing, bare skin and poses.
+Expansion uses concrete visual descriptions rather than adding content-rating
+labels, moral judgements or assurances about the image's acceptability.
 The prompt interpreter preserves group size and distinguishes an empty coast
 from the town waterfront. Explicit locations and artistic media take priority.
 Visual reference directions are appended deterministically for the selected
