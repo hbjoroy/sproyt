@@ -21,6 +21,11 @@ while accepting, return to the original channel and choose **Legg i utkast**.
 Accepted images remain recoverable in the inbox until posted, dismissed or
 expired. **Avslå** (decline) removes the private preview without posting.
 
+The attachment filename comes from a short descriptive title returned alongside
+the expanded prompt, normalized to a bounded safe `.png` filename. If absent,
+including on older jobs, a name is derived from the original prompt. Previously
+accepted attachments retain their existing filenames.
+
 ## Configuration
 
 Set `SPROYT_COMFYUI_URL` to the private ComfyUI image server, for example
