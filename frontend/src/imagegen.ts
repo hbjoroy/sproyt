@@ -29,38 +29,46 @@ function decodeJobs(value: unknown): Job[] {
 }
 
 export function createImageGeneration(options: {
-  http: HttpClient; before: HTMLElement; connected: () => boolean; channel: () => string;
+  http: HttpClient; before: HTMLElement; toolbar: HTMLElement; connected: () => boolean; channel: () => string;
   identity: () => string; channelName: (id: string) => string; attach: (media: MediaObject) => void;
 }) {
   const panel = document.createElement("section");
   panel.className = "imagegen-inbox";
   panel.setAttribute("aria-label", "Private biletmeldingar");
   panel.hidden = true;
-  const launcher = document.createElement("button"); launcher.type = "button"; launcher.textContent = "Biletverkstad"; launcher.hidden = true;
-  launcher.addEventListener("click", () => { panel.hidden = false; void refresh(); });
-  options.before.before(launcher, panel);
+  const launcher = document.createElement("button"); launcher.type = "button"; launcher.textContent = "🖼️";
+  launcher.className = "composer-icon"; launcher.title = "Biletverkstad"; launcher.setAttribute("aria-label", "Biletverkstad");
+  launcher.addEventListener("click", () => {
+    dismissed = false;
+    if (!jobs.length) status.textContent = 'Skriv /imagegen "skildring av biletet" i meldinga. Opplasta bilete i utkastet blir brukte som referansar (opptil tre).';
+    panel.hidden = false;
+    void refresh();
+  });
+  options.toolbar.append(launcher);
+  options.before.before(panel);
   const heading = document.createElement("strong");
   heading.textContent = "Biletverkstad · berre synleg for deg";
   const status = document.createElement("p");
   status.setAttribute("role", "status");
   const cards = document.createElement("div");
   const hide = document.createElement("button"); hide.type = "button"; hide.textContent = "Skjul";
-  hide.addEventListener("click", () => { panel.hidden = true; });
+  hide.addEventListener("click", () => { dismissed = true; panel.hidden = true; });
   panel.append(heading, hide, status, cards);
   let signature = "";
   let polling = false;
   let submitting = false;
   let busy = false;
   let jobs: Job[] = [];
+  let dismissed = false;
   // Reuse the admission id on a network retry, including after a page reload.
-  function requestId(channel: string, prompt: string): string {
+  function requestId(channel: string, prompt: string, referenceIds: string[]): string {
     const key = `sproyt-imagegen-admission:${options.identity()}`;
     try {
       const previous: unknown = JSON.parse(sessionStorage.getItem(key) || "null");
-      if (isRecord(previous) && previous.channel === channel && previous.prompt === prompt && typeof previous.id === "string") return previous.id;
+      if (isRecord(previous) && previous.channel === channel && previous.prompt === prompt && JSON.stringify(previous.referenceIds || []) === JSON.stringify(referenceIds) && typeof previous.id === "string") return previous.id;
     } catch { /* Storage is optional; server-side admission still bounds jobs. */ }
     const id = crypto.randomUUID();
-    try { sessionStorage.setItem(key, JSON.stringify({ channel, prompt, id })); } catch { /* optional */ }
+    try { sessionStorage.setItem(key, JSON.stringify({ channel, prompt, referenceIds, id })); } catch { /* optional */ }
     return id;
   }
   async function jsonPost(path: string, body: unknown): Promise<unknown> {
@@ -76,9 +84,8 @@ export function createImageGeneration(options: {
     const next = JSON.stringify([jobs, options.channel(), options.identity()]);
     if (next === signature || busy) return;
     signature = next;
-    launcher.hidden = jobs.length === 0 && !status.textContent;
     if (jobs.some(job => job.state === "ready")) status.textContent = "Biletet er klart til privat gjennomgang.";
-    panel.hidden = jobs.length === 0 && !status.textContent;
+    panel.hidden = dismissed || (jobs.length === 0 && !status.textContent);
     cards.replaceChildren();
     for (const job of jobs) {
       const card = document.createElement("article");
@@ -167,14 +174,16 @@ export function createImageGeneration(options: {
   }
   window.setInterval(() => { void refresh(); }, 5_000);
   return {
-    async submit(draft: string, channel: string): Promise<boolean> {
+    async submit(draft: string, channel: string, media: MediaObject[] = []): Promise<boolean> {
       const prompt = imagePrompt(draft);
       if (prompt === null) return false;
       if (submitting) throw new Error("Biletførespurnaden blir allereie send.");
-      submitting = true; panel.hidden = false; launcher.hidden = false;
+      const referenceIds = media.filter(item => item.channel_id === channel && item.content_type.startsWith("image/")).map(item => item.id);
+      if (referenceIds.length > 3) throw new Error("Bruk høgst tre referansebilete i utkastet når du lagar eit bilete.");
+      submitting = true; dismissed = false; panel.hidden = false;
       status.textContent = "Legg biletet i kø …";
       try {
-        await jsonPost("/api/v1/imagegen", { channel_id: channel, request_id: requestId(channel, prompt), prompt });
+        await jsonPost("/api/v1/imagegen", { channel_id: channel, request_id: requestId(channel, prompt, referenceIds), prompt, reference_ids: referenceIds });
         try { sessionStorage.removeItem(`sproyt-imagegen-admission:${options.identity()}`); } catch { /* optional */ }
         status.textContent = "Biletet er i kø. Førehandsvisinga kjem hit privat; ingenting er posta i kanalen.";
         await refresh();

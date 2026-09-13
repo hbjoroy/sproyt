@@ -411,7 +411,7 @@
         participant: () => new URLSearchParams(window.location.search).get("participant")
       });
       const imageGeneration = createImageGeneration({
-        http, before: sendForm, identity: () => currentParticipantId || "", connected: () => connectionSupervisor.snapshot().connected,
+        http, before: sendForm, toolbar: composerTools, identity: () => currentParticipantId || "", connected: () => connectionSupervisor.snapshot().connected,
         channel: () => activeChannelId || "", channelName: (id) => knownChannels.find(channel => channel.id === id)?.name || "Opphavleg kanal",
         attach: (media) => { if (!pendingMedia.some(item => item.id === media.id)) pendingMedia.push(media); renderMediaPreviews(); bodyInput.focus(); }
       });
@@ -1269,7 +1269,7 @@
           if (imagePrompt(draft) !== null) {
             if (!activeChannelId || !connectionSupervisor.snapshot().connected) { setUploadStatus("Kople til før du lagar eit bilete.", "error"); return; }
             const channel = activeChannelId;
-            if (await imageGeneration.submit(draft, channel) && activeChannelId === channel && bodyInput.value.trim() === draft) {
+            if (await imageGeneration.submit(draft, channel, activeChannelMedia()) && activeChannelId === channel && bodyInput.value.trim() === draft) {
               bodyInput.value = ""; persistActiveDraft(); syncComposerState();
             }
             return;

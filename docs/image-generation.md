@@ -5,6 +5,14 @@ without posting the command or prompt to channel history.
 The private image inbox above the composer shows progress and the completed
 preview. It follows the account across refreshes and devices while Sprøyt is
 open. It is an in-app whisper; it does not send an OS push notification.
+The picture icon in the composer's editing toolbar opens this inbox. The toolbar
+appears while the editor has focus. **Skjul** keeps the inbox closed during
+background polling until it is reopened or another generation is requested.
+
+Attach up to three images to the unsent channel draft before using `/imagegen`
+to use them as visual references. They remain in the draft and are not published
+by generation. Only the requester's unpublished images in that channel qualify;
+videos are not reference inputs. More than three images produces an error.
 
 **Godta** (accept) creates an ordinary image attachment owned by the requester
 in the original channel and adds it to the draft. Existing caption text is
@@ -27,7 +35,7 @@ The fixed server graph uses `qwen_image_edit_2511_fp8mixed.safetensors`,
 1024×768 PNG images with four Euler/simple steps, CFG 1 and AuraFlow shift 3.1.
 The Lightning LoRA accelerates generation; the previous Heartsync
 nudity-oriented LoRA is no longer part of the application graph. Users supply
-text; arbitrary graph nodes and image URLs are not accepted.
+text and existing draft image IDs; arbitrary graph nodes and image URLs are not accepted.
 
 Copy the two reviewed photos from `assets/imagegen-references/` into
 ComfyUI's `input/sproyt-references/`. Their source links, attribution, licence
@@ -36,8 +44,17 @@ both the actual Artemis ferry and the real waterfront as image inputs;
 unspecified Greek/Paros coastal scenes receive the ferry only. Other explicit
 settings receive neither. Each reference is scaled to 0.5 megapixels and
 supplied through TextEncodeQwenImageEditPlus for visual and VAE encoding. These are actual image inputs,
-not just text descriptions. Replace/update references through a reviewed
-server deployment; this change does not add a general browser upload field.
+not just text descriptions. Draft images take priority in upload order; the
+remaining slots, up to three total, use the default ferry and waterfront photos
+where appropriate. The prompt expander receives the reference count and leaves
+visual interpretation of uploaded photos to Qwen Image Edit.
+
+At admission, draft images are copied into durable private job storage as
+JPEG references up to 1024 pixels and 2 MiB each. The worker uploads these to
+ComfyUI's private `input/sproyt-private/` directory before queuing the graph,
+then removes the temporary database copies. References are not returned in job
+list responses. Santorini retains these input files alongside its generated
+outputs; declining a preview does not erase ComfyUI's local files.
 
 The private inbox exposes **Sjå referansefoto**, with photo credits and links.
 PNG metadata retains the same provenance. Images are generated compositions,

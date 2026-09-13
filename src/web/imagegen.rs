@@ -10,7 +10,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    domain::{ChannelId, MediaUpload, UserId},
+    domain::{ChannelId, MediaId, MediaUpload, UserId},
     imagegen::{ImageGeneration, Job},
     server::AppState,
     web::{
@@ -42,6 +42,8 @@ pub(crate) struct Request {
     channel_id: String,
     request_id: Uuid,
     prompt: String,
+    #[serde(default)]
+    reference_ids: Vec<String>,
 }
 
 pub(crate) async fn enqueue(
@@ -76,8 +78,82 @@ pub(crate) async fn enqueue(
         )
             .into_response();
     }
+    if body.reference_ids.len() > 3
+        || body
+            .reference_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != body.reference_ids.len()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Use at most three distinct draft images.",
+        )
+            .into_response();
+    }
+    let mut references = Vec::new();
+    for id in &body.reference_ids {
+        let media_id = match MediaId::new(id.clone()) {
+            Ok(id) => id,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        let (media, content) = match state
+            .chat
+            .load_media(principal.user.id.clone(), media_id)
+            .await
+        {
+            Ok(value) => value,
+            Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        };
+        if media.owner_id != principal.user.id
+            || media.channel_id != channel
+            || !media.content_type.starts_with("image/")
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        match service.media_published(id).await {
+            Ok(false) => (),
+            Ok(true) => {
+                return (
+                    StatusCode::CONFLICT,
+                    "Only unsent draft images can be used.",
+                )
+                    .into_response();
+            }
+            Err(_) => return internal(),
+        }
+        let encoded = tokio::task::spawn_blocking(move || -> Result<String, String> {
+            let image = image::load_from_memory(&content)
+                .map_err(|e| e.to_string())?
+                .thumbnail(1024, 1024)
+                .to_rgb8();
+            let mut bytes = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 90)
+                .encode_image(&image)
+                .map_err(|e| e.to_string())?;
+            if bytes.len() > 2 * 1024 * 1024 {
+                return Err("Reference too large".into());
+            }
+            Ok(STANDARD.encode(bytes))
+        })
+        .await;
+        match encoded {
+            Ok(Ok(encoded)) => references.push((id.clone(), encoded)),
+            _ => {
+                return (StatusCode::BAD_REQUEST, "Could not read reference image.")
+                    .into_response();
+            }
+        }
+    }
     match service
-        .enqueue(principal.user.id, channel, body.request_id, prompt.into())
+        .enqueue_with_references(
+            principal.user.id,
+            channel,
+            body.request_id,
+            prompt.into(),
+            references,
+        )
         .await
     {
         Ok(job) => private_json(json!({"job":job.view()})),
