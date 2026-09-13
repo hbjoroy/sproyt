@@ -9,6 +9,7 @@ use sqlx::{PgPool, SqlitePool};
 use tokio::sync::watch;
 use uuid::Uuid;
 
+use crate::imagegen_prompt::Scene;
 use crate::{
     config::{DatabaseConfig, DatabaseKind},
     domain::{MediaObject, UserId},
@@ -57,7 +58,8 @@ impl Job {
     pub fn view(&self) -> Value {
         json!({"id":self.id,"channel_id":self.channel_id,"state":self.state,
             "prompt":self.prompt,"created_at":self.created_at,"error":self.error,
-            "media":self.media,"expansion":self.expansion})
+            "media":self.media,"expansion":self.expansion,
+            "visual_references":visual_references(self.expansion.as_ref().map(|e| e.scene).unwrap_or_default())})
     }
     pub fn transition(&mut self, state: &str) {
         self.state = state.into();
@@ -417,7 +419,8 @@ impl ImageGeneration {
 impl Gateway {
     async fn submit(&self, job: &Job) -> Result<String, Error> {
         let response: Value = self.http.post(format!("{}/prompt", self.base))
-            .json(&json!({"prompt": workflow(job.expansion.as_ref().map(|e| e.prompt.as_str()).unwrap_or(&job.prompt), job.created_at as u64), "client_id":job.id}))
+            .json(&json!({"prompt": workflow(job.expansion.as_ref().map(|e| e.prompt.as_str()).unwrap_or(&job.prompt), job.created_at as u64, job.expansion.as_ref().map(|e| e.scene).unwrap_or_default()), "client_id":job.id,
+                "extra_data":{"extra_pnginfo":{"reference_photos":visual_references(job.expansion.as_ref().map(|e| e.scene).unwrap_or_default())}}}))
             .send().await?.error_for_status()?.json().await?;
         let id = response["prompt_id"].as_str().ok_or("missing prompt id")?;
         Uuid::parse_str(id)?;
@@ -478,19 +481,44 @@ impl Gateway {
     }
 }
 
-pub(crate) fn workflow(prompt: &str, seed: u64) -> Value {
-    json!({
-        "1":{"class_type":"UNETLoader","inputs":{"unet_name":"flux1-dev-fp8.safetensors","weight_dtype":"default"}},
-        "2":{"class_type":"DualCLIPLoader","inputs":{"clip_name1":"clip_l.safetensors","clip_name2":"t5xxl_fp16.safetensors","type":"flux","device":"default"}},
-        "3":{"class_type":"VAELoader","inputs":{"vae_name":"ae.safetensors"}},
-        "4":{"class_type":"CLIPTextEncode","inputs":{"text":prompt,"clip":["2",0]}},
-        "5":{"class_type":"FluxGuidance","inputs":{"conditioning":["4",0],"guidance":3.5}},
-        "6":{"class_type":"EmptySD3LatentImage","inputs":{"width":768,"height":768,"batch_size":1}},
-        "7":{"class_type":"KSampler","inputs":{"model":["10",0],"positive":["5",0],"negative":["4",0],"latent_image":["6",0],"seed":seed,"steps":28,"cfg":1,"sampler_name":"euler","scheduler":"simple","denoise":1}},
+fn visual_references(scene: Scene) -> Vec<Value> {
+    let mut refs = vec![];
+    if scene != Scene::Other {
+        refs.push(json!({"title":"Artemis ved Paros","url":"https://commons.wikimedia.org/wiki/File:20221101_440_Paros.jpg","credit":"Jean Housen · CC BY-SA 4.0"}));
+    }
+    if scene == Scene::Paroikia {
+        refs.push(json!({"title":"Strandlinja i Paroikia","url":"https://commons.wikimedia.org/wiki/File:Paros_Parikia_01.jpg","credit":"Olaf Tausch · CC BY 3.0"}));
+    }
+    refs
+}
+
+pub(crate) fn workflow(prompt: &str, seed: u64, scene: Scene) -> Value {
+    let mut graph = json!({
+        "1":{"class_type":"UNETLoader","inputs":{"unet_name":"qwen_image_edit_2511_fp8mixed.safetensors","weight_dtype":"default"}},
+        "2":{"class_type":"CLIPLoader","inputs":{"clip_name":"qwen_2.5_vl_7b_fp8_scaled.safetensors","type":"qwen_image","device":"default"}},
+        "3":{"class_type":"VAELoader","inputs":{"vae_name":"qwen_image_vae.safetensors"}},
+        "4":{"class_type":"TextEncodeQwenImageEditPlus","inputs":{"prompt":prompt,"clip":["2",0],"vae":["3",0]}},
+        "5":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["4",0]}},
+        "6":{"class_type":"EmptySD3LatentImage","inputs":{"width":1024,"height":768,"batch_size":1}},
+        "7":{"class_type":"KSampler","inputs":{"model":["11",0],"positive":["4",0],"negative":["5",0],"latent_image":["6",0],"seed":seed,"steps":4,"cfg":1,"sampler_name":"euler","scheduler":"simple","denoise":1}},
         "8":{"class_type":"VAEDecode","inputs":{"samples":["7",0],"vae":["3",0]}},
-        "9":{"class_type":"SaveImage","inputs":{"images":["8",0],"filename_prefix":"Sproyt-Heartsync"}},
-        "10":{"class_type":"LoraLoaderModelOnly","inputs":{"model":["1",0],"lora_name":"Heartsync_Flux_NSFW_uncensored.safetensors","strength_model":1}}
-    })
+        "9":{"class_type":"SaveImage","inputs":{"images":["8",0],"filename_prefix":"Sproyt-Qwen-References"}},
+        "10":{"class_type":"LoraLoaderModelOnly","inputs":{"model":["1",0],"lora_name":"Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors","strength_model":1}},
+        "11":{"class_type":"ModelSamplingAuraFlow","inputs":{"model":["10",0],"shift":3.1}}
+    });
+    // Fixed, reviewed input files on Santorini. No client-supplied paths or URLs.
+    let references: &[&str] = match scene {
+        Scene::Paroikia => &["artemis-jean-housen.jpg", "paroikia-olaf-tausch.jpg"],
+        Scene::Coast => &["artemis-jean-housen.jpg"],
+        Scene::Other => &[],
+    };
+    for (i, file) in references.iter().enumerate() {
+        let n = 20 + i * 4;
+        graph[n.to_string()] = json!({"class_type":"LoadImage","inputs":{"image":format!("sproyt-references/{file}")}});
+        graph[(n + 1).to_string()] = json!({"class_type":"ImageScaleToTotalPixels","inputs":{"image":[n.to_string(),0],"upscale_method":"lanczos","megapixels":0.5,"resolution_steps":16}});
+        graph["4"]["inputs"][format!("image{}", i + 1)] = json!([(n + 1).to_string(), 0]);
+    }
+    graph
 }
 
 #[cfg(test)]
@@ -526,6 +554,36 @@ impl ImageGeneration {
 mod tests {
     use super::*;
     use crate::domain::ChannelId;
+
+    #[test]
+    fn scenes_route_only_appropriate_visual_references() {
+        for (scene, count) in [(Scene::Other, 0), (Scene::Coast, 1), (Scene::Paroikia, 2)] {
+            let graph = workflow("Two friends", 42, scene);
+            let nodes = graph.as_object().unwrap();
+            assert_eq!(
+                nodes
+                    .values()
+                    .filter(|n| n["class_type"] == "LoadImage")
+                    .count(),
+                count
+            );
+            assert_eq!(visual_references(scene).len(), count);
+            assert!(
+                !nodes
+                    .values()
+                    .any(|n| n["inputs"]["lora_name"]
+                        == "Heartsync_Flux_NSFW_uncensored.safetensors")
+            );
+            // Every connection resolves, including the no-reference route.
+            for node in nodes.values() {
+                for input in node["inputs"].as_object().unwrap().values() {
+                    if let Some(link) = input.as_array() {
+                        assert!(nodes.contains_key(link[0].as_str().unwrap()));
+                    }
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn imagegen_postgres_queue_contract() {
@@ -701,10 +759,10 @@ mod tests {
         assert!(ready.view().get("image").is_none());
         assert!(ready.media.is_none());
         let submitted = captured.lock().await;
-        assert_eq!(submitted["prompt"]["4"]["inputs"]["text"], job.prompt);
+        assert_eq!(submitted["prompt"]["4"]["inputs"]["prompt"], job.prompt);
         assert_eq!(
-            submitted["prompt"]["10"]["inputs"]["lora_name"],
-            "Heartsync_Flux_NSFW_uncensored.safetensors"
+            submitted["prompt"]["1"]["inputs"]["unet_name"],
+            "qwen_image_edit_2511_fp8mixed.safetensors"
         );
         task.abort();
     }

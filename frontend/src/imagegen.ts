@@ -10,7 +10,8 @@ export function imagePrompt(draft: string): string | null {
 }
 
 type Expansion = { prompt: string; model: string | null; style: string | null; sources: string[]; warning: string | null };
-type Job = { expansion: Expansion | null; id: string; channel_id: string; state: string; prompt: string; error: string | null };
+type VisualReference = { title: string; url: string; credit: string };
+type Job = { expansion: Expansion | null; visualReferences: VisualReference[]; id: string; channel_id: string; state: string; prompt: string; error: string | null };
 function decodeJobs(value: unknown): Job[] {
   if (!isRecord(value) || !Array.isArray(value.jobs)) throw new Error("Ugyldig biletkø");
   return value.jobs.map((job: unknown) => {
@@ -22,7 +23,8 @@ function decodeJobs(value: unknown): Job[] {
       sources: Array.isArray(e.sources) ? e.sources.filter((source): source is string => typeof source === "string" && source.startsWith("https://en.wikipedia.org/wiki/")) : [],
       warning: typeof e.warning === "string" ? e.warning : null
     } : null;
-    return { expansion, id: job.id, channel_id: job.channel_id, state: job.state, prompt: job.prompt, error: typeof job.error === "string" ? job.error : null };
+    const visualReferences: VisualReference[] = Array.isArray(job.visual_references) ? job.visual_references.filter((r): r is VisualReference => isRecord(r) && typeof r.title === "string" && typeof r.credit === "string" && typeof r.url === "string" && r.url.startsWith("https://commons.wikimedia.org/wiki/File:")) : [];
+    return { expansion, visualReferences, id: job.id, channel_id: job.channel_id, state: job.state, prompt: job.prompt, error: typeof job.error === "string" ? job.error : null };
   });
 }
 
@@ -93,6 +95,18 @@ export function createImageGeneration(options: {
         for (const source of job.expansion.sources) {
           const link = document.createElement("a"); link.href = source; link.textContent = "Kjelde: " + decodeURIComponent(new URL(source).pathname.slice(6)).replaceAll("_", " ");
           link.target = "_blank"; link.rel = "noopener noreferrer"; details.append(link, document.createElement("br"));
+        }
+        card.append(details);
+      }
+      if (job.visualReferences.length) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary"); summary.textContent = "Sjå referansefoto";
+        details.append(summary);
+        for (const reference of job.visualReferences) {
+          const line = document.createElement("p");
+          const link = document.createElement("a"); link.href = reference.url; link.textContent = reference.title;
+          link.target = "_blank"; link.rel = "noopener noreferrer";
+          line.append(link, document.createTextNode(" · " + reference.credit)); details.append(line);
         }
         card.append(details);
       }
