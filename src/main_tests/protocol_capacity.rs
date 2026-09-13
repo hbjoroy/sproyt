@@ -83,6 +83,13 @@ async fn imagegen_http_preview_review_and_unpublished_attachment_contract() {
         .write_to(&mut bytes, image::ImageFormat::Png)
         .unwrap();
     job.image = Some(base64::engine::general_purpose::STANDARD.encode(bytes.into_inner()));
+    job.expansion = Some(
+        serde_json::from_value(serde_json::json!({
+            "prompt":"A blue sea", "filename":"Bla sjo i solnedgang.png", "model":null,
+            "style":null, "sources":[], "warning":null
+        }))
+        .unwrap(),
+    );
     job.transition("ready");
     service.save(&mut job).await.unwrap();
     let base = format!("http://{address}/api/v1/imagegen/{}", job.id);
@@ -131,6 +138,10 @@ async fn imagegen_http_preview_review_and_unpublished_attachment_contract() {
     let value: serde_json::Value = accepted.json().await.unwrap();
     assert_eq!(value["media"]["owner_id"], owner.user.id.to_string());
     assert_eq!(value["media"]["channel_id"], channel.id.to_string());
+    assert_eq!(
+        value["media"]["original_filename"],
+        "bla-sjo-i-solnedgang.png"
+    );
     let again: serde_json::Value = client
         .post(format!("{base}/review?participant=image-owner"))
         .json(&serde_json::json!({"decision":"accept"}))

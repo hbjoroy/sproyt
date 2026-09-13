@@ -300,7 +300,10 @@ pub(crate) async fn review(
                 .store_media(MediaUpload {
                     actor: principal.user.id,
                     channel_id: job.channel_id.clone(),
-                    filename: format!("heartsync-{}.png", job.id),
+                    filename: crate::imagegen_prompt::image_filename(
+                        job.expansion.as_ref().and_then(|e| e.filename.as_deref()),
+                        &job.prompt,
+                    ),
                     content_type: "image/png".into(),
                     content: prepared.0,
                     dimensions: prepared.1,
