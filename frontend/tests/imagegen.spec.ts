@@ -7,7 +7,11 @@ test("imagegen stays private, survives reload, and accepts into a draft without 
   await page.route(/\/api\/v1\/imagegen(?:\?.*)?$/, async route => {
     if (route.request().method() === "POST") {
       const body = route.request().postDataJSON() as { prompt: string; channel_id: string };
-      job = { id: "test-image", channel_id: body.channel_id, state: "ready", prompt: body.prompt, error: null };
+      job = { id: "test-image", channel_id: body.channel_id, state: "ready", prompt: body.prompt, error: null,
+        visual_references: [
+          { title: "Artemis ved Paros", url: "https://commons.wikimedia.org/wiki/File:20221101_440_Paros.jpg", credit: "Jean Housen · CC BY-SA 4.0" },
+          { title: "Untrusted", url: "javascript:alert(1)", credit: "Unknown" }
+        ] };
       await route.fulfill({ json: { job } });
     } else await route.fulfill({ json: { enabled: true, jobs: job ? [job] : [] } });
   });
@@ -25,6 +29,9 @@ test("imagegen stays private, survives reload, and accepts into a draft without 
   await page.locator("#send-form").evaluate((form: HTMLFormElement) => form.requestSubmit());
   const inbox = page.getByRole("region", { name: "Private biletmeldingar" });
   await expect(inbox.getByRole("button", { name: "Godta", exact: true })).toBeVisible();
+  await inbox.getByText("Sjå referansefoto", { exact: true }).click();
+  await expect(inbox.getByRole("link", { name: "Artemis ved Paros" })).toHaveAttribute("href", "https://commons.wikimedia.org/wiki/File:20221101_440_Paros.jpg");
+  await expect(inbox.getByRole("link", { name: "Untrusted" })).toHaveCount(0);
   expect(sent.some(frame => frame.includes("send_message") && frame.includes("oil painting"))).toBe(false);
   await page.reload();
   await expect(inbox.getByRole("button", { name: "Godta", exact: true })).toBeVisible({ timeout: 15000 });

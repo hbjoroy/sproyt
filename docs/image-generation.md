@@ -1,7 +1,7 @@
 # Image generation
 
-In a channel, send `/imagegen "your description"`. This queues a Heartsync
-FLUX.1 image without posting the command or prompt to channel history.
+In a channel, send `/imagegen "your description"`. This queues an image
+without posting the command or prompt to channel history.
 The private image inbox above the composer shows progress and the completed
 preview. It follows the account across refreshes and devices while Sprøyt is
 open. It is an in-app whisper; it does not send an OS push notification.
@@ -21,11 +21,27 @@ this as `config.comfyuiUrl`, with `networkPolicy.comfyuiCidrs` and
 `networkPolicy.comfyuiPort` for narrowly scoped network access. ComfyUI must
 remain a trusted private service: Sprøyt does not expose its API to browsers.
 
-The fixed server graph uses `flux1-dev-fp8.safetensors`,
-`Heartsync_Flux_NSFW_uncensored.safetensors`, `clip_l.safetensors`,
-`t5xxl_fp16.safetensors`, and `ae.safetensors`. It generates 768×768 PNG images,
-28 Euler/simple steps, CFG 1, guidance 3.5, and LoRA strength 1. Users supply
-only text; arbitrary graph nodes and image URLs are not accepted.
+The fixed server graph uses `qwen_image_edit_2511_fp8mixed.safetensors`,
+`qwen_2.5_vl_7b_fp8_scaled.safetensors`, `qwen_image_vae.safetensors`, and
+`Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors`. It generates
+1024×768 PNG images with four Euler/simple steps, CFG 1 and AuraFlow shift 3.1.
+The Lightning LoRA accelerates generation; the previous Heartsync
+nudity-oriented LoRA is no longer part of the application graph. Users supply
+text; arbitrary graph nodes and image URLs are not accepted.
+
+Copy the two reviewed photos from `assets/imagegen-references/` into
+ComfyUI's `input/sproyt-references/`. Their source links, attribution, licence
+and checksums are recorded in the adjacent README. Paroikia scenes receive
+both the actual Artemis ferry and the real waterfront as image inputs;
+unspecified Greek/Paros coastal scenes receive the ferry only. Other explicit
+settings receive neither. Each reference is scaled to 0.5 megapixels and
+supplied through TextEncodeQwenImageEditPlus for visual and VAE encoding. These are actual image inputs,
+not just text descriptions. Replace/update references through a reviewed
+server deployment; this change does not add a general browser upload field.
+
+The private inbox exposes **Sjå referansefoto**, with photo credits and links.
+PNG metadata retains the same provenance. Images are generated compositions,
+not geographic reconstructions or evidence of a ferry's current position.
 
 Migration 0035 stores durable requests in SQLite or PostgreSQL. Unique indexes
 limit each account to one unreviewed request and the shared GPU queue to eight
@@ -51,6 +67,12 @@ produces a concise, composed image prompt. Explicit subjects, actions, media
 and locations take precedence. When no setting is given or implied, the
 default is Paroikia's seafront on Paros one hour before sunset, with the
 Artemis passenger ferry small in the distance behind the main subject.
+Ordinary scenes use context-appropriate clothing. Non-sexual adult nudity is
+preserved only when explicitly requested, including naturism and oil painting.
+The prompt interpreter preserves group size and distinguishes an empty coast
+from the town waterfront. Explicit locations and artistic media take priority.
+Visual reference directions are appended deterministically for the selected
+scene so the model receives the correct relationship between text and photos.
 
 `SPROYT_IMAGEGEN_WEB_RESEARCH=true` enables up to two short public-reference
 queries through Wikipedia's REST search API. It does not send the full prompt
