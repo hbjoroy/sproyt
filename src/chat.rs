@@ -851,6 +851,13 @@ impl ChatEngine {
         .await
     }
 
+    pub async fn announce_persisted_message(&self, message_id: MessageId) -> Result<(), ChatError> {
+        self.mailbox
+            .send(Command::ExternalMessage { message_id })
+            .await
+            .map_err(|_| ChatError::EngineStopped)
+    }
+
     async fn send_message_command(
         &self,
         channel_id: ChannelId,

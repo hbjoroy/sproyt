@@ -35,6 +35,199 @@ const ENROLLMENT_SOURCE: &str = include_str!("../enrollment.rs");
 const ENROLLMENT_HTTP_SOURCE: &str = include_str!("../web/enrollment.rs");
 
 #[tokio::test]
+async fn grafana_webhook_is_channel_bound_safe_and_idempotent() {
+    use crate::domain::{ChannelKind, ChannelSlug, DisplayName};
+
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server, state) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    let principal = state
+        .auth
+        .authenticate_request(Some("grafana-owner".to_owned()), None)
+        .await
+        .unwrap();
+    state
+        .chat
+        .ensure_user(principal.user.clone())
+        .await
+        .unwrap();
+    let circle = state
+        .chat
+        .create_circle(
+            principal.user.id.clone(),
+            ChannelSlug::new("grafana-circle").unwrap(),
+            DisplayName::new("Grafana circle").unwrap(),
+        )
+        .await
+        .unwrap();
+    let channel = state
+        .chat
+        .create_channel(
+            principal.user.id.clone(),
+            ChannelSlug::new("grafana-alerts").unwrap(),
+            DisplayName::new("Grafana alerts").unwrap(),
+            ChannelKind::Private,
+            Some(circle.id),
+        )
+        .await
+        .unwrap();
+    let client = reqwest::Client::new();
+    let base = format!("http://{address}");
+    let created = client
+        .post(format!(
+            "{base}/api/v1/channels/{}/integrations/grafana?participant=grafana-owner",
+            channel.id
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    assert_eq!(created.headers()["cache-control"], "no-store");
+    let created: serde_json::Value = created.json().await.unwrap();
+    let credential = created["credential"].as_str().unwrap();
+    let agent_id = created["agent_id"].as_str().unwrap();
+    let alert = serde_json::json!({
+        "receiver": "sprøyt",
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {"severity": "critical", "service": "api"},
+            "annotations": {
+                "summary": "API @alle er nede",
+                "runbook_url": "https://grafana.example/runbook/api"
+            },
+            "startsAt": "2026-09-14T10:00:00Z",
+            "fingerprint": "alert-one",
+            "dashboardURL": "https://grafana.example/d/api"
+        }],
+        "truncatedAlerts": 2
+    });
+    let alerts_url = format!("{base}/api/v1/integrations/grafana/alerts");
+    assert_eq!(
+        client
+            .post(&alerts_url)
+            .json(&alert)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let send = || {
+        client
+            .post(&alerts_url)
+            .bearer_auth(credential)
+            .json(&alert)
+            .send()
+    };
+    let first: serde_json::Value = send().await.unwrap().json().await.unwrap();
+    assert_eq!(first["accepted"], 1);
+    let replay: serde_json::Value = send().await.unwrap().json().await.unwrap();
+    assert_eq!(replay["duplicate"], 1);
+    let history = state
+        .chat
+        .subscribe(channel.id.clone(), principal.user.id.clone())
+        .await
+        .unwrap()
+        .history;
+    assert_eq!(history.len(), 1);
+    assert!(history[0].body.as_str().starts_with("## 🔴"));
+    assert!(history[0].body.as_str().contains("＠alle"));
+    assert!(!history[0].body.as_str().contains('@'));
+    assert!(history[0].body.as_str().contains("utelét 2 alarmar"));
+
+    let oversized = serde_json::json!({
+        "alerts": (0..51).map(|index| serde_json::json!({
+            "status": "firing", "labels": {}, "annotations": {},
+            "startsAt": "2026-09-14T10:00:00Z", "fingerprint": format!("oversized-{index}")
+        })).collect::<Vec<_>>()
+    });
+    assert_eq!(
+        client
+            .post(&alerts_url)
+            .bearer_auth(credential)
+            .json(&oversized)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        state
+            .chat
+            .subscribe(channel.id.clone(), principal.user.id.clone())
+            .await
+            .unwrap()
+            .history
+            .len(),
+        1
+    );
+
+    let report_url = format!("{base}/api/v1/integrations/grafana/reports");
+    let report = serde_json::json!({
+        "version": "1",
+        "report_id": "weekly-2026-37",
+        "period_start": "2026-09-07T00:00:00Z",
+        "period_end": "2026-09-14T00:00:00Z",
+        "title": "Plattformrapport",
+        "summary": "Alt er stabilt.",
+        "links": [{"label": "Dashboard", "url": "https://grafana.example/d/platform"}]
+    });
+    let report_response: serde_json::Value = client
+        .post(&report_url)
+        .bearer_auth(credential)
+        .json(&report)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(report_response["accepted"], 1);
+    let report_replay: serde_json::Value = client
+        .post(&report_url)
+        .bearer_auth(credential)
+        .json(&report)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(report_replay["duplicate"], 1);
+    assert_eq!(
+        state
+            .chat
+            .subscribe(channel.id.clone(), principal.user.id.clone())
+            .await
+            .unwrap()
+            .history
+            .len(),
+        2
+    );
+
+    let revoked = client
+        .post(format!(
+            "{base}/api/v1/agents/{agent_id}/revoke?participant=grafana-owner"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(
+        send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn imagegen_http_preview_review_and_unpublished_attachment_contract() {
     use crate::domain::{ChannelKind, ChannelSlug, DisplayName};
     use base64::Engine;
@@ -1007,7 +1200,8 @@ async fn start_test_server_with_state(
     let address = listener.local_addr().unwrap();
     let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
     let process_repository: Arc<dyn ProcessRepository> = repository.clone();
-    let agent_repository: Arc<dyn AgentRepository> = repository;
+    let agent_repository: Arc<dyn AgentRepository> = repository.clone();
+    let integration_repository: Arc<dyn crate::integration::IntegrationRepository> = repository;
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
@@ -1017,6 +1211,7 @@ async fn start_test_server_with_state(
         operations: operations.clone(),
         processes: ProcessService::start(process_repository, None),
         agents: AgentService::new(agent_repository),
+        integrations: crate::integration::IntegrationService::new(integration_repository),
         notifications: NotificationService::test(),
         enrollment: None,
         websocket_idle_timeout,
@@ -1038,7 +1233,8 @@ async fn start_postgres_test_server(
     let address = listener.local_addr().unwrap();
     let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
     let process_repository: Arc<dyn ProcessRepository> = repository.clone();
-    let agent_repository: Arc<dyn AgentRepository> = repository;
+    let agent_repository: Arc<dyn AgentRepository> = repository.clone();
+    let integration_repository: Arc<dyn crate::integration::IntegrationRepository> = repository;
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
@@ -1048,6 +1244,7 @@ async fn start_postgres_test_server(
         operations: operations.clone(),
         processes: ProcessService::start(process_repository, None),
         agents: AgentService::new(agent_repository),
+        integrations: crate::integration::IntegrationService::new(integration_repository),
         notifications: NotificationService::test(),
         enrollment: None,
         websocket_idle_timeout,
@@ -1069,7 +1266,8 @@ async fn start_test_server_with_gateway(
     let address = listener.local_addr().unwrap();
     let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
     let process_repository: Arc<dyn ProcessRepository> = repository.clone();
-    let agent_repository: Arc<dyn AgentRepository> = repository;
+    let agent_repository: Arc<dyn AgentRepository> = repository.clone();
+    let integration_repository: Arc<dyn crate::integration::IntegrationRepository> = repository;
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
@@ -1079,6 +1277,7 @@ async fn start_test_server_with_gateway(
         operations: operations.clone(),
         processes: ProcessService::start(process_repository, Some(gateway)),
         agents: AgentService::new(agent_repository),
+        integrations: crate::integration::IntegrationService::new(integration_repository),
         notifications: NotificationService::test(),
         enrollment: None,
         websocket_idle_timeout: Duration::from_secs(60),

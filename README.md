@@ -45,6 +45,10 @@ interfaces.
 See [docs/protocol.md](docs/protocol.md) for the stable WebSocket and agent/MCP
 protocol contract.
 
+See [docs/incoming-webhooks.md](docs/incoming-webhooks.md) for channel-scoped
+Grafana alert and operational-report integrations, retry semantics, and safe
+Markdown rendering.
+
 See [docs/roadmap.md](docs/roadmap.md) for the phased delivery plan from the
 current prototype through durable private chat, OIDC, Kubernetes, Heart process
 orchestration, and agent participation.

@@ -21,6 +21,7 @@ use crate::{
     config::{AppConfig, AuthMode, LogFormat},
     db,
     enrollment::EnrollmentService,
+    integration::IntegrationService,
     notification::NotificationService,
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{HeartGateway, ProcessService, SharedProcessGateway},
@@ -40,6 +41,10 @@ use crate::{
     web::auth::{auth_callback, auth_login, auth_logout, auth_refresh, auth_session},
     web::browser::index,
     web::enrollment::create_enrollment_invitation,
+    web::integrations::{
+        create_grafana_integration, receive_grafana_alerts, receive_report,
+        rotate_integration_credential,
+    },
     web::mcp::mcp_handler,
     web::media::{download_media, download_media_preview, upload_media},
     web::processes::{
@@ -56,6 +61,7 @@ pub(super) struct AppState {
     pub(super) operations: OperationalState,
     pub(super) processes: ProcessService,
     pub(super) agents: AgentService,
+    pub(super) integrations: IntegrationService,
     pub(super) notifications: NotificationService,
     pub(super) imagegen: Option<crate::imagegen::ImageGeneration>,
     pub(super) enrollment: Option<EnrollmentService>,
@@ -107,6 +113,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         operations: operations.clone(),
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),
+        integrations: IntegrationService::new(repositories.integration),
         notifications,
         enrollment: EnrollmentService::from_env()?,
         websocket_idle_timeout: config.websocket_idle_timeout(),
@@ -208,6 +215,22 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route("/api/v1/agents", post(create_agent))
         .route("/api/v1/agents/{id}/grants", post(grant_agent))
         .route("/api/v1/agents/{id}/revoke", post(revoke_agent))
+        .route(
+            "/api/v1/channels/{id}/integrations/grafana",
+            post(create_grafana_integration),
+        )
+        .route(
+            "/api/v1/integrations/{id}/rotate",
+            post(rotate_integration_credential),
+        )
+        .route(
+            "/api/v1/integrations/grafana/alerts",
+            post(receive_grafana_alerts).layer(DefaultBodyLimit::max(256 * 1024)),
+        )
+        .route(
+            "/api/v1/integrations/grafana/reports",
+            post(receive_report).layer(DefaultBodyLimit::max(256 * 1024)),
+        )
         .route("/api/v1/agent-grants/{id}/revoke", post(revoke_agent_grant))
         .route(
             "/api/v1/messages/{id}/approve-agent",

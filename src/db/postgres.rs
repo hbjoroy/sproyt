@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::agent::{
     ActivityProvenance, AgentFuture, AgentPrincipal, AgentRepository, AgentScope, CreateAgent,
-    CreatedAgent, GrantAgent, MessageProvenance,
+    CreatedAgent, GrantAgent, MessageProvenance, RotatedCredential,
 };
 use crate::domain::{
     AcceptCircleInvitation, AcceptEnrollmentInvitation, AcceptedChatInvitation,
@@ -31,6 +31,10 @@ use crate::domain::{
     UserId, UserProfile, UserTask, enrollment_email_hash, enrollment_token_hash,
     generate_enrollment_token,
 };
+use crate::integration::{
+    AlertState, DeliveryResult, GRAFANA_PROVIDER, IncomingAlert, IncomingReport, IntegrationFuture,
+    IntegrationRepository,
+};
 use crate::notification::enqueue_message_postgres;
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -39,6 +43,74 @@ use crate::process::{
 };
 
 use super::{media_ids_from_body, sql_error, storage};
+
+async fn integration_channel_postgres(
+    executor: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    agent_id: &UserId,
+    credential_id: Uuid,
+) -> Result<ChannelId, RepositoryError> {
+    let now = Utc::now();
+    let rows = sqlx::query_scalar::<_, Uuid>(
+        "select g.channel_id from agent_profiles p join agent_grants g on g.agent_id=p.agent_id \
+         where p.agent_id=$1 and p.provider=$2 and p.revoked_at is null \
+         and (p.expires_at is null or p.expires_at>$3) and g.scope='send_messages' \
+         and g.channel_id is not null and g.circle_id is null and g.revoked_at is null \
+         and (g.expires_at is null or g.expires_at>$3) and exists \
+         (select 1 from channel_memberships m where m.channel_id=g.channel_id and m.user_id=p.agent_id) \
+         and not exists(select 1 from agent_grants extra where extra.agent_id=p.agent_id \
+         and extra.id<>g.id and extra.revoked_at is null and (extra.expires_at is null or extra.expires_at>$3)) \
+         and exists(select 1 from agent_credentials c where c.id=$4 \
+         and c.agent_id=p.agent_id and c.revoked_at is null and c.expires_at>$3) limit 2",
+    )
+    .bind(*agent_id.as_uuid())
+    .bind(GRAFANA_PROVIDER)
+    .bind(now)
+    .bind(credential_id)
+    .fetch_all(&mut **executor)
+    .await
+    .map_err(sql_error)?;
+    match rows.as_slice() {
+        [channel_id] => Ok(ChannelId::from_uuid(*channel_id)),
+        _ => Err(RepositoryError::PermissionDenied),
+    }
+}
+
+async fn insert_integration_message_postgres(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    agent_id: UserId,
+    channel_id: ChannelId,
+    body: MessageBody,
+) -> Result<ChatMessage, RepositoryError> {
+    let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence=next_sequence+1 where channel_id=$1 returning next_sequence-1")
+        .bind(*channel_id.as_uuid()).fetch_optional(&mut **transaction).await.map_err(sql_error)?
+        .ok_or(RepositoryError::NotFound)?;
+    let sender_display_name = DisplayName::new(
+        sqlx::query_scalar::<_, String>("select display_name from users where id=$1")
+            .bind(*agent_id.as_uuid())
+            .fetch_one(&mut **transaction)
+            .await
+            .map_err(sql_error)?,
+    )
+    .map_err(storage)?;
+    let message = ChatMessage {
+        id: MessageId::generate(),
+        channel_id,
+        parent_message_id: None,
+        sender_id: agent_id,
+        sender_display_name,
+        body,
+        sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
+        sent_at: persisted_now(),
+        edited_at: None,
+        deleted_at: None,
+    };
+    sqlx::query("insert into messages(id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at) values($1,$2,null,$3,$4,$5,$6,$7)")
+        .bind(*message.id.as_uuid()).bind(*message.channel_id.as_uuid()).bind(*message.sender_id.as_uuid())
+        .bind(message.sender_display_name.as_str()).bind(sequence).bind(message.body.as_str()).bind(message.sent_at)
+        .execute(&mut **transaction).await.map_err(sql_error)?;
+    enqueue_message_postgres(transaction, &message).await?;
+    Ok(message)
+}
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
 
@@ -2588,11 +2660,45 @@ impl AgentRepository for PostgresChatRepository {
             transaction.commit().await.map_err(sql_error)
         })
     }
+    fn rotate_credential<'a>(
+        &'a self,
+        actor: UserId,
+        agent_id: UserId,
+    ) -> AgentFuture<'a, RotatedCredential> {
+        Box::pin(async move {
+            let now = Utc::now();
+            let expires_at = now + chrono::Duration::days(90);
+            let mut secret = [0_u8; 32];
+            getrandom::fill(&mut secret).map_err(storage)?;
+            let credential = URL_SAFE_NO_PAD.encode(secret);
+            let hash = Sha256::digest(credential.as_bytes()).to_vec();
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let allowed: Option<i32> = sqlx::query_scalar("select 1 from agent_profiles where agent_id=$1 and owner_id=$2 and revoked_at is null and (expires_at is null or expires_at>$3)")
+                .bind(*agent_id.as_uuid()).bind(*actor.as_uuid()).bind(now)
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("update agent_credentials set revoked_at=$1 where agent_id=$2 and revoked_at is null")
+                .bind(now).bind(*agent_id.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into agent_credentials(id,agent_id,token_hash,expires_at,created_at) values($1,$2,$3,$4,$5)")
+                .bind(Uuid::now_v7()).bind(*agent_id.as_uuid()).bind(hash).bind(expires_at).bind(now)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'agent.credential_rotated','agent',$2,$3)")
+                .bind(*actor.as_uuid()).bind(agent_id.to_string()).bind(serde_json::json!({}))
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(RotatedCredential {
+                credential,
+                credential_expires_at: expires_at,
+            })
+        })
+    }
     fn authenticate_agent<'a>(&'a self, credential: &'a str) -> AgentFuture<'a, AgentPrincipal> {
         Box::pin(async move {
             let hash = Sha256::digest(credential.as_bytes()).to_vec();
             let now = Utc::now();
-            let row=sqlx::query("select p.agent_id,p.owner_id,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where c.token_hash=$1 and c.revoked_at is null and c.expires_at>$2 and p.revoked_at is null and(p.expires_at is null or p.expires_at>$2)").bind(&hash).bind(now).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::PermissionDenied)?;
+            let row=sqlx::query("select c.id as credential_id,p.agent_id,p.owner_id,p.provider,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where c.token_hash=$1 and c.revoked_at is null and c.expires_at>$2 and p.revoked_at is null and(p.expires_at is null or p.expires_at>$2)").bind(&hash).bind(now).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::PermissionDenied)?;
             sqlx::query("update agent_credentials set last_used_at=$1 where token_hash=$2")
                 .bind(now)
                 .bind(hash)
@@ -2601,7 +2707,9 @@ impl AgentRepository for PostgresChatRepository {
                 .map_err(sql_error)?;
             Ok(AgentPrincipal {
                 agent_id: UserId::from_uuid(row.try_get("agent_id").map_err(storage)?),
+                credential_id: row.try_get("credential_id").map_err(storage)?,
                 owner_id: UserId::from_uuid(row.try_get("owner_id").map_err(storage)?),
+                provider: row.try_get("provider").map_err(storage)?,
                 purpose: row.try_get("purpose").map_err(storage)?,
                 rate_limit_per_minute: u16::try_from(
                     row.try_get::<i32, _>("rate_limit_per_minute")
@@ -3128,6 +3236,138 @@ fn circle_with_role(row: PgRow) -> Result<(Circle, CircleRole), RepositoryError>
     ))
 }
 
+impl IntegrationRepository for PostgresChatRepository {
+    fn deliver_alert<'a>(&'a self, alert: IncomingAlert) -> IntegrationFuture<'a, DeliveryResult> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let channel_id = integration_channel_postgres(
+                &mut transaction,
+                &alert.agent_id,
+                alert.credential_id,
+            )
+            .await?;
+            sqlx::query("insert into incoming_alert_occurrences(agent_id,fingerprint,starts_at,state,updated_at) values($1,$2,$3,'pending',$4) on conflict(agent_id,fingerprint,starts_at) do nothing")
+                .bind(*alert.agent_id.as_uuid()).bind(&alert.fingerprint).bind(alert.starts_at).bind(Utc::now())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            let row = sqlx::query("select state,firing_message_id,resolved_message_id from incoming_alert_occurrences where agent_id=$1 and fingerprint=$2 and starts_at=$3 for update")
+                .bind(*alert.agent_id.as_uuid()).bind(&alert.fingerprint).bind(alert.starts_at)
+                .fetch_one(&mut *transaction).await.map_err(sql_error)?;
+            let state: String = row.try_get("state").map_err(storage)?;
+            let existing: Option<Uuid> = match alert.state {
+                AlertState::Firing => row.try_get("firing_message_id").map_err(storage)?,
+                AlertState::Resolved => row.try_get("resolved_message_id").map_err(storage)?,
+            };
+            if matches!(alert.state, AlertState::Firing)
+                && state == "resolved"
+                && existing.is_none()
+            {
+                sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'integration.alert_ignored','integration',$2,$3)")
+                    .bind(*alert.agent_id.as_uuid()).bind(alert.agent_id.to_string())
+                    .bind(serde_json::json!({"status": alert.state.as_str(), "outcome": "already_resolved"}))
+                    .execute(&mut *transaction).await.map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(DeliveryResult::IgnoredResolved);
+            }
+            if let Some(message_id) = existing {
+                let row = sqlx::query("select id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at from messages where id=$1")
+                    .bind(message_id).fetch_one(&mut *transaction).await.map_err(sql_error)?;
+                let message = chat_message(row)?;
+                sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'integration.alert_duplicate','integration',$2,$3)")
+                    .bind(*alert.agent_id.as_uuid()).bind(alert.agent_id.to_string())
+                    .bind(serde_json::json!({"status": alert.state.as_str(), "message_id": message.id.as_uuid().to_string()}))
+                    .execute(&mut *transaction).await.map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(DeliveryResult::Duplicate(message));
+            }
+            let message = insert_integration_message_postgres(
+                &mut transaction,
+                alert.agent_id.clone(),
+                channel_id,
+                alert.body,
+            )
+            .await?;
+            let (column, next_state) = match alert.state {
+                AlertState::Firing => ("firing_message_id", "firing"),
+                AlertState::Resolved => ("resolved_message_id", "resolved"),
+            };
+            let update = format!(
+                "update incoming_alert_occurrences set {column}=$1,state=$2,updated_at=$3 where agent_id=$4 and fingerprint=$5 and starts_at=$6"
+            );
+            sqlx::query(&update)
+                .bind(*message.id.as_uuid())
+                .bind(next_state)
+                .bind(Utc::now())
+                .bind(*alert.agent_id.as_uuid())
+                .bind(&alert.fingerprint)
+                .bind(alert.starts_at)
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'integration.alert_delivered','integration',$2,$3)")
+                .bind(*alert.agent_id.as_uuid()).bind(alert.agent_id.to_string())
+                .bind(serde_json::json!({"status": alert.state.as_str(), "message_id": message.id.as_uuid().to_string()}))
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            let _ = sqlx::query("select pg_notify('sproyt_messages',$1)")
+                .bind(message.id.as_uuid().to_string())
+                .execute(&self.pool)
+                .await;
+            Ok(DeliveryResult::Accepted(message))
+        })
+    }
+
+    fn deliver_report<'a>(
+        &'a self,
+        report: IncomingReport,
+    ) -> IntegrationFuture<'a, DeliveryResult> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let channel_id = integration_channel_postgres(
+                &mut transaction,
+                &report.agent_id,
+                report.credential_id,
+            )
+            .await?;
+            sqlx::query("insert into incoming_report_deliveries(agent_id,report_id,created_at) values($1,$2,$3) on conflict(agent_id,report_id) do nothing")
+                .bind(*report.agent_id.as_uuid()).bind(&report.report_id).bind(Utc::now())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            let existing: Option<Uuid> = sqlx::query_scalar("select message_id from incoming_report_deliveries where agent_id=$1 and report_id=$2 for update")
+                .bind(*report.agent_id.as_uuid()).bind(&report.report_id).fetch_one(&mut *transaction).await.map_err(sql_error)?;
+            if let Some(message_id) = existing {
+                let row = sqlx::query("select id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at from messages where id=$1")
+                    .bind(message_id).fetch_one(&mut *transaction).await.map_err(sql_error)?;
+                let message = chat_message(row)?;
+                sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'integration.report_duplicate','integration',$2,$3)")
+                    .bind(*report.agent_id.as_uuid()).bind(report.agent_id.to_string())
+                    .bind(serde_json::json!({"message_id": message.id.as_uuid().to_string()}))
+                    .execute(&mut *transaction).await.map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(DeliveryResult::Duplicate(message));
+            }
+            let message = insert_integration_message_postgres(
+                &mut transaction,
+                report.agent_id.clone(),
+                channel_id,
+                report.body,
+            )
+            .await?;
+            sqlx::query("update incoming_report_deliveries set message_id=$1 where agent_id=$2 and report_id=$3")
+                .bind(*message.id.as_uuid()).bind(*report.agent_id.as_uuid()).bind(&report.report_id)
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'integration.report_delivered','integration',$2,$3)")
+                .bind(*report.agent_id.as_uuid()).bind(report.agent_id.to_string())
+                .bind(serde_json::json!({"message_id": message.id.as_uuid().to_string()}))
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            let _ = sqlx::query("select pg_notify('sproyt_messages',$1)")
+                .bind(message.id.as_uuid().to_string())
+                .execute(&self.pool)
+                .await;
+            Ok(DeliveryResult::Accepted(message))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -3135,6 +3375,101 @@ mod tests {
     use super::*;
     use crate::domain::{PrincipalKind, User};
     use tokio::sync::Barrier;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn postgres_integration_delivery_is_atomic_under_race() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let repository = Arc::new(PostgresChatRepository::connect(&url).await.unwrap());
+        repository.migrate().await.unwrap();
+        let suffix = Uuid::now_v7().simple().to_string();
+        let owner = UserId::named(format!("integration-race-owner-{suffix}"));
+        repository
+            .upsert_user(User {
+                id: owner.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Integration race owner").unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: owner.clone(),
+                slug: ChannelSlug::new(format!("integration-race-circle-{suffix}")).unwrap(),
+                name: DisplayName::new("Integration race circle").unwrap(),
+            })
+            .await
+            .unwrap();
+        let channel = repository
+            .create_channel(CreateChannel {
+                actor: owner.clone(),
+                slug: ChannelSlug::new(format!("integration-race-{suffix}")).unwrap(),
+                name: DisplayName::new("Integration race").unwrap(),
+                kind: ChannelKind::Private,
+                circle_id: Some(circle.id),
+            })
+            .await
+            .unwrap();
+        let created = repository
+            .create_agent(CreateAgent {
+                actor: owner.clone(),
+                owner_id: owner.clone(),
+                display_name: "Grafana".to_owned(),
+                provider: GRAFANA_PROVIDER.to_owned(),
+                service_identity: format!("integration-race-{suffix}"),
+                purpose: "race test".to_owned(),
+                rate_limit_per_minute: 60,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        repository
+            .grant_agent(GrantAgent {
+                actor: owner,
+                agent_id: created.agent_id.clone(),
+                circle_id: None,
+                channel_id: Some(channel.id),
+                scope: AgentScope::SendMessages,
+                expires_at: None,
+            })
+            .await
+            .unwrap();
+        let principal = repository
+            .authenticate_agent(&created.credential)
+            .await
+            .unwrap();
+        let calls = 8;
+        let barrier = Arc::new(Barrier::new(calls));
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..calls {
+            let repository = repository.clone();
+            let barrier = barrier.clone();
+            let principal = principal.clone();
+            tasks.spawn(async move {
+                barrier.wait().await;
+                repository
+                    .deliver_report(IncomingReport {
+                        agent_id: principal.agent_id,
+                        credential_id: principal.credential_id,
+                        report_id: "same-report".to_owned(),
+                        body: MessageBody::new("same report").unwrap(),
+                    })
+                    .await
+                    .unwrap()
+            });
+        }
+        let mut accepted = 0;
+        while let Some(result) = tasks.join_next().await {
+            if matches!(result.unwrap(), DeliveryResult::Accepted(_)) {
+                accepted += 1;
+            }
+        }
+        assert_eq!(accepted, 1);
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn postgres_open_direct_channel_is_idempotent_under_race() {

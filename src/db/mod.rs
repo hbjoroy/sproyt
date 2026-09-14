@@ -11,12 +11,14 @@ use std::sync::Arc;
 use crate::agent::{AgentRepository, SharedAgentRepository};
 use crate::config::{DatabaseConfig, DatabaseKind};
 use crate::domain::{ChatRepository, MediaId, MessageBody, RepositoryError};
+use crate::integration::{IntegrationRepository, SharedIntegrationRepository};
 use crate::process::{ProcessRepository, SharedProcessRepository};
 
 pub struct Repositories {
     pub chat: Arc<dyn ChatRepository>,
     pub process: SharedProcessRepository,
     pub agent: SharedAgentRepository,
+    pub integration: SharedIntegrationRepository,
 }
 
 fn media_ids_from_body(body: &MessageBody) -> Result<Vec<MediaId>, RepositoryError> {
@@ -60,22 +62,26 @@ pub async fn connect_repositories(
             let repository = Arc::new(SqliteChatRepository::connect(config.url()).await?);
             let chat: Arc<dyn ChatRepository> = repository.clone();
             let process: Arc<dyn ProcessRepository> = repository.clone();
-            let agent: Arc<dyn AgentRepository> = repository;
+            let agent: Arc<dyn AgentRepository> = repository.clone();
+            let integration: Arc<dyn IntegrationRepository> = repository;
             Ok(Repositories {
                 chat,
                 process,
                 agent,
+                integration,
             })
         }
         DatabaseKind::Postgres => {
             let repository = Arc::new(PostgresChatRepository::connect(config.url()).await?);
             let chat: Arc<dyn ChatRepository> = repository.clone();
             let process: Arc<dyn ProcessRepository> = repository.clone();
-            let agent: Arc<dyn AgentRepository> = repository;
+            let agent: Arc<dyn AgentRepository> = repository.clone();
+            let integration: Arc<dyn IntegrationRepository> = repository;
             Ok(Repositories {
                 chat,
                 process,
                 agent,
+                integration,
             })
         }
     }
