@@ -24,6 +24,12 @@ PostgreSQL metrics. Traces and logs may contain request IDs and durable object
 IDs, but never message bodies, cookies, authorization headers, OIDC tokens, or
 client secrets.
 
+Incoming integrations add `sproyt_integration_deliveries_total`, with only the
+fixed outcomes `accepted`, `duplicate`, `ignored`, `rejected`, and `error`, plus
+`sproyt_integration_duration_microseconds_total`. These metrics never use an
+integration, channel, alert, report, or user identifier as a label. See
+[`incoming-webhooks.md`](incoming-webhooks.md) for the retry and audit contract.
+
 Authenticated browsers report only a fixed event name for WebSocket connect,
 disconnect/error, session-refresh success/failure and upload success/failure.
 No close reason, URL, filename, browser identity or application content is

@@ -76,6 +76,12 @@ pub struct CreatedAgent {
     pub credential_expires_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct RotatedCredential {
+    pub credential: String,
+    pub credential_expires_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug)]
 pub struct GrantAgent {
     pub actor: UserId,
@@ -89,7 +95,9 @@ pub struct GrantAgent {
 #[derive(Clone, Debug)]
 pub struct AgentPrincipal {
     pub agent_id: UserId,
+    pub credential_id: Uuid,
     pub owner_id: UserId,
+    pub provider: String,
     pub purpose: String,
     pub rate_limit_per_minute: u16,
 }
@@ -99,6 +107,11 @@ pub trait AgentRepository: Send + Sync + 'static {
     fn grant_agent<'a>(&'a self, command: GrantAgent) -> AgentFuture<'a, Uuid>;
     fn revoke_grant<'a>(&'a self, actor: UserId, grant_id: Uuid) -> AgentFuture<'a, ()>;
     fn revoke_agent<'a>(&'a self, actor: UserId, agent_id: UserId) -> AgentFuture<'a, ()>;
+    fn rotate_credential<'a>(
+        &'a self,
+        actor: UserId,
+        agent_id: UserId,
+    ) -> AgentFuture<'a, RotatedCredential>;
     fn authenticate_agent<'a>(&'a self, credential: &'a str) -> AgentFuture<'a, AgentPrincipal>;
     fn consume_rate_limit<'a>(
         &'a self,
@@ -147,6 +160,13 @@ impl AgentService {
         agent_id: UserId,
     ) -> Result<(), RepositoryError> {
         self.repository.revoke_agent(actor, agent_id).await
+    }
+    pub async fn rotate_credential(
+        &self,
+        actor: UserId,
+        agent_id: UserId,
+    ) -> Result<RotatedCredential, RepositoryError> {
+        self.repository.rotate_credential(actor, agent_id).await
     }
     pub async fn require_scope(
         &self,

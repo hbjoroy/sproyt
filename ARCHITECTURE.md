@@ -40,7 +40,7 @@ implementation remain outside the HTTP adapter tree.
 
 ```text
 src/
-  agent.rs, auth.rs, chat.rs, notification.rs, operations.rs, process.rs
+  agent.rs, auth.rs, chat.rs, integration.rs, notification.rs, operations.rs, process.rs
                                       typed application services
   domain/                            identifiers, models, policy, repositories
   db/                                SQLite and PostgreSQL SQLx repositories
@@ -57,6 +57,7 @@ src/
     media.rs                         media upload, download and preview routes
     processes.rs                     Heart process and feature routes
     agents.rs                        agent grant and approval routes
+    integrations.rs                  channel-bound Grafana webhook adapters
     mcp.rs                           MCP HTTP adapter and tool dispatch
 ```
 
@@ -124,6 +125,13 @@ cross-replica wake-up and clients recover from durable channel sequence data.
 MCP is an HTTP adapter for scoped agents, not a second chat implementation.
 Its tools authorize through the same agent grants and call the same chat and
 process services as other adapters.
+
+Incoming Grafana webhooks reuse agent identity, credential hashing, grants and
+audit policy, but have a dedicated persistence contract. The integration
+repository atomically records each alert transition or report idempotency key
+with the generated chat message and notification outbox work. The binding is
+derived only from the integration's single active channel grant; payload data
+cannot select a channel or acquire broader agent capabilities.
 
 Dependencies point inward: web adapters depend on typed services and domain
 contracts; services depend on domain types and repository traits; database

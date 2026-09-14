@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::agent::{
     ActivityProvenance, AgentFuture, AgentPrincipal, AgentRepository, AgentScope, CreateAgent,
-    CreatedAgent, GrantAgent, MessageProvenance,
+    CreatedAgent, GrantAgent, MessageProvenance, RotatedCredential,
 };
 use crate::domain::{
     AcceptCircleInvitation, AcceptEnrollmentInvitation, AcceptedChatInvitation,
@@ -25,6 +25,10 @@ use crate::domain::{
     RepositoryError, RepositoryFuture, SendMessage, UpdateChannelDescription, User, UserId,
     UserProfile, UserTask, enrollment_email_hash, enrollment_token_hash, generate_enrollment_token,
 };
+use crate::integration::{
+    AlertState, DeliveryResult, GRAFANA_PROVIDER, IncomingAlert, IncomingReport, IntegrationFuture,
+    IntegrationRepository,
+};
 use crate::notification::enqueue_message_sqlite;
 use crate::process::{
     EnqueueCorrelation, EnqueueInspection, EnqueueProcessStart, OutboxId, OutboxJob,
@@ -33,6 +37,70 @@ use crate::process::{
 };
 
 use super::{media_ids_from_body, sql_error, storage};
+
+async fn integration_channel_sqlite(
+    executor: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    agent_id: &UserId,
+    credential_id: Uuid,
+) -> Result<ChannelId, RepositoryError> {
+    let now = Utc::now();
+    let rows = sqlx::query_scalar::<_, String>(
+        "select g.channel_id from agent_profiles p join agent_grants g on g.agent_id=p.agent_id \
+         where p.agent_id=? and p.provider=? and p.revoked_at is null \
+         and (p.expires_at is null or p.expires_at>?) and g.scope='send_messages' \
+         and g.channel_id is not null and g.circle_id is null and g.revoked_at is null \
+         and (g.expires_at is null or g.expires_at>?) and exists \
+         (select 1 from channel_memberships m where m.channel_id=g.channel_id and m.user_id=p.agent_id) \
+         and not exists(select 1 from agent_grants extra where extra.agent_id=p.agent_id \
+         and extra.id<>g.id and extra.revoked_at is null and (extra.expires_at is null or extra.expires_at>?)) \
+         and exists(select 1 from agent_credentials c where c.id=? \
+         and c.agent_id=p.agent_id and c.revoked_at is null and c.expires_at>?) limit 2",
+    )
+    .bind(agent_id.to_string()).bind(GRAFANA_PROVIDER).bind(now).bind(now).bind(now)
+    .bind(credential_id.to_string()).bind(now)
+    .fetch_all(&mut **executor).await.map_err(sql_error)?;
+    match rows.as_slice() {
+        [channel_id] => ChannelId::new(channel_id.clone()).map_err(storage),
+        _ => Err(RepositoryError::PermissionDenied),
+    }
+}
+
+async fn insert_integration_message_sqlite(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    agent_id: UserId,
+    channel_id: ChannelId,
+    body: MessageBody,
+) -> Result<ChatMessage, RepositoryError> {
+    let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence=next_sequence+1 where channel_id=? returning next_sequence-1")
+        .bind(channel_id.to_string()).fetch_optional(&mut **transaction).await.map_err(sql_error)?
+        .ok_or(RepositoryError::NotFound)?;
+    let sender_display_name = DisplayName::new(
+        sqlx::query_scalar::<_, String>("select display_name from users where id=?")
+            .bind(agent_id.to_string())
+            .fetch_one(&mut **transaction)
+            .await
+            .map_err(sql_error)?,
+    )
+    .map_err(storage)?;
+    let message = ChatMessage {
+        id: MessageId::generate(),
+        channel_id,
+        parent_message_id: None,
+        sender_id: agent_id,
+        sender_display_name,
+        body,
+        sequence: ChannelSequence::try_from(sequence).map_err(storage)?,
+        sent_at: persisted_now(),
+        edited_at: None,
+        deleted_at: None,
+    };
+    sqlx::query("insert into messages(id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at) values(?,?,null,?,?,?,?,?)")
+        .bind(message.id.as_uuid().to_string()).bind(message.channel_id.to_string()).bind(message.sender_id.to_string())
+        .bind(message.sender_display_name.as_str()).bind(sequence).bind(message.body.as_str()).bind(message.sent_at)
+        .execute(&mut **transaction).await.map_err(sql_error)?;
+    enqueue_message_sqlite(transaction, &message).await?;
+    Ok(message)
+}
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/sqlite");
 
@@ -2354,11 +2422,52 @@ impl AgentRepository for SqliteChatRepository {
         })
     }
 
+    fn rotate_credential<'a>(
+        &'a self,
+        actor: UserId,
+        agent_id: UserId,
+    ) -> AgentFuture<'a, RotatedCredential> {
+        Box::pin(async move {
+            let now = Utc::now();
+            let expires_at = now + Duration::days(90);
+            let mut secret = [0_u8; 32];
+            getrandom::fill(&mut secret).map_err(storage)?;
+            let credential = URL_SAFE_NO_PAD.encode(secret);
+            let hash = Sha256::digest(credential.as_bytes()).to_vec();
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let allowed: Option<i64> = sqlx::query_scalar("select 1 from agent_profiles where agent_id=? and owner_id=? and revoked_at is null and (expires_at is null or expires_at>?)")
+                .bind(agent_id.to_string()).bind(actor.to_string()).bind(now)
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query(
+                "update agent_credentials set revoked_at=? where agent_id=? and revoked_at is null",
+            )
+            .bind(now)
+            .bind(agent_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            sqlx::query("insert into agent_credentials(id,agent_id,token_hash,expires_at,created_at) values(?,?,?,?,?)")
+                .bind(Uuid::now_v7().to_string()).bind(agent_id.to_string()).bind(hash).bind(expires_at).bind(now)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values(?,'agent.credential_rotated','agent',?,?)")
+                .bind(actor.to_string()).bind(agent_id.to_string()).bind("{}")
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(RotatedCredential {
+                credential,
+                credential_expires_at: expires_at,
+            })
+        })
+    }
+
     fn authenticate_agent<'a>(&'a self, credential: &'a str) -> AgentFuture<'a, AgentPrincipal> {
         Box::pin(async move {
             let hash = Sha256::digest(credential.as_bytes()).to_vec();
             let now = Utc::now();
-            let row = sqlx::query("select p.agent_id,p.owner_id,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where c.token_hash=? and c.revoked_at is null and c.expires_at>? and p.revoked_at is null and (p.expires_at is null or p.expires_at>?)")
+            let row = sqlx::query("select c.id as credential_id,p.agent_id,p.owner_id,p.provider,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where c.token_hash=? and c.revoked_at is null and c.expires_at>? and p.revoked_at is null and (p.expires_at is null or p.expires_at>?)")
                 .bind(hash).bind(now).bind(now).fetch_optional(&self.pool).await.map_err(sql_error)?
                 .ok_or(RepositoryError::PermissionDenied)?;
             sqlx::query("update agent_credentials set last_used_at=? where token_hash=?")
@@ -2370,8 +2479,13 @@ impl AgentRepository for SqliteChatRepository {
             Ok(AgentPrincipal {
                 agent_id: UserId::new(row.try_get::<String, _>("agent_id").map_err(storage)?)
                     .map_err(storage)?,
+                credential_id: Uuid::parse_str(
+                    &row.try_get::<String, _>("credential_id").map_err(storage)?,
+                )
+                .map_err(storage)?,
                 owner_id: UserId::new(row.try_get::<String, _>("owner_id").map_err(storage)?)
                     .map_err(storage)?,
+                provider: row.try_get("provider").map_err(storage)?,
                 purpose: row.try_get("purpose").map_err(storage)?,
                 rate_limit_per_minute: u16::try_from(
                     row.try_get::<i64, _>("rate_limit_per_minute")
@@ -2962,6 +3076,127 @@ fn circle_with_role(row: sqlx::sqlite::SqliteRow) -> Result<(Circle, CircleRole)
         },
         CircleRole::parse(&role).ok_or_else(|| storage("invalid circle role"))?,
     ))
+}
+
+impl IntegrationRepository for SqliteChatRepository {
+    fn deliver_alert<'a>(&'a self, alert: IncomingAlert) -> IntegrationFuture<'a, DeliveryResult> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let channel_id =
+                integration_channel_sqlite(&mut transaction, &alert.agent_id, alert.credential_id)
+                    .await?;
+            sqlx::query("insert into incoming_alert_occurrences(agent_id,fingerprint,starts_at,state,updated_at) values(?,?,?,'pending',?) on conflict(agent_id,fingerprint,starts_at) do nothing")
+                .bind(alert.agent_id.to_string()).bind(&alert.fingerprint).bind(alert.starts_at).bind(Utc::now())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            let row = sqlx::query("select state,firing_message_id,resolved_message_id from incoming_alert_occurrences where agent_id=? and fingerprint=? and starts_at=?")
+                .bind(alert.agent_id.to_string()).bind(&alert.fingerprint).bind(alert.starts_at)
+                .fetch_one(&mut *transaction).await.map_err(sql_error)?;
+            let state: String = row.try_get("state").map_err(storage)?;
+            let existing: Option<String> = match alert.state {
+                AlertState::Firing => row.try_get("firing_message_id").map_err(storage)?,
+                AlertState::Resolved => row.try_get("resolved_message_id").map_err(storage)?,
+            };
+            if matches!(alert.state, AlertState::Firing)
+                && state == "resolved"
+                && existing.is_none()
+            {
+                sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values(?,'integration.alert_ignored','integration',?,?)")
+                    .bind(alert.agent_id.to_string()).bind(alert.agent_id.to_string())
+                    .bind(serde_json::json!({"status": alert.state.as_str(), "outcome": "already_resolved"}).to_string())
+                    .execute(&mut *transaction).await.map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(DeliveryResult::IgnoredResolved);
+            }
+            if let Some(message_id) = existing {
+                let row = sqlx::query("select id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at from messages where id=?")
+                    .bind(message_id).fetch_one(&mut *transaction).await.map_err(sql_error)?;
+                let message = chat_message(row)?;
+                sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values(?,'integration.alert_duplicate','integration',?,?)")
+                    .bind(alert.agent_id.to_string()).bind(alert.agent_id.to_string())
+                    .bind(serde_json::json!({"status": alert.state.as_str(), "message_id": message.id.as_uuid().to_string()}).to_string())
+                    .execute(&mut *transaction).await.map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(DeliveryResult::Duplicate(message));
+            }
+            let message = insert_integration_message_sqlite(
+                &mut transaction,
+                alert.agent_id.clone(),
+                channel_id,
+                alert.body,
+            )
+            .await?;
+            let (column, next_state) = match alert.state {
+                AlertState::Firing => ("firing_message_id", "firing"),
+                AlertState::Resolved => ("resolved_message_id", "resolved"),
+            };
+            let update = format!(
+                "update incoming_alert_occurrences set {column}=?,state=?,updated_at=? where agent_id=? and fingerprint=? and starts_at=?"
+            );
+            sqlx::query(&update)
+                .bind(message.id.as_uuid().to_string())
+                .bind(next_state)
+                .bind(Utc::now())
+                .bind(alert.agent_id.to_string())
+                .bind(&alert.fingerprint)
+                .bind(alert.starts_at)
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values(?,'integration.alert_delivered','integration',?,?)")
+                .bind(alert.agent_id.to_string()).bind(alert.agent_id.to_string())
+                .bind(serde_json::json!({"status": alert.state.as_str(), "message_id": message.id.as_uuid().to_string()}).to_string())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(DeliveryResult::Accepted(message))
+        })
+    }
+
+    fn deliver_report<'a>(
+        &'a self,
+        report: IncomingReport,
+    ) -> IntegrationFuture<'a, DeliveryResult> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let channel_id = integration_channel_sqlite(
+                &mut transaction,
+                &report.agent_id,
+                report.credential_id,
+            )
+            .await?;
+            sqlx::query("insert into incoming_report_deliveries(agent_id,report_id,created_at) values(?,?,?) on conflict(agent_id,report_id) do nothing")
+                .bind(report.agent_id.to_string()).bind(&report.report_id).bind(Utc::now())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            let existing: Option<String> = sqlx::query_scalar("select message_id from incoming_report_deliveries where agent_id=? and report_id=?")
+                .bind(report.agent_id.to_string()).bind(&report.report_id).fetch_one(&mut *transaction).await.map_err(sql_error)?;
+            if let Some(message_id) = existing {
+                let row = sqlx::query("select id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at from messages where id=?")
+                    .bind(message_id).fetch_one(&mut *transaction).await.map_err(sql_error)?;
+                let message = chat_message(row)?;
+                sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values(?,'integration.report_duplicate','integration',?,?)")
+                    .bind(report.agent_id.to_string()).bind(report.agent_id.to_string())
+                    .bind(serde_json::json!({"message_id": message.id.as_uuid().to_string()}).to_string())
+                    .execute(&mut *transaction).await.map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(DeliveryResult::Duplicate(message));
+            }
+            let message = insert_integration_message_sqlite(
+                &mut transaction,
+                report.agent_id.clone(),
+                channel_id,
+                report.body,
+            )
+            .await?;
+            sqlx::query("update incoming_report_deliveries set message_id=? where agent_id=? and report_id=?")
+                .bind(message.id.as_uuid().to_string()).bind(report.agent_id.to_string()).bind(&report.report_id)
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values(?,'integration.report_delivered','integration',?,?)")
+                .bind(report.agent_id.to_string()).bind(report.agent_id.to_string())
+                .bind(serde_json::json!({"message_id": message.id.as_uuid().to_string()}).to_string())
+                .execute(&mut *transaction).await.map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(DeliveryResult::Accepted(message))
+        })
+    }
 }
 
 #[cfg(test)]

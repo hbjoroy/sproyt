@@ -6,6 +6,7 @@ pub(crate) mod browser;
 pub(crate) mod enrollment;
 pub(crate) mod http;
 pub(crate) mod imagegen;
+pub(crate) mod integrations;
 pub(crate) mod mcp;
 pub(crate) mod media;
 pub(crate) mod processes;

@@ -36,6 +36,12 @@ struct OperationalStateInner {
     client_resume_recovery: AtomicU64,
     client_connect_timeout: AtomicU64,
     client_liveness_timeout: AtomicU64,
+    integration_accepted: AtomicU64,
+    integration_duplicate: AtomicU64,
+    integration_ignored: AtomicU64,
+    integration_rejected: AtomicU64,
+    integration_error: AtomicU64,
+    integration_duration_micros: AtomicU64,
     shutdown: watch::Sender<bool>,
 }
 
@@ -58,6 +64,12 @@ impl Default for OperationalState {
                 client_resume_recovery: AtomicU64::new(0),
                 client_connect_timeout: AtomicU64::new(0),
                 client_liveness_timeout: AtomicU64::new(0),
+                integration_accepted: AtomicU64::new(0),
+                integration_duplicate: AtomicU64::new(0),
+                integration_ignored: AtomicU64::new(0),
+                integration_rejected: AtomicU64::new(0),
+                integration_error: AtomicU64::new(0),
+                integration_duration_micros: AtomicU64::new(0),
                 shutdown: watch::channel(false).0,
             }),
         }
@@ -65,6 +77,20 @@ impl Default for OperationalState {
 }
 
 impl OperationalState {
+    pub fn record_integration(&self, outcome: IntegrationOutcome, elapsed_micros: u64) {
+        let counter = match outcome {
+            IntegrationOutcome::Accepted => &self.inner.integration_accepted,
+            IntegrationOutcome::Duplicate => &self.inner.integration_duplicate,
+            IntegrationOutcome::Ignored => &self.inner.integration_ignored,
+            IntegrationOutcome::Rejected => &self.inner.integration_rejected,
+            IntegrationOutcome::Error => &self.inner.integration_error,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .integration_duration_micros
+            .fetch_add(elapsed_micros, Ordering::Relaxed);
+    }
+
     pub fn record_client_event(&self, event: ClientEvent) {
         let counter = match event {
             ClientEvent::WebSocketConnected => &self.inner.client_ws_connected,
@@ -184,8 +210,60 @@ impl OperationalState {
             )
             .expect("writing to a String cannot fail");
         }
+        writeln!(output, "# TYPE sproyt_integration_deliveries_total counter")
+            .expect("writing to a String cannot fail");
+        for (outcome, value) in [
+            (
+                "accepted",
+                self.inner.integration_accepted.load(Ordering::Relaxed),
+            ),
+            (
+                "duplicate",
+                self.inner.integration_duplicate.load(Ordering::Relaxed),
+            ),
+            (
+                "ignored",
+                self.inner.integration_ignored.load(Ordering::Relaxed),
+            ),
+            (
+                "rejected",
+                self.inner.integration_rejected.load(Ordering::Relaxed),
+            ),
+            (
+                "error",
+                self.inner.integration_error.load(Ordering::Relaxed),
+            ),
+        ] {
+            writeln!(
+                output,
+                "sproyt_integration_deliveries_total{{outcome=\"{outcome}\"}} {value}"
+            )
+            .expect("writing to a String cannot fail");
+        }
+        writeln!(
+            output,
+            "# TYPE sproyt_integration_duration_microseconds_total counter"
+        )
+        .expect("writing to a String cannot fail");
+        writeln!(
+            output,
+            "sproyt_integration_duration_microseconds_total {}",
+            self.inner
+                .integration_duration_micros
+                .load(Ordering::Relaxed)
+        )
+        .expect("writing to a String cannot fail");
         output
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum IntegrationOutcome {
+    Accepted,
+    Duplicate,
+    Ignored,
+    Rejected,
+    Error,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -253,9 +331,12 @@ mod tests {
     fn metrics_do_not_expose_application_data() {
         let operations = OperationalState::default();
         operations.record_client_event(ClientEvent::WebSocketDisconnected);
+        operations.record_integration(IntegrationOutcome::Duplicate, 42);
         let metrics = operations.metrics();
         assert!(metrics.contains("sproyt_ready 0"));
         assert!(metrics.contains("sproyt_client_events_total{event=\"websocket_disconnected\"} 1"));
+        assert!(metrics.contains("sproyt_integration_deliveries_total{outcome=\"duplicate\"} 1"));
+        assert!(metrics.contains("sproyt_integration_duration_microseconds_total 42"));
         assert!(!metrics.contains("message"));
     }
 

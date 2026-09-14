@@ -25,7 +25,7 @@ async fn mcp_uses_agent_scope_idempotency_and_immediate_revocation() {
     repository.migrate().await.unwrap();
     let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
     let process_repository: Arc<dyn ProcessRepository> = repository.clone();
-    let agent_repository: Arc<dyn AgentRepository> = repository;
+    let agent_repository: Arc<dyn AgentRepository> = repository.clone();
     let chat = ChatEngine::start(chat_repository);
     let agents = AgentService::new(agent_repository);
     let owner = UserId::named("mcp-owner");
@@ -80,6 +80,7 @@ async fn mcp_uses_agent_scope_idempotency_and_immediate_revocation() {
         operations: OperationalState::default(),
         processes: ProcessService::start(process_repository, None),
         agents: agents.clone(),
+        integrations: crate::integration::IntegrationService::new(repository.clone()),
         notifications: NotificationService::test(),
         enrollment: None,
         websocket_idle_timeout: Duration::from_secs(60),
@@ -303,6 +304,7 @@ async fn mcp_process_tools_enforce_separate_scopes_and_idempotency() {
         operations: OperationalState::default(),
         processes: ProcessService::start(repository.clone(), None),
         agents: agents.clone(),
+        integrations: crate::integration::IntegrationService::new(repository.clone()),
         notifications: NotificationService::test(),
         enrollment: None,
         websocket_idle_timeout: Duration::from_secs(60),
@@ -528,7 +530,8 @@ async fn mcp_rejects_incompatible_transport_requests_before_dispatch() {
         chat: ChatEngine::start(repository.clone()),
         operations: OperationalState::default(),
         processes: ProcessService::start(repository.clone(), None),
-        agents: AgentService::new(repository),
+        agents: AgentService::new(repository.clone()),
+        integrations: crate::integration::IntegrationService::new(repository),
         notifications: NotificationService::test(),
         enrollment: None,
         websocket_idle_timeout: Duration::from_secs(60),

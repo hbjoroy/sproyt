@@ -7,6 +7,7 @@ mod domain;
 mod enrollment;
 mod imagegen;
 mod imagegen_prompt;
+mod integration;
 mod notification;
 mod operations;
 mod process;
