@@ -39,6 +39,18 @@ spec:
     - ports:
         - protocol: TCP
           port: 443
+    {{- with .Values.networkPolicy.authentikNamespaceSelector }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- with $.Values.networkPolicy.authentikPodSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.authentikPort }}
+    {{- end }}
     {{- if .Values.networkPolicy.databaseSameNamespace }}
     - to:
         - podSelector: {}

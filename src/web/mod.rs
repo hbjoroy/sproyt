@@ -3,6 +3,7 @@ pub(crate) mod agents;
 pub(crate) mod assets;
 pub(crate) mod auth;
 pub(crate) mod browser;
+pub(crate) mod enrollment;
 pub(crate) mod http;
 pub(crate) mod imagegen;
 pub(crate) mod mcp;

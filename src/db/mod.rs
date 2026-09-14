@@ -112,6 +112,7 @@ where
     use chrono::Utc;
 
     repository.health_check().await.unwrap();
+    verify_enrollment_invitation_contract(repository, &format!("{suffix}-enrollment")).await;
     let actor = UserId::named(format!("chat-contract-actor-{suffix}"));
     repository
         .upsert_user(User {
@@ -891,6 +892,179 @@ where
             })
             .await,
         Err(RepositoryError::NotFound)
+    );
+}
+
+#[cfg(test)]
+pub async fn verify_enrollment_invitation_contract<R>(repository: &R, suffix: &str)
+where
+    R: ChatRepository,
+{
+    use crate::domain::{
+        AcceptCircleInvitation, AcceptEnrollmentInvitation, ActivateEnrollmentInvitation,
+        ChannelSlug, CreateCircle, CreateCircleInvitation, DisplayName, EnrollmentInvitationState,
+        PrepareEnrollmentInvitation, PrincipalKind, User, UserId,
+    };
+    use chrono::{Duration, Utc};
+    use uuid::Uuid;
+
+    async fn add_user<R: ChatRepository>(repository: &R, id: UserId, name: &str) {
+        repository
+            .upsert_user(User {
+                id,
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new(name).unwrap(),
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let owner = UserId::named(format!("enrollment-owner-{suffix}"));
+    let member = UserId::named(format!("enrollment-member-{suffix}"));
+    let invitee = UserId::named(format!("enrollment-invitee-{suffix}"));
+    add_user(repository, owner.clone(), "Enrollment owner").await;
+    add_user(repository, member.clone(), "Enrollment member").await;
+    add_user(repository, invitee.clone(), "Enrollment invitee").await;
+    let circle = repository
+        .create_circle(CreateCircle {
+            actor: owner.clone(),
+            slug: ChannelSlug::new(format!("enrollment-{suffix}")).unwrap(),
+            name: DisplayName::new("Enrollment contract circle").unwrap(),
+        })
+        .await
+        .unwrap();
+
+    let ordinary = repository
+        .create_circle_invitation(CreateCircleInvitation {
+            actor: owner.clone(),
+            circle_id: circle.id.clone(),
+        })
+        .await
+        .unwrap();
+    repository
+        .accept_circle_invitation(AcceptCircleInvitation {
+            actor: member.clone(),
+            token: ordinary.token,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
+                actor: member,
+                circle_id: circle.id.clone(),
+                email: "member@example.com".to_owned(),
+                expires_at: Utc::now() + Duration::hours(1),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied),
+        "only the circle owner may prepare enrollment"
+    );
+
+    let expired = repository
+        .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
+            actor: owner.clone(),
+            circle_id: circle.id.clone(),
+            email: "expired@example.com".to_owned(),
+            expires_at: Utc::now() - Duration::seconds(1),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .activate_enrollment_invitation(ActivateEnrollmentInvitation {
+                token: expired.token,
+                authentik_invitation_id: Uuid::new_v4(),
+            })
+            .await,
+        Err(RepositoryError::NotFound),
+        "expired enrollment must not activate"
+    );
+
+    let expires_at = Utc::now() + Duration::hours(2);
+    let issued = repository
+        .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
+            actor: owner.clone(),
+            circle_id: circle.id.clone(),
+            email: "  Invitee@Example.COM  ".to_owned(),
+            expires_at,
+        })
+        .await
+        .unwrap();
+    assert_eq!(issued.invitation.expires_at, expires_at);
+    assert_eq!(issued.invitation.state, EnrollmentInvitationState::Inactive);
+    assert_eq!(issued.invitation.authentik_invitation_id, None);
+    assert_eq!(
+        repository
+            .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+                actor: invitee.clone(),
+                email: "invitee@example.com".to_owned(),
+                token: issued.token.clone(),
+            })
+            .await,
+        Err(RepositoryError::NotFound),
+        "inactive enrollment must not be accepted"
+    );
+
+    let authentik_invitation_id = Uuid::new_v4();
+    let activated = repository
+        .activate_enrollment_invitation(ActivateEnrollmentInvitation {
+            token: issued.token.clone(),
+            authentik_invitation_id,
+        })
+        .await
+        .unwrap();
+    assert_eq!(activated.state, EnrollmentInvitationState::Active);
+    assert_eq!(
+        activated.authentik_invitation_id,
+        Some(authentik_invitation_id)
+    );
+    assert_eq!(
+        repository
+            .activate_enrollment_invitation(ActivateEnrollmentInvitation {
+                token: issued.token.clone(),
+                authentik_invitation_id: Uuid::new_v4(),
+            })
+            .await,
+        Err(RepositoryError::NotFound),
+        "an enrollment must activate at most once"
+    );
+    assert_eq!(
+        repository
+            .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+                actor: invitee.clone(),
+                email: "wrong@example.com".to_owned(),
+                token: issued.token.clone(),
+            })
+            .await,
+        Err(RepositoryError::NotFound),
+        "the expected email must match"
+    );
+
+    let membership = repository
+        .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+            actor: invitee.clone(),
+            email: "\tINVITEE@example.com\n".to_owned(),
+            token: issued.token.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(membership.circle_id, circle.id);
+    assert_eq!(membership.user_id, invitee.clone());
+    assert_eq!(membership.role, crate::domain::CircleRole::Member);
+    assert_eq!(
+        repository
+            .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+                actor: invitee,
+                email: "invitee@example.com".to_owned(),
+                token: issued.token,
+            })
+            .await,
+        Err(RepositoryError::NotFound),
+        "an enrollment must be consumed at most once"
     );
 }
 

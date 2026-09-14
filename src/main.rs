@@ -4,6 +4,7 @@ mod chat;
 mod config;
 mod db;
 mod domain;
+mod enrollment;
 mod imagegen;
 mod imagegen_prompt;
 mod notification;

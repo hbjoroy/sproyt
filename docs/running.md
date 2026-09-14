@@ -251,12 +251,14 @@ including the provider slug and trailing slash:
 OIDC_ISSUER='https://sproyt-security.bjoroy.me/application/o/sproyt/'
 OIDC_CLIENT_ID='<client-id>'
 OIDC_CLIENT_SECRET='<client-secret>'
+AUTHENTIK_API_TOKEN='<dedicated-invitation-token>'
 PUBLIC_ORIGIN='https://sproyt.bjoroy.me'
 SPROYT_SESSION_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
 
 kubectl -n sproyt create secret generic sproyt \
   --from-literal=DATABASE_URL="postgresql://sproyt:${SPROYT_DB_PASSWORD}@postgres-postgresql.database.svc.cluster.local:5432/sproyt" \
   --from-literal=SPROYT_OIDC_CLIENT_SECRET="$OIDC_CLIENT_SECRET" \
+  --from-literal=SPROYT_AUTHENTIK_API_TOKEN="$AUTHENTIK_API_TOKEN" \
   --from-literal=SPROYT_SESSION_KEY="$SPROYT_SESSION_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
@@ -264,6 +266,10 @@ kubectl -n sproyt create secret generic sproyt \
 Do not reuse the PostgreSQL root credential in `DATABASE_URL`. Sproyt needs only
 its dedicated `sproyt` role. Register `${PUBLIC_ORIGIN}/auth/callback` and
 `${PUBLIC_ORIGIN}/` as the callback and post-logout URLs in Authentik.
+`SPROYT_AUTHENTIK_API_TOKEN` belongs to a separate, least-privilege Authentik
+service account that can only add invitation objects; see
+[authentik.md](authentik.md#invite-a-new-sprøyt-user). Omit this optional key to
+leave owner-initiated new-user enrollment disabled.
 
 ### Enable push notifications
 
@@ -323,6 +329,11 @@ config:
   oidcClientId: ${OIDC_CLIENT_ID}
   oidcRedirectUrl: ${PUBLIC_ORIGIN}/auth/callback
   oidcPostLogoutRedirectUrl: ${PUBLIC_ORIGIN}/
+  publicUrl: ${PUBLIC_ORIGIN}
+  authentikApiUrl: http://authentik-server.authentik.svc.cluster.local
+  authentikPublicUrl: https://sproyt-security.bjoroy.me
+  authentikEnrollmentFlowId: dcde5ce9-ca43-4003-8d0c-762e8554650c
+  authentikEnrollmentFlowSlug: sproyt-invitation-enrollment
   heartUrl: ""
   mcpAllowedOrigins: ${PUBLIC_ORIGIN}
 

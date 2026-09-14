@@ -20,6 +20,7 @@ use crate::{
     chat::ChatEngine,
     config::{AppConfig, AuthMode, LogFormat},
     db,
+    enrollment::EnrollmentService,
     notification::NotificationService,
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{HeartGateway, ProcessService, SharedProcessGateway},
@@ -38,6 +39,7 @@ use crate::{
     },
     web::auth::{auth_callback, auth_login, auth_logout, auth_refresh, auth_session},
     web::browser::index,
+    web::enrollment::create_enrollment_invitation,
     web::mcp::mcp_handler,
     web::media::{download_media, download_media_preview, upload_media},
     web::processes::{
@@ -56,6 +58,7 @@ pub(super) struct AppState {
     pub(super) agents: AgentService,
     pub(super) notifications: NotificationService,
     pub(super) imagegen: Option<crate::imagegen::ImageGeneration>,
+    pub(super) enrollment: Option<EnrollmentService>,
     pub(super) websocket_idle_timeout: Duration,
     pub(super) advanced_ui_enabled: bool,
     pub(super) agent_ui_enabled: bool,
@@ -105,6 +108,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),
         notifications,
+        enrollment: EnrollmentService::from_env()?,
         websocket_idle_timeout: config.websocket_idle_timeout(),
         advanced_ui_enabled: std::env::var("SPROYT_UI_ADVANCED_ENABLED").as_deref() == Ok("true"),
         agent_ui_enabled: std::env::var("SPROYT_UI_AGENT_ENABLED").as_deref() == Ok("true"),
@@ -172,6 +176,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route(
             "/api/v1/channels/{id}/notifications",
             axum::routing::put(enable_channel_notifications).delete(disable_channel_notifications),
+        )
+        .route(
+            "/api/v1/circles/{id}/enrollment-invitations",
+            post(create_enrollment_invitation),
         )
         .route("/api/v1/channels/{id}/media", post(upload_media))
         .route(

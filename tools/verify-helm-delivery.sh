@@ -4,6 +4,7 @@ set -euo pipefail
 chart=${1:-helm/sproyt}
 digest=${2:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
 issuer=https://sproyt-security.bjoroy.me/application/o/sproyt/
+enrollment_flow_id=dcde5ce9-ca43-4003-8d0c-762e8554650c
 helm_command=${HELM:-helm}
 
 common=(
@@ -22,6 +23,8 @@ heart_rendered=$(mktemp)
 trap 'rm -f "$rendered" "$heart_rendered"' EXIT
 "$helm_command" template sproyt "$chart" "${common[@]}" \
   --set "image.digest=$digest" \
+  --set secret.existingSecret=sproyt-ci \
+  --set "config.authentikEnrollmentFlowId=$enrollment_flow_id" \
   --set imagePullSecrets[0].name=oci-pull-secret \
   --set config.heartUrl=http://heart.heart.svc.cluster.local:3000 \
   --set 'networkPolicy.heartNamespaceSelector.matchLabels.kubernetes\.io/metadata\.name=heart' \
@@ -36,6 +39,12 @@ grep -F -q "kubernetes.io/metadata.name: heart" "$rendered"
 grep -F -q "port: 3000" "$rendered"
 grep -F -q "app: heart" "$rendered"
 grep -F -q 'kubernetes.io/metadata.name: "sproyt"' "$rendered"
+grep -F -q "SPROYT_AUTHENTIK_ENROLLMENT_FLOW_ID: \"$enrollment_flow_id\"" "$rendered"
+grep -F -q 'SPROYT_AUTHENTIK_API_URL: "http://authentik-server.authentik.svc.cluster.local"' "$rendered"
+grep -F -q -- '- name: SPROYT_AUTHENTIK_API_TOKEN' "$rendered"
+grep -F -q 'key: SPROYT_AUTHENTIK_API_TOKEN' "$rendered"
+grep -F -q 'kubernetes.io/metadata.name: authentik' "$rendered"
+grep -F -q 'app.kubernetes.io/component: server' "$rendered"
 test "$(grep -F -c -- "- name: oci-pull-secret" "$rendered")" -eq 2
 test "$(grep -F -c "serviceAccountName: default" "$rendered")" -eq 1
 

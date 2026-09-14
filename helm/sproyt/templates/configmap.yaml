@@ -20,6 +20,13 @@ data:
   SPROYT_OIDC_CLIENT_ID: {{ required "config.oidcClientId must be set" .Values.config.oidcClientId | quote }}
   SPROYT_OIDC_REDIRECT_URL: {{ .Values.config.oidcRedirectUrl | quote }}
   SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL: {{ .Values.config.oidcPostLogoutRedirectUrl | quote }}
+  SPROYT_PUBLIC_URL: {{ .Values.config.publicUrl | quote }}
+  SPROYT_AUTHENTIK_API_URL: {{ .Values.config.authentikApiUrl | quote }}
+  SPROYT_AUTHENTIK_PUBLIC_URL: {{ .Values.config.authentikPublicUrl | quote }}
+  SPROYT_AUTHENTIK_ENROLLMENT_FLOW_SLUG: {{ .Values.config.authentikEnrollmentFlowSlug | quote }}
+  {{- with .Values.config.authentikEnrollmentFlowId }}
+  SPROYT_AUTHENTIK_ENROLLMENT_FLOW_ID: {{ . | quote }}
+  {{- end }}
   {{- if .Values.config.heartUrl }}
   SPROYT_HEART_URL: {{ .Values.config.heartUrl | quote }}
   {{- else if .Values.heart.enabled }}

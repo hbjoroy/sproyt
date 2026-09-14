@@ -11,15 +11,16 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::domain::PrincipalKind;
 use crate::domain::{
-    AcceptCircleInvitation, AcceptedChatInvitation, ChannelId, ChannelKind, ChannelRef,
-    ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle,
-    CircleMembership, CircleRole, CreateChannel, CreateChatInvitation, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, DeleteMessage, DisplayName, EditMessage,
-    InvitationPreview, InvitationTarget, InvitationTokenCommand, IssuedChatInvitation,
+    AcceptCircleInvitation, AcceptEnrollmentInvitation, AcceptedChatInvitation,
+    ActivateEnrollmentInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
+    ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
+    CreateChannel, CreateChatInvitation, CreateCircle, CreateCircleInvitation, DeleteCircle,
+    DeleteMessage, DisplayName, EditMessage, EnrollmentInvitation, InvitationPreview,
+    InvitationTarget, InvitationTokenCommand, IssuedChatInvitation, IssuedEnrollmentInvitation,
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId, MessageLimit,
-    MessageReactionChange, MessageReactionSummary, PresenceLease, RepositoryError, SendMessage,
-    TextValidationError, User, UserId, UserProfile,
+    MessageReactionChange, MessageReactionSummary, PrepareEnrollmentInvitation, PresenceLease,
+    RepositoryError, SendMessage, TextValidationError, User, UserId, UserProfile,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -469,6 +470,54 @@ impl ChatEngine {
     ) -> Result<CircleMembership, ChatError> {
         self.repository
             .accept_circle_invitation(AcceptCircleInvitation { actor, token })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn prepare_enrollment_invitation(
+        &self,
+        actor: UserId,
+        circle_id: crate::domain::CircleId,
+        email: String,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<IssuedEnrollmentInvitation, ChatError> {
+        self.repository
+            .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
+                actor,
+                circle_id,
+                email,
+                expires_at,
+            })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn activate_enrollment_invitation(
+        &self,
+        token: String,
+        authentik_invitation_id: Uuid,
+    ) -> Result<EnrollmentInvitation, ChatError> {
+        self.repository
+            .activate_enrollment_invitation(ActivateEnrollmentInvitation {
+                token,
+                authentik_invitation_id,
+            })
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn accept_enrollment_invitation(
+        &self,
+        actor: UserId,
+        email: String,
+        token: String,
+    ) -> Result<CircleMembership, ChatError> {
+        self.repository
+            .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+                actor,
+                email,
+                token,
+            })
             .await
             .map_err(ChatError::from)
     }

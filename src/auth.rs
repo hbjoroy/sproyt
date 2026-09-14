@@ -31,6 +31,7 @@ const LOGIN_TTL_SECONDS: u64 = 600;
 const ACCESS_SESSION_MAX_TTL_SECONDS: u64 = 8 * 60 * 60;
 const REFRESH_IDLE_TTL_SECONDS: u64 = 30 * 24 * 60 * 60;
 const SESSION_REFRESH_LEAD_SECONDS: u64 = 60;
+const MAX_EMAIL_LENGTH: usize = 254;
 pub const LOGIN_COOKIE: &str = "sproyt_oidc_tx";
 pub const SESSION_COOKIE: &str = "sproyt_session";
 pub const REFRESH_COOKIE: &str = "sproyt_refresh";
@@ -40,6 +41,7 @@ pub struct AuthenticatedPrincipal {
     pub user: User,
     pub issuer: String,
     pub subject: String,
+    pub email: Option<String>,
 }
 
 #[derive(Clone)]
@@ -76,7 +78,7 @@ impl AuthService {
             return Err(AuthError::Unauthorized);
         }
         let name = requested_name.unwrap_or_else(|| "guest".to_owned());
-        principal("urn:sproyt:development", &name, &name)
+        principal("urn:sproyt:development", &name, &name, None)
     }
 
     pub async fn authenticate_session(
@@ -113,9 +115,24 @@ impl AuthService {
     }
 
     pub fn login(&self, return_to: Option<String>) -> Result<LoginStart, AuthError> {
+        self.login_with_enrollment(return_to, None)
+    }
+
+    /// Starts an OIDC login tied to a single enrollment token.  The token is
+    /// kept only in the encrypted, short-lived OIDC transaction cookie; it is
+    /// deliberately not included in the provider redirect or a return URL.
+    pub fn login_enrollment(&self, token: String) -> Result<LoginStart, AuthError> {
+        self.login_with_enrollment(None, Some(token))
+    }
+
+    fn login_with_enrollment(
+        &self,
+        return_to: Option<String>,
+        enrollment_token: Option<String>,
+    ) -> Result<LoginStart, AuthError> {
         match self {
             Self::Development => Err(AuthError::Unsupported("OIDC is disabled".to_owned())),
-            Self::Oidc(service) => service.login(return_to),
+            Self::Oidc(service) => service.login(return_to, enrollment_token),
         }
     }
 
@@ -177,6 +194,7 @@ pub struct LoginComplete {
     pub set_refresh_cookie: Option<String>,
     pub clear_transaction_cookie: String,
     pub return_to: String,
+    pub enrollment_token: Option<String>,
 }
 
 pub struct SessionRenewal {
@@ -316,7 +334,11 @@ impl OidcService {
         }
     }
 
-    fn login(&self, return_to: Option<String>) -> Result<LoginStart, AuthError> {
+    fn login(
+        &self,
+        return_to: Option<String>,
+        enrollment_token: Option<String>,
+    ) -> Result<LoginStart, AuthError> {
         let client = self.current_client()?;
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         let (url, state, nonce) = client
@@ -336,6 +358,7 @@ impl OidcService {
             pkce_verifier: verifier.secret().to_owned(),
             expires_at: now_seconds() + LOGIN_TTL_SECONDS,
             return_to,
+            enrollment_token,
         };
         let value = self.codec.seal(&transaction)?;
         Ok(LoginStart {
@@ -393,7 +416,15 @@ impl OidcService {
                     .map(|username| username.as_str())
             })
             .unwrap_or(&subject);
-        let principal = principal(&self.issuer, &subject, display_name)?;
+        // The ID-token signature, issuer, audience, and nonce were verified
+        // above; do not source identity data from an unverified endpoint.
+        // Enrollment is e-mail-bound, but Authentik's standard scope mapping
+        // emits `email_verified: false` even for its fixed invitation value.
+        // The e-mail is nevertheless from this signature-, issuer-, audience-
+        // and nonce-verified ID token; the local, opaque enrollment token is
+        // separately matched to its expected e-mail hash during acceptance.
+        let email = normalized_email(claims.email().map(|email| email.as_str()));
+        let principal = principal(&self.issuer, &subject, display_name, email)?;
         let now = now_seconds();
         // The ID token expiry validates the authentication assertion. The
         // access token has its own lifetime, supplied by the token endpoint,
@@ -409,6 +440,7 @@ impl OidcService {
                         issuer: self.issuer.clone(),
                         subject: subject.clone(),
                         display_name: principal.user.display_name.to_string(),
+                        email: principal.email.clone(),
                         refresh_token: refresh_token.secret().to_owned(),
                         expires_at: refresh_expires_at,
                     })
@@ -421,6 +453,7 @@ impl OidcService {
             issuer: self.issuer.clone(),
             subject,
             display_name: principal.user.display_name.to_string(),
+            email: principal.email.clone(),
             access_token: Some(token.access_token().secret().to_owned()),
             refresh_token: None,
             expires_at,
@@ -435,6 +468,7 @@ impl OidcService {
             set_refresh_cookie: refresh_cookie,
             clear_transaction_cookie: clear_cookie(LOGIN_COOKIE, "/auth/callback"),
             return_to: transaction.return_to.unwrap_or_else(|| "/".to_owned()),
+            enrollment_token: transaction.enrollment_token,
         })
     }
 
@@ -445,7 +479,12 @@ impl OidcService {
         let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
         let claims: SessionClaims = self.codec.open(value)?;
         validate_session_claims(&claims, &self.issuer)?;
-        principal(&claims.issuer, &claims.subject, &claims.display_name)
+        principal(
+            &claims.issuer,
+            &claims.subject,
+            &claims.display_name,
+            claims.email,
+        )
     }
 
     fn session_refresh_after(&self, cookie_header: Option<&str>) -> Result<u64, AuthError> {
@@ -468,7 +507,12 @@ impl OidcService {
         let Some(access_token) = claims.access_token else {
             // Expand/contract compatibility: sessions issued by the previous
             // release remain usable only until their already bounded expiry.
-            return principal(&claims.issuer, &claims.subject, &claims.display_name);
+            return principal(
+                &claims.issuer,
+                &claims.subject,
+                &claims.display_name,
+                claims.email,
+            );
         };
         let client = self.current_client()?;
         let user_info: CoreUserInfoClaims = client
@@ -490,14 +534,14 @@ impl OidcService {
                     .map(|username| username.as_str())
             })
             .unwrap_or(&claims.display_name);
-        principal(&claims.issuer, &claims.subject, display_name)
+        principal(&claims.issuer, &claims.subject, display_name, claims.email)
     }
 
     async fn renew_session(
         &self,
         cookie_header: Option<&str>,
     ) -> Result<SessionRenewal, AuthError> {
-        let (issuer, subject, display_name, refresh_token) =
+        let (issuer, subject, display_name, email, refresh_token) =
             if let Some(value) = read_cookie(cookie_header, REFRESH_COOKIE) {
                 let claims: RefreshClaims = self.codec.open(value)?;
                 validate_refresh_claims(&claims.issuer, claims.expires_at, &self.issuer)?;
@@ -505,6 +549,7 @@ impl OidcService {
                     claims.issuer,
                     claims.subject,
                     claims.display_name,
+                    claims.email,
                     claims.refresh_token,
                 )
             } else {
@@ -520,6 +565,7 @@ impl OidcService {
                     claims.issuer,
                     claims.subject,
                     claims.display_name,
+                    claims.email,
                     refresh_token,
                 )
             };
@@ -547,6 +593,7 @@ impl OidcService {
             issuer: issuer.clone(),
             subject: subject.clone(),
             display_name,
+            email: email.clone(),
             access_token: Some(access_token),
             refresh_token: None,
             expires_at: now_seconds().saturating_add(access_max_age),
@@ -557,6 +604,7 @@ impl OidcService {
             issuer,
             subject,
             display_name: renewed.display_name.clone(),
+            email,
             refresh_token: token
                 .refresh_token()
                 .map_or(refresh_token, |token| token.secret().to_owned()),
@@ -578,6 +626,8 @@ struct LoginTransaction {
     expires_at: u64,
     #[serde(default)]
     return_to: Option<String>,
+    #[serde(default)]
+    enrollment_token: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -585,6 +635,8 @@ struct SessionClaims {
     issuer: String,
     subject: String,
     display_name: String,
+    #[serde(default)]
+    email: Option<String>,
     #[serde(default)]
     access_token: Option<String>,
     #[serde(default)]
@@ -599,6 +651,8 @@ struct RefreshClaims {
     issuer: String,
     subject: String,
     display_name: String,
+    #[serde(default)]
+    email: Option<String>,
     refresh_token: String,
     expires_at: u64,
 }
@@ -678,6 +732,7 @@ fn principal(
     issuer: &str,
     subject: &str,
     display_name: &str,
+    email: Option<String>,
 ) -> Result<AuthenticatedPrincipal, AuthError> {
     Ok(AuthenticatedPrincipal {
         user: User {
@@ -690,7 +745,14 @@ fn principal(
         },
         issuer: issuer.to_owned(),
         subject: subject.to_owned(),
+        email,
     })
+}
+
+fn normalized_email(email: Option<&str>) -> Option<String> {
+    let email = email?.trim();
+    (!email.is_empty() && email.len() <= MAX_EMAIL_LENGTH && !email.chars().any(char::is_control))
+        .then(|| email.to_lowercase())
 }
 
 fn secure_cookie(name: &str, value: &str, path: &str, max_age: u64) -> String {
@@ -840,6 +902,8 @@ mod tests {
                 "iat":now,
                 "nonce":provider.nonce.lock().unwrap().clone(),
                 "name":"Authentik Test User",
+                "email":"  Authentik.User@Example.Test  ",
+                "email_verified":false,
                 "preferred_username":"ignored-fallback"
             }))
             .unwrap(),
@@ -970,6 +1034,20 @@ mod tests {
             .unwrap();
         assert_eq!(first.user.id, second.user.id);
         assert_eq!(first.issuer, "urn:sproyt:development");
+        assert!(first.email.is_none());
+    }
+
+    #[test]
+    fn normalized_email_trims_lowercases_and_rejects_unsafe_values() {
+        assert_eq!(
+            normalized_email(Some("  User.Name@Example.Test  ")),
+            Some("user.name@example.test".to_owned())
+        );
+        assert_eq!(normalized_email(Some("user\n@example.test")), None);
+        assert_eq!(
+            normalized_email(Some(&"a".repeat(MAX_EMAIL_LENGTH + 1))),
+            None
+        );
     }
 
     #[test]
@@ -980,6 +1058,7 @@ mod tests {
             issuer: "issuer".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            email: None,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
             expires_at: now_seconds() + 60,
@@ -1018,7 +1097,29 @@ mod tests {
         let opened: SessionClaims = codec.open(&sealed).unwrap();
 
         assert_eq!(opened.subject, "alice");
+        assert!(opened.email.is_none());
         assert!(opened.access_token.is_none());
+
+        #[derive(Serialize)]
+        struct PreviousRefreshClaims {
+            issuer: String,
+            subject: String,
+            display_name: String,
+            refresh_token: String,
+            expires_at: u64,
+        }
+
+        let sealed = codec
+            .seal(&PreviousRefreshClaims {
+                issuer: "issuer".to_owned(),
+                subject: "alice".to_owned(),
+                display_name: "Alice".to_owned(),
+                refresh_token: "refresh-token".to_owned(),
+                expires_at: now_seconds() + 60,
+            })
+            .unwrap();
+        let opened: RefreshClaims = codec.open(&sealed).unwrap();
+        assert!(opened.email.is_none());
     }
 
     #[test]
@@ -1031,6 +1132,7 @@ mod tests {
             issuer: "issuer".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            email: None,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
             expires_at: now_seconds() + 60,
@@ -1057,6 +1159,7 @@ mod tests {
             issuer: "https://issuer.example".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            email: None,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
             expires_at: now_seconds().saturating_sub(1),
@@ -1094,6 +1197,7 @@ mod tests {
                 issuer: provider.issuer.clone(),
                 subject: "authentik-user-without-refresh".to_owned(),
                 display_name: "Authentik User".to_owned(),
+                email: None,
                 access_token: Some("valid-access-token".to_owned()),
                 refresh_token: None,
                 expires_at: now_seconds() + 60,
@@ -1111,6 +1215,7 @@ mod tests {
                 issuer: provider.issuer.clone(),
                 subject: "authentik-user-1".to_owned(),
                 display_name: "Expired Authentik User".to_owned(),
+                email: None,
                 access_token: Some("expired-access-token".to_owned()),
                 refresh_token: Some("refresh-a".to_owned()),
                 expires_at: now_seconds().saturating_sub(1),
@@ -1128,6 +1233,7 @@ mod tests {
                 issuer: provider.issuer.clone(),
                 subject: "authentik-user-1".to_owned(),
                 display_name: "Suspended Authentik User".to_owned(),
+                email: None,
                 access_token: Some("expired-access-token".to_owned()),
                 refresh_token: Some("refresh-a".to_owned()),
                 expires_at: now_seconds().saturating_sub(1),
@@ -1173,13 +1279,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(complete.return_to, "/?invite=safe-token");
+        assert_eq!(complete.enrollment_token, None);
         assert_eq!(complete.principal.subject, "authentik-user-1");
         assert_eq!(complete.principal.issuer, provider.issuer);
+        assert_eq!(
+            complete.principal.email.as_deref(),
+            Some("authentik.user@example.test")
+        );
         assert_eq!(
             complete.principal.user.display_name.to_string(),
             "Authentik Test User"
         );
         assert!(complete.clear_transaction_cookie.contains("Max-Age=0"));
+
+        let enrollment_login = auth
+            .login_enrollment("enrollment-token_123456".to_owned())
+            .unwrap();
+        let enrollment_state =
+            authorization_parameter(&enrollment_login.authorization_url, "state");
+        let enrollment_nonce =
+            authorization_parameter(&enrollment_login.authorization_url, "nonce");
+        *provider.nonce.lock().unwrap() = enrollment_nonce;
+        let enrollment_complete = auth
+            .callback(
+                "valid-code".to_owned(),
+                enrollment_state,
+                Some(&enrollment_login.set_cookie),
+            )
+            .await
+            .unwrap();
+        assert_eq!(enrollment_complete.return_to, "/");
+        assert_eq!(
+            enrollment_complete.enrollment_token.as_deref(),
+            Some("enrollment-token_123456")
+        );
         let max_age = complete
             .set_cookie
             .split(';')
@@ -1202,6 +1335,10 @@ mod tests {
             restored.user.display_name.to_string(),
             "Authentik Test User"
         );
+        assert_eq!(
+            restored.email.as_deref(),
+            Some("authentik.user@example.test")
+        );
         let revalidated = auth
             .revalidate_request(None, Some(&complete.set_cookie))
             .await
@@ -1209,6 +1346,10 @@ mod tests {
         assert_eq!(
             revalidated.user.display_name.to_string(),
             "Current Authentik User"
+        );
+        assert_eq!(
+            revalidated.email.as_deref(),
+            Some("authentik.user@example.test")
         );
         let cookie_header = format!("{}; {}", complete.set_cookie, refresh_cookie);
         let renewal = auth.renew_session(Some(&cookie_header)).await.unwrap();
@@ -1219,11 +1360,19 @@ mod tests {
             .open(read_cookie(Some(&renewed_cookie), SESSION_COOKIE).unwrap())
             .unwrap();
         assert!(renewed.refresh_token.is_none());
+        assert_eq!(
+            renewed.email.as_deref(),
+            Some("authentik.user@example.test")
+        );
         let renewed_refresh: RefreshClaims = service
             .codec
             .open(read_cookie(Some(&renewal.set_refresh_cookie), REFRESH_COOKIE).unwrap())
             .unwrap();
         assert_eq!(renewed_refresh.refresh_token, "refresh-b");
+        assert_eq!(
+            renewed_refresh.email.as_deref(),
+            Some("authentik.user@example.test")
+        );
         let remaining_idle_lifetime = renewed_refresh.expires_at.saturating_sub(now_seconds());
         assert!(
             (REFRESH_IDLE_TTL_SECONDS - 2..=REFRESH_IDLE_TTL_SECONDS)

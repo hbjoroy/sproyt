@@ -6,19 +6,21 @@ use std::{
 use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
 
 use super::{
-    AcceptCircleInvitation, AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary,
-    ChatEvent, ChatMessage, Circle, CircleId, CircleMembership, CircleRole, CreateChannel,
-    CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel,
-    EditMessage, InboxMention, IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages,
-    MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership, MessageId,
-    PortableUserExport, SendMessage, ThreadSummary, UpdateChannelDescription, User, UserId,
-    UserProfile, UserTask,
+    AcceptCircleInvitation, AcceptEnrollmentInvitation, ActivateEnrollmentInvitation,
+    AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatEvent, ChatMessage,
+    Circle, CircleId, CircleMembership, CircleRole, CreateChannel, CreateCircle,
+    CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel, EditMessage,
+    EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation, JoinChannel,
+    LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant,
+    Membership, MessageId, PortableUserExport, PrepareEnrollmentInvitation, SendMessage,
+    ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
-    ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, DisplayName, ExportedChannel,
-    ExportedCircle, InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT, Policy,
-    RepositoryError::NotFound,
+    ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, DisplayName, EnrollmentInvitationState,
+    ExportedChannel, ExportedCircle, InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT,
+    Policy, RepositoryError::NotFound, enrollment_email_hash, enrollment_token_hash,
+    generate_enrollment_token,
 };
 #[cfg(test)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -102,6 +104,18 @@ pub trait ChatRepository: Send + Sync + 'static {
     fn accept_circle_invitation<'a>(
         &'a self,
         command: AcceptCircleInvitation,
+    ) -> RepositoryFuture<'a, CircleMembership>;
+    fn prepare_enrollment_invitation<'a>(
+        &'a self,
+        command: PrepareEnrollmentInvitation,
+    ) -> RepositoryFuture<'a, IssuedEnrollmentInvitation>;
+    fn activate_enrollment_invitation<'a>(
+        &'a self,
+        command: ActivateEnrollmentInvitation,
+    ) -> RepositoryFuture<'a, EnrollmentInvitation>;
+    fn accept_enrollment_invitation<'a>(
+        &'a self,
+        command: AcceptEnrollmentInvitation,
     ) -> RepositoryFuture<'a, CircleMembership>;
     fn create_chat_invitation<'a>(
         &'a self,
@@ -984,6 +998,102 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn prepare_enrollment_invitation<'a>(
+        &'a self,
+        command: PrepareEnrollmentInvitation,
+    ) -> RepositoryFuture<'a, IssuedEnrollmentInvitation> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let role = state
+                .circle_memberships
+                .get(&(command.circle_id.clone(), command.actor.clone()))
+                .map(|membership| &membership.role);
+            if !Policy::can_invite_to_circle(role) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+
+            let token = generate_enrollment_token()
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+            let token_hash = enrollment_token_hash(&token);
+            let invitation = EnrollmentInvitation {
+                id: Uuid::new_v4(),
+                circle_id: command.circle_id,
+                invited_by: command.actor,
+                expires_at: command.expires_at,
+                state: EnrollmentInvitationState::Inactive,
+                authentik_invitation_id: None,
+            };
+            state.enrollment_invitations.insert(
+                token_hash,
+                StoredEnrollmentInvitation {
+                    invitation: invitation.clone(),
+                    expected_email_hash: enrollment_email_hash(&command.email),
+                    consumed_by: None,
+                },
+            );
+            Ok(IssuedEnrollmentInvitation { invitation, token })
+        })
+    }
+
+    fn activate_enrollment_invitation<'a>(
+        &'a self,
+        command: ActivateEnrollmentInvitation,
+    ) -> RepositoryFuture<'a, EnrollmentInvitation> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let stored = state
+                .enrollment_invitations
+                .get_mut(&enrollment_token_hash(&command.token))
+                .ok_or(RepositoryError::NotFound)?;
+            if stored.invitation.state != EnrollmentInvitationState::Inactive
+                || stored.invitation.expires_at <= Utc::now()
+            {
+                return Err(RepositoryError::NotFound);
+            }
+            stored.invitation.state = EnrollmentInvitationState::Active;
+            stored.invitation.authentik_invitation_id = Some(command.authentik_invitation_id);
+            Ok(stored.invitation.clone())
+        })
+    }
+
+    fn accept_enrollment_invitation<'a>(
+        &'a self,
+        command: AcceptEnrollmentInvitation,
+    ) -> RepositoryFuture<'a, CircleMembership> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            if !state.users.contains_key(&command.actor) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let stored = state
+                .enrollment_invitations
+                .get_mut(&enrollment_token_hash(&command.token))
+                .ok_or(RepositoryError::NotFound)?;
+            if stored.invitation.state != EnrollmentInvitationState::Active
+                || stored.invitation.expires_at <= Utc::now()
+                || stored.expected_email_hash != enrollment_email_hash(&command.email)
+            {
+                return Err(RepositoryError::NotFound);
+            }
+
+            stored.invitation.state = EnrollmentInvitationState::Consumed;
+            stored.consumed_by = Some(command.actor.clone());
+            let circle_id = stored.invitation.circle_id.clone();
+            let joined_at = Utc::now();
+            let membership = CircleMembership {
+                circle_id: circle_id.clone(),
+                user_id: command.actor.clone(),
+                role: CircleRole::Member,
+                joined_at,
+            };
+            state
+                .circle_memberships
+                .entry((circle_id, command.actor))
+                .or_insert_with(|| membership.clone());
+            Ok(membership)
+        })
+    }
+
     fn create_channel<'a>(&'a self, command: CreateChannel) -> RepositoryFuture<'a, Channel> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
@@ -1805,6 +1915,7 @@ struct RepositoryState {
     circles_by_slug: HashMap<super::ChannelSlug, CircleId>,
     circle_memberships: HashMap<(CircleId, UserId), CircleMembership>,
     circle_invitations: HashMap<Vec<u8>, CircleInvitation>,
+    enrollment_invitations: HashMap<Vec<u8>, StoredEnrollmentInvitation>,
     channels: HashMap<ChannelId, Channel>,
     channels_by_slug: HashMap<super::ChannelSlug, ChannelId>,
     channel_descriptions: HashMap<ChannelId, String>,
@@ -1823,6 +1934,13 @@ struct RepositoryState {
     command_receipts: HashMap<(UserId, String), MessageId>,
     message_reactions: HashSet<(MessageId, UserId, String)>,
     thread_read_markers: HashMap<(MessageId, UserId), ChannelSequence>,
+}
+
+#[cfg(test)]
+struct StoredEnrollmentInvitation {
+    invitation: EnrollmentInvitation,
+    expected_email_hash: Vec<u8>,
+    consumed_by: Option<UserId>,
 }
 
 #[cfg(test)]

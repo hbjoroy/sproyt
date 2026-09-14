@@ -31,6 +31,8 @@ impl BrowserClient {
 }
 
 const BROWSER_CLIENT: BrowserClient = BrowserClient;
+const ENROLLMENT_SOURCE: &str = include_str!("../enrollment.rs");
+const ENROLLMENT_HTTP_SOURCE: &str = include_str!("../web/enrollment.rs");
 
 #[tokio::test]
 async fn imagegen_http_preview_review_and_unpublished_attachment_contract() {
@@ -903,9 +905,9 @@ fn browser_exposes_channel_members_and_owner_managed_markdown_description() {
 #[test]
 fn browser_exposes_owner_circle_invitations_from_the_conversation_drawer() {
     assert!(BROWSER_CLIENT.contains("id=\"circle-invite-dialog\""));
-    assert!(
-        BROWSER_CLIENT.contains("Inviter ein Sprøyt-brukar i DM, eller del ei lenkje med andre.")
-    );
+    assert!(BROWSER_CLIENT.contains(
+        "Inviter ein Sprøyt-brukar i DM, eller send ei registreringsinvitasjon til ein ny brukar."
+    ));
     assert!(BROWSER_CLIENT.contains("menu.className = \"conversation-circle-menu\""));
     assert!(BROWSER_CLIENT.contains("addAction(\"Inviter person\""));
     assert!(BROWSER_CLIENT.contains("if (circle.role === \"owner\")"));
@@ -919,9 +921,29 @@ fn browser_exposes_owner_circle_invitations_from_the_conversation_drawer() {
             .contains("circleInvitePersonStatuses.set(key, messageRequestId ? \"Sendt i DM\"")
     );
     assert!(BROWSER_CLIENT.contains("id=\"create-circle-share-link\""));
+    assert!(BROWSER_CLIENT.contains("id=\"circle-enrollment-form\""));
+    assert!(BROWSER_CLIENT.contains("type=\"email\""));
+    assert!(BROWSER_CLIENT.contains("Send invitasjon"));
+    assert!(BROWSER_CLIENT.contains("enrollmentApi.create(circleId"));
     assert!(BROWSER_CLIENT.contains(
         "`${window.location.origin}/?invite=${encodeURIComponent(event.payload.invitation.token)}`"
     ));
+}
+
+#[test]
+fn onboarding_is_server_side_single_use_and_owner_authorized() {
+    assert!(ENROLLMENT_SOURCE.contains("single_use: true"));
+    assert!(ENROLLMENT_SOURCE.contains(".bearer_auth(&self.token)"));
+    assert!(ENROLLMENT_SOURCE.contains("connect_timeout(Duration::from_secs(3))"));
+    assert!(ENROLLMENT_SOURCE.contains("timeout(Duration::from_secs(8))"));
+    assert!(ENROLLMENT_SOURCE.contains("append_pair(\"next\", next.as_str())"));
+    assert!(ENROLLMENT_HTTP_SOURCE.contains(".prepare_enrollment_invitation("));
+    assert!(ENROLLMENT_HTTP_SOURCE.contains(".activate_enrollment_invitation("));
+    assert!(ENROLLMENT_HTTP_SOURCE.contains(".send_email("));
+    assert!(ENROLLMENT_HTTP_SOURCE.contains("enrollment.revoke("));
+    assert!(ENROLLMENT_HTTP_SOURCE.contains("Json(result.invitation)"));
+    assert!(ENROLLMENT_HTTP_SOURCE.contains("HeaderValue::from_static(\"no-store\")"));
+    assert!(!APP_SOURCE.contains("SPROYT_AUTHENTIK_API_TOKEN"));
 }
 
 #[test]
@@ -996,6 +1018,7 @@ async fn start_test_server_with_state(
         processes: ProcessService::start(process_repository, None),
         agents: AgentService::new(agent_repository),
         notifications: NotificationService::test(),
+        enrollment: None,
         websocket_idle_timeout,
         advanced_ui_enabled: false,
         agent_ui_enabled: false,
@@ -1026,6 +1049,7 @@ async fn start_postgres_test_server(
         processes: ProcessService::start(process_repository, None),
         agents: AgentService::new(agent_repository),
         notifications: NotificationService::test(),
+        enrollment: None,
         websocket_idle_timeout,
         advanced_ui_enabled: false,
         agent_ui_enabled: false,
@@ -1056,6 +1080,7 @@ async fn start_test_server_with_gateway(
         processes: ProcessService::start(process_repository, Some(gateway)),
         agents: AgentService::new(agent_repository),
         notifications: NotificationService::test(),
+        enrollment: None,
         websocket_idle_timeout: Duration::from_secs(60),
         advanced_ui_enabled: false,
         agent_ui_enabled: false,

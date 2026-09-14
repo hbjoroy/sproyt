@@ -217,6 +217,22 @@ test("a circle owner invites an existing user from the conversation drawer", asy
   await expect(dialog).toBeVisible();
   await expect(page.locator("#conversation-drawer")).toBeHidden();
   await expect(page.locator("#circle-invite-title")).toHaveText(`Inviter til ${circleName}`);
+  await expect(page.locator("#circle-enrollment-form")).toBeVisible();
+  await expect(page.locator("#circle-enrollment-email")).toHaveAttribute("type", "email");
+  await expect(page.locator("#circle-enrollment-email")).toHaveAttribute("inputmode", "email");
+  await expect(page.locator("#create-circle-enrollment")).toHaveText("Send invitasjon");
+  await expect(page.locator("#circle-invite-status")).toHaveAttribute("role", "status");
+  let enrollmentBody: unknown = null;
+  await page.route(/\/api\/v1\/circles\/[^/]+\/enrollment-invitations(?:\?.*)?$/, async (route) => {
+    enrollmentBody = route.request().postDataJSON();
+    await route.fulfill({ json: { url: "https://identity.example/if/flow/sproyt-invitation-enrollment/?itoken=e2e", expires_at: "2026-10-01T12:30:00Z" } });
+  });
+  await page.locator("#circle-enrollment-email").fill("ny.brukar@example.com");
+  await page.locator("#circle-enrollment-name").fill("Ny Brukar");
+  await page.locator("#circle-enrollment-form").getByRole("button", { name: "Send invitasjon" }).click();
+  await expect(page.locator("#circle-invite-link")).toHaveValue("https://identity.example/if/flow/sproyt-invitation-enrollment/?itoken=e2e");
+  await expect(page.locator("#circle-invite-status")).toContainText("Invitasjonen er sendt på e-post");
+  expect(enrollmentBody).toEqual({ email: "ny.brukar@example.com", display_name: "Ny Brukar" });
   await page.locator("#create-circle-share-link").click();
   await expect(page.locator("#circle-invite-link")).toHaveValue(/^http:\/\/127\.0\.0\.1:\d+\/\?invite=[A-Za-z0-9_-]{32,128}$/, { timeout: 15_000 });
   await page.locator("#circle-invite-search").fill(peerName);

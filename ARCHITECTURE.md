@@ -143,6 +143,15 @@ auth mode and is rejected in production. Encrypted, HttpOnly session cookies
 are validated by HTTP and WebSocket authentication; refresh tokens are never
 exposed to browser JavaScript.
 
+New-user onboarding also preserves this identity boundary. A circle owner can
+ask Sprøyt to create a short-lived, single-use Authentik enrollment invitation.
+Sprøyt supplies only the invitee's email, optional display name and the existing
+circle invitation as a post-enrollment return target. Authentik owns account
+creation, password policy, enrollment and login; Sprøyt never receives the new
+password. The Authentik API token is a server-side deployment secret with only
+permission to add invitations, and the feature remains unavailable when that
+credential is not configured.
+
 ## Tests and quality gates
 
 Unit and adapter-capacity tests are included from `src/main_tests/` so they

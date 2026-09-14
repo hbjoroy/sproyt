@@ -67,6 +67,12 @@ spec:
                   name: {{ .Values.secret.existingSecret }}
                   key: {{ .Values.secret.sessionPreviousKeysKey }}
                   optional: true
+            - name: SPROYT_AUTHENTIK_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret }}
+                  key: {{ .Values.secret.authentikApiTokenKey }}
+                  optional: true
             - name: SPROYT_VAPID_PUBLIC_KEY
               valueFrom:
                 secretKeyRef:

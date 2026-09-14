@@ -31,6 +31,11 @@ config:
   oidcClientId: ""
   oidcRedirectUrl: https://sproyt.bjoroy.me/auth/callback
   oidcPostLogoutRedirectUrl: https://sproyt.bjoroy.me/
+  publicUrl: https://sproyt.bjoroy.me
+  authentikApiUrl: http://authentik-server.authentik.svc.cluster.local
+  authentikPublicUrl: https://sproyt-security.bjoroy.me
+  authentikEnrollmentFlowId: ""
+  authentikEnrollmentFlowSlug: sproyt-invitation-enrollment
   heartUrl: ""
   comfyuiUrl: ""
   vllmUrl: ""
@@ -81,6 +86,7 @@ secret:
   oidcClientSecretKey: SPROYT_OIDC_CLIENT_SECRET
   sessionKeyKey: SPROYT_SESSION_KEY
   sessionPreviousKeysKey: SPROYT_SESSION_PREVIOUS_KEYS
+  authentikApiTokenKey: SPROYT_AUTHENTIK_API_TOKEN
   vapidPublicKeyKey: SPROYT_VAPID_PUBLIC_KEY
   vapidPrivateKeyKey: SPROYT_VAPID_PRIVATE_KEY
   vapidSubjectKey: SPROYT_VAPID_SUBJECT
@@ -123,6 +129,14 @@ networkPolicy:
   databaseNamespaceSelector: {}
   databasePodSelector: {}
   databaseCidrs: []
+  authentikNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: authentik
+  authentikPodSelector:
+    matchLabels:
+      app.kubernetes.io/name: authentik
+      app.kubernetes.io/component: server
+  authentikPort: 80
   # Required for an in-cluster Heart endpoint on a non-HTTPS port. HTTPS
   # endpoints are already covered by the general OIDC/HTTPS egress rule.
   heartSameNamespace: false

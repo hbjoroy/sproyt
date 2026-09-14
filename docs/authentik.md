@@ -125,3 +125,60 @@ provider slug (not its secret), test-user identity and results for each check:
 
 Attach this evidence to S-11 and the production release checklist. A green
 offline CI contract is not a substitute for these live checks.
+
+## Invite a new Sprøyt user
+
+Sprøyt can create a combined, single-use enrollment link for a circle owner.
+The link opens the Authentik enrollment flow, creates an external user in the
+`sproyt-users` group, signs the user in, and returns through `/auth/login`.
+Sprøyt then consumes the e-mail-bound invitation once and adds the user to the
+intended circle automatically. Sprøyt does not create passwords or receive
+them.
+
+The production flow must have slug `sproyt-invitation-enrollment`, designation
+`enrollment`, authentication `require_unauthenticated`, and an Invitation stage
+with **Continue flow without invitation** disabled. The current production
+flow UUID is `dcde5ce9-ca43-4003-8d0c-762e8554650c`; treat a changed UUID as a
+reviewed configuration change. Its User Write stage must create external users
+in `sproyt-users` so the OIDC application binding admits them.
+
+Create a dedicated Authentik service account such as `sproyt-enrollment`, then
+create an expiring API token for it. Grant only the invitation permissions
+needed by Sprøyt: `authentik_stages_invitation.add_invitation`,
+`authentik_stages_invitation.view_invitation`, and
+`authentik_stages_invitation.delete_invitation`. These respectively create an
+invitation, queue its enrollment email, and clean it up when Sprøyt cannot
+activate it locally. Do not make the account a superuser and do not reuse the
+OIDC client secret. Authentik's
+[service-account guidance](https://docs.goauthentik.io/users-sources/user/account-types/service-accounts/)
+recommends a separate least-privilege account and API token for automation.
+
+Store the token only as `SPROYT_AUTHENTIK_API_TOKEN` in the existing namespaced
+Sprøyt Secret. Configure the non-secret values in Helm:
+
+```yaml
+config:
+  authentikApiUrl: http://authentik-server.authentik.svc.cluster.local
+  authentikPublicUrl: https://sproyt-security.bjoroy.me
+  authentikEnrollmentFlowId: dcde5ce9-ca43-4003-8d0c-762e8554650c
+  authentikEnrollmentFlowSlug: sproyt-invitation-enrollment
+  publicUrl: https://sproyt.bjoroy.me
+```
+
+The chart admits port 80 only to pods labelled as the Authentik server in the
+`authentik` namespace. The public enrollment link remains HTTPS. If the token
+is absent the feature fails closed with a visible unavailable message; if the
+token is present but the flow ID is missing or invalid, Sprøyt refuses to
+start. Created invitations expire after 48 hours and are single-use.
+
+Acceptance requires all of the following:
+
+1. A circle owner can enter an email and Authentik queues the enrollment email
+   through Brevo. The owner receives no secret or API response details in logs.
+2. A non-owner gets HTTP 403 and no Authentik invitation is created.
+3. Following the link creates one external `sproyt-users` user, signs them in,
+   returns to Sprøyt, and adds them to the intended circle without another
+   confirmation step.
+4. Reusing the Authentik invitation fails, and an expired link cannot enroll.
+5. Revoking the service token disables only new-user invitations; existing
+   login and chat remain available.

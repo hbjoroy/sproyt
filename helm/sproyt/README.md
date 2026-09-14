@@ -8,6 +8,10 @@ Create the referenced Secret before installation. It must contain
 `DATABASE_URL`, `SPROYT_OIDC_CLIENT_SECRET`, and `SPROYT_SESSION_KEY`.
 During session-key rotation it may also contain the optional
 `SPROYT_SESSION_PREVIOUS_KEYS` value.
+Owner-created enrollment links are optional. To enable them, add a dedicated
+least-privilege Authentik token as `SPROYT_AUTHENTIK_API_TOKEN` and set
+`config.authentikEnrollmentFlowId`; see
+[`docs/authentik.md`](../../docs/authentik.md#invite-a-new-sprøyt-user).
 Private registries can be configured with `imagePullSecrets`; each referenced
 Secret must exist in the release namespace. See
 [`docs/running.md`](../../docs/running.md) for the complete external PostgreSQL,

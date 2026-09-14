@@ -16,17 +16,20 @@ use crate::agent::{
     CreatedAgent, GrantAgent, MessageProvenance,
 };
 use crate::domain::{
-    AcceptCircleInvitation, AcceptedChatInvitation, AddChannelMember, Channel, ChannelId,
-    ChannelKind, ChannelRef, ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage,
-    ChatRepository, Circle, CircleId, CircleInvitation, CircleMembership, CircleRole,
-    CreateChannel, CreateChatInvitation, CreateCircle, CreateCircleInvitation, DeleteCircle,
-    DeleteMessage, DiscoverableChannel, DisplayName, EditMessage, ExportedChannel, ExportedCircle,
-    InboxMention, InvitationId, InvitationPreview, InvitationResponse, InvitationTarget,
-    InvitationTokenCommand, IssuedChatInvitation, IssuedInvitation, JoinChannel, LeaveChannel,
-    LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant, Membership,
-    MembershipRole, MessageBody, MessageId, PORTABLE_USER_EXPORT_FORMAT, Policy,
-    PortableUserExport, PresenceLease, RepositoryError, RepositoryFuture, SendMessage,
-    UpdateChannelDescription, User, UserId, UserProfile, UserTask,
+    AcceptCircleInvitation, AcceptEnrollmentInvitation, AcceptedChatInvitation,
+    ActivateEnrollmentInvitation, AddChannelMember, Channel, ChannelId, ChannelKind, ChannelRef,
+    ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle,
+    CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateChatInvitation,
+    CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel,
+    DisplayName, EditMessage, EnrollmentInvitation, EnrollmentInvitationState, ExportedChannel,
+    ExportedCircle, InboxMention, InvitationId, InvitationPreview, InvitationResponse,
+    InvitationTarget, InvitationTokenCommand, IssuedChatInvitation, IssuedEnrollmentInvitation,
+    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
+    MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
+    PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PrepareEnrollmentInvitation,
+    PresenceLease, RepositoryError, RepositoryFuture, SendMessage, UpdateChannelDescription, User,
+    UserId, UserProfile, UserTask, enrollment_email_hash, enrollment_token_hash,
+    generate_enrollment_token,
 };
 use crate::notification::enqueue_message_postgres;
 use crate::process::{
@@ -904,6 +907,102 @@ impl ChatRepository for PostgresChatRepository {
                 user_id: command.actor,
                 role: CircleRole::Member,
                 joined_at,
+            })
+        })
+    }
+
+    fn prepare_enrollment_invitation<'a>(
+        &'a self,
+        command: PrepareEnrollmentInvitation,
+    ) -> RepositoryFuture<'a, IssuedEnrollmentInvitation> {
+        Box::pin(async move {
+            let allowed = sqlx::query_scalar::<_, i32>(
+                "select 1 from circle_memberships where circle_id=$1 and user_id=$2 and role='owner'",
+            )
+            .bind(*command.circle_id.as_uuid())
+            .bind(*command.actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+
+            let token = generate_enrollment_token().map_err(storage)?;
+            let invitation = EnrollmentInvitation {
+                id: Uuid::new_v4(),
+                circle_id: command.circle_id,
+                invited_by: command.actor,
+                expires_at: command.expires_at,
+                state: EnrollmentInvitationState::Inactive,
+                authentik_invitation_id: None,
+            };
+            sqlx::query("insert into enrollment_invitations(id,circle_id,invited_by,token_hash,expected_email_hash,expires_at,state) values($1,$2,$3,$4,$5,$6,'inactive')")
+                .bind(invitation.id)
+                .bind(*invitation.circle_id.as_uuid())
+                .bind(*invitation.invited_by.as_uuid())
+                .bind(enrollment_token_hash(&token))
+                .bind(enrollment_email_hash(&command.email))
+                .bind(invitation.expires_at)
+                .execute(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            Ok(IssuedEnrollmentInvitation { invitation, token })
+        })
+    }
+
+    fn activate_enrollment_invitation<'a>(
+        &'a self,
+        command: ActivateEnrollmentInvitation,
+    ) -> RepositoryFuture<'a, EnrollmentInvitation> {
+        Box::pin(async move {
+            let row = sqlx::query("update enrollment_invitations set state='active',authentik_invitation_id=$1,activated_at=now() where token_hash=$2 and state='inactive' and expires_at>now() returning id,circle_id,invited_by,expires_at")
+                .bind(command.authentik_invitation_id)
+                .bind(enrollment_token_hash(&command.token))
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::NotFound)?;
+            Ok(EnrollmentInvitation {
+                id: row.try_get("id").map_err(storage)?,
+                circle_id: CircleId::from_uuid(row.try_get("circle_id").map_err(storage)?),
+                invited_by: UserId::from_uuid(row.try_get("invited_by").map_err(storage)?),
+                expires_at: row.try_get("expires_at").map_err(storage)?,
+                state: EnrollmentInvitationState::Active,
+                authentik_invitation_id: Some(command.authentik_invitation_id),
+            })
+        })
+    }
+
+    fn accept_enrollment_invitation<'a>(
+        &'a self,
+        command: AcceptEnrollmentInvitation,
+    ) -> RepositoryFuture<'a, CircleMembership> {
+        Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let now = Utc::now();
+            let circle_id = sqlx::query_scalar::<_, Uuid>("update enrollment_invitations set state='consumed',consumed_by=$1,consumed_at=$2 where token_hash=$3 and expected_email_hash=$4 and state='active' and expires_at>$2 returning circle_id")
+                .bind(*command.actor.as_uuid())
+                .bind(now)
+                .bind(enrollment_token_hash(&command.token))
+                .bind(enrollment_email_hash(&command.email))
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::NotFound)?;
+            sqlx::query("insert into circle_memberships(circle_id,user_id,role,joined_at) values($1,$2,'member',$3) on conflict(circle_id,user_id) do nothing")
+                .bind(circle_id)
+                .bind(*command.actor.as_uuid())
+                .bind(now)
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(CircleMembership {
+                circle_id: CircleId::from_uuid(circle_id),
+                user_id: command.actor,
+                role: CircleRole::Member,
+                joined_at: now,
             })
         })
     }

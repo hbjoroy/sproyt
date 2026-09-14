@@ -29,6 +29,7 @@ export type ProcessView = Readonly<{
 }>;
 
 export type CreatedAgent = Readonly<{ agentId: string; credential: string }>;
+export type EnrollmentInvitation = Readonly<{ url: string; expiresAt: string }>;
 export type EventPlanningRequest = Readonly<{ channelId: string; requestId: string; title: string }>;
 export type HttpClientDependencies = Readonly<{ fetch?: FetchLike; refreshSession?: () => Promise<boolean>; participant?: () => string | null }>;
 
@@ -112,6 +113,24 @@ export class AgentApi {
   revoke(agentId: string): Promise<void> { return this.http.empty(`/api/v1/agents/${encodeURIComponent(agentId)}/revoke`, { method: "POST", headers: jsonHeaders() }); }
 }
 
+export class EnrollmentApi {
+  constructor(private readonly http: HttpClient) {}
+  create(circleId: string, input: Readonly<{ email: string; displayName?: string }>): Promise<EnrollmentInvitation> {
+    return this.http.json(
+      `/api/v1/circles/${encodeURIComponent(circleId)}/enrollment-invitations`,
+      decodeEnrollmentInvitation,
+      jsonPost({ email: input.email, display_name: input.displayName || null })
+    );
+  }
+}
+
+/** The enrollment endpoint deliberately uses this response while Authentik is absent. */
+export function isEnrollmentNotConfigured(error: unknown): boolean {
+  return error instanceof HttpError
+    && error.status === 503
+    && /ikkje konfigurert/i.test(error.message);
+}
+
 function jsonHeaders(): HeadersInit { return { accept: "application/json", "content-type": "application/json" }; }
 function jsonPost(body: JsonObject): RequestInit { return { method: "POST", headers: jsonHeaders(), body: JSON.stringify(body) }; }
 
@@ -143,6 +162,21 @@ export function decodeProcessView(value: unknown): ProcessView {
 export function decodeCreatedAgent(value: unknown): CreatedAgent {
   if (!isRecord(value) || typeof value.agent_id !== "string" || typeof value.credential !== "string") throw new Error("Ugyldig svar ved oppretting av agenttilgang.");
   return { agentId: value.agent_id, credential: value.credential };
+}
+
+export function decodeEnrollmentInvitation(value: unknown): EnrollmentInvitation {
+  if (!isRecord(value) || typeof value.url !== "string" || typeof value.expires_at !== "string") throw new Error("Ugyldig registreringsinvitasjon.");
+  let url: URL;
+  try {
+    url = new URL(value.url);
+  } catch (_) {
+    throw new Error("Utrygg registreringsinvitasjon.");
+  }
+  const expiresAt = new Date(value.expires_at);
+  if (url.protocol !== "https:" || !url.hostname || url.username || url.password || !Number.isFinite(expiresAt.getTime())) {
+    throw new Error("Utrygg registreringsinvitasjon.");
+  }
+  return { url: url.toString(), expiresAt: value.expires_at };
 }
 
 function decodeProcessStarted(value: unknown): string {

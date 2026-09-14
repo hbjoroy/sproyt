@@ -1,6 +1,6 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
       import { createApplicationStore, createServerEventMailbox } from "./client-store";
-      import { AgentApi, HttpClient, NotificationApi, ProcessApi, type CreatedAgent, type ProcessView } from "./api";
+      import { AgentApi, EnrollmentApi, HttpClient, NotificationApi, ProcessApi, isEnrollmentNotConfigured, type CreatedAgent, type ProcessView } from "./api";
       import { requireElement, requireElements } from "./dom";
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
@@ -127,6 +127,10 @@
       const circleInviteSearch = requireElement("#circle-invite-search", HTMLInputElement);
       const circleInviteCount = requireElement("#circle-invite-count", HTMLElement);
       const circleInviteList = requireElement("#circle-invite-list", HTMLElement);
+      const circleEnrollmentForm = requireElement("#circle-enrollment-form", HTMLFormElement);
+      const circleEnrollmentEmail = requireElement("#circle-enrollment-email", HTMLInputElement);
+      const circleEnrollmentName = requireElement("#circle-enrollment-name", HTMLInputElement);
+      const createCircleEnrollment = requireElement("#create-circle-enrollment", HTMLButtonElement);
       const createCircleShareLink = requireElement("#create-circle-share-link", HTMLButtonElement);
       const circleInviteLinkActions = requireElement("#circle-invite-link-actions", HTMLElement);
       const circleInviteLink = requireElement("#circle-invite-link", HTMLInputElement);
@@ -418,6 +422,7 @@
       const notificationsApi = new NotificationApi(http);
       const processesApi = new ProcessApi(http);
       const agentsApi = new AgentApi(http);
+      const enrollmentApi = new EnrollmentApi(http);
 
       const serverEventMailbox = createServerEventMailbox({
         reduce: applicationStore.reduceServerEvent,
@@ -960,6 +965,33 @@
         trigger?.focus({ preventScroll: true });
       });
       circleInviteSearch.addEventListener("input", renderCircleInviteUsers);
+      circleEnrollmentForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const circleId = circleInviteDialog.dataset.circleId;
+        if (!circleId || !circleEnrollmentForm.reportValidity()) return;
+        createCircleEnrollment.disabled = true;
+        circleInviteLink.value = "";
+        circleInviteLinkActions.hidden = true;
+        circleInviteStatus.textContent = "Sender registreringsinvitasjon …";
+        try {
+          const invitation = await enrollmentApi.create(circleId, {
+            email: circleEnrollmentEmail.value.trim(),
+            displayName: circleEnrollmentName.value.trim() || undefined
+          });
+          circleInviteLink.value = invitation.url;
+          circleInviteLinkActions.hidden = false;
+          circleInviteStatus.textContent = `Invitasjonen er sendt på e-post. Du kan òg kopiere eller dele lenkja; ho er gyldig til ${new Intl.DateTimeFormat("nn-NO", { dateStyle: "medium", timeStyle: "short" }).format(new Date(invitation.expiresAt))}.`;
+        } catch (error) {
+          if (isEnrollmentNotConfigured(error)) {
+            circleEnrollmentForm.hidden = true;
+            circleInviteStatus.textContent = "Registrering av nye brukarar er ikkje tilgjengeleg enno. Du kan framleis dele ei vanleg kretslenkje.";
+          } else {
+            circleInviteStatus.textContent = error instanceof Error ? error.message : "Kunne ikkje lage registreringslenkja.";
+          }
+        } finally {
+          createCircleEnrollment.disabled = false;
+        }
+      });
       createCircleShareLink.addEventListener("click", () => {
         const circleId = circleInviteDialog.dataset.circleId;
         if (!circleId) return;
@@ -973,29 +1005,41 @@
         }
       });
       copyCircleInviteLink.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(circleInviteLink.value);
-          circleInviteStatus.textContent = "Invitasjonslenkja er kopiert.";
-        } catch (_) {
-          circleInviteLink.select();
-          circleInviteStatus.textContent = "Merk og kopier lenkja manuelt.";
-        }
+        await copyCircleInvitationLink();
       });
       shareCircleInviteLink.addEventListener("click", async () => {
         const circle = knownCircles.get(circleInviteDialog.dataset.circleId || "");
         if (!circleInviteLink.value) return;
         if (!navigator.share) {
-          copyCircleInviteLink.click();
+          await copyCircleInvitationLink();
           return;
         }
+        shareCircleInviteLink.disabled = true;
         try {
           await navigator.share({ title: `Invitasjon til ${circle?.name || "Sprøyt"}`, text: `Bli med i ${circle?.name || "vennekretsen"} på Sprøyt`, url: circleInviteLink.value });
           circleInviteStatus.textContent = "Invitasjonslenkja er delt.";
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") return;
           circleInviteStatus.textContent = "Kunne ikkje opne deling. Du kan kopiere lenkja i staden.";
+        } finally {
+          shareCircleInviteLink.disabled = false;
         }
       });
+
+      async function copyCircleInvitationLink(): Promise<void> {
+        if (!circleInviteLink.value) return;
+        copyCircleInviteLink.disabled = true;
+        try {
+          await navigator.clipboard.writeText(circleInviteLink.value);
+          circleInviteStatus.textContent = "Invitasjonslenkja er kopiert.";
+        } catch (_) {
+          circleInviteLink.focus();
+          circleInviteLink.select();
+          circleInviteStatus.textContent = "Merk og kopier lenkja manuelt.";
+        } finally {
+          copyCircleInviteLink.disabled = false;
+        }
+      }
       requireElement("#direct-message-close", HTMLButtonElement).addEventListener("click", () => directMessageDialog.close());
       channelPeopleButton.addEventListener("click", () => openChannelDetails(false));
       connectionStatusToggle.addEventListener("click", () => {
@@ -2234,6 +2278,9 @@
         circleInviteDialog.dataset.circleId = circleId;
         circleInviteTitle.textContent = `Inviter til ${circle.name}`;
         circleInviteSearch.value = "";
+        circleEnrollmentEmail.value = "";
+        circleEnrollmentName.value = "";
+        circleEnrollmentForm.hidden = false;
         circleInviteStatus.textContent = "Hentar ferske personlister …";
         circleInviteLink.value = "";
         circleInviteLinkActions.hidden = true;

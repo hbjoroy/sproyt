@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { AgentApi, HttpClient, HttpError, NotificationApi, ProcessApi, readJson, sameOriginJson } from "../src/api";
+import { AgentApi, EnrollmentApi, HttpClient, HttpError, NotificationApi, ProcessApi, decodeEnrollmentInvitation, isEnrollmentNotConfigured, readJson, sameOriginJson } from "../src/api";
 import { clientCommandTypes, createConnectionController, isClientCommand, parseSocketEvent, resetTransientRequestsAfterDisconnect, shouldForceResume, type ConnectionSocket } from "../src/connection";
 import { NavigationController, restoreNavigation } from "../src/navigation";
 import { createDurableOutbox, type DurableOutboxStorage, type DurableSend } from "../src/durable-outbox";
@@ -579,7 +579,8 @@ test("typed HTTP endpoints decode Rust-shaped responses and keep participant plu
     new Response(JSON.stringify({ process: { definition_name: "event-planning", status: "waiting" }, events: [{ event_type: "asked", actor_id: "agent-1", payload: { question: "when" } }] })),
     new Response(JSON.stringify({ agent_id: "agent-1", credential: "secret" })),
     new Response(null, { status: 204 }),
-    new Response(null, { status: 204 })
+    new Response(null, { status: 204 }),
+    new Response(JSON.stringify({ url: "https://identity.example/if/flow/invite/?itoken=one", expires_at: "2026-09-07T10:00:00Z" }))
   ];
   let refreshed = 0;
   const http = new HttpClient({
@@ -596,12 +597,18 @@ test("typed HTTP endpoints decode Rust-shaped responses and keep participant plu
   assert.deepEqual(await agents.create({ displayName: "Agent", provider: "test", serviceIdentity: "service-1", purpose: "test", rateLimitPerMinute: 1, expiresAt: "2026-08-20T09:00:00Z" }), { agentId: "agent-1", credential: "secret" });
   await agents.grant("agent/1", "channel/1", "read_history", "2026-08-20T09:00:00Z");
   await agents.revoke("agent/1");
+  assert.deepEqual(await new EnrollmentApi(http).create("circle/1", { email: "ny@example.com", displayName: "Ny" }), {
+    url: "https://identity.example/if/flow/invite/?itoken=one",
+    expiresAt: "2026-09-07T10:00:00Z"
+  });
   assert.equal(refreshed, 1);
   assert.equal(calls[0]?.input, "/api/v1/me/notifications?participant=participant-1");
   assert.equal(calls[1]?.input, "/api/v1/me/notifications?participant=participant-1");
   assert.match(calls[2]?.init?.body?.toString() ?? "", /channel\/1/);
   assert.match(calls[3]?.input ?? "", /process%2F1/);
   assert.match(calls[5]?.input ?? "", /agent%2F1/);
+  assert.match(calls[7]?.input ?? "", /circles\/circle%2F1\/enrollment-invitations/);
+  assert.match(calls[7]?.init?.body?.toString() ?? "", /ny@example.com/);
 });
 
 test("typed HTTP endpoints reject malformed and empty bodies before they reach UI", async () => {
@@ -611,6 +618,26 @@ test("typed HTTP endpoints reject malformed and empty bodies before they reach U
   await assert.rejects(new ProcessApi(empty).get("process-1"), /Ugyldig prosess-svar/);
   const refused = new HttpClient({ fetch: async () => new Response("ikkje lov", { status: 403 }) });
   await assert.rejects(new AgentApi(refused).revoke("agent-1"), (error: unknown) => error instanceof HttpError && error.status === 403 && error.message === "ikkje lov");
+  const unsafe = new HttpClient({ fetch: async () => new Response(JSON.stringify({ url: "http://identity.example/invite", expires_at: "soon" })) });
+  await assert.rejects(new EnrollmentApi(unsafe).create("circle-1", { email: "ny@example.com" }), /Utrygg registreringsinvitasjon/);
+});
+
+test("enrollment invitation boundary accepts only credential-free HTTPS URLs and real expiry timestamps", () => {
+  assert.deepEqual(decodeEnrollmentInvitation({ url: "https://identity.example/if/flow/invite/?itoken=one", expires_at: "2026-10-07T10:00:00Z" }), {
+    url: "https://identity.example/if/flow/invite/?itoken=one", expiresAt: "2026-10-07T10:00:00Z"
+  });
+  for (const value of [
+    { url: "not a URL", expires_at: "2026-10-07T10:00:00Z" },
+    { url: "https://user:secret@identity.example/invite", expires_at: "2026-10-07T10:00:00Z" },
+    { url: "https://identity.example/invite", expires_at: "not-a-date" },
+    { url: "https://", expires_at: "2026-10-07T10:00:00Z" }
+  ]) assert.throws(() => decodeEnrollmentInvitation(value), /Utrygg registreringsinvitasjon/);
+});
+
+test("only the explicit unavailable response disables new-user enrollment", () => {
+  assert.equal(isEnrollmentNotConfigured(new HttpError(503, "Invitasjon av nye brukarar er ikkje konfigurert enno.")), true);
+  assert.equal(isEnrollmentNotConfigured(new HttpError(503, "Authentik svarar ikkje akkurat no. Prøv igjen.")), false);
+  assert.equal(isEnrollmentNotConfigured(new HttpError(502, "ikkje konfigurert")), false);
 });
 
 test("invalid refresh delays fail closed to a short retry", () => {
