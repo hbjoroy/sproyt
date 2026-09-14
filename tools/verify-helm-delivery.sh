@@ -45,6 +45,7 @@ grep -F -q -- '- name: SPROYT_AUTHENTIK_API_TOKEN' "$rendered"
 grep -F -q 'key: SPROYT_AUTHENTIK_API_TOKEN' "$rendered"
 grep -F -q 'kubernetes.io/metadata.name: authentik' "$rendered"
 grep -F -q 'app.kubernetes.io/component: server' "$rendered"
+grep -F -q 'port: 9000' "$rendered"
 test "$(grep -F -c -- "- name: oci-pull-secret" "$rendered")" -eq 2
 test "$(grep -F -c "serviceAccountName: default" "$rendered")" -eq 1
 
