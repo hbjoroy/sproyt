@@ -1810,6 +1810,11 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("event.type === \"membership_left\""));
     assert!(BROWSER_CLIENT.contains("activeChannel.name.trim().toLocaleLowerCase() !== \"prat\""));
     assert!(BROWSER_CLIENT.contains("id=\"circle-channel-dialog\""));
+    assert!(BROWSER_CLIENT.contains("id=\"channel-grafana-integration\""));
+    assert!(BROWSER_CLIENT.contains("id=\"create-grafana-integration\""));
+    assert!(BROWSER_CLIENT.contains("id=\"grafana-credential\" readonly"));
+    assert!(BROWSER_CLIENT.contains("integrationsApi.createGrafana(channelId)"));
+    assert!(BROWSER_CLIENT.contains("channelGrafanaIntegration.hidden = channel.is_direct"));
     assert!(BROWSER_CLIENT.contains("function renderManagedJoinableChannels(channels)"));
     assert!(BROWSER_CLIENT.contains("+ Finn fleire kanalar"));
     assert!(BROWSER_CLIENT.contains("className = \"joinable-channel-description\""));

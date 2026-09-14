@@ -29,6 +29,11 @@ export type ProcessView = Readonly<{
 }>;
 
 export type CreatedAgent = Readonly<{ agentId: string; credential: string }>;
+export type CreatedGrafanaIntegration = Readonly<{
+  agentId: string;
+  credential: string;
+  credentialExpiresAt: string;
+}>;
 export type EnrollmentInvitation = Readonly<{ url: string; expiresAt: string }>;
 export type EventPlanningRequest = Readonly<{ channelId: string; requestId: string; title: string }>;
 export type HttpClientDependencies = Readonly<{ fetch?: FetchLike; refreshSession?: () => Promise<boolean>; participant?: () => string | null }>;
@@ -113,6 +118,17 @@ export class AgentApi {
   revoke(agentId: string): Promise<void> { return this.http.empty(`/api/v1/agents/${encodeURIComponent(agentId)}/revoke`, { method: "POST", headers: jsonHeaders() }); }
 }
 
+export class IntegrationApi {
+  constructor(private readonly http: HttpClient) {}
+  createGrafana(channelId: string): Promise<CreatedGrafanaIntegration> {
+    return this.http.json(
+      `/api/v1/channels/${encodeURIComponent(channelId)}/integrations/grafana`,
+      decodeCreatedGrafanaIntegration,
+      { method: "POST", headers: jsonHeaders() }
+    );
+  }
+}
+
 export class EnrollmentApi {
   constructor(private readonly http: HttpClient) {}
   create(circleId: string, input: Readonly<{ email: string; displayName?: string }>): Promise<EnrollmentInvitation> {
@@ -162,6 +178,21 @@ export function decodeProcessView(value: unknown): ProcessView {
 export function decodeCreatedAgent(value: unknown): CreatedAgent {
   if (!isRecord(value) || typeof value.agent_id !== "string" || typeof value.credential !== "string") throw new Error("Ugyldig svar ved oppretting av agenttilgang.");
   return { agentId: value.agent_id, credential: value.credential };
+}
+
+export function decodeCreatedGrafanaIntegration(value: unknown): CreatedGrafanaIntegration {
+  if (!isRecord(value)
+    || typeof value.agent_id !== "string"
+    || typeof value.credential !== "string"
+    || typeof value.credential_expires_at !== "string"
+    || !Number.isFinite(new Date(value.credential_expires_at).getTime())) {
+    throw new Error("Ugyldig svar ved oppretting av Grafana-integrasjon.");
+  }
+  return {
+    agentId: value.agent_id,
+    credential: value.credential,
+    credentialExpiresAt: value.credential_expires_at
+  };
 }
 
 export function decodeEnrollmentInvitation(value: unknown): EnrollmentInvitation {

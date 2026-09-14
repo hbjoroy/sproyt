@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { AgentApi, EnrollmentApi, HttpClient, HttpError, NotificationApi, ProcessApi, decodeEnrollmentInvitation, isEnrollmentNotConfigured, readJson, sameOriginJson } from "../src/api";
+import { AgentApi, EnrollmentApi, HttpClient, HttpError, IntegrationApi, NotificationApi, ProcessApi, decodeEnrollmentInvitation, isEnrollmentNotConfigured, readJson, sameOriginJson } from "../src/api";
 import { clientCommandTypes, createConnectionController, isClientCommand, parseSocketEvent, resetTransientRequestsAfterDisconnect, shouldForceResume, type ConnectionSocket } from "../src/connection";
 import { NavigationController, restoreNavigation } from "../src/navigation";
 import { createDurableOutbox, type DurableOutboxStorage, type DurableSend } from "../src/durable-outbox";
@@ -580,6 +580,7 @@ test("typed HTTP endpoints decode Rust-shaped responses and keep participant plu
     new Response(JSON.stringify({ agent_id: "agent-1", credential: "secret" })),
     new Response(null, { status: 204 }),
     new Response(null, { status: 204 }),
+    new Response(JSON.stringify({ agent_id: "grafana-1", credential: "grafana-secret", credential_expires_at: "2026-12-13T10:00:00Z" })),
     new Response(JSON.stringify({ url: "https://identity.example/if/flow/invite/?itoken=one", expires_at: "2026-09-07T10:00:00Z" }))
   ];
   let refreshed = 0;
@@ -597,6 +598,11 @@ test("typed HTTP endpoints decode Rust-shaped responses and keep participant plu
   assert.deepEqual(await agents.create({ displayName: "Agent", provider: "test", serviceIdentity: "service-1", purpose: "test", rateLimitPerMinute: 1, expiresAt: "2026-08-20T09:00:00Z" }), { agentId: "agent-1", credential: "secret" });
   await agents.grant("agent/1", "channel/1", "read_history", "2026-08-20T09:00:00Z");
   await agents.revoke("agent/1");
+  assert.deepEqual(await new IntegrationApi(http).createGrafana("channel/1"), {
+    agentId: "grafana-1",
+    credential: "grafana-secret",
+    credentialExpiresAt: "2026-12-13T10:00:00Z"
+  });
   assert.deepEqual(await new EnrollmentApi(http).create("circle/1", { email: "ny@example.com", displayName: "Ny" }), {
     url: "https://identity.example/if/flow/invite/?itoken=one",
     expiresAt: "2026-09-07T10:00:00Z"
@@ -607,8 +613,10 @@ test("typed HTTP endpoints decode Rust-shaped responses and keep participant plu
   assert.match(calls[2]?.init?.body?.toString() ?? "", /channel\/1/);
   assert.match(calls[3]?.input ?? "", /process%2F1/);
   assert.match(calls[5]?.input ?? "", /agent%2F1/);
-  assert.match(calls[7]?.input ?? "", /circles\/circle%2F1\/enrollment-invitations/);
-  assert.match(calls[7]?.init?.body?.toString() ?? "", /ny@example.com/);
+  assert.match(calls[7]?.input ?? "", /channels\/channel%2F1\/integrations\/grafana/);
+  assert.equal(calls[7]?.init?.method, "POST");
+  assert.match(calls[8]?.input ?? "", /circles\/circle%2F1\/enrollment-invitations/);
+  assert.match(calls[8]?.init?.body?.toString() ?? "", /ny@example.com/);
 });
 
 test("typed HTTP endpoints reject malformed and empty bodies before they reach UI", async () => {

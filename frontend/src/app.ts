@@ -1,6 +1,6 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
       import { createApplicationStore, createServerEventMailbox } from "./client-store";
-      import { AgentApi, EnrollmentApi, HttpClient, NotificationApi, ProcessApi, isEnrollmentNotConfigured, type CreatedAgent, type ProcessView } from "./api";
+      import { AgentApi, EnrollmentApi, HttpClient, IntegrationApi, NotificationApi, ProcessApi, isEnrollmentNotConfigured, type CreatedAgent, type ProcessView } from "./api";
       import { requireElement, requireElements } from "./dom";
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
@@ -162,6 +162,14 @@
       const addChannelMember = requireElement("#add-channel-member", HTMLButtonElement);
       const inviteChannelMember = requireElement("#invite-channel-member", HTMLButtonElement);
       const channelMemberStatus = requireElement("#channel-member-status", HTMLElement);
+      const channelGrafanaIntegration = requireElement("#channel-grafana-integration", HTMLElement);
+      const createGrafanaIntegrationButton = requireElement("#create-grafana-integration", HTMLButtonElement);
+      const channelGrafanaSecret = requireElement("#channel-grafana-secret", HTMLElement);
+      const grafanaWebhookUrl = requireElement("#grafana-webhook-url", HTMLInputElement);
+      const grafanaCredential = requireElement("#grafana-credential", HTMLTextAreaElement);
+      const copyGrafanaUrlButton = requireElement("#copy-grafana-url", HTMLButtonElement);
+      const copyGrafanaCredentialButton = requireElement("#copy-grafana-credential", HTMLButtonElement);
+      const channelGrafanaStatus = requireElement("#channel-grafana-status", HTMLElement);
       const invitationToken = requireElement("#invitation-token", HTMLInputElement);
       const copyInvitation = requireElement("#copy-invitation", HTMLButtonElement);
       const createAgentAccessButton = requireElement("#create-agent-access", HTMLButtonElement);
@@ -422,6 +430,7 @@
       const notificationsApi = new NotificationApi(http);
       const processesApi = new ProcessApi(http);
       const agentsApi = new AgentApi(http);
+      const integrationsApi = new IntegrationApi(http);
       const enrollmentApi = new EnrollmentApi(http);
 
       const serverEventMailbox = createServerEventMailbox({
@@ -1050,7 +1059,47 @@
         if (!target?.closest(".connection-status")) connectionStatusToggle.setAttribute("aria-expanded", "false");
         if (threadPanel.open && !threadEmojiPicker.contains(target)) threadEmojiPicker.open = false;
       });
+      function clearGrafanaIntegrationSecret(): void {
+        grafanaCredential.value = "";
+        grafanaWebhookUrl.value = "";
+        channelGrafanaSecret.hidden = true;
+        channelGrafanaStatus.textContent = "";
+        createGrafanaIntegrationButton.disabled = false;
+      }
+      async function copyGrafanaValue(control: HTMLInputElement | HTMLTextAreaElement, label: string): Promise<void> {
+        if (!control.value) return;
+        try {
+          await navigator.clipboard.writeText(control.value);
+          channelGrafanaStatus.textContent = `${label} er kopiert.`;
+        } catch (_) {
+          control.focus();
+          control.select();
+          channelGrafanaStatus.textContent = `Merk og kopier ${label.toLocaleLowerCase()} manuelt.`;
+        }
+      }
+      createGrafanaIntegrationButton.addEventListener("click", async () => {
+        const channelId = channelDetailsDialog.dataset.channelId;
+        if (!channelId) return;
+        createGrafanaIntegrationButton.disabled = true;
+        channelGrafanaStatus.textContent = "Lagar Grafana-nøkkel …";
+        try {
+          const created = await integrationsApi.createGrafana(channelId);
+          grafanaWebhookUrl.value = `${window.location.origin}/api/v1/integrations/grafana/alerts`;
+          grafanaCredential.value = created.credential;
+          channelGrafanaSecret.hidden = false;
+          const expires = new Date(created.credentialExpiresAt).toLocaleDateString("nn-NO", { dateStyle: "long" });
+          channelGrafanaStatus.textContent = `Nøkkelen er klar og gjeld til ${expires}. Kopier tokenet no; det blir ikkje vist igjen.`;
+          grafanaCredential.focus();
+          grafanaCredential.select();
+        } catch (error) {
+          createGrafanaIntegrationButton.disabled = false;
+          channelGrafanaStatus.textContent = `Kunne ikkje lage Grafana-nøkkel: ${errorMessage(error)}`;
+        }
+      });
+      copyGrafanaUrlButton.addEventListener("click", () => void copyGrafanaValue(grafanaWebhookUrl, "Webhook-adressa"));
+      copyGrafanaCredentialButton.addEventListener("click", () => void copyGrafanaValue(grafanaCredential, "Tokenet"));
       channelDetailsClose.addEventListener("click", () => channelDetailsDialog.close());
+      channelDetailsDialog.addEventListener("close", clearGrafanaIntegrationSecret);
       channelMemberSearch.addEventListener("input", () => {
         const channelId = channelDetailsDialog.dataset.channelId;
         if (channelId) renderChannelMembers(channelId);
@@ -2591,8 +2640,10 @@
         const channel = knownChannels.find((item) => item.id === activeChannelId);
         if (!channel) return;
         channelDetailsDialog.dataset.channelId = channel.id;
+        clearGrafanaIntegrationSecret();
         channelMemberSearch.value = "";
         channelMemberAdd.hidden = !["owner", "moderator"].includes(channel.role);
+        channelGrafanaIntegration.hidden = channel.is_direct || !["owner", "moderator"].includes(channel.role);
         channelMemberStatus.textContent = "";
         refreshChannelMemberOptions(channel.id);
         if (channel.circle_id) sendCommand("list_circle_users", { circle_id: channel.circle_id });
