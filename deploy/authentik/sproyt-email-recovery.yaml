@@ -1,0 +1,457 @@
+version: 1
+metadata:
+  name: Sprøyt email verification and account recovery
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - identifiers:
+      slug: sproyt-account-recovery
+    id: recovery-flow
+    model: authentik_flows.flow
+    attrs:
+      name: Sprøyt account recovery
+      title: Tilbakestill Sprøyt-passordet
+      designation: recovery
+      authentication: require_unauthenticated
+
+  - identifiers:
+      name: sproyt-recovery-identification
+    id: recovery-identification
+    model: authentik_stages_identification.identificationstage
+    attrs:
+      user_fields: [email, username]
+      case_insensitive_matching: true
+      show_matched_user: false
+      pretend_user_exists: true
+
+  - identifiers:
+      name: sproyt-recovery-email
+    id: recovery-email
+    model: authentik_stages_email.emailstage
+    attrs:
+      use_global_settings: true
+      token_expiry: minutes=30
+      subject: Tilbakestill Sprøyt-passordet
+      template: email/password_reset.html
+      activate_user_on_success: false
+      recovery_max_attempts: 5
+      recovery_cache_timeout: minutes=5
+
+  - identifiers:
+      name: sproyt-recovery-initial-send-limited
+    id: recovery-rate-limit-policy
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        # Authentik's EmailStage limits resends, but not the first send in a
+        # fresh flow. Count initial sends per recipient in the shared cache.
+        from django.core.cache import cache
+        from hashlib import sha256
+
+        plan = request.context["flow_plan"]
+        if request.context.get("is_restored") or plan.context.get("sproyt_initial_send_counted"):
+            return False
+        user = request.context.get("pending_user")
+        email = str(getattr(user, "email", "") or "").strip().casefold()
+        if not email:
+            return True
+        key = "sproyt:recovery:first-send:" + sha256(email.encode("utf-8")).hexdigest()
+        try:
+            if cache.add(key, 1, timeout=300):
+                attempts = 1
+            else:
+                attempts = cache.incr(key)
+        except Exception:
+            return True
+        plan.context["sproyt_initial_send_counted"] = True
+        return attempts > 5
+
+  - identifiers:
+      name: sproyt-recovery-rate-limit-deny
+    id: recovery-rate-limit-deny
+    model: authentik_stages_deny.denystage
+    attrs:
+      deny_message: For mange forsøk. Vent fem minutt og prøv igjen.
+
+  - identifiers:
+      name: sproyt-recovery-password
+    id: recovery-password
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, default-password-change-field-password]]
+        - !Find [authentik_stages_prompt.prompt, [name, default-password-change-field-password-repeat]]
+      validation_policies:
+        - !Find [authentik_policies.policy, [name, default-password-change-password-policy]]
+
+  - identifiers:
+      name: sproyt-recovery-user-write
+    id: recovery-user-write
+    model: authentik_stages_user_write.userwritestage
+    attrs:
+      user_creation_mode: never_create
+
+  - identifiers:
+      name: sproyt-recovery-user-login
+    id: recovery-user-login
+    model: authentik_stages_user_login.userloginstage
+
+  - identifiers: {target: !KeyOf recovery-flow, stage: !KeyOf recovery-identification, order: 10}
+    id: recovery-binding-identification
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: true, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf recovery-flow, stage: !KeyOf recovery-rate-limit-deny, order: 15}
+    id: recovery-binding-rate-limit-deny
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf recovery-rate-limit-policy, target: !KeyOf recovery-binding-rate-limit-deny, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf recovery-flow, stage: !KeyOf recovery-email, order: 20}
+    id: recovery-binding-email
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: true, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers:
+      target: !KeyOf recovery-flow
+      stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, sproyt-authentication-mfa-validation]]
+      order: 25
+    id: recovery-binding-mfa
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: true, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf recovery-flow, stage: !KeyOf recovery-password, order: 30}
+    id: recovery-binding-password
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: true, re_evaluate_policies: false, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf recovery-flow, stage: !KeyOf recovery-user-write, order: 40}
+    id: recovery-binding-write
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: true, re_evaluate_policies: false, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf recovery-flow, stage: !KeyOf recovery-user-login, order: 100}
+    id: recovery-binding-login
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: true, re_evaluate_policies: false, policy_engine_mode: any, invalid_response_action: retry}
+
+  - identifiers:
+      name: sproyt-authentication-identification
+    model: authentik_stages_identification.identificationstage
+    attrs:
+      user_fields: [email, username]
+      recovery_flow: !KeyOf recovery-flow
+
+  - identifiers:
+      slug: sproyt-user-settings
+    id: user-settings-flow
+    model: authentik_flows.flow
+    attrs:
+      name: Sprøyt user settings
+      title: Profil og e-post
+      designation: stage_configuration
+      authentication: require_authenticated
+
+  - identifiers:
+      name: sproyt-user-settings-prompt
+    id: user-settings-prompt
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, default-user-settings-field-username]]
+        - !Find [authentik_stages_prompt.prompt, [name, default-user-settings-field-name]]
+        - !Find [authentik_stages_prompt.prompt, [name, default-user-settings-field-email]]
+        - !Find [authentik_stages_prompt.prompt, [name, default-user-settings-field-locale]]
+      validation_policies:
+        - !Find [authentik_policies.policy, [name, default-user-settings-authorization]]
+
+  - identifiers:
+      name: sproyt-user-settings-email-verification
+    id: user-settings-email
+    model: authentik_stages_email.emailstage
+    attrs:
+      use_global_settings: true
+      token_expiry: minutes=30
+      subject: Stadfest e-postadressa di for Sprøyt
+      template: email/account_confirmation.html
+      activate_user_on_success: false
+      recovery_max_attempts: 5
+      recovery_cache_timeout: minutes=5
+
+  - identifiers:
+      name: sproyt-user-settings-initial-send-limited
+    id: settings-rate-limit-policy
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        from django.core.cache import cache
+        from hashlib import sha256
+
+        plan = request.context["flow_plan"]
+        if request.context.get("is_restored") or plan.context.get("sproyt_settings_send_counted"):
+            return False
+        prompt_data = request.context.get("prompt_data", {})
+        email = str(prompt_data.get("email", "")).strip().casefold()
+        user = request.context.get("pending_user", request.user)
+        current_email = str(getattr(user, "email", "") or "").strip().casefold()
+        verified = bool(getattr(user, "attributes", {}).get("email_verified", False))
+        if not email or (email == current_email and verified):
+            return False
+        key = "sproyt:settings:first-send:" + sha256(email.encode("utf-8")).hexdigest()
+        try:
+            if cache.add(key, 1, timeout=300):
+                attempts = 1
+            else:
+                attempts = cache.incr(key)
+        except Exception:
+            return True
+        plan.context["sproyt_settings_send_counted"] = True
+        return attempts > 5
+
+  - identifiers:
+      name: sproyt-user-settings-rate-limit-deny
+    id: settings-rate-limit-deny
+    model: authentik_stages_deny.denystage
+    attrs:
+      deny_message: For mange forsøk. Vent fem minutt og prøv igjen.
+
+  - identifiers:
+      name: sproyt-user-settings-write
+    id: user-settings-write
+    model: authentik_stages_user_write.userwritestage
+    attrs:
+      user_creation_mode: never_create
+
+  - identifiers:
+      name: sproyt-verify-changed-email
+    id: verify-changed-email
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        prompt_data = request.context.get("prompt_data", {})
+        email = str(prompt_data.get("email", "")).strip()
+        user = request.context.get("pending_user", request.user)
+        if not email or user is None:
+            return False
+        current_email = str(getattr(user, "email", "") or "").strip()
+        already_verified = bool(getattr(user, "attributes", {}).get("email_verified", False))
+        if email.casefold() == current_email.casefold() and already_verified:
+            return False
+        attributes = prompt_data.get("attributes", {})
+        if not isinstance(attributes, dict):
+            attributes = {}
+        attributes["email_verified"] = True
+        attributes["email_verified_address"] = email
+        attributes.pop("email_verified_migrated_2026_09_15", None)
+        attributes.pop("email_verified_migration_previous_2026_09_15", None)
+        prompt_data["attributes"] = attributes
+        request.context["prompt_data"] = prompt_data
+        request.context["flow_plan"].context["prompt_data"] = prompt_data
+        request.context["flow_plan"].context["email"] = email
+        request.context["flow_plan"].context["pending_user"] = user
+        return True
+
+  - identifiers:
+      name: sproyt-reject-mismatched-email-token
+    id: reject-mismatched-email-token
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        # Authentik merges the current browser plan into a restored token plan.
+        # Deny if a later address from the same session no longer matches the
+        # address and user stored in the original email token.
+        token = request.context.get("is_restored")
+        if token is None:
+            return True
+        token_plan = token.plan
+        verified_email = str(token_plan.context.get("email", "")).strip()
+        prompt_data = request.context.get("prompt_data", {})
+        if not verified_email or not isinstance(prompt_data, dict):
+            return True
+        current_email = str(prompt_data.get("email", "")).strip()
+        token_user = token_plan.context.get("pending_user")
+        current_user = request.context.get("pending_user", request.user)
+        same_user = getattr(token_user, "pk", None) == getattr(current_user, "pk", None)
+        return not (
+            token.flow.slug == "sproyt-user-settings"
+            and same_user
+            and verified_email.casefold() == current_email.casefold()
+        )
+
+  - identifiers:
+      name: sproyt-user-settings-token-mismatch-deny
+    id: settings-token-mismatch-deny
+    model: authentik_stages_deny.denystage
+    attrs:
+      deny_message: E-postlenka passar ikkje med den siste endringa. Start stadfestinga på nytt.
+
+  - identifiers: {target: !KeyOf user-settings-flow, stage: !KeyOf user-settings-prompt, order: 10}
+    id: user-settings-binding-prompt
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: true, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf user-settings-flow, stage: !KeyOf settings-rate-limit-deny, order: 15}
+    id: user-settings-binding-rate-limit-deny
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf settings-rate-limit-policy, target: !KeyOf user-settings-binding-rate-limit-deny, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf user-settings-flow, stage: !KeyOf user-settings-email, order: 20}
+    id: user-settings-binding-email
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf verify-changed-email, target: !KeyOf user-settings-binding-email, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf user-settings-flow, stage: !KeyOf settings-token-mismatch-deny, order: 25}
+    id: user-settings-binding-token-mismatch-deny
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf reject-mismatched-email-token, target: !KeyOf user-settings-binding-token-mismatch-deny, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf user-settings-flow, stage: !KeyOf user-settings-write, order: 30}
+    id: user-settings-binding-write
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: true, re_evaluate_policies: false, policy_engine_mode: any, invalid_response_action: retry}
+
+  - identifiers:
+      domain: sproyt-security.bjoroy.me
+    model: authentik_brands.brand
+    attrs:
+      flow_user_settings: !KeyOf user-settings-flow
+
+  - identifiers:
+      name: sproyt-default-settings-invalidate-changed-email
+    id: default-settings-invalidate-email
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: false
+      expression: |
+        # The built-in settings flow remains directly addressable. If it is
+        # used, never carry a verification claim over to a different address.
+        prompt_data = request.context.get("prompt_data", {})
+        user = request.context.get("pending_user", request.user)
+        email = str(prompt_data.get("email", "")).strip()
+        current_email = str(getattr(user, "email", "") or "").strip()
+        if email.casefold() != current_email.casefold():
+            attributes = prompt_data.get("attributes", {})
+            if not isinstance(attributes, dict):
+                attributes = {}
+            attributes["email_verified"] = False
+            attributes.pop("email_verified_address", None)
+            attributes.pop("email_verified_migrated_2026_09_15", None)
+            attributes.pop("email_verified_migration_previous_2026_09_15", None)
+            prompt_data["attributes"] = attributes
+            request.context["prompt_data"] = prompt_data
+            request.context["flow_plan"].context["prompt_data"] = prompt_data
+        return True
+
+  - identifiers:
+      target: !Find [authentik_flows.flow, [slug, default-user-settings-flow]]
+      stage: !Find [authentik_stages_user_write.userwritestage, [name, default-user-settings-write]]
+      order: 100
+    id: default-settings-write-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf default-settings-invalidate-email, target: !KeyOf default-settings-write-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+
+  - identifiers:
+      name: Sprøyt verified email
+    id: sproyt-verified-email-mapping
+    model: authentik_providers_oauth2.scopemapping
+    attrs:
+      scope_name: email
+      description: Sprøyt email scope with address-bound verification
+      expression: |
+        email = str(request.user.email or "").strip()
+        attributes = request.user.attributes or {}
+        return {
+            "email": email,
+            "email_verified": bool(email)
+                and attributes.get("email_verified") is True
+                and str(attributes.get("email_verified_address", "")).strip().casefold() == email.casefold(),
+        }
+
+  - identifiers:
+      name: sproyt-provider
+    model: authentik_providers_oauth2.oauth2provider
+    attrs:
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "authentik default OAuth Mapping: OpenID 'openid'"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "authentik default OAuth Mapping: OpenID 'profile'"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "authentik default OAuth Mapping: OpenID 'offline_access'"]]
+        - !KeyOf sproyt-verified-email-mapping
+
+  - identifiers:
+      name: sproyt-mark-invitation-email-verified
+    id: mark-invitation-email
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: false
+      expression: |
+        prompt_data = request.context.get("prompt_data", {})
+        invitation = request.context.get("invitation")
+        if invitation is None:
+            return False
+        email = str((invitation.fixed_data or {}).get("email", "")).strip()
+        if not email or invitation.flow.slug != "sproyt-invitation-enrollment":
+            return False
+        prompt_data["email"] = email
+        attributes = prompt_data.get("attributes", {})
+        if not isinstance(attributes, dict):
+            attributes = {}
+        attributes["email_verified"] = True
+        attributes["email_verified_address"] = email
+        prompt_data["attributes"] = attributes
+        request.context["prompt_data"] = prompt_data
+        request.context["flow_plan"].context["prompt_data"] = prompt_data
+        return True
+
+  - identifiers:
+      name: sproyt-invalid-invitation-context
+    id: invalid-invitation-context
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        invitation = request.context.get("invitation")
+        if not request.context.get("invitation_in_effect") or invitation is None:
+            return True
+        email = str((invitation.fixed_data or {}).get("email", "")).strip()
+        prompt_email = str(request.context.get("prompt_data", {}).get("email", "")).strip()
+        return not (
+            invitation.flow.slug == "sproyt-invitation-enrollment"
+            and bool(email)
+            and email.casefold() == prompt_email.casefold()
+        )
+
+  - identifiers:
+      name: sproyt-invitation-context-deny
+    id: invitation-context-deny
+    model: authentik_stages_deny.denystage
+    attrs:
+      deny_message: Invitasjonen manglar ei gyldig e-postadresse.
+
+  - identifiers:
+      target: !Find [authentik_flows.flow, [slug, sproyt-invitation-enrollment]]
+      stage: !KeyOf invitation-context-deny
+      order: 35
+    id: invitation-context-deny-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf invalid-invitation-context, target: !KeyOf invitation-context-deny-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+
+  - identifiers:
+      target: !Find [authentik_flows.flow, [slug, sproyt-invitation-enrollment]]
+      stage: !Find [authentik_stages_user_write.userwritestage, [name, User Write Stage]]
+      order: 40
+    id: invitation-write-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: any, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf mark-invitation-email, target: !KeyOf invitation-write-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}

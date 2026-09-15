@@ -182,3 +182,71 @@ Acceptance requires all of the following:
 4. Reusing the Authentik invitation fails, and an expired link cannot enroll.
 5. Revoking the service token disables only new-user invitations; existing
    login and chat remain available.
+
+## Email verification and account recovery
+
+The versioned blueprint is `deploy/authentik/sproyt-email-recovery.yaml`. It
+adds a recovery link to the Sprøyt identification stage, configures a dedicated
+Sprøyt user-settings flow, and marks email received through a single-use Sprøyt
+invitation as verified.
+
+Recovery is deliberately transitional: an account with a registered email can
+recover even when its legacy `email_verified` attribute was absent. The email
+token expires after 30 minutes. A dedicated, fail-closed policy limits initial
+email sends to five per recipient per five minutes; Authentik's Email Stage
+also limits resends in an existing flow. Existing MFA is required; users
+without configured MFA are not blocked. Inactive users are not automatically
+reactivated.
+
+The user-settings flow does not persist a changed email until the recipient
+opens the confirmation link. An unchanged address already marked verified does
+not send another email. The Sprøyt brand points to this dedicated settings flow
+so the default settings flow for other Authentik brands remains unchanged.
+A guard before the write stage reads the verified address and user from the
+original email token plan. It denies the flow if a newer, unverified address in
+the same browser session no longer matches the link that was opened.
+Verification is bound to the exact address in
+`attributes.email_verified_address`; the Sprøyt-specific OIDC email mapping
+only emits `email_verified: true` while that address still matches the user's
+current email. The built-in settings flow clears this state when it changes an
+address, so a direct settings URL cannot leave a stale verification claim.
+
+At initial activation, mark only existing human accounts with a non-empty
+email as verified, store the same address in `email_verified_address`, and add
+`email_verified_migrated_2026_09_15: true`. The marker
+makes the one-time trust decision auditable and lets rollback remove only the
+migrated attributes. Do not include service accounts or accounts without email.
+Successful later verification removes the migration marker, so rollback never
+undoes verification completed by the user after migration.
+Also store the exact previous presence and values in
+`email_verified_migration_previous_2026_09_15`; this makes rollback reversible
+even if a pre-existing account already carried one of the attributes.
+
+Before applying, dry-run the blueprint with the running Authentik version and
+record the current Sprøyt identification and brand settings. After applying,
+verify the stage order, the linked recovery/settings flows, the migrated user
+counts, SMTP delivery, and a complete recovery with a dedicated test account.
+Never test password recovery against an owner's production account.
+
+### Production activation 2026-09-15
+
+The blueprint passed Authentik 2026.8.2's own dry-run before activation. Helm
+revision 38 is the pre-change deployment and revision 39 mounts the blueprint.
+Fifteen human accounts with email were migrated; eighteen human accounts
+without email were left unverified. Anonymous inspection confirmed that the
+Sprøyt login advertises the recovery flow and that the recovery flow starts
+with email/username identification.
+
+Isolated live-code policy tests (without sending mail) confirmed that initial
+sends 1-5 are allowed and send 6 is denied within the window. They also
+confirmed that a matching email token passes, an A-to-B address change followed
+by the old A token is denied, and the Sprøyt OIDC mapping returns true only for
+an address-bound verified account.
+
+For rollback, first change the blueprint instantiate label to `false` and
+update its ConfigMap. Then run
+`deploy/authentik/rollback-email-recovery.py` through `ak shell`; it restores
+the previous identification, brand and OIDC mappings, removes bindings added to
+shared flows, expires outstanding recovery/settings tokens, and restores the
+exact pre-migration attributes only for accounts still carrying the migration
+marker. Finally, Helm revision 38 can be restored to remove the blueprint mount.
