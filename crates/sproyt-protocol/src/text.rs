@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum TextValidationError {
     Empty { field: &'static str },
     InvalidSlug,
+    InvalidHandle,
     InvalidSequence,
     InvalidReaction,
     SequenceOverflow,
@@ -21,6 +22,9 @@ impl fmt::Display for TextValidationError {
                 formatter,
                 "channel slug can only contain lowercase letters, numbers, '-' and '_'"
             ),
+            Self::InvalidHandle => {
+                formatter.write_str("handle can only contain letters, numbers, '.', '-' and '_'")
+            }
             Self::InvalidSequence => formatter.write_str("channel sequence cannot be negative"),
             Self::InvalidReaction => formatter.write_str("reaction emoji is not supported"),
             Self::SequenceOverflow => formatter.write_str("channel sequence is exhausted"),
@@ -101,6 +105,73 @@ impl DisplayName {
 }
 
 impl fmt::Display for DisplayName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// A stable public address. The leading `@` is presentation, not storage.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Handle(String);
+
+impl Handle {
+    const MAX_BYTES: usize = 80;
+
+    pub fn with_suffix(&self, ordinal: u32) -> Self {
+        if ordinal <= 1 {
+            return self.clone();
+        }
+        let suffix = format!("-{ordinal}");
+        let limit = Self::MAX_BYTES.saturating_sub(suffix.len());
+        let mut base = String::new();
+        for character in self.0.chars() {
+            if base.len() + character.len_utf8() > limit {
+                break;
+            }
+            base.push(character);
+        }
+        Self(format!("{base}{suffix}"))
+    }
+
+    pub fn new(value: impl Into<String>) -> Result<Self, TextValidationError> {
+        let value = bounded_non_empty(value, "handle", Self::MAX_BYTES)?;
+        let normalized = value.to_lowercase();
+        if !normalized
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '_' | '-' | '.'))
+        {
+            return Err(TextValidationError::InvalidHandle);
+        }
+        Ok(Self(normalized))
+    }
+
+    /// Canonicalize a verified external username without making authentication
+    /// depend on the provider's punctuation policy.
+    pub fn from_external(value: &str) -> Self {
+        let mut normalized = String::new();
+        for character in value.trim().to_lowercase().chars() {
+            if !(character.is_alphanumeric() || matches!(character, '_' | '-' | '.')) {
+                continue;
+            }
+            if normalized.len() + character.len_utf8() > Self::MAX_BYTES {
+                break;
+            }
+            normalized.push(character);
+        }
+        Self(if normalized.is_empty() {
+            "user".to_owned()
+        } else {
+            normalized
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Handle {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }

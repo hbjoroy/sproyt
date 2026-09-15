@@ -27,8 +27,10 @@ In the Authentik admin interface for the `sproyt` provider:
    `https://sproyt.bjoroy.me/` as a strict logout URI. Otherwise configure it as
    the provider's permitted post-logout redirect.
 7. Include the standard `openid`, `profile`, `email` and `offline_access`
-   scopes/property mappings. Sproyt uses `sub` as the stable external identity
-   and uses `name` or `preferred_username` only as display text.
+   scopes/property mappings. Sproyt uses `sub` as the stable external identity,
+   `preferred_username` as the default public `@nick`, and `name` as the
+   initial display name. The user can later edit the display name in Sprøyt;
+   neither name is used as an authentication key.
 8. Bind only the users or groups that should be allowed into the private beta.
 
 Record the provider slug, client ID and client secret in the deployment secret

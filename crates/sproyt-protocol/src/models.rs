@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ChannelId, ChannelSequence, ChannelSlug, CircleId, DisplayName, InvitationId, MessageBody,
-    MessageId, UserId,
+    ChannelId, ChannelSequence, ChannelSlug, CircleId, DisplayName, Handle, InvitationId,
+    MessageBody, MessageId, UserId,
 };
 
 pub const PORTABLE_USER_EXPORT_FORMAT: &str = "sproyt.user-export.v1";
@@ -37,6 +37,8 @@ pub struct User {
     pub id: UserId,
     pub kind: PrincipalKind,
     pub display_name: DisplayName,
+    /// Human users have a unique handle; system agents may intentionally not.
+    pub handle: Option<Handle>,
     pub external_provider: Option<String>,
     pub external_subject: Option<String>,
     pub created_at: DateTime<Utc>,

@@ -151,6 +151,14 @@ auth mode and is rejected in production. Encrypted, HttpOnly session cookies
 are validated by HTTP and WebSocket authentication; refresh tokens are never
 exposed to browser JavaScript.
 
+The OIDC issuer and `sub` claim form the stable, private account identity.
+Sprøyt stores a separate, globally unique public handle for mentions. Its
+initial value is canonicalized from Authentik `preferred_username`; it is not
+an authentication key and is not changed by profile refreshes. `display_name`
+is an independent, user-editable presentation field. Authentication refreshes
+must preserve both a locally edited display name and an established handle.
+Historical messages retain their sender-name snapshot.
+
 New-user onboarding also preserves this identity boundary. A circle owner can
 ask Sprøyt to create a short-lived, single-use Authentik enrollment invitation.
 Sprøyt supplies only the invitee's email, optional display name and the existing

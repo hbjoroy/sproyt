@@ -9,15 +9,15 @@ use super::{
     AcceptCircleInvitation, AcceptEnrollmentInvitation, ActivateEnrollmentInvitation,
     AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatEvent, ChatMessage,
     Circle, CircleId, CircleMembership, CircleRole, CreateChannel, CreateCircle,
-    CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel, EditMessage,
-    EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation, JoinChannel,
-    LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload, MediaVariant,
-    Membership, MessageId, PortableUserExport, PrepareEnrollmentInvitation, SendMessage,
-    ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
+    CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel, DisplayName,
+    EditMessage, EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation,
+    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
+    MediaVariant, Membership, MessageId, PortableUserExport, PrepareEnrollmentInvitation,
+    SendMessage, ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
-    ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, DisplayName, EnrollmentInvitationState,
+    ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, EnrollmentInvitationState,
     ExportedChannel, ExportedCircle, InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT,
     Policy, RepositoryError::NotFound, enrollment_email_hash, enrollment_token_hash,
     generate_enrollment_token,
@@ -62,6 +62,11 @@ pub trait ChatRepository: Send + Sync + 'static {
         text: String,
         emoji: String,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> RepositoryFuture<'a, UserProfile>;
+    fn update_profile<'a>(
+        &'a self,
+        actor: UserId,
+        display_name: DisplayName,
     ) -> RepositoryFuture<'a, UserProfile>;
     fn store_media<'a>(
         &'a self,
@@ -335,6 +340,15 @@ impl ChatRepository for InMemoryChatRepository {
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
+            let mut user = user;
+            if let Some(existing) = state.users.get(&user.id) {
+                // Authentication refreshes identity binding, never a locally
+                // chosen display name or established public handle.
+                user.display_name = existing.display_name.clone();
+                if existing.handle.is_some() {
+                    user.handle = existing.handle.clone();
+                }
+            }
             if user.kind == crate::domain::PrincipalKind::Human
                 && !state.signup_ordinals.contains_key(&user.id)
             {
@@ -472,6 +486,33 @@ impl ChatRepository for InMemoryChatRepository {
             state
                 .user_statuses
                 .insert(actor, (text.clone(), emoji.clone(), expires_at));
+            Ok(UserProfile {
+                user,
+                status_text: text,
+                status_emoji: emoji,
+                status_expires_at: expires_at,
+            })
+        })
+    }
+
+    fn update_profile<'a>(
+        &'a self,
+        actor: UserId,
+        display_name: DisplayName,
+    ) -> RepositoryFuture<'a, UserProfile> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let user = state
+                .users
+                .get_mut(&actor)
+                .ok_or(RepositoryError::PermissionDenied)?;
+            if user.kind != crate::domain::PrincipalKind::Human {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            user.display_name = display_name;
+            let user = user.clone();
+            let (text, emoji, expires_at) =
+                state.user_statuses.get(&actor).cloned().unwrap_or_default();
             Ok(UserProfile {
                 user,
                 status_text: text,
@@ -1986,7 +2027,9 @@ mod tests {
         crate::db::verify_chat_repository_contract(&InMemoryChatRepository::default(), "in-memory")
             .await;
     }
-    use crate::domain::{ChannelKind, ChannelSlug, DisplayName, MessageBody, PrincipalKind};
+    use crate::domain::{
+        ChannelKind, ChannelSlug, DisplayName, Handle, MessageBody, PrincipalKind,
+    };
     use chrono::Utc;
 
     async fn add_human(repository: &InMemoryChatRepository, name: &str) -> UserId {
@@ -1996,6 +2039,7 @@ mod tests {
                 id: id.clone(),
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new(name).unwrap(),
+                handle: Some(Handle::new(name.replace(' ', "-")).unwrap()),
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),
@@ -2015,6 +2059,7 @@ mod tests {
                 id: agent.clone(),
                 kind: PrincipalKind::Agent,
                 display_name: DisplayName::new("Badge agent").unwrap(),
+                handle: None,
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),
@@ -2037,6 +2082,7 @@ mod tests {
                 id: first.clone(),
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new("Renamed adopter").unwrap(),
+                handle: Some(Handle::new("first-adopter").unwrap()),
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),

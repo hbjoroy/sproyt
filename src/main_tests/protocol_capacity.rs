@@ -517,9 +517,9 @@ fn browser_keeps_compact_status_controls_and_saves_the_complete_draft() {
             "sendCommand(\"set_status\", { text: statusDraft.text, emoji: statusDraft.emoji, expires_at: null })"
         ));
     assert!(BROWSER_CLIENT.contains("if (!statusDraft.dirty)"));
-    assert!(BROWSER_CLIENT.contains(
-        "if (event.payload.profile.id === currentParticipantId) statusDraft.dirty = false"
-    ));
+    assert!(
+        BROWSER_CLIENT.contains("if (event.type === \"status_updated\") statusDraft.dirty = false")
+    );
 }
 
 #[test]
@@ -1475,7 +1475,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(!body.contains("{{CLIENT_CORE_URL}}"));
     assert!(!body.contains("{{DISPLAY_NAME}}"));
     assert!(!body.contains("{{AGENT_HIDDEN}}"));
-    assert!(body.contains("Innlogga som <strong>guest</strong>"));
+    assert!(body.contains("Innlogga som <strong id=\"identity-display-name\">guest</strong>"));
     assert!(!body.contains("id=\"participant\""));
     assert!(
         BROWSER_CLIENT.contains("const url = new URL(`${protocol}://${window.location.host}/ws`)")
@@ -1964,7 +1964,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("if (!sendCommand(\"list_users\"))"));
     assert!(BROWSER_CLIENT.contains("if (requestedCommand === \"open_direct_channel\")"));
     assert!(BROWSER_CLIENT.contains("Brukaren finst ikkje lenger. Lukk dialogen og prøv på nytt."));
-    assert!(BROWSER_CLIENT.contains("activeProfile(channel?.direct_user_id)?.display_name"));
+    assert!(BROWSER_CLIENT.contains("const peer = activeProfile(channel?.direct_user_id)"));
     assert!(BROWSER_CLIENT.contains("if (knownChannels.length > 0) renderChannels()"));
     assert!(!BROWSER_CLIENT.contains("heading.textContent = \"Andre samtalar\""));
     assert!(BROWSER_CLIENT.contains(

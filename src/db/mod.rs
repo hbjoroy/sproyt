@@ -111,9 +111,9 @@ where
     use crate::domain::{
         AcceptCircleInvitation, AddChannelMember, ChannelKind, ChannelRef, ChannelSequence,
         ChannelSlug, CreateChannel, CreateCircle, CreateCircleInvitation, DeleteCircle,
-        DeleteMessage, DisplayName, EditMessage, JoinChannel, LeaveChannel, LoadRecentMessages,
-        MarkRead, MessageBody, MessageLimit, PORTABLE_USER_EXPORT_FORMAT, PrincipalKind,
-        SendMessage, User, UserId,
+        DeleteMessage, DisplayName, EditMessage, Handle, JoinChannel, LeaveChannel,
+        LoadRecentMessages, MarkRead, MessageBody, MessageLimit, PORTABLE_USER_EXPORT_FORMAT,
+        PrincipalKind, SendMessage, User, UserId,
     };
     use chrono::Utc;
 
@@ -125,6 +125,7 @@ where
             id: actor.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Chat contract actor").unwrap(),
+            handle: Some(Handle::new("chat-contract-actor").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -142,6 +143,7 @@ where
             id: badge_agent.clone(),
             kind: PrincipalKind::Agent,
             display_name: DisplayName::new("Badge contract agent").unwrap(),
+            handle: None,
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -155,6 +157,7 @@ where
             id: later_human.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Badge contract human").unwrap(),
+            handle: Some(Handle::new("badge-contract-human").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -175,6 +178,7 @@ where
             id: actor.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Chat contract actor renamed").unwrap(),
+            handle: Some(Handle::new("chat-contract-actor").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -190,6 +194,7 @@ where
             id: actor.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Chat contract actor").unwrap(),
+            handle: Some(Handle::new("chat-contract-actor").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -256,6 +261,7 @@ where
             id: general_member.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("General member").unwrap(),
+            handle: Some(Handle::new("general-member").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -321,12 +327,24 @@ where
             id: actor.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Renamed chat contract actor").unwrap(),
+            handle: Some(Handle::new("chat-contract-actor").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
         })
         .await
         .unwrap();
+    let updated_profile = repository
+        .update_profile(
+            actor.clone(),
+            DisplayName::new("Renamed chat contract actor").unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        updated_profile.user.display_name.as_str(),
+        "Renamed chat contract actor"
+    );
     let replay = repository
         .append_message_idempotent(
             SendMessage {
@@ -553,6 +571,7 @@ where
             id: thread_reader.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Thread reader").unwrap(),
+            handle: Some(Handle::new("thread-reader").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -675,6 +694,7 @@ where
             id: member.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Chat contract member").unwrap(),
+            handle: Some(Handle::new("chat-contract-member").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -717,6 +737,7 @@ where
             id: outsider.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Chat contract outsider").unwrap(),
+            handle: Some(Handle::new("chat-contract-outsider").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -909,7 +930,7 @@ where
     use crate::domain::{
         AcceptCircleInvitation, AcceptEnrollmentInvitation, ActivateEnrollmentInvitation,
         ChannelSlug, CreateCircle, CreateCircleInvitation, DisplayName, EnrollmentInvitationState,
-        PrepareEnrollmentInvitation, PrincipalKind, User, UserId,
+        Handle, PrepareEnrollmentInvitation, PrincipalKind, User, UserId,
     };
     use chrono::{Duration, Utc};
     use uuid::Uuid;
@@ -920,6 +941,7 @@ where
                 id,
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new(name).unwrap(),
+                handle: Some(Handle::from_external(name)),
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),
@@ -1099,6 +1121,7 @@ where
             id: actor.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Contract actor").unwrap(),
+            handle: Some(crate::domain::Handle::new("contract-actor").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),
@@ -1214,6 +1237,7 @@ where
             id: member.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Contract member").unwrap(),
+            handle: Some(crate::domain::Handle::new("contract-member").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),

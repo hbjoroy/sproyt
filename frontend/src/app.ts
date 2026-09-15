@@ -193,6 +193,10 @@
       const desktopSidebarToggle = requireElement("#desktop-sidebar-toggle", HTMLButtonElement);
       const desktopAdvancedEntry = requireElement("#desktop-advanced-entry", HTMLButtonElement);
       const statusEditor = requireElement("#status-editor", HTMLDetailsElement);
+      const profileDisplayName = requireElement("#profile-display-name", HTMLInputElement);
+      const saveProfileDisplayName = requireElement("#save-profile-display-name", HTMLButtonElement);
+      const profileNameNotice = requireElement("#profile-name-notice", HTMLElement);
+      const identityDisplayName = requireElement("#identity-display-name", HTMLElement);
       const notificationEditor = requireElement("#notification-editor", HTMLDetailsElement);
       const currentStatusIcon = requireElement(".status-compact-icon", HTMLElement);
       const currentStatusLabel = requireElement(".status-summary-label", HTMLElement);
@@ -243,6 +247,7 @@
         onDisconnected: () => reportClientEvent("websocket_disconnected"),
         onSocketError: () => reportClientEvent("websocket_error"),
         onConnectionLost: () => {
+          finishPendingProfileUpdate("Sambandet vart brote. Namnet er ikkje lagra – prøv igjen.");
           if (pendingCircleCreationRequestId) {
             pendingCircleCreationRequestId = null;
             createCircleForm.querySelector<HTMLButtonElement>("button[type=submit]")!.disabled = false;
@@ -271,6 +276,7 @@
         },
         onRequestsLost: (requestIds) => {
           for (const requestId of requestIds) {
+            finishPendingProfileUpdate("Sambandet vart brote. Namnet er ikkje lagra – prøv igjen.", requestId);
             if (pendingMessages.has(requestId)) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
             if (pendingThreadReplies.has(requestId)) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
             historyRequestIds.delete(requestId);
@@ -394,6 +400,8 @@
       let composerHasFocus = false;
       let composerComposing = false;
       const statusDraft = { emoji: "", text: "", dirty: false };
+      let profileDisplayNameDirty = false;
+      let pendingProfileUpdateRequestId: string | null = null;
       const usesDesktopComposerKeys = window.matchMedia("(any-hover: hover) and (any-pointer: fine)");
 
       function syncRenderedNavigation(): void {
@@ -1226,7 +1234,11 @@
       });
 
       function mentionHandle(user: UserProfile): string {
-        return user.display_name.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "");
+        return user.handle || "";
+      }
+
+      function profileIdentity(user: UserProfile): string {
+        return user.handle ? `${user.display_name} · @${user.handle}` : user.display_name;
       }
 
       function closeMentionSuggestions() {
@@ -1300,7 +1312,7 @@
           closeMentionSuggestions();
           return;
         }
-        const match = bodyInput.value.slice(0, caret).match(/(?:^|\s)@([\p{L}\p{N}_-]*)$/u);
+        const match = bodyInput.value.slice(0, caret).match(/(?:^|\s)@([\p{L}\p{N}_.-]*)$/u);
         if (!match) {
           closeMentionSuggestions();
           return;
@@ -1309,7 +1321,7 @@
         if (query === undefined) return;
         activeMention = { start: caret - query.length - 1, end: caret };
         mentionMatches = mentionCandidates()
-          .filter((user) => mentionHandle(user).startsWith(query))
+          .filter((user) => user.handle !== null && mentionHandle(user).startsWith(query))
           .sort((left, right) => left.display_name.localeCompare(right.display_name));
         selectedMentionIndex = Math.min(selectedMentionIndex, Math.max(0, mentionMatches.length - 1));
         renderMentionSuggestions();
@@ -1475,6 +1487,33 @@
         statusDraft.dirty = true;
         sendCommand("set_status", { text: "", emoji: "", expires_at: null });
       });
+      profileDisplayName.addEventListener("input", () => { profileDisplayNameDirty = true; });
+      saveProfileDisplayName.addEventListener("click", () => {
+        const displayName = profileDisplayName.value.trim();
+        if (!displayName) {
+          profileDisplayName.setCustomValidity("Visningsnamnet kan ikkje vere tomt.");
+          profileDisplayName.reportValidity();
+          return;
+        }
+        profileDisplayName.setCustomValidity("");
+        profileNameNotice.textContent = "";
+        const requestId = sendCommand("update_profile", { display_name: displayName });
+        if (requestId) {
+          pendingProfileUpdateRequestId = requestId;
+          saveProfileDisplayName.disabled = true;
+          saveProfileDisplayName.textContent = "Lagrar …";
+        } else {
+          profileNameNotice.textContent = "Ikkje tilkopla enno. Vent litt og prøv igjen.";
+        }
+      });
+
+      function finishPendingProfileUpdate(message: string, requestId: string | undefined = pendingProfileUpdateRequestId ?? undefined): void {
+        if (!requestId || pendingProfileUpdateRequestId !== requestId) return;
+        pendingProfileUpdateRequestId = null;
+        saveProfileDisplayName.disabled = false;
+        saveProfileDisplayName.textContent = "Lagre namn";
+        profileNameNotice.textContent = message;
+      }
 
       function vapidKeyBytes(value: string): Uint8Array<ArrayBuffer> {
         const padding = "=".repeat((4 - value.length % 4) % 4);
@@ -2376,7 +2415,7 @@
         knownUsers.filter((user) => user.id !== currentParticipantId).forEach((user) => {
           const handle = mentionHandle(user);
           const status = [user.status_emoji, user.status_text].filter(Boolean).join(" ");
-          const label = `${user.display_name} (@${handle})${status ? ` · ${status}` : ""}`;
+          const label = `${profileIdentity(user)}${status ? ` · ${status}` : ""}`;
           directUser.add(new Option(label, user.id));
         });
         if ([...directUser.options].some((option) => option.value === selectedUserId)) {
@@ -2386,6 +2425,8 @@
         if (circleInviteDialog.open) renderCircleInviteUsers();
         const own = knownUsers.find((user) => user.id === currentParticipantId);
         if (own) {
+          if (!profileDisplayNameDirty) profileDisplayName.value = own.display_name;
+          identityDisplayName.textContent = own.display_name;
           if (!statusDraft.dirty) {
             statusDraft.emoji = own.status_emoji || "";
             statusDraft.text = own.status_text || "";
@@ -2428,7 +2469,8 @@
       }
 
       function directChannelLabel(channel: Channel | null | undefined): string {
-        return activeProfile(channel?.direct_user_id)?.display_name || channel?.name || "Direktesamtale";
+        const peer = activeProfile(channel?.direct_user_id);
+        return peer ? profileIdentity(peer) : channel?.name || "Direktesamtale";
       }
 
       function profileStatus(profile: UserProfile | null | undefined): Readonly<{ symbol: string; text: string; label: string }> | null {
@@ -2479,12 +2521,14 @@
           conversationContext.hidden = false;
         }
         if (!channel) return;
-        conversationTitle.textContent = channel.name;
+        const peer = channel.direct_user_id ? activeProfile(channel.direct_user_id) : null;
+        conversationTitle.textContent = channel.is_direct && channel.direct_user_id
+          ? (peer ? profileIdentity(peer) : channel.name)
+          : channel.name;
         conversationCircle.textContent = channel.circle_id
           ? (knownCircles.get(channel.circle_id)?.name || "Vennekrets")
           : (channel.is_direct ? "Direktemelding" : "Felles");
         conversationCircle.hidden = false;
-        const peer = channel.direct_user_id ? activeProfile(channel.direct_user_id) : null;
         const status = profileStatus(peer);
         if (!peer || !status) return;
         conversationPeerStatus.hidden = false;
@@ -2539,7 +2583,7 @@
         // browser is primarily a way to reach the other people here.
         const otherUsers = users.filter((profile) => profile.id !== currentParticipantId);
         const visibleUsers = query
-          ? otherUsers.filter((profile) => profile.display_name
+          ? otherUsers.filter((profile) => `${profile.display_name} ${profile.handle || ""}`
             .normalize("NFKD")
             .replace(/[\u0300-\u036f]/g, "")
             .toLocaleLowerCase("nb-NO")
@@ -2571,7 +2615,7 @@
           item.dataset.profileUserId = profile.id;
           const name = document.createElement("span");
           name.className = "channel-member-name";
-          name.textContent = profile.display_name;
+          name.textContent = profileIdentity(profile);
           item.append(name);
           appendProfileStatus(item, profile.id);
           const action = document.createElement("button");
@@ -2607,7 +2651,7 @@
           .filter((user) => user.id !== currentParticipantId && !memberIds.has(user.id))
           .forEach((user) => {
             const status = [user.status_emoji, user.status_text].filter(Boolean).join(" ");
-            channelMember.add(new Option(`${user.display_name}${status ? ` · ${status}` : ""}`, user.id));
+            channelMember.add(new Option(`${profileIdentity(user)}${status ? ` · ${status}` : ""}`, user.id));
           });
         updateOnboardingButtons();
       }
@@ -2740,7 +2784,7 @@
           return;
         }
 
-        if (event.type === "status_updated") {
+        if (event.type === "status_updated" || event.type === "profile_updated") {
           knownUsers = [event.payload.profile, ...knownUsers.filter((user) => user.id !== event.payload.profile.id)];
           for (const [circleId, users] of knownCircleUsers) {
             if (users.some((user) => user.id === event.payload.profile.id)) {
@@ -2752,11 +2796,18 @@
               knownChannelUsers.set(channelId, [event.payload.profile, ...users.filter((user) => user.id !== event.payload.profile.id)]);
             }
           }
-          if (event.payload.profile.id === currentParticipantId) statusDraft.dirty = false;
+          if (event.payload.profile.id === currentParticipantId) {
+            if (event.type === "status_updated") statusDraft.dirty = false;
+            if (event.type === "profile_updated") {
+              profileDisplayNameDirty = false;
+              profileDisplayName.value = event.payload.profile.display_name;
+              finishPendingProfileUpdate("", event.request_id);
+            }
+          }
           renderKnownUsers();
           renderConversationIdentity();
           refreshVisibleProfileStatuses(event.payload.profile.id);
-          if (event.payload.profile.id === currentParticipantId) {
+          if (event.type === "status_updated" && event.payload.profile.id === currentParticipantId) {
             const statusEditor = document.querySelector("#status-editor");
             if (statusEditor instanceof HTMLDetailsElement) statusEditor.open = false;
           }
@@ -3284,6 +3335,13 @@
               failPendingMessage(event.request_id, message, true);
             }
             pushSystem(event.payload.message || event.payload.code);
+            return;
+          }
+          if (requestedCommand === "update_profile") {
+            const message = event.payload.code === "validation_error"
+              ? "Visningsnamnet er ikkje gyldig. Prøv eit kortare namn."
+              : "Namnet kunne ikkje lagrast. Prøv igjen.";
+            finishPendingProfileUpdate(message, event.request_id);
             return;
           }
           if (requestedCommand === "accept_invitation") {

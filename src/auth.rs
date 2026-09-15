@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::OidcConfig,
-    domain::{DisplayName, PrincipalKind, TextValidationError, User, UserId},
+    domain::{DisplayName, Handle, PrincipalKind, TextValidationError, User, UserId},
 };
 
 const LOGIN_TTL_SECONDS: u64 = 600;
@@ -78,7 +78,7 @@ impl AuthService {
             return Err(AuthError::Unauthorized);
         }
         let name = requested_name.unwrap_or_else(|| "guest".to_owned());
-        principal("urn:sproyt:development", &name, &name, None)
+        principal("urn:sproyt:development", &name, &name, Some(&name), None)
     }
 
     pub async fn authenticate_session(
@@ -406,6 +406,9 @@ impl OidcService {
             }
         };
         let subject = claims.subject().as_str().to_owned();
+        let preferred_username = claims
+            .preferred_username()
+            .map(|username| username.as_str());
         let display_name = claims
             .name()
             .and_then(|name| name.get(None))
@@ -424,7 +427,13 @@ impl OidcService {
         // and nonce-verified ID token; the local, opaque enrollment token is
         // separately matched to its expected e-mail hash during acceptance.
         let email = normalized_email(claims.email().map(|email| email.as_str()));
-        let principal = principal(&self.issuer, &subject, display_name, email)?;
+        let principal = principal(
+            &self.issuer,
+            &subject,
+            display_name,
+            preferred_username,
+            email,
+        )?;
         let now = now_seconds();
         // The ID token expiry validates the authentication assertion. The
         // access token has its own lifetime, supplied by the token endpoint,
@@ -440,6 +449,12 @@ impl OidcService {
                         issuer: self.issuer.clone(),
                         subject: subject.clone(),
                         display_name: principal.user.display_name.to_string(),
+                        #[allow(clippy::option_as_ref_deref)]
+                        preferred_username: principal
+                            .user
+                            .handle
+                            .as_ref()
+                            .map(|handle| handle.to_string()),
                         email: principal.email.clone(),
                         refresh_token: refresh_token.secret().to_owned(),
                         expires_at: refresh_expires_at,
@@ -453,6 +468,11 @@ impl OidcService {
             issuer: self.issuer.clone(),
             subject,
             display_name: principal.user.display_name.to_string(),
+            preferred_username: principal
+                .user
+                .handle
+                .as_ref()
+                .map(|handle| handle.to_string()),
             email: principal.email.clone(),
             access_token: Some(token.access_token().secret().to_owned()),
             refresh_token: None,
@@ -483,6 +503,7 @@ impl OidcService {
             &claims.issuer,
             &claims.subject,
             &claims.display_name,
+            claims.preferred_username.as_deref(),
             claims.email,
         )
     }
@@ -511,6 +532,7 @@ impl OidcService {
                 &claims.issuer,
                 &claims.subject,
                 &claims.display_name,
+                claims.preferred_username.as_deref(),
                 claims.email,
             );
         };
@@ -524,6 +546,10 @@ impl OidcService {
             .request_async(&self.http_client)
             .await
             .map_err(|_| AuthError::Unauthorized)?;
+        let preferred_username = user_info
+            .preferred_username()
+            .map(|username| username.as_str())
+            .or(claims.preferred_username.as_deref());
         let display_name = user_info
             .name()
             .and_then(|name| name.get(None))
@@ -534,14 +560,20 @@ impl OidcService {
                     .map(|username| username.as_str())
             })
             .unwrap_or(&claims.display_name);
-        principal(&claims.issuer, &claims.subject, display_name, claims.email)
+        principal(
+            &claims.issuer,
+            &claims.subject,
+            display_name,
+            preferred_username,
+            claims.email,
+        )
     }
 
     async fn renew_session(
         &self,
         cookie_header: Option<&str>,
     ) -> Result<SessionRenewal, AuthError> {
-        let (issuer, subject, display_name, email, refresh_token) =
+        let (issuer, subject, display_name, preferred_username, email, refresh_token) =
             if let Some(value) = read_cookie(cookie_header, REFRESH_COOKIE) {
                 let claims: RefreshClaims = self.codec.open(value)?;
                 validate_refresh_claims(&claims.issuer, claims.expires_at, &self.issuer)?;
@@ -549,6 +581,7 @@ impl OidcService {
                     claims.issuer,
                     claims.subject,
                     claims.display_name,
+                    claims.preferred_username,
                     claims.email,
                     claims.refresh_token,
                 )
@@ -565,6 +598,7 @@ impl OidcService {
                     claims.issuer,
                     claims.subject,
                     claims.display_name,
+                    claims.preferred_username,
                     claims.email,
                     refresh_token,
                 )
@@ -593,6 +627,7 @@ impl OidcService {
             issuer: issuer.clone(),
             subject: subject.clone(),
             display_name,
+            preferred_username,
             email: email.clone(),
             access_token: Some(access_token),
             refresh_token: None,
@@ -604,6 +639,7 @@ impl OidcService {
             issuer,
             subject,
             display_name: renewed.display_name.clone(),
+            preferred_username: renewed.preferred_username.clone(),
             email,
             refresh_token: token
                 .refresh_token()
@@ -636,6 +672,8 @@ struct SessionClaims {
     subject: String,
     display_name: String,
     #[serde(default)]
+    preferred_username: Option<String>,
+    #[serde(default)]
     email: Option<String>,
     #[serde(default)]
     access_token: Option<String>,
@@ -651,6 +689,8 @@ struct RefreshClaims {
     issuer: String,
     subject: String,
     display_name: String,
+    #[serde(default)]
+    preferred_username: Option<String>,
     #[serde(default)]
     email: Option<String>,
     refresh_token: String,
@@ -732,6 +772,7 @@ fn principal(
     issuer: &str,
     subject: &str,
     display_name: &str,
+    preferred_username: Option<&str>,
     email: Option<String>,
 ) -> Result<AuthenticatedPrincipal, AuthError> {
     Ok(AuthenticatedPrincipal {
@@ -739,6 +780,7 @@ fn principal(
             id: UserId::named(format!("{issuer}:{subject}")),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new(display_name)?,
+            handle: preferred_username.map(Handle::from_external),
             external_provider: Some(issuer.to_owned()),
             external_subject: Some(subject.to_owned()),
             created_at: chrono::Utc::now(),
@@ -1058,6 +1100,7 @@ mod tests {
             issuer: "issuer".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            preferred_username: None,
             email: None,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
@@ -1132,6 +1175,7 @@ mod tests {
             issuer: "issuer".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            preferred_username: None,
             email: None,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
@@ -1159,6 +1203,7 @@ mod tests {
             issuer: "https://issuer.example".to_owned(),
             subject: "alice".to_owned(),
             display_name: "Alice".to_owned(),
+            preferred_username: None,
             email: None,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
@@ -1197,6 +1242,7 @@ mod tests {
                 issuer: provider.issuer.clone(),
                 subject: "authentik-user-without-refresh".to_owned(),
                 display_name: "Authentik User".to_owned(),
+                preferred_username: None,
                 email: None,
                 access_token: Some("valid-access-token".to_owned()),
                 refresh_token: None,
@@ -1215,6 +1261,7 @@ mod tests {
                 issuer: provider.issuer.clone(),
                 subject: "authentik-user-1".to_owned(),
                 display_name: "Expired Authentik User".to_owned(),
+                preferred_username: None,
                 email: None,
                 access_token: Some("expired-access-token".to_owned()),
                 refresh_token: Some("refresh-a".to_owned()),
@@ -1233,6 +1280,7 @@ mod tests {
                 issuer: provider.issuer.clone(),
                 subject: "authentik-user-1".to_owned(),
                 display_name: "Suspended Authentik User".to_owned(),
+                preferred_username: None,
                 email: None,
                 access_token: Some("expired-access-token".to_owned()),
                 refresh_token: Some("refresh-a".to_owned()),

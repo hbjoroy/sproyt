@@ -17,7 +17,7 @@ pub use commands::*;
 pub use events::ChatEvent;
 pub use ids::{ChannelId, ChannelSequence, CircleId, InvitationId, MediaId, MessageId, UserId};
 pub use models::*;
-pub use text::{ChannelSlug, DisplayName, MessageBody, TextValidationError};
+pub use text::{ChannelSlug, DisplayName, Handle, MessageBody, TextValidationError};
 pub use wire::{ClientCommand, ServerEvent};
 
 /// The only protocol version accepted by this release.
@@ -183,6 +183,7 @@ mod tests {
                 crate::ClientCommand::ListUsers => "list_users",
                 crate::ClientCommand::ListCircleUsers { .. } => "list_circle_users",
                 crate::ClientCommand::SetStatus { .. } => "set_status",
+                crate::ClientCommand::UpdateProfile { .. } => "update_profile",
                 crate::ClientCommand::OpenDirectChannel { .. } => "open_direct_channel",
                 crate::ClientCommand::ExpandDirectChannel { .. } => "expand_direct_channel",
                 crate::ClientCommand::CreateChannel { .. } => "create_channel",

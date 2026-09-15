@@ -3,7 +3,8 @@ export type JsonPrimitive = null | boolean | number | string;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export interface JsonObject { readonly [field: string]: JsonValue; }
 export type Identifier = string;
-export interface UserProfile { id: string; kind: "human" | "agent"; display_name: string; external_provider: string | null; external_subject: string | null; created_at: string; status_text: string; status_emoji: string; status_expires_at: string | null; }
+/** `handle` is the stable, server-assigned mention name without its `@`. */
+export interface UserProfile { id: string; kind: "human" | "agent"; display_name: string; handle: string | null; external_provider: string | null; external_subject: string | null; created_at: string; status_text: string; status_emoji: string; status_expires_at: string | null; }
 export interface ChannelBase { id: string; slug: string; name: string; kind: "public" | "local" | "private"; circle_id: string | null; created_by: string; }
 /** Rust ChannelSummary: deliberately does not include Channel.created_by. */
 export interface Channel { id: string; slug: string; name: string; kind: "public" | "local" | "private"; circle_id: string | null; direct_user_id: string | null; /** Missing only while a new browser overlaps an older pod. */ is_direct?: boolean; description: string; role: "owner" | "moderator" | "member" | "observer"; last_read_sequence: number; latest_sequence: number; }
@@ -35,6 +36,7 @@ export type ClientCommand =
   | Command<"list_my_circles"> | Command<"list_mentions"> | Command<"list_tasks"> | Command<"ping">
   | Command<"list_circle_users", { circle_id: string }>
   | Command<"set_status", { text: string; emoji: string; expires_at: string | null }>
+  | Command<"update_profile", { display_name: string }>
   | Command<"open_direct_channel", { user_id: string }>
   | Command<"expand_direct_channel", { channel_id: string; user_id: string }>
   | Command<"create_channel", { slug: string; name: string; kind: "public" | "local" | "private"; circle_id: string | null }>
@@ -94,7 +96,7 @@ type Frame<T extends string, P = never> = T extends T
     : { protocol: typeof protocolId; type: T; request_id?: string; payload: P }
   : never;
 export type ServerEvent =
- | Frame<"hello", { participant_id: string; signup_ordinal: number | null }> | Frame<"users_listed", { users: UserProfile[] }> | Frame<"circle_users_listed", { circle_id: string; users: UserProfile[] }> | Frame<"status_updated", { profile: UserProfile }>
+ | Frame<"hello", { participant_id: string; signup_ordinal: number | null }> | Frame<"users_listed", { users: UserProfile[] }> | Frame<"circle_users_listed", { circle_id: string; users: UserProfile[] }> | Frame<"status_updated" | "profile_updated", { profile: UserProfile }>
  | Frame<"direct_channel_opened" | "direct_channel_expanded" | "channel_created", { channel: ChannelBase }> | Frame<"membership_joined" | "channel_member_added" | "read_marker_updated", { membership: Membership }> | Frame<"membership_left" | "subscription_ended", { channel_id: string }>
  | Frame<"channels_listed", { channels: Channel[] }> | Frame<"channel_users_listed", { channel_id: string; users: UserProfile[] }> | Frame<"channel_description_updated", { channel_id: string; description: string }> | Frame<"joinable_channels_listed", { channels: { channel: ChannelBase; description: string }[] }>
  | Frame<"messages_loaded", { channel_id: string; messages: ChatMessage[] }> | Frame<"thread_loaded", { root_message_id: string; messages: ChatMessage[] }> | Frame<"thread_summaries_listed", { channel_id: string; summaries: ThreadSummary[] }> | Frame<"thread_read_updated", { summary: ThreadSummary }> | Frame<"subscription_started", { channel_id: string; history: ChatMessage[] }>
@@ -117,7 +119,10 @@ const isNullableString = (value: unknown): value is string | null => value === n
 const isOneOf = <T extends string>(value: unknown, choices: readonly T[]): value is T => isString(value) && choices.some((choice) => choice === value);
 const objectWith = (value: unknown, required: Readonly<Record<string, (entry: unknown) => boolean>>): value is Record<string, unknown> => isRecord(value) && Object.entries(required).every(([key, validate]) => validate(value[key]));
 const listOf = <T>(guard: (value: unknown) => value is T) => (value: unknown): value is T[] => Array.isArray(value) && value.every(guard);
-const isUser = (value: unknown): value is UserProfile => objectWith(value, { id: isString, kind: (v) => isOneOf(v, ["human", "agent"]), display_name: isString, external_provider: isNullableString, external_subject: isNullableString, created_at: isString, status_text: isString, status_emoji: isString, status_expires_at: isNullableString });
+/** Older pods omit `handle` during a rolling deployment; normalise that to null. */
+type WireUserProfile = Omit<UserProfile, "handle"> & { handle?: string | null };
+const isUser = (value: unknown): value is WireUserProfile => objectWith(value, { id: isString, kind: (v) => isOneOf(v, ["human", "agent"]), display_name: isString, handle: (entry) => entry === undefined || isNullableString(entry), external_provider: isNullableString, external_subject: isNullableString, created_at: isString, status_text: isString, status_emoji: isString, status_expires_at: isNullableString });
+const userFromWire = (user: WireUserProfile): UserProfile => ({ ...user, handle: user.handle ?? null });
 const isChannelBase = (value: unknown): value is ChannelBase => objectWith(value, { id: isString, slug: isString, name: isString, kind: (v) => isOneOf(v, ["public", "local", "private"]), circle_id: isNullableString, created_by: isString });
 const isChannel = (value: unknown): value is Channel => objectWith(value, { id: isString, slug: isString, name: isString, kind: (v) => isOneOf(v, ["public", "local", "private"]), circle_id: isNullableString, direct_user_id: isNullableString, is_direct: (entry) => entry === undefined || isBoolean(entry), description: isString, role: (v) => isOneOf(v, ["owner", "moderator", "member", "observer"]), last_read_sequence: isCount, latest_sequence: isCount });
 type WireMessage = Omit<ChatMessage, "parent_message_id" | "edited_at" | "deleted_at"> & { parent_message_id?: string | null; edited_at?: string | null; deleted_at?: string | null };
@@ -162,14 +167,14 @@ export function asWireEvent(value: unknown): ServerEvent | null {
     // New clients must tolerate an older pod during a rolling deployment.
     // Missing is normalised to null; malformed supplied values are rejected.
     case "hello": return isString(payload.participant_id) && (payload.signup_ordinal === undefined || payload.signup_ordinal === null || (isCount(payload.signup_ordinal) && payload.signup_ordinal > 0)) ? { protocol: protocolId, type: "hello", request_id, payload: { participant_id: payload.participant_id, signup_ordinal: payload.signup_ordinal ?? null } } : null;
-    case "users_listed": return listOf(isUser)(payload.users) ? { protocol: protocolId, type: "users_listed", request_id, payload: { users: payload.users } } : null;
-    case "circle_users_listed": return isString(payload.circle_id) && listOf(isUser)(payload.users) ? { protocol: protocolId, type: "circle_users_listed", request_id, payload: { circle_id: payload.circle_id, users: payload.users } } : null;
-    case "status_updated": return isUser(payload.profile) ? { protocol: protocolId, type: "status_updated", request_id, payload: { profile: payload.profile } } : null;
+    case "users_listed": return listOf(isUser)(payload.users) ? { protocol: protocolId, type: "users_listed", request_id, payload: { users: payload.users.map(userFromWire) } } : null;
+    case "circle_users_listed": return isString(payload.circle_id) && listOf(isUser)(payload.users) ? { protocol: protocolId, type: "circle_users_listed", request_id, payload: { circle_id: payload.circle_id, users: payload.users.map(userFromWire) } } : null;
+    case "status_updated": case "profile_updated": return isUser(payload.profile) ? { protocol: protocolId, type: value.type, request_id, payload: { profile: userFromWire(payload.profile) } } : null;
     case "direct_channel_opened": case "direct_channel_expanded": case "channel_created": return isChannelBase(payload.channel) ? { protocol: protocolId, type: value.type, request_id, payload: { channel: payload.channel } } : null;
     case "membership_joined": case "channel_member_added": case "read_marker_updated": return isMembership(payload.membership) ? { protocol: protocolId, type: value.type, request_id, payload: { membership: payload.membership } } : null;
     case "membership_left": case "subscription_ended": return isString(payload.channel_id) ? { protocol: protocolId, type: value.type, request_id, payload: { channel_id: payload.channel_id } } : null;
     case "channels_listed": return listOf(isChannel)(payload.channels) ? { protocol: protocolId, type: "channels_listed", request_id, payload: { channels: payload.channels } } : null;
-    case "channel_users_listed": return isString(payload.channel_id) && listOf(isUser)(payload.users) ? { protocol: protocolId, type: "channel_users_listed", request_id, payload: { channel_id: payload.channel_id, users: payload.users } } : null;
+    case "channel_users_listed": return isString(payload.channel_id) && listOf(isUser)(payload.users) ? { protocol: protocolId, type: "channel_users_listed", request_id, payload: { channel_id: payload.channel_id, users: payload.users.map(userFromWire) } } : null;
     case "channel_description_updated": return isString(payload.channel_id) && isString(payload.description) ? { protocol: protocolId, type: "channel_description_updated", request_id, payload: { channel_id: payload.channel_id, description: payload.description } } : null;
     case "joinable_channels_listed": return listOf(isDiscoverable)(payload.channels) ? { protocol: protocolId, type: "joinable_channels_listed", request_id, payload: { channels: payload.channels } } : null;
     case "messages_loaded": return isString(payload.channel_id) && listOf(isMessage)(payload.messages) ? { protocol: protocolId, type: "messages_loaded", request_id, payload: { channel_id: payload.channel_id, messages: payload.messages.map(messageFromWire) } } : null;

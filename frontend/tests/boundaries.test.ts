@@ -980,10 +980,12 @@ test("malformed refresh JSON fails closed and recent-user recovery is re-evaluat
 
 test("Rust serde-shaped server frames decode while malformed nested values fail closed", () => {
   const channel = { id: "c1", slug: "prat", name: "Prat", kind: "public", circle_id: "circle-1", created_by: "u1" };
-  const profile = { id: "u1", kind: "human", display_name: "Ada", external_provider: null, external_subject: null, created_at: "2026-08-20T08:00:00Z", status_text: "", status_emoji: "", status_expires_at: null };
+  const profile = { id: "u1", kind: "human", display_name: "Ada", handle: "ada", external_provider: null, external_subject: null, created_at: "2026-08-20T08:00:00Z", status_text: "", status_emoji: "", status_expires_at: null };
   const message = { id: "m1", channel_id: "c1", sender_id: "u1", sender_display_name: "Ada", body: "Hei", sequence: 1, sent_at: "2026-08-20T08:00:00Z" };
   const fixtures: unknown[] = [
     { protocol: protocolId, type: "users_listed", payload: { users: [profile] } },
+    { protocol: protocolId, type: "profile_updated", payload: { profile } },
+    { protocol: protocolId, type: "users_listed", payload: { users: [{ ...profile, id: "agent-1", kind: "agent", handle: null }] } },
     { protocol: protocolId, type: "direct_channel_opened", payload: { channel } },
     { protocol: protocolId, type: "joinable_channels_listed", payload: { channels: [{ channel, description: "Open kanal" }] } },
     { protocol: protocolId, type: "messages_loaded", payload: { channel_id: "c1", messages: [message] } },
@@ -998,6 +1000,7 @@ test("Rust serde-shaped server frames decode while malformed nested values fail 
     { protocol: protocolId, type: "joinable_channels_listed", payload: { channels: [{ channel, description: 7 }] } },
     { protocol: protocolId, type: "messages_loaded", payload: { channel_id: "c1", messages: [{ ...message, sequence: 2 ** 53 }] } },
     { protocol: protocolId, type: "lagged", payload: { channel_id: "c1", last_seen_sequence: 1, latest_known_sequence: 4, skipped: 2 ** 53, hint: "last inn att" } },
+    { protocol: protocolId, type: "users_listed", payload: { users: [{ ...profile, handle: 7 }] } },
     { protocol: protocolId, type: "users_listed", payload: { users: [{ ...profile, status_expires_at: 1 }] } }
   ];
   for (const frame of malformed) assert.equal(asWireEvent(frame), null);

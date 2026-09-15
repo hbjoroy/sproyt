@@ -131,6 +131,10 @@
       #status-editor, #notification-editor { padding: 2px 0; }
       #status-editor > summary, #notification-editor > summary { padding: 5px 0; cursor: pointer; }
       .status-settings, .notification-settings { display: grid; gap: 8px; padding: 7px 0 3px; }
+      .profile-name-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px; }
+      .profile-name-fields label { display: grid; gap: 3px; }
+      .profile-name-fields button { width: auto; min-height: 36px; padding: 5px 11px; white-space: nowrap; }
+      #profile-name-notice { color: var(--muted); font-size: .82rem; }
       .status-fields { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 6px; }
       .signup-badge { display: inline-flex; align-items: center; margin-top: 3px; padding: 2px 6px; border-radius: 999px; background: var(--surface-hover); color: var(--ink); font-size: .76rem; font-weight: 650; }
       .status-fields label { gap: 3px; }
@@ -1168,11 +1172,12 @@
       <aside class="sidebar" id="sidebar-panel">
         <div class="brand"><img class="brand-mark" src="/assets/sproyt-wave-icon-512.png" alt=""><h1>Sprøyt</h1><button class="desktop-sidebar-toggle" id="desktop-sidebar-toggle" type="button" aria-expanded="true" aria-label="Kollaps menyen" data-tooltip="Kollaps menyen" title="Kollaps menyen">‹</button></div>
         <div class="identity">
-          <span>Innlogga som <strong>{{DISPLAY_NAME}}</strong></span>
+          <span>Innlogga som <strong id="identity-display-name">{{DISPLAY_NAME}}</strong></span>
           <span id="signup-badge" class="signup-badge" hidden></span>
           <details id="status-editor">
             <summary id="current-status" aria-label="Set status" data-tooltip="Set status" title="Set status"><span class="status-compact-icon" aria-hidden="true">🙂</span><span class="status-summary-label">Set status</span></summary>
             <div class="status-settings">
+              <div class="profile-name-fields"><label>Visningsnamn<input id="profile-display-name" maxlength="100" autocomplete="name" value="{{DISPLAY_NAME}}"></label><button id="save-profile-display-name" type="button">Lagre namn</button></div><small id="profile-name-notice" aria-live="polite"></small>
               <div class="status-fields"><label>Emoji<input id="status-emoji" aria-label="Status-emoji" maxlength="32" placeholder="🙂"></label><label>Tekst<input id="status-text" maxlength="100" placeholder="Kva skjer?"></label></div>
               <div class="status-emoji-options" id="status-emoji-options" aria-label="Vel status-emoji"><button type="button" data-emoji="🙂" aria-label="Glad">🙂</button><button type="button" data-emoji="💻" aria-label="Arbeider">💻</button><button type="button" data-emoji="🏠" aria-label="Heime">🏠</button><button type="button" data-emoji="🚶" aria-label="Ute">🚶</button><button type="button" data-emoji="🍽️" aria-label="Matpause">🍽️</button><button type="button" data-emoji="🌴" aria-label="Ferie">🌴</button></div>
               <div class="settings-actions"><button class="secondary-button" id="clear-status" type="button">Nullstill</button><button id="save-status" type="button">Lagre</button></div>

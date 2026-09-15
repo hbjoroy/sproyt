@@ -111,6 +111,7 @@ mod tests {
             id: owner.clone(),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new("Integration owner").unwrap(),
+            handle: Some(crate::domain::Handle::new("integration-owner").unwrap()),
             external_provider: None,
             external_subject: None,
             created_at: Utc::now(),

@@ -254,6 +254,17 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn update_profile(
+        &self,
+        actor: UserId,
+        display_name: String,
+    ) -> Result<UserProfile, ChatError> {
+        self.repository
+            .update_profile(actor, DisplayName::new(display_name)?)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn store_media(&self, upload: MediaUpload) -> Result<MediaObject, ChatError> {
         use sha2::{Digest, Sha256};
         let sha256 = format!("{:x}", Sha256::digest(&upload.content));
@@ -343,6 +354,7 @@ impl ChatEngine {
                 id: participant_id,
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new(participant_name)?,
+                handle: Some(crate::domain::Handle::new(participant_name)?),
                 external_provider: Some("development".to_owned()),
                 external_subject: Some(participant_name.to_owned()),
                 created_at: chrono::Utc::now(),

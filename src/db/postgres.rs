@@ -22,7 +22,7 @@ use crate::domain::{
     CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateChatInvitation,
     CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel,
     DisplayName, EditMessage, EnrollmentInvitation, EnrollmentInvitationState, ExportedChannel,
-    ExportedCircle, InboxMention, InvitationId, InvitationPreview, InvitationResponse,
+    ExportedCircle, Handle, InboxMention, InvitationId, InvitationPreview, InvitationResponse,
     InvitationTarget, InvitationTokenCommand, IssuedChatInvitation, IssuedEnrollmentInvitation,
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
@@ -300,13 +300,48 @@ impl ChatRepository for PostgresChatRepository {
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
-            sqlx::query("insert into users (id, kind, display_name, external_provider, external_subject, created_at) values ($1, $2, $3, $4, $5, $6) on conflict(id) do update set kind = excluded.kind, display_name = excluded.display_name, external_provider = excluded.external_provider, external_subject = excluded.external_subject")
+            let mut user = user;
+            let source: Option<String> =
+                sqlx::query_scalar("select handle_source from users where id=$1")
+                    .bind(*user.id.as_uuid())
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+            let supplied_handle = user.handle.is_some();
+            if user.kind == crate::domain::PrincipalKind::Human
+                && user.handle.is_none()
+                && source.is_none()
+            {
+                user.handle = Some(Handle::from_external(user.display_name.as_str()));
+            }
+            if let Some(handle) = user.handle.clone()
+                && source.as_deref() != Some("oidc")
+            {
+                for ordinal in 1..10_000_u32 {
+                    let candidate = handle.with_suffix(ordinal).to_string();
+                    let occupied: Option<Uuid> = sqlx::query_scalar(
+                        "select id from users where lower(handle)=lower($1) and id <> $2",
+                    )
+                    .bind(&candidate)
+                    .bind(*user.id.as_uuid())
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                    if occupied.is_none() {
+                        user.handle = Some(Handle::new(candidate).map_err(storage)?);
+                        break;
+                    }
+                }
+            }
+            sqlx::query("insert into users (id, kind, display_name, handle, handle_source, external_provider, external_subject, created_at) values ($1, $2, $3, $4, case when $4 is null then null when $8 then 'oidc' else 'legacy' end, $5, $6, $7) on conflict(id) do update set kind = excluded.kind, external_provider = excluded.external_provider, external_subject = excluded.external_subject, handle = case when users.handle_source = 'legacy' and excluded.handle is not null and $8 then excluded.handle else users.handle end, handle_source = case when users.handle_source = 'legacy' and excluded.handle is not null and $8 then 'oidc' else users.handle_source end")
                 .bind(*user.id.as_uuid())
                 .bind(user.kind.as_str())
                 .bind(user.display_name.as_str())
+                .bind(user.handle.as_ref().map(Handle::as_str))
                 .bind(&user.external_provider)
                 .bind(&user.external_subject)
                 .bind(user.created_at)
+                .bind(supplied_handle)
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
@@ -356,7 +391,7 @@ impl ChatRepository for PostgresChatRepository {
             if exists.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at from users where kind = 'human' order by lower(display_name), id")
+            let rows = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at from users where kind = 'human' order by lower(display_name), id")
                 .fetch_all(&self.pool)
                 .await
                 .map_err(sql_error)?;
@@ -374,7 +409,7 @@ impl ChatRepository for PostgresChatRepository {
             if exists.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at from users where kind = 'human' order by lower(display_name), id")
+            let rows = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at from users where kind = 'human' order by lower(display_name), id")
                 .fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -397,7 +432,7 @@ impl ChatRepository for PostgresChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join circle_memberships m on m.user_id=u.id where m.circle_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join circle_memberships m on m.user_id=u.id where m.circle_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
                 .bind(*circle_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -421,6 +456,20 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn update_profile<'a>(
+        &'a self,
+        actor: UserId,
+        display_name: DisplayName,
+    ) -> RepositoryFuture<'a, UserProfile> {
+        Box::pin(async move {
+            let row = sqlx::query("update users set display_name=$1 where id=$2 and kind='human' returning id,kind,display_name,handle,external_provider,external_subject,created_at,status_text,status_emoji,status_expires_at")
+                .bind(display_name.as_str()).bind(*actor.as_uuid())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?
+                .ok_or(RepositoryError::PermissionDenied)?;
+            user_profile_from_row(row)
+        })
+    }
+
     fn set_user_status<'a>(
         &'a self,
         actor: UserId,
@@ -429,7 +478,7 @@ impl ChatRepository for PostgresChatRepository {
         expires_at: Option<chrono::DateTime<Utc>>,
     ) -> RepositoryFuture<'a, UserProfile> {
         Box::pin(async move {
-            let row = sqlx::query("update users set status_text=$1, status_emoji=$2, status_expires_at=$3 where id=$4 and kind='human' returning id, kind, display_name, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at")
+            let row = sqlx::query("update users set status_text=$1, status_emoji=$2, status_expires_at=$3 where id=$4 and kind='human' returning id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at")
                 .bind(text).bind(emoji).bind(expires_at).bind(*actor.as_uuid())
                 .fetch_optional(&self.pool).await.map_err(sql_error)?
                 .ok_or(RepositoryError::PermissionDenied)?;
@@ -743,7 +792,7 @@ impl ChatRepository for PostgresChatRepository {
                 .execute(&mut *tx)
                 .await
                 .map_err(sql_error)?;
-            let row = sqlx::query("select id, kind, display_name, external_provider, external_subject, created_at from users where id=$1")
+            let row = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at from users where id=$1")
                 .bind(*actor.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)?
                 .ok_or(RepositoryError::NotFound)?;
             let kind: String = row.try_get("kind").map_err(storage)?;
@@ -755,6 +804,12 @@ impl ChatRepository for PostgresChatRepository {
                     row.try_get::<String, _>("display_name").map_err(storage)?,
                 )
                 .map_err(storage)?,
+                handle: row
+                    .try_get::<Option<String>, _>("handle")
+                    .map_err(storage)?
+                    .map(Handle::new)
+                    .transpose()
+                    .map_err(storage)?,
                 external_provider: row.try_get("external_provider").map_err(storage)?,
                 external_subject: row.try_get("external_subject").map_err(storage)?,
                 created_at: row.try_get("created_at").map_err(storage)?,
@@ -1418,7 +1473,7 @@ impl ChatRepository for PostgresChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
                 .bind(*channel_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -2920,6 +2975,12 @@ fn user_from_row(row: PgRow) -> Result<User, RepositoryError> {
             .ok_or_else(|| storage("invalid principal kind"))?,
         display_name: DisplayName::new(row.try_get::<String, _>("display_name").map_err(storage)?)
             .map_err(storage)?,
+        handle: row
+            .try_get::<Option<String>, _>("handle")
+            .map_err(storage)?
+            .map(Handle::new)
+            .transpose()
+            .map_err(storage)?,
         external_provider: row.try_get("external_provider").map_err(storage)?,
         external_subject: row.try_get("external_subject").map_err(storage)?,
         created_at: row.try_get("created_at").map_err(storage)?,
@@ -2940,6 +3001,12 @@ fn user_profile_from_row(row: PgRow) -> Result<UserProfile, RepositoryError> {
                     .map_err(sql_error)?,
             )
             .map_err(storage)?,
+            handle: row
+                .try_get::<Option<String>, _>("handle")
+                .map_err(sql_error)?
+                .map(Handle::new)
+                .transpose()
+                .map_err(storage)?,
             external_provider: row.try_get("external_provider").map_err(sql_error)?,
             external_subject: row.try_get("external_subject").map_err(sql_error)?,
             created_at: row.try_get("created_at").map_err(sql_error)?,
@@ -3085,15 +3152,15 @@ async fn persist_mentions_postgres(
         return Ok(());
     }
     let rows = sqlx::query(
-        "select u.id,u.display_name from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human'",
+        "select u.id,u.handle from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human'",
     )
     .bind(*message.channel_id.as_uuid())
     .fetch_all(&mut **transaction)
     .await
     .map_err(sql_error)?;
     for row in rows {
-        let display_name: String = row.try_get("display_name").map_err(storage)?;
-        if requested.contains(&mention_handle(&display_name)) {
+        let handle: Option<String> = row.try_get("handle").map_err(storage)?;
+        if handle.is_some_and(|handle| requested.contains(&mention_handle(&handle))) {
             sqlx::query("insert into message_mentions(message_id,mentioned_user_id) values($1,$2) on conflict(message_id,mentioned_user_id) do nothing")
                 .bind(*message.id.as_uuid())
                 .bind(row.try_get::<uuid::Uuid, _>("id").map_err(storage)?)
@@ -3116,7 +3183,7 @@ fn mention_handles(body: &str) -> std::collections::HashSet<String> {
 fn mention_handle(value: &str) -> String {
     value
         .chars()
-        .filter(|character| character.is_alphanumeric() || *character == '_' || *character == '-')
+        .filter(|character| character.is_alphanumeric() || matches!(character, '_' | '-' | '.'))
         .flat_map(char::to_lowercase)
         .collect()
 }
@@ -3390,6 +3457,7 @@ mod tests {
                 id: owner.clone(),
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new("Integration race owner").unwrap(),
+                handle: Some(Handle::new("integration-race-owner").unwrap()),
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),
@@ -3487,6 +3555,7 @@ mod tests {
                     id,
                     kind: PrincipalKind::Human,
                     display_name: DisplayName::new(display_name).unwrap(),
+                    handle: Some(Handle::from_external(display_name)),
                     external_provider: None,
                     external_subject: None,
                     created_at: Utc::now(),
@@ -3571,6 +3640,7 @@ mod tests {
                         id: user,
                         kind: PrincipalKind::Human,
                         display_name: DisplayName::new(format!("Signup {index}")).unwrap(),
+                        handle: Some(Handle::new(format!("signup-{index}")).unwrap()),
                         external_provider: None,
                         external_subject: None,
                         created_at: Utc::now(),
@@ -3602,6 +3672,7 @@ mod tests {
                 id: users[0].clone(),
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new("Renamed signup").unwrap(),
+                handle: Some(Handle::new("signup-0").unwrap()),
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),
@@ -3623,6 +3694,7 @@ mod tests {
                 id: next.clone(),
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new("Next signup").unwrap(),
+                handle: Some(Handle::new("next-signup").unwrap()),
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),
@@ -3675,6 +3747,7 @@ mod tests {
                 id: user.clone(),
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new("Presence user").unwrap(),
+                handle: Some(Handle::new("presence-user").unwrap()),
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),
@@ -3864,6 +3937,7 @@ mod tests {
                 id: alice.clone(),
                 kind: PrincipalKind::Human,
                 display_name: DisplayName::new("Alice").unwrap(),
+                handle: Some(Handle::new("alice").unwrap()),
                 external_provider: None,
                 external_subject: None,
                 created_at: Utc::now(),

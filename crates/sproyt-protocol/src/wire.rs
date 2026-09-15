@@ -18,6 +18,9 @@ pub enum ClientCommand {
         emoji: String,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     },
+    UpdateProfile {
+        display_name: String,
+    },
     OpenDirectChannel {
         user_id: crate::UserId,
     },
@@ -163,6 +166,9 @@ pub enum ServerEvent {
         users: Vec<crate::UserProfile>,
     },
     StatusUpdated {
+        profile: crate::UserProfile,
+    },
+    ProfileUpdated {
         profile: crate::UserProfile,
     },
     DirectChannelOpened {
