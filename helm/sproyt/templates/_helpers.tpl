@@ -17,6 +17,20 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- end }}
 
+{{- define "sproyt.migrationImage" -}}
+{{- $repository := default .Values.image.repository .Values.migration.image.repository -}}
+{{- $tag := default .Values.image.tag .Values.migration.image.tag -}}
+{{- $digest := default .Values.image.digest .Values.migration.image.digest -}}
+{{- if and (eq .Values.config.environment "production") (not $digest) -}}
+{{- fail "migration.image.digest or image.digest is required when config.environment=production" -}}
+{{- end -}}
+{{- if $digest -}}
+{{ printf "%s@%s" $repository $digest }}
+{{- else -}}
+{{ printf "%s:%s" $repository $tag }}
+{{- end -}}
+{{- end }}
+
 {{- define "sproyt.heart.fullname" -}}{{ include "sproyt.fullname" . }}-heart{{- end }}
 {{- define "sproyt.heart.labels" -}}
 app.kubernetes.io/name: heart

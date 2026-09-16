@@ -8,6 +8,16 @@ image:
   digest: ""
   pullPolicy: IfNotPresent
 
+# Keep database migrations forward-only during an application rollback. When
+# empty, the migration hook uses the application image. Operators may pin a
+# newer migration-capable image while temporarily running an older app image.
+migration:
+  image:
+    repository: ""
+    tag: ""
+    digest: ""
+    pullPolicy: ""
+
 # Secrets must exist in the release namespace. Leave empty for public/local images.
 imagePullSecrets: []
 # - name: oci-pull-secret

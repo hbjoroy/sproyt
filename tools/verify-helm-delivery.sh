@@ -49,6 +49,15 @@ grep -F -q 'port: 9000' "$rendered"
 test "$(grep -F -c -- "- name: oci-pull-secret" "$rendered")" -eq 2
 test "$(grep -F -c "serviceAccountName: default" "$rendered")" -eq 1
 
+rollback_digest=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+rollback_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$heart_rendered" "$rollback_rendered"' EXIT
+"$helm_command" template sproyt "$chart" "${common[@]}" \
+  --set "image.digest=$rollback_digest" \
+  --set "migration.image.digest=$digest" >"$rollback_rendered"
+test "$(grep -F -c "image: \"oci.bjoroy.me/sproyt/sproyt@$rollback_digest\"" "$rollback_rendered")" -eq 1
+test "$(grep -F -c "image: \"$image\"" "$rollback_rendered")" -eq 1
+
 if "$helm_command" template sproyt "$chart" "${common[@]}" \
   --set "image.digest=$digest" \
   --set heart.enabled=true >/dev/null 2>&1; then

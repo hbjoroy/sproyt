@@ -32,8 +32,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: {{ include "sproyt.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "sproyt.migrationImage" . | quote }}
+          imagePullPolicy: {{ default .Values.image.pullPolicy .Values.migration.image.pullPolicy }}
           args: ["migrate"]
           env:
             - name: DATABASE_URL
