@@ -26,11 +26,24 @@ In the Authentik admin interface for the `sproyt` provider:
 6. If the installed version distinguishes logout redirect URIs, add
    `https://sproyt.bjoroy.me/` as a strict logout URI. Otherwise configure it as
    the provider's permitted post-logout redirect.
-7. Include the standard `openid`, `profile`, `email` and `offline_access`
-   scopes/property mappings. Sproyt uses `sub` as the stable external identity,
-   `preferred_username` as the default public `@nick`, and `name` as the
-   initial display name. The user can later edit the display name in Sprøyt;
-   neither name is used as an authentication key.
+7. Include `openid`, `email` and `offline_access`. For `profile`, use a
+   Sproyt-specific scope mapping rather than Authentik's shared default mapping:
+
+   ```python
+   return delete_none_values({
+       "name": request.user.name,
+       "preferred_username": request.user.username,
+       "nickname": request.user.username,
+   })
+   ```
+
+   Do not include `picture` or `groups` unless Sproyt starts consuming them.
+   Inline avatars previously made Authentik's JWT large enough to exceed the
+   browser's per-cookie limit in older Sproyt releases. Sproyt uses `sub` as
+   the stable, invisible external identity, `preferred_username` as the
+   default public `@nick`, and `name` as the initial display name. The user can
+   later edit the display name in Sprøyt; neither name is an authentication
+   key.
 8. Bind only the users or groups that should be allowed into the private beta.
 
 Record the provider slug, client ID and client secret in the deployment secret

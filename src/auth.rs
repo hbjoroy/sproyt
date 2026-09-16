@@ -474,7 +474,12 @@ impl OidcService {
                 .as_ref()
                 .map(|handle| handle.to_string()),
             email: principal.email.clone(),
-            access_token: Some(token.access_token().secret().to_owned()),
+            // Do not put the provider access token in a browser cookie.  Real
+            // Authentik access tokens can be large enough that adding normal
+            // profile claims pushes the encrypted cookie past the browser's
+            // 4 KiB per-cookie limit, which makes a fresh login loop.
+            // Refresh credentials remain in their dedicated cookie.
+            access_token: None,
             refresh_token: None,
             expires_at,
             refresh_expires_at: Some(refresh_expires_at),
@@ -613,7 +618,6 @@ impl OidcService {
             .request_async(&self.http_client)
             .await
             .map_err(|_| AuthError::Unauthorized)?;
-        let access_token = token.access_token().secret().to_owned();
         // Refresh-token exchange already authenticates the grant. Do not make
         // renewal depend on a second userinfo round-trip: profile freshness is
         // handled by the explicit revalidation path, while background renewal
@@ -629,7 +633,9 @@ impl OidcService {
             display_name,
             preferred_username,
             email: email.clone(),
-            access_token: Some(access_token),
+            // See the callback path: an access token is not needed to resume
+            // the local session and must not bloat the browser cookie.
+            access_token: None,
             refresh_token: None,
             expires_at: now_seconds().saturating_add(access_max_age),
             refresh_expires_at: Some(refresh_expires_at),
@@ -1118,6 +1124,49 @@ mod tests {
     }
 
     #[test]
+    fn new_session_cookie_omits_large_access_tokens_and_stays_below_browser_limit() {
+        let key = URL_SAFE_NO_PAD.encode([6_u8; 32]);
+        let codec = CookieCodec::new(&key, &[]).unwrap();
+        let preferred_username =
+            "early-adopter-with-a-perfectly-ordinary-but-long-authentik-username";
+        let base = || SessionClaims {
+            issuer: "https://auth.example".to_owned(),
+            subject: "authentik-user-with-a-long-subject".to_owned(),
+            display_name: "An Authentik User With A Normal Display Name".to_owned(),
+            preferred_username: Some(preferred_username.to_owned()),
+            email: Some("user.with.a.long.local.part@example.test".to_owned()),
+            access_token: None,
+            refresh_token: None,
+            expires_at: now_seconds() + 300,
+            refresh_expires_at: Some(now_seconds() + REFRESH_IDLE_TTL_SECONDS),
+        };
+
+        // Authentik can issue JWT access tokens of this size.  The pre-fix
+        // session cookie stored that token and exceeded the 4 KiB browser
+        // limit after profile data was added.
+        let mut oversized_legacy = base();
+        oversized_legacy.access_token = Some("a".repeat(3_000));
+        let oversized_cookie = secure_cookie(
+            SESSION_COOKIE,
+            &codec.seal(&oversized_legacy).unwrap(),
+            "/",
+            300,
+        );
+        assert!(oversized_cookie.len() > 4_096);
+
+        let new_cookie = secure_cookie(SESSION_COOKIE, &codec.seal(&base()).unwrap(), "/", 300);
+        assert!(new_cookie.len() < 3_800);
+        let claims: SessionClaims = codec
+            .open(read_cookie(Some(&new_cookie), SESSION_COOKIE).unwrap())
+            .unwrap();
+        assert_eq!(
+            claims.preferred_username.as_deref(),
+            Some(preferred_username)
+        );
+        assert!(claims.access_token.is_none());
+    }
+
+    #[test]
     fn session_cookie_accepts_previous_release_shape_during_rollout() {
         #[derive(Serialize)]
         struct PreviousSessionClaims {
@@ -1387,13 +1436,18 @@ mod tests {
             restored.email.as_deref(),
             Some("authentik.user@example.test")
         );
+        let callback_session: SessionClaims = service
+            .codec
+            .open(read_cookie(Some(&complete.set_cookie), SESSION_COOKIE).unwrap())
+            .unwrap();
+        assert!(callback_session.access_token.is_none());
         let revalidated = auth
             .revalidate_request(None, Some(&complete.set_cookie))
             .await
             .unwrap();
         assert_eq!(
             revalidated.user.display_name.to_string(),
-            "Current Authentik User"
+            "Authentik Test User"
         );
         assert_eq!(
             revalidated.email.as_deref(),
@@ -1408,6 +1462,7 @@ mod tests {
             .open(read_cookie(Some(&renewed_cookie), SESSION_COOKIE).unwrap())
             .unwrap();
         assert!(renewed.refresh_token.is_none());
+        assert!(renewed.access_token.is_none());
         assert_eq!(
             renewed.email.as_deref(),
             Some("authentik.user@example.test")
@@ -1442,10 +1497,11 @@ mod tests {
                 .await
                 .is_ok()
         );
-        assert!(matches!(
-            auth.revalidate_request(None, Some(&renewed_cookie)).await,
-            Err(AuthError::Unauthorized)
-        ));
+        assert!(
+            auth.revalidate_request(None, Some(&renewed_cookie))
+                .await
+                .is_ok()
+        );
 
         let nonce_login = auth.login(None).unwrap();
         let nonce_state = authorization_parameter(&nonce_login.authorization_url, "state");
