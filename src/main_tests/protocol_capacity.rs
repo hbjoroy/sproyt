@@ -570,9 +570,12 @@ fn browser_is_an_installable_pwa_with_bounded_offline_caching() {
     assert!(BROWSER_CLIENT.contains("navigator.serviceWorker.register"));
     assert!(BROWSER_CLIENT.contains("/assets/sproyt-wave-icon-512.png"));
     assert!(BROWSER_CLIENT.contains("viewport-fit=cover"));
+    assert!(BROWSER_CLIENT.contains("interactive-widget=resizes-content"));
     assert!(BROWSER_CLIENT.contains("--app-height: 100dvh"));
     assert!(BROWSER_CLIENT.contains("env(safe-area-inset-bottom)"));
-    assert!(BROWSER_CLIENT.contains("const height = viewport?.height || window.innerHeight"));
+    assert!(BROWSER_CLIENT.contains("const layoutHeight = window.innerHeight"));
+    assert!(BROWSER_CLIENT.contains("const visualHeight = viewport?.height ?? layoutHeight"));
+    assert!(BROWSER_CLIENT.contains("const layoutMatchesVisual = !viewport || ("));
     assert!(BROWSER_CLIENT.contains("--app-offset-top: 0px"));
     assert!(BROWSER_CLIENT.contains("height: var(--app-height)"));
     assert!(!BROWSER_CLIENT.contains("width: min(1120px, 100%)"));
@@ -1785,7 +1788,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     );
     assert!(BROWSER_CLIENT.contains("function settleConversationAtBottom()"));
     assert!(!BROWSER_CLIENT.contains("sendForm.scrollIntoView"));
-    assert!(BROWSER_CLIENT.contains("const offsetTop = viewport?.offsetTop || 0"));
+    assert!(BROWSER_CLIENT.contains("const offsetTop = layoutMatchesVisual ? 0 : visualOffsetTop"));
     assert!(
         BROWSER_CLIENT
             .contains("window.visualViewport?.addEventListener(\"scroll\", syncAppViewportHeight")
