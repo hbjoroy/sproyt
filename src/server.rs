@@ -34,8 +34,8 @@ use crate::{
         approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
     },
     web::assets::{
-        app_bundle, client_core_wasm, client_store, client_store_legacy, offline_page, pwa_manifest,
-        service_worker, wave_logo_192, wave_logo_512,
+        app_bundle, client_core_wasm, client_store, client_store_legacy, offline_page,
+        pwa_manifest, service_worker, wave_logo_192, wave_logo_512,
     },
     web::auth::{auth_callback, auth_login, auth_logout, auth_refresh, auth_session},
     web::browser::index,
