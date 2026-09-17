@@ -41,7 +41,12 @@ export function PreviewManagement({ snapshot, onNavigate, capabilities, settings
       } else onNavigate(destination);
     }}>{label}</Button>;
   return <>
-    <Button onClick={() => setOpen(true)}>Meny og innstillingar</Button>
+    <Button onClick={event => {
+      // Safari does not focus buttons on pointer activation. Give the native
+      // dialog a stable return target instead of leaving focus on the draft.
+      event.currentTarget.focus({ preventScroll: true });
+      setOpen(true);
+    }}>Meny og innstillingar</Button>
     <Dialog open={open} title="Meny og innstillingar" closeLabel="Lukk menyen" onClose={() => setOpen(false)}>
       <p>Samtalen og utkasta dine blir tekne vare på.</p>
       <div style={{ display: "grid", gap: 8 }}>
