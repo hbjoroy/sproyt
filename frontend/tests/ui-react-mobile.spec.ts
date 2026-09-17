@@ -48,8 +48,10 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }
     const parent = thread.locator(".sp-thread-parent");
     await expect(parent.locator("[data-thread-trigger]")).toHaveCount(0);
     await expect(parent.getByRole("button", { name: "Legg til reaksjon", exact: true })).toBeVisible();
+    await parent.getByRole("button", { name: "Fleire meldingsval" }).click();
     await expect(parent.getByRole("button", { name: "Rediger", exact: true })).toBeVisible();
     await expect(parent.getByRole("button", { name: "Slett", exact: true })).toBeVisible();
+    await parent.getByRole("button", { name: "Lukk meldingsvala" }).click();
     const reply = thread.getByRole("textbox", { name: "Svar i tråden" });
     await reply.fill("Trådutkast");
     await expectUsableConversation(page, thread, viewport.height * .25);
@@ -82,15 +84,10 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await expect(composer).toHaveValue("Bevar mobilutkastet");
   expect((await channel.locator(".sp-timeline").boundingBox())!.height).toBeGreaterThanOrEqual(height - 1);
   await composer.click();
-  const tools = channel.locator(".sp-writing-tools-track");
-  const more = channel.getByRole("button", { name: "Vis fleire skriveverktøy", exact: true });
-  await expect(more).toBeVisible();
-  for (let step = 0; step < 5 && await more.isVisible(); step++) {
-    const previous = await tools.evaluate(element => element.scrollLeft);
-    await more.click();
-    await expect.poll(() => tools.evaluate(element => element.scrollLeft)).toBeGreaterThan(previous);
-  }
-  await expect(channel.getByRole("button", { name: "Vis første skriveverktøy", exact: true })).toBeVisible();
+  const tools = channel.getByRole("toolbar", { name: "Skriveverktøy" });
+  await expect(tools).toBeVisible();
+  await expect(tools.getByRole("button")).toHaveCount(4);
+  expect(await tools.evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(await tools.evaluate(element => element.clientWidth));
   await expect(channel.getByRole("button", { name: "Biletegenerering", exact: true })).toBeInViewport({ ratio: 1 });
   await channel.getByRole("button", { name: "Biletegenerering", exact: true }).click();
   await expect(channel.getByRole("region", { name: "Private biletmeldingar" })).toBeVisible();
