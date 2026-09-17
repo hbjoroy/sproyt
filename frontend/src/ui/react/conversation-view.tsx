@@ -158,14 +158,22 @@ export interface ConversationViewProps {
   readonly overlays?: ReactNode;
 }
 
+function ConnectionIndicator({ connected, status }: { readonly connected: boolean; readonly status: string }) {
+  const reconnecting = !connected && /^(Fornyar økta|Gjenopprettar samtalen|Koplar til)/.test(status);
+  const state = connected ? "connected" : reconnecting ? "reconnecting" : "disconnected";
+  const symbol = connected ? "●" : reconnecting ? "◐" : "○";
+  return <div className="sp-connection-status" data-connected={connected} data-state={state}
+    role="status" aria-label={`Sambandsstatus: ${status}`} title={status}>
+    <span aria-hidden="true">{symbol}</span><span className="sp-sr">{status}</span>
+  </div>;
+}
+
 export function ConversationView(props: ConversationViewProps) {
   const snapshot = useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
   const titleId = useId();
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
     <AppShell view={props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
-      header={<>{props.header}{snapshot.connection.status && <div className="sp-connection-status" data-connected={snapshot.connection.connected}>
-        <Status>{snapshot.connection.status}</Status>
-      </div>}</>}>
+      header={<>{props.header}{snapshot.connection.status && <ConnectionIndicator {...snapshot.connection} />}</>}>
       <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}>
         <section className="sp-channel-pane" aria-labelledby={titleId}>
           <header className="sp-context">

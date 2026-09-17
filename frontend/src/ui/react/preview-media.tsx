@@ -8,18 +8,23 @@ function mediaUrl(id: string, preview = false) {
   return `/api/v1/media/${id}${preview ? "/preview" : ""}${participant ? `?participant=${encodeURIComponent(participant)}` : ""}`;
 }
 
-function MediaFigure({ id, contentType, name, onOpen }: { id: string; contentType: string; name: string; onOpen?: () => void }) {
+function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: {
+  id: string; contentType: string; name: string; onOpen?: () => void; fullResolution?: boolean;
+}) {
+  const isVideo = contentType.startsWith("video/");
   return <figure className="sp-media-figure">
-    {contentType.startsWith("video/")
+    {isVideo
       ? <video src={mediaUrl(id)} controls preload="metadata" aria-label={name} />
       : onOpen
         ? <button type="button" aria-label={`Vis ${name} i full storleik`} onClick={onOpen}
             className="sp-media-open">
             <img src={mediaUrl(id, true)} alt={name} loading="lazy" />
           </button>
-        : <img src={mediaUrl(id, true)} alt={name} loading="lazy" />}
-    <figcaption><span title={name}>{name}</span><a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer"
-      aria-label="Vis i full storleik" title="Vis i full storleik">Original ↗</a></figcaption>
+        : <img src={mediaUrl(id, !fullResolution)} alt={name} loading="lazy" />}
+    <figcaption><span title={name}>{name}</span>{onOpen
+      ? <button type="button" className="sp-media-original" onClick={onOpen}
+          aria-label="Vis originalbiletet">Original</button>
+      : isVideo && <a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer">Original ↗</a>}</figcaption>
   </figure>;
 }
 
@@ -40,7 +45,7 @@ export function PreviewAttachments({ media, status, busy, onRemove }: {
     {status && <Status>{status}</Status>}
     {expanded && media.filter(item => item.id === expanded).map(item => <Dialog key={item.id} open title={item.original_filename}
       closeLabel="Lukk førehandsvisinga" onClose={() => setExpanded(null)}>
-      <MediaFigure id={item.id} contentType={item.content_type} name={item.original_filename} />
+      <MediaFigure id={item.id} contentType={item.content_type} name={item.original_filename} fullResolution />
     </Dialog>)}
   </section>;
 }
@@ -60,6 +65,5 @@ export function PreviewMediaContent({ body, mediaOnly = false }: { body: string;
     {lightbox && <Dialog open title={lightbox.name} closeLabel="Lukk bilete" onClose={() => setLightbox(null)}>
       <img src={mediaUrl(lightbox.id)} alt={lightbox.name}
         style={{ display: "block", maxWidth: "100%", maxHeight: "min(82dvh, 900px)", objectFit: "contain" }} />
-      <a className="sp-media-original" href={mediaUrl(lightbox.id)} target="_blank" rel="noopener noreferrer">Vis i full storleik ↗</a>
     </Dialog>}</>;
 }

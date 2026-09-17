@@ -73,6 +73,8 @@ test("shell reads the existing runtime without enqueuing events or taking its li
     timeline: { channelId: "channel", messages: [], formatTime: value => value, renderContent: item => item.body }
   }));
   assert.ok(html.includes("Fråkopla — prøver igjen"));
+  assert.ok(html.includes('data-state="disconnected"'));
+  assert.ok(html.includes("○"));
   assert.ok(html.includes('data-theme="dark"'));
   assert.equal(delivered, 0);
   assert.equal(runtime.getSnapshot().transport.processedEvents, 0);

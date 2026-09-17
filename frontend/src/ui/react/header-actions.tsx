@@ -27,7 +27,10 @@ export function HeaderActions({ children, primary }: { readonly children: ReactN
     };
   }, [open]);
   return <div className="sp-header-actions" ref={container}>
-    <span className="sp-brand">Sprøyt.</span>
+    <span className="sp-brand sp-sproyt-brand">
+      <img src="/assets/sproyt-wave.svg" alt="" aria-hidden="true" />
+      <span>Sprøyt</span>
+    </span>
     <div className="sp-header-primary">{primary}
     <Button className="sp-header-toggle" variant="quiet" ref={trigger} aria-expanded={open} aria-controls={id}
       onClick={() => setOpen(value => !value)}>Meny <span aria-hidden="true">☰</span></Button></div>

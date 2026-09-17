@@ -62,8 +62,11 @@ test("React reactions support keyboard popup, several badges, Unicode and live s
   await expect(message.getByRole("button", { name: "👍: 2 reaksjonar" })).toHaveAttribute("aria-pressed", "true");
   await message.getByRole("button", { name: "👍: 2 reaksjonar" }).click();
   await expect(message.getByRole("button", { name: "👍: 1 reaksjonar" })).toHaveAttribute("aria-pressed", "false");
-  await message.locator('summary[aria-label="Kven reagerte?"]').click();
-  await expect(message.locator("details.sp-reaction-details")).toContainText("❤️ Du");
+  const heart = message.getByRole("button", { name: "❤️: 1 reaksjonar" });
+  await heart.hover();
+  await expect(message.getByRole("tooltip")).toContainText("❤️ Du");
+  await page.mouse.move(0, 0);
+  await expect(message.getByRole("tooltip")).toHaveCount(0);
   expect(commands).toHaveLength(4);
   expect(sockets).toBe(1);
   expect(errors).toEqual([]);

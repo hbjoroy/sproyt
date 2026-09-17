@@ -40,11 +40,12 @@ test("React sends real attachment-only messages and exposes an uncropped preview
   await expect(message).toBeVisible();
   const image = message.getByRole("img");
   await expect(image).toHaveCSS("object-fit", "contain");
-  const url = await message.getByRole("link", { name: "Vis i full storleik" }).getAttribute("href");
-  expect(url).toMatch(/^\/api\/v1\/media\/[0-9a-f-]+\?participant=/);
-  await image.click();
+  await message.getByRole("button", { name: "Vis originalbiletet" }).click();
   const lightbox = preview.getByRole("dialog", { name: "landskap.png" });
-  await expect(lightbox.getByRole("img", { name: "landskap.png" })).toBeVisible();
+  const original = lightbox.getByRole("img", { name: "landskap.png" });
+  await expect(original).toBeVisible();
+  const url = await original.getAttribute("src");
+  expect(url).toMatch(/^\/api\/v1\/media\/[0-9a-f-]+\?participant=/);
   await page.keyboard.press("Escape");
   await expect(lightbox).toHaveCount(0);
   const response = await page.request.get(url!);
