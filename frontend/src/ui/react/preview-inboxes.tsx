@@ -110,7 +110,11 @@ export function PreviewInboxes({ state, host }: { readonly state: PreviewInboxSt
   };
   const openInbox = () => { setOpen(true); select(kind); };
   return <>
-    <Button onClick={openInbox}>Innboks og oppgåver{mentionCount + taskCount > 0 ? ` (${mentionCount + taskCount})` : ""}</Button>
+    <Button variant="quiet" className="sp-inbox-trigger" onClick={openInbox}
+      aria-label={`Innboks og oppgåver${unreadTotal ? `, ${unreadTotal} uleste meldingar` : ""}`} title="Innboks og oppgåver">
+      <span aria-hidden="true">▤</span><span className="sp-inbox-label">Innboks</span>
+      {unreadTotal + mentionCount + taskCount > 0 && <span className="sp-badge">{approximateCount(unreadTotal + mentionCount + taskCount)}</span>}
+    </Button>
     <Dialog open={open} title="Innboks og oppgåver" closeLabel="Tilbake til samtalen" onClose={() => setOpen(false)}>
       <nav aria-label="Innboksvising" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Button aria-pressed={kind === "unread"} onClick={() => select("unread")}>Uleste{unreadTotal ? ` (${approximateCount(unreadTotal)})` : ""}</Button>

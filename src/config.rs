@@ -11,6 +11,8 @@ const DEFAULT_WS_IDLE_TIMEOUT_SECONDS: u64 = 60;
 const PRODUCTION_OIDC_ISSUER: &str = "https://sproyt-security.bjoroy.me/application/o/sproyt/";
 const PRODUCTION_OIDC_REDIRECT_URL: &str = "https://sproyt.bjoroy.me/auth/callback";
 const PRODUCTION_POST_LOGOUT_REDIRECT_URL: &str = "https://sproyt.bjoroy.me/";
+const CANARY_OIDC_REDIRECT_URL: &str = "https://sproyt-canary.bjoroy.me/auth/callback";
+const CANARY_POST_LOGOUT_REDIRECT_URL: &str = "https://sproyt-canary.bjoroy.me/";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppConfig {
@@ -185,11 +187,12 @@ impl OidcConfig {
             ));
         }
         if environment == DeploymentEnvironment::Production
-            && redirect.as_str() != PRODUCTION_OIDC_REDIRECT_URL
+            && ![PRODUCTION_OIDC_REDIRECT_URL, CANARY_OIDC_REDIRECT_URL]
+                .contains(&redirect.as_str())
         {
             return Err(ConfigError::InvalidOidcConfig(
                 "SPROYT_OIDC_REDIRECT_URL",
-                "expected https://sproyt.bjoroy.me/auth/callback",
+                "expected an approved bjoroy.me callback URL",
             ));
         }
         let post_logout = validate_oidc_url(
@@ -207,11 +210,15 @@ impl OidcConfig {
             ));
         }
         if environment == DeploymentEnvironment::Production
-            && post_logout.as_str() != PRODUCTION_POST_LOGOUT_REDIRECT_URL
+            && ![
+                PRODUCTION_POST_LOGOUT_REDIRECT_URL,
+                CANARY_POST_LOGOUT_REDIRECT_URL,
+            ]
+            .contains(&post_logout.as_str())
         {
             return Err(ConfigError::InvalidOidcConfig(
                 "SPROYT_OIDC_POST_LOGOUT_REDIRECT_URL",
-                "expected https://sproyt.bjoroy.me/",
+                "expected an approved bjoroy.me logout URL",
             ));
         }
         validate_session_key("SPROYT_SESSION_KEY", &self.session_key)?;
@@ -642,6 +649,21 @@ mod tests {
             config(issuer, redirect, logout, &key)
                 .validate(DeploymentEnvironment::Production)
                 .is_ok()
+        );
+        assert!(
+            config(
+                issuer,
+                CANARY_OIDC_REDIRECT_URL,
+                CANARY_POST_LOGOUT_REDIRECT_URL,
+                &key
+            )
+            .validate(DeploymentEnvironment::Production)
+            .is_ok()
+        );
+        assert!(
+            config(issuer, CANARY_OIDC_REDIRECT_URL, logout, &key)
+                .validate(DeploymentEnvironment::Production)
+                .is_err()
         );
         assert!(
             config(

@@ -98,30 +98,40 @@ export function ConversationTimeline(props: TimelineProps) {
     {!props.loading && !props.error && visibleEntries.length === 0 && <Status>Ingen meldingar enno.</Status>}
     {visibleEntries.map((item, index) => item.type === "system"
       ? <Status key={`notice-${index}`}>{item.text}</Status>
-      : <ConversationMessage key={item.message.id} message={item.message} {...props} />)}
+      : <ConversationMessage key={item.message.id} message={item.message} {...props}
+          dateLabel={index === 0 || (() => {
+            const previous = visibleEntries.slice(0, index).reverse().find(entry => entry.type === "message");
+            return previous?.type !== "message" || new Date(previous.message.sent_at).toLocaleDateString(["nn-NO", "nb-NO"])
+              !== new Date(item.message.sent_at).toLocaleDateString(["nn-NO", "nb-NO"]);
+          })() ? new Date(item.message.sent_at).toLocaleDateString(["nn-NO", "nb-NO"], { day: "numeric", month: "long", year: "numeric" }) : undefined} />)}
   </div>;
 }
 
 export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "renderContent" | "renderActions" | "messageStatus" | "onReactionRequest">;
 
 /** The thread parent uses the same safe rendering and permission policy as replies. */
-export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean }) {
+export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean; readonly dateLabel?: string }) {
   const message = props.message;
   const wrapper = useRef<HTMLDivElement>(null);
   const latestMessage = useRef(message);
   latestMessage.current = message;
   const requestReaction = props.onReactionRequest;
+  const deliveryStatus = props.messageStatus?.(message);
+  const visibleStatus = deliveryStatus === "Sendt" ? undefined : deliveryStatus?.replace(/^Sendt · /, "");
   const onReactionRequest = useCallback((anchor: HTMLElement) => {
     if (!latestMessage.current.deleted_at) requestReaction?.(latestMessage.current, anchor);
   }, [requestReaction]);
   useEffect(() => {
     const time = wrapper.current?.querySelector("time");
     if (time) time.title = new Date(message.sent_at).toLocaleString("nn-NO");
-  }, [message.sent_at]);
-  return <div ref={wrapper} data-message-id={message.id}>
+    const author = wrapper.current?.querySelector(".sp-message-meta strong");
+    if (author instanceof HTMLElement) author.title = author.textContent ?? "";
+  }, [message.sent_at, message.sender_display_name, props.formatAuthor]);
+  return <div ref={wrapper} data-message-id={message.id} data-date-start={props.dateLabel ? "true" : undefined}>
+    {props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
     <Message author={props.formatAuthor?.(message) ?? message.sender_display_name} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
-        status={message.deleted_at ? "Sletta" : props.messageStatus?.(message) ?? (message.edited_at ? "Redigert" : undefined)}
+        status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
         actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}
         onReactionRequest={!message.deleted_at && props.onReactionRequest
           ? onReactionRequest : undefined}>

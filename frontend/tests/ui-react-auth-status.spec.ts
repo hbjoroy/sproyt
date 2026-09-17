@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("React preview shows delivery status for an accepted own message", async ({ page }) => {
+test("React preview keeps routine accepted status out of the message rhythm", async ({ page }) => {
   await page.goto("/?participant=playwright-react-delivery&ui=react", { waitUntil: "domcontentloaded" });
   const preview = page.locator("#sproyt-react-preview");
   const composer = preview.getByRole("textbox", { name: "Skriv melding" });
@@ -10,7 +10,7 @@ test("React preview shows delivery status for an accepted own message", async ({
   await composer.press("Enter");
   const message = preview.locator("[data-message-id]").filter({ hasText: body });
   await expect(message).toBeVisible();
-  await expect(message).toContainText("Sendt");
+  await expect(message.getByText("Sendt", { exact: true })).toHaveCount(0);
 });
 
 test("React reauthentication action persists channel and thread drafts before login", async ({ page }) => {

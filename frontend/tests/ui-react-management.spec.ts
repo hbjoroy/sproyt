@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function openPreview(page: Page, participant: string) {
   await page.goto(`/?participant=${participant}&ui=react`);
@@ -7,13 +7,19 @@ async function openPreview(page: Page, participant: string) {
   return preview;
 }
 
+async function openManagement(preview: Locator) {
+  const trigger = preview.getByRole("button", { name: "Meny og innstillingar" });
+  if (!await trigger.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
+  await trigger.click();
+  return trigger;
+}
+
 test("management directory contains focus, cancels with Escape and does not mutate", async ({ page }) => {
   const commands: string[] = [];
   page.on("websocket", socket => socket.on("framesent", ({ payload }) => commands.push(JSON.parse(String(payload)).type)));
   const preview = await openPreview(page, "preview-management-cancel");
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast medan menyen er open");
-  const trigger = preview.getByRole("button", { name: "Meny og innstillingar" });
-  await trigger.click();
+  const trigger = await openManagement(preview);
   const dialog = preview.getByRole("dialog", { name: "Meny og innstillingar" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Samtalen og utkasta dine blir tekne vare på");
@@ -36,7 +42,7 @@ for (const [label, title] of [
     page.on("websocket", () => sockets++);
     const preview = await openPreview(page, `preview-management-${label}`);
     await preview.getByRole("textbox", { name: "Skriv melding" }).fill("behald administrasjonsutkast");
-    await preview.getByRole("button", { name: "Meny og innstillingar" }).click();
+    await openManagement(preview);
     await preview.getByRole("button", { name: label, exact: true }).click();
     const dialog = preview.getByRole("dialog", { name: title });
     await expect(dialog).toBeVisible();
@@ -54,19 +60,19 @@ for (const [label, title] of [
 test("creation, channel membership and enrollment stay in React and retain real circle scope", async ({ page }) => {
   const participant = `preview-management-circle-${Date.now()}`;
   let preview = await openPreview(page, participant);
-  await preview.getByRole("button", { name: "Meny og innstillingar" }).click();
+  await openManagement(preview);
   await preview.getByRole("button", { name: "Ny vennekrets", exact: true }).click();
   const creation = preview.getByRole("dialog", { name: "Ny vennekrets", exact: true });
   await creation.getByRole("textbox", { name: "Namn på vennekrets" }).fill("Krets frå React");
   await creation.getByRole("button", { name: "Opprett vennekrets" }).click();
   await expect(creation).toHaveCount(0);
   preview = await openPreview(page, participant);
-  await preview.getByRole("button", { name: "Meny og innstillingar" }).click();
+  await openManagement(preview);
   const circle = preview.getByRole("region", { name: "Krets frå React", exact: true });
   await circle.getByRole("button", { name: "Kanalar og medlemskap" }).click();
   await expect(preview.getByRole("dialog", { name: "Kanalar i Krets frå React" })).toBeVisible();
   preview = await openPreview(page, participant);
-  await preview.getByRole("button", { name: "Meny og innstillingar" }).click();
+  await openManagement(preview);
   await preview.getByRole("searchbox", { name: "Finn vennekrets" }).fill("Krets frå React");
   await preview.getByRole("region", { name: "Krets frå React", exact: true })
     .getByRole("button", { name: "Inviter personar og nye brukarar" }).click();
@@ -117,7 +123,7 @@ test("React management preserves both channel and thread drafts", async ({ page 
   await channelInput.fill("kanalutkast gjennom meny");
   await preview.locator("[data-message-id]").filter({ hasText: root }).getByRole("button", { name: "Svar i tråd" }).click();
   await preview.getByRole("textbox", { name: "Svar i tråden" }).fill("trådutkast gjennom meny");
-  await preview.getByRole("button", { name: "Meny og innstillingar" }).click();
+  await openManagement(preview);
   await preview.getByRole("button", { name: "Personar og ny direktemelding" }).click();
   await expect(preview.getByRole("dialog", { name: "Personar og ny direktemelding" })).toBeVisible();
   await expect(page.locator("#thread-panel")).toHaveAttribute("inert", "");

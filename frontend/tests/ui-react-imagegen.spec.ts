@@ -57,6 +57,7 @@ test("private image review survives reload and attaches without publishing; deta
   await inbox.getByRole("button", { name: "Skjul", exact: true }).click();
   await expect(inbox).toHaveCount(0);
   await input.focus();
+  await preview.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
   await preview.getByRole("button", { name: "Biletegenerering", exact: true }).click();
   await expect(inbox).toBeVisible();
   expect(state.sockets()).toBe(1);

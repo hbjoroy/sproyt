@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function settings(page: Page, label: "Profil og status" | "Varslingsinnstillingar") {
   const preview = page.locator("#sproyt-react-preview");
+  await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
   await preview.getByRole("button", { name: label, exact: true }).click();
   return preview.getByRole("dialog", { name: label, exact: true });
@@ -102,6 +103,7 @@ test("raw text toggle retains markdown source and returns to safe formatted cont
   await input.fill(source); await input.press("Enter");
   const message = preview.locator("[data-message-id]").filter({ hasText: /råtekst/ }).last();
   await expect(message.locator("strong")).toBeVisible();
+  await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await preview.getByRole("button", { name: "Vis råtekst", exact: true }).click();
   await expect(message.locator("pre")).toHaveText(source);
   await expect(message.locator("script")).toHaveCount(0);

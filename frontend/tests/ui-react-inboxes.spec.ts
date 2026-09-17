@@ -92,14 +92,14 @@ test("React inbox handles unread, mentions and tasks while preserving the conver
   await composer.fill("utkastet skal overleve innboksen");
   await page.evaluate(() => (window as typeof window & { __inboxFixture: { activate(): void } }).__inboxFixture.activate());
 
-  await preview.getByRole("button", { name: "Innboks og oppgåver", exact: true }).click();
+  await preview.getByRole("button", { name: /^Innboks og oppgåver/ }).click();
   let dialog = preview.getByRole("dialog", { name: "Innboks og oppgåver" });
   await expect(dialog.getByText("3 uleste meldingar i 1 samtale")).toBeVisible();
   await dialog.getByRole("button", { name: "# general, 3 uleste meldingar" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(composer).toHaveValue("utkastet skal overleve innboksen");
 
-  await preview.getByRole("button", { name: "Innboks og oppgåver", exact: true }).click();
+  await preview.getByRole("button", { name: /^Innboks og oppgåver/ }).click();
   dialog = preview.getByRole("dialog", { name: "Innboks og oppgåver" });
   await dialog.getByRole("button", { name: "Omtalar" }).click();
   const mention = dialog.getByRole("article").filter({ hasText: "Kjeldemelding for omtale" });
@@ -137,7 +137,7 @@ test("closing the React inbox restores focus and keeps an open thread draft", as
   await root.getByRole("button", { name: "Svar i tråd" }).click();
   const reply = preview.locator(".sp-thread-pane").getByRole("textbox", { name: "Svar i tråden" });
   await reply.fill("eit usendt trådutkast");
-  const trigger = preview.getByRole("button", { name: "Innboks og oppgåver", exact: true });
+  const trigger = preview.getByRole("button", { name: /^Innboks og oppgåver/ });
   await trigger.click();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();

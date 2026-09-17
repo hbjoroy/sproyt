@@ -9,29 +9,39 @@ function mediaUrl(id: string, preview = false) {
 }
 
 function MediaFigure({ id, contentType, name, onOpen }: { id: string; contentType: string; name: string; onOpen?: () => void }) {
-  const size = { display: "block", maxWidth: "100%", maxHeight: "min(45vh, 360px)", objectFit: "contain" as const };
-  return <figure style={{ margin: "8px 0", minWidth: 0 }}>
+  return <figure className="sp-media-figure">
     {contentType.startsWith("video/")
-      ? <video src={mediaUrl(id)} controls preload="metadata" style={size} aria-label={name} />
+      ? <video src={mediaUrl(id)} controls preload="metadata" aria-label={name} />
       : onOpen
         ? <button type="button" aria-label={`Vis ${name} i full storleik`} onClick={onOpen}
-            style={{ display: "block", padding: 0, border: 0, background: "transparent", maxWidth: "100%" }}>
-            <img src={mediaUrl(id, true)} alt={name} loading="lazy" style={size} />
+            className="sp-media-open">
+            <img src={mediaUrl(id, true)} alt={name} loading="lazy" />
           </button>
-        : <img src={mediaUrl(id, true)} alt={name} loading="lazy" style={size} />}
-    <figcaption>{name} · <a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer">Vis i full storleik</a></figcaption>
+        : <img src={mediaUrl(id, true)} alt={name} loading="lazy" />}
+    <figcaption><span title={name}>{name}</span><a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer"
+      aria-label="Vis i full storleik" title="Vis i full storleik">Original ↗</a></figcaption>
   </figure>;
 }
 
 export function PreviewAttachments({ media, status, busy, onRemove }: {
   media: readonly MediaObject[]; status?: string; busy: boolean; onRemove: (id: string) => void;
 }) {
-  return <section aria-label="Valde vedlegg" style={{ maxHeight: "min(38vh, 360px)", overflowY: "auto" }}>
-    {media.map(item => <div key={item.id}>
-      <MediaFigure id={item.id} contentType={item.content_type} name={item.original_filename} />
-      <Button disabled={busy} onClick={() => onRemove(item.id)}>Fjern {item.original_filename}</Button>
+  const [expanded, setExpanded] = useState<string | null>(null);
+  return <section aria-label="Valde vedlegg" className="sp-draft-attachments">
+    {media.map(item => <div className="sp-draft-attachment" key={item.id}>
+      <button className="sp-draft-thumbnail" type="button" title={`Vis ${item.original_filename}`}
+        aria-label={`Vis ${item.original_filename}`} onClick={() => setExpanded(item.id)}>
+        {item.content_type.startsWith("image/") ? <img src={mediaUrl(item.id, true)} alt="" /> : <span aria-hidden="true">▶</span>}
+      </button>
+      <span className="sp-draft-filename" title={item.original_filename}>{item.original_filename}</span>
+      <Button variant="quiet" disabled={busy} aria-label={`Fjern ${item.original_filename}`} title={`Fjern ${item.original_filename}`}
+        onClick={() => onRemove(item.id)}><span aria-hidden="true">×</span></Button>
     </div>)}
     {status && <Status>{status}</Status>}
+    {expanded && media.filter(item => item.id === expanded).map(item => <Dialog key={item.id} open title={item.original_filename}
+      closeLabel="Lukk førehandsvisinga" onClose={() => setExpanded(null)}>
+      <MediaFigure id={item.id} contentType={item.content_type} name={item.original_filename} />
+    </Dialog>)}
   </section>;
 }
 
@@ -50,5 +60,6 @@ export function PreviewMediaContent({ body, mediaOnly = false }: { body: string;
     {lightbox && <Dialog open title={lightbox.name} closeLabel="Lukk bilete" onClose={() => setLightbox(null)}>
       <img src={mediaUrl(lightbox.id)} alt={lightbox.name}
         style={{ display: "block", maxWidth: "100%", maxHeight: "min(82dvh, 900px)", objectFit: "contain" }} />
+      <a className="sp-media-original" href={mediaUrl(lightbox.id)} target="_blank" rel="noopener noreferrer">Vis i full storleik ↗</a>
     </Dialog>}</>;
 }

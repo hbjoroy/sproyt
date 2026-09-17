@@ -8,7 +8,11 @@ async function enter(page: Page, participant: string) {
 }
 async function menu(preview: Locator, label: string) {
   const menu = preview.getByRole("dialog", { name: "Meny og innstillingar" });
-  if (!await menu.isVisible()) await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
+  if (!await menu.isVisible()) {
+    const trigger = preview.getByRole("button", { name: "Meny og innstillingar", exact: true });
+    if (!await trigger.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
+    await trigger.click();
+  }
   await menu.getByRole("button", { name: label, exact: true }).click();
 }
 async function createCircle(preview: Locator, name: string) {

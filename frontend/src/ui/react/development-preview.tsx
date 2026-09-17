@@ -193,11 +193,10 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     header: <>{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
-      <HeaderActions>
+      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}>
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
-      <PreviewInboxes state={host.inboxState()} host={host} />
       <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced}
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }}
         onNavigate={destination => { close(); host.openManagement(destination); }} /></HeaderActions></>,
@@ -230,7 +229,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       onScroll: channelScroll.onScroll
     },
     message: {
-      formatTime: sentAt => new Date(sentAt).toLocaleTimeString("nn-NO", { hour: "2-digit", minute: "2-digit" }),
+      formatTime: sentAt => new Date(sentAt).toLocaleTimeString(["nn-NO", "nb-NO"], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
       formatAuthor: message => {
         const profile = host.settings.profileFor?.(message.sender_id);
         return [host.isOwnMessage(message) ? "Du" : message.sender_display_name,

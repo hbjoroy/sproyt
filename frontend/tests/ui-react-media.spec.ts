@@ -25,6 +25,7 @@ test("React sends real attachment-only messages and exposes an uncropped preview
   const input = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled({ timeout: 15000 });
   await input.focus();
+  await preview.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
   const chooser = page.waitForEvent("filechooser");
   await preview.getByRole("button", { name: "Legg ved bilete eller video" }).click();
   await (await chooser).setFiles(await photo(page));
@@ -32,7 +33,7 @@ test("React sends real attachment-only messages and exposes an uncropped preview
   await expect(attachments.getByRole("button", { name: "Fjern landskap.png" })).toBeEnabled();
   await expect(attachments).toContainText("klar til å sendast");
   await input.blur();
-  await expect(attachments.getByRole("img")).toBeVisible();
+  await expect(attachments.getByRole("button", { name: "Vis landskap.png", exact: true })).toBeVisible();
   await preview.getByRole("button", { name: "Send vedlegg", exact: true }).click();
   await expect(attachments.getByRole("button", { name: "Fjern landskap.png" })).toHaveCount(0);
   const message = preview.locator(".sp-channel-pane [data-message-id]").filter({ has: page.getByRole("img", { name: "landskap.png" }) });

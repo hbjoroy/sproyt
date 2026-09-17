@@ -85,6 +85,8 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   expect((await channel.locator(".sp-timeline").boundingBox())!.height).toBeGreaterThanOrEqual(height - 1);
   await composer.click();
   const tools = channel.getByRole("toolbar", { name: "Skriveverktøy" });
+  await expect(tools).toBeHidden();
+  await channel.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
   await expect(tools).toBeVisible();
   await expect(tools.getByRole("button")).toHaveCount(4);
   expect(await tools.evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(await tools.evaluate(element => element.clientWidth));

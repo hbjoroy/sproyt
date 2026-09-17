@@ -58,7 +58,7 @@
         overflow-x: clip;
       }
 
-      main {
+      #sproyt-app {
         width: 100%;
         max-width: 100%;
         min-width: 0;
@@ -74,24 +74,24 @@
         overflow: hidden;
       }
 
-      main > *,
-      .sidebar > *,
-      .conversation-header > *,
-      .messages,
-      .message,
-      .message > *,
-      form.send > * {
+      #sproyt-app > *,
+      #sproyt-app .sidebar > *,
+      #sproyt-app .conversation-header > *,
+      #sproyt-app .messages,
+      #sproyt-app .message,
+      #sproyt-app .message > *,
+      #sproyt-app form.send > * {
         min-width: 0;
         max-width: 100%;
       }
 
-      header,
-      form,
-      .messages {
+      #sproyt-app header,
+      #sproyt-app form,
+      #sproyt-app .messages {
         padding: 18px;
       }
 
-      header {
+      #sproyt-app header {
         display: grid;
         gap: 12px;
         border-bottom: 1px solid var(--line);
@@ -494,32 +494,32 @@
       #agent-credential { min-height: 92px; font-family: ui-monospace, monospace; font-size: .75rem; }
       .advanced-tools[hidden] { display: none; }
 
-      h1 {
+      #sproyt-app h1 {
         margin: 0;
         font-size: 1.6rem;
         line-height: 1.1;
       }
 
-      label {
+      #sproyt-app label {
         display: grid;
         gap: 4px;
         color: var(--muted);
         font-size: 0.9rem;
       }
 
-      input,
-      textarea,
-      select,
-      button {
+      #sproyt-app input,
+      #sproyt-app textarea,
+      #sproyt-app select,
+      #sproyt-app button {
         min-height: 40px;
         border: 1px solid var(--border);
         border-radius: 6px;
         font: inherit;
       }
 
-      input,
-      textarea,
-      select {
+      #sproyt-app input,
+      #sproyt-app textarea,
+      #sproyt-app select {
         width: 100%;
         padding: 8px 10px;
         background-color: var(--control);
@@ -527,49 +527,49 @@
         caret-color: var(--ink);
       }
 
-      select {
+      #sproyt-app select {
         color-scheme: light dark;
       }
 
-      select option,
-      select optgroup {
+      #sproyt-app select option,
+      #sproyt-app select optgroup {
         background-color: var(--control);
         color: var(--ink);
       }
 
-      input::placeholder,
-      textarea::placeholder {
+      #sproyt-app input::placeholder,
+      #sproyt-app textarea::placeholder {
         color: var(--subtle);
         opacity: 1;
       }
 
-      textarea {
+      #sproyt-app textarea {
         min-height: 84px;
         resize: vertical;
       }
 
-      button {
+      #sproyt-app button {
         padding: 8px 14px;
         background: var(--accent);
         color: var(--accent-ink);
         cursor: pointer;
       }
 
-      button:disabled {
+      #sproyt-app button:disabled {
         cursor: default;
         opacity: 0.55;
       }
 
-      input:disabled,
-      textarea:disabled,
-      select:disabled {
+      #sproyt-app input:disabled,
+      #sproyt-app textarea:disabled,
+      #sproyt-app select:disabled {
         background: var(--surface);
         color: var(--muted);
         opacity: .75;
         -webkit-text-fill-color: var(--muted);
       }
 
-      :focus-visible {
+      #sproyt-app :focus-visible {
         outline: 3px solid var(--focus);
         outline-offset: 2px;
       }
@@ -815,9 +815,9 @@
         .conversation-header .view-controls { order: 2; }
         .conversation-header .channel-people { order: 3; }
 
-        main { transition: grid-template-columns .16s ease; }
+        #sproyt-app { transition: grid-template-columns .16s ease; }
         .sidebar { transition: padding .16s ease; }
-        main.desktop-sidebar-collapsed { grid-template-columns: 56px minmax(0, 1fr); }
+        #sproyt-app.desktop-sidebar-collapsed { grid-template-columns: 56px minmax(0, 1fr); }
         .sidebar.desktop-collapsed { justify-items: center; gap: 12px; padding: 12px 7px; overflow-x: visible; }
         .sidebar.desktop-collapsed .brand { width: 100%; display: grid; grid-template-columns: 1fr; justify-items: center; gap: 8px; }
         .sidebar.desktop-collapsed .brand h1,
@@ -865,11 +865,11 @@
         .sidebar.desktop-collapsed [data-tooltip] { position: relative; }
         .sidebar.desktop-collapsed [data-tooltip]::after { position: absolute; top: 50%; left: calc(100% + 10px); z-index: 20; width: max-content; max-width: min(240px, calc(100vw - 80px)); padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); color: var(--ink); box-shadow: 0 6px 18px rgb(0 0 0 / 18%); content: attr(data-tooltip); font-size: .8rem; font-weight: 600; line-height: 1.25; opacity: 0; pointer-events: none; transform: translate(4px, -50%); transition: opacity .12s ease, transform .12s ease; }
         .sidebar.desktop-collapsed [data-tooltip]:hover::after, .sidebar.desktop-collapsed [data-tooltip]:focus-visible::after { opacity: 1; transform: translate(0, -50%); }
-        @media (prefers-reduced-motion: reduce) { main, .sidebar { transition: none; } }
+        @media (prefers-reduced-motion: reduce) { #sproyt-app, .sidebar { transition: none; } }
       }
 
       @media (min-width: 641px) and (max-width: 900px) {
-        main { grid-template-columns: 56px minmax(0, 1fr); }
+        #sproyt-app { grid-template-columns: 56px minmax(0, 1fr); }
         .sidebar { justify-items: center; gap: 12px; padding: 12px 7px; overflow-x: visible; }
         .sidebar .brand { width: 100%; display: grid; grid-template-columns: 1fr; justify-items: center; gap: 8px; }
         .sidebar .brand h1, .sidebar .identity > span, .sidebar .status-summary-label, .sidebar .notification-summary-label, .sidebar .logout-label, .sidebar .navigation-heading, .sidebar .conversation-drawer { display: none; }
@@ -898,7 +898,7 @@
       }
 
       @media (min-width: 641px) {
-        main.desktop-sidebar-expanded { grid-template-columns: 280px minmax(0, 1fr); }
+        #sproyt-app.desktop-sidebar-expanded { grid-template-columns: 280px minmax(0, 1fr); }
         .sidebar.desktop-expanded { justify-items: stretch; gap: 18px; padding: 20px 16px; overflow-x: hidden; }
         .sidebar.desktop-expanded .brand { display: flex; width: auto; justify-items: initial; gap: 10px; }
         .sidebar.desktop-expanded .brand h1, .sidebar.desktop-expanded .identity > span, .sidebar.desktop-expanded .status-summary-label, .sidebar.desktop-expanded .notification-summary-label, .sidebar.desktop-expanded .logout-label, .sidebar.desktop-expanded .navigation-heading { display: initial; }
@@ -925,11 +925,11 @@
 
       /* Conversation-first desktop shell: settings rail, conversation drawer, then chat. */
       @media (min-width: 641px) {
-        main { grid-template-columns: 56px minmax(240px, 280px) minmax(0, 1fr); }
-        main.desktop-sidebar-collapsed { grid-template-columns: 56px minmax(240px, 280px) minmax(0, 1fr); }
-        main.desktop-sidebar-expanded { grid-template-columns: 280px minmax(240px, 280px) minmax(0, 1fr); }
-        main.conversation-drawer-collapsed, main.desktop-sidebar-collapsed.conversation-drawer-collapsed { grid-template-columns: 56px 0 minmax(0, 1fr); }
-        main.desktop-sidebar-expanded.conversation-drawer-collapsed { grid-template-columns: 280px 0 minmax(0, 1fr); }
+        #sproyt-app { grid-template-columns: 56px minmax(240px, 280px) minmax(0, 1fr); }
+        #sproyt-app.desktop-sidebar-collapsed { grid-template-columns: 56px minmax(240px, 280px) minmax(0, 1fr); }
+        #sproyt-app.desktop-sidebar-expanded { grid-template-columns: 280px minmax(240px, 280px) minmax(0, 1fr); }
+        #sproyt-app.conversation-drawer-collapsed, #sproyt-app.desktop-sidebar-collapsed.conversation-drawer-collapsed { grid-template-columns: 56px 0 minmax(0, 1fr); }
+        #sproyt-app.desktop-sidebar-expanded.conversation-drawer-collapsed { grid-template-columns: 280px 0 minmax(0, 1fr); }
         .conversation-header, .messages, .composer-area { grid-column: 3; }
         .conversation-drawer { grid-column: 2; grid-row: 1 / -1; display: grid; align-content: start; min-height: 0; gap: 8px; margin: 0; padding: 14px 10px; border-top: 0; border-right: 1px solid var(--line); background: var(--surface); overflow: hidden; }
         .conversation-drawer.is-collapsed { display: none; }
@@ -959,7 +959,7 @@
           padding-left: max(12px, env(safe-area-inset-left));
         }
 
-        main {
+        #sproyt-app {
           height: 100%;
           min-height: 0;
           position: relative;
@@ -1070,26 +1070,26 @@
           color: var(--ink);
         }
 
-        main,
-        .message {
+        #sproyt-app,
+        #sproyt-app .message {
           background: var(--paper);
           border-color: var(--border);
           color: var(--ink);
         }
 
-        input,
-        textarea,
-        select {
+        #sproyt-app input,
+        #sproyt-app textarea,
+        #sproyt-app select {
           background: var(--control);
           border-color: var(--border);
           color: var(--ink);
         }
 
-        select option,
-        select optgroup { background: var(--control); color: var(--ink); }
+        #sproyt-app select option,
+        #sproyt-app select optgroup { background: var(--control); color: var(--ink); }
 
-        header,
-        form.send {
+        #sproyt-app header,
+        #sproyt-app form.send {
           border-color: var(--line);
         }
 
@@ -1116,11 +1116,11 @@
         .reaction-badge[aria-pressed="true"] { background: #315d48; }
         .reaction-picker > div { background: var(--surface-raised); border-color: var(--border); }
 
-        label,
-        .meta,
-        .status,
-        .system,
-        .rendered blockquote {
+        #sproyt-app label,
+        #sproyt-app .meta,
+        #sproyt-app .status,
+        #sproyt-app .system,
+        #sproyt-app .rendered blockquote {
           color: var(--muted);
         }
 
