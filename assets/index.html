@@ -962,10 +962,9 @@
 
         body {
           position: fixed;
-          top: 0;
+          top: var(--app-offset-top);
           right: 0;
           left: 0;
-          transform: translateY(var(--app-offset-top));
           height: var(--app-height);
           min-height: 0;
           padding-top: max(12px, env(safe-area-inset-top));

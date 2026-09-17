@@ -106,6 +106,53 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await context.close();
 });
 
+test("Android visual viewport keeps the focused composer above the keyboard", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    baseURL, serviceWorkers: "block", viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true
+  });
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    const viewport = new EventTarget();
+    Object.assign(viewport, {
+      height: 844, width: 390, offsetTop: 0, offsetLeft: 0,
+      pageTop: 0, pageLeft: 0, scale: 1, onresize: null, onscroll: null
+    });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+  });
+  await page.goto("/?participant=playwright-android-keyboard", { waitUntil: "domcontentloaded" });
+  const app = page.locator("#sproyt-react-preview");
+  const composer = app.getByRole("textbox", { name: "Skriv melding" });
+  await expect(composer).toBeEnabled({ timeout: 15_000 });
+  await composer.focus();
+
+  const keyboardViewport = { height: 411.4, offsetTop: 37.2 };
+  await page.evaluate(({ height, offsetTop }) => {
+    const viewport = window.visualViewport!;
+    Object.assign(viewport, { height, offsetTop, pageTop: offsetTop });
+    viewport.dispatchEvent(new Event("resize"));
+    viewport.dispatchEvent(new Event("scroll"));
+  }, keyboardViewport);
+
+  await expect.poll(async () => app.evaluate((element, viewport) => {
+    const bounds = element.getBoundingClientRect();
+    return Math.max(
+      Math.abs(bounds.top - viewport.offsetTop),
+      Math.abs(bounds.height - viewport.height),
+      Math.abs(bounds.bottom - viewport.offsetTop - viewport.height)
+    );
+  }, keyboardViewport)).toBeLessThan(.05);
+  expect(await app.evaluate(element => element.style.bottom)).toBe("auto");
+  const composerBounds = await composer.boundingBox();
+  expect(composerBounds).not.toBeNull();
+  expect(composerBounds!.y + composerBounds!.height)
+    .toBeLessThanOrEqual(keyboardViewport.offsetTop + keyboardViewport.height);
+  expect(await page.locator("html").evaluate(element => ({
+    height: element.style.getPropertyValue("--app-height"),
+    offsetTop: element.style.getPropertyValue("--app-offset-top")
+  }))).toEqual({ height: "411.4px", offsetTop: "37.2px" });
+  await context.close();
+});
+
 test("channel overflow keeps notification and confirmed leave actions together", async ({ page }) => {
   await page.goto("/?participant=preview-channel-overflow&ui=react");
   const preview = page.locator("#sproyt-react-preview");

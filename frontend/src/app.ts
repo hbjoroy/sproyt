@@ -54,8 +54,10 @@
         const viewport = window.visualViewport;
         const height = viewport?.height || window.innerHeight;
         const offsetTop = viewport?.offsetTop || 0;
-        document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
-        document.documentElement.style.setProperty("--app-offset-top", `${Math.round(offsetTop)}px`);
+        // Keep the visual viewport's fractional CSS pixels. Rounding the height
+        // up can leave the composer below the keyboard edge on high-DPI phones.
+        document.documentElement.style.setProperty("--app-height", `${height}px`);
+        document.documentElement.style.setProperty("--app-offset-top", `${offsetTop}px`);
       }
       syncAppViewportHeight();
       window.addEventListener("resize", syncAppViewportHeight, { passive: true });

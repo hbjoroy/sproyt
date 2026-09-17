@@ -1790,7 +1790,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         BROWSER_CLIENT
             .contains("window.visualViewport?.addEventListener(\"scroll\", syncAppViewportHeight")
     );
-    assert!(BROWSER_CLIENT.contains("transform: translateY(var(--app-offset-top))"));
+    assert!(BROWSER_CLIENT.contains("top: var(--app-offset-top)"));
+    assert!(!BROWSER_CLIENT.contains("transform: translateY(var(--app-offset-top))"));
     assert!(
         APP_SOURCE.contains(
             "function formatMessageTimestamp(sentAt: Date, now: Date = new Date()): string"

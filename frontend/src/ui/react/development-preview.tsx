@@ -171,7 +171,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   const container = document.createElement("section");
   container.id = "sproyt-react-preview";
   container.setAttribute("aria-label", "Sprøyt");
-  Object.assign(container.style, { position: "fixed", inset: "0", zIndex: "1000", height: "var(--app-height, 100dvh)",
+  Object.assign(container.style, { position: "fixed", top: "var(--app-offset-top, 0px)", right: "0", bottom: "auto", left: "0",
+    zIndex: "1000", height: "var(--app-height, 100dvh)",
     paddingTop: "env(safe-area-inset-top)", paddingRight: "env(safe-area-inset-right)",
     paddingBottom: "env(safe-area-inset-bottom)", paddingLeft: "env(safe-area-inset-left)" });
   document.body.append(container);
