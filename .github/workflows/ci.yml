@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_image:
-        description: Publish the tested ARM64 image to the production OCI registry
+        description: Publish the tested ARM64 image as an immutable commit tag
         required: false
         default: false
         type: boolean
@@ -404,8 +404,7 @@ jobs:
     name: Publish immutable OCI image
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish_image &&
-      github.ref == 'refs/heads/main')
+      (github.event_name == 'workflow_dispatch' && inputs.publish_image)
     needs:
       - quality
       - postgres-schema
