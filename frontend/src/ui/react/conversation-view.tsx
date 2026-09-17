@@ -109,12 +109,18 @@ export function ConversationTimeline(props: TimelineProps) {
 
 export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "renderContent" | "renderActions" | "messageStatus" | "onReactionRequest">;
 
+export function formatMessageDateTime(sentAt: string): string {
+  return new Date(sentAt).toLocaleString(["nn-NO", "nb-NO"], { dateStyle: "full", timeStyle: "medium" });
+}
+
 /** The thread parent uses the same safe rendering and permission policy as replies. */
 export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean; readonly dateLabel?: string }) {
   const message = props.message;
   const wrapper = useRef<HTMLDivElement>(null);
   const latestMessage = useRef(message);
   latestMessage.current = message;
+  const fullTimestamp = formatMessageDateTime(message.sent_at);
+  const timestampTooltipId = `message-time-${message.id}`;
   const requestReaction = props.onReactionRequest;
   const deliveryStatus = props.messageStatus?.(message);
   const visibleStatus = deliveryStatus === "Sendt" ? undefined : deliveryStatus?.replace(/^Sendt · /, "");
@@ -123,10 +129,84 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   }, [requestReaction]);
   useEffect(() => {
     const time = wrapper.current?.querySelector("time");
-    if (time) time.title = new Date(message.sent_at).toLocaleString("nn-NO");
+    if (time) {
+      time.title = fullTimestamp;
+      time.tabIndex = 0;
+      time.setAttribute("role", "button");
+      time.setAttribute("aria-label", `Sendt ${fullTimestamp}. Trykk for å vise eller skjule tidspunktet.`);
+      time.setAttribute("aria-describedby", timestampTooltipId);
+      time.setAttribute("aria-expanded", "false");
+      // The message surface owns a long-press reaction gesture. Keep a tap on
+      // its timestamp from starting that timer; the timestamp has its own action.
+      const keepTimestampGesture = (event: Event) => event.stopPropagation();
+      let ignoreClickAfterTouch = false;
+      let openedFromTouch = false;
+      const toggleTimestamp = () => {
+        const owner = wrapper.current;
+        if (!owner) return;
+        const open = owner.dataset.timeOpen !== "true";
+        if (open) owner.dataset.timeOpen = "true";
+        else {
+          delete owner.dataset.timeOpen;
+          time.blur();
+          openedFromTouch = false;
+        }
+        time.setAttribute("aria-expanded", String(open));
+      };
+      const toggleTimestampFromTouch = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        ignoreClickAfterTouch = true;
+        openedFromTouch = true;
+        time.focus({ preventScroll: true });
+        toggleTimestamp();
+      };
+      const toggleTimestampFromClick = () => {
+        if (ignoreClickAfterTouch) {
+          ignoreClickAfterTouch = false;
+          return;
+        }
+        openedFromTouch = false;
+        toggleTimestamp();
+      };
+      const toggleTimestampFromKeyboard = (event: Event) => {
+        if (!(event instanceof KeyboardEvent) || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        openedFromTouch = false;
+        toggleTimestamp();
+      };
+      const closeTimestamp = () => {
+        if (wrapper.current) delete wrapper.current.dataset.timeOpen;
+        time.setAttribute("aria-expanded", "false");
+      };
+      const closeTimestampAfterFocus = () => {
+        if (!openedFromTouch) closeTimestamp();
+      };
+      const closeTimestampFromOutside = (event: Event) => {
+        if (event.target instanceof Node && time.contains(event.target)) return;
+        openedFromTouch = false;
+        closeTimestamp();
+      };
+      time.addEventListener("pointerdown", keepTimestampGesture);
+      time.addEventListener("touchend", toggleTimestampFromTouch);
+      time.addEventListener("click", toggleTimestampFromClick);
+      time.addEventListener("keydown", toggleTimestampFromKeyboard);
+      time.addEventListener("blur", closeTimestampAfterFocus);
+      document.addEventListener("pointerdown", closeTimestampFromOutside, true);
+      return () => {
+        time.removeEventListener("pointerdown", keepTimestampGesture);
+        time.removeEventListener("touchend", toggleTimestampFromTouch);
+        time.removeEventListener("click", toggleTimestampFromClick);
+        time.removeEventListener("keydown", toggleTimestampFromKeyboard);
+        time.removeEventListener("blur", closeTimestampAfterFocus);
+        document.removeEventListener("pointerdown", closeTimestampFromOutside, true);
+      };
+    }
+  }, [fullTimestamp, timestampTooltipId]);
+  useEffect(() => {
     const author = wrapper.current?.querySelector(".sp-message-meta strong");
     if (author instanceof HTMLElement) author.title = author.textContent ?? "";
-  }, [message.sent_at, message.sender_display_name, props.formatAuthor]);
+  }, [message.sender_display_name, props.formatAuthor]);
   return <div ref={wrapper} data-message-id={message.id} data-date-start={props.dateLabel ? "true" : undefined}>
     {props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
     <Message author={props.formatAuthor?.(message) ?? message.sender_display_name} dateTime={message.sent_at}
@@ -137,6 +217,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
           ? onReactionRequest : undefined}>
         {message.deleted_at ? <p>Meldinga er sletta.</p> : props.renderContent(message)}
     </Message>
+    <span id={timestampTooltipId} className="sp-message-time-tooltip" role="tooltip">{fullTimestamp}</span>
   </div>;
 }
 

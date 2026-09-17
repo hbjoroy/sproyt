@@ -675,6 +675,7 @@
 
       .message {
         display: grid;
+        position: relative;
         gap: 3px;
         min-width: 0;
         max-width: 100%;
@@ -694,6 +695,20 @@
         font-size: 0.85rem;
       }
       .message-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .message time { cursor: help; outline-offset: 3px; }
+      .message-time-tooltip {
+        display: none; position: absolute; z-index: 8; top: 2rem; left: 10px;
+        width: max-content; max-width: min(24rem, calc(100vw - 2rem));
+        padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px;
+        background: var(--surface-raised); color: var(--ink); box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+        font-size: .8rem; line-height: 1.35; white-space: normal; pointer-events: none;
+      }
+      .message:has(time:hover) > .message-time-tooltip,
+      .message:has(time:focus-visible) > .message-time-tooltip,
+      .message[data-time-open="true"] > .message-time-tooltip { display: block; }
+      @media (pointer: coarse) {
+        .message time { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; }
+      }
 
       .rendered {
         display: grid;

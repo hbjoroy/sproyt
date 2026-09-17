@@ -28,7 +28,7 @@ export function HeaderActions({ children, primary }: { readonly children: ReactN
   }, [open]);
   return <div className="sp-header-actions" ref={container}>
     <span className="sp-brand sp-sproyt-brand">
-      <img src="/assets/sproyt-wave.svg" alt="" aria-hidden="true" />
+      <img src="/assets/sproyt-wave-icon-512.png" alt="" aria-hidden="true" />
       <span>Sprøyt</span>
     </span>
     <div className="sp-header-primary">{primary}

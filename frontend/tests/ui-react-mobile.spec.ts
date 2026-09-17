@@ -35,6 +35,16 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }
     await channel.getByRole("button", { name: "Send ↑", exact: true }).click();
     const sent = channel.locator("[data-message-id]").filter({ hasText: message });
     await expect(sent).toBeVisible();
+    const timestamp = sent.locator("time");
+    await expect(timestamp).toHaveAttribute("aria-label", /^Sendt .+ Trykk for å vise eller skjule tidspunktet\.$/);
+    await expect(timestamp).toHaveAttribute("title", /\d{4}/);
+    const timestampTooltip = sent.getByRole("tooltip");
+    await timestamp.tap();
+    await expect(timestamp).toHaveAttribute("aria-expanded", "true");
+    await expect(timestampTooltip).toBeVisible();
+    await composer.tap();
+    await expect(timestamp).toHaveAttribute("aria-expanded", "false");
+    await expect(timestampTooltip).toBeHidden();
     await expect(composer).toHaveValue("");
     await composer.fill("Kanalutkast som skal bli verande");
     await channel.getByRole("button", { name: "← Samtalar" }).click();

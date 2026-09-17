@@ -1796,7 +1796,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
             "function formatMessageTimestamp(sentAt: Date, now: Date = new Date()): string"
         )
     );
-    assert!(BROWSER_CLIENT.contains("dateStyle: \"full\", timeStyle: \"short\""));
+    assert!(BROWSER_CLIENT.contains("dateStyle: \"full\", timeStyle: \"medium\""));
+    assert!(BROWSER_CLIENT.contains("timestamp.setAttribute(\"aria-expanded\", \"false\")"));
     assert!(BROWSER_CLIENT.contains("appendProfileStatus(senderLabel, message.sender_id)"));
     assert!(BROWSER_CLIENT.contains("channel.direct_user_id"));
     assert!(BROWSER_CLIENT.contains("function approximateUnreadCount(count)"));

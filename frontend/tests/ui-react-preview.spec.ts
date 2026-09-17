@@ -123,7 +123,14 @@ test("preview keyboard sending uses one host send and preserves Shift+Enter and 
   await input.dispatchEvent("compositionend");
   await input.press("Enter");
   await expect(input).toHaveValue("");
-  await expect(preview.getByText(message, { exact: true })).toBeVisible();
+  const sent = preview.locator("[data-message-id]").filter({ hasText: message });
+  await expect(sent.getByText(message, { exact: true })).toBeVisible();
+  const timestamp = sent.locator("time");
+  await timestamp.hover();
+  await expect(sent.getByRole("tooltip")).toBeVisible();
+  await timestamp.focus();
+  await expect(sent.getByRole("tooltip")).toBeVisible();
+  await input.focus();
   await expect(input).toBeFocused();
   expect(sends).toEqual([message]);
 });

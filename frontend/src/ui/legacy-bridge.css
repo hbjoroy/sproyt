@@ -116,6 +116,7 @@
 #sproyt-react-preview [data-message-id] .sp-message-meta {
   display: contents;
 }
+#sproyt-react-preview [data-message-id] { position: relative; }
 #sproyt-react-preview [data-message-id] .sp-message { display: flex; flex-wrap: wrap; align-items: center; column-gap: .5rem; position: relative; width: 100%; max-width: 860px; }
 #sproyt-react-preview [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message { margin-top: .5rem; }
 #sproyt-react-preview [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message::before {
@@ -124,7 +125,17 @@
 }
 #sproyt-react-preview [data-message-id] .sp-message-body { flex-basis: 100%; order: 1; }
 #sproyt-react-preview [data-message-id] .sp-message-meta strong { min-width: 0; max-width: calc(100% - 12rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#sproyt-react-preview .sp-time { white-space: nowrap; }
+#sproyt-react-preview .sp-time { white-space: nowrap; cursor: help; outline-offset: 3px; }
+#sproyt-react-preview .sp-message-time-tooltip {
+  display: none; position: absolute; z-index: 8; top: 1.45rem; left: 0;
+  width: max-content; max-width: min(24rem, calc(100vw - 2rem));
+  padding: .4rem .55rem; border: 1px solid var(--sp-rule); border-radius: 2px;
+  background: var(--sp-surface); color: var(--sp-text); box-shadow: 0 6px 18px #0002;
+  font-size: .75rem; line-height: 1.35; white-space: normal; pointer-events: none;
+}
+#sproyt-react-preview [data-message-id]:has(.sp-time:hover) > .sp-message-time-tooltip,
+#sproyt-react-preview [data-message-id]:has(.sp-time:focus-visible) > .sp-message-time-tooltip,
+#sproyt-react-preview [data-message-id][data-time-open="true"] > .sp-message-time-tooltip { display: block; }
 #sproyt-react-preview .sp-date { margin-top: .65rem; }
 #sproyt-react-preview .sp-masthead { position: relative; flex-shrink: 0; }
 .sp-header-actions { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
@@ -235,4 +246,5 @@
 @media (pointer: coarse) {
   .sp-composer-symbol.sp-button, .sp-message-symbol.sp-button { min-width: 44px; min-height: 44px; }
   .sp-reaction-badge-wrap > .sp-button { min-width: 44px; min-height: 44px; }
+  #sproyt-react-preview .sp-time { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; }
 }

@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createApplicationRuntime } from "../../application/runtime";
 import type { ChatMessage } from "../../types";
-import { ConversationNavigation, ConversationTimeline, ConversationView, messagesForTimeline } from "./conversation-view";
+import { ConversationNavigation, ConversationTimeline, ConversationView, formatMessageDateTime, messagesForTimeline } from "./conversation-view";
 import type { TimelineProps } from "./conversation-view";
 
 function message(id: string, sequence: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -48,6 +48,8 @@ test("ordered timeline keeps notices between messages and formats the author", (
   assert.ok(html.indexOf("first") < html.indexOf("Tilkopling attoppretta"));
   assert.ok(html.indexOf("Tilkopling attoppretta") < html.indexOf("second"));
   assert.ok(html.includes("Du · 🌱 · Arbeider"));
+  assert.ok(html.includes('class="sp-message-time-tooltip"'));
+  assert.ok(html.includes(`>${formatMessageDateTime(first.sent_at)}</span>`));
 });
 
 test("circles with identical names retain distinct groups and channel identities", () => {
