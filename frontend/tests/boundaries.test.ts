@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import "./conversation-snapshot.test";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";

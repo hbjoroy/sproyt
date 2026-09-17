@@ -58,7 +58,7 @@ test("development client loads through CSP, connects, and sends a message", asyn
     await route.fulfill({ json: { refresh_after_seconds: 300 } });
   });
 
-  const response = await page.goto("/?participant=playwright-smoke", { waitUntil: "domcontentloaded" });
+  const response = await page.goto("/?participant=playwright-smoke&ui=legacy", { waitUntil: "domcontentloaded" });
   expect(response).not.toBeNull();
   expect(response?.headers()["content-security-policy"]).toMatch(/script-src 'self' 'nonce-/);
 
@@ -126,7 +126,7 @@ test("development client loads through CSP, connects, and sends a message", asyn
 
 test("conversation-first navigation collapses on desktop and behaves as a modal drawer on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/?participant=playwright-conversation-layout", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=playwright-conversation-layout&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
 
   const sidebar = page.locator("#sidebar-panel");
@@ -187,7 +187,7 @@ test("a circle owner invites an existing user from the conversation drawer", asy
     window.WebSocket = RecordingWebSocket;
     window.__sproytCircleInviteCommands = commands;
   });
-  await page.goto("/?participant=playwright-circle-invite-owner", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=playwright-circle-invite-owner&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
 
   const circleName = `Invitasjon ${crypto.randomUUID().slice(0, 8)}`;
@@ -274,7 +274,7 @@ test("a dropped send survives a real IndexedDB reload with one request id and cl
     }
     window.WebSocket = JournalProbeWebSocket;
   });
-  await page.goto("/?participant=playwright-durable-journal", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=playwright-durable-journal&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
   const message = `journal reload ${crypto.randomUUID()}`;
   await page.locator("#body").fill(message);
@@ -324,7 +324,7 @@ test("the channel member browser opens a direct conversation without showing you
     window.WebSocket = RecordingWebSocket;
     window.__sproytDmCommands = commands;
   });
-  await page.goto("/?participant=playwright-dm-actor", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=playwright-dm-actor&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
   await page.locator("#channel-people").click();
   const memberList = page.locator("#channel-member-list");

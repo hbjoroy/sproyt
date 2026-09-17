@@ -1,5 +1,12 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
-      import { createApplicationStore, createServerEventMailbox } from "./client-store";
+      import { createApplicationRuntime } from "./application/runtime";
+      import { createCommunityRequests } from "./application/community-requests";
+      import { createCommunityHost } from "./application/community-host";
+      import { createAdvancedHost } from "./application/advanced-host";
+      import { projectConversationSnapshot, type ConversationTimelineItem as TimelineItem } from "./application/conversation-snapshot";
+      import { createPendingRequests, type PendingMessage } from "./application/pending-requests";
+      import { installSproytDesignSystem, setSproytTheme, type SproytThemeMode } from "./ui/design-system";
+      import { shouldMountReactInterface } from "./ui/react/development-selector";
       import { AgentApi, EnrollmentApi, HttpClient, IntegrationApi, NotificationApi, ProcessApi, isEnrollmentNotConfigured, type CreatedAgent, type ProcessView } from "./api";
       import { requireElement, requireElements } from "./dom";
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
@@ -10,19 +17,29 @@
       import { isJsonObject, isRecord, mediaFromUpload } from "./types";
       import type { Channel, ChatMessage, Circle, ClientCommand, ClientCommandArguments, JsonObject, MediaObject, Mention, MermaidApi, ThreadComposerState, ThreadSummary, UploadResponse, UserProfile, UserTask, WireEvent } from "./types";
 
-      type TimelineItem =
-        | Readonly<{ type: "message"; message: ChatMessage }>
-        | Readonly<{ type: "system"; text: string }>;
       type Invitation = Readonly<{ response?: "accepted" | "declined" | null; invited_by: string; invited_by_name: string; channel_name?: string | null; circle_name?: string | null; accepted_count: number; declined_count: number }>;
       type InvitationCache =
         | Readonly<{ status: "pending" }>
         | Readonly<{ status: "missing" | "failed"; message: string }>
         | Readonly<{ status: "resolved"; invitation: Invitation }>;
-      type PendingInvitationResponse = Readonly<{ token: string; command: "accept_invitation" | "decline_invitation" }>;
-      type PendingCircleInvitationRecipient = Readonly<{ circleId: string; userId: string }>;
-      type PendingMessage = Readonly<{ channelId: string; body: string; draft: string; mediaIds: string[] }>;
       type MessageInteraction = Readonly<{ messageId: string; customReaction: string; focusCustomReaction: boolean; focusReactionSummary: boolean }>;
+      type PreviewInboxResponseType = "mentions_listed" | "tasks_listed" | "mention_read" | "task_created" | "task_updated";
+      type PreviewInboxRequest = Readonly<{
+        expected: PreviewInboxResponseType;
+        resolve: () => void;
+        reject: (error: Error) => void;
+        timer: ReturnType<typeof setTimeout>;
+      }>;
       const sendAdmissionPolicy = createSendAdmissionPolicy();
+      let refreshDevelopmentPreview = () => {};
+      let developmentPreviewActive = false;
+      let developmentThreadLoad: { requestId: string | null; rootId: string; loading: boolean; error?: string } | null = null;
+      let developmentChannelRevealMessageId: string | null = null;
+      let developmentThreadRevealMessageId: string | null = null;
+      const developmentReactionRequests = new Map<string, string>();
+      const developmentReactionErrors = new Map<string, string>();
+      const communityRequests = createCommunityRequests();
+      const previewInboxRequests = new Map<string, PreviewInboxRequest>();
       function isMermaidApi(value: unknown): value is MermaidApi {
         return isRecord(value) && typeof value.initialize === "function" && typeof value.run === "function";
       }
@@ -213,6 +230,30 @@
       const conversationDrawerHeaderToggle = requireElement("#conversation-drawer-header-toggle", HTMLButtonElement);
       const conversationSearch = requireElement("#conversation-search", HTMLInputElement);
       const conversationList = requireElement("#conversation-list", HTMLElement);
+      const themeModeToggle = requireElement("#theme-mode-toggle", HTMLButtonElement);
+      const sproytApp = requireElement("#sproyt-app", HTMLElement);
+
+      let themeMode = installSproytDesignSystem(sproytApp);
+      function renderThemeMode(): void {
+        const label = themeMode === "system" ? "systemtema" : themeMode === "dark" ? "mørkt tema" : "lyst tema";
+        themeModeToggle.textContent = `Tema: ${themeMode}`;
+        themeModeToggle.setAttribute("aria-label", `Brukar ${label}. Byt tema`);
+        themeModeToggle.title = `Brukar ${label}. Byt tema`;
+      }
+      renderThemeMode();
+      const cycleThemeMode = () => {
+        const modes: readonly SproytThemeMode[] = ["system", "light", "dark"];
+        const position = modes.indexOf(themeMode);
+        themeMode = modes[(position + 1) % modes.length] ?? "system";
+        setSproytTheme(sproytApp, themeMode);
+        renderThemeMode();
+        refreshDevelopmentPreview();
+      };
+      // The legacy header can be rebuilt while connection state changes. Keep
+      // this control delegated until that view is fully migrated to React.
+      document.addEventListener("click", (event) => {
+        if ((event.target as Element | null)?.closest("#theme-mode-toggle")) cycleThemeMode();
+      });
 
       let sessionController: SessionController;
       const connectionSupervisor = createConnectionController({
@@ -247,6 +288,11 @@
         onDisconnected: () => reportClientEvent("websocket_disconnected"),
         onSocketError: () => reportClientEvent("websocket_error"),
         onConnectionLost: () => {
+          if (developmentThreadLoad?.loading) {
+            developmentThreadLoad.loading = false;
+            developmentThreadLoad.error = "Sambandet vart brote. Prøv å laste tråden igjen.";
+            refreshDevelopmentPreview();
+          }
           finishPendingProfileUpdate("Sambandet vart brote. Namnet er ikkje lagra – prøv igjen.");
           if (pendingCircleCreationRequestId) {
             pendingCircleCreationRequestId = null;
@@ -276,6 +322,7 @@
         },
         onRequestsLost: (requestIds) => {
           for (const requestId of requestIds) {
+            failPreviewInboxRequest(requestId, "Sambandet vart brote. Prøv igjen.");
             finishPendingProfileUpdate("Sambandet vart brote. Namnet er ikkje lagra – prøv igjen.", requestId);
             if (pendingMessages.has(requestId)) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
             if (pendingThreadReplies.has(requestId)) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
@@ -320,7 +367,7 @@
       let lastBackgroundRecoveryAt = 0;
       let hiddenSince: number | null = document.visibilityState === "hidden" ? Date.now() : null;
       let lastUserActivityAt = Date.now();
-      let renderMode = "view";
+      let renderMode: "view" | "raw" = "view";
       let requestNumber = 0;
       const browserSessionId = `browser-${crypto.randomUUID()}`;
       const nextRequestId = (): string => { requestNumber += 1; return `${browserSessionId}-${requestNumber}`; };
@@ -347,33 +394,25 @@
       const threadReplies = new Map<string, ChatMessage[]>();
       const threadRoots = new Map<string, ChatMessage>();
       const threadSummaries = new Map<string, ThreadSummary>();
-      const pendingThreadReplies = new Map<string, Readonly<{ rootId: string; channelId: string; body: string; draft: string; mediaIds: string[] }>>();
+      const pendingRequests = createPendingRequests();
+      const {
+        pendingThreadReplies, pendingCommands, pendingInvitationResponses, pendingInvitationInspections,
+        pendingChannelInvitationRecipients, pendingCircleInvitationRecipients, pendingCircleShareInvitations,
+        pendingCircleDirectInvitations, pendingDirectInvitationMessages, pendingDirectChannelUsers,
+        pendingPeopleDirectRequests, pendingMessages, uncertainMessages, uncertainThreadReplies,
+        retriedUncertainRequests, historyRequestIds
+      } = pendingRequests;
       let activeThreadRootId: string | null = null;
       let pendingThreadToOpen: string | null = null;
       const seenMessageIds = new Set<string>();
       const catchUpTargets = new Map<string, number>();
-      const pendingCommands = new Map<string, string>();
-      const pendingInvitationResponses = new Map<string, PendingInvitationResponse>();
-      const pendingInvitationInspections = new Map<string, string>();
-      const pendingChannelInvitationRecipients = new Map<string, string>();
-      const pendingCircleInvitationRecipients = new Map<string, PendingCircleInvitationRecipient>();
-      const pendingCircleShareInvitations = new Map<string, string>();
-      const pendingCircleDirectInvitations = new Map<string, PendingCircleInvitationRecipient>();
-      const pendingDirectInvitationMessages = new Map<string, string>();
-      const pendingDirectChannelUsers = new Map<string, string>();
       // Requests from the member browser are independent: a slow DM open must
       // not block another person, the composer, or the rest of the dialog.
-      const pendingPeopleDirectRequests = new Map<string, string>();
       const peopleDirectStatuses = new Map<string, string>();
       const circleInvitePersonStatuses = new Map<string, string>();
       const invitationInspectionCache = new Map<string, InvitationCache>();
       let latestChannelListRequestId: string | null = null;
       let latestCircleListRequestId: string | null = null;
-      const pendingMessages = new Map<string, PendingMessage>();
-      const uncertainMessages = new Map<string, PendingMessage>();
-      const uncertainThreadReplies = new Map<string, Readonly<{ rootId: string; channelId: string; body: string; draft: string; mediaIds: string[] }>>();
-      const retriedUncertainRequests = new Set<string>();
-      const historyRequestIds = new Set();
       const historyPageSize = 50;
       let historyHasMore = false;
       let historyLoading = false;
@@ -384,11 +423,13 @@
       const knownChannelUsers = new Map<string, UserProfile[]>();
       const channelNotificationIds = new Set<string>();
       const pendingChannelNotificationIds = new Set<string>();
+      const channelNotificationErrors = new Map<string, string>();
       let knownMentions: Mention[] = [];
       let knownTasks: UserTask[] = [];
       const knownCircles = new Map<string, Circle>();
       let temporaryAgentId: string | null = null;
       let pendingMedia: MediaObject[] = [];
+      const channelUploads = new Map<string, { count: number; status: string; kind: string }>();
       const threadComposerStates = new Map<string, ThreadComposerState>();
       const messageReactions = new Map<string, Map<string, ReactionSummary>>();
       const reactionEmojis = [...document.querySelectorAll("#message-emoji-options [data-emoji]")]
@@ -402,6 +443,7 @@
       const statusDraft = { emoji: "", text: "", dirty: false };
       let profileDisplayNameDirty = false;
       let pendingProfileUpdateRequestId: string | null = null;
+      const previewProfileRequests = new Map<string, { type: "profile_updated" | "status_updated"; resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
       const usesDesktopComposerKeys = window.matchMedia("(any-hover: hover) and (any-pointer: fine)");
 
       function syncRenderedNavigation(): void {
@@ -413,7 +455,20 @@
         restoredCircleId = snapshot.restoredCircleId;
       }
 
-      const applicationStore = createApplicationStore();
+      const applicationRuntime = createApplicationRuntime(renderServerEvent);
+      const applicationStore = applicationRuntime.store;
+      // Read-only integration seam for the React presentation adapter. The
+      // current rendering and all command/state ownership remain unchanged.
+      export function getConversationSnapshot() {
+        return projectConversationSnapshot({
+          channels: knownChannels, circles: knownCircles,
+          activeChannelId, activeCircleId, activeRootScope, activeInboxKind,
+          query: conversationSearch.value, timeline, threadReplies, threadRoots,
+          threadSummaries, activeThreadRootId, historyLoading, historyHasMore,
+          connection: applicationStore.snapshot.connection,
+          channelNotificationIds, pendingChannelNotificationIds, channelNotificationErrors, directChannelLabel
+        });
+      }
       const sessionBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
       sessionController = createSessionController({
         fetch: window.fetch.bind(window), storage: window.localStorage, broadcast: sessionBroadcast,
@@ -422,9 +477,12 @@
         visibility: () => document.visibilityState, isConnectionOpen: () => connectionSupervisor.snapshot().connected,
         lastUserActivityAt: () => lastUserActivityAt, onRefreshDueAt: (refreshDueAt) => applicationStore.updateSession({ refreshDueAt }), onStatus: setConnectionStatus,
         onSessionRotated: () => connectionSupervisor.replaceAfterSessionRefresh(), onReconnectNeeded: (reason) => connectionSupervisor.scheduleReconnect(1006, reason),
-        onLoginRequired: () => window.location.assign("/auth/login"), onReauthenticationRequired: (required) => { reauthenticateNowButton.hidden = !required; }, reportClientEvent, browserSessionId
+        onLoginRequired: () => window.location.assign("/auth/login"), onReauthenticationRequired: (required) => {
+          applicationStore.updateSession({ reauthenticationRequired: required });
+          reauthenticateNowButton.hidden = !required;
+        }, reportClientEvent, browserSessionId
       });
-      reauthenticateNowButton.addEventListener("click", () => { persistActiveDraft(); persistThreadDraft(); sessionController.reauthenticateNow(); });
+      reauthenticateNowButton.addEventListener("click", reauthenticateNow);
       const http = new HttpClient({
         fetch: window.fetch.bind(window),
         refreshSession: () => sessionController.refresh(true),
@@ -433,18 +491,27 @@
       const imageGeneration = createImageGeneration({
         http, before: sendForm, toolbar: composerTools, identity: () => currentParticipantId || "", connected: () => connectionSupervisor.snapshot().connected,
         channel: () => activeChannelId || "", channelName: (id) => knownChannels.find(channel => channel.id === id)?.name || "Opphavleg kanal",
-        attach: (media) => { if (!pendingMedia.some(item => item.id === media.id)) pendingMedia.push(media); renderMediaPreviews(); bodyInput.focus(); }
+        attach: (media, rootId) => {
+          if (rootId) {
+            const state = threadComposerState(rootId);
+            if (state && !state.media.some(item => item.id === media.id)) state.media.push(media);
+            if (rootId === activeThreadRootId) renderThreadMediaPreviews();
+            refreshDevelopmentPreview();
+          } else {
+            if (!pendingMedia.some(item => item.id === media.id)) pendingMedia.push(media);
+            renderMediaPreviews();
+            if (!developmentPreviewActive) bodyInput.focus();
+          }
+        }
       });
       const notificationsApi = new NotificationApi(http);
+      imageGeneration.subscribe(() => refreshDevelopmentPreview());
       const processesApi = new ProcessApi(http);
       const agentsApi = new AgentApi(http);
       const integrationsApi = new IntegrationApi(http);
       const enrollmentApi = new EnrollmentApi(http);
 
-      const serverEventMailbox = createServerEventMailbox({
-        reduce: applicationStore.reduceServerEvent,
-        deliver: renderServerEvent
-      });
+      const serverEventMailbox = applicationRuntime;
 
       function persistActiveDraft() {
         navigation.persistChannelDraft(activeChannelId, bodyInput.value);
@@ -460,6 +527,12 @@
         const state = threadComposerStates.get(rootId);
         if (!state) return;
         navigation.persistThreadDraft(channelId, rootId, state.draft);
+      }
+
+      function reauthenticateNow(): void {
+        persistActiveDraft();
+        persistThreadDraft();
+        sessionController.reauthenticateNow();
       }
 
       function restoreThreadDraft(rootId: string, channelId: string): string {
@@ -572,6 +645,7 @@
         sendForm.classList.toggle("is-expanded", expanded);
         composerTools.hidden = !composerHasFocus;
         resizeComposer();
+        refreshDevelopmentPreview();
       }
 
       function closeComposerToolsAfterFocusLeaves() {
@@ -725,6 +799,12 @@
       }
 
       function setUploadStatus(message: string, kind: string = "progress"): void {
+        if (activeChannelId) {
+          const state = channelUploads.get(activeChannelId) ?? { count: 0, status: "", kind: "progress" };
+          state.status = message;
+          state.kind = kind;
+          channelUploads.set(activeChannelId, state);
+        }
         uploadStatus.textContent = message;
         uploadStatus.dataset.kind = kind;
         uploadStatus.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
@@ -767,46 +847,61 @@
       }
 
       async function uploadMediaFiles(files: Iterable<File>): Promise<void> {
-        if (!activeChannelId) return;
+        const channelId = activeChannelId;
+        if (!channelId) return;
+        const state = channelUploads.get(channelId) ?? { count: 0, status: "", kind: "progress" };
+        channelUploads.set(channelId, state);
+        const updateStatus = (message: string, kind = "progress") => {
+          state.status = message;
+          state.kind = kind;
+          if (activeChannelId === channelId) setUploadStatus(message, kind);
+        };
+        state.count += 1;
+        setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
+        try {
         for (const file of files) {
           if (!file.size || file.size > 35 * 1024 * 1024) {
-            setUploadStatus(`${file.name || "Fila"} må vere mellom 1 byte og 35 MiB.`, "error");
+            updateStatus(`${file.name || "Fila"} må vere mellom 1 byte og 35 MiB.`, "error");
             continue;
           }
           const form = new FormData();
           form.append("file", file, file.name || "clipboard-image.png");
           const filename = file.name || "bilete";
-          setUploadStatus(`Gjer klar ${filename} (${(file.size / 1024 / 1024).toFixed(1)} MiB) …`);
+          updateStatus(`Gjer klar ${filename} (${(file.size / 1024 / 1024).toFixed(1)} MiB) …`);
           const participant = new URL(window.location.href).searchParams.get("participant");
           const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
-          const url = `/api/v1/channels/${activeChannelId}/media${authQuery}`;
+          const url = `/api/v1/channels/${channelId}/media${authQuery}`;
           let response;
           try {
-            response = await postMedia(url, form, filename);
+            response = await postMedia(url, form, filename, updateStatus);
             if (response.status === 401 && await sessionController.refresh(true)) {
-              response = await postMedia(url, form, filename);
+              response = await postMedia(url, form, filename, updateStatus);
             }
           } catch (error) {
             reportClientEvent("upload_failed");
             const online = navigator.onLine ? "Nettlesaren fekk ikkje noko HTTP-svar frå tenesta" : "Eininga er fråkopla nettet";
-            setUploadStatus(`Opplasting av ${file.name || "fila"} feila: ${online}. ${error instanceof Error ? error.message : "Ukjend nettverksfeil"}.`, "error");
+            updateStatus(`Opplasting av ${file.name || "fila"} feila: ${online}. ${error instanceof Error ? error.message : "Ukjend nettverksfeil"}.`, "error");
             continue;
           }
           if (response.status === 401) {
             reportClientEvent("upload_failed");
-            setUploadStatus("Opplasting feila (HTTP 401): Økta kunne ikkje fornyast. Logg inn på nytt.", "error");
+            updateStatus("Opplasting feila (HTTP 401): Økta kunne ikkje fornyast. Logg inn på nytt.", "error");
             continue;
           }
-          if (!response.ok) { reportClientEvent("upload_failed"); setUploadStatus(await uploadFailureMessage(response, file.name || "fila"), "error"); continue; }
+          if (!response.ok) { reportClientEvent("upload_failed"); updateStatus(await uploadFailureMessage(response, file.name || "fila"), "error"); continue; }
           let media: MediaObject | null;
           try { media = mediaFromUpload(await response.json()); } catch { media = null; }
-          if (media === null) { reportClientEvent("upload_failed"); setUploadStatus("Opplastinga var ferdig, men tenesta svarte med ugyldige mediedata. Prøv igjen.", "error"); continue; }
-          pendingMedia.push(media);
+          if (media === null) { reportClientEvent("upload_failed"); updateStatus("Opplastinga var ferdig, men tenesta svarte med ugyldige mediedata. Prøv igjen.", "error"); continue; }
+          pendingMedia.push({ ...media, channel_id: channelId });
           renderMediaPreviews();
           reportClientEvent("upload_succeeded");
-          setUploadStatus(`${file.name || "Fila"} er behandla og klar til å sendast.`, "success");
+          updateStatus(`${file.name || "Fila"} er behandla og klar til å sendast.`, "success");
         }
-        setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
+        } finally {
+          state.count = Math.max(0, state.count - 1);
+          setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
+          refreshDevelopmentPreview();
+        }
       }
 
       function threadComposerState(rootId = activeThreadRootId) {
@@ -845,6 +940,7 @@
         threadSendButton.disabled = !writable || state.uploadCount > 0 || hasPendingThreadReply();
         threadEmojiPicker.setAttribute("aria-disabled", String(!writable || state.uploadCount > 0));
         resizeThreadComposer();
+        refreshDevelopmentPreview();
       }
 
       function setThreadUploadStatus(message: string, kind: string = "progress", rootId: string | null = activeThreadRootId): void {
@@ -905,6 +1001,7 @@
           const participant = new URL(window.location.href).searchParams.get("participant");
           const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
           const url = `/api/v1/channels/${channelId}/media${authQuery}`;
+          setThreadUploadStatus(`Gjer klar ${filename} …`, "progress", rootId);
           try {
             let response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
             if (response.status === 401 && await sessionController.refresh(true)) response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
@@ -921,7 +1018,7 @@
             setThreadUploadStatus(`Opplasting av ${filename} feila: ${error instanceof Error ? error.message : "Ukjend feil"}`, "error", rootId);
           } finally {
             state.uploadCount = Math.max(0, state.uploadCount - 1);
-            if (rootId === activeThreadRootId) syncThreadComposer();
+            if (rootId === activeThreadRootId) renderThreadMediaPreviews();
           }
         }
       }
@@ -957,6 +1054,7 @@
         threadScopeGeneration += 1;
         activeThreadRootId = null;
         threadEmojiPicker.open = false;
+        refreshDevelopmentPreview();
       });
       circleChannelClose.addEventListener("click", () => circleChannelDialog.close());
       circleAdminClose.addEventListener("click", () => circleAdminDialog.close());
@@ -1167,6 +1265,17 @@
         const state = threadComposerState(rootId);
         const draft = threadBody.value.trim();
         const media = state?.media || [];
+        try {
+          if (imagePrompt(draft) !== null) {
+            if (!rootId || !channelId || !state || state.uploadCount > 0 || !connectionSupervisor.snapshot().connected) return;
+            if (await imageGeneration.submit(draft, channelId, media, rootId) && state.draft.trim() === draft) {
+              state.draft = "";
+              navigation.persistThreadDraft(channelId, rootId, "");
+              if (activeThreadRootId === rootId && activeChannelId === channelId) { threadBody.value = ""; syncThreadComposer(); }
+            }
+            return;
+          }
+        } catch (error) { setThreadUploadStatus(error instanceof Error ? error.message : "Kunne ikkje leggje biletet i kø.", "error", rootId); return; }
         const scopeGeneration = threadScopeGeneration;
         const mediaTokens = media.map((item) => `[[media:${item.id}|${item.content_type}|${encodeURIComponent(item.original_filename)}]]`).join("\n");
         const body = [draft, mediaTokens].filter(Boolean).join("\n");
@@ -1369,6 +1478,7 @@
 
       sendForm.addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (activeChannelId && (channelUploads.get(activeChannelId)?.count ?? 0) > 0) return;
         const draft = bodyInput.value.trim();
         try {
           if (imagePrompt(draft) !== null) {
@@ -1521,6 +1631,60 @@
         return Uint8Array.from(raw, (character) => character.charCodeAt(0));
       }
 
+      function savePreviewProfile(type: "profile_updated" | "status_updated", send: () => string | null): Promise<void> {
+        if ([...previewProfileRequests.values()].some(request => request.type === type)) {
+          return Promise.reject(new Error("Ei lagring ventar framleis på svar. Vent litt og prøv igjen."));
+        }
+        const requestId = send();
+        if (!requestId) return Promise.reject(new Error("Ikkje tilkopla enno. Vent litt og prøv igjen."));
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            previewProfileRequests.delete(requestId);
+            reject(new Error("Lagringa vart ikkje stadfesta. Kontroller profilen og prøv igjen."));
+          }, 20_000);
+          previewProfileRequests.set(requestId, { type, resolve, reject, timer });
+        });
+      }
+
+      function failPreviewInboxRequest(requestId: string | undefined, message: string): boolean {
+        if (!requestId) return false;
+        const request = previewInboxRequests.get(requestId);
+        if (!request) return false;
+        clearTimeout(request.timer);
+        previewInboxRequests.delete(requestId);
+        request.reject(new Error(message));
+        return true;
+      }
+
+      function runPreviewInboxRequest(expected: PreviewInboxResponseType, send: () => string | null): Promise<void> {
+        if ([...previewInboxRequests.values()].some(request => request.expected === expected)) {
+          return Promise.reject(new Error("Førespurnaden ventar framleis på svar. Vent litt og prøv igjen."));
+        }
+        const requestId = send();
+        if (!requestId) return Promise.reject(new Error("Ikkje tilkopla enno. Vent litt og prøv igjen."));
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            previewInboxRequests.delete(requestId);
+            reject(new Error("Svaret vart ikkje stadfesta. Kontroller innboksen og prøv igjen."));
+          }, 20_000);
+          previewInboxRequests.set(requestId, { expected, resolve, reject, timer });
+        });
+      }
+
+      async function registerBrowserPush(publicKey: string): Promise<void> {
+        if (!("Notification" in window) || !("PushManager" in window)) throw new Error("Nettlesaren støttar ikkje push-varsel.");
+        const registration = await serviceWorkerReady;
+        if (!registration) throw new Error("Service worker er ikkje tilgjengeleg");
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") throw new Error("Varsel vart ikkje tillate");
+        let subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+          if (!publicKey) throw new Error("Serveren manglar offentleg Push-nøkkel");
+          subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyBytes(publicKey) });
+        }
+        await notificationsApi.registerPush(subscription.toJSON());
+      }
+
       async function loadNotificationSettings() {
         try {
           const settings = await notificationsApi.get();
@@ -1530,6 +1694,7 @@
           channelNotificationIds.clear();
           settings.channelIds.forEach((channelId) => channelNotificationIds.add(channelId));
           renderConversationDrawer();
+          refreshDevelopmentPreview();
           const notificationLabel = settings.preferences.mode === "muted" ? "Varsel: ingen" : settings.preferences.mode === "weekly" ? "Varsel: kvar veke" : "Varsel: direkte";
           notificationSummaryLabel.textContent = notificationLabel;
           notificationSummary.setAttribute("aria-label", notificationLabel);
@@ -1540,6 +1705,27 @@
           notificationNotice.textContent = !settings.enabled ? "Push er ikkje konfigurert på serveren enno." : settings.subscriptions ? `${settings.subscriptions} eining(ar) tek imot varsel.` : "Varsel er ikkje slått på på denne eininga.";
         } catch (error) {
           notificationNotice.textContent = `Kunne ikkje hente varselinnstillingar: ${errorMessage(error)}`;
+        }
+      }
+
+      async function setChannelNotifications(channelId: string, enabled: boolean): Promise<void> {
+        if (pendingChannelNotificationIds.has(channelId)) return;
+        channelNotificationErrors.delete(channelId);
+        pendingChannelNotificationIds.add(channelId);
+        renderConversationDrawer();
+        refreshDevelopmentPreview();
+        try {
+          await notificationsApi.setChannel(channelId, enabled);
+          if (enabled) channelNotificationIds.add(channelId);
+          else channelNotificationIds.delete(channelId);
+        } catch (error) {
+          const message = `Kunne ikkje endre kanalvarsel: ${errorMessage(error)}`;
+          channelNotificationErrors.set(channelId, message);
+          notificationNotice.textContent = message;
+        } finally {
+          pendingChannelNotificationIds.delete(channelId);
+          renderConversationDrawer();
+          refreshDevelopmentPreview();
         }
       }
 
@@ -1556,17 +1742,7 @@
 
       enableNotifications.addEventListener("click", async () => {
         try {
-          const registration = await serviceWorkerReady;
-          if (!registration) throw new Error("Service worker er ikkje tilgjengeleg");
-          const permission = await Notification.requestPermission();
-          if (permission !== "granted") throw new Error("Varsel vart ikkje tillate");
-          let subscription = await registration.pushManager.getSubscription();
-          if (!subscription) {
-            const publicKey = enableNotifications.dataset.publicKey;
-            if (!publicKey) throw new Error("Serveren manglar offentleg Push-nøkkel");
-            subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyBytes(publicKey) });
-          }
-          await notificationsApi.registerPush(subscription.toJSON());
+          await registerBrowserPush(enableNotifications.dataset.publicKey || "");
           notificationNotice.textContent = "Varsel er slått på på denne eininga.";
           loadNotificationSettings();
         } catch (error) {
@@ -2138,6 +2314,10 @@
           threadBody.value = pending.draft;
         }
         if (state) state.draft = pending.draft;
+        if (state && developmentPreviewActive) {
+          state.status = `Trådsvaret vart ikkje sendt: ${message}`;
+          state.statusKind = "error";
+        }
         navigation.persistThreadDraft(pending.channelId, pending.rootId, pending.draft);
         if (activeChannelId === pending.channelId && activeThreadRootId === pending.rootId) {
           threadBody.readOnly = false;
@@ -2157,8 +2337,9 @@
           || [...uncertainMessages.values()].some((pending) => pending.channelId === activeChannelId);
         bodyInput.disabled = !writableChannel;
         bodyInput.readOnly = activeMessagePending;
-        sendButton.disabled = !writableChannel || activeMessagePending;
-        attachMediaButton.disabled = !writableChannel || activeMessagePending;
+        const uploading = activeChannelId !== null && (channelUploads.get(activeChannelId)?.count ?? 0) > 0;
+        sendButton.disabled = !writableChannel || activeMessagePending || uploading;
+        attachMediaButton.disabled = !writableChannel || activeMessagePending || uploading;
         messageEmojiPicker.setAttribute("aria-disabled", String(!writableChannel || activeMessagePending));
         syncThreadComposer();
         circleButtons.forEach((button) => { button.disabled = !connected; });
@@ -2705,26 +2886,32 @@
           return;
         }
         if (event.type === "pong") return;
-        const requestedCommand = event.request_id ? pendingCommands.get(event.request_id) : undefined;
-        const pendingInvitation = event.request_id ? pendingInvitationResponses.get(event.request_id) : undefined;
-        const inspectedInvitationToken = event.request_id ? pendingInvitationInspections.get(event.request_id) : undefined;
-        const invitationRecipient = event.request_id ? pendingChannelInvitationRecipients.get(event.request_id) : undefined;
-        const circleInvitationRecipient = event.request_id ? pendingCircleInvitationRecipients.get(event.request_id) : undefined;
-        const circleShareInvitation = event.request_id ? pendingCircleShareInvitations.get(event.request_id) : undefined;
-        const directInvitationMessage = event.request_id ? pendingDirectInvitationMessages.get(event.request_id) : undefined;
-        const directCircleInvitation = event.request_id ? pendingCircleDirectInvitations.get(event.request_id) : undefined;
-        const directPeerUserId = event.request_id ? pendingDirectChannelUsers.get(event.request_id) : undefined;
-        const directPersonUserId = event.request_id ? pendingPeopleDirectRequests.get(event.request_id) : undefined;
-        if (event.request_id) pendingCommands.delete(event.request_id);
-        if (event.request_id) pendingInvitationResponses.delete(event.request_id);
-        if (event.request_id) pendingInvitationInspections.delete(event.request_id);
-        if (event.request_id) pendingChannelInvitationRecipients.delete(event.request_id);
-        if (event.request_id) pendingCircleInvitationRecipients.delete(event.request_id);
-        if (event.request_id) pendingCircleShareInvitations.delete(event.request_id);
-        if (event.request_id) pendingDirectInvitationMessages.delete(event.request_id);
-        if (event.request_id) pendingCircleDirectInvitations.delete(event.request_id);
-        if (event.request_id) pendingDirectChannelUsers.delete(event.request_id);
-        if (event.request_id) pendingPeopleDirectRequests.delete(event.request_id);
+        communityRequests.observe(event);
+        const profileRequest = event.request_id ? previewProfileRequests.get(event.request_id) : undefined;
+        if (profileRequest && (event.type === "error" || event.type === profileRequest.type)) {
+          clearTimeout(profileRequest.timer);
+          previewProfileRequests.delete(event.request_id!);
+          if (event.type === "error") profileRequest.reject(new Error(event.payload.message || "Kunne ikkje lagre. Prøv igjen."));
+          else profileRequest.resolve();
+        }
+        if (event.request_id && developmentReactionRequests.has(event.request_id)) {
+          const messageId = developmentReactionRequests.get(event.request_id)!;
+          developmentReactionRequests.delete(event.request_id);
+          if (event.type === "error") developmentReactionErrors.set(messageId, event.payload.message);
+          else developmentReactionErrors.delete(messageId);
+        }
+        const previewInboxRequest = event.request_id ? previewInboxRequests.get(event.request_id) : undefined;
+        if (previewInboxRequest && (event.type === "error" || event.type === previewInboxRequest.expected)) {
+          clearTimeout(previewInboxRequest.timer);
+          previewInboxRequests.delete(event.request_id!);
+          if (event.type === "error") previewInboxRequest.reject(new Error(event.payload.message || "Handlinga feila. Prøv igjen."));
+          else previewInboxRequest.resolve();
+        }
+        const {
+          requestedCommand, pendingInvitation, inspectedInvitationToken, invitationRecipient,
+          circleInvitationRecipient, circleShareInvitation, directInvitationMessage,
+          directCircleInvitation, directPeerUserId, directPersonUserId
+        } = pendingRequests.correlate(event.request_id);
 
         if (event.type === "hello") {
           const changedUser = currentParticipantId !== null && currentParticipantId !== event.payload.participant_id;
@@ -2838,6 +3025,11 @@
 
         if (event.type === "task_created") {
           knownTasks = [event.payload.task, ...knownTasks.filter((task) => task.id !== event.payload.task.id)];
+          renderPrimaryNavigation();
+          if (developmentPreviewActive) {
+            refreshDevelopmentPreview();
+            return;
+          }
           showInbox("tasks");
           return;
         }
@@ -3109,6 +3301,11 @@
             return;
           }
           connectionSupervisor.setSubscribedChannel(event.payload.channel_id);
+          // Direct-message mentions offer expansion only after the actual
+          // membership is known, including after reload/reconnection.
+          if (knownChannels.find(channel => channel.id === event.payload.channel_id)?.is_direct) {
+            sendCommand("list_channel_users", { channel_id: event.payload.channel_id });
+          }
           setConnectionStatus("Tilkopla");
           renderConversationIdentity();
           event.payload.history.forEach(appendTimelineMessage);
@@ -3175,6 +3372,7 @@
         }
 
         if (event.type === "thread_loaded") {
+          if (developmentThreadLoad?.rootId === event.payload.root_message_id) developmentThreadLoad.loading = false;
           const root = event.payload.messages.find((message) => message.id === event.payload.root_message_id);
           const replies = event.payload.messages.filter((message) => message.parent_message_id === event.payload.root_message_id);
           if (root) threadRoots.set(event.payload.root_message_id, root);
@@ -3313,6 +3511,13 @@
         }
 
         if (event.type === "error") {
+          if (previewInboxRequest) return;
+          if (developmentPreviewActive && developmentThreadLoad && developmentThreadLoad.requestId === event.request_id) {
+            developmentThreadLoad.loading = false;
+            developmentThreadLoad.error = event.payload.message || "Tråden kunne ikkje lastast.";
+            refreshDevelopmentPreview();
+            return;
+          }
           const failedHistory = historyRequestIds.delete(event.request_id);
           if (failedHistory) {
             historyLoading = false;
@@ -3581,18 +3786,7 @@
             notification.textContent = subscribed ? "🔔" : "🔕";
             notification.addEventListener("click", async () => {
               const enable = !channelNotificationIds.has(channel.id);
-              pendingChannelNotificationIds.add(channel.id);
-              renderConversationDrawer();
-              try {
-                await notificationsApi.setChannel(channel.id, enable);
-                if (enable) channelNotificationIds.add(channel.id);
-                else channelNotificationIds.delete(channel.id);
-              } catch (error) {
-                notificationNotice.textContent = `Kunne ikkje endre kanalvarsel: ${errorMessage(error)}`;
-              } finally {
-                pendingChannelNotificationIds.delete(channel.id);
-                renderConversationDrawer();
-              }
+              await setChannelNotifications(channel.id, enable);
             });
             row.append(notification);
           }
@@ -4108,6 +4302,8 @@
         navigation.setActiveChannel(channel);
         syncRenderedNavigation();
         restoreActiveDraft();
+        const upload = channelUploads.get(channel.id);
+        setUploadStatus(upload?.status ?? "", upload?.kind ?? "progress");
         if (channel.circle_id) {
           circleSelect.value = channel.circle_id;
         } else {
@@ -4228,16 +4424,21 @@
         const oldest = oldestItem?.message;
         if (!oldest) return;
         historyLoading = true;
+        refreshDevelopmentPreview();
         const requestId = sendCommand("load_recent_messages", {
           channel_id: activeChannelId,
           before: oldest.sequence,
           limit: historyPageSize
         });
         if (requestId) historyRequestIds.add(requestId);
-        else historyLoading = false;
+        else {
+          historyLoading = false;
+          refreshDevelopmentPreview();
+        }
       }
 
       function renderTimeline({ preserveScroll = false, forceBottom = false, revealMessageId = null }: Readonly<{ preserveScroll?: boolean; forceBottom?: boolean; revealMessageId?: string | null }> = {}): void {
+        if (revealMessageId) developmentChannelRevealMessageId = revealMessageId;
         const previousHeight = messagesEl.scrollHeight;
         const previousTop = messagesEl.scrollTop;
         const wasNearBottom = previousHeight - previousTop - messagesEl.clientHeight < 80;
@@ -4428,11 +4629,22 @@
         threadUploadStatus.textContent = state?.status || "";
         threadUploadStatus.dataset.kind = state?.statusKind || "progress";
         threadBody.readOnly = false;
-        if (!threadPanel.open) threadPanel.showModal();
+        if (!threadPanel.open) {
+          // Keep the existing thread lifecycle without a native modal above the
+          // local React surface. The legacy container is already inert there.
+          if (developmentPreviewActive) { threadPanel.inert = true; threadPanel.show(); }
+          else threadPanel.showModal();
+        }
         threadMessages.innerHTML = '<div class="empty-state"><p>Lastar tråden …</p></div>';
         renderThreadMediaPreviews();
         syncThreadComposer();
-        sendCommand("load_thread", { root_message_id: messageId });
+        const requestId = sendCommand("load_thread", { root_message_id: messageId });
+        if (developmentPreviewActive) {
+          developmentThreadLoad = { requestId, rootId: messageId, loading: requestId !== null,
+            error: requestId ? undefined : "Tråden kunne ikkje lastast. Kontroller sambandet og prøv igjen." };
+          renderThread();
+          refreshDevelopmentPreview();
+        }
       }
 
       function renderThread({ revealOwn = false } = {}) {
@@ -4454,6 +4666,7 @@
         for (const reply of threadReplies.get(activeThreadRootId) || []) {
           appendMessage(reply, threadMessages, false);
         }
+        if (revealOwn) developmentThreadRevealMessageId = (threadReplies.get(activeThreadRootId) || []).at(-1)?.id ?? null;
         if (revealOwn || wasNearBottom) settleThreadAtBottom();
         else threadMessages.scrollTop = threadMessages.scrollHeight - previousHeight + previousTop;
       }
@@ -4520,7 +4733,7 @@
 
       function renderMessageReactions(message: ChatMessage, onPickerToggle: (open: boolean) => void): HTMLElement {
         const bar = document.createElement("div");
-        bar.className = "message-reactions";
+        bar.className = "message-reactions sp-message-actions";
         const reactions = messageReactions.get(message.id) || new Map();
         const displayedEmojis = [...reactions.keys()].sort((left, right) => {
           const leftIndex = reactionEmojis.indexOf(left);
@@ -4641,11 +4854,11 @@
 
       function appendMessage(message: ChatMessage, target: HTMLElement = messagesEl, includeThread: boolean = true): void {
         const wrapper = document.createElement("article");
-        wrapper.className = "message";
+        wrapper.className = "message sp-message";
         wrapper.dataset.messageId = message.id;
 
         const meta = document.createElement("div");
-        meta.className = "meta";
+        meta.className = "meta sp-message-meta";
         const metaText = document.createElement("span");
         metaText.className = "message-meta-text";
         const sender = message.sender_id === currentParticipantId
@@ -4679,15 +4892,16 @@
 
         const body = document.createElement("div");
         if (message.deleted_at) {
-          body.className = "rendered message-tombstone";
+          body.className = "rendered message-tombstone sp-message-body";
           body.textContent = "Meldinga er sletta.";
         } else if (renderMode === "raw") {
+          body.className = "sp-message-body";
           const pre = document.createElement("pre");
           pre.className = "raw-body";
           pre.textContent = message.body;
           body.append(pre);
         } else {
-          body.className = "rendered";
+          body.className = "rendered sp-message-body";
           renderMessageBody(message.body, body);
         }
 
@@ -4705,7 +4919,7 @@
         if (includeThread && !message.parent_message_id && replyCount > 0) {
           if (!footer) {
             footer = document.createElement("div");
-            footer.className = "message-reactions";
+            footer.className = "message-reactions sp-message-actions";
             wrapper.append(footer);
           }
           thread = document.createElement("button");
@@ -4881,7 +5095,12 @@
           }
           const caption = document.createElement("figcaption");
           caption.textContent = media.name;
-          figure.append(element, caption);
+          const original = document.createElement("a");
+          original.href = originalUrl;
+          original.textContent = "Vis i full storleik";
+          original.target = "_blank";
+          original.rel = "noopener noreferrer";
+          figure.append(element, caption, original);
           target.append(figure);
         });
       }
@@ -5201,11 +5420,11 @@
         }
       }
 
-      async function renderMermaidDiagrams() {
+      async function renderMermaidDiagrams(root: ParentNode = messagesEl) {
         if (renderMode !== "view") {
           return;
         }
-        const diagrams = [...messagesEl.querySelectorAll(".mermaid")].filter((diagram): diagram is HTMLElement => diagram instanceof HTMLElement);
+        const diagrams = [...root.querySelectorAll(".mermaid")].filter((diagram): diagram is HTMLElement => diagram instanceof HTMLElement);
         if (diagrams.length === 0) return;
         if (mermaidPromise === null) {
           const mermaidUrl = new URL("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs");
@@ -5239,5 +5458,271 @@
             diagram.textContent = `Mermaid-feil: ${errorMessage(error)}`;
           }
         }
+      }
+
+      // The existing application is initialized exactly once above. Only this
+      // local opt-in presentation subscribes to it; it owns no socket or state.
+      if (shouldMountReactInterface(window.location)) {
+        void import("./ui/react/development-preview").then(({ mountDevelopmentPreview }) => {
+          developmentPreviewActive = true;
+          const preview = mountDevelopmentPreview({
+            advanced: createAdvancedHost({
+              agents: agentsApi, integrations: integrationsApi, processes: processesApi,
+              channels: () => knownChannels, circles: () => knownCircles,
+              capabilities: () => ({ agent: !createAgentAccessButton.closest("[hidden]"), heart: !processTitle.closest("[hidden]") })
+            }),
+            imageGeneration,
+            openImageGeneration: () => imageGeneration.open(),
+            legacyContainer: sproytApp,
+            runtime: applicationRuntime,
+            snapshot: getConversationSnapshot,
+            theme: () => themeMode,
+            cycleTheme: cycleThemeMode,
+            renderMode: () => renderMode,
+            setRenderMode: mode => { setRenderMode(mode); refreshDevelopmentPreview(); },
+            settings: {
+              profile: () => activeProfile(currentParticipantId),
+              profileFor: userId => activeProfile(userId),
+              saveName: name => savePreviewProfile("profile_updated", () => sendCommand("update_profile", { display_name: name })),
+              saveStatus: (text, emoji) => savePreviewProfile("status_updated", () => sendCommand("set_status", { text, emoji, expires_at: null })),
+              loadNotifications: () => notificationsApi.get(),
+              saveNotifications: async preferences => { await notificationsApi.save(preferences); await loadNotificationSettings(); },
+              enablePush: async publicKey => { await registerBrowserPush(publicKey); await loadNotificationSettings(); }
+            },
+            community: createCommunityHost({
+              requests: communityRequests, send: sendCommand, openDirect: openDirectChannel,
+              selfId: () => currentParticipantId, channels: () => knownChannels, circles: () => knownCircles,
+              slugify, channelSlug: scopedCircleChannelSlug, invitationToken: invitationValueToToken,
+              enrollment: enrollmentApi, renderMarkdown
+            }),
+            inboxState: () => ({
+              channels: knownChannels,
+              mentions: knownMentions,
+              tasks: knownTasks,
+              participantId: currentParticipantId,
+              circleNames: Object.fromEntries([...knownCircles].map(([id, circle]) => [id, circle.name]))
+            }),
+            load: kind => runPreviewInboxRequest(kind === "mentions" ? "mentions_listed" : "tasks_listed",
+              () => sendCommand(kind === "mentions" ? "list_mentions" : "list_tasks")),
+            openChannel: channelId => {
+              const channel = knownChannels.find(item => item.id === channelId);
+              if (channel) selectChannel(channel);
+            },
+            openMentionSource: mention => {
+              persistActiveDraft();
+              persistThreadDraft();
+              const channel = knownChannels.find(item => item.id === mention.message.channel_id);
+              if (!channel) return;
+              const rootId = mention.message.parent_message_id;
+              if (channel.id === activeChannelId) {
+                if (rootId) openThread(rootId);
+                else {
+                  developmentChannelRevealMessageId = mention.message.id;
+                  refreshDevelopmentPreview();
+                }
+                return;
+              }
+              if (rootId) pendingThreadToOpen = rootId;
+              selectChannel(channel);
+              if (!rootId) developmentChannelRevealMessageId = mention.message.id;
+            },
+            markMentionRead: messageId => runPreviewInboxRequest("mention_read",
+              () => sendCommand("mark_mention_read", { message_id: messageId })),
+            createTask: ({ sourceMessageId, title, processLinkId }) => {
+              if (!currentParticipantId) return Promise.reject(new Error("Profilen er ikkje klar enno. Vent litt og prøv igjen."));
+              return runPreviewInboxRequest("task_created", () => sendCommand("create_task", {
+                source_message_id: sourceMessageId,
+                assignee_id: currentParticipantId!,
+                title,
+                process_link_id: processLinkId
+              }));
+            },
+            setTaskDone: (taskId, done) => runPreviewInboxRequest("task_updated",
+              () => sendCommand("set_task_done", { task_id: taskId, done })),
+            managementCapabilities: () => ({
+              agent: !createAgentAccessButton.closest("[hidden]"),
+              heart: !processTitle.closest("[hidden]")
+            }),
+            setChannelNotifications: (channelId, enabled) => { void setChannelNotifications(channelId, enabled); },
+            reauthenticateNow,
+            openManagement: (destination) => {
+              persistActiveDraft();
+              persistThreadDraft();
+              // Close the restored thread before opening another native modal.
+              // Its draft remains in the same host-owned thread draft store.
+              if (threadPanel.open) threadPanel.close();
+              setMobileConversationDrawerOpen(false);
+              setMobileNavigationOpen(false);
+              switch (destination.kind) {
+                case "create-circle": createCircleFromDrawer.click(); break;
+                case "circles": circleToolSettings.click(); break;
+                case "people": openDirectMessageDialog(); break;
+                case "channel": openChannelDetails(); break;
+                case "channels": openChannelManagement(destination.circleId); break;
+                case "invite": openCircleInviteDialog(destination.circleId); break;
+                default: {
+                  setDesktopSidebarCollapsed(false, false);
+                  if (window.matchMedia("(max-width: 640px)").matches) setMobileNavigationOpen(true);
+                  const details = destination.kind === "profile" ? statusEditor
+                    : destination.kind === "notifications" ? notificationEditor
+                    : destination.kind === "agent" ? createAgentAccessButton.closest("details") : null;
+                  if (details instanceof HTMLDetailsElement && !details.hidden) details.open = true;
+                  const focus = destination.kind === "profile" ? profileDisplayName
+                    : destination.kind === "notifications" ? notificationEditor.querySelector<HTMLElement>("summary")
+                    : destination.kind === "agent" ? details?.querySelector<HTMLElement>("summary") : processTitle;
+                  if (focus && !focus.closest("[hidden]")) { focus.focus(); focus.scrollIntoView({ block: "nearest" }); }
+                }
+              }
+            },
+            select: (channelId) => {
+              const channel = knownChannels.find(item => item.id === channelId);
+              if (channel) selectChannel(channel);
+            },
+            search: (query) => { conversationSearch.value = query; renderConversationDrawer(); },
+            openThread,
+            closeThread: () => { if (threadPanel.open) threadPanel.close(); },
+            loadOlder: loadOlderHistory,
+            isOwnMessage: (message) => message.sender_id === currentParticipantId,
+            takeScrollIntent: () => {
+              const intent = {
+                channelRevealMessageId: developmentChannelRevealMessageId,
+                threadRevealMessageId: developmentThreadRevealMessageId
+              };
+              developmentChannelRevealMessageId = null;
+              developmentThreadRevealMessageId = null;
+              return intent;
+            },
+            messageStatus: (message) => {
+              if (message.sender_id !== currentParticipantId) return message.edited_at ? "Redigert" : undefined;
+              const pending = message.parent_message_id
+                ? [...pendingThreadReplies.values()].find(item => item.channelId === message.channel_id
+                  && item.rootId === message.parent_message_id && item.body === message.body)
+                : [...pendingMessages.values()].find(item => item.channelId === message.channel_id && item.body === message.body);
+              if (pending) return "Sender …";
+              const uncertain = message.parent_message_id
+                ? [...uncertainThreadReplies.values()].find(item => item.channelId === message.channel_id
+                  && item.rootId === message.parent_message_id && item.body === message.body)
+                : [...uncertainMessages.values()].find(item => item.channelId === message.channel_id && item.body === message.body);
+              if (uncertain) return "Kontrollerer levering …";
+              return message.edited_at ? "Sendt · Redigert" : "Sendt";
+            },
+            renderMessageContent: (message, target) => {
+              // Media has a React-native uncropped preview; this bridge keeps
+              // only the established safe Markdown and invitation content.
+              renderMessageBody(message.body.replace(/\[\[media:[^\]]+\]\]/giu, ""), target);
+              void renderMermaidDiagrams(target);
+            },
+            threadLoad: () => developmentThreadLoad?.rootId === activeThreadRootId
+              ? developmentThreadLoad : { loading: false },
+            reactions: (messageId) => [...(messageReactions.get(messageId) ?? [])].map(([emoji, reaction]) => ({
+              emoji, count: reaction.count, reactedByMe: reaction.reactedByMe,
+              names: reaction.userIds.map(userId => userId === currentParticipantId ? "Du" : activeProfile(userId)?.display_name || "Ein ven")
+            })),
+            reactionError: (messageId) => developmentReactionErrors.get(messageId),
+            toggleReaction: (messageId, emoji) => {
+              developmentReactionErrors.delete(messageId);
+              const requestId = sendCommand("toggle_message_reaction", { message_id: messageId, emoji });
+              if (requestId) developmentReactionRequests.set(requestId, messageId);
+              else developmentReactionErrors.set(messageId, "Ikkje tilkopla. Prøv reaksjonen igjen når tilkoplinga er tilbake.");
+              refreshDevelopmentPreview();
+            },
+            composer: (target) => {
+              const isThread = target.parentMessageId !== null;
+              const input = isThread ? threadBody : bodyInput;
+              const state = isThread ? threadComposerState(target.parentMessageId) : null;
+              const matches = target.channelId === activeChannelId && (!isThread || target.parentMessageId === activeThreadRootId);
+              return {
+                value: matches ? input.value : "",
+                disabled: !matches || input.disabled || (isThread && threadForm.hidden),
+                busy: imageGeneration.getSnapshot().busy || input.readOnly || (isThread ? ((state?.uploadCount ?? 0) > 0 || hasPendingThreadReply(target.parentMessageId))
+                  : (channelUploads.get(target.channelId)?.count ?? 0) > 0),
+                sendOnEnter: usesDesktopComposerKeys.matches,
+                media: isThread ? state?.media ?? [] : activeChannelMedia(),
+                uploadStatus: isThread ? (state?.statusKind !== "error" ? state?.status : undefined)
+                  : (channelUploads.get(target.channelId)?.kind !== "error" ? channelUploads.get(target.channelId)?.status : undefined),
+                error: isThread ? (state?.statusKind === "error" ? state.status : undefined)
+                  : (channelUploads.get(target.channelId)?.kind === "error" ? channelUploads.get(target.channelId)?.status : undefined)
+              };
+            },
+            upload: (target, files) => {
+              if (target.channelId !== activeChannelId) return;
+              if (target.parentMessageId !== null) {
+                if (target.parentMessageId !== activeThreadRootId || threadBody.disabled || threadBody.readOnly || hasPendingThreadReply()) return;
+                void uploadThreadMediaFiles(files);
+              } else if (!bodyInput.disabled && !bodyInput.readOnly) void uploadMediaFiles(files);
+            },
+            removeMedia: (target, id) => {
+              if (target.channelId !== activeChannelId) return;
+              if (target.parentMessageId !== null) {
+                if (target.parentMessageId !== activeThreadRootId || hasPendingThreadReply() || threadBody.readOnly) return;
+                const state = threadComposerState(target.parentMessageId);
+                if (!state || state.uploadCount > 0) return;
+                state.media = state.media.filter(media => media.id !== id);
+                setThreadUploadStatus("Vedlegget er fjerna.");
+                renderThreadMediaPreviews();
+              } else {
+                if (bodyInput.readOnly || (channelUploads.get(target.channelId)?.count ?? 0) > 0) return;
+                pendingMedia = pendingMedia.filter(media => media.id !== id || media.channel_id !== target.channelId);
+                setUploadStatus("Vedlegget er fjerna.");
+                renderMediaPreviews();
+              }
+            },
+            canEditMessage: (message) => message.sender_id === currentParticipantId && !message.deleted_at,
+            editMessage: (messageId, body) => { sendCommand("edit_message", { message_id: messageId, body }); },
+            deleteMessage: (messageId) => { sendCommand("delete_message", { message_id: messageId }); },
+            mentionCandidates: (target) => {
+              if (target.channelId !== activeChannelId) return [];
+              const channel = knownChannels.find(item => item.id === target.channelId);
+              if (channel?.is_direct && !knownChannelUsers.has(target.channelId)) return [];
+              const members = new Set((knownChannelUsers.get(target.channelId) ?? []).map(user => user.id));
+              return mentionCandidates().filter(user => Boolean(user.handle)).map(user => ({
+                id: user.id, name: user.display_name, handle: mentionHandle(user),
+                expandsDirect: Boolean(channel?.is_direct && user.id !== currentParticipantId && !members.has(user.id))
+              }));
+            },
+            expandDirect: (target, userId) => {
+              if (target.channelId !== activeChannelId) return;
+              if (target.parentMessageId !== null && target.parentMessageId !== activeThreadRootId) return;
+              const channel = knownChannels.find(item => item.id === target.channelId);
+              const members = knownChannelUsers.get(target.channelId) ?? [];
+              if (!channel?.is_direct || !knownChannelUsers.has(target.channelId)
+                || userId === currentParticipantId || members.some(user => user.id === userId)) return;
+              if (!knownUsers.some(user => user.id === userId)) return;
+              sendCommand("expand_direct_channel", { channel_id: target.channelId, user_id: userId });
+            },
+            changeDraft: (target, value) => {
+              if (target.channelId !== activeChannelId) return;
+              if (target.parentMessageId !== null && target.parentMessageId !== activeThreadRootId) return;
+              const input = target.parentMessageId ? threadBody : bodyInput;
+              if (input.disabled || input.readOnly) return;
+              input.value = value;
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+            },
+            send: (target) => {
+              if (target.channelId !== activeChannelId) return;
+              const isThread = target.parentMessageId !== null;
+              if (isThread && target.parentMessageId !== activeThreadRootId) return;
+              const input = isThread ? threadBody : bodyInput;
+              const button = isThread ? threadSendButton : sendButton;
+              if (input.disabled || input.readOnly || button.disabled) return;
+              if (isThread) setThreadUploadStatus("", "progress", target.parentMessageId);
+              (isThread ? threadForm : sendForm).requestSubmit();
+            },
+            returnToComposer: (target) => {
+              refreshDevelopmentPreview = () => {};
+              developmentPreviewActive = false;
+              threadPanel.inert = false;
+              if (activeThreadRootId && (!target || target.parentMessageId === activeThreadRootId)) {
+                if (threadPanel.open && !threadPanel.matches(":modal")) threadPanel.removeAttribute("open");
+                if (!threadPanel.open) threadPanel.showModal();
+                threadBody.focus({ preventScroll: true });
+              } else {
+                if (threadPanel.open) threadPanel.close();
+                bodyInput.focus({ preventScroll: true });
+              }
+            }
+          });
+          refreshDevelopmentPreview = preview.update;
+        }).catch((error: unknown) => console.error("React-førehandsvisinga kunne ikkje opnast", error));
       }
     
