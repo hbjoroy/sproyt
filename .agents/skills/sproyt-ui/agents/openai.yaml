@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sprøyt UI"
+  short_description: "Editorial React and Vue components and themes"
+  default_prompt: "Use $sproyt-ui to build this interface with the Sprøyt design system."

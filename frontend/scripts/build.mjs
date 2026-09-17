@@ -13,6 +13,7 @@ await build({
   format: "esm",
   outdir: outputDirectory,
   platform: "browser",
+  loader: { ".css": "text" },
   sourcemap: false,
   target: "es2022"
 });

@@ -11,7 +11,15 @@ export function imagePrompt(draft: string): string | null {
 
 type Expansion = { prompt: string; model: string | null; style: string | null; sources: string[]; warning: string | null };
 type VisualReference = { title: string; url: string; credit: string };
-type Job = { expansion: Expansion | null; visualReferences: VisualReference[]; id: string; channel_id: string; state: string; prompt: string; error: string | null };
+export type ImageGenerationJob = { expansion: Expansion | null; visualReferences: VisualReference[]; id: string; channel_id: string; state: string; prompt: string; error: string | null };
+type Job = ImageGenerationJob;
+export interface ImageGenerationSnapshot {
+  readonly jobs: readonly Job[];
+  readonly visible: boolean;
+  readonly status: string;
+  readonly busy: boolean;
+}
+export type ImageGenerationOwner = ReturnType<typeof createImageGeneration>;
 function decodeJobs(value: unknown): Job[] {
   if (!isRecord(value) || !Array.isArray(value.jobs)) throw new Error("Ugyldig biletkø");
   return value.jobs.map((job: unknown) => {
@@ -30,7 +38,7 @@ function decodeJobs(value: unknown): Job[] {
 
 export function createImageGeneration(options: {
   http: HttpClient; before: HTMLElement; toolbar: HTMLElement; connected: () => boolean; channel: () => string;
-  identity: () => string; channelName: (id: string) => string; attach: (media: MediaObject) => void;
+  identity: () => string; channelName: (id: string) => string; attach: (media: MediaObject, rootId?: string) => void;
 }) {
   const panel = document.createElement("section");
   panel.className = "imagegen-inbox";
@@ -38,12 +46,7 @@ export function createImageGeneration(options: {
   panel.hidden = true;
   const launcher = document.createElement("button"); launcher.type = "button"; launcher.textContent = "🖼️";
   launcher.className = "composer-icon"; launcher.title = "Biletverkstad"; launcher.setAttribute("aria-label", "Biletverkstad");
-  launcher.addEventListener("click", () => {
-    dismissed = false;
-    if (!jobs.length) status.textContent = 'Skriv /imagegen "skildring av biletet" i meldinga. Opplasta bilete i utkastet blir brukte som referansar (opptil tre).';
-    panel.hidden = false;
-    void refresh();
-  });
+  launcher.addEventListener("click", open);
   options.toolbar.append(launcher);
   options.before.before(panel);
   const heading = document.createElement("strong");
@@ -52,7 +55,7 @@ export function createImageGeneration(options: {
   status.setAttribute("role", "status");
   const cards = document.createElement("div");
   const hide = document.createElement("button"); hide.type = "button"; hide.textContent = "Skjul";
-  hide.addEventListener("click", () => { dismissed = true; panel.hidden = true; });
+  hide.addEventListener("click", hidePanel);
   panel.append(heading, hide, status, cards);
   let signature = "";
   let polling = false;
@@ -60,15 +63,40 @@ export function createImageGeneration(options: {
   let busy = false;
   let jobs: Job[] = [];
   let dismissed = false;
+  let statusMessage = "";
+  let snapshot: ImageGenerationSnapshot = { jobs: [], visible: false, status: "", busy: false };
+  const listeners = new Set<() => void>();
+  const jobScopes = new Map<string, string>();
+  function publish() {
+    snapshot = { jobs: [...jobs], visible: !dismissed && (jobs.length > 0 || Boolean(statusMessage)), status: statusMessage, busy: busy || submitting };
+    panel.hidden = !snapshot.visible;
+    for (const listener of listeners) listener();
+  }
+  function setStatus(message: string) { statusMessage = message; status.textContent = message; publish(); }
+  function open() {
+    dismissed = false;
+    if (!jobs.length) setStatus('Skriv /imagegen "skildring av biletet" i meldinga. Opplasta bilete i utkastet blir brukte som referansar (opptil tre).');
+    publish();
+    void refresh();
+  }
+  function hidePanel() { dismissed = true; publish(); }
+  function jobScope(id: string, rootId?: string): string | undefined {
+    const key = `sproyt-imagegen-scope:${options.identity()}:${id}`;
+    if (rootId) jobScopes.set(key, rootId);
+    try {
+      if (rootId) sessionStorage.setItem(key, rootId);
+      return sessionStorage.getItem(key) ?? jobScopes.get(key);
+    } catch { return jobScopes.get(key); }
+  }
   // Reuse the admission id on a network retry, including after a page reload.
-  function requestId(channel: string, prompt: string, referenceIds: string[]): string {
+  function requestId(channel: string, prompt: string, referenceIds: string[], rootId?: string): string {
     const key = `sproyt-imagegen-admission:${options.identity()}`;
     try {
       const previous: unknown = JSON.parse(sessionStorage.getItem(key) || "null");
-      if (isRecord(previous) && previous.channel === channel && previous.prompt === prompt && JSON.stringify(previous.referenceIds || []) === JSON.stringify(referenceIds) && typeof previous.id === "string") return previous.id;
+      if (isRecord(previous) && previous.channel === channel && previous.rootId === rootId && previous.prompt === prompt && JSON.stringify(previous.referenceIds || []) === JSON.stringify(referenceIds) && typeof previous.id === "string") return previous.id;
     } catch { /* Storage is optional; server-side admission still bounds jobs. */ }
     const id = crypto.randomUUID();
-    try { sessionStorage.setItem(key, JSON.stringify({ channel, prompt, referenceIds, id })); } catch { /* optional */ }
+    try { sessionStorage.setItem(key, JSON.stringify({ channel, prompt, referenceIds, rootId, id })); } catch { /* optional */ }
     return id;
   }
   async function jsonPost(path: string, body: unknown): Promise<unknown> {
@@ -81,10 +109,11 @@ export function createImageGeneration(options: {
     return `/api/v1/imagegen/${encodeURIComponent(id)}/preview${participant ? `?participant=${encodeURIComponent(participant)}` : ""}`;
   }
   function render() {
+    publish();
     const next = JSON.stringify([jobs, options.channel(), options.identity()]);
     if (next === signature || busy) return;
     signature = next;
-    if (jobs.some(job => job.state === "ready")) status.textContent = "Biletet er klart til privat gjennomgang.";
+    if (jobs.some(job => job.state === "ready") && !statusMessage) setStatus("Biletet er klart til privat gjennomgang.");
     panel.hidden = dismissed || (jobs.length === 0 && !status.textContent);
     cards.replaceChildren();
     for (const job of jobs) {
@@ -133,26 +162,7 @@ export function createImageGeneration(options: {
         if (decision === "accept" && options.channel() !== job.channel_id) {
           button.disabled = true; label.textContent += " Opne den opphavlege kanalen for å leggje biletet i utkastet.";
         }
-        button.addEventListener("click", async () => {
-          if (busy) return;
-          const identity = options.identity();
-          busy = true; card.querySelectorAll("button").forEach(b => { b.disabled = true; });
-          try {
-            const result = await jsonPost(`/api/v1/imagegen/${encodeURIComponent(job.id)}/review`, { decision });
-            if (identity !== options.identity()) return;
-            if (decision === "accept") {
-              const media = mediaFromUpload(result);
-              if (!media) throw new Error("Ugyldig biletvedlegg");
-              // A channel switch while awaiting the response must not attach
-              // the picture to whichever channel happens to be open now.
-              if (options.channel() === job.channel_id) {
-                options.attach(media);
-                status.textContent = "Biletet er lagt i utkastet. Skriv ei melding og trykk Send når du vil dele det.";
-              } else status.textContent = "Biletet er godteke. Opne den opphavlege kanalen for å leggje det i utkastet.";
-            } else status.textContent = decision === "decline" ? "Biletet er avslått og blir ikkje delt." : "Biletmeldinga er lukka.";
-          } catch (error) { status.textContent = error instanceof Error ? error.message : "Kunne ikkje oppdatere biletet."; }
-          finally { busy = false; signature = ""; await refresh(); }
-        });
+        button.addEventListener("click", () => { void review(job.id, decision as "accept" | "decline" | "dismiss"); });
         card.append(button);
       };
       if (job.state === "ready") { action("Godta", "accept"); action("Avslå", "decline"); }
@@ -160,6 +170,27 @@ export function createImageGeneration(options: {
       if (job.state === "failed") action("Lukk", "dismiss");
       cards.append(card);
     }
+  }
+  async function review(id: string, decision: "accept" | "decline" | "dismiss") {
+    const job = jobs.find(item => item.id === id);
+    if (!job || busy || (decision === "accept" && options.channel() !== job.channel_id)) return;
+    const identity = options.identity();
+    busy = true;
+    cards.querySelectorAll("button").forEach(button => { button.disabled = true; });
+    publish();
+    try {
+      const result = await jsonPost(`/api/v1/imagegen/${encodeURIComponent(job.id)}/review`, { decision });
+      if (identity !== options.identity()) return;
+      if (decision === "accept") {
+        const media = mediaFromUpload(result);
+        if (!media || media.channel_id !== job.channel_id) throw new Error("Ugyldig biletvedlegg");
+        if (options.channel() === job.channel_id) {
+          options.attach(media, jobScope(job.id));
+          setStatus("Biletet er lagt i utkastet. Skriv ei melding og trykk Send når du vil dele det.");
+        } else setStatus("Biletet er godteke. Opne den opphavlege kanalen for å leggje det i utkastet.");
+      } else setStatus(decision === "decline" ? "Biletet er avslått og blir ikkje delt." : "Biletmeldinga er lukka.");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Kunne ikkje oppdatere biletet."); }
+    finally { busy = false; signature = ""; publish(); await refresh(); }
   }
   async function refresh() {
     if (polling || busy || !options.connected()) return;
@@ -174,21 +205,29 @@ export function createImageGeneration(options: {
   }
   window.setInterval(() => { void refresh(); }, 5_000);
   return {
-    async submit(draft: string, channel: string, media: MediaObject[] = []): Promise<boolean> {
+    getSnapshot: () => snapshot,
+    subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    open, hide: hidePanel, review, refresh, previewUrl,
+    channelName: options.channelName,
+    threadRoot: (id: string) => jobScope(id),
+    async submit(draft: string, channel: string, media: MediaObject[] = [], rootId?: string): Promise<boolean> {
       const prompt = imagePrompt(draft);
       if (prompt === null) return false;
       if (submitting) throw new Error("Biletførespurnaden blir allereie send.");
       const referenceIds = media.filter(item => item.channel_id === channel && item.content_type.startsWith("image/")).map(item => item.id);
       if (referenceIds.length > 3) throw new Error("Bruk høgst tre referansebilete i utkastet når du lagar eit bilete.");
       submitting = true; dismissed = false; panel.hidden = false;
-      status.textContent = "Legg biletet i kø …";
+      setStatus("Legg biletet i kø …");
+      const identity = options.identity();
       try {
-        await jsonPost("/api/v1/imagegen", { channel_id: channel, request_id: requestId(channel, prompt, referenceIds), prompt, reference_ids: referenceIds });
+        const result = await jsonPost("/api/v1/imagegen", { channel_id: channel, request_id: requestId(channel, prompt, referenceIds, rootId), prompt, reference_ids: referenceIds });
+        if (identity !== options.identity()) return false;
+        if (rootId && isRecord(result) && isRecord(result.job) && typeof result.job.id === "string") jobScope(result.job.id, rootId);
         try { sessionStorage.removeItem(`sproyt-imagegen-admission:${options.identity()}`); } catch { /* optional */ }
-        status.textContent = "Biletet er i kø. Førehandsvisinga kjem hit privat; ingenting er posta i kanalen.";
+        setStatus("Biletet er i kø. Førehandsvisinga kjem hit privat; ingenting er posta i kanalen.");
         await refresh();
         return true;
-      } finally { submitting = false; }
+      } finally { submitting = false; publish(); }
     },
   };
 }

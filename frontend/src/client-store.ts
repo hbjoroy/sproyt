@@ -1,7 +1,7 @@
 import type { ServerEvent } from "./types";
 
 type ApplicationState = Readonly<{
-  session: Readonly<{ refreshDueAt: number }>;
+  session: Readonly<{ refreshDueAt: number; reauthenticationRequired: boolean }>;
   connection: Readonly<{ connected: boolean; status: string }>;
   transport: Readonly<{ lastEventType: ServerEvent["type"] | null; processedEvents: number }>;
 }>;
@@ -15,7 +15,7 @@ type ApplicationStore = Readonly<{
 
 export function createApplicationStore(): ApplicationStore {
   let state: ApplicationState = Object.freeze({
-    session: Object.freeze({ refreshDueAt: 0 }),
+    session: Object.freeze({ refreshDueAt: 0, reauthenticationRequired: false }),
     connection: Object.freeze({ connected: false, status: "Koplar til …" }),
     transport: Object.freeze({ lastEventType: null, processedEvents: 0 })
   });

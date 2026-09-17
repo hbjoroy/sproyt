@@ -10,6 +10,7 @@ RUN rustup target add wasm32-unknown-unknown
 FROM --platform=$BUILDPLATFORM node:24.19.0-alpine3.23@sha256:244cc2b53f46f9e876304391d17682b0ddae9ac33491f4857e25e35a36ba7995 AS frontend-builder
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/vendor/sproyt-ui-0.1.0.tgz ./vendor/sproyt-ui-0.1.0.tgz
 RUN npm ci
 COPY frontend ./
 RUN npm run build

@@ -1,0 +1,104 @@
+/* Transitional styles for the existing DOM views. Keep all colour choices in
+   @sproyt/ui semantic tokens so later React view migrations do not introduce
+   a second palette. */
+.sproyt-editorial-app {
+  --canvas: var(--sp-canvas);
+  --paper: var(--sp-surface);
+  --surface: var(--sp-chrome);
+  --surface-raised: var(--sp-surface);
+  --surface-hover: var(--sp-wash);
+  --control: var(--sp-surface);
+  --ink: var(--sp-text);
+  --muted: var(--sp-muted);
+  --subtle: var(--sp-muted);
+  --border: var(--sp-line);
+  --line: var(--sp-line);
+  --accent: var(--sp-accent);
+  --accent-hover: var(--sp-accent);
+  --accent-ink: var(--sp-on-accent);
+  --focus: var(--sp-text);
+  --danger: var(--sp-error);
+  --danger-surface: var(--sp-surface);
+  min-height: var(--app-height, 100dvh);
+  background: var(--sp-canvas);
+  color: var(--sp-text);
+}
+
+.sproyt-editorial-app { border-radius: 0; box-shadow: none; }
+
+.sproyt-editorial-app button,
+.sproyt-editorial-app input,
+.sproyt-editorial-app textarea,
+.sproyt-editorial-app select { border-radius: 2px; }
+
+.sproyt-editorial-app .conversation-header,
+.sproyt-editorial-app .conversation-drawer,
+.sproyt-editorial-app .bottom-navigation,
+.sproyt-editorial-app .sidebar-panel { background: var(--sp-chrome); }
+
+.sproyt-editorial-app .conversation-header,
+.sproyt-editorial-app .conversation-drawer { border-color: var(--sp-line); }
+
+.sproyt-editorial-app .messages,
+.sproyt-editorial-app .thread-messages { background: var(--sp-canvas); }
+
+.sproyt-editorial-app .message { border-color: var(--sp-line); }
+.sproyt-editorial-app .message + .message .message-author::before {
+  background: var(--sp-line);
+}
+
+.sproyt-editorial-app .send,
+.sproyt-editorial-app .thread-form {
+  background: var(--sp-surface);
+  border-color: var(--sp-line);
+  border-top-color: var(--sp-rule);
+}
+
+.sproyt-editorial-app .send textarea,
+.sproyt-editorial-app .thread-form textarea,
+.sproyt-editorial-app input,
+.sproyt-editorial-app select { color: var(--sp-text); }
+
+.sproyt-editorial-app dialog {
+  color: var(--sp-text);
+  background: var(--sp-canvas);
+  border-color: var(--sp-rule);
+}
+
+.sproyt-editorial-app dialog header { border-color: var(--sp-rule); }
+.sproyt-editorial-app .status { color: var(--sp-muted); }
+.sproyt-editorial-app .error,
+.sproyt-editorial-app [data-tone="error"] { color: var(--sp-error); }
+
+.sproyt-editorial-app .reaction-badge[aria-pressed="true"] { background: var(--sp-wash); }
+.sproyt-editorial-app .theme-mode-toggle {
+  min-height: var(--sp-target);
+  border: 1px solid var(--sp-line);
+  background: transparent;
+  color: var(--sp-text);
+  padding: .35rem .6rem;
+}
+
+@media (pointer: coarse) {
+  .sproyt-editorial-app .message-actions button,
+  .sproyt-editorial-app .reaction-badge { min-height: 44px; min-width: 44px; }
+}
+
+/* The bundled conversation row has one primary action. Sprøyt also needs the
+   host-owned per-channel notification command beside that primary action. */
+.sp-conversation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.sp-conversation-row > .sp-conversation { min-width: 0; }
+.sp-conversation-actions { display: contents; }
+.sp-channel-notification-toggle { min-width: var(--sp-target); padding-inline: .55rem; }
+.sp-conversation-row > .sp-conversation-actions > .sp-status {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  margin: .2rem .65rem .5rem;
+}

@@ -423,7 +423,9 @@ fn media_signatures_override_untrusted_declared_types() {
 fn browser_exposes_paste_upload_and_safe_media_rendering() {
     assert!(BROWSER_CLIENT.contains("bodyInput.addEventListener(\"paste\""));
     assert!(BROWSER_CLIENT.contains("accept=\"image/*,video/*,.heic,.heif,.mov\""));
-    assert!(BROWSER_CLIENT.contains("/api/v1/channels/${activeChannelId}/media"));
+    // Uploads capture the channel before asynchronous work starts, so a
+    // navigation during a multi-file batch cannot place later files elsewhere.
+    assert!(BROWSER_CLIENT.contains("/api/v1/channels/${channelId}/media"));
     assert!(
         BROWSER_CLIENT.contains("response.status === 401 && await sessionController.refresh(true)")
     );
@@ -779,7 +781,9 @@ fn browser_rotates_sockets_only_for_real_session_changes() {
     );
     assert!(CONNECTION_SOURCE.contains("state.socketHandoff?.nextSocket === nextSocket"));
     assert!(CONNECTION_SOURCE.contains("state.socket = nextSocket"));
-    assert!(!BROWSER_CLIENT.contains("}, 500);"));
+    // The bundled design package may contain unrelated 500ms timers. The
+    // application source itself must not own a competing reconnect timer.
+    assert!(!APP_SOURCE.contains("}, 500);"));
     assert!(APP_SOURCE.contains("recoverConnection(false)"));
     assert!(BROWSER_CLIENT.contains(
             ".catch(() => connectionSupervisor.scheduleReconnect(1006, \"kunne ikkje gjenopprette sambandet\"))"
@@ -795,7 +799,11 @@ fn browser_routes_session_connection_and_events_through_supervisors() {
     assert!(BROWSER_CLIENT.contains("const connectionSupervisor = createConnectionController({"));
     assert!(INDEX_HTML.contains("{{APP_URL}}"));
     assert!(!INDEX_HTML.contains("{{CLIENT_STORE_URL}}"));
-    assert!(BROWSER_CLIENT.contains("const applicationStore = createApplicationStore();"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("const applicationRuntime = createApplicationRuntime(renderServerEvent);")
+    );
+    assert!(BROWSER_CLIENT.contains("const applicationStore = applicationRuntime.store;"));
     assert!(CLIENT_STORE.contains("function createApplicationStore()"));
     assert!(CLIENT_STORE.contains("updateSession(patch)"));
     assert!(CLIENT_STORE.contains("updateConnection(patch)"));
@@ -818,9 +826,11 @@ fn browser_routes_session_connection_and_events_through_supervisors() {
         .find("if (nextEvent === void 0) break;\n          deliver(reduce(nextEvent));")
         .expect("reduce before delivery");
     assert!(queued < reduce_then_deliver);
-    assert!(BROWSER_CLIENT.contains("const serverEventMailbox = createServerEventMailbox({"));
-    assert!(BROWSER_CLIENT.contains("reduce: applicationStore.reduceServerEvent,"));
-    assert!(BROWSER_CLIENT.contains("deliver: renderServerEvent"));
+    assert!(
+        BROWSER_CLIENT
+            .contains("const applicationRuntime = createApplicationRuntime(renderServerEvent);")
+    );
+    assert!(BROWSER_CLIENT.contains("const serverEventMailbox = applicationRuntime;"));
     assert!(!BROWSER_CLIENT.contains("const applicationStore = (() => {"));
     assert!(!BROWSER_CLIENT.contains("const serverEventMailbox = (() => {"));
     assert!(!BROWSER_CLIENT.contains("let sessionRefreshTimer"));
@@ -1064,10 +1074,7 @@ fn browser_exposes_channel_members_and_owner_managed_markdown_description() {
         BROWSER_CLIENT
             .contains("id=\"invite-channel-member\" type=\"button\" disabled>Inviter</button>")
     );
-    assert!(
-        BROWSER_CLIENT
-            .contains("const pendingChannelInvitationRecipients = new Map<string, string>()")
-    );
+    assert!(BROWSER_CLIENT.contains("const pendingRequests = createPendingRequests()"));
     assert!(BROWSER_CLIENT.contains("pendingDirectInvitationMessages.set(directRequestId"));
     assert!(BROWSER_CLIENT.contains(
         "sendCommand(\"send_message\", { channel_id: channel.id, body: directInvitationMessage })"
@@ -1142,7 +1149,7 @@ fn onboarding_is_server_side_single_use_and_owner_authorized() {
 #[test]
 fn browser_uses_one_complete_theme_contract_for_dark_mode_controls() {
     assert!(BROWSER_CLIENT.contains(
-        "<meta name=\"theme-color\" content=\"#111613\" media=\"(prefers-color-scheme: dark)\">"
+        "<meta name=\"theme-color\" content=\"#191b18\" media=\"(prefers-color-scheme: dark)\">"
     ));
     assert!(BROWSER_CLIENT.contains("color-scheme: light dark;"));
     assert!(BROWSER_CLIENT.contains("accent-color: var(--accent);"));
@@ -1490,7 +1497,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     );
     assert!(BROWSER_CLIENT.contains("channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId"));
     assert!(BROWSER_CLIENT.contains("payload.channel_id !== activeChannelId"));
-    assert!(BROWSER_CLIENT.contains("const pendingMessages = new Map<string, PendingMessage>()"));
+    assert!(BROWSER_CLIENT.contains("const pendingRequests = createPendingRequests()"));
 
     let service_worker = reqwest::get(format!("http://{address}/service-worker.js"))
         .await

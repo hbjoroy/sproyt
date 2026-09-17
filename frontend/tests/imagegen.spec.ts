@@ -6,7 +6,7 @@ test("image tool follows editor focus and hiding survives refreshed job status",
     polls++;
     return route.fulfill({ json: { enabled: true, jobs: [{ id: "focus-job", channel_id: "unused", state: polls > 1 ? "running" : "queued", prompt: "A sea view", error: null }] } });
   });
-  await page.goto("/?participant=imagegen-focus-test");
+  await page.goto("/?participant=imagegen-focus-test&ui=legacy");
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15000 });
   const tool = page.getByRole("button", { name: "Biletverkstad", exact: true });
   const inbox = page.getByRole("region", { name: "Private biletmeldingar" });
@@ -35,7 +35,7 @@ test("draft photos are sent as references and remain unpublished attachments", a
     if (route.request().method() === "POST") request = route.request().postDataJSON();
     return route.fulfill({ json: { enabled: true, jobs: [] } });
   });
-  await page.goto("/?participant=imagegen-draft-test");
+  await page.goto("/?participant=imagegen-draft-test&ui=legacy");
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15000 });
   for (let i = 0; i < 2; i++) {
     await page.locator("#media-input").setInputFiles({ name: `ref-${i}.png`, mimeType: "image/png", buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) });
@@ -71,7 +71,7 @@ test("imagegen stays private, survives reload, and accepts into a draft without 
     job.state = "accepted";
     await route.fulfill({ json: { job, media: { id: "c63ac052-a05a-4b5d-bfff-04429338df90", channel_id: job.channel_id, original_filename: "generated.png", content_type: "image/png" } } });
   });
-  await page.goto("/?participant=imagegen-browser-test");
+  await page.goto("/?participant=imagegen-browser-test&ui=legacy");
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15000 });
   await page.locator("#body").fill('/imagegen "An oil painting of the sea"');
   await page.locator("#send-form").evaluate((form: HTMLFormElement) => form.requestSubmit());
@@ -99,7 +99,7 @@ test("declining a generated image adds no attachment", async ({ page }) => {
   });
   await page.route(/\/api\/v1\/imagegen\/decline-image\/preview/, route => route.fulfill({ status: 204 }));
   await page.route(/\/api\/v1\/imagegen\/decline-image\/review/, async route => { declined = true; await route.fulfill({ json: {} }); });
-  await page.goto("/?participant=imagegen-decline-test");
+  await page.goto("/?participant=imagegen-decline-test&ui=legacy");
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15000 });
   await page.locator("#body").fill('/imagegen "Seascape"');
   await page.locator("#send-form").evaluate((form: HTMLFormElement) => form.requestSubmit());

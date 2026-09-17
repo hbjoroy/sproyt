@@ -28,7 +28,7 @@ test("malformed WebSocket envelopes are ignored without a page error or visible 
   await trackSockets(page);
   await page.route(/\/auth\/session(?:\?.*)?$/, (route) => route.fulfill({ json: { refresh_after_seconds: 300 } }));
 
-  await page.goto("/?participant=boundary-envelope", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=boundary-envelope&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
   await page.waitForTimeout(250);
   const messagesBefore = await page.locator("#messages").innerText();
@@ -55,7 +55,7 @@ test("unsupported WebSocket protocol is reported visibly", async ({ page }) => {
   await trackSockets(page);
   await page.route(/\/auth\/session(?:\?.*)?$/, (route) => route.fulfill({ json: { refresh_after_seconds: 300 } }));
 
-  await page.goto("/?participant=boundary-protocol", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=boundary-protocol&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
   // Let the initial subscription finish before asserting a system message.
   // Its history render replaces the message list by design.
@@ -88,7 +88,7 @@ test("malformed navigation storage does not crash while session refresh proceeds
     await route.fulfill({ json: { refresh_after_seconds: 300 } });
   });
 
-  await page.goto("/?participant=boundary-storage", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=boundary-storage&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect.poll(() => page.evaluate(() => navigator.locks)).toBeUndefined();
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
   // A short refresh proves that concurrent session checks cannot suppress the timer.
@@ -106,7 +106,7 @@ test("malformed initial session JSON does not crash the client", async ({ page }
     body: "{not-json"
   }));
 
-  await page.goto("/?participant=boundary-api", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=boundary-api&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
   await page.waitForTimeout(100);
   expect(pageErrors).toEqual([]);
@@ -115,7 +115,7 @@ test("malformed initial session JSON does not crash the client", async ({ page }
 test("explicit reauthentication preserves the active draft and supports keyboard activation", async ({ page }) => {
   let loginRequests = 0;
   await page.route(/\/auth\/login(?:\?.*)?$/, async (route) => { loginRequests += 1; await route.fulfill({ contentType: "text/html", body: "reauth" }); });
-  await page.goto("/?participant=boundary-reauth", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=boundary-reauth&ui=legacy", { waitUntil: "domcontentloaded" });
   const composer = page.locator("#body");
   await expect(composer).toBeEnabled({ timeout: 15_000 });
   await composer.fill("utkast som må bevarast");
@@ -134,7 +134,7 @@ test("malformed successful media response stays inside the upload error boundary
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.route(/\/api\/v1\/channels\/[^/]+\/media(?:\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{not-json" }));
-  await page.goto("/?participant=boundary-upload", { waitUntil: "domcontentloaded" });
+  await page.goto("/?participant=boundary-upload&ui=legacy", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#body")).toBeEnabled({ timeout: 15_000 });
   await page.locator("#media-input").setInputFiles({ name: "test.png", mimeType: "image/png", buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) });
   await expect(page.locator("#upload-status")).toContainText("ugyldige mediedata");
