@@ -1,5 +1,5 @@
 import { Button, Composer, Dialog, Status, openReactionPicker, reactionEmoji } from "@sproyt/ui/react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { MediaObject } from "../../types";
 import type { ComposerTarget } from "./host-adapter";
 import { PreviewAttachments } from "./preview-media";
@@ -30,37 +30,6 @@ export interface PreviewComposerHost {
   readonly mentionCandidates: (target: ComposerTarget) => readonly PreviewMention[];
   readonly expandDirect: (target: ComposerTarget, userId: string) => void;
   readonly openImageGeneration: () => void;
-}
-
-/** A visible touch target makes tools beyond the compact row discoverable. */
-function WritingTools({ children }: { readonly children: ReactNode }) {
-  const track = useRef<HTMLDivElement>(null);
-  const [overflow, setOverflow] = useState(false);
-  const [atEnd, setAtEnd] = useState(false);
-  const measure = () => {
-    const element = track.current;
-    if (!element) return;
-    setOverflow(element.scrollWidth > element.clientWidth + 1);
-    setAtEnd(element.scrollLeft + element.clientWidth >= element.scrollWidth - 2);
-  };
-  useLayoutEffect(() => {
-    const element = track.current;
-    if (!element) return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    measure();
-    return () => observer.disconnect();
-  }, []);
-  return <div className="sp-writing-tools">
-    <div className="sp-writing-tools-track" ref={track} onScroll={measure}>{children}</div>
-    <Button className="sp-writing-tools-more" data-overflow={overflow}
-      aria-label={atEnd ? "Vis første skriveverktøy" : "Vis fleire skriveverktøy"}
-      title={atEnd ? "Vis første skriveverktøy" : "Vis fleire skriveverktøy"}
-      onClick={() => {
-        const element = track.current;
-        if (element) element.scrollBy({ left: atEnd ? -element.scrollWidth : element.clientWidth * .85 });
-      }}>{atEnd ? "←" : "→"}</Button>
-  </div>;
 }
 
 /** Host state owns drafts and delivery; selection and transient suggestions
@@ -214,8 +183,8 @@ export function PreviewComposer({ host, target }: {
         {state.media.length > 0 && !state.value.trim() && <Button disabled={state.disabled || state.busy}
           onClick={() => host.send(target)}>Send vedlegg</Button>}
       </>}
-      tools={<WritingTools>
-        <Button disabled={state.disabled || state.busy} onClick={event => {
+      tools={<div className="sp-writing-tools" role="toolbar" aria-label="Skriveverktøy">
+        <Button className="sp-composer-symbol" variant="quiet" aria-label="Set inn emoji" title="Set inn emoji" disabled={state.disabled || state.busy} onClick={event => {
           const field = input();
           if (field) updateSelection(field);
           closeEmoji.current?.();
@@ -224,21 +193,21 @@ export function PreviewComposer({ host, target }: {
             items: [...reactionEmoji, ["😀", "Stort smil, glad"]],
             onSelect: emoji => replaceSelection(emoji)
           });
-        }}>Set inn emoji</Button>
-        <Button disabled={state.disabled || state.busy} onClick={() => {
+        }}><span aria-hidden="true">☺</span></Button>
+        <Button className="sp-composer-symbol" variant="quiet" aria-label="Omtal ein person" title="Omtal ein person" disabled={state.disabled || state.busy} onClick={() => {
           const prefix = selection.current.start > 0 && !/\s/u.test(state.value[selection.current.start - 1] ?? "") ? " @" : "@";
           replaceSelection(prefix);
           setDismissed(false);
-        }}>Omtal ein person</Button>
-        <Button disabled={state.disabled || state.busy} onClick={() => fileInput.current?.click()}>Legg ved bilete eller video</Button>
+        }}><span aria-hidden="true">@</span></Button>
+        <Button className="sp-composer-symbol" variant="quiet" aria-label="Legg ved bilete eller video" title="Legg ved bilete eller video" disabled={state.disabled || state.busy} onClick={() => fileInput.current?.click()}><span aria-hidden="true">📎</span></Button>
         <input ref={fileInput} type="file" accept="image/*,video/*" multiple hidden aria-label="Vel bilete eller video"
           onChange={event => {
             const files = [...(event.currentTarget.files ?? [])];
             event.currentTarget.value = "";
             if (!state.disabled && !state.busy) host.upload(target, files);
           }} />
-        <Button onClick={host.openImageGeneration}>Biletegenerering</Button>
-      </WritingTools>} />
+        <Button className="sp-composer-symbol" variant="quiet" aria-label="Biletegenerering" title="Biletegenerering" onClick={host.openImageGeneration}><span aria-hidden="true">✦</span></Button>
+      </div>} />
     {expansion && <Dialog open title="Ny gruppesamtale" closeLabel="Avbryt" onClose={() => { setExpansion(null); queueMicrotask(restoreCaret); }}>
       <p>Start ei ny gruppesamtale med {expansion.name}? Den gamle direkte samtalen held fram privat.</p>
       <Button onClick={() => { host.expandDirect(target, expansion.id); setExpansion(null); }}>Start gruppesamtale</Button>

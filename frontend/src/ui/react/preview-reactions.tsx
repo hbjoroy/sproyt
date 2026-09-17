@@ -1,6 +1,6 @@
 import { Button, Dialog, Status, TextField, openReactionPicker } from "@sproyt/ui/react";
-import { useState } from "react";
-import type { PointerEvent } from "react";
+import { useState, type ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ChatMessage } from "../../types";
 
 export interface PreviewReaction {
@@ -17,17 +17,18 @@ export interface PreviewReactionHost {
 }
 
 /** Presentation only: all counts, identities and mutations remain host-owned. */
-export function PreviewReactionActions({ message, host, open }: {
+export function PreviewReactionActions({ message, host, open, primaryAction, overflowActions }: {
   message: ChatMessage; host: PreviewReactionHost; open: (message: ChatMessage, anchor: HTMLElement) => void;
+  primaryAction?: ReactNode; overflowActions?: ReactNode;
 }) {
   const [customOpen, setCustomOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [emoji, setEmoji] = useState("");
   const reactions = host.reactions(message.id).filter(reaction => reaction.count > 0);
-  if (message.deleted_at) return null;
   // An empty Composer collapses its tool row on blur. Keep pointerdown from
   // moving focus until click, so that reflow cannot move a message action out
   // from under pointerup. Keyboard focus and touch scrolling remain native.
-  const keepPointerTarget = (event: PointerEvent<HTMLElement>) => {
+  const keepPointerTarget = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.pointerType === "mouse" && event.button === 0) event.preventDefault();
   };
   const submit = () => {
@@ -35,19 +36,30 @@ export function PreviewReactionActions({ message, host, open }: {
     host.toggleReaction(message.id, emoji.trim());
     setCustomOpen(false);
   };
+  if (message.deleted_at) return null;
   return <>
-    {reactions.map(reaction => <Button key={reaction.emoji} aria-pressed={reaction.reactedByMe}
-      onPointerDown={keepPointerTarget}
-      aria-label={`${reaction.emoji}: ${reaction.count} reaksjonar`}
-      onClick={() => host.toggleReaction(message.id, reaction.emoji)}>
-      {reaction.emoji} {reaction.count}
-    </Button>)}
-    <Button onPointerDown={keepPointerTarget} onClick={event => open(message, event.currentTarget)}>Legg til reaksjon</Button>
-    <Button onPointerDown={keepPointerTarget} onClick={() => setCustomOpen(true)}>Eigen emoji</Button>
-    {reactions.length > 0 && <details><summary onPointerDown={keepPointerTarget}>Kven reagerte?</summary><ul>
-      {reactions.map(reaction => <li key={reaction.emoji}>{reaction.emoji} {reaction.names.join(", ")}</li>)}
-    </ul></details>}
-    {host.reactionError(message.id) && <Status tone="error">{host.reactionError(message.id)}</Status>}
+    <div className="sp-message-primary-actions">
+      <Button className="sp-message-symbol" variant="quiet" aria-label="Legg til reaksjon" title="Legg til reaksjon"
+        onPointerDown={keepPointerTarget} onClick={event => open(message, event.currentTarget)}><span aria-hidden="true">♡</span></Button>
+      {primaryAction}
+      <Button className="sp-message-symbol" variant="quiet" aria-label="Fleire meldingsval" title="Fleire meldingsval"
+        onPointerDown={keepPointerTarget} onClick={() => setMenuOpen(true)}><span aria-hidden="true">⋯</span></Button>
+      <Dialog open={menuOpen} title="Meldingsval" closeLabel="Lukk meldingsvala" onClose={() => setMenuOpen(false)}>
+        <div className="sp-message-menu-dialog">
+        <Button onPointerDown={keepPointerTarget} onClick={() => { setMenuOpen(false); setCustomOpen(true); }}>Eigen emoji</Button>
+        {reactions.length > 0 && <details className="sp-reaction-details"><summary onPointerDown={keepPointerTarget}>Kven reagerte?</summary><ul>
+          {reactions.map(reaction => <li key={reaction.emoji}>{reaction.emoji} {reaction.names.join(", ")}</li>)}
+        </ul></details>}
+        {overflowActions}
+        </div>
+      </Dialog>
+    </div>
+    <div className="sp-message-reaction-row">
+      {reactions.map(reaction => <Button key={reaction.emoji} aria-pressed={reaction.reactedByMe}
+        onPointerDown={keepPointerTarget} aria-label={`${reaction.emoji}: ${reaction.count} reaksjonar`}
+        onClick={() => host.toggleReaction(message.id, reaction.emoji)}>{reaction.emoji} {reaction.count}</Button>)}
+      {host.reactionError(message.id) && <Status tone="error">{host.reactionError(message.id)}</Status>}
+    </div>
     <div onKeyDown={event => { if (customOpen && event.key === "Escape") event.stopPropagation(); }}>
       <Dialog open={customOpen} title="Eigen reaksjon" closeLabel="Lukk reaksjonsdialogen" onClose={() => setCustomOpen(false)}>
         <form onSubmit={event => { event.preventDefault(); submit(); }}>

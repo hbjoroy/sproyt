@@ -145,6 +145,7 @@ test("preview edits and deletes an own message without leaving the shared runtim
   await input.press("Enter");
   const card = preview.locator("[data-message-id]").filter({ hasText: original });
   const messageId = await card.getAttribute("data-message-id");
+  await card.getByRole("button", { name: "Fleire meldingsval" }).click();
   await card.getByRole("button", { name: "Rediger", exact: true }).click();
   const editor = preview.getByRole("dialog", { name: "Rediger melding" });
   await editor.getByRole("textbox", { name: "Melding" }).fill(edited);

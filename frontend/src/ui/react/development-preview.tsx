@@ -230,7 +230,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       onScroll: channelScroll.onScroll
     },
     message: {
-      formatTime: sentAt => new Date(sentAt).toLocaleString("nn-NO"),
+      formatTime: sentAt => new Date(sentAt).toLocaleTimeString("nn-NO", { hour: "2-digit", minute: "2-digit" }),
       formatAuthor: message => {
         const profile = host.settings.profileFor?.(message.sender_id);
         return [host.isOwnMessage(message) ? "Du" : message.sender_display_name,
@@ -241,11 +241,13 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       renderActions: (message, context) => {
         if (message.deleted_at) return null;
         const replies = snapshot.threadSummaries.find(summary => summary.root_message_id === message.id)?.reply_count ?? 0;
-        return <><PreviewReactionActions message={message} host={host} open={reactionPicker.open} />
-          <PreviewMessageMutations message={message} host={host} />
-          {message.parent_message_id === null && !context?.threadParent && <Button data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
+        const threadAction = message.parent_message_id === null && !context?.threadParent ? <Button className="sp-message-symbol" variant="quiet"
+          aria-label={replies ? `${replies} svar i tråd` : "Svar i tråd"} title={replies ? `${replies} svar i tråd` : "Svar i tråd"}
+          data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
           onPointerDown={event => { if (event.pointerType === "mouse" && event.button === 0) event.preventDefault(); }}
-          onClick={() => { host.openThread(message.id); update(); }}>{replies ? `${replies} svar` : "Svar i tråd"}</Button>}</>;
+          onClick={() => { host.openThread(message.id); update(); }}><span aria-hidden="true">↩</span>{replies > 0 && <span>{replies}</span>}</Button> : null;
+        return <PreviewReactionActions message={message} host={host} open={reactionPicker.open}
+          primaryAction={threadAction} overflowActions={<PreviewMessageMutations message={message} host={host} />} />;
       },
       // The established DOM renderer is a deliberately isolated island. It
       // preserves the existing safe Markdown, Mermaid, media and invitation

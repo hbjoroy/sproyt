@@ -1,4 +1,4 @@
-import { useCallback, useId, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useRef, useSyncExternalStore } from "react";
 import type { ReactNode, Ref } from "react";
 import { AppShell, Button, ConversationList, Message, Status, TextField, Theme } from "@sproyt/ui/react";
 import type { Conversation, ThemeMode } from "@sproyt/ui/react";
@@ -107,13 +107,18 @@ export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuth
 /** The thread parent uses the same safe rendering and permission policy as replies. */
 export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean }) {
   const message = props.message;
+  const wrapper = useRef<HTMLDivElement>(null);
   const latestMessage = useRef(message);
   latestMessage.current = message;
   const requestReaction = props.onReactionRequest;
   const onReactionRequest = useCallback((anchor: HTMLElement) => {
     if (!latestMessage.current.deleted_at) requestReaction?.(latestMessage.current, anchor);
   }, [requestReaction]);
-  return <div data-message-id={message.id}>
+  useEffect(() => {
+    const time = wrapper.current?.querySelector("time");
+    if (time) time.title = new Date(message.sent_at).toLocaleString("nn-NO");
+  }, [message.sent_at]);
+  return <div ref={wrapper} data-message-id={message.id}>
     <Message author={props.formatAuthor?.(message) ?? message.sender_display_name} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : props.messageStatus?.(message) ?? (message.edited_at ? "Redigert" : undefined)}

@@ -48,6 +48,7 @@ test("React reactions support keyboard popup, several badges, Unicode and live s
   await expect(picker).toHaveCount(0);
   await expect(add).toBeFocused();
 
+  await message.getByRole("button", { name: "Fleire meldingsval" }).click();
   await message.getByRole("button", { name: "Eigen emoji" }).click();
   const custom = preview.getByRole("dialog", { name: "Eigen reaksjon" });
   await custom.getByRole("textbox", { name: "Lim inn Unicode-emoji" }).fill("🦀");
@@ -61,8 +62,9 @@ test("React reactions support keyboard popup, several badges, Unicode and live s
   await expect(message.getByRole("button", { name: "👍: 2 reaksjonar" })).toHaveAttribute("aria-pressed", "true");
   await message.getByRole("button", { name: "👍: 2 reaksjonar" }).click();
   await expect(message.getByRole("button", { name: "👍: 1 reaksjonar" })).toHaveAttribute("aria-pressed", "false");
+  await message.getByRole("button", { name: "Fleire meldingsval" }).click();
   await message.getByText("Kven reagerte?", { exact: true }).click();
-  await expect(message.locator("details")).toContainText("❤️ Du");
+  await expect(message.locator("details.sp-reaction-details")).toContainText("❤️ Du");
   expect(commands).toHaveLength(4);
   expect(sockets).toBe(1);
   expect(errors).toEqual([]);
@@ -103,6 +105,7 @@ test("React reaction gestures preserve touch scrolling and work in thread replie
   expect(errors).toEqual([]);
   await picker.getByRole("button", { name: "Feiring, hurra" }).click();
   await expect(replyMessage.getByRole("button", { name: "🎉: 1 reaksjonar" })).toBeVisible();
+  await replyMessage.getByRole("button", { name: "Fleire meldingsval" }).click();
   await replyMessage.getByRole("button", { name: "Eigen emoji" }).click();
   await page.keyboard.press("Escape");
   await expect(thread).toBeVisible();
