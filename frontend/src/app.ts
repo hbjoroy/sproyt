@@ -53,12 +53,33 @@
 
       function syncAppViewportHeight() {
         const viewport = window.visualViewport;
-        const height = viewport?.height || window.innerHeight;
-        const offsetTop = viewport?.offsetTop || 0;
-        // Keep the visual viewport's fractional CSS pixels. Rounding the height
-        // up can leave the composer below the keyboard edge on high-DPI phones.
+        const layoutHeight = window.innerHeight;
+        const visualHeight = viewport?.height ?? layoutHeight;
+        // `interactive-widget=resizes-content` asks Chromium to resize the
+        // layout viewport for the keyboard. When the layout and visual
+        // viewports agree, a fixed app can share that containing block rather
+        // than trying to reproduce it from visualViewport.
+        //
+        // Some engines ignore the viewport hint and only resize the visual
+        // viewport. Keep that path for them (and while pinch-zoomed), including
+        // its scroll offset. Agreement is only a geometry choice, not a
+        // support test for the viewport hint. A one-pixel tolerance avoids
+        // switching paths for fractional browser chrome measurements.
+        const visualOffsetTop = viewport?.offsetTop ?? 0;
+        const layoutMatchesVisual = !viewport || (
+          viewport.scale === 1
+          && Math.abs(visualOffsetTop) < 1
+          && Math.abs(layoutHeight - visualHeight) < 1
+        );
+        // Keep the smaller fractional height where the browser exposes one so
+        // the composer cannot extend a fraction of a pixel below the viewport.
+        const height = layoutMatchesVisual ? Math.min(layoutHeight, visualHeight) : visualHeight;
+        const offsetTop = layoutMatchesVisual ? 0 : visualOffsetTop;
+        // Keep fractional CSS pixels. Rounding the height up can place the
+        // composer below the keyboard edge on high-DPI phones.
         document.documentElement.style.setProperty("--app-height", `${height}px`);
         document.documentElement.style.setProperty("--app-offset-top", `${offsetTop}px`);
+        document.documentElement.dataset.appViewport = layoutMatchesVisual ? "layout-match" : "visual";
       }
       syncAppViewportHeight();
       window.addEventListener("resize", syncAppViewportHeight, { passive: true });

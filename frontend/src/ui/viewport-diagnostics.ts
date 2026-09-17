@@ -41,6 +41,7 @@ export function installViewportDiagnostics(): void {
       "Viewport diagnostic v1 (CSS px)",
       `inner=${n(innerHeight)} client=${document.documentElement.clientHeight} scrollY=${n(scrollY)}`,
       `vv=${n(viewport?.height ?? innerHeight)} top=${n(top)} bottom=${n(bottom)} scale=${n(viewport?.scale ?? 1)}`,
+      `app viewport=${document.documentElement.dataset.appViewport ?? "—"}`,
       `app ${box(root)} | body ${box(document.body)}`,
       `form ${box(form)} | input ${box(input)}`,
       `input gap=${inputBottom === undefined ? "—" : n(bottom - inputBottom)} outline extent=${n(outline)}`,
