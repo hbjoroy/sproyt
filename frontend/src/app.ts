@@ -1,4 +1,5 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
+      import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
       import { createCommunityRequests } from "./application/community-requests";
       import { createCommunityHost } from "./application/community-host";
@@ -63,6 +64,7 @@
       window.addEventListener("resize", syncAppViewportHeight, { passive: true });
       window.visualViewport?.addEventListener("resize", syncAppViewportHeight, { passive: true });
       window.visualViewport?.addEventListener("scroll", syncAppViewportHeight, { passive: true });
+      installViewportDiagnostics();
 
       const serviceWorkerReady = "serviceWorker" in navigator
         ? navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(() => navigator.serviceWorker.ready)

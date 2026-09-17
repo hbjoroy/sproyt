@@ -106,7 +106,7 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await context.close();
 });
 
-test("Android visual viewport keeps the focused composer above the keyboard", async ({ browser, baseURL }) => {
+test("synthetic visual viewport coordinates position the composer", async ({ browser, baseURL }) => {
   const context = await browser.newContext({
     baseURL, serviceWorkers: "block", viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true
   });
@@ -151,6 +151,25 @@ test("Android visual viewport keeps the focused composer above the keyboard", as
     offsetTop: element.style.getPropertyValue("--app-offset-top")
   }))).toEqual({ height: "411.4px", offsetTop: "37.2px" });
   await context.close();
+});
+
+test("opt-in viewport diagnostics report geometry without changing layout or exposing drafts", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?participant=viewport-diagnostics");
+  const input = page.getByRole("textbox", { name: "Skriv melding" });
+  await expect(input).toBeEnabled();
+  await expect(page.locator("#sproyt-viewport-diagnostics")).toHaveCount(0);
+  const original = await input.boundingBox();
+  await page.goto("/?participant=viewport-diagnostics&viewport-debug=1");
+  await expect(input).toBeEnabled();
+  expect(await input.boundingBox()).toEqual(original);
+  await input.fill("Private draft not for diagnostics");
+  const panel = page.locator("#sproyt-viewport-diagnostics");
+  await expect(panel).toContainText("focus=true");
+  await expect(panel).toContainText("outline extent=");
+  await expect(panel).not.toContainText("Private draft");
+  await expect(input).toBeFocused();
+  await expect(panel).toHaveCSS("pointer-events", "none");
 });
 
 test("channel overflow keeps notification and confirmed leave actions together", async ({ page }) => {
