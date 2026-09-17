@@ -37,6 +37,7 @@ test("emoji replaces the current selection and restores the caret in channel and
   const input = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled();
   await input.fill("før gammal etter");
+  await preview.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
   await input.evaluate((field: HTMLTextAreaElement) => field.setSelectionRange(4, 10));
   await preview.getByRole("button", { name: "Set inn emoji", exact: true }).click();
   await preview.getByRole("dialog", { name: "Set inn emoji" }).getByRole("button", { name: "Tommel opp, ja, bra" }).click();
@@ -50,6 +51,7 @@ test("emoji replaces the current selection and restores the caret in channel and
   const thread = preview.locator(".sp-thread-pane");
   const reply = thread.getByRole("textbox", { name: "Svar i tråden" });
   await reply.fill("trådtekst");
+  await thread.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
   await reply.press("Home");
   await thread.getByRole("button", { name: "Set inn emoji", exact: true }).click();
   await preview.getByRole("dialog", { name: "Set inn emoji" }).getByRole("button", { name: "Tommel opp, ja, bra" }).click();

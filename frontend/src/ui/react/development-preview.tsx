@@ -72,9 +72,54 @@ function ChannelNotificationControl({ channelId, channelName, enabled, pending, 
     <Button className="sp-channel-notification-toggle" variant="quiet" busy={pending}
       aria-label={label} title={label} aria-pressed={enabled}
       onClick={() => onChange(channelId, !enabled)}>
-      <span aria-hidden="true">{enabled ? "🔔" : "🔕"}</span>
+      <BellIcon muted={!enabled} />
     </Button>
     {error && <Status tone="error"><span>{error}</span> <Button onClick={() => onChange(channelId, !enabled)}>Prøv igjen</Button></Status>}
+  </>;
+}
+
+function BellIcon({ muted = false }: { readonly muted?: boolean }) {
+  return <svg className="sp-bell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+    {muted && <path d="M4 4l16 16" />}
+  </svg>;
+}
+
+function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost }) {
+  const [open, setOpen] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveError, setLeaveError] = useState("");
+  const channel = snapshot.activeChannel;
+  const conversation = channel ? snapshot.groups.flatMap(group => group.conversations).find(item => item.id === channel.id) : undefined;
+  if (!channel || channel.is_direct) return null;
+  const notifications = conversation?.notifications;
+  return <>
+    <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
+      aria-label="Kanalval" title="Kanalval" onClick={() => setOpen(true)}><span aria-hidden="true">⋯</span></Button>
+    <Dialog open={open} title={`Kanalval: ${channel.name}`} closeLabel="Lukk kanalvala"
+      onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
+      <div className="sp-channel-menu-dialog">
+        {notifications && <Button variant="quiet" disabled={notifications.pending} aria-pressed={notifications.enabled}
+          onClick={() => host.setChannelNotifications(channel.id, !notifications.enabled)}>
+          <BellIcon muted={!notifications.enabled} /><span>Varsel {notifications.enabled ? "på" : "av"}</span>
+        </Button>}
+        {notifications?.error && <Status tone="error">{notifications.error}</Status>}
+        {!confirmLeave ? <Button variant="danger" onClick={() => setConfirmLeave(true)}>Forlat kanalen</Button>
+          : <div className="sp-leave-confirm" role="group" aria-label="Stadfest at du vil forlate kanalen">
+            <p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p>
+            <div className="sp-row"><Button onClick={() => setConfirmLeave(false)}>Avbryt</Button>
+              <Button variant="danger" busy={leaving} onClick={() => {
+                if (leaving) return;
+                setLeaving(true); setLeaveError("");
+                void host.community.leaveChannel(channel.id).then(() => setOpen(false)).catch(error => {
+                  setLeaveError(error instanceof Error ? error.message : "Kunne ikkje forlate kanalen.");
+                }).finally(() => setLeaving(false));
+              }}>Ja, forlat kanalen</Button></div>
+          </div>}
+        {leaveError && <Status tone="error">{leaveError}</Status>}
+      </div>
+    </Dialog>
   </>;
 }
 
@@ -193,15 +238,15 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     header: <>{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
-      <HeaderActions>
+      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}>
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
-      <PreviewInboxes state={host.inboxState()} host={host} />
       <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced}
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }}
         onNavigate={destination => { close(); host.openManagement(destination); }} /></HeaderActions></>,
     navigationActions: null,
+    contextActions: <ChannelActions snapshot={snapshot} host={host} />,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}
@@ -230,7 +275,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       onScroll: channelScroll.onScroll
     },
     message: {
-      formatTime: sentAt => new Date(sentAt).toLocaleTimeString("nn-NO", { hour: "2-digit", minute: "2-digit" }),
+      formatTime: sentAt => new Date(sentAt).toLocaleTimeString(["nn-NO", "nb-NO"], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
       formatAuthor: message => {
         const profile = host.settings.profileFor?.(message.sender_id);
         return [host.isOwnMessage(message) ? "Du" : message.sender_display_name,

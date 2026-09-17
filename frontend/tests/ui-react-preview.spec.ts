@@ -31,6 +31,38 @@ test("default client mounts the design-system interface", async ({ page }) => {
   expect(await page.locator("#sproyt-app").evaluate((element: HTMLElement) => element.inert)).toBe(true);
 });
 
+test("legacy element rules do not leak into the design-system shell", async ({ page }) => {
+  await page.goto("/?participant=playwright-preview-style-boundary", { waitUntil: "domcontentloaded" });
+  const preview = page.locator("#sproyt-react-preview");
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15_000 });
+  const styles = await preview.evaluate(root => {
+    const main = root.querySelector<HTMLElement>(".sp-main")!;
+    const masthead = root.querySelector<HTMLElement>(".sp-masthead")!;
+    const input = root.querySelector<HTMLElement>(".sp-textarea")!;
+    const mainStyle = getComputedStyle(main);
+    const mastheadStyle = getComputedStyle(masthead);
+    const inputStyle = getComputedStyle(input);
+    return {
+      mainDisplay: mainStyle.display,
+      mainBackground: mainStyle.backgroundColor,
+      mainBorder: mainStyle.borderTopWidth,
+      mainRadius: mainStyle.borderTopLeftRadius,
+      mainShadow: mainStyle.boxShadow,
+      mastheadDisplay: mastheadStyle.display,
+      inputRadius: inputStyle.borderTopLeftRadius
+    };
+  });
+  expect(styles).toEqual({
+    mainDisplay: "flex",
+    mainBackground: "rgb(250, 249, 245)",
+    mainBorder: "0px",
+    mainRadius: "0px",
+    mainShadow: "none",
+    mastheadDisplay: "flex",
+    inputRadius: "2px"
+  });
+});
+
 test("local React preview follows the existing runtime and returns without reconnecting or losing drafts", async ({ page, context }) => {
   let sockets = 0;
   const pageErrors: string[] = [];
@@ -60,6 +92,7 @@ test("local React preview follows the existing runtime and returns without recon
   await expect(preview).toContainText("Ingen samtalar funne.");
   await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("");
   await expect(preview.getByRole("button", { name: /# general/i })).toBeVisible();
+  await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await preview.getByRole("button", { name: "Til fullt grensesnitt" }).first().click();
   await expect(preview).toHaveCount(0);
   await expect(page.locator("#body")).toHaveValue("utkast bevart gjennom førehandsvisinga");
@@ -90,7 +123,14 @@ test("preview keyboard sending uses one host send and preserves Shift+Enter and 
   await input.dispatchEvent("compositionend");
   await input.press("Enter");
   await expect(input).toHaveValue("");
-  await expect(preview.getByText(message, { exact: true })).toBeVisible();
+  const sent = preview.locator("[data-message-id]").filter({ hasText: message });
+  await expect(sent.getByText(message, { exact: true })).toBeVisible();
+  const timestamp = sent.locator("time");
+  await timestamp.hover();
+  await expect(sent.getByRole("tooltip")).toBeVisible();
+  await timestamp.focus();
+  await expect(sent.getByRole("tooltip")).toBeVisible();
+  await input.focus();
   await expect(input).toBeFocused();
   expect(sends).toEqual([message]);
 });
@@ -184,6 +224,7 @@ test("preview image workshop opens with the draft intact", async ({ page }) => {
   const input = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled({ timeout: 15_000 });
   await input.fill("vedlegg kjem her");
+  await preview.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
   await preview.getByRole("button", { name: "Biletegenerering", exact: true }).click();
   await expect(preview.getByRole("region", { name: "Private biletmeldingar" })).toBeVisible();
   await expect(input).toHaveValue("vedlegg kjem her");
@@ -319,7 +360,10 @@ for (const draft of ["/imagegen", "vedlegg i tråden"]) {
     const thread = preview.locator(".sp-thread-pane");
     const reply = thread.getByRole("textbox", { name: "Svar i tråden" });
     await reply.fill(draft);
-    if (draft.startsWith("vedlegg")) await thread.getByRole("button", { name: "Biletegenerering", exact: true }).click();
+    if (draft.startsWith("vedlegg")) {
+      await thread.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
+      await thread.getByRole("button", { name: "Biletegenerering", exact: true }).click();
+    }
     else await reply.press("Enter");
     await expect(preview).toBeVisible();
     await expect(reply).toHaveValue(draft);
@@ -356,6 +400,7 @@ test("preview thread switching keeps each draft and full interface handoff prese
   await trigger(1).click();
   await expect(reply).toHaveValue("utkast til andre tråd");
   await composer.fill("hovudutkast");
+  await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await preview.getByRole("button", { name: "Til fullt grensesnitt", exact: true }).click();
   await expect(preview).toHaveCount(0);
   await expect(page.locator("#thread-panel")).toBeVisible();

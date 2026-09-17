@@ -1,7 +1,8 @@
-import { Button, Composer, Dialog, Status, openReactionPicker, reactionEmoji } from "@sproyt/ui/react";
+import { Button, Dialog, Status, openReactionPicker, reactionEmoji } from "@sproyt/ui/react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { MediaObject } from "../../types";
 import type { ComposerTarget } from "./host-adapter";
+import { DraftComposer } from "./draft-composer";
 import { PreviewAttachments } from "./preview-media";
 
 export interface PreviewMention {
@@ -156,7 +157,7 @@ export function PreviewComposer({ host, target }: {
         if (!state.disabled && !state.busy) host.upload(target, files);
       }
     }}>
-    <Composer label={target.parentMessageId ? "Svar i tråden" : "Skriv melding"}
+    <DraftComposer hasAttachments={state.media.length > 0} label={target.parentMessageId ? "Svar i tråden" : "Skriv melding"}
       value={state.value} onChange={value => {
         const field = input();
         if (field) updateSelection(field);
@@ -180,8 +181,6 @@ export function PreviewComposer({ host, target }: {
         </div>}
         {(state.media.length > 0 || state.uploadStatus) && <PreviewAttachments media={state.media} status={state.uploadStatus}
           busy={state.busy || state.disabled} onRemove={id => host.removeMedia(target, id)} />}
-        {state.media.length > 0 && !state.value.trim() && <Button disabled={state.disabled || state.busy}
-          onClick={() => host.send(target)}>Send vedlegg</Button>}
       </>}
       tools={<div className="sp-writing-tools" role="toolbar" aria-label="Skriveverktøy">
         <Button className="sp-composer-symbol" variant="quiet" aria-label="Set inn emoji" title="Set inn emoji" disabled={state.disabled || state.busy} onClick={event => {

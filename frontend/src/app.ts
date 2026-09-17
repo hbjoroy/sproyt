@@ -4870,11 +4870,42 @@
         appendProfileStatus(senderLabel, message.sender_id);
         metaText.append(senderLabel);
         const sentAt = new Date(message.sent_at);
+        let timestampTooltip: HTMLSpanElement | null = null;
         if (!Number.isNaN(sentAt.valueOf())) {
           const timestamp = document.createElement("time");
+          const fullTimestamp = sentAt.toLocaleString(["nn-NO", "nb-NO"], { dateStyle: "full", timeStyle: "medium" });
           timestamp.dateTime = sentAt.toISOString();
-          timestamp.title = sentAt.toLocaleString([], { dateStyle: "full", timeStyle: "short" });
+          timestamp.title = fullTimestamp;
           timestamp.textContent = ` · ${formatMessageTimestamp(sentAt)}`;
+          timestamp.tabIndex = 0;
+          timestamp.setAttribute("role", "button");
+          timestamp.setAttribute("aria-label", `Sendt ${fullTimestamp}. Trykk for å vise eller skjule tidspunktet.`);
+          timestamp.setAttribute("aria-expanded", "false");
+          timestampTooltip = document.createElement("span");
+          timestampTooltip.className = "message-time-tooltip";
+          timestampTooltip.id = `message-time-${message.id}`;
+          timestampTooltip.setAttribute("role", "tooltip");
+          timestampTooltip.textContent = fullTimestamp;
+          timestamp.setAttribute("aria-describedby", timestampTooltip.id);
+          const toggleTimestamp = () => {
+            const open = wrapper.dataset.timeOpen !== "true";
+            if (open) wrapper.dataset.timeOpen = "true";
+            else {
+              delete wrapper.dataset.timeOpen;
+              timestamp.blur();
+            }
+            timestamp.setAttribute("aria-expanded", String(open));
+          };
+          timestamp.addEventListener("click", toggleTimestamp);
+          timestamp.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            toggleTimestamp();
+          });
+          timestamp.addEventListener("blur", () => {
+            delete wrapper.dataset.timeOpen;
+            timestamp.setAttribute("aria-expanded", "false");
+          });
           metaText.append(timestamp);
         }
         if (message.deleted_at) {
@@ -4906,6 +4937,7 @@
         }
 
         wrapper.append(meta, body);
+        if (timestampTooltip) wrapper.append(timestampTooltip);
         let footer = null;
         if (!message.deleted_at) {
           footer = renderMessageReactions(message, (open) => {

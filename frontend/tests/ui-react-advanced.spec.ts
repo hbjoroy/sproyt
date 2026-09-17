@@ -14,7 +14,11 @@ async function enter(page: Page, enabled = true) {
 }
 async function menu(preview: Locator, label: string) {
   const menu = preview.getByRole("dialog", { name: "Meny og innstillingar", exact: true });
-  if (!await menu.isVisible()) await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
+  if (!await menu.isVisible()) {
+    const trigger = preview.getByRole("button", { name: "Meny og innstillingar", exact: true });
+    if (!await trigger.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
+    await trigger.click();
+  }
   await menu.getByRole("button", { name: label, exact: true }).click();
 }
 async function owner(preview: Locator) {
@@ -28,6 +32,7 @@ async function owner(preview: Locator) {
 
 test("feature flags hide agent/Heart and member role hides Grafana", async ({ page }) => {
   const preview = await enter(page, false);
+  await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
   await expect(preview.getByRole("button", { name: "Agenttilgang", exact: true })).toHaveCount(0);
   await expect(preview.getByRole("button", { name: "Heart og planlegging", exact: true })).toHaveCount(0);

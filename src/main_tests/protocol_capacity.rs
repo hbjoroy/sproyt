@@ -529,10 +529,12 @@ fn browser_keeps_desktop_sidebar_controls_compact_and_reachable() {
     assert!(BROWSER_CLIENT.contains("id=\"desktop-sidebar-toggle\""));
     assert!(BROWSER_CLIENT.contains("sproyt.desktop-sidebar-collapsed.v1"));
     assert!(
-        BROWSER_CLIENT.contains("main.desktop-sidebar-collapsed { grid-template-columns: 56px")
+        BROWSER_CLIENT
+            .contains("#sproyt-app.desktop-sidebar-collapsed { grid-template-columns: 56px")
     );
     assert!(
-        BROWSER_CLIENT.contains("main.desktop-sidebar-expanded { grid-template-columns: 280px")
+        BROWSER_CLIENT
+            .contains("#sproyt-app.desktop-sidebar-expanded { grid-template-columns: 280px")
     );
     assert!(BROWSER_CLIENT.contains("id=\"desktop-advanced-entry\""));
     assert!(
@@ -1154,10 +1156,12 @@ fn browser_uses_one_complete_theme_contract_for_dark_mode_controls() {
     assert!(BROWSER_CLIENT.contains("color-scheme: light dark;"));
     assert!(BROWSER_CLIENT.contains("accent-color: var(--accent);"));
     assert!(
-        BROWSER_CLIENT.contains("input,\n      textarea,\n      select {\n        width: 100%;")
+        BROWSER_CLIENT.contains(
+            "#sproyt-app input,\n      #sproyt-app textarea,\n      #sproyt-app select {\n        width: 100%;"
+        )
     );
     assert!(BROWSER_CLIENT.contains(
-            "select option,\n      select optgroup {\n        background-color: var(--control);\n        color: var(--ink);"
+            "#sproyt-app select option,\n      #sproyt-app select optgroup {\n        background-color: var(--control);\n        color: var(--ink);"
         ));
     assert!(BROWSER_CLIENT.contains("@media (prefers-color-scheme: dark)"));
     assert!(BROWSER_CLIENT.contains("--control: #111713;"));
@@ -1792,7 +1796,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
             "function formatMessageTimestamp(sentAt: Date, now: Date = new Date()): string"
         )
     );
-    assert!(BROWSER_CLIENT.contains("dateStyle: \"full\", timeStyle: \"short\""));
+    assert!(BROWSER_CLIENT.contains("dateStyle: \"full\", timeStyle: \"medium\""));
+    assert!(BROWSER_CLIENT.contains("timestamp.setAttribute(\"aria-expanded\", \"false\")"));
     assert!(BROWSER_CLIENT.contains("appendProfileStatus(senderLabel, message.sender_id)"));
     assert!(BROWSER_CLIENT.contains("channel.direct_user_id"));
     assert!(BROWSER_CLIENT.contains("function approximateUnreadCount(count)"));

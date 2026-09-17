@@ -35,6 +35,16 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }
     await channel.getByRole("button", { name: "Send ↑", exact: true }).click();
     const sent = channel.locator("[data-message-id]").filter({ hasText: message });
     await expect(sent).toBeVisible();
+    const timestamp = sent.locator("time");
+    await expect(timestamp).toHaveAttribute("aria-label", /^Sendt .+ Trykk for å vise eller skjule tidspunktet\.$/);
+    await expect(timestamp).toHaveAttribute("title", /\d{4}/);
+    const timestampTooltip = sent.getByRole("tooltip");
+    await timestamp.tap();
+    await expect(timestamp).toHaveAttribute("aria-expanded", "true");
+    await expect(timestampTooltip).toBeVisible();
+    await composer.tap();
+    await expect(timestamp).toHaveAttribute("aria-expanded", "false");
+    await expect(timestampTooltip).toBeHidden();
     await expect(composer).toHaveValue("");
     await composer.fill("Kanalutkast som skal bli verande");
     await channel.getByRole("button", { name: "← Samtalar" }).click();
@@ -85,6 +95,8 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   expect((await channel.locator(".sp-timeline").boundingBox())!.height).toBeGreaterThanOrEqual(height - 1);
   await composer.click();
   const tools = channel.getByRole("toolbar", { name: "Skriveverktøy" });
+  await expect(tools).toBeHidden();
+  await channel.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
   await expect(tools).toBeVisible();
   await expect(tools.getByRole("button")).toHaveCount(4);
   expect(await tools.evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(await tools.evaluate(element => element.clientWidth));
@@ -92,4 +104,17 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await channel.getByRole("button", { name: "Biletegenerering", exact: true }).click();
   await expect(channel.getByRole("region", { name: "Private biletmeldingar" })).toBeVisible();
   await context.close();
+});
+
+test("channel overflow keeps notification and confirmed leave actions together", async ({ page }) => {
+  await page.goto("/?participant=preview-channel-overflow&ui=react");
+  const preview = page.locator("#sproyt-react-preview");
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15_000 });
+  await preview.getByRole("button", { name: "Kanalval" }).click();
+  const menu = preview.getByRole("dialog", { name: /Kanalval:/ });
+  await expect(menu.getByRole("button", { name: /Varsel (på|av)/ })).toBeVisible();
+  await menu.getByRole("button", { name: "Forlat kanalen", exact: true }).click();
+  await expect(menu.getByRole("group", { name: "Stadfest at du vil forlate kanalen" })).toBeVisible();
+  await menu.getByRole("button", { name: "Avbryt" }).click();
+  await expect(menu.getByRole("button", { name: "Forlat kanalen", exact: true })).toBeVisible();
 });
