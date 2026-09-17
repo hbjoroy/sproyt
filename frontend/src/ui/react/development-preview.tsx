@@ -22,6 +22,7 @@ import { createTimelineScrollController } from "./timeline-scroll";
 import { PreviewImageGeneration } from "./preview-imagegen";
 import type { ImageGenerationOwner } from "../../imagegen";
 import { PreviewInboxes, type PreviewInboxHost, type PreviewInboxState } from "./preview-inboxes";
+import { HeaderActions } from "./header-actions";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly imageGeneration: ImageGenerationOwner;
@@ -189,16 +190,17 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     previousSnapshot = snapshot;
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view,
-    header: <>{explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
-      {host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
+    header: <>{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
+      <HeaderActions>
+      {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
       <PreviewInboxes state={host.inboxState()} host={host} />
       <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced}
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }}
-        onNavigate={destination => { close(); host.openManagement(destination); }} /></>,
+        onNavigate={destination => { close(); host.openManagement(destination); }} /></HeaderActions></>,
     navigationActions: null,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
@@ -236,12 +238,12 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       },
       messageStatus: host.messageStatus,
       onReactionRequest: reactionPicker.open,
-      renderActions: message => {
+      renderActions: (message, context) => {
         if (message.deleted_at) return null;
         const replies = snapshot.threadSummaries.find(summary => summary.root_message_id === message.id)?.reply_count ?? 0;
         return <><PreviewReactionActions message={message} host={host} open={reactionPicker.open} />
           <PreviewMessageMutations message={message} host={host} />
-          {message.parent_message_id === null && <Button data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
+          {message.parent_message_id === null && !context?.threadParent && <Button data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
           onPointerDown={event => { if (event.pointerType === "mouse" && event.button === 0) event.preventDefault(); }}
           onClick={() => { host.openThread(message.id); update(); }}>{replies ? `${replies} svar` : "Svar i tråd"}</Button>}</>;
       },
@@ -252,7 +254,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         ? <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.body}</pre>
         : <><PreviewMessageContent host={host} message={message} /><PreviewMediaContent body={message.body} mediaOnly /></>
     },
-    renderComposer: target => <div key={`${target.channelId}:${target.parentMessageId ?? ""}`}>
+    renderComposer: target => <div className="sp-composer-dock" key={`${target.channelId}:${target.parentMessageId ?? ""}`}>
       {Boolean(target.parentMessageId) === Boolean(snapshot.thread) && <PreviewImageGeneration owner={host.imageGeneration} channelId={snapshot.selection.channelId} />}
       <PreviewComposer host={host} target={target} /></div>,
     overlays: null

@@ -83,6 +83,7 @@ for (const [label, field] of [
     await page.setViewportSize({ width: 390, height: 844 });
     const preview = await openPreview(page, `preview-management-compact-${label}`);
     await preview.getByRole("textbox", { name: "Skriv melding" }).fill("mobilt utkast");
+    await preview.getByRole("button", { name: "Meny", exact: true }).click();
     await preview.getByRole("button", { name: "Meny og innstillingar" }).click();
     await preview.getByRole("button", { name: label, exact: true }).click();
     const dialog = preview.getByRole("dialog", { name: label, exact: true });

@@ -97,7 +97,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
       ? host.renderComposer({ channelId, parentMessageId: null }) : null,
     thread: threadVisible ? <ThreadPane title="Tråd" context={snapshot.title} closeLabel="Lukk tråden"
       onClose={host.onCloseThread}
-      parent={thread.root ? <ConversationMessage message={thread.root} {...host.message} />
+      parent={thread.root ? <ConversationMessage message={thread.root} {...host.message} threadParent />
         : <Status>Den opphavlege meldinga er ikkje lasta.</Status>}
       composer={snapshot.activeChannel !== null ? host.renderComposer({ channelId, parentMessageId: thread.rootMessageId }) : null}>
       <ThreadTimeline {...host.message} {...host.threadTimeline}

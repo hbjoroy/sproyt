@@ -70,7 +70,7 @@ export interface TimelineProps {
   /** Use the existing safe renderer (LegacyContent is available as a bridge). */
   readonly renderContent: (message: ChatMessage) => ReactNode;
   /** Permission checks, replies, reaction counts, edit and delete stay with the host. */
-  readonly renderActions?: (message: ChatMessage) => ReactNode;
+  readonly renderActions?: (message: ChatMessage, context?: { readonly threadParent: boolean }) => ReactNode;
   readonly messageStatus?: (message: ChatMessage) => string | undefined;
   readonly onReactionRequest?: (message: ChatMessage, anchor: HTMLElement) => void;
 }
@@ -105,7 +105,7 @@ export function ConversationTimeline(props: TimelineProps) {
 export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "renderContent" | "renderActions" | "messageStatus" | "onReactionRequest">;
 
 /** The thread parent uses the same safe rendering and permission policy as replies. */
-export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage }) {
+export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean }) {
   const message = props.message;
   const latestMessage = useRef(message);
   latestMessage.current = message;
@@ -117,7 +117,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     <Message author={props.formatAuthor?.(message) ?? message.sender_display_name} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : props.messageStatus?.(message) ?? (message.edited_at ? "Redigert" : undefined)}
-        actions={props.renderActions?.(message)}
+        actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}
         onReactionRequest={!message.deleted_at && props.onReactionRequest
           ? onReactionRequest : undefined}>
         {message.deleted_at ? <p>Meldinga er sletta.</p> : props.renderContent(message)}
@@ -148,12 +148,14 @@ export function ConversationView(props: ConversationViewProps) {
   const titleId = useId();
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
     <AppShell view={props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
-      header={<>{props.header}{snapshot.connection.status && <Status>{snapshot.connection.status}</Status>}</>}>
+      header={<>{props.header}{snapshot.connection.status && <div className="sp-connection-status" data-connected={snapshot.connection.connected}>
+        <Status>{snapshot.connection.status}</Status>
+      </div>}</>}>
       <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}>
         <section className="sp-channel-pane" aria-labelledby={titleId}>
           <header className="sp-context">
             <Button className="sp-only-compact" onClick={props.onBack}>← Samtalar</Button>
-            <div>{props.context && <p className="sp-kicker">{props.context}</p>}<h1 id={titleId} className="sp-heading">{props.title}</h1></div>
+            <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 id={titleId} className="sp-heading">{props.title}</h1></div>
             {props.contextActions}
           </header>
           <ConversationTimeline {...props.timeline} />
