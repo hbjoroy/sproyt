@@ -109,7 +109,7 @@
   padding: 0; border: 0; border-radius: 0; background: var(--sp-canvas); box-shadow: none;
 }
 #sproyt-react-preview .sp-message-meta {
-  padding: 0; border: 0; background: transparent; gap: .5rem;
+  padding: 0; border: 0; background: transparent; gap: .5rem; align-self: center;
 }
 #sproyt-react-preview .sp-message { width: fit-content; max-width: min(100%, 860px); grid-template-columns: minmax(0, auto) auto; }
 #sproyt-react-preview [data-message-id] + [data-message-id] .sp-message-meta::before {
