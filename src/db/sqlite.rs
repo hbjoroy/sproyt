@@ -935,14 +935,22 @@ impl ChatRepository for SqliteChatRepository {
         command: PrepareEnrollmentInvitation,
     ) -> RepositoryFuture<'a, IssuedEnrollmentInvitation> {
         Box::pin(async move {
-            let allowed = sqlx::query_scalar::<_, i64>(
-                "select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'",
-            )
-            .bind(command.circle_id.to_string())
-            .bind(command.actor.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(sql_error)?;
+            let allowed = if let Some(circle_id) = &command.circle_id {
+                sqlx::query_scalar::<_, i64>(
+                    "select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'",
+                )
+                .bind(circle_id.to_string())
+                .bind(command.actor.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?
+            } else {
+                sqlx::query_scalar::<_, i64>("select 1 from users where id=? and kind='human'")
+                    .bind(command.actor.to_string())
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(sql_error)?
+            };
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
@@ -958,7 +966,7 @@ impl ChatRepository for SqliteChatRepository {
             };
             sqlx::query("insert into enrollment_invitations(id,circle_id,invited_by,token_hash,expected_email_hash,expires_at,state) values(?,?,?,?,?,?,'inactive')")
                 .bind(invitation.id.to_string())
-                .bind(invitation.circle_id.to_string())
+                .bind(invitation.circle_id.as_ref().map(ToString::to_string))
                 .bind(invitation.invited_by.to_string())
                 .bind(enrollment_token_hash(&token))
                 .bind(enrollment_email_hash(&command.email))
@@ -988,10 +996,12 @@ impl ChatRepository for SqliteChatRepository {
             Ok(EnrollmentInvitation {
                 id: Uuid::parse_str(&row.try_get::<String, _>("id").map_err(storage)?)
                     .map_err(storage)?,
-                circle_id: CircleId::from_uuid(
-                    Uuid::parse_str(&row.try_get::<String, _>("circle_id").map_err(storage)?)
-                        .map_err(storage)?,
-                ),
+                circle_id: row
+                    .try_get::<Option<String>, _>("circle_id")
+                    .map_err(storage)?
+                    .map(|value| Uuid::parse_str(&value).map(CircleId::from_uuid))
+                    .transpose()
+                    .map_err(storage)?,
                 invited_by: UserId::from_uuid(
                     Uuid::parse_str(&row.try_get::<String, _>("invited_by").map_err(storage)?)
                         .map_err(storage)?,
@@ -1006,11 +1016,11 @@ impl ChatRepository for SqliteChatRepository {
     fn accept_enrollment_invitation<'a>(
         &'a self,
         command: AcceptEnrollmentInvitation,
-    ) -> RepositoryFuture<'a, CircleMembership> {
+    ) -> RepositoryFuture<'a, Option<CircleMembership>> {
         Box::pin(async move {
             let now = Utc::now();
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
-            let circle_id = sqlx::query_scalar::<_, String>("update enrollment_invitations set state='consumed',consumed_by=?,consumed_at=? where token_hash=? and expected_email_hash=? and state='active' and expires_at>? returning circle_id")
+            let circle_id = sqlx::query_scalar::<_, Option<String>>("update enrollment_invitations set state='consumed',consumed_by=?,consumed_at=? where token_hash=? and expected_email_hash=? and state='active' and expires_at>? returning circle_id")
                 .bind(command.actor.to_string())
                 .bind(now)
                 .bind(enrollment_token_hash(&command.token))
@@ -1020,20 +1030,24 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?
                 .ok_or(RepositoryError::NotFound)?;
-            sqlx::query("insert into circle_memberships(circle_id,user_id,role,joined_at) values(?,?,'member',?) on conflict(circle_id,user_id) do nothing")
-                .bind(&circle_id)
-                .bind(command.actor.to_string())
-                .bind(now)
-                .execute(&mut *transaction)
-                .await
-                .map_err(sql_error)?;
+            if let Some(circle_id) = circle_id {
+                sqlx::query("insert into circle_memberships(circle_id,user_id,role,joined_at) values(?,?,'member',?) on conflict(circle_id,user_id) do nothing")
+                    .bind(&circle_id)
+                    .bind(command.actor.to_string())
+                    .bind(now)
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(Some(CircleMembership {
+                    circle_id: CircleId::from_uuid(Uuid::parse_str(&circle_id).map_err(storage)?),
+                    user_id: command.actor,
+                    role: CircleRole::Member,
+                    joined_at: now,
+                }));
+            }
             transaction.commit().await.map_err(sql_error)?;
-            Ok(CircleMembership {
-                circle_id: CircleId::from_uuid(Uuid::parse_str(&circle_id).map_err(storage)?),
-                user_id: command.actor,
-                role: CircleRole::Member,
-                joined_at: now,
-            })
+            Ok(None)
         })
     }
 

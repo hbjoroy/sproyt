@@ -12,10 +12,10 @@ import { PreviewComposer, type PreviewComposerHost } from "./preview-composer";
 import { PreviewMediaContent } from "./preview-media";
 export type { PreviewComposerState } from "./preview-composer";
 import { PreviewManagement, type ManagementDestination } from "./preview-management";
-import { LegacyContent } from "./legacy-content";
+import { SafeDomContent } from "./safe-dom-content";
 import type { ChatMessage } from "../../types";
 import type { PreviewSettingsHost } from "./preview-settings";
-import type { CommunityHost } from "./preview-community";
+import { PreviewCommunity, type CommunityHost } from "./preview-community";
 import type { AdvancedHost } from "../../application/advanced-host";
 import { PreviewGrafana } from "./preview-advanced";
 import { createTimelineScrollController } from "./timeline-scroll";
@@ -85,8 +85,16 @@ function BellIcon({ muted = false }: { readonly muted?: boolean }) {
   </svg>;
 }
 
+function ChannelMembersIcon() {
+  return <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <circle cx="9" cy="8" r="3" /><circle cx="17" cy="10" r="2.25" />
+    <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M14 20c0-2.5 1.6-4.6 4-5.4" />
+  </svg>;
+}
+
 function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost }) {
   const [open, setOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveError, setLeaveError] = useState("");
@@ -94,12 +102,16 @@ function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSna
   const conversation = channel ? snapshot.groups.flatMap(group => group.conversations).find(item => item.id === channel.id) : undefined;
   if (!channel || channel.is_direct) return null;
   const notifications = conversation?.notifications;
+  const openDetails = () => { setOpen(false); requestAnimationFrame(() => setDetailsOpen(true)); };
   return <>
+    <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
+      aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={openDetails}><ChannelMembersIcon /></Button>
     <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
       aria-label="Kanalval" title="Kanalval" onClick={() => setOpen(true)}><span aria-hidden="true">⋯</span></Button>
     <Dialog open={open} title={`Kanalval: ${channel.name}`} closeLabel="Lukk kanalvala"
       onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
       <div className="sp-channel-menu-dialog">
+        <Button variant="quiet" onClick={openDetails}><ChannelMembersIcon /><span>Medlemmer og kanalomtale</span></Button>
         {notifications && <Button variant="quiet" disabled={notifications.pending} aria-pressed={notifications.enabled}
           onClick={() => host.setChannelNotifications(channel.id, !notifications.enabled)}>
           <BellIcon muted={!notifications.enabled} /><span>Varsel {notifications.enabled ? "på" : "av"}</span>
@@ -120,12 +132,14 @@ function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSna
         {leaveError && <Status tone="error">{leaveError}</Status>}
       </div>
     </Dialog>
+    {detailsOpen && <PreviewCommunity destination={{ kind: "channel", channelId: channel.id }} snapshot={snapshot} host={host.community}
+      onNavigate={() => {}} onClose={() => setDetailsOpen(false)} />}
   </>;
 }
 
 function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
   const render = useCallback((target: HTMLDivElement) => host.renderMessageContent(message, target), [host, message]);
-  return <LegacyContent className="sp-message-content" render={render} />;
+  return <SafeDomContent className="sp-message-content" render={render} />;
 }
 
 function PreviewMessageMutations({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
@@ -177,7 +191,11 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     paddingBottom: "env(safe-area-inset-bottom)", paddingLeft: "env(safe-area-inset-left)" });
   document.body.append(container);
   const previouslyInert = host.legacyContainer.inert;
+  const previouslyHidden = host.legacyContainer.hidden;
+  const previousAriaHidden = host.legacyContainer.getAttribute("aria-hidden");
   host.legacyContainer.inert = true;
+  host.legacyContainer.hidden = true;
+  host.legacyContainer.setAttribute("aria-hidden", "true");
   let view: "list" | "detail" = "detail";
   let disposed = false;
   let unsubscribe = () => {};
@@ -196,6 +214,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     mounted?.unmount();
     container.remove();
     host.legacyContainer.inert = previouslyInert;
+    host.legacyContainer.hidden = previouslyHidden;
+    if (previousAriaHidden === null) host.legacyContainer.removeAttribute("aria-hidden");
+    else host.legacyContainer.setAttribute("aria-hidden", previousAriaHidden);
     const url = new URL(window.location.href);
     url.searchParams.delete("ui");
     window.history.replaceState(window.history.state, "", url);

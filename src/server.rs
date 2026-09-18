@@ -39,7 +39,7 @@ use crate::{
     },
     web::auth::{auth_callback, auth_login, auth_logout, auth_refresh, auth_session},
     web::browser::index,
-    web::enrollment::create_enrollment_invitation,
+    web::enrollment::{create_enrollment_invitation, create_global_enrollment_invitation},
     web::integrations::{
         create_grafana_integration, receive_grafana_alerts, receive_report,
         rotate_integration_credential,
@@ -181,6 +181,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route(
             "/api/v1/circles/{id}/enrollment-invitations",
             post(create_enrollment_invitation),
+        )
+        .route(
+            "/api/v1/enrollment-invitations",
+            post(create_global_enrollment_invitation),
         )
         .route("/api/v1/channels/{id}/media", post(upload_media))
         .route(

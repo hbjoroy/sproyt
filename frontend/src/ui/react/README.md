@@ -48,7 +48,7 @@ hostnames and URLs without this explicit query retain the default UI.
    actions and selection/search callbacks. Group IDs must not be display names.
 5. Supply timeline messages, the active channel ID, existing timestamp formatting,
    safe content rendering, permitted actions, pagination and scroll/read policy.
-   `LegacyContent` can host the current safe Markdown/media renderer in an isolated
+   `SafeDomContent` can host the current safe Markdown/media renderer in an isolated
    node; return cleanup that cancels asynchronous rendering and listeners. Keep
    its render callback stable until the rendered content actually changes.
 6. Pass the adapted composer as `composer`, the design-system `ThreadPane` as

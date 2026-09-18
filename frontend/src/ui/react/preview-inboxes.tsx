@@ -102,6 +102,7 @@ export function PreviewInboxes({ state, host }: { readonly state: PreviewInboxSt
   const unreadTotal = unread.reduce((total, item) => total + item.count, 0);
   const mentionCount = state.mentions.filter(mention => !mention.read).length;
   const taskCount = state.tasks.filter(task => task.status !== "done").length;
+  const attentionCount = unreadTotal + mentionCount + taskCount;
   const select = (next: PreviewInboxKind) => {
     setKind(next); setError("");
     if (next === "unread") return;
@@ -110,10 +111,11 @@ export function PreviewInboxes({ state, host }: { readonly state: PreviewInboxSt
   };
   const openInbox = () => { setOpen(true); select(kind); };
   return <>
-    <Button variant="quiet" className="sp-inbox-trigger" onClick={openInbox}
-      aria-label={`Innboks og oppgåver${unreadTotal ? `, ${unreadTotal} uleste meldingar` : ""}`} title="Innboks og oppgåver">
+    <Button variant="quiet" className="sp-inbox-trigger" data-has-items={attentionCount > 0 || undefined} onClick={openInbox}
+      aria-label={`Innboks og oppgåver${attentionCount ? `, ${attentionCount} nye eller opne element` : ""}`}
+      title={attentionCount ? `Innboks: ${attentionCount} nye eller opne` : "Innboks og oppgåver"}>
       <span aria-hidden="true">▤</span><span className="sp-inbox-label">Innboks</span>
-      {unreadTotal + mentionCount + taskCount > 0 && <span className="sp-badge">{approximateCount(unreadTotal + mentionCount + taskCount)}</span>}
+      {attentionCount > 0 && <span className="sp-badge" aria-hidden="true">{approximateCount(attentionCount)}</span>}
     </Button>
     <Dialog open={open} title="Innboks og oppgåver" closeLabel="Tilbake til samtalen" onClose={() => setOpen(false)}>
       <nav aria-label="Innboksvising" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

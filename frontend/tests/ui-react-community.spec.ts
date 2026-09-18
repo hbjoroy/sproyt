@@ -58,6 +58,56 @@ test("real React circle creates Prat once, creates scoped channel, edits Markdow
   expect(commands.find(item => item.type === "create_channel" && item.payload.name === "Turplan")?.payload.circle_id).toBeTruthy();
 });
 
+test("Felles creates a global channel with a global slug and exposes its members directly", async ({ page }) => {
+  const commands: Array<{ type: string; payload?: { name?: string; slug?: string; circle_id?: string | null } }> = [];
+  page.on("websocket", socket => socket.on("framesent", ({ payload }) => commands.push(JSON.parse(String(payload)))));
+  const participant = `community-global-${Date.now()}`;
+  const preview = await enter(page, participant);
+  await menu(preview, "Kanalar i Felles");
+  const channels = preview.getByRole("dialog", { name: "Kanalar i Felles" });
+  await channels.getByLabel("Kanalnamn").fill("Felles prat");
+  await channels.getByLabel("Kanaltype").selectOption("public");
+  await channels.getByRole("button", { name: "Opprett kanal" }).click();
+  await expect(channels).toHaveCount(0);
+  await expect.poll(() => commands.find(command => command.type === "create_channel" && command.payload?.name === "Felles prat")?.payload).toEqual({
+    circle_id: null, kind: "public", name: "Felles prat", slug: "felles-prat"
+  });
+  await expect(preview.getByRole("button", { name: "# Felles prat" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await preview.getByRole("button", { name: "Medlemmer i Felles prat" }).click();
+  const details = preview.getByRole("dialog", { name: "Kanaldetaljar: Felles prat" });
+  await expect(details.getByRole("searchbox", { name: "Finn kanalmedlem" })).toBeVisible();
+  await expect(details.getByRole("listitem")).toContainText(participant);
+  await expect(details.getByRole("button", { name: "Last personlista på nytt" })).toBeVisible();
+});
+
+test("Felles sends a global registration invitation without using a circle endpoint", async ({ page }) => {
+  let globalRequests = 0; let circleRequests = 0; let body: unknown;
+  await page.route("**/api/v1/enrollment-invitations?*", route => {
+    globalRequests += 1; body = route.request().postDataJSON();
+    return route.fulfill({ json: { url: "https://auth.example.org/enrollment/global", expires_at: "2027-01-01T00:00:00Z" } });
+  });
+  await page.route("**/api/v1/circles/*/enrollment-invitations?*", route => {
+    circleRequests += 1;
+    return route.fulfill({ status: 500, body: "kretsendepunktet skal ikkje brukast" });
+  });
+  const preview = await enter(page, `community-global-enrollment-${Date.now()}`);
+  await menu(preview, "Inviter ny brukar til Sprøyt");
+  const invite = preview.getByRole("dialog", { name: "Inviter ny brukar til Sprøyt" });
+  await invite.getByLabel("E-postadresse").fill("new@example.org");
+  await invite.getByLabel("Namn på ny brukar").fill("Ny på Sprøyt");
+  await invite.getByRole("button", { name: "Send registreringsinvitasjon" }).click();
+  await expect(invite).toContainText("Registreringsinvitasjonen er sendt på e-post.");
+  await expect(invite.getByRole("textbox", { name: "Invitasjonslenkje", exact: true })).toHaveValue("https://auth.example.org/enrollment/global");
+  expect(body).toEqual({ email: "new@example.org", display_name: "Ny på Sprøyt" });
+  expect(globalRequests).toBe(1);
+  expect(circleRequests).toBe(0);
+  await page.keyboard.press("Escape");
+  const management = preview.getByRole("dialog", { name: "Meny og innstillingar" });
+  await expect(management).toBeVisible();
+  await expect(management.getByRole("button", { name: "Inviter ny brukar til Sprøyt" })).toBeFocused();
+});
+
 test("people search filters self, opens real DM and preserves original draft", async ({ page, context }) => {
   const peer = await context.newPage();
   await enter(peer, "community-peer-anna");
@@ -116,7 +166,8 @@ test("community rejects keep entered values, member loads retry and enrollment k
       }
     };
   });
-  const preview = await enter(page, `community-retry-${Date.now()}`);
+  const participant = `community-retry-${Date.now()}`;
+  const preview = await enter(page, participant);
   await menu(preview, "Ny vennekrets");
   const create = preview.getByRole("dialog", { name: "Ny vennekrets", exact: true });
   await create.getByLabel("Namn på vennekrets").fill("Krets etter retry");
@@ -131,7 +182,7 @@ test("community rejects keep entered values, member loads retry and enrollment k
   await expect(details).toContainText("Mellombels feil, prøv igjen");
   await details.getByRole("button", { name: "Last personlista på nytt" }).click();
   await expect(details.getByText("Mellombels feil, prøv igjen")).toHaveCount(0);
-  await expect(details.getByText("Ingen personar passar søket.")).toBeVisible();
+  await expect(details.getByRole("listitem")).toContainText(participant);
   await page.keyboard.press("Escape");
   await preview.getByRole("region", { name: "Krets etter retry", exact: true }).getByRole("button", { name: "Inviter personar og nye brukarar" }).click();
   let body: unknown;

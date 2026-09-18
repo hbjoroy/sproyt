@@ -279,7 +279,7 @@ mod tests {
         let issued = chat
             .prepare_enrollment_invitation(
                 owner.id.clone(),
-                circle.id,
+                Some(circle.id),
                 "invitee@example.test".to_owned(),
                 Utc::now() + Duration::hours(1),
             )

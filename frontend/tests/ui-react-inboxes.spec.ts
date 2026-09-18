@@ -92,7 +92,10 @@ test("React inbox handles unread, mentions and tasks while preserving the conver
   await composer.fill("utkastet skal overleve innboksen");
   await page.evaluate(() => (window as typeof window & { __inboxFixture: { activate(): void } }).__inboxFixture.activate());
 
-  await preview.getByRole("button", { name: /^Innboks og oppgåver/ }).click();
+  const trigger = preview.getByRole("button", { name: /^Innboks og oppgåver/ });
+  await expect(trigger).toHaveAttribute("aria-label", /3 nye eller opne element/);
+  await expect(trigger.locator(".sp-badge")).toHaveText("3");
+  await trigger.click();
   let dialog = preview.getByRole("dialog", { name: "Innboks og oppgåver" });
   await expect(dialog.getByText("3 uleste meldingar i 1 samtale")).toBeVisible();
   await dialog.getByRole("button", { name: "# general, 3 uleste meldingar" }).click();
@@ -115,8 +118,11 @@ test("React inbox handles unread, mentions and tasks while preserving the conver
   await mention.getByRole("button", { name: "Lagre oppgåve" }).click();
   const task = dialog.getByRole("article").filter({ hasText: "Følg opp omtalen" });
   await expect(task).toContainText("Heart prosess-42");
+  await expect(trigger).toHaveAttribute("aria-label", /4 nye eller opne element/);
+  await expect(trigger.locator(".sp-badge")).toHaveText("4");
   await task.getByRole("button", { name: "Ferdig" }).click();
   await expect(task.getByRole("button", { name: "Opne igjen" })).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-label", /3 nye eller opne element/);
   await task.getByRole("button", { name: "Opne igjen" }).click();
   await expect(task.getByRole("button", { name: "Ferdig" })).toBeVisible();
 

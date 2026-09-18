@@ -27,13 +27,32 @@ pub(crate) async fn create_enrollment_invitation(
     headers: HeaderMap,
     Json(request): Json<EnrollmentInvitationRequest>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
-        Ok(principal) => principal,
-        Err(error) => return auth_error_response(error),
-    };
     let circle_id = match uuid::Uuid::parse_str(&circle) {
         Ok(circle_id) => CircleId::from_uuid(circle_id),
         Err(_) => return (StatusCode::BAD_REQUEST, "ugyldig vennekrets").into_response(),
+    };
+    create_enrollment_invitation_for_scope(state, query, headers, request, Some(circle_id)).await
+}
+
+pub(crate) async fn create_global_enrollment_invitation(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(request): Json<EnrollmentInvitationRequest>,
+) -> axum::response::Response {
+    create_enrollment_invitation_for_scope(state, query, headers, request, None).await
+}
+
+async fn create_enrollment_invitation_for_scope(
+    state: AppState,
+    query: WsQuery,
+    headers: HeaderMap,
+    request: EnrollmentInvitationRequest,
+    circle_id: Option<CircleId>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
     };
     let Some(enrollment) = &state.enrollment else {
         return (
@@ -49,7 +68,8 @@ pub(crate) async fn create_enrollment_invitation(
     }
     // The repository creates an inactive token first.  It is deliberately not
     // redeemable until Authentik has accepted the corresponding invitation.
-    // Preparing it here still enforces that only the circle owner can invite.
+    // Preparing it here enforces circle ownership for circle invitations and
+    // an existing human account for a global Sprøyt invitation.
     let expires_at = Utc::now() + Duration::hours(crate::enrollment::INVITATION_LIFETIME_HOURS);
     let invitation = match state
         .chat

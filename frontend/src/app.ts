@@ -3030,6 +3030,7 @@
           knownMentions = event.payload.mentions;
           renderPrimaryNavigation();
           renderMentionInbox();
+          if (developmentPreviewActive) refreshDevelopmentPreview();
           return;
         }
 
@@ -3038,6 +3039,7 @@
           if (mention) mention.read = true;
           renderPrimaryNavigation();
           renderMentionInbox();
+          if (developmentPreviewActive) refreshDevelopmentPreview();
           return;
         }
 
@@ -3045,6 +3047,7 @@
           knownTasks = event.payload.tasks;
           renderPrimaryNavigation();
           renderTaskInbox();
+          if (developmentPreviewActive) refreshDevelopmentPreview();
           return;
         }
 
@@ -3063,6 +3066,7 @@
           knownTasks = knownTasks.map((task) => task.id === event.payload.task.id ? event.payload.task : task);
           renderPrimaryNavigation();
           renderTaskInbox();
+          if (developmentPreviewActive) refreshDevelopmentPreview();
           return;
         }
 
@@ -5526,7 +5530,10 @@
             advanced: createAdvancedHost({
               agents: agentsApi, integrations: integrationsApi, processes: processesApi,
               channels: () => knownChannels, circles: () => knownCircles,
-              capabilities: () => ({ agent: !createAgentAccessButton.closest("[hidden]"), heart: !processTitle.closest("[hidden]") })
+              capabilities: () => ({
+                agent: !createAgentAccessButton.closest<HTMLElement>(".agent-access")?.hidden,
+                heart: !processTitle.closest<HTMLElement>(".advanced-tools")?.hidden
+              })
             }),
             imageGeneration,
             openImageGeneration: () => imageGeneration.open(),
@@ -5597,8 +5604,8 @@
             setTaskDone: (taskId, done) => runPreviewInboxRequest("task_updated",
               () => sendCommand("set_task_done", { task_id: taskId, done })),
             managementCapabilities: () => ({
-              agent: !createAgentAccessButton.closest("[hidden]"),
-              heart: !processTitle.closest("[hidden]")
+              agent: !createAgentAccessButton.closest<HTMLElement>(".agent-access")?.hidden,
+              heart: !processTitle.closest<HTMLElement>(".advanced-tools")?.hidden
             }),
             setChannelNotifications: (channelId, enabled) => { void setChannelNotifications(channelId, enabled); },
             reauthenticateNow,

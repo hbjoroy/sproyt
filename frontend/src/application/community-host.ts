@@ -39,7 +39,16 @@ export function createCommunityHost(deps: {
       // The existing circle_created handler creates Prat exactly once.
       await request("circle_created", () => deps.send("create_circle", { name, slug: deps.slugify(name) }));
     },
-    createChannel: async (id, name, kind) => { circle(id); if (!name.trim()) throw new Error("Skriv eit kanalnamn."); await request("channel_created", () => deps.send("create_channel", { circle_id: id, name, kind, slug: deps.channelSlug(id, name) })); },
+    createChannel: async (id, name, kind) => {
+      if (id) circle(id);
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("Skriv eit kanalnamn.");
+      // Felles has no circle namespace. Keep its stable, human-readable slug
+      // compatible with the established global channel contract.
+      const slug = id ? deps.channelSlug(id, trimmed) : deps.slugify(trimmed).replace(/^-+|-+$/g, "");
+      if (!slug) throw new Error("Kanalnamnet må innehalde bokstavar eller tal.");
+      await request("channel_created", () => deps.send("create_channel", { circle_id: id, name: trimmed, kind, slug }));
+    },
     joinable: async id => { circle(id); return (await request("joinable_channels_listed", () => deps.send("list_joinable_channels", { circle_id: id }))).payload.channels.map(item => ({ id: item.channel.id, name: item.channel.name, description: item.description })); },
     join: async id => { await request("membership_joined", () => deps.send("join_channel", { channel: { type: "id", value: id } })); },
     leaveChannel: async id => { channel(id); await request("membership_left", () => deps.send("leave_channel", { channel_id: id })); },
@@ -63,6 +72,10 @@ export function createCommunityHost(deps: {
       circle(circleId, true);
       try { return await deps.enrollment.create(circleId, { email, displayName: name || undefined }); }
       catch (error) { if (isEnrollmentNotConfigured(error)) throw new Error("Registrering av nye brukarar er ikkje tilgjengeleg enno. Du kan framleis dele ei vanleg kretslenkje."); throw error; }
+    },
+    enrollGlobal: async (email, name) => {
+      try { return await deps.enrollment.createGlobal({ email, displayName: name || undefined }); }
+      catch (error) { if (isEnrollmentNotConfigured(error)) throw new Error("Registrering av nye brukarar er ikkje tilgjengeleg enno."); throw error; }
     },
     renderMarkdown: deps.renderMarkdown
   };

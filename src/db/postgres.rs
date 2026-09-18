@@ -1043,14 +1043,22 @@ impl ChatRepository for PostgresChatRepository {
         command: PrepareEnrollmentInvitation,
     ) -> RepositoryFuture<'a, IssuedEnrollmentInvitation> {
         Box::pin(async move {
-            let allowed = sqlx::query_scalar::<_, i32>(
-                "select 1 from circle_memberships where circle_id=$1 and user_id=$2 and role='owner'",
-            )
-            .bind(*command.circle_id.as_uuid())
-            .bind(*command.actor.as_uuid())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(sql_error)?;
+            let allowed = if let Some(circle_id) = &command.circle_id {
+                sqlx::query_scalar::<_, i32>(
+                    "select 1 from circle_memberships where circle_id=$1 and user_id=$2 and role='owner'",
+                )
+                .bind(*circle_id.as_uuid())
+                .bind(*command.actor.as_uuid())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?
+            } else {
+                sqlx::query_scalar::<_, i32>("select 1 from users where id=$1 and kind='human'")
+                    .bind(*command.actor.as_uuid())
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(sql_error)?
+            };
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
@@ -1066,7 +1074,7 @@ impl ChatRepository for PostgresChatRepository {
             };
             sqlx::query("insert into enrollment_invitations(id,circle_id,invited_by,token_hash,expected_email_hash,expires_at,state) values($1,$2,$3,$4,$5,$6,'inactive')")
                 .bind(invitation.id)
-                .bind(*invitation.circle_id.as_uuid())
+                .bind(invitation.circle_id.as_ref().map(|id| *id.as_uuid()))
                 .bind(*invitation.invited_by.as_uuid())
                 .bind(enrollment_token_hash(&token))
                 .bind(enrollment_email_hash(&command.email))
@@ -1092,7 +1100,10 @@ impl ChatRepository for PostgresChatRepository {
                 .ok_or(RepositoryError::NotFound)?;
             Ok(EnrollmentInvitation {
                 id: row.try_get("id").map_err(storage)?,
-                circle_id: CircleId::from_uuid(row.try_get("circle_id").map_err(storage)?),
+                circle_id: row
+                    .try_get::<Option<Uuid>, _>("circle_id")
+                    .map_err(storage)?
+                    .map(CircleId::from_uuid),
                 invited_by: UserId::from_uuid(row.try_get("invited_by").map_err(storage)?),
                 expires_at: row.try_get("expires_at").map_err(storage)?,
                 state: EnrollmentInvitationState::Active,
@@ -1104,11 +1115,11 @@ impl ChatRepository for PostgresChatRepository {
     fn accept_enrollment_invitation<'a>(
         &'a self,
         command: AcceptEnrollmentInvitation,
-    ) -> RepositoryFuture<'a, CircleMembership> {
+    ) -> RepositoryFuture<'a, Option<CircleMembership>> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             let now = Utc::now();
-            let circle_id = sqlx::query_scalar::<_, Uuid>("update enrollment_invitations set state='consumed',consumed_by=$1,consumed_at=$2 where token_hash=$3 and expected_email_hash=$4 and state='active' and expires_at>$2 returning circle_id")
+            let circle_id = sqlx::query_scalar::<_, Option<Uuid>>("update enrollment_invitations set state='consumed',consumed_by=$1,consumed_at=$2 where token_hash=$3 and expected_email_hash=$4 and state='active' and expires_at>$2 returning circle_id")
                 .bind(*command.actor.as_uuid())
                 .bind(now)
                 .bind(enrollment_token_hash(&command.token))
@@ -1117,20 +1128,24 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?
                 .ok_or(RepositoryError::NotFound)?;
-            sqlx::query("insert into circle_memberships(circle_id,user_id,role,joined_at) values($1,$2,'member',$3) on conflict(circle_id,user_id) do nothing")
-                .bind(circle_id)
-                .bind(*command.actor.as_uuid())
-                .bind(now)
-                .execute(&mut *transaction)
-                .await
-                .map_err(sql_error)?;
+            if let Some(circle_id) = circle_id {
+                sqlx::query("insert into circle_memberships(circle_id,user_id,role,joined_at) values($1,$2,'member',$3) on conflict(circle_id,user_id) do nothing")
+                    .bind(circle_id)
+                    .bind(*command.actor.as_uuid())
+                    .bind(now)
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(Some(CircleMembership {
+                    circle_id: CircleId::from_uuid(circle_id),
+                    user_id: command.actor,
+                    role: CircleRole::Member,
+                    joined_at: now,
+                }));
+            }
             transaction.commit().await.map_err(sql_error)?;
-            Ok(CircleMembership {
-                circle_id: CircleId::from_uuid(circle_id),
-                user_id: command.actor,
-                role: CircleRole::Member,
-                joined_at: now,
-            })
+            Ok(None)
         })
     }
 
