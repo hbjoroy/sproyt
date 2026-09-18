@@ -131,6 +131,13 @@ export class IntegrationApi {
 
 export class EnrollmentApi {
   constructor(private readonly http: HttpClient) {}
+  createGlobal(input: Readonly<{ email: string; displayName?: string }>): Promise<EnrollmentInvitation> {
+    return this.http.json(
+      "/api/v1/enrollment-invitations",
+      decodeEnrollmentInvitation,
+      jsonPost({ email: input.email, display_name: input.displayName || null })
+    );
+  }
   create(circleId: string, input: Readonly<{ email: string; displayName?: string }>): Promise<EnrollmentInvitation> {
     return this.http.json(
       `/api/v1/circles/${encodeURIComponent(circleId)}/enrollment-invitations`,

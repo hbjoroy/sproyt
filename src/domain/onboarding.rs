@@ -9,8 +9,8 @@ use super::{CircleId, UserId};
 pub enum EnrollmentInvitationState {
     Inactive,
     Active,
-    // Production repositories consume this state atomically in SQL and return
-    // the resulting membership. The in-memory contract model materialises it.
+    // Production repositories consume this state atomically in SQL. A scoped
+    // invitation returns its resulting membership; a global one returns none.
     #[cfg_attr(not(test), allow(dead_code))]
     Consumed,
 }
@@ -18,7 +18,9 @@ pub enum EnrollmentInvitationState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnrollmentInvitation {
     pub id: Uuid,
-    pub circle_id: CircleId,
+    /// A circle-scoped invitation also grants circle membership. A global
+    /// invitation only admits the verified account to Sprøyt/Felles.
+    pub circle_id: Option<CircleId>,
     pub invited_by: UserId,
     pub expires_at: DateTime<Utc>,
     pub state: EnrollmentInvitationState,
@@ -28,7 +30,7 @@ pub struct EnrollmentInvitation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrepareEnrollmentInvitation {
     pub actor: UserId,
-    pub circle_id: CircleId,
+    pub circle_id: Option<CircleId>,
     pub email: String,
     pub expires_at: DateTime<Utc>,
 }

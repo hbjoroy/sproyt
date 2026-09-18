@@ -29,6 +29,7 @@ test("default client mounts the design-system interface", async ({ page }) => {
   await expect(page.locator("#sproyt-react-preview")).toBeVisible();
   await expect(page.locator("#sproyt-react-preview").getByRole("textbox", { name: "Skriv melding" })).toBeEnabled();
   expect(await page.locator("#sproyt-app").evaluate((element: HTMLElement) => element.inert)).toBe(true);
+  await expect(page.locator("#sproyt-app")).toBeHidden();
 });
 
 test("legacy element rules do not leak into the design-system shell", async ({ page }) => {
@@ -98,6 +99,7 @@ test("local React preview follows the existing runtime and returns without recon
   await expect(page.locator("#body")).toHaveValue("utkast bevart gjennom førehandsvisinga");
   await expect(page.locator("#body")).toBeFocused();
   expect(await page.locator("#sproyt-app").evaluate((element: HTMLElement) => element.inert)).toBe(false);
+  await expect(page.locator("#sproyt-app")).toBeVisible();
   expect(new URL(page.url()).searchParams.has("ui")).toBe(false);
   expect(sockets).toBe(1);
   expect(pageErrors).toEqual([]);

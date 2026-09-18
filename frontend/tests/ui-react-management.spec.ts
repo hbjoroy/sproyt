@@ -118,7 +118,7 @@ test("React management preserves both channel and thread drafts", async ({ page 
   const channelInput = preview.getByRole("textbox", { name: "Skriv melding" });
   const root = `management-tråd ${Date.now()}`;
   await channelInput.fill(root);
-  await channelInput.press("Enter");
+  await preview.locator(".sp-channel-pane").getByRole("button", { name: "Send ↑", exact: true }).click();
   await expect(channelInput).toHaveValue("");
   await channelInput.fill("kanalutkast gjennom meny");
   await preview.locator("[data-message-id]").filter({ hasText: root }).getByRole("button", { name: "Svar i tråd" }).click();

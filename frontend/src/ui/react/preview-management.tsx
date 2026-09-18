@@ -7,7 +7,7 @@ import { PreviewAdvanced } from "./preview-advanced";
 import type { AdvancedHost } from "../../application/advanced-host";
 
 export type ManagementDestination =
-  | { kind: "create-circle" | "circles" | "people" | "channel" | "profile" | "notifications" | "agent" | "heart" }
+  | { kind: "create-circle" | "circles" | "people" | "channel" | "global-channels" | "global-invite" | "profile" | "notifications" | "agent" | "heart" }
   | { kind: "channels" | "invite"; circleId: string };
 
 /** Focused management tasks share the host's commands and state. Opening the
@@ -30,8 +30,9 @@ export function PreviewManagement({ snapshot, onNavigate, capabilities, settings
   const advancedTrigger = useRef<HTMLButtonElement | null>(null);
   const action = (label: string, destination: ManagementDestination) =>
     <Button key={label} onClick={event => {
-      if (["people", "channel", "create-circle", "circles", "channels", "invite"].includes(destination.kind)) {
+      if (["people", "channel", "create-circle", "circles", "global-channels", "global-invite", "channels", "invite"].includes(destination.kind)) {
         communityTrigger.current = event.currentTarget;
+        setOpen(false);
         if (destination.kind === "channel") {
           if (snapshot.activeChannel) setDestination({ kind: "channel", channelId: snapshot.activeChannel.id });
         } else setDestination(destination as CommunityDestination);
@@ -41,12 +42,19 @@ export function PreviewManagement({ snapshot, onNavigate, capabilities, settings
       } else onNavigate(destination);
     }}>{label}</Button>;
   return <>
-    <Button onClick={() => setOpen(true)}>Meny og innstillingar</Button>
+    <Button onClick={event => {
+      // Safari does not focus buttons on pointer activation. Give the native
+      // dialog a stable return target instead of leaving focus on the draft.
+      event.currentTarget.focus({ preventScroll: true });
+      setOpen(true);
+    }}>Meny og innstillingar</Button>
     <Dialog open={open} title="Meny og innstillingar" closeLabel="Lukk menyen" onClose={() => setOpen(false)}>
       <p>Samtalen og utkasta dine blir tekne vare på.</p>
       <div style={{ display: "grid", gap: 8 }}>
         {action("Personar og ny direktemelding", { kind: "people" })}
         {snapshot.activeChannel && action("Kanaldetaljar, medlemmer og integrasjonar", { kind: "channel" })}
+        {action("Kanalar i Felles", { kind: "global-channels" })}
+        {action("Inviter ny brukar til Sprøyt", { kind: "global-invite" })}
         {action("Ny vennekrets", { kind: "create-circle" })}
         {action("Kretsadministrasjon og invitasjonskode", { kind: "circles" })}
         <Button onClick={event => { settingsTrigger.current = event.currentTarget; setSetting("profile"); }}>Profil og status</Button>
@@ -69,7 +77,7 @@ export function PreviewManagement({ snapshot, onNavigate, capabilities, settings
       requestAnimationFrame(() => settingsTrigger.current?.focus({ preventScroll: true }));
     }} />}
     {destination && <PreviewCommunity key={JSON.stringify(destination)} destination={destination} snapshot={snapshot} host={community}
-      onNavigate={setDestination} onClose={() => { setDestination(undefined); requestAnimationFrame(() => communityTrigger.current?.focus({ preventScroll: true })); }} />}
+      onNavigate={setDestination} onClose={() => { setDestination(undefined); setOpen(true); requestAnimationFrame(() => communityTrigger.current?.focus({ preventScroll: true })); }} />}
     {advancedKind && <PreviewAdvanced kind={advancedKind} host={advanced} snapshot={snapshot} onClose={() => {
       setAdvancedKind(undefined); requestAnimationFrame(() => advancedTrigger.current?.focus({ preventScroll: true }));
     }} />}

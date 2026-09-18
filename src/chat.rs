@@ -489,7 +489,7 @@ impl ChatEngine {
     pub async fn prepare_enrollment_invitation(
         &self,
         actor: UserId,
-        circle_id: crate::domain::CircleId,
+        circle_id: Option<crate::domain::CircleId>,
         email: String,
         expires_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<IssuedEnrollmentInvitation, ChatError> {
@@ -523,7 +523,7 @@ impl ChatEngine {
         actor: UserId,
         email: String,
         token: String,
-    ) -> Result<CircleMembership, ChatError> {
+    ) -> Result<Option<CircleMembership>, ChatError> {
         self.repository
             .accept_enrollment_invitation(AcceptEnrollmentInvitation {
                 actor,

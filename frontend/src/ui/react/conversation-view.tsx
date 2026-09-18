@@ -67,7 +67,7 @@ export interface TimelineProps {
   readonly notices?: readonly string[];
   readonly formatTime: (sentAt: string) => string;
   readonly formatAuthor?: (message: ChatMessage) => string;
-  /** Use the existing safe renderer (LegacyContent is available as a bridge). */
+  /** Use the existing safe renderer (SafeDomContent is available as a bridge). */
   readonly renderContent: (message: ChatMessage) => ReactNode;
   /** Permission checks, replies, reaction counts, edit and delete stay with the host. */
   readonly renderActions?: (message: ChatMessage, context?: { readonly threadParent: boolean }) => ReactNode;

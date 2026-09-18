@@ -106,6 +106,144 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await context.close();
 });
 
+test("visual-only keyboard fallback positions the composer from visual viewport coordinates", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    baseURL, serviceWorkers: "block", viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true
+  });
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    const viewport = new EventTarget();
+    Object.assign(viewport, {
+      height: 844, width: 390, offsetTop: 0, offsetLeft: 0,
+      pageTop: 0, pageLeft: 0, scale: 1, onresize: null, onscroll: null
+    });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+  });
+  await page.goto("/?participant=playwright-android-keyboard", { waitUntil: "domcontentloaded" });
+  const app = page.locator("#sproyt-react-preview");
+  const composer = app.getByRole("textbox", { name: "Skriv melding" });
+  await expect(composer).toBeEnabled({ timeout: 15_000 });
+  await composer.focus();
+
+  const keyboardViewport = { height: 411.4, offsetTop: 37.2 };
+  await page.evaluate(({ height, offsetTop }) => {
+    const viewport = window.visualViewport!;
+    Object.assign(viewport, { height, offsetTop, pageTop: offsetTop });
+    viewport.dispatchEvent(new Event("resize"));
+    viewport.dispatchEvent(new Event("scroll"));
+  }, keyboardViewport);
+
+  await expect.poll(async () => app.evaluate((element, viewport) => {
+    const bounds = element.getBoundingClientRect();
+    return Math.max(
+      Math.abs(bounds.top - viewport.offsetTop),
+      Math.abs(bounds.height - viewport.height),
+      Math.abs(bounds.bottom - viewport.offsetTop - viewport.height)
+    );
+  }, keyboardViewport)).toBeLessThan(.05);
+  expect(await app.evaluate(element => element.style.bottom)).toBe("auto");
+  const composerBounds = await composer.boundingBox();
+  expect(composerBounds).not.toBeNull();
+  expect(composerBounds!.y + composerBounds!.height)
+    .toBeLessThanOrEqual(keyboardViewport.offsetTop + keyboardViewport.height);
+  expect(await page.locator("html").evaluate(element => ({
+    height: element.style.getPropertyValue("--app-height"),
+    offsetTop: element.style.getPropertyValue("--app-offset-top"),
+    mode: element.dataset.appViewport
+  }))).toEqual({ height: "411.4px", offsetTop: "37.2px", mode: "visual" });
+  await context.close();
+});
+
+test("layout-resize keyboard mode uses matching layout viewport geometry", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    baseURL, serviceWorkers: "block", viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true
+  });
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    let layoutHeight = 844;
+    const viewport = new EventTarget();
+    Object.assign(viewport, {
+      height: 844, width: 390, offsetTop: 0, offsetLeft: 0,
+      pageTop: 0, pageLeft: 0, scale: 1, onresize: null, onscroll: null
+    });
+    Object.defineProperty(window, "innerHeight", { configurable: true, get: () => layoutHeight });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+    Object.defineProperty(window, "__setLayoutViewportHeight", {
+      configurable: true,
+      value: (height: number) => { layoutHeight = height; }
+    });
+  });
+  await page.goto("/?participant=playwright-layout-keyboard", { waitUntil: "domcontentloaded" });
+  await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /interactive-widget=resizes-content/);
+  const app = page.locator("#sproyt-react-preview");
+  const composer = app.getByRole("textbox", { name: "Skriv melding" });
+  await expect(composer).toBeEnabled({ timeout: 15_000 });
+  await composer.focus();
+
+  const keyboardHeight = 325.9;
+  await page.evaluate((height) => {
+    (window as typeof window & { __setLayoutViewportHeight: (next: number) => void }).__setLayoutViewportHeight(height);
+    const viewport = window.visualViewport!;
+    Object.assign(viewport, { height, offsetTop: 0, pageTop: 0 });
+    window.dispatchEvent(new Event("resize"));
+    viewport.dispatchEvent(new Event("resize"));
+  }, keyboardHeight);
+
+  await expect.poll(async () => app.evaluate((element, height) => {
+    const bounds = element.getBoundingClientRect();
+    return Math.max(Math.abs(bounds.top), Math.abs(bounds.height - height), Math.abs(bounds.bottom - height));
+  }, keyboardHeight)).toBeLessThan(.05);
+  const composerBounds = await composer.boundingBox();
+  expect(composerBounds).not.toBeNull();
+  expect(composerBounds!.y + composerBounds!.height).toBeLessThanOrEqual(keyboardHeight);
+  expect(await page.locator("html").evaluate(element => ({
+    height: element.style.getPropertyValue("--app-height"),
+    offsetTop: element.style.getPropertyValue("--app-offset-top"),
+    mode: element.dataset.appViewport
+  }))).toEqual({ height: "325.9px", offsetTop: "0px", mode: "layout-match" });
+  await context.close();
+});
+
+test("browser layout resize keeps the composer inside the new viewport", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    baseURL, serviceWorkers: "block", viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true
+  });
+  const page = await context.newPage();
+  await page.goto("/?participant=playwright-browser-layout-resize", { waitUntil: "domcontentloaded" });
+  const app = page.locator("#sproyt-react-preview");
+  const composer = app.getByRole("textbox", { name: "Skriv melding" });
+  await expect(composer).toBeEnabled({ timeout: 15_000 });
+  await page.setViewportSize({ width: 390, height: 326 });
+  await expect.poll(async () => app.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return Math.max(Math.abs(bounds.top), Math.abs(bounds.height - 326), Math.abs(bounds.bottom - 326));
+  })).toBeLessThan(.05);
+  const composerBounds = await composer.boundingBox();
+  expect(composerBounds).not.toBeNull();
+  expect(composerBounds!.y + composerBounds!.height).toBeLessThanOrEqual(326);
+  await context.close();
+});
+
+test("opt-in viewport diagnostics report geometry without changing layout or exposing drafts", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?participant=viewport-diagnostics");
+  const input = page.getByRole("textbox", { name: "Skriv melding" });
+  await expect(input).toBeEnabled();
+  await expect(page.locator("#sproyt-viewport-diagnostics")).toHaveCount(0);
+  const original = await input.boundingBox();
+  await page.goto("/?participant=viewport-diagnostics&viewport-debug=1");
+  await expect(input).toBeEnabled();
+  expect(await input.boundingBox()).toEqual(original);
+  await input.fill("Private draft not for diagnostics");
+  const panel = page.locator("#sproyt-viewport-diagnostics");
+  await expect(panel).toContainText("focus=true");
+  await expect(panel).toContainText("app viewport=");
+  await expect(panel).toContainText("outline extent=");
+  await expect(panel).not.toContainText("Private draft");
+  await expect(input).toBeFocused();
+  await expect(panel).toHaveCSS("pointer-events", "none");
+});
+
 test("channel overflow keeps notification and confirmed leave actions together", async ({ page }) => {
   await page.goto("/?participant=preview-channel-overflow&ui=react");
   const preview = page.locator("#sproyt-react-preview");

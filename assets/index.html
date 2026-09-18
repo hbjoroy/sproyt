@@ -2,7 +2,7 @@
 <html lang="nn">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#191b18" media="(prefers-color-scheme: dark)">
     <meta name="application-name" content="Sprøyt">
@@ -962,10 +962,9 @@
 
         body {
           position: fixed;
-          top: 0;
+          top: var(--app-offset-top);
           right: 0;
           left: 0;
-          transform: translateY(var(--app-offset-top));
           height: var(--app-height);
           min-height: 0;
           padding-top: max(12px, env(safe-area-inset-top));

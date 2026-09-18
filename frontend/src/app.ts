@@ -1,4 +1,5 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
+      import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
       import { createCommunityRequests } from "./application/community-requests";
       import { createCommunityHost } from "./application/community-host";
@@ -52,15 +53,39 @@
 
       function syncAppViewportHeight() {
         const viewport = window.visualViewport;
-        const height = viewport?.height || window.innerHeight;
-        const offsetTop = viewport?.offsetTop || 0;
-        document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
-        document.documentElement.style.setProperty("--app-offset-top", `${Math.round(offsetTop)}px`);
+        const layoutHeight = window.innerHeight;
+        const visualHeight = viewport?.height ?? layoutHeight;
+        // `interactive-widget=resizes-content` asks Chromium to resize the
+        // layout viewport for the keyboard. When the layout and visual
+        // viewports agree, a fixed app can share that containing block rather
+        // than trying to reproduce it from visualViewport.
+        //
+        // Some engines ignore the viewport hint and only resize the visual
+        // viewport. Keep that path for them (and while pinch-zoomed), including
+        // its scroll offset. Agreement is only a geometry choice, not a
+        // support test for the viewport hint. A one-pixel tolerance avoids
+        // switching paths for fractional browser chrome measurements.
+        const visualOffsetTop = viewport?.offsetTop ?? 0;
+        const layoutMatchesVisual = !viewport || (
+          viewport.scale === 1
+          && Math.abs(visualOffsetTop) < 1
+          && Math.abs(layoutHeight - visualHeight) < 1
+        );
+        // Keep the smaller fractional height where the browser exposes one so
+        // the composer cannot extend a fraction of a pixel below the viewport.
+        const height = layoutMatchesVisual ? Math.min(layoutHeight, visualHeight) : visualHeight;
+        const offsetTop = layoutMatchesVisual ? 0 : visualOffsetTop;
+        // Keep fractional CSS pixels. Rounding the height up can place the
+        // composer below the keyboard edge on high-DPI phones.
+        document.documentElement.style.setProperty("--app-height", `${height}px`);
+        document.documentElement.style.setProperty("--app-offset-top", `${offsetTop}px`);
+        document.documentElement.dataset.appViewport = layoutMatchesVisual ? "layout-match" : "visual";
       }
       syncAppViewportHeight();
       window.addEventListener("resize", syncAppViewportHeight, { passive: true });
       window.visualViewport?.addEventListener("resize", syncAppViewportHeight, { passive: true });
       window.visualViewport?.addEventListener("scroll", syncAppViewportHeight, { passive: true });
+      installViewportDiagnostics();
 
       const serviceWorkerReady = "serviceWorker" in navigator
         ? navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(() => navigator.serviceWorker.ready)
@@ -3005,6 +3030,7 @@
           knownMentions = event.payload.mentions;
           renderPrimaryNavigation();
           renderMentionInbox();
+          if (developmentPreviewActive) refreshDevelopmentPreview();
           return;
         }
 
@@ -3013,6 +3039,7 @@
           if (mention) mention.read = true;
           renderPrimaryNavigation();
           renderMentionInbox();
+          if (developmentPreviewActive) refreshDevelopmentPreview();
           return;
         }
 
@@ -3020,6 +3047,7 @@
           knownTasks = event.payload.tasks;
           renderPrimaryNavigation();
           renderTaskInbox();
+          if (developmentPreviewActive) refreshDevelopmentPreview();
           return;
         }
 
@@ -3038,6 +3066,7 @@
           knownTasks = knownTasks.map((task) => task.id === event.payload.task.id ? event.payload.task : task);
           renderPrimaryNavigation();
           renderTaskInbox();
+          if (developmentPreviewActive) refreshDevelopmentPreview();
           return;
         }
 
@@ -5501,7 +5530,10 @@
             advanced: createAdvancedHost({
               agents: agentsApi, integrations: integrationsApi, processes: processesApi,
               channels: () => knownChannels, circles: () => knownCircles,
-              capabilities: () => ({ agent: !createAgentAccessButton.closest("[hidden]"), heart: !processTitle.closest("[hidden]") })
+              capabilities: () => ({
+                agent: !createAgentAccessButton.closest<HTMLElement>(".agent-access")?.hidden,
+                heart: !processTitle.closest<HTMLElement>(".advanced-tools")?.hidden
+              })
             }),
             imageGeneration,
             openImageGeneration: () => imageGeneration.open(),
@@ -5572,8 +5604,8 @@
             setTaskDone: (taskId, done) => runPreviewInboxRequest("task_updated",
               () => sendCommand("set_task_done", { task_id: taskId, done })),
             managementCapabilities: () => ({
-              agent: !createAgentAccessButton.closest("[hidden]"),
-              heart: !processTitle.closest("[hidden]")
+              agent: !createAgentAccessButton.closest<HTMLElement>(".agent-access")?.hidden,
+              heart: !processTitle.closest<HTMLElement>(".advanced-tools")?.hidden
             }),
             setChannelNotifications: (channelId, enabled) => { void setChannelNotifications(channelId, enabled); },
             reauthenticateNow,

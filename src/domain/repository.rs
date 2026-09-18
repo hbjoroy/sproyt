@@ -121,7 +121,7 @@ pub trait ChatRepository: Send + Sync + 'static {
     fn accept_enrollment_invitation<'a>(
         &'a self,
         command: AcceptEnrollmentInvitation,
-    ) -> RepositoryFuture<'a, CircleMembership>;
+    ) -> RepositoryFuture<'a, Option<CircleMembership>>;
     fn create_chat_invitation<'a>(
         &'a self,
         _command: super::CreateChatInvitation,
@@ -1045,12 +1045,20 @@ impl ChatRepository for InMemoryChatRepository {
     ) -> RepositoryFuture<'a, IssuedEnrollmentInvitation> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
-            let role = state
-                .circle_memberships
-                .get(&(command.circle_id.clone(), command.actor.clone()))
-                .map(|membership| &membership.role);
-            if !Policy::can_invite_to_circle(role) {
+            let Some(actor) = state.users.get(&command.actor) else {
                 return Err(RepositoryError::PermissionDenied);
+            };
+            if command.circle_id.is_none() && actor.kind != crate::domain::PrincipalKind::Human {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if let Some(circle_id) = &command.circle_id {
+                let role = state
+                    .circle_memberships
+                    .get(&(circle_id.clone(), command.actor.clone()))
+                    .map(|membership| &membership.role);
+                if !Policy::can_invite_to_circle(role) {
+                    return Err(RepositoryError::PermissionDenied);
+                }
             }
 
             let token = generate_enrollment_token()
@@ -1100,7 +1108,7 @@ impl ChatRepository for InMemoryChatRepository {
     fn accept_enrollment_invitation<'a>(
         &'a self,
         command: AcceptEnrollmentInvitation,
-    ) -> RepositoryFuture<'a, CircleMembership> {
+    ) -> RepositoryFuture<'a, Option<CircleMembership>> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
             if !state.users.contains_key(&command.actor) {
@@ -1119,7 +1127,9 @@ impl ChatRepository for InMemoryChatRepository {
 
             stored.invitation.state = EnrollmentInvitationState::Consumed;
             stored.consumed_by = Some(command.actor.clone());
-            let circle_id = stored.invitation.circle_id.clone();
+            let Some(circle_id) = stored.invitation.circle_id.clone() else {
+                return Ok(None);
+            };
             let joined_at = Utc::now();
             let membership = CircleMembership {
                 circle_id: circle_id.clone(),
@@ -1131,7 +1141,7 @@ impl ChatRepository for InMemoryChatRepository {
                 .circle_memberships
                 .entry((circle_id, command.actor))
                 .or_insert_with(|| membership.clone());
-            Ok(membership)
+            Ok(Some(membership))
         })
     }
 

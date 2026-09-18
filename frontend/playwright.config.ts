@@ -17,5 +17,10 @@ export default defineConfig({
   failOnFlakyTests: true,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: { baseURL, serviceWorkers: "block", trace: "retain-on-failure" },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    ...(process.env.SPROYT_E2E_WEBKIT === "1" ? [{
+      name: "webkit-iphone", use: { ...devices["iPhone 13"] }
+    }] : [])
+  ]
 });

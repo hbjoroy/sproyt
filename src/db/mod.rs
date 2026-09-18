@@ -953,9 +953,16 @@ where
     let owner = UserId::named(format!("enrollment-owner-{suffix}"));
     let member = UserId::named(format!("enrollment-member-{suffix}"));
     let invitee = UserId::named(format!("enrollment-invitee-{suffix}"));
+    let global_invitee = UserId::named(format!("global-enrollment-invitee-{suffix}"));
     add_user(repository, owner.clone(), "Enrollment owner").await;
     add_user(repository, member.clone(), "Enrollment member").await;
     add_user(repository, invitee.clone(), "Enrollment invitee").await;
+    add_user(
+        repository,
+        global_invitee.clone(),
+        "Global enrollment invitee",
+    )
+    .await;
     let circle = repository
         .create_circle(CreateCircle {
             actor: owner.clone(),
@@ -983,7 +990,7 @@ where
         repository
             .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
                 actor: member,
-                circle_id: circle.id.clone(),
+                circle_id: Some(circle.id.clone()),
                 email: "member@example.com".to_owned(),
                 expires_at: Utc::now() + Duration::hours(1),
             })
@@ -995,7 +1002,7 @@ where
     let expired = repository
         .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
             actor: owner.clone(),
-            circle_id: circle.id.clone(),
+            circle_id: Some(circle.id.clone()),
             email: "expired@example.com".to_owned(),
             expires_at: Utc::now() - Duration::seconds(1),
         })
@@ -1016,7 +1023,7 @@ where
     let issued = repository
         .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
             actor: owner.clone(),
-            circle_id: circle.id.clone(),
+            circle_id: Some(circle.id.clone()),
             email: "  Invitee@Example.COM  ".to_owned(),
             expires_at,
         })
@@ -1079,10 +1086,41 @@ where
             token: issued.token.clone(),
         })
         .await
-        .unwrap();
+        .unwrap()
+        .expect("circle enrollment creates membership");
     assert_eq!(membership.circle_id, circle.id);
     assert_eq!(membership.user_id, invitee.clone());
     assert_eq!(membership.role, crate::domain::CircleRole::Member);
+
+    let global = repository
+        .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
+            actor: owner.clone(),
+            circle_id: None,
+            email: "global@example.com".to_owned(),
+            expires_at: Utc::now() + Duration::hours(2),
+        })
+        .await
+        .unwrap();
+    assert_eq!(global.invitation.circle_id, None);
+    repository
+        .activate_enrollment_invitation(ActivateEnrollmentInvitation {
+            token: global.token.clone(),
+            authentik_invitation_id: Uuid::new_v4(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+                actor: global_invitee,
+                email: "GLOBAL@example.com".to_owned(),
+                token: global.token,
+            })
+            .await
+            .unwrap(),
+        None,
+        "global enrollment admits the account without granting a circle membership"
+    );
     assert_eq!(
         repository
             .accept_enrollment_invitation(AcceptEnrollmentInvitation {

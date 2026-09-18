@@ -1,12 +1,14 @@
 # Plan: nytt Sprøyt-UI med eksisterande funksjonar
 
-Dato: 2026-09-16. Status: i arbeid. Fase 1–3 er starta; funksjonsmatrisa er ikkje ferdig migrert.
+Dato: 2026-09-16. Sist oppdatert: 2026-09-18. Status: fase 1–5 er gjennomførte og funksjonsmatrisa er migrert. Fase 6 er i arbeid: React er den einaste ordinære synlege brukarflata, medan den gamle DOM-verten enno finst gøymd som ein mellombels runtime-adapter.
+
+Den siste paritetsrunden la til synleg samla indikator for ulest, omtalar og opne oppgåver i innboksen, kanaloppretting i Felles, global registreringsinvitasjon til Sprøyt og direkte tilgang til medlemslista i ein kanal. Global registreringsinvitasjon krev database-migrasjon `0039`, som gjer kretsomfang valfritt utan å endre eksisterande kretsinvitasjonar. Den trygge rendereradapteren heiter `SafeDomContent`; han bevarer Markdown, Mermaid og anna rikt meldingsinnhald fram til rendererutskiljinga er ferdig.
 
 ## Mål og avgrensing
 
 Erstatt dagens brukarflate med designsystemet i `sproyt-ui/sproyt-ui`, og før vidare alle eksisterande brukarfunksjonar, tilgangsreglar og leveringsgarantiar. Designpakken bestemmer visuelt uttrykk og gir komponentar; han er ikkje ein fullstendig produktspesifikasjon. Demo-data, forenkla tilstand og manglande skjermbilete skal ikkje redusere Sprøyt.
 
-Den medfølgjande skillen ligg i `.agents/skills/sproyt-ui`, med `SKILL.md`, begge referansane, `agents/openai.yaml` og komponentarkivet. Komponentpakken er lagd som lokal npm-avhengigheit i `frontend/vendor/`; database og produksjon er ikkje endra.
+Den medfølgjande skillen ligg i `.agents/skills/sproyt-ui`, med `SKILL.md`, begge referansane, `agents/openai.yaml` og komponentarkivet. Komponentpakken er lagd som lokal npm-avhengigheit i `frontend/vendor/`. Produksjon blir ikkje endra som del av denne arbeidsrunden; endringa skal først verifiserast i canary.
 
 ## Grunnlag og prioritet
 
@@ -164,7 +166,7 @@ Særleg viktige akseptprøver:
 
 Bruk isolert database og testkontoar; ikkje send ekte invitasjonar eller endre produksjonsdata som del av UI-verifikasjonen. Dersom containerar trengst på Windows, les `wslc --help` og bruk `wslc` i samsvar med arbeidsavtalen.
 
-Lever i avgrensa endringar etter fasane over. Produksjonsovergang kjem etter komplett funksjonskontroll og den eksisterande releaseprosessen. Behald førre applikasjonsartefakt for tilbakeføring; UI-migreringa skal ikkje krevje endra databaseskjema eller sletting av lokale utkast/kødata. Mål pakkestorleik, oppstart og lange tidslinjer mot grunnlaget frå fase 1 før levering.
+Lever i avgrensa endringar etter fasane over. Produksjonsovergang kjem etter komplett funksjonskontroll og den eksisterande releaseprosessen. Behald førre applikasjonsartefakt for tilbakeføring; migrasjon `0039` utvidar registreringsinvitasjonar med valfritt kretsomfang, men UI-migreringa slettar ikkje lokale utkast eller kødata. Mål pakkestorleik, oppstart og lange tidslinjer mot grunnlaget frå fase 1 før levering.
 
 ## Viktigaste risikoar
 
@@ -174,4 +176,4 @@ Lever i avgrensa endringar etter fasane over. Produksjonsovergang kjem etter kom
 - **Ressurslevering og PWA:** nytt JS/CSS kan kome i utakt med Rust-binæren eller gamle faner. Mottiltak: fingeravtrykk, prebuilt-verifikasjon og oppgraderingsprøve.
 - **Falsk ferdigstatus:** eit nytt appskal kan skjule mykje umigrert funksjonalitet. Mottiltak: gammalt UI blir ikkje fjerna før alle radene i matrisa er verifiserte.
 
-Neste steg, når implementering blir bestilt, er fase 1. Arbeidet stoppar her i denne oppgåva.
+Neste steg er canary-verifikasjon av denne paritetsrunden, særleg Felles-invitasjon/kanalar, kanalmedlemmer og innboksindikatoren. Deretter står resten av fase 6 att: trekkje runtime-eigarskap ut av `app.ts`, fjerne den gøymde DOM-verten og overgangsstilane, og køyre den same komplette akseptporten før produksjon.
