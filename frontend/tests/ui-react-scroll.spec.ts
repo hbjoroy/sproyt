@@ -45,10 +45,11 @@ test("React timeline loads older history at the top and keeps the visible messag
     element.dispatchEvent(new Event("scroll"));
   });
   const anchor = await visibleAnchor(page, "#sproyt-react-preview .sp-channel-pane > .sp-timeline");
-  await expect.poll(() => olderRequests).toBe(1);
+  await expect.poll(() => olderRequests).toBeGreaterThan(0);
   // The test database is shared by the named-suite run, so earlier tests may
-  // already have added messages to General. Verify the page was prepended
-  // instead of assuming this test owns the channel's total history.
+  // already have added enough messages to fetch several older pages while the
+  // viewport remains at the top. Verify that content was prepended and the
+  // reading anchor held instead of assuming one request or a fixed total.
   await expect.poll(() => timeline.locator("[data-message-id]").count()).toBeGreaterThan(initialCount);
   await expect.poll(async () => {
     const restored = await timeline.locator(`[data-message-id="${anchor.id}"]`).evaluate((message: HTMLElement) =>
