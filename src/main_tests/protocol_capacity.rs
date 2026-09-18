@@ -429,7 +429,12 @@ fn browser_exposes_paste_upload_and_safe_media_rendering() {
     assert!(APP_BUNDLE.contains("/api/v1/media/"));
     assert!(APP_BUNDLE.contains("encodeURIComponent(participant)"));
     assert!(APP_BUNDLE.contains("\"aria-label\": \"Vis originalbiletet\""));
-    assert!(APP_BUNDLE.contains("maxHeight: \"min(82dvh, 900px)\""));
+    assert!(APP_BUNDLE.contains("className: \"sp-image-viewer\""));
+    assert!(APP_BUNDLE.contains("width: 100vw; height: 100dvh"));
+    assert!(APP_BUNDLE.contains("touch-action: none"));
+    assert!(APP_BUNDLE.contains("onPointerDown: pointerDown"));
+    assert!(APP_BUNDLE.contains("\"aria-label\": \"Zoom inn\""));
+    assert!(!APP_BUNDLE.contains("maxHeight: \"min(82dvh, 900px)\""));
     assert!(APP_BUNDLE.contains("objectFit: \"contain\""));
 }
 
