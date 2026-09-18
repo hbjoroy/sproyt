@@ -1,8 +1,8 @@
 import { Button, Dialog, PersonList, Status, TextField } from "@sproyt/ui/react";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Channel, Circle, UserProfile } from "../../types";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
-import { SafeDomContent } from "./safe-dom-content";
+import { MarkdownContent } from "./markdown-content";
 
 export type CommunityDestination = { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" } | { kind: "channel"; channelId: string } | { kind: "channels" | "invite"; circleId: string };
 export interface CommunityHost {
@@ -24,7 +24,6 @@ export interface CommunityHost {
   accept(value: string): Promise<void>;
   enroll(circleId: string, email: string, name: string): Promise<{ url: string; expiresAt: string }>;
   enrollGlobal(email: string, name: string): Promise<{ url: string; expiresAt: string }>;
-  renderMarkdown(text: string, target: HTMLDivElement): void;
   renderIntegration?: (channelId: string) => ReactNode;
 }
 
@@ -41,9 +40,8 @@ function useOperation() {
   return { busy, run, feedback: <>{error && <Status tone="error">{error}</Status>}{notice && <Status>{notice}</Status>}</> };
 }
 
-function Markdown({ host, text }: { host: CommunityHost; text: string }) {
-  const render = useCallback((target: HTMLDivElement) => host.renderMarkdown(text, target), [host, text]);
-  return <SafeDomContent render={render} />;
+function Markdown({ text }: { text: string }) {
+  return <MarkdownContent source={text} />;
 }
 
 function People({ host, channel, onClose }: { host: CommunityHost; channel?: Readonly<Channel>; onClose(): void }) {
@@ -69,7 +67,7 @@ function People({ host, channel, onClose }: { host: CommunityHost; channel?: Rea
   return <>
     {channel && <section aria-label="Kanalomtale">
       <h3>Om {channel.name}</h3>
-      {channel.description ? <Markdown host={host} text={channel.description} /> : <p>Ingen kanalomtale enno.</p>}
+      {channel.description ? <Markdown text={channel.description} /> : <p>Ingen kanalomtale enno.</p>}
       {channel.role === "owner" && <form onSubmit={event => { event.preventDefault(); void op.run(() => host.description(channel.id, description), "Omtalen er lagra."); }}>
         <label htmlFor="community-description">Kanalomtale (Markdown)</label>
         <textarea id="community-description" value={description} onChange={event => setDescription(event.target.value)} rows={4} />
@@ -129,7 +127,7 @@ function ScopeChannels({ host, circle, channels, onClose, onNavigate }: {
     </section>}
     {circle && <><h3>Finn opne kanalar</h3><Button onClick={() => void load()} busy={op.busy}>Last kanalar på nytt</Button>
       {!joinable.length && <p>Ingen fleire opne kanalar akkurat no.</p>}
-      {joinable.map(channel => <section key={channel.id}><h4>{channel.name}</h4><Markdown host={host} text={channel.description} /><Button disabled={op.busy} onClick={() => void op.run(async () => { await host.join(channel.id); onClose(); })}>Bli med i {channel.name}</Button></section>)}
+      {joinable.map(channel => <section key={channel.id}><h4>{channel.name}</h4><Markdown text={channel.description} /><Button disabled={op.busy} onClick={() => void op.run(async () => { await host.join(channel.id); onClose(); })}>Bli med i {channel.name}</Button></section>)}
       <Button variant="danger" disabled={op.busy} onClick={() => setConfirm(true)}>{circle.role === "owner" ? "Slett vennekrets" : "Forlat vennekrets"}</Button>
       {confirm && <div role="group" aria-label="Stadfest kretsendring"><p>{circle.role === "owner" ? `Slett ${circle.name} og all chat- og prosesshistorikk permanent?` : `Forlat ${circle.name}? Du mistar tilgang til kanalane i kretsen.`}</p><Button onClick={() => setConfirm(false)}>Avbryt</Button><Button variant="danger" disabled={op.busy} onClick={() => void op.run(async () => { await (circle.role === "owner" ? host.deleteCircle(circle.id) : host.leaveCircle(circle.id)); onClose(); })}>Ja, {circle.role === "owner" ? "slett kretsen" : "forlat kretsen"}</Button></div>}</>}
     {op.feedback}

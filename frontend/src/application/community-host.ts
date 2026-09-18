@@ -15,7 +15,6 @@ export function createCommunityHost(deps: {
   channelSlug(circleId: string, name: string): string;
   invitationToken(value: string): string | null;
   enrollment: EnrollmentApi;
-  renderMarkdown(text: string, target: HTMLDivElement): void;
 }): CommunityHost {
   const request = deps.requests.request;
   const circle = (id: string, owner = false) => {
@@ -76,7 +75,6 @@ export function createCommunityHost(deps: {
     enrollGlobal: async (email, name) => {
       try { return await deps.enrollment.createGlobal({ email, displayName: name || undefined }); }
       catch (error) { if (isEnrollmentNotConfigured(error)) throw new Error("Registrering av nye brukarar er ikkje tilgjengeleg enno."); throw error; }
-    },
-    renderMarkdown: deps.renderMarkdown
+    }
   };
 }

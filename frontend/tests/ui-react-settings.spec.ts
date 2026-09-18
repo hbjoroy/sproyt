@@ -102,13 +102,13 @@ test("raw text toggle retains markdown source and returns to safe formatted cont
   const source = `**råtekst ${Date.now()}** <script>window.unsafe=true</script>`;
   await input.fill(source); await input.press("Enter");
   const message = preview.locator("[data-message-id]").filter({ hasText: /råtekst/ }).last();
-  await expect(message.locator("strong")).toBeVisible();
+  await expect(message.locator(".sp-message-content strong")).toHaveText(/råtekst/);
   await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await preview.getByRole("button", { name: "Vis råtekst", exact: true }).click();
   await expect(message.locator("pre")).toHaveText(source);
   await expect(message.locator("script")).toHaveCount(0);
   await preview.getByRole("button", { name: "Vis formatert", exact: true }).click();
-  await expect(message.locator("strong")).toBeVisible();
+  await expect(message.locator(".sp-message-content strong")).toHaveText(/råtekst/);
 });
 
 test("notification load can be retried and push uses the host registration after explicit consent", async ({ page }) => {

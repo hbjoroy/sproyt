@@ -5488,8 +5488,7 @@
         const diagrams = [...root.querySelectorAll(".mermaid")].filter((diagram): diagram is HTMLElement => diagram instanceof HTMLElement);
         if (diagrams.length === 0) return;
         if (mermaidPromise === null) {
-          const mermaidUrl = new URL("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs");
-          mermaidPromise = import(mermaidUrl.href).then((module: unknown) => {
+          mermaidPromise = import("mermaid").then((module: unknown) => {
             if (!isRecord(module)) throw new Error("Mermaid-modulen manglar standardeksport");
             const api = module.default;
             if (!isMermaidApi(api)) throw new Error("Mermaid-modulen har ugyldig API");
@@ -5557,7 +5556,7 @@
               requests: communityRequests, send: sendCommand, openDirect: openDirectChannel,
               selfId: () => currentParticipantId, channels: () => knownChannels, circles: () => knownCircles,
               slugify, channelSlug: scopedCircleChannelSlug, invitationToken: invitationValueToToken,
-              enrollment: enrollmentApi, renderMarkdown
+              enrollment: enrollmentApi
             }),
             inboxState: () => ({
               channels: knownChannels,
@@ -5670,11 +5669,12 @@
               if (uncertain) return "Kontrollerer levering …";
               return message.edited_at ? "Sendt · Redigert" : "Sendt";
             },
-            renderMessageContent: (message, target) => {
-              // Media has a React-native uncropped preview; this bridge keeps
-              // only the established safe Markdown and invitation content.
-              renderMessageBody(message.body.replace(/\[\[media:[^\]]+\]\]/giu, ""), target);
-              void renderMermaidDiagrams(target);
+            renderMessageDecorations: (message, target) => {
+              // React owns Markdown, Mermaid and media. Keep only the live
+              // invitation cards in the transitional host-owned DOM island.
+              const invitations = [...message.body.matchAll(/\[\[invite:([A-Za-z0-9_-]{32,128})\]\]/gu)]
+                .map(match => match[0]).join("\n");
+              if (invitations) renderMessageBody(invitations, target);
             },
             threadLoad: () => developmentThreadLoad?.rootId === activeThreadRootId
               ? developmentThreadLoad : { loading: false },
