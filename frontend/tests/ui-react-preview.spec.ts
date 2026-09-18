@@ -23,6 +23,23 @@ test("app constructs one runtime and preview only subscribes to it", () => {
   expect(preview).toContain("host.runtime.subscribe(update)");
 });
 
+test("React application styles stay outside the legacy bridge", () => {
+  const designSystem = readFileSync(new URL("../src/ui/design-system.ts", import.meta.url), "utf8");
+  const preview = readFileSync(new URL("../src/ui/react/development-preview.tsx", import.meta.url), "utf8");
+  const reactAppCss = readFileSync(new URL("../src/ui/react-app.css", import.meta.url), "utf8");
+  const legacyBridgeCss = readFileSync(new URL("../src/ui/legacy-bridge.css", import.meta.url), "utf8");
+
+  expect(designSystem).toContain('import reactAppCss from "./react-app.css"');
+  expect(designSystem).toContain('import bridgeCss from "./legacy-bridge.css"');
+  expect(designSystem).toContain("export function installSproytStyles()");
+  expect(designSystem).toContain("${reactAppCss}");
+  expect(designSystem).toContain("${bridgeCss}");
+  expect(preview).toContain('import { installSproytStyles, type SproytThemeMode } from "../design-system"');
+  expect(preview).toContain("installSproytStyles();");
+  expect(reactAppCss).toContain("#sproyt-react-preview .sp-main");
+  expect(legacyBridgeCss).not.toContain("#sproyt-react-preview");
+});
+
 test("default client mounts the design-system interface", async ({ page }) => {
   await page.goto("/?participant=playwright-preview-default", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
@@ -62,6 +79,23 @@ test("legacy element rules do not leak into the design-system shell", async ({ p
     mastheadDisplay: "flex",
     inputRadius: "2px"
   });
+});
+
+test("React conversation search ignores the hidden legacy input", async ({ page }) => {
+  const app = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+  expect(app).toContain("query: conversationQuery");
+  expect(app).toContain("search: (query) => { conversationQuery = query; }");
+  expect(app).not.toContain("search: (query) => { conversationSearch.value = query;");
+
+  await page.goto("/?participant=playwright-preview-search-seam", { waitUntil: "domcontentloaded" });
+  const preview = page.locator("#sproyt-react-preview");
+  const search = preview.getByRole("searchbox", { name: "Finn samtale" });
+  await expect(search).toBeVisible({ timeout: 15_000 });
+  const legacySearch = page.locator("#sproyt-app #conversation-search");
+  await legacySearch.evaluate((element: HTMLInputElement) => { element.value = "forgifta legacyquery"; });
+
+  await expect(legacySearch).toHaveValue("forgifta legacyquery");
+  await expect(preview.getByRole("region", { name: "# General" })).toBeVisible();
 });
 
 test("local React preview follows the existing runtime and returns without reconnecting or losing drafts", async ({ page, context }) => {

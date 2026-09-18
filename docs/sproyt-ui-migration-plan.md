@@ -1,8 +1,8 @@
 # Plan: nytt Sprøyt-UI med eksisterande funksjonar
 
-Dato: 2026-09-16. Sist oppdatert: 2026-09-18. Status: fase 1–5 er gjennomførte og funksjonsmatrisa er migrert. Fase 6 er i arbeid: React er den einaste ordinære synlege brukarflata, medan den gamle DOM-verten enno finst gøymd som ein mellombels runtime-adapter.
+Dato: 2026-09-16. Sist oppdatert: 2026-09-18. Status: fase 1–5 er gjennomførte og funksjonsmatrisa er migrert. Fase 6 er i arbeid: React er den einaste ordinære synlege brukarflata. Invitasjonskort, meldingsutkast, sending, samtalesøk og trådlivsløp er no frikopla frå dei skjulte legacy-kontrollane; den gamle DOM-verten finst enno som ein mellombels adapter for enkelte projeksjonar, mellom anna kanalbyte, og lokal regresjonsvising.
 
-Den siste paritetsrunden la til synleg samla indikator for ulest, omtalar og opne oppgåver i innboksen, kanaloppretting i Felles, global registreringsinvitasjon til Sprøyt og direkte tilgang til medlemslista i ein kanal. Global registreringsinvitasjon krev database-migrasjon `0039`, som gjer kretsomfang valfritt utan å endre eksisterande kretsinvitasjonar. `MarkdownContent` brukar lokalt installert `react-markdown`, `remark-gfm` og Mermaid; rå HTML er avslått. `SafeDomContent` er no avgrensa til mellombelse interaktive invitasjonskort.
+Den siste paritetsrunden la til synleg samla indikator for ulest, omtalar og opne oppgåver i innboksen, kanaloppretting i Felles, global registreringsinvitasjon til Sprøyt og direkte tilgang til medlemslista i ein kanal. Global registreringsinvitasjon krev database-migrasjon `0039`, som gjer kretsomfang valfritt utan å endre eksisterande kretsinvitasjonar. `MarkdownContent` brukar lokalt installert `react-markdown`, `remark-gfm` og Mermaid; rå HTML er avslått. Invitasjonskort og handlingane deira er eigde av React og ein eigen applikasjonstilstand.
 
 ## Mål og avgrensing
 

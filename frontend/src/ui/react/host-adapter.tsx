@@ -4,11 +4,8 @@ import { Status, ThreadPane } from "@sproyt/ui/react";
 import type { ConversationSnapshot, ConversationSnapshotGroup } from "../../application/conversation-snapshot";
 import { ConversationMessage, ConversationTimeline, ConversationView } from "./conversation-view";
 import type { ConversationViewProps, MessagePresentation, TimelineProps } from "./conversation-view";
-
-export interface ComposerTarget {
-  readonly channelId: string;
-  readonly parentMessageId: string | null;
-}
+import type { ComposerTarget } from "../../application/composer-controller";
+export type { ComposerTarget } from "../../application/composer-controller";
 
 export type TimelineControls = Pick<TimelineProps,
   "viewportRef" | "onScroll" | "error" | "onRetry" | "onLoadOlder">;
