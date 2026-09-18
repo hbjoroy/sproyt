@@ -409,7 +409,7 @@ impl ChatRepository for PostgresChatRepository {
             if exists.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at from users where kind = 'human' order by lower(display_name), id")
+            let rows = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at, exists(select 1 from signup_ordinals where user_id=users.id and ordinal<=50) early_adopter from users where kind = 'human' order by lower(display_name), id")
                 .fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -432,7 +432,7 @@ impl ChatRepository for PostgresChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join circle_memberships m on m.user_id=u.id where m.circle_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at,exists(select 1 from signup_ordinals where user_id=u.id and ordinal<=50) early_adopter from users u join circle_memberships m on m.user_id=u.id where m.circle_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
                 .bind(*circle_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -462,7 +462,7 @@ impl ChatRepository for PostgresChatRepository {
         display_name: DisplayName,
     ) -> RepositoryFuture<'a, UserProfile> {
         Box::pin(async move {
-            let row = sqlx::query("update users set display_name=$1 where id=$2 and kind='human' returning id,kind,display_name,handle,external_provider,external_subject,created_at,status_text,status_emoji,status_expires_at")
+            let row = sqlx::query("update users set display_name=$1 where id=$2 and kind='human' returning id,kind,display_name,handle,external_provider,external_subject,created_at,status_text,status_emoji,status_expires_at,exists(select 1 from signup_ordinals where user_id=users.id and ordinal<=50) early_adopter")
                 .bind(display_name.as_str()).bind(*actor.as_uuid())
                 .fetch_optional(&self.pool).await.map_err(sql_error)?
                 .ok_or(RepositoryError::PermissionDenied)?;
@@ -478,7 +478,7 @@ impl ChatRepository for PostgresChatRepository {
         expires_at: Option<chrono::DateTime<Utc>>,
     ) -> RepositoryFuture<'a, UserProfile> {
         Box::pin(async move {
-            let row = sqlx::query("update users set status_text=$1, status_emoji=$2, status_expires_at=$3 where id=$4 and kind='human' returning id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at")
+            let row = sqlx::query("update users set status_text=$1, status_emoji=$2, status_expires_at=$3 where id=$4 and kind='human' returning id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at, exists(select 1 from signup_ordinals where user_id=users.id and ordinal<=50) early_adopter")
                 .bind(text).bind(emoji).bind(expires_at).bind(*actor.as_uuid())
                 .fetch_optional(&self.pool).await.map_err(sql_error)?
                 .ok_or(RepositoryError::PermissionDenied)?;
@@ -1488,7 +1488,7 @@ impl ChatRepository for PostgresChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at,exists(select 1 from signup_ordinals where user_id=u.id and ordinal<=50) early_adopter from users u join channel_memberships m on m.user_id=u.id where m.channel_id=$1 and u.kind='human' order by lower(u.display_name),u.id")
                 .bind(*channel_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -3026,6 +3026,7 @@ fn user_profile_from_row(row: PgRow) -> Result<UserProfile, RepositoryError> {
             external_subject: row.try_get("external_subject").map_err(sql_error)?,
             created_at: row.try_get("created_at").map_err(sql_error)?,
         },
+        early_adopter: row.try_get("early_adopter").map_err(sql_error)?,
         status_text: if expired {
             String::new()
         } else {

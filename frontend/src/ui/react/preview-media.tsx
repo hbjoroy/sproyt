@@ -1,6 +1,7 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
 import { useState } from "react";
 import type { MediaObject } from "../../types";
+import { ImageViewer } from "./image-viewer";
 
 /** URLs are constructed from validated server IDs, never from user-authored URLs. */
 function mediaUrl(id: string, preview = false) {
@@ -32,6 +33,7 @@ export function PreviewAttachments({ media, status, busy, onRemove }: {
   media: readonly MediaObject[]; status?: string; busy: boolean; onRemove: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const expandedItem = media.find(item => item.id === expanded);
   return <section aria-label="Valde vedlegg" className="sp-draft-attachments">
     {media.map(item => <div className="sp-draft-attachment" key={item.id}>
       <button className="sp-draft-thumbnail" type="button" title={`Vis ${item.original_filename}`}
@@ -43,10 +45,11 @@ export function PreviewAttachments({ media, status, busy, onRemove }: {
         onClick={() => onRemove(item.id)}><span aria-hidden="true">×</span></Button>
     </div>)}
     {status && <Status>{status}</Status>}
-    {expanded && media.filter(item => item.id === expanded).map(item => <Dialog key={item.id} open title={item.original_filename}
+    {expandedItem?.content_type.startsWith("image/") && <ImageViewer src={mediaUrl(expandedItem.id)} name={expandedItem.original_filename} onClose={() => setExpanded(null)} />}
+    {expandedItem && !expandedItem.content_type.startsWith("image/") && <Dialog open title={expandedItem.original_filename}
       closeLabel="Lukk førehandsvisinga" onClose={() => setExpanded(null)}>
-      <MediaFigure id={item.id} contentType={item.content_type} name={item.original_filename} fullResolution />
-    </Dialog>)}
+      <MediaFigure id={expandedItem.id} contentType={expandedItem.content_type} name={expandedItem.original_filename} fullResolution />
+    </Dialog>}
   </section>;
 }
 
@@ -62,8 +65,5 @@ export function PreviewMediaContent({ body, mediaOnly = false }: { body: string;
   return <>{!mediaOnly && text && <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</div>}
     {attachments.map((media, index) => <MediaFigure key={`${media.id}:${index}`} {...media}
       onOpen={media.contentType.startsWith("image/") ? () => setLightbox({ id: media.id, name: media.name }) : undefined} />)}
-    {lightbox && <Dialog open title={lightbox.name} closeLabel="Lukk bilete" onClose={() => setLightbox(null)}>
-      <img src={mediaUrl(lightbox.id)} alt={lightbox.name}
-        style={{ display: "block", maxWidth: "100%", maxHeight: "min(82dvh, 900px)", objectFit: "contain" }} />
-    </Dialog>}</>;
+    {lightbox && <ImageViewer src={mediaUrl(lightbox.id)} name={lightbox.name} onClose={() => setLightbox(null)} />}</>;
 }

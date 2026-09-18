@@ -995,6 +995,10 @@ test("Rust serde-shaped server frames decode while malformed nested values fail 
     { protocol: protocolId, type: "pong" }
   ];
   for (const frame of fixtures) assert.notEqual(asWireEvent(frame), null);
+  const earlyAdopter = asWireEvent({ protocol: protocolId, type: "users_listed", payload: { users: [{ ...profile, early_adopter: true }] } });
+  assert.equal(earlyAdopter?.type === "users_listed" ? earlyAdopter.payload.users[0]?.early_adopter : undefined, true);
+  const oldProfile = asWireEvent({ protocol: protocolId, type: "users_listed", payload: { users: [profile] } });
+  assert.equal(oldProfile?.type === "users_listed" ? oldProfile.payload.users[0]?.early_adopter : undefined, false);
 
   const malformed: unknown[] = [
     { protocol: protocolId, type: "joinable_channels_listed", payload: { channels: [{ channel: { ...channel, created_by: 7 }, description: "Open" }] } },
@@ -1002,7 +1006,8 @@ test("Rust serde-shaped server frames decode while malformed nested values fail 
     { protocol: protocolId, type: "messages_loaded", payload: { channel_id: "c1", messages: [{ ...message, sequence: 2 ** 53 }] } },
     { protocol: protocolId, type: "lagged", payload: { channel_id: "c1", last_seen_sequence: 1, latest_known_sequence: 4, skipped: 2 ** 53, hint: "last inn att" } },
     { protocol: protocolId, type: "users_listed", payload: { users: [{ ...profile, handle: 7 }] } },
-    { protocol: protocolId, type: "users_listed", payload: { users: [{ ...profile, status_expires_at: 1 }] } }
+    { protocol: protocolId, type: "users_listed", payload: { users: [{ ...profile, status_expires_at: 1 }] } },
+    { protocol: protocolId, type: "users_listed", payload: { users: [{ ...profile, early_adopter: "yes" }] } }
   ];
   for (const frame of malformed) assert.equal(asWireEvent(frame), null);
 });

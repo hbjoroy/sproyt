@@ -1,10 +1,20 @@
 import sproytUiCss from "@sproyt/ui/styles.css";
 import bridgeCss from "./legacy-bridge.css";
+import reactAppCss from "./react-app.css";
 
 const styleId = "sproyt-editorial-design-system";
 const themeStorageKey = "sproyt.theme.v1";
 
 export type SproytThemeMode = "light" | "dark" | "system";
+
+/** Installs the shared and transitional styles once for either application surface. */
+export function installSproytStyles(): void {
+  if (document.getElementById(styleId)) return;
+  const style = document.createElement("style");
+  style.id = styleId;
+  style.textContent = `${sproytUiCss}\n${reactAppCss}\n${bridgeCss}`;
+  document.head.append(style);
+}
 
 /**
  * Applies the shared UI package to the transitional DOM client.
@@ -14,18 +24,13 @@ export type SproytThemeMode = "light" | "dark" | "system";
  * stylesheet. State, routing and browser effects remain with the client.
  */
 export function installSproytDesignSystem(root: HTMLElement): SproytThemeMode {
+  installSproytStyles();
   root.classList.add("sp-theme", "sproyt-editorial-app");
   root.dataset.accent = "citron";
   root.dataset.density = "comfortable";
   const mode = storedTheme();
   root.dataset.theme = mode;
 
-  if (!document.getElementById(styleId)) {
-    const style = document.createElement("style");
-    style.id = styleId;
-    style.textContent = `${sproytUiCss}\n${bridgeCss}`;
-    document.head.append(style);
-  }
   return mode;
 }
 

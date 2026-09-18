@@ -425,6 +425,10 @@ impl ChatRepository for InMemoryChatRepository {
                         .unwrap_or_default();
                     let active = expires_at.is_none_or(|expiry| expiry > now);
                     UserProfile {
+                        early_adopter: state
+                            .signup_ordinals
+                            .get(&user.id)
+                            .is_some_and(|ordinal| *ordinal <= 50),
                         user,
                         status_text: if active { text } else { String::new() },
                         status_emoji: if active { emoji } else { String::new() },
@@ -487,6 +491,10 @@ impl ChatRepository for InMemoryChatRepository {
                 .user_statuses
                 .insert(actor, (text.clone(), emoji.clone(), expires_at));
             Ok(UserProfile {
+                early_adopter: state
+                    .signup_ordinals
+                    .get(&user.id)
+                    .is_some_and(|ordinal| *ordinal <= 50),
                 user,
                 status_text: text,
                 status_emoji: emoji,
@@ -514,6 +522,10 @@ impl ChatRepository for InMemoryChatRepository {
             let (text, emoji, expires_at) =
                 state.user_statuses.get(&actor).cloned().unwrap_or_default();
             Ok(UserProfile {
+                early_adopter: state
+                    .signup_ordinals
+                    .get(&user.id)
+                    .is_some_and(|ordinal| *ordinal <= 50),
                 user,
                 status_text: text,
                 status_emoji: emoji,
@@ -2038,7 +2050,7 @@ mod tests {
             .await;
     }
     use crate::domain::{
-        ChannelKind, ChannelSlug, DisplayName, Handle, MessageBody, PrincipalKind,
+        ChannelKind, ChannelSlug, DisplayName, Handle, MessageBody, PrincipalKind, UserProfile,
     };
     use chrono::Utc;
 
@@ -2060,7 +2072,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signup_numbers_are_private_stable_and_skip_agents() {
+    async fn early_adopter_badge_is_public_but_signup_number_stays_private() {
         let repository = InMemoryChatRepository::default();
         let first = add_human(&repository, "first adopter").await;
         let agent = UserId::named("badge-agent");
@@ -2105,9 +2117,52 @@ mod tests {
         );
         let profiles = repository.list_user_profiles(first.clone()).await.unwrap();
         assert!(
+            profiles
+                .iter()
+                .find(|profile| profile.user.id == first)
+                .unwrap()
+                .early_adopter
+        );
+        assert!(
             !serde_json::to_string(&profiles)
                 .unwrap()
                 .contains("signup_ordinal")
+        );
+        assert!(
+            serde_json::to_string(&profiles)
+                .unwrap()
+                .contains("early_adopter")
+        );
+        let mut legacy_profile = serde_json::to_value(&profiles[0]).unwrap();
+        legacy_profile
+            .as_object_mut()
+            .unwrap()
+            .remove("early_adopter");
+        let legacy_profile: UserProfile = serde_json::from_value(legacy_profile).unwrap();
+        assert!(!legacy_profile.early_adopter);
+
+        let mut fifty_first = None;
+        for ordinal in 3..=51 {
+            let user = add_human(&repository, &format!("adopter {ordinal}")).await;
+            if ordinal == 51 {
+                fifty_first = Some(user);
+            }
+        }
+        let fifty_first = fifty_first.unwrap();
+        let profiles = repository.list_user_profiles(second.clone()).await.unwrap();
+        assert!(
+            profiles
+                .iter()
+                .find(|profile| profile.user.id == second)
+                .unwrap()
+                .early_adopter
+        );
+        assert!(
+            !profiles
+                .iter()
+                .find(|profile| profile.user.id == fifty_first)
+                .unwrap()
+                .early_adopter
         );
         let export = repository.export_user_data(first).await.unwrap();
         assert_eq!(export.signup_ordinal, Some(1));

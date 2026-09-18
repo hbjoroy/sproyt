@@ -429,7 +429,12 @@ fn browser_exposes_paste_upload_and_safe_media_rendering() {
     assert!(APP_BUNDLE.contains("/api/v1/media/"));
     assert!(APP_BUNDLE.contains("encodeURIComponent(participant)"));
     assert!(APP_BUNDLE.contains("\"aria-label\": \"Vis originalbiletet\""));
-    assert!(APP_BUNDLE.contains("maxHeight: \"min(82dvh, 900px)\""));
+    assert!(APP_BUNDLE.contains("className: \"sp-image-viewer\""));
+    assert!(APP_BUNDLE.contains("width: 100vw; height: 100dvh"));
+    assert!(APP_BUNDLE.contains("touch-action: none"));
+    assert!(APP_BUNDLE.contains("onPointerDown: pointerDown"));
+    assert!(APP_BUNDLE.contains("\"aria-label\": \"Zoom inn\""));
+    assert!(!APP_BUNDLE.contains("maxHeight: \"min(82dvh, 900px)\""));
     assert!(APP_BUNDLE.contains("objectFit: \"contain\""));
 }
 
@@ -440,9 +445,10 @@ fn browser_uses_a_compact_composer_with_safe_keyboard_semantics() {
     assert!(BROWSER_CLIENT.contains("height: 44px; min-width: 44px; min-height: 44px"));
     assert!(BROWSER_CLIENT.contains("resize: none; overflow-y: hidden"));
     assert!(BROWSER_CLIENT.contains("function resizeComposer()"));
-    assert!(BROWSER_CLIENT.contains("bodyInput.value.length === 0\n          ? minimum"));
+    assert!(BROWSER_CLIENT.contains("channelComposer.draft.length === 0\n          ? minimum"));
     assert!(
-        BROWSER_CLIENT.contains("bodyInput.value.length > 0 && bodyInput.scrollHeight > maximum")
+        BROWSER_CLIENT
+            .contains("channelComposer.draft.length > 0 && bodyInput.scrollHeight > maximum")
     );
     assert!(BROWSER_CLIENT.contains("form.send.is-expanded #media-previews:not(:empty)"));
     assert!(BROWSER_CLIENT.contains("form.send.is-expanded #upload-status:not(:empty)"));
@@ -1588,7 +1594,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
             "composerScopeGeneration === scopeGeneration && activeChannelId === channelId"
         )
     );
-    assert!(BROWSER_CLIENT.contains("bodyInput.value = pending.draft"));
+    assert!(BROWSER_CLIENT.contains("channelComposer.draft = pending.draft"));
     assert!(BROWSER_CLIENT.contains("const channelDraftPrefix = \"sproyt.channel-draft.v1.\""));
     assert!(BROWSER_CLIENT.contains("function persistActiveDraft()"));
     assert!(BROWSER_CLIENT.contains("function restoreActiveDraft()"));
@@ -1676,10 +1682,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
             .contains("const invitationInspectionCache = new Map<string, InvitationCache>()")
     );
     assert!(BROWSER_CLIENT.contains("if (cached?.status === \"pending\")"));
-    assert!(
-        BROWSER_CLIENT
-            .contains("if (cached?.status === \"missing\" || cached?.status === \"failed\")")
-    );
+    assert!(BROWSER_CLIENT.contains(
+        "if (cached?.status === \"missing\" || (!force && cached?.status === \"failed\"))"
+    ));
     assert!(BROWSER_CLIENT.contains("pendingInvitationInspections.set(requestId, token)"));
     assert!(BROWSER_CLIENT.contains("if (requestedCommand === \"inspect_invitation\")"));
     assert!(BROWSER_CLIENT.contains("showInvitationError(inspectedInvitationToken, message)"));

@@ -78,7 +78,8 @@ function People({ host, channel, onClose }: { host: CommunityHost; channel?: Rea
     <Button onClick={() => void load()} busy={op.busy}>Last personlista på nytt</Button>
     {loaded && <PersonList people={visible.map(person => ({ id: person.id, name: person.display_name, detail: [person.handle ? `@${person.handle}` : "", person.status_emoji, person.status_text].filter(Boolean).join(" · ") }))}
       emptyLabel="Ingen personar passar søket." actions={person => person.id === host.selfId() ? null
-        : <Button disabled={op.busy} onClick={() => void op.run(async () => { await host.openDirect(person.id); onClose(); })}>Start samtale med {person.name}</Button>} />}
+        : <Button className="sp-community-direct" variant="quiet" aria-label={`Start samtale med ${person.name}`} title={`Start samtale med ${person.name}`}
+          disabled={op.busy} onClick={() => void op.run(async () => { await host.openDirect(person.id); onClose(); })}><span aria-hidden="true">→</span></Button>} />}
     {channel && ["owner", "moderator"].includes(channel.role) && <section aria-label="Legg til kanalmedlem">
       <h3>Legg til kanalmedlem</h3>
       <label htmlFor="community-member">Vel person</label>
@@ -194,7 +195,7 @@ export function PreviewCommunity({ destination, snapshot, host, onClose, onNavig
   const channel = destination.kind === "channel" ? snapshot.channels.find(item => item.id === destination.channelId) : undefined;
   const title = destination.kind === "people" ? "Personar og ny direktemelding" : destination.kind === "channel" ? `Kanaldetaljar: ${channel?.name ?? "Kanal"}` : destination.kind === "create-circle" ? "Ny vennekrets" : destination.kind === "circles" ? "Kretsadministrasjon og invitasjonskode" : destination.kind === "global-channels" ? "Kanalar i Felles" : destination.kind === "global-invite" ? "Inviter ny brukar til Sprøyt" : destination.kind === "channels" ? `Kanalar i ${circle?.name ?? "vennekretsen"}` : `Inviter til ${circle?.name ?? "vennekretsen"}`;
   return <Dialog open title={title} closeLabel="Lukk" onClose={onClose}>
-    <div style={{ display: "grid", gap: 12 }}>
+    <div className="sp-community-dialog">
       {destination.kind === "people" && <People host={host} onClose={onClose} />}
       {destination.kind === "channel" && (channel ? <People host={host} channel={channel} onClose={onClose} /> : <Status>Kanalen er ikkje lenger tilgjengeleg.</Status>)}
       {destination.kind === "create-circle" && <CreateCircle host={host} onClose={onClose} />}

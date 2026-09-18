@@ -10,7 +10,7 @@ async function photo(page: Page, name = "landskap.png") {
   return { name, mimeType: "image/png", buffer: Buffer.from(data, "base64") };
 }
 
-test("React sends real attachment-only messages and exposes an uncropped preview and original", async ({ page }) => {
+test("React sends real attachment-only messages and opens a full-screen zoomable original", async ({ page, context, browserName }) => {
   let sockets = 0;
   const sends: string[] = [];
   page.on("websocket", socket => {
@@ -20,7 +20,7 @@ test("React sends real attachment-only messages and exposes an uncropped preview
       if (command.type === "send_message") sends.push(command.payload.body);
     });
   });
-  await page.goto("/?participant=preview-media-send&ui=react");
+  await page.goto(`/?participant=preview-media-send-${browserName}-${Date.now()}&ui=react`);
   const preview = page.locator("#sproyt-react-preview");
   const input = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled({ timeout: 15000 });
@@ -36,7 +36,7 @@ test("React sends real attachment-only messages and exposes an uncropped preview
   await expect(attachments.getByRole("button", { name: "Vis landskap.png", exact: true })).toBeVisible();
   await preview.getByRole("button", { name: "Send vedlegg", exact: true }).click();
   await expect(attachments.getByRole("button", { name: "Fjern landskap.png" })).toHaveCount(0);
-  const message = preview.locator(".sp-channel-pane [data-message-id]").filter({ has: page.getByRole("img", { name: "landskap.png" }) });
+  const message = preview.locator(".sp-channel-pane [data-message-id]").filter({ has: page.getByRole("img", { name: "landskap.png" }) }).last();
   await expect(message).toBeVisible();
   const image = message.getByRole("img");
   await expect(image).toHaveCSS("object-fit", "contain");
@@ -44,6 +44,28 @@ test("React sends real attachment-only messages and exposes an uncropped preview
   const lightbox = preview.getByRole("dialog", { name: "landskap.png" });
   const original = lightbox.getByRole("img", { name: "landskap.png" });
   await expect(original).toBeVisible();
+  const viewport = page.viewportSize()!;
+  const viewerBox = await lightbox.boundingBox();
+  expect(viewerBox?.width).toBe(viewport.width);
+  expect(viewerBox?.height).toBe(viewport.height);
+  const fittedBox = await original.boundingBox();
+  await lightbox.getByRole("button", { name: "Zoom inn" }).click();
+  await expect(lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" })).toHaveText("140%");
+  const enlargedBox = await original.boundingBox();
+  expect(enlargedBox!.width).toBeGreaterThan(fittedBox!.width);
+  await lightbox.locator(".sp-image-viewer-surface").dblclick();
+  await expect(lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" })).toHaveText("100%");
+  await lightbox.locator(".sp-image-viewer-surface").dblclick();
+  await expect(lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" })).toHaveText("250%");
+  const reset = lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" });
+  await reset.click();
+  if (browserName === "chromium") {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 580, y: 360, id: 1 }, { x: 700, y: 360, id: 2 }] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 520, y: 360, id: 1 }, { x: 760, y: 360, id: 2 }] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(reset).not.toHaveText("100%");
+  }
   const url = await original.getAttribute("src");
   expect(url).toMatch(/^\/api\/v1\/media\/[0-9a-f-]+\?participant=/);
   await page.keyboard.press("Escape");

@@ -109,6 +109,7 @@ test("Felles sends a global registration invitation without using a circle endpo
 });
 
 test("people search filters self, opens real DM and preserves original draft", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   const peer = await context.newPage();
   await enter(peer, "community-peer-anna");
   const preview = await enter(page, "community-dm-owner");
@@ -118,7 +119,14 @@ test("people search filters self, opens real DM and preserves original draft", a
   await people.getByRole("searchbox", { name: "Finn person" }).fill("community-dm-owner");
   await expect(people.getByRole("button", { name: /Start samtale med/ })).toHaveCount(0);
   await people.getByRole("searchbox", { name: "Finn person" }).fill("community-peer-anna");
-  await people.getByRole("button", { name: "Start samtale med community-peer-anna" }).click();
+  const direct = people.getByRole("button", { name: "Start samtale med community-peer-anna" });
+  const info = people.locator(".sp-person-info");
+  const [directBox, infoBox] = await Promise.all([direct.boundingBox(), info.boundingBox()]);
+  expect(directBox?.width).toBeLessThanOrEqual(48);
+  expect(infoBox?.width).toBeGreaterThan(160);
+  expect(infoBox?.height).toBeLessThan(80);
+  await direct.click();
+  await page.setViewportSize({ width: 1280, height: 720 });
   await expect(people).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("");
