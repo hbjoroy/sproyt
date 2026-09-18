@@ -51,11 +51,32 @@
 #sproyt-react-preview [data-message-id]:has(.sp-time:hover) > .sp-message-time-tooltip,
 #sproyt-react-preview [data-message-id]:has(.sp-time:focus-visible) > .sp-message-time-tooltip,
 #sproyt-react-preview [data-message-id][data-time-open="true"] > .sp-message-time-tooltip { display: block; }
+#sproyt-react-preview .sp-early-adopter-tooltip {
+  display: none; position: absolute; z-index: 8; top: 1.45rem; left: 0;
+  width: max-content; max-width: min(24rem, calc(100vw - 2rem));
+  padding: .4rem .55rem; border: 1px solid var(--sp-rule); border-radius: 2px;
+  background: var(--sp-surface); color: var(--sp-text); box-shadow: 0 6px 18px #0002;
+  font-size: .75rem; line-height: 1.35; white-space: normal; pointer-events: none;
+}
+#sproyt-react-preview [data-message-id]:has(.sp-message-meta strong:hover) > .sp-early-adopter-tooltip,
+#sproyt-react-preview [data-message-id]:has(.sp-message-meta strong:focus-visible) > .sp-early-adopter-tooltip,
+#sproyt-react-preview [data-message-id][data-early-adopter-open="true"] > .sp-early-adopter-tooltip { display: block; }
+#sproyt-react-preview [data-message-id]:has(.sp-early-adopter-tooltip) .sp-message-meta strong { cursor: help; }
+.sp-profile-early-adopter {
+  width: fit-content; margin: 0; padding: .3rem .55rem;
+  border: 1px solid var(--sp-rule); background: var(--sp-wash);
+  font-size: .8rem; font-weight: 700; letter-spacing: .02em;
+}
 #sproyt-react-preview .sp-date { margin-top: .65rem; }
 #sproyt-react-preview .sp-masthead { position: relative; flex-shrink: 0; }
 .sp-header-actions { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .sp-sproyt-brand { display: inline-flex; align-items: center; gap: .55rem; letter-spacing: -.055em; }
 .sp-sproyt-brand img { width: 38px; height: 38px; border-radius: 9px; }
+.sp-header-early-adopter {
+  display: inline-flex; align-items: center; gap: .25rem; flex-shrink: 0;
+  padding: .22rem .45rem; border: 1px solid var(--sp-rule); background: var(--sp-wash);
+  font-size: .72rem; font-weight: 700; letter-spacing: .02em;
+}
 .sp-header-primary { display: flex; align-items: center; gap: .25rem; }
 .sp-inbox-trigger.sp-button { position: relative; }
 .sp-inbox-trigger > .sp-badge {
@@ -217,6 +238,8 @@
 @container sp-app (max-width: 800px) {
   #sproyt-react-preview .sp-masthead { gap: .25rem .5rem; padding: .25rem .8rem; }
   .sp-sproyt-brand img { display: none; }
+  .sp-header-early-adopter-label { display: none; }
+  .sp-header-early-adopter { padding-inline: .3rem; border-color: transparent; background: transparent; }
   .sp-header-panel { inset-inline: .5rem; width: auto; }
   .sp-inbox-label { display: none; }
   .sp-connection-status { width: 24px; height: 24px; }

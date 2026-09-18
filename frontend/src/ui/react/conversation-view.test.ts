@@ -52,6 +52,17 @@ test("ordered timeline keeps notices between messages and formats the author", (
   assert.ok(html.includes(`>${formatMessageDateTime(first.sent_at)}</span>`));
 });
 
+test("first-50 members get a compact chat mark with an accessible explanation", () => {
+  const html = renderToStaticMarkup(createElement(ConversationTimeline, {
+    channelId: "channel", messages: [message("founder", 1)],
+    formatTime: () => "22:00", formatAuthor: item => `${item.sender_display_name} · ✨`, earlyAdopter: () => true,
+    renderContent: item => item.body
+  }));
+  assert.ok(html.includes("Historisk namn · ✨"));
+  assert.ok(html.includes('class="sp-early-adopter-tooltip"'));
+  assert.ok(html.includes("Blant dei første 50 på Sprøyt"));
+});
+
 test("circles with identical names retain distinct groups and channel identities", () => {
   const html = renderToStaticMarkup(createElement(ConversationNavigation, {
     groups: [
