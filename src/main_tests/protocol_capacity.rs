@@ -421,38 +421,16 @@ fn media_signatures_override_untrusted_declared_types() {
 
 #[test]
 fn browser_exposes_paste_upload_and_safe_media_rendering() {
-    assert!(BROWSER_CLIENT.contains("bodyInput.addEventListener(\"paste\""));
-    assert!(BROWSER_CLIENT.contains("accept=\"image/*,video/*,.heic,.heif,.mov\""));
-    // Uploads capture the channel before asynchronous work starts, so a
-    // navigation during a multi-file batch cannot place later files elsewhere.
-    assert!(BROWSER_CLIENT.contains("/api/v1/channels/${channelId}/media"));
-    assert!(
-        BROWSER_CLIENT.contains("response.status === 401 && await sessionController.refresh(true)")
-    );
-    assert!(BROWSER_CLIENT.contains("element.loading = \"lazy\""));
-    assert!(BROWSER_CLIENT.contains("element.controls = true"));
-    assert!(BROWSER_CLIENT.contains("/api/v1/media/${media.id}/preview"));
-    assert!(BROWSER_CLIENT.contains("function openMediaLightbox(url, name)"));
-    assert!(BROWSER_CLIENT.contains("mediaLightbox.showModal()"));
-    assert!(BROWSER_CLIENT.contains("max-height: min(48dvh, 420px)"));
-    assert!(BROWSER_CLIENT.contains("max-width: calc(100vw - 24px)"));
-    assert!(BROWSER_CLIENT.contains("id=\"upload-status\""));
-    assert!(BROWSER_CLIENT.contains("request.upload.addEventListener(\"progress\""));
-    assert!(BROWSER_CLIENT.contains("Behandlar fila"));
-    assert!(BROWSER_CLIENT.contains("className = \"media-preview-remove\""));
-    assert!(
-        BROWSER_CLIENT
-            .contains("remove.setAttribute(\"aria-label\", `Fjern ${media.original_filename}`)")
-    );
-    assert!(
-        BROWSER_CLIENT.contains(
-            "pendingMedia = pendingMedia.filter((candidate) => candidate.id !== media.id)"
-        )
-    );
-    assert!(BROWSER_CLIENT.contains(
-        "if ([...pendingMessages.values()].some((pending) => pending.channelId === activeChannelId)) return"
-    ));
-    assert!(BROWSER_CLIENT.contains("bodyInput.focus({ preventScroll: true })"));
+    assert!(APP_BUNDLE.contains("clipboardData.files"));
+    assert!(APP_BUNDLE.contains("host.upload(target, files)"));
+    assert!(APP_BUNDLE.contains("accept: \"image/*,video/*\""));
+    assert!(APP_BUNDLE.contains("\"aria-label\": `Fjern ${item.original_filename}`"));
+    assert!(APP_BUNDLE.contains("host.removeMedia(target, id"));
+    assert!(APP_BUNDLE.contains("/api/v1/media/"));
+    assert!(APP_BUNDLE.contains("encodeURIComponent(participant)"));
+    assert!(APP_BUNDLE.contains("\"aria-label\": \"Vis originalbiletet\""));
+    assert!(APP_BUNDLE.contains("maxHeight: \"min(82dvh, 900px)\""));
+    assert!(APP_BUNDLE.contains("objectFit: \"contain\""));
 }
 
 #[test]
@@ -689,49 +667,20 @@ fn browser_exposes_durable_reaction_badges() {
 
 #[test]
 fn browser_patches_only_affected_reaction_card_with_timeline_fallback() {
-    assert!(BROWSER_CLIENT.contains("function patchMessageReactions(messageId)"));
-    assert!(BROWSER_CLIENT.contains("|| [...threadReplies.values()].flat().find"));
-    assert!(BROWSER_CLIENT.contains("for (const container of [messagesEl, threadMessages])"));
-    assert!(
-        BROWSER_CLIENT
-            .contains("const nextReactions = renderMessageReactions(message, (open) => {")
-    );
-    assert!(BROWSER_CLIENT.contains("card.classList.toggle(\"reaction-picker-requested\", open)"));
-    assert!(BROWSER_CLIENT.contains("const thread = reactions.querySelector(\".thread-link\");"));
-    assert!(BROWSER_CLIENT.contains("const menu = card.querySelector(\".message-menu\");"));
-    assert!(
-        BROWSER_CLIENT.contains("if (thread instanceof HTMLElement) nextReactions.append(thread);")
-    );
-    assert!(
-        BROWSER_CLIENT
-            .contains("if (menu instanceof HTMLElement) placeMessageMenu(card, nextReactions, menu, thread instanceof HTMLElement, messageId);")
-    );
-    assert!(BROWSER_CLIENT.contains("reactions.replaceWith(nextReactions);"));
-    assert!(!BROWSER_CLIENT.contains("reactions.replaceWith(renderMessageReactions(message));"));
-    assert!(BROWSER_CLIENT.contains("if (!card || !(reactions instanceof HTMLElement)) continue;"));
-
-    let patch = APP_BUNDLE
-        .split("function patchMessageReactions(messageId) {")
+    // React retains each message by id. The reaction row reads and mutates
+    // state only for that message, while runtime updates remain the fallback.
+    let timeline = APP_BUNDLE
+        .split("function ConversationTimeline(props) {")
         .nth(1)
-        .and_then(|value| value.split("\n      function appendMessage").next())
-        .expect("keyed reaction patch helper");
-    let capture = patch
-        .find("const interaction = captureMessageInteraction(container);")
-        .expect("capture interaction before patch");
-    let replace = patch
-        .find("reactions.replaceWith(nextReactions);")
-        .expect("replace reaction footer");
-    let restore = patch
-        .find("restoreMessageInteraction(container, interaction);")
-        .expect("restore interaction after patch");
-    assert!(capture < replace && replace < restore);
-
-    for reaction_event in [
-        "if (event.type === \"message_reaction_changed\") {\n          if (event.payload.change.channel_id === activeChannelId) {\n            applyReactionChange(event.payload.change);\n            if (!patchMessageReactions(event.payload.change.message_id)) {\n              renderTimeline({ preserveScroll: true });\n            }",
-        "} else if (chatEvent.type === \"message_reaction_changed\") {\n            if (chatEvent.change.channel_id === activeChannelId) {\n              applyReactionChange(chatEvent.change);\n              if (!patchMessageReactions(chatEvent.change.message_id)) {\n                renderTimeline({ preserveScroll: true });\n              }",
-    ] {
-        assert!(BROWSER_CLIENT.contains(reaction_event));
-    }
+        .expect("React conversation timeline");
+    assert!(timeline.contains("ConversationMessage,"));
+    assert!(timeline.contains("item.message.id"));
+    assert!(APP_BUNDLE.contains("host.reactions(message.id).filter"));
+    assert!(APP_BUNDLE.contains("reactions.map((reaction) =>"));
+    assert!(APP_BUNDLE.contains("host.toggleReaction(message.id, reaction.emoji)"));
+    assert!(APP_BUNDLE.contains("messageStatus: host.messageStatus"));
+    assert!(APP_BUNDLE.contains("runtime: host.runtime"));
+    assert!(APP_BUNDLE.contains("host.runtime.subscribe(update"));
 }
 
 #[test]
@@ -1023,28 +972,18 @@ fn browser_uses_compact_accessible_mobile_conversation_bar() {
 
 #[test]
 fn browser_keeps_conversation_dense_with_accessible_message_actions() {
-    assert!(BROWSER_CLIENT.contains(
-            ".conversation-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 50px; padding: 6px 12px; }"
-        ));
-    assert!(BROWSER_CLIENT.contains(".messages {\n        align-content: start;\n        display: grid;\n        gap: 8px;\n        padding: 12px;"));
-    assert!(BROWSER_CLIENT.contains("padding: 7px 9px;"));
-    assert!(BROWSER_CLIENT.contains(".rendered {\n        display: grid;\n        gap: 7px;"));
-    assert!(BROWSER_CLIENT.contains(
-            ".message-menu > summary,\n        .message-menu button,\n        .thread-link,\n        .reaction-badge,\n        .reaction-picker summary { min-height: 44px; }"
-        ));
-    assert!(BROWSER_CLIENT.contains("className = \"message-menu\""));
-    assert!(
-        BROWSER_CLIENT.contains("function placeMessageMenu(card, footer, menu, thread, messageId)")
-    );
-    assert!(BROWSER_CLIENT.contains("menu.classList.add(\"footer-menu\")"));
-    assert!(BROWSER_CLIENT.contains("footer.insertBefore(menu, null)"));
-    assert!(
-        BROWSER_CLIENT.contains(".message-menu.footer-menu + .thread-link { margin-left: 0; }")
-    );
-    assert!(BROWSER_CLIENT.contains("Fleire handlingar for meldinga"));
-    assert!(BROWSER_CLIENT.contains("Legg til reaksjon"));
-    assert!(BROWSER_CLIENT.contains("message.sender_id === currentParticipantId"));
-    assert!(BROWSER_CLIENT.contains("reaction-picker-requested"));
+    assert!(APP_BUNDLE.contains("className: \"sp-context\""));
+    assert!(APP_BUNDLE.contains("className: \"sp-timeline\""));
+    assert!(APP_BUNDLE.contains("className: \"sp-message-primary-actions\""));
+    assert!(APP_BUNDLE.contains("\"aria-label\": \"Legg til reaksjon\""));
+    assert!(APP_BUNDLE.contains("\"aria-label\": \"Fleire meldingsval\""));
+    assert!(APP_BUNDLE.contains("title: \"Meldingsval\""));
+    assert!(APP_BUNDLE.contains("className: \"sp-message-reaction-row\""));
+    assert!(APP_BUNDLE.contains(".sp-message{row-gap:0;margin-bottom:.5rem}"));
+    assert!(APP_BUNDLE.contains(
+        "@media(pointer:coarse){.sp-message-actions .sp-button{min-width:44px;min-height:44px}"
+    ));
+    assert!(APP_BUNDLE.contains(".sp-message-content table"));
 }
 
 #[test]
@@ -1186,15 +1125,12 @@ fn browser_refreshes_unread_summaries_when_a_background_tab_returns() {
 
 #[test]
 fn browser_linkifies_safe_web_urls_without_expanding_messages() {
-    assert!(BROWSER_CLIENT.contains("function appendLinkedText(parent, text)"));
-    assert!(BROWSER_CLIENT.contains("const urlPattern = /https?:\\/\\/[^\\s<>]+/gi"));
-    assert!(BROWSER_CLIENT.contains("link.rel = \"noopener noreferrer\""));
-    assert!(BROWSER_CLIENT.contains("link.referrerPolicy = \"no-referrer\""));
-    assert!(BROWSER_CLIENT.contains("function readableLinkLabel(href)"));
-    assert!(
-        BROWSER_CLIENT.contains(".rendered a { overflow-wrap: anywhere; word-break: break-word; }")
-    );
-    assert!(BROWSER_CLIENT.contains("min-width: 0;\n        max-width: 100%;"));
+    assert!(APP_BUNDLE.contains("remarkPlugins: [remarkGfm]"));
+    assert!(APP_BUNDLE.contains("target: \"_blank\""));
+    assert!(APP_BUNDLE.contains("rel: \"noopener noreferrer\""));
+    assert!(APP_BUNDLE.contains("referrerPolicy: \"no-referrer\""));
+    assert!(APP_BUNDLE.contains(".sp-message-content table"));
+    assert!(APP_BUNDLE.contains("overflowWrap: \"anywhere\""));
 }
 
 async fn start_test_server(
@@ -1477,13 +1413,12 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     );
     assert!(!body.contains("function syncAppViewportHeight() {"));
     assert!(body.contains(&format!("<style nonce=\"{nonce}\">")));
-    assert!(
-        BROWSER_CLIENT
-            .contains("https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.esm.min.mjs")
-    );
-    assert!(!BROWSER_CLIENT.contains("import mermaid from"));
-    assert!(BROWSER_CLIENT.contains("mermaidPromise = import("));
-    assert!(!BROWSER_CLIENT.contains("npm/mermaid@11/dist/"));
+    assert!(!policy.contains("cdn.jsdelivr.net"));
+    assert!(!BROWSER_CLIENT.contains("cdn.jsdelivr.net/npm/mermaid"));
+    assert!(BROWSER_CLIENT.contains("import(\"mermaid\")"));
+    assert!(APP_BUNDLE.contains("node_modules/mermaid/"));
+    assert!(APP_BUNDLE.contains("securityLevel: \"strict\""));
+    assert!(APP_BUNDLE.contains("new DOMParser().parseFromString(result.svg, \"image/svg+xml\")"));
     assert!(!body.contains("{{NONCE}}"));
     assert!(!body.contains("{{APP_URL}}"));
     assert!(!body.contains("{{CLIENT_CORE_URL}}"));
@@ -1598,7 +1533,10 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("id=\"circle-joinable-list\""));
     assert!(!BROWSER_CLIENT.contains("id=\"joinable-channel\""));
     assert!(BROWSER_CLIENT.contains("id=\"add-channel-member\""));
-    assert!(BROWSER_CLIENT.contains("function scopedCircleChannelSlug(circleId, value)"));
+    assert!(
+        APP_SOURCE
+            .contains("function scopedCircleChannelSlug(circleId: string, value: string): string")
+    );
     assert!(BROWSER_CLIENT.contains("scopedCircleChannelSlug(managedCircleId, name)"));
     assert!(BROWSER_CLIENT.contains("scopedCircleChannelSlug(event.payload.circle.id, \"prat\")"));
     assert!(BROWSER_CLIENT.contains(
@@ -1729,7 +1667,10 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         )
     );
     assert!(BROWSER_CLIENT.contains("[[invite:${event.payload.invitation.token}]]"));
-    assert!(BROWSER_CLIENT.contains("function renderInvitationCard(token, target)"));
+    assert!(
+        APP_SOURCE
+            .contains("function renderInvitationCard(token: string, target: HTMLElement): void")
+    );
     assert!(
         BROWSER_CLIENT
             .contains("const invitationInspectionCache = new Map<string, InvitationCache>()")
@@ -1777,7 +1718,11 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     );
     assert!(!BROWSER_CLIENT.contains("window.location.reload()"));
     assert!(CONNECTION_SOURCE.contains("Fråkopla (${detail})"));
-    assert!(BROWSER_CLIENT.contains("function acknowledgeLatest(channelId, messages)"));
+    assert!(
+        APP_SOURCE.contains(
+            "function acknowledgeLatest(channelId: string, messages: ChatMessage[]): void"
+        )
+    );
     assert!(BROWSER_CLIENT.contains("function loadOlderHistory()"));
     assert!(BROWSER_CLIENT.contains("before: oldest.sequence"));
     assert!(BROWSER_CLIENT.contains("renderTimeline({ preserveScroll: true })"));
@@ -1804,7 +1749,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("timestamp.setAttribute(\"aria-expanded\", \"false\")"));
     assert!(BROWSER_CLIENT.contains("appendProfileStatus(senderLabel, message.sender_id)"));
     assert!(BROWSER_CLIENT.contains("channel.direct_user_id"));
-    assert!(BROWSER_CLIENT.contains("function approximateUnreadCount(count)"));
+    assert!(APP_SOURCE.contains("function approximateUnreadCount(count: number): string"));
     assert!(BROWSER_CLIENT.contains("if (count < 50) return \"25+\""));
     assert!(BROWSER_CLIENT.contains("if (count < 100) return \"50+\""));
     assert!(BROWSER_CLIENT.contains("button.classList.add(\"has-unread\")"));
@@ -1831,7 +1776,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("id=\"grafana-credential\" readonly"));
     assert!(BROWSER_CLIENT.contains("integrationsApi.createGrafana(channelId)"));
     assert!(BROWSER_CLIENT.contains("channelGrafanaIntegration.hidden = channel.is_direct"));
-    assert!(BROWSER_CLIENT.contains("function renderManagedJoinableChannels(channels)"));
+    assert!(
+        APP_SOURCE.contains("function renderManagedJoinableChannels(channels: Channel[]): void")
+    );
     assert!(BROWSER_CLIENT.contains("+ Finn fleire kanalar"));
     assert!(BROWSER_CLIENT.contains("className = \"joinable-channel-description\""));
     assert!(BROWSER_CLIENT.contains("renderMarkdown(channel.description, description)"));
@@ -1872,7 +1819,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         BROWSER_CLIENT
             .contains("bottomChannelPanel.open = false;\n        bottomCirclePanel.open = false;")
     );
-    assert!(BROWSER_CLIENT.contains("function pendingMessageToReveal(message, requestId = null)"));
+    assert!(APP_SOURCE.contains(
+        "function pendingMessageToReveal(message: ChatMessage, requestId: string | null = null): PendingMessage | null"
+    ));
     assert!(BROWSER_CLIENT.contains("message.sender_id !== currentParticipantId"));
     assert!(BROWSER_CLIENT.contains(
         "renderTimeline({ revealMessageId: revealOwnMessage ? event.payload.message.id : null })"
@@ -1880,7 +1829,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains(
         "renderTimeline({ revealMessageId: revealOwnMessage ? chatEvent.message.id : null })"
     ));
-    assert!(BROWSER_CLIENT.contains("function revealTimelineMessage(messageId)"));
+    assert!(APP_SOURCE.contains("function revealTimelineMessage(messageId: string): void"));
     assert!(BROWSER_CLIENT.contains("const cardRect = card.getBoundingClientRect()"));
     assert!(BROWSER_CLIENT.contains("const viewportRect = messagesEl.getBoundingClientRect()"));
     assert!(BROWSER_CLIENT.contains("if (delta > 0) messagesEl.scrollTop += delta"));
