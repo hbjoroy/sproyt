@@ -2,7 +2,7 @@ import { Button } from "@sproyt/ui/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 /** Keep the same controls and open dialogs mounted across compact/list layouts. */
-export function HeaderActions({ children, primary, badge }: { readonly children: ReactNode; readonly primary?: ReactNode; readonly badge?: ReactNode }) {
+export function HeaderActions({ children, primary }: { readonly children: ReactNode; readonly primary?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -31,7 +31,6 @@ export function HeaderActions({ children, primary, badge }: { readonly children:
       <img src="/assets/sproyt-wave-icon-512.png" alt="" aria-hidden="true" />
       <span>Sprøyt</span>
     </span>
-    {badge}
     <div className="sp-header-primary">{primary}
     <Button className="sp-header-toggle" variant="quiet" ref={trigger} aria-expanded={open} aria-controls={id}
       onClick={() => setOpen(value => !value)}>Meny <span aria-hidden="true">☰</span></Button></div>

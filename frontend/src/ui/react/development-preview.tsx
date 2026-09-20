@@ -262,11 +262,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     header: <>{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
-      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}
-        badge={host.settings.profile()?.early_adopter ? <span className="sp-header-early-adopter"
-          role="img" aria-label="Blant dei første 50 på Sprøyt" title="Blant dei første 50 på Sprøyt">
-          <span aria-hidden="true">✨</span><span className="sp-header-early-adopter-label">Første 50</span>
-        </span> : null}>
+      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}>
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>

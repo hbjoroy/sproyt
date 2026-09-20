@@ -5,7 +5,7 @@ test("first-50 badge is visible on the profile and compact beside chat authors",
   const preview = page.locator("#sproyt-react-preview");
   const composer = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(composer).toBeEnabled({ timeout: 15000 });
-  await expect(preview.getByRole("img", { name: "Blant dei første 50 på Sprøyt" })).toBeVisible();
+  await expect(preview.locator(".sp-header-early-adopter")).toHaveCount(0);
 
   await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
