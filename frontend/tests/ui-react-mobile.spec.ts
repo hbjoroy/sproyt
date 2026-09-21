@@ -264,7 +264,9 @@ test("channel overflow keeps notification and confirmed leave actions together",
   await page.goto("/?participant=preview-channel-overflow&ui=react");
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15_000 });
-  await preview.getByRole("button", { name: "Meny", exact: true }).click();
+  if (await preview.locator(".sp-mobile-conversation-context").isVisible()) {
+    await preview.getByRole("button", { name: "Meny", exact: true }).click();
+  }
   await preview.getByRole("button", { name: "Kanalval" }).click();
   const menu = preview.getByRole("dialog", { name: /Kanalval:/ });
   await expect(menu.getByRole("button", { name: /Varsel (på|av)/ })).toBeVisible();
