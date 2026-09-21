@@ -91,7 +91,7 @@ function ChannelMembersIcon() {
   </svg>;
 }
 
-function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost }) {
+function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -103,10 +103,10 @@ function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSna
   const notifications = conversation?.notifications;
   const openDetails = () => { setOpen(false); requestAnimationFrame(() => setDetailsOpen(true)); };
   return <>
-    <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
+    {!compact && <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
       aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={openDetails}><ChannelMembersIcon /></Button>
-    <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
-      aria-label="Kanalval" title="Kanalval" onClick={() => setOpen(true)}><span aria-hidden="true">⋯</span></Button>
+    }<Button className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"} variant="quiet"
+      aria-label="Kanalval" title="Kanalval" onClick={() => setOpen(true)}><span aria-hidden="true">⋯</span>{compact && <span>Kanalval</span>}</Button>
     <Dialog open={open} title={`Kanalval: ${channel.name}`} closeLabel="Lukk kanalvala"
       onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
       <div className="sp-channel-menu-dialog">
@@ -257,12 +257,20 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       revealMessageId: revealThreadMessage
     });
     previousSnapshot = snapshot;
+    const compactContext = snapshot.activeChannel?.is_direct ? "Direkte" : snapshot.activeChannel?.circle_id
+      ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel?.circle_id)?.name ?? "Vennekrets"
+      : snapshot.activeChannel ? "Felles" : undefined;
+    const backToConversations = () => { view = "list"; update(); };
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view,
     header: <>{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
-      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}>
+      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}
+        compactConversation={view === "detail" ? {
+          context: compactContext, title: snapshot.title, onBack: backToConversations
+        } : undefined}>
+      {view === "detail" && <div className="sp-mobile-channel-menu"><ChannelActions compact snapshot={snapshot} host={host} /></div>}
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
@@ -274,7 +282,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}
       error={conversation.notifications.error} onChange={host.setChannelNotifications} /> : null,
-    onBack() { view = "list"; update(); },
+    onBack: backToConversations,
     onQueryChange(query) { host.search(query); update(); },
     onSelect(channelId) { reactionPicker.close(); host.select(channelId); view = "detail"; update(); },
     onCloseThread() {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type { ReactNode, Ref } from "react";
 import { AppShell, Button, ConversationList, Message, Status, TextField, Theme } from "@sproyt/ui/react";
 import type { Conversation, ThemeMode } from "@sproyt/ui/react";
@@ -289,15 +289,14 @@ function ConnectionIndicator({ connected, status }: { readonly connected: boolea
 
 export function ConversationView(props: ConversationViewProps) {
   const snapshot = useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
-  const titleId = useId();
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
     <AppShell view={props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
       header={<>{props.header}{snapshot.connection.status && <ConnectionIndicator {...snapshot.connection} />}</>}>
       <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}>
-        <section className="sp-channel-pane" aria-labelledby={titleId}>
+        <section className="sp-channel-pane" aria-label={props.title}>
           <header className="sp-context">
             <Button className="sp-only-compact" onClick={props.onBack}>← Samtalar</Button>
-            <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 id={titleId} className="sp-heading">{props.title}</h1></div>
+            <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 className="sp-heading">{props.title}</h1></div>
             {props.contextActions}
           </header>
           <ConversationTimeline {...props.timeline} />

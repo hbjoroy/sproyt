@@ -27,9 +27,18 @@ for (const width of [320, 390, 1440]) for (const theme of ["light", "dark"]) {
     await expect(field).toBeEnabled();
     await page.evaluate(name => (window as unknown as { visualSocket: WebSocket }).visualSocket.send(JSON.stringify({
       protocol: "sproyt.chat.v1", type: "create_channel", request_id: crypto.randomUUID(),
-      payload: { slug: name, name: "Prat", kind: "public" }
+      payload: { slug: name, name: "Maritim engineering", kind: "public" }
     })), `visual-${width}-${theme}`);
-    await expect(pane.getByRole("heading", { name: "# Prat", exact: true })).toBeVisible();
+    if (width <= 800) {
+      await expect(pane.getByRole("heading", { name: "# Maritim engineering", exact: true })).toBeHidden();
+      const compactTitle = app.locator(".sp-mobile-conversation-title");
+      await expect(compactTitle).toBeVisible();
+      await expect(compactTitle).toHaveAttribute("aria-label", /# Maritim engineering/);
+      await expect(compactTitle).toContainText("# Maritim…ing");
+    } else {
+      await expect(pane.getByRole("heading", { name: "# Maritim engineering", exact: true })).toBeVisible();
+    }
+    expect(await app.evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(await app.evaluate(element => element.clientWidth));
     for (const body of prose) { await field.fill(body); await field.press("Enter"); await expect(field).toHaveValue(""); }
     const messages = pane.locator("[data-message-id]").filter({ hasText: prose[0] });
     await expect(messages).toBeVisible();

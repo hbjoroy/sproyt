@@ -1,5 +1,5 @@
 import { Button, type Composer } from "@sproyt/ui/react";
-import { useId, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 
 /** Application-owned composition keeps attachments and text in one draft.
  * The library's visual vocabulary is retained; tools open only on request. */
@@ -30,10 +30,17 @@ export function DraftComposer({ value, onChange, onSend, label, leading, tools,
     window.visualViewport?.addEventListener("resize", resize);
     return () => { observer.disconnect(); window.visualViewport?.removeEventListener("resize", resize); };
   }, []);
+  // The tool tray is an intentional expansion. Once its draft has been sent
+  // or cleared, return the compact, one-line composer without hiding any
+  // attachment or reply context above it.
+  useEffect(() => {
+    if (!value.trim() && !hasAttachments && !busy) setToolsOpen(false);
+  }, [value, hasAttachments, busy]);
   const submit = () => {
     if (!disabled && !busy && (value.trim() || hasAttachments)) onSend(value.trim());
   };
-  return <form className="sp-composer sp-draft-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
+  return <form className="sp-composer sp-draft-composer" data-tools-open={toolsOpen || undefined}
+    onSubmit={event => { event.preventDefault(); submit(); }}>
     <div className="sp-draft-context">{leading}</div>
     <label className="sp-label" htmlFor={id}>{label}</label>
     <textarea ref={field} id={id} className="sp-textarea" rows={1} value={value}
