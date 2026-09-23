@@ -26,6 +26,7 @@ use crate::{
 #[derive(Deserialize)]
 pub(crate) struct EventsQuery {
     participant: Option<String>,
+    bootstrap: Option<bool>,
     channel_id: Option<String>,
     request_id: Option<String>,
     after: Option<u64>,
@@ -71,13 +72,6 @@ pub(crate) async fn command_handler(
         Ok(principal) => principal,
         Err(error) => return auth_error_response(error),
     };
-    if let Err(error) = state.chat.ensure_user(principal.user.clone()).await {
-        return Json(ServerEnvelope::response(
-            envelope.request_id,
-            ws::error_event(error),
-        ))
-        .into_response();
-    }
     let request_id = envelope.request_id.clone();
     let response = if check_protocol(&envelope.protocol) != ProtocolVersion::Supported {
         ServerEnvelope::response(
@@ -107,7 +101,22 @@ pub(crate) async fn command_handler(
             },
         )
     } else {
-        ws::execute_http_command(&state.chat, &principal.user.id, envelope).await
+        // A browser can abort fetch during navigation. Keep the domain command
+        // alive after that cancellation so an interrupted SQLite transaction
+        // cannot retain its write reservation, and idempotent sends still land.
+        let chat = state.chat.clone();
+        let participant_id = principal.user.id.clone();
+        match tokio::spawn(async move {
+            ws::execute_http_command(&chat, &participant_id, envelope).await
+        })
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::error!(?error, "HTTP command task stopped unexpectedly");
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+        }
     };
     Json(response).into_response()
 }
@@ -169,15 +178,7 @@ pub(crate) async fn events_handler(
         Ok(principal) => principal,
         Err(error) => return auth_error_response(error),
     };
-    if state
-        .chat
-        .ensure_user(principal.user.clone())
-        .await
-        .is_err()
-    {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-    let participant_id = principal.user.id;
+    let participant_id = principal.user.id.clone();
     let channel_id = match query.channel_id {
         Some(id) => match ChannelId::new(id) {
             Ok(id) => Some(id),
@@ -197,6 +198,18 @@ pub(crate) async fn events_handler(
         || channel_id.is_some() != request_id.is_some()
     {
         return StatusCode::BAD_REQUEST.into_response();
+    }
+    // The initial, unscoped stream provisions the authenticated user before
+    // it opens. Channel streams are replaced rapidly during navigation and
+    // must not start a write transaction that cancellation can interrupt.
+    if query.bootstrap == Some(true)
+        && state
+            .chat
+            .ensure_user(principal.user.clone())
+            .await
+            .is_err()
+    {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let subscription = if let Some(channel_id) = &channel_id {
         match state

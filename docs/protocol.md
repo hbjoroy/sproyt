@@ -118,8 +118,11 @@ persisted message sequences. On reconnect the browser passes its last sequence
 as `after` (and the server also understands `Last-Event-ID`), so a `lagged`
 event triggers paged `load_recent_messages` catch-up when the recent history
 does not cover the gap. Both the GET and POST authenticate with the normal
-session cookie. The stream checks membership before delivering each channel
-event and checks the session and membership periodically.
+session cookie. The first unscoped stream uses `bootstrap=true` to provision
+the user before the browser sends commands; later streams do not repeat that
+write during cancellable channel navigation. The stream checks membership
+before delivering each channel event and checks the session and membership
+periodically.
 
 The browser closes a failed EventSource and lets the connection controller
 reconnect it, avoiding overlapping native retries. It quietly probes WebSocket

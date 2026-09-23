@@ -43,21 +43,9 @@ async fn http_command_fallback_rejects_cross_origin_requests() {
         .unwrap();
     assert_eq!(rejected.status(), axum::http::StatusCode::FORBIDDEN);
 
-    let accepted = client
-        .post(&url)
-        .header("origin", format!("http://{address}"))
-        .json(&command)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(accepted.status(), axum::http::StatusCode::OK);
-    let event: serde_json::Value = accepted.json().await.unwrap();
-    assert_eq!(event["type"], "hello");
-    assert_eq!(event["request_id"], "fallback-hello");
-
     let stream = client
         .get(format!(
-            "http://{address}/api/v1/events?participant=fallback-user"
+            "http://{address}/api/v1/events?participant=fallback-user&bootstrap=true"
         ))
         .send()
         .await
@@ -70,6 +58,18 @@ async fn http_command_fallback_rejects_cross_origin_requests() {
             .starts_with("text/event-stream")
     );
     assert_eq!(stream.headers()["x-accel-buffering"], "no");
+
+    let accepted = client
+        .post(&url)
+        .header("origin", format!("http://{address}"))
+        .json(&command)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), axum::http::StatusCode::OK);
+    let event: serde_json::Value = accepted.json().await.unwrap();
+    assert_eq!(event["type"], "hello");
+    assert_eq!(event["request_id"], "fallback-hello");
     server.abort();
 }
 

@@ -74,6 +74,7 @@ export class SseSocket extends EventTarget implements ConnectionSocket {
     this.subscriptionTimer = null;
     this.activeChannel = channelId;
     const url = new URL(this.eventsUrl);
+    if (!this.opened && channelId === null) url.searchParams.set("bootstrap", "true");
     if (channelId !== null && requestId !== null) {
       this.pendingSubscription = { channelId, requestId };
       url.searchParams.set("channel_id", channelId);
