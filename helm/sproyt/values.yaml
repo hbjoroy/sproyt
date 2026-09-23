@@ -52,6 +52,8 @@ config:
   imagegenWebResearch: false
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60
+  # Per application pod; the realtime listener holds one additional connection.
+  dbMaxConnections: 4
   # Keep Heart/process diagnostics out of the ordinary private-beta journey.
   uiAdvancedEnabled: false
   uiAgentEnabled: false

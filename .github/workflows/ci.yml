@@ -173,7 +173,10 @@ jobs:
       - name: Run PostgreSQL repository contract
         env:
           SPROYT_FRONTEND_PREBUILT: "1"
-        run: cargo test db::postgres::tests --locked
+        run: |
+          cargo test db::postgres::tests --locked
+          cargo test postgres_notifications_share_the_repository_connection_budget --locked
+          cargo test postgres_imagegen_uses_the_shared_connection_budget --locked
 
       - name: Verify expected tables
         run: |

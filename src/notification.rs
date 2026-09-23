@@ -123,11 +123,16 @@ impl NotificationService {
         }
     }
 
-    pub async fn connect(config: &DatabaseConfig) -> Result<Self, RepositoryError> {
+    pub async fn connect(
+        config: &DatabaseConfig,
+        postgres_pool: Option<&PgPool>,
+    ) -> Result<Self, RepositoryError> {
         let store = match config.kind() {
-            DatabaseKind::Postgres => {
-                NotificationStore::Postgres(PgPool::connect(config.url()).await.map_err(storage)?)
-            }
+            DatabaseKind::Postgres => NotificationStore::Postgres(
+                postgres_pool
+                    .ok_or_else(|| storage("PostgreSQL pool is missing"))?
+                    .clone(),
+            ),
             DatabaseKind::Sqlite => {
                 NotificationStore::Sqlite(SqlitePool::connect(config.url()).await.map_err(storage)?)
             }
@@ -804,6 +809,51 @@ fn storage(error: impl std::fmt::Display) -> RepositoryError {
 mod tests {
     use super::*;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    #[tokio::test]
+    async fn postgres_notifications_share_the_repository_connection_budget() {
+        use crate::{db::PostgresChatRepository, domain::ChatRepository};
+        use sqlx::postgres::PgPoolOptions;
+
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .min_connections(0)
+            .acquire_timeout(Duration::from_millis(100))
+            .connect(&url)
+            .await
+            .expect("test PostgreSQL connects");
+        let repository = PostgresChatRepository::connect_with_pool(&url, pool.clone())
+            .await
+            .expect("repository connects with shared pool");
+        let config = DatabaseConfig::new(url).unwrap();
+        let notifications = NotificationService::connect(&config, Some(&pool))
+            .await
+            .expect("notifications use shared pool");
+        let held = pool.acquire().await.unwrap();
+        assert!(repository.health_check().await.is_err());
+        let NotificationStore::Postgres(notification_pool) = &notifications.store else {
+            unreachable!();
+        };
+        assert!(matches!(
+            sqlx::query_scalar::<_, i32>("select 1")
+                .fetch_one(notification_pool)
+                .await,
+            Err(sqlx::Error::PoolTimedOut)
+        ));
+        drop(held);
+        repository.health_check().await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i32>("select 1")
+                .fetch_one(notification_pool)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(pool.size(), 1);
+    }
 
     async fn service() -> NotificationService {
         let pool = SqlitePoolOptions::new()

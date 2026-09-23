@@ -14,6 +14,7 @@ data:
   SPROYT_LOG_FORMAT: {{ .Values.config.logFormat | quote }}
   SPROYT_AUTH_MODE: {{ .Values.config.authMode | quote }}
   SPROYT_WS_IDLE_TIMEOUT_SECONDS: {{ .Values.config.websocketIdleTimeoutSeconds | quote }}
+  SPROYT_DB_MAX_CONNECTIONS: {{ .Values.config.dbMaxConnections | quote }}
   SPROYT_UI_ADVANCED_ENABLED: {{ .Values.config.uiAdvancedEnabled | quote }}
   SPROYT_UI_AGENT_ENABLED: {{ .Values.config.uiAgentEnabled | quote }}
   SPROYT_OIDC_ISSUER: {{ required "config.oidcIssuer must be the Authentik provider issuer" .Values.config.oidcIssuer | quote }}

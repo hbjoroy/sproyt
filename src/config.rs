@@ -8,6 +8,7 @@ const DEFAULT_ENVIRONMENT: &str = "development";
 const DEFAULT_LOG_FORMAT: &str = "pretty";
 const DEFAULT_AUTH_MODE: &str = "development";
 const DEFAULT_WS_IDLE_TIMEOUT_SECONDS: u64 = 60;
+const DEFAULT_DB_MAX_CONNECTIONS: u32 = 4;
 const PRODUCTION_OIDC_ISSUER: &str = "https://sproyt-security.bjoroy.me/application/o/sproyt/";
 const PRODUCTION_OIDC_REDIRECT_URL: &str = "https://sproyt.bjoroy.me/auth/callback";
 const PRODUCTION_POST_LOGOUT_REDIRECT_URL: &str = "https://sproyt.bjoroy.me/";
@@ -23,6 +24,7 @@ pub struct AppConfig {
     auth_mode: AuthMode,
     oidc: Option<OidcConfig>,
     websocket_idle_timeout: Duration,
+    db_max_connections: u32,
 }
 
 impl AppConfig {
@@ -60,6 +62,8 @@ impl AppConfig {
         }
         config.websocket_idle_timeout =
             parse_idle_timeout(env::var("SPROYT_WS_IDLE_TIMEOUT_SECONDS").ok().as_deref())?;
+        config.db_max_connections =
+            parse_db_max_connections(env::var("SPROYT_DB_MAX_CONNECTIONS").ok().as_deref())?;
         Ok(config)
     }
 
@@ -89,6 +93,7 @@ impl AppConfig {
             auth_mode,
             oidc: None,
             websocket_idle_timeout: Duration::from_secs(DEFAULT_WS_IDLE_TIMEOUT_SECONDS),
+            db_max_connections: DEFAULT_DB_MAX_CONNECTIONS,
         })
     }
 
@@ -98,6 +103,10 @@ impl AppConfig {
 
     pub const fn database(&self) -> &DatabaseConfig {
         &self.database
+    }
+
+    pub const fn db_max_connections(&self) -> u32 {
+        self.db_max_connections
     }
 
     pub const fn environment(&self) -> DeploymentEnvironment {
@@ -134,6 +143,21 @@ fn parse_idle_timeout(value: Option<&str>) -> Result<Duration, ConfigError> {
         ));
     }
     Ok(Duration::from_secs(seconds))
+}
+
+fn parse_db_max_connections(value: Option<&str>) -> Result<u32, ConfigError> {
+    let connections = match value {
+        None => DEFAULT_DB_MAX_CONNECTIONS,
+        Some(value) => value
+            .parse::<u32>()
+            .map_err(|_| ConfigError::InvalidDatabaseMaxConnections(value.to_owned()))?,
+    };
+    if !(1..=32).contains(&connections) {
+        return Err(ConfigError::InvalidDatabaseMaxConnections(
+            connections.to_string(),
+        ));
+    }
+    Ok(connections)
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -457,6 +481,7 @@ pub enum ConfigError {
     InvalidEnvironment(String),
     InvalidLogFormat(String),
     InvalidWebSocketIdleTimeout(String),
+    InvalidDatabaseMaxConnections(String),
     InvalidOidcConfig(&'static str, &'static str),
     MissingEnvironmentVariable(&'static str),
     UnsupportedDatabaseUrl(String),
@@ -483,6 +508,10 @@ impl fmt::Display for ConfigError {
             Self::InvalidWebSocketIdleTimeout(value) => write!(
                 formatter,
                 "invalid SPROYT_WS_IDLE_TIMEOUT_SECONDS value: {value}; expected 5 to 3600"
+            ),
+            Self::InvalidDatabaseMaxConnections(value) => write!(
+                formatter,
+                "invalid SPROYT_DB_MAX_CONNECTIONS value: {value}; expected 1 to 32"
             ),
             Self::InvalidOidcConfig(name, reason) => {
                 write!(formatter, "invalid {name}: {reason}")
@@ -530,6 +559,16 @@ mod tests {
         assert!(parse_idle_timeout(Some("0")).is_err());
         assert!(parse_idle_timeout(Some("3601")).is_err());
         assert!(parse_idle_timeout(Some("not-a-number")).is_err());
+    }
+
+    #[test]
+    fn database_max_connections_is_bounded() {
+        assert_eq!(parse_db_max_connections(None).unwrap(), 4);
+        assert_eq!(parse_db_max_connections(Some("1")).unwrap(), 1);
+        assert_eq!(parse_db_max_connections(Some("32")).unwrap(), 32);
+        for value in ["0", "33", "abc", "-1"] {
+            assert!(parse_db_max_connections(Some(value)).is_err());
+        }
     }
 
     #[test]

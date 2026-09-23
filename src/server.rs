@@ -88,8 +88,11 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     init_tracing(config.log_format())?;
     let address = config.bind_address();
     let operations = OperationalState::default();
-    let repositories = db::connect_repositories(config.database()).await?;
-    let notifications = NotificationService::connect(config.database()).await?;
+    let postgres_pool =
+        db::connect_postgres_pool(config.database(), config.db_max_connections()).await?;
+    let repositories = db::connect_repositories(config.database(), postgres_pool.as_ref()).await?;
+    let notifications =
+        NotificationService::connect(config.database(), postgres_pool.as_ref()).await?;
     notifications.start_worker(operations.subscribe_shutdown());
     let auth = match config.auth_mode() {
         AuthMode::Development => AuthService::development(),
@@ -102,7 +105,9 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
             .await?
         }
     };
-    let imagegen = crate::imagegen::ImageGeneration::from_env(config.database()).await?;
+    let imagegen =
+        crate::imagegen::ImageGeneration::from_env(config.database(), postgres_pool.as_ref())
+            .await?;
     if let Some(service) = &imagegen {
         service.start_worker(operations.subscribe_shutdown());
     }
