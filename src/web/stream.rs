@@ -145,6 +145,12 @@ fn frame(envelope: ServerEnvelope) -> Result<Event, Infallible> {
     Ok(event)
 }
 
+fn missing_before_history(after: Option<u64>, first_available: Option<u64>) -> Option<(u64, u64)> {
+    let after = after.filter(|after| *after > 0)?;
+    let skipped = first_available?.saturating_sub(after.saturating_add(1));
+    (skipped > 0).then_some((after, skipped))
+}
+
 pub(crate) async fn events_handler(
     State(state): State<AppState>,
     Query(query): Query<EventsQuery>,
@@ -230,11 +236,12 @@ pub(crate) async fn events_handler(
             let _presence = presence;
             let history = subscription.history;
             let mut last_seen = history.last().map_or(ChannelSequence::new(0), |message| message.sequence);
+            let first_available = history.first().map(|message| u64::from(message.sequence));
             yield frame(ServerEnvelope::response(request_id, ServerEvent::SubscriptionStarted { channel_id: channel_id.clone(), history }));
-            if let Some(after) = after.filter(|after| *after > 0 && *after < u64::from(last_seen)) {
+            if let Some((after, skipped)) = missing_before_history(after, first_available) {
                 yield frame(ServerEnvelope::event(ServerEvent::Lagged {
                     channel_id: channel_id.clone(), last_seen_sequence: ChannelSequence::new(after),
-                    latest_known_sequence: last_seen, skipped: u64::from(last_seen) - after,
+                    latest_known_sequence: last_seen, skipped,
                     hint: "load_recent_messages_after".to_owned(),
                 }));
             }
@@ -310,4 +317,17 @@ async fn channel_visible(
     chat.list_channels(participant_id.clone())
         .await
         .is_ok_and(|channels| channels.iter().any(|channel| &channel.id == channel_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::missing_before_history;
+
+    #[test]
+    fn reconnect_only_reports_messages_missing_from_recent_history() {
+        assert_eq!(missing_before_history(Some(1), Some(11)), Some((1, 9)));
+        assert_eq!(missing_before_history(Some(55), Some(11)), None);
+        assert_eq!(missing_before_history(Some(60), Some(11)), None);
+        assert_eq!(missing_before_history(Some(u64::MAX), Some(11)), None);
+    }
 }

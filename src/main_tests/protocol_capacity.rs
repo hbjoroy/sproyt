@@ -133,6 +133,7 @@ async fn event_stream_reports_a_gap_beyond_recent_history() {
     assert!(body.contains("\"type\":\"subscription_started\""));
     assert!(body.contains("\"last_seen_sequence\":1"));
     assert!(body.contains("\"latest_known_sequence\":60"));
+    assert!(body.contains("\"skipped\":9"));
     server.abort();
 }
 
