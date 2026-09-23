@@ -100,6 +100,35 @@ The running WebSocket endpoint accepts only the versioned `sproyt.chat.v1`
 envelope. Unknown protocol versions and command types return stable structured
 errors; there is no parallel legacy command path.
 
+## Browser transport fallback
+
+The browser normally uses `/ws`. After two failed WebSocket connections it
+opens `GET /api/v1/events` as an SSE stream and sends the same command
+envelopes to `POST /api/v1/commands`. The POST response is the ordinary server
+envelope with the original `request_id`. Commands are serialized in the
+browser, and the server uses the same command executor, authorization and
+idempotent message receipt as WebSocket. The POST endpoint accepts JSON only,
+has a 64 KiB body limit and rejects cross-origin browser requests.
+
+The active SSE channel is selected by `channel_id` and `request_id` query
+parameters on the event stream. The first stream message is the correlated
+`subscription_started` response and its recent history; subsequent messages
+are ordinary `chat` events. A new channel opens a new stream. Event IDs contain
+persisted message sequences. On reconnect the browser passes its last sequence
+as `after` (and the server also understands `Last-Event-ID`), so a `lagged`
+event triggers paged `load_recent_messages` catch-up when the recent history
+does not cover the gap. Both the GET and POST authenticate with the normal
+session cookie. The stream checks membership before delivering each channel
+event and checks the session and membership periodically.
+
+The browser closes a failed EventSource and lets the connection controller
+reconnect it, avoiding overlapping native retries. It quietly probes WebSocket
+while SSE remains active, first after about a minute, then after 2, 5 and up
+to 10 minutes if probes fail. A successful probe becomes active only after
+`hello`, the current channel subscription and any outstanding command responses
+are accounted for. A focus or network change can trigger an earlier probe.
+`?transport=sse` forces the fallback for canary testing and disables probes.
+
 ## Events
 
 Sequence `0` is reserved for an unread/catch-up cursor before the first

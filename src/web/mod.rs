@@ -11,4 +11,5 @@ pub(crate) mod mcp;
 pub(crate) mod media;
 pub(crate) mod processes;
 pub(crate) mod socket;
+pub(crate) mod stream;
 pub(crate) mod system;

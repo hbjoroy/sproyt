@@ -12,6 +12,7 @@ interface SocketHandoff {
   expectedGeneration: number;
   expectedSubscriptionRequestId: string | null;
   readySubscriptionEvent: Extract<ServerEvent, Readonly<{ type: "subscription_started" }>> | null;
+  probe: boolean;
 }
 interface ConnectionState {
   socket: ConnectionSocket | null;
@@ -25,8 +26,14 @@ interface ConnectionState {
   heartbeatTimer: number | null;
   livenessTimer: number | null;
   stableConnectionTimer: number | null;
+  probeTimer: number | null;
+  probeAttempt: number;
+  websocketFailures: number;
+  fallbackActive: boolean;
+  probeOnOpen: boolean;
+  lastProbeAt: number;
 }
-export interface ConnectionSnapshot { readonly connected: boolean; readonly closing: boolean; readonly handoffActive: boolean; readonly subscribedChannelId: string | null; }
+export interface ConnectionSnapshot { readonly connected: boolean; readonly closing: boolean; readonly handoffActive: boolean; readonly subscribedChannelId: string | null; readonly transport: "websocket" | "sse" | null; }
 export interface ConnectionController {
   start(): void;
   connect(silent?: boolean, replaceCurrent?: boolean): void;
@@ -38,6 +45,7 @@ export interface ConnectionController {
   replaceAfterSessionRefresh(): void;
   /** Discard a potentially stale OPEN socket (not a refresh handoff). */
   recoverAfterResume(): void;
+  probeWebsocket(): void;
   scheduleReconnect(closeCode?: number, closeReason?: string): void;
   send<Type extends ClientCommandType>(type: Type, ...args: ClientCommandArguments<Type>): string | null;
   resend<Type extends ClientCommandType>(requestId: string, type: Type, ...args: ClientCommandArguments<Type>): string | null;
@@ -47,6 +55,8 @@ export interface ConnectionController {
 export interface ConnectionDependencies {
   readonly websocketUrl: () => string;
   readonly createSocket?: (url: string) => ConnectionSocket;
+  readonly createFallbackSocket?: (url: string) => ConnectionSocket;
+  readonly forceFallback?: boolean;
   readonly createRequestId: () => string;
   readonly onCommandSent: (requestId: string, command: ClientCommand) => void;
   readonly onBeforeConnect: () => void;
@@ -166,8 +176,9 @@ function hasSafeOutboundNumbers(value: unknown): boolean {
 }
 
 export function createConnectionController(dependencies: ConnectionDependencies): ConnectionController {
-  const state: ConnectionState = { socket: null, socketHandoff: null, subscribedChannelId: null, desiredChannelId: null, subscriptionGeneration: 0, recoveryPromise: null, reconnectTimer: null, reconnectAttempt: 0, heartbeatTimer: null, livenessTimer: null, stableConnectionTimer: null };
+  const state: ConnectionState = { socket: null, socketHandoff: null, subscribedChannelId: null, desiredChannelId: null, subscriptionGeneration: 0, recoveryPromise: null, reconnectTimer: null, reconnectAttempt: 0, heartbeatTimer: null, livenessTimer: null, stableConnectionTimer: null, probeTimer: null, probeAttempt: 0, websocketFailures: 0, fallbackActive: dependencies.forceFallback === true, probeOnOpen: false, lastProbeAt: 0 };
   const createSocket = dependencies.createSocket ?? ((url: string) => new WebSocket(url));
+  const fallbackSockets = new WeakSet<ConnectionSocket>();
   const requestTracker = createRequestTracker(dependencies.createRequestId, protocolId);
   const outbox = createOutbox();
   const pendingBySocket = new Map<ConnectionSocket, Set<string>>();
@@ -178,8 +189,13 @@ export function createConnectionController(dependencies: ConnectionDependencies)
   const clearConnectTimeout = (socket: ConnectionSocket): void => { const timer = connectTimeouts.get(socket); if (timer !== undefined) dependencies.clearTimeout(timer); connectTimeouts.delete(socket); };
   const clearLiveness = (): void => { if (state.livenessTimer !== null) dependencies.clearInterval(state.livenessTimer); state.livenessTimer = null; };
   const clearStableTimer = (): void => { if (state.stableConnectionTimer !== null) dependencies.clearTimeout(state.stableConnectionTimer); state.stableConnectionTimer = null; };
+  const clearProbe = (): void => { if (state.probeTimer !== null) dependencies.clearTimeout(state.probeTimer); state.probeTimer = null; };
   const now = dependencies.now ?? (() => Date.now());
   const isVisible = dependencies.isVisible ?? (() => true);
+  const recordWebsocketFailure = (): void => {
+    state.websocketFailures += 1;
+    if (state.websocketFailures >= 2 && dependencies.createFallbackSocket) state.fallbackActive = true;
+  };
   const loseSocketRequests = (socket: ConnectionSocket, uncertain = false): void => { const requestIds = [...(pendingBySocket.get(socket) ?? [])]; pendingBySocket.delete(socket); if (requestIds.length > 0) (uncertain ? dependencies.onUncertainRequests ?? dependencies.onRequestsLost : dependencies.onRequestsLost)(requestIds); };
   const sendVia = <Type extends ClientCommandType>(socket: ConnectionSocket | null, type: Type, ...args: ClientCommandArguments<Type>): string | null => sendViaRequest(socket, null, type, ...args);
   const sendViaRequest = <Type extends ClientCommandType>(socket: ConnectionSocket | null, preservedRequestId: string | null, type: Type, ...args: ClientCommandArguments<Type>): string | null => {
@@ -243,18 +259,41 @@ export function createConnectionController(dependencies: ConnectionDependencies)
     }
   };
   let controller: ConnectionController;
+  const scheduleProbe = (): void => {
+    if (!state.fallbackActive || dependencies.forceFallback || state.probeTimer !== null) return;
+    const minutes = [1, 2, 5, 10][Math.min(state.probeAttempt, 3)] ?? 10;
+    const delay = minutes * 60_000 + Math.floor(Math.random() * 10_000);
+    state.probeTimer = dependencies.setTimeout(() => {
+      state.probeTimer = null;
+      if (!state.fallbackActive || state.socketHandoff !== null || !isVisible() || state.socket === null || state.socket.readyState !== WebSocket.OPEN) { scheduleProbe(); return; }
+      state.probeAttempt += 1;
+      state.lastProbeAt = now();
+      connectSocket(true, state.socket, true);
+    }, delay);
+  };
   const activateSocket = (socket: ConnectionSocket): void => {
     clearHeartbeat(); clearLiveness(); clearStableTimer();
     lastServerActivity.set(socket, now());
-    dependencies.onConnected(); dependencies.onStatus(true, "Tilkopla");
-    state.stableConnectionTimer = dependencies.setTimeout(() => { if (state.socket === socket && socket.readyState === WebSocket.OPEN) state.reconnectAttempt = 0; }, 10_000);
+    dependencies.onConnected(); dependencies.onStatus(true, fallbackSockets.has(socket) ? "Tilkopla via reserve" : "Tilkopla");
+    if (fallbackSockets.has(socket)) {
+      if (state.probeOnOpen) {
+        state.probeOnOpen = false;
+        clearProbe();
+        state.probeTimer = dependencies.setTimeout(() => {
+          state.probeTimer = null;
+          controller.probeWebsocket();
+        }, 3_000);
+      } else scheduleProbe();
+    } else clearProbe();
+    state.stableConnectionTimer = dependencies.setTimeout(() => { if (state.socket === socket && socket.readyState === WebSocket.OPEN) { state.reconnectAttempt = 0; if (!fallbackSockets.has(socket)) state.websocketFailures = 0; } }, 10_000);
     state.heartbeatTimer = dependencies.setInterval(() => { if (state.socket === socket && isVisible()) sendVia(socket, "ping"); }, 10_000);
     state.livenessTimer = dependencies.setInterval(() => {
       if (state.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
       if (!isVisible()) return;
       if (now() - (lastServerActivity.get(socket) ?? now()) <= 20_000) return;
       dependencies.reportClientEvent?.("liveness_timeout");
-        loseSocketRequests(socket, true);
+      if (!fallbackSockets.has(socket)) recordWebsocketFailure();
+      loseSocketRequests(socket, true);
       state.socket = null; state.subscribedChannelId = null;
       clearHeartbeat(); clearLiveness(); clearStableTimer();
       socket.close(4003, "liveness timed out");
@@ -268,12 +307,13 @@ export function createConnectionController(dependencies: ConnectionDependencies)
     if (handoff.timeoutId !== null) dependencies.clearTimeout(handoff.timeoutId);
     state.socketHandoff = null;
     state.socket = handoff.nextSocket;
+    if (handoff.probe) { state.fallbackActive = false; state.websocketFailures = 0; state.probeAttempt = 0; clearProbe(); }
     if (handoff.readySubscriptionEvent !== null) state.subscribedChannelId = handoff.readySubscriptionEvent.payload.channel_id;
     activateSocket(handoff.nextSocket);
     if (handoff.previousSocket.readyState === WebSocket.OPEN) handoff.previousSocket.close(4000, "session refreshed");
     return handoff.readySubscriptionEvent;
   };
-  const connectSocket = (silent = false, previousSocket: ConnectionSocket | null = null): void => {
+  const connectSocket = (silent = false, previousSocket: ConnectionSocket | null = null, forceWebsocket = false): void => {
     clearReconnect();
     if (previousSocket === null) {
       const current = state.socket;
@@ -281,25 +321,28 @@ export function createConnectionController(dependencies: ConnectionDependencies)
       clearHeartbeat(); clearLiveness(); clearStableTimer();
     }
     dependencies.onBeforeConnect();
-    const nextSocket = createSocket(dependencies.websocketUrl());
+    const useFallback = state.fallbackActive && !forceWebsocket && dependencies.createFallbackSocket !== undefined;
+    const nextSocket = useFallback ? dependencies.createFallbackSocket!(dependencies.websocketUrl()) : createSocket(dependencies.websocketUrl());
+    if (useFallback) fallbackSockets.add(nextSocket);
     if (previousSocket === null) { state.socket = nextSocket; state.subscribedChannelId = null; }
     if (previousSocket === null) {
       const timeout = dependencies.setTimeout(() => {
         if (state.socket !== nextSocket || nextSocket.readyState !== WebSocket.CONNECTING) return;
         connectTimeouts.delete(nextSocket);
         dependencies.reportClientEvent?.("connect_timeout");
+        if (!useFallback) recordWebsocketFailure();
         loseSocketRequests(nextSocket, true);
-        nextSocket.close(4002, "connection timed out");
         if (state.socket === nextSocket) {
           state.socket = null;
           dependencies.onDisconnected();
           dependencies.onConnectionLost();
           controller.scheduleReconnect(1006, "sambandet tok for lang tid");
         }
+        nextSocket.close(4002, "connection timed out");
       }, 12_000);
       connectTimeouts.set(nextSocket, timeout);
     } else {
-      const handoff: SocketHandoff = { previousSocket, nextSocket, timeoutId: null, ready: false, expectedChannelId: state.desiredChannelId, expectedGeneration: state.subscriptionGeneration, expectedSubscriptionRequestId: null, readySubscriptionEvent: null };
+      const handoff: SocketHandoff = { previousSocket, nextSocket, timeoutId: null, ready: false, expectedChannelId: state.desiredChannelId, expectedGeneration: state.subscriptionGeneration, expectedSubscriptionRequestId: null, readySubscriptionEvent: null, probe: forceWebsocket };
       handoff.timeoutId = dependencies.setTimeout(() => {
         if (state.socketHandoff !== handoff) return;
         state.socketHandoff = null;
@@ -307,9 +350,10 @@ export function createConnectionController(dependencies: ConnectionDependencies)
         loseSocketRequests(nextSocket);
         nextSocket.close(4001, "session handoff timed out");
         if (previousSocket.readyState === WebSocket.OPEN) {
-          dependencies.onStatus(true, "Tilkopla");
+          dependencies.onStatus(true, fallbackSockets.has(previousSocket) ? "Tilkopla via reserve" : "Tilkopla");
           reconcileDesiredSubscription(previousSocket);
           dependencies.onHandoffFallback();
+          if (forceWebsocket) scheduleProbe();
           return;
         }
         loseSocketRequests(previousSocket, true);
@@ -396,13 +440,14 @@ export function createConnectionController(dependencies: ConnectionDependencies)
         if (handoff.timeoutId !== null) dependencies.clearTimeout(handoff.timeoutId);
         state.socketHandoff = null;
         if (handoff.previousSocket.readyState === WebSocket.OPEN) {
-          dependencies.onStatus(true, "Tilkopla"); loseSocketRequests(nextSocket); reconcileDesiredSubscription(handoff.previousSocket); dependencies.onHandoffFallback(); return;
+          dependencies.onStatus(true, fallbackSockets.has(handoff.previousSocket) ? "Tilkopla via reserve" : "Tilkopla"); loseSocketRequests(nextSocket); reconcileDesiredSubscription(handoff.previousSocket); dependencies.onHandoffFallback(); if (handoff.probe) scheduleProbe(); return;
         }
         loseSocketRequests(handoff.previousSocket, true);
         if (state.socket === handoff.previousSocket) state.socket = nextSocket;
       }
       if (previousSocket !== null && state.socket === previousSocket && previousSocket.readyState === WebSocket.OPEN) { dependencies.onHandoffFallback(); return; }
       if (state.socket !== nextSocket) return;
+      if (previousSocket === null && closeEvent.code !== 1008 && !useFallback) recordWebsocketFailure();
       loseSocketRequests(nextSocket, true);
       dependencies.onDisconnected(); state.subscribedChannelId = null; dependencies.onConnectionLost(); clearHeartbeat(); clearLiveness(); clearStableTimer();
       if (closeEvent.code === 1008) dependencies.onAuthenticationFailure().catch(() => controller.scheduleReconnect(closeEvent.code, closeEvent.reason)); else controller.scheduleReconnect(closeEvent.code, closeEvent.reason);
@@ -412,7 +457,7 @@ export function createConnectionController(dependencies: ConnectionDependencies)
   controller = Object.freeze({
     start: (): void => connectSocket(),
     connect: (silent = false, replaceCurrent = false): void => connectSocket(silent, replaceCurrent && state.socket?.readyState === WebSocket.OPEN ? state.socket : null),
-    snapshot: (): ConnectionSnapshot => Object.freeze({ connected: state.socket?.readyState === WebSocket.OPEN, closing: state.socket?.readyState === WebSocket.CLOSING, handoffActive: state.socketHandoff !== null, subscribedChannelId: state.subscribedChannelId }),
+    snapshot: (): ConnectionSnapshot => Object.freeze({ connected: state.socket?.readyState === WebSocket.OPEN, closing: state.socket?.readyState === WebSocket.CLOSING, handoffActive: state.socketHandoff !== null, subscribedChannelId: state.subscribedChannelId, transport: state.socket === null ? null : fallbackSockets.has(state.socket) ? "sse" : "websocket" }),
     recover: async (operation: (snapshot: ConnectionSnapshot) => Promise<void>): Promise<void> => { if (state.recoveryPromise !== null) return state.recoveryPromise; state.recoveryPromise = operation(controller.snapshot()); try { await state.recoveryPromise; } finally { state.recoveryPromise = null; } },
     setSubscribedChannel: (channelId: string): void => {
       state.subscribedChannelId = channelId;
@@ -450,6 +495,15 @@ export function createConnectionController(dependencies: ConnectionDependencies)
       }
       dependencies.onDisconnected(); dependencies.onConnectionLost();
       connectSocket(true);
+    },
+    probeWebsocket: (): void => {
+      if (!state.fallbackActive || dependencies.forceFallback || now() - state.lastProbeAt < 30_000) return;
+      const current = state.socket;
+      if (current === null || current.readyState !== WebSocket.OPEN || state.socketHandoff !== null) { state.probeOnOpen = true; return; }
+      clearProbe();
+      state.probeAttempt = 0;
+      state.lastProbeAt = now();
+      connectSocket(true, current, true);
     },
     scheduleReconnect: (closeCode = 1006, closeReason = ""): void => { if (state.reconnectTimer !== null) return; state.reconnectAttempt += 1; const delay = Math.min(15_000, 500 * (2 ** Math.min(state.reconnectAttempt - 1, 5))); const detail = closeReason ? `kode ${closeCode}: ${closeReason}` : `kode ${closeCode}`; dependencies.onStatus(false, `Fråkopla (${detail}) – prøver igjen om ${Math.ceil(delay / 1000)} sekund`); state.reconnectTimer = dependencies.setTimeout(() => { state.reconnectTimer = null; dependencies.recover().catch(() => controller.scheduleReconnect(closeCode, closeReason)); }, delay); },
     send,

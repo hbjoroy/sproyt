@@ -183,12 +183,12 @@ pub async fn handle_socket(
     }
 }
 
-struct ActiveSubscription {
+pub(crate) struct ActiveSubscription {
     connection_id: ConnectionId,
     task: tokio::task::JoinHandle<()>,
 }
 
-async fn execute_command(
+pub(crate) async fn execute_command(
     chat: &ChatEngine,
     participant_id: &UserId,
     envelope: ClientEnvelope,
@@ -578,6 +578,26 @@ async fn execute_command(
     }
 }
 
+/// Execute a command without a transport-local subscription. The SSE transport
+/// owns its subscription in the GET stream; all other commands use this same
+/// validated domain path as WebSocket, regardless of the serving replica.
+pub(crate) async fn execute_http_command(
+    chat: &ChatEngine,
+    participant_id: &UserId,
+    envelope: ClientEnvelope,
+) -> ServerEnvelope {
+    let (outbound, _) = mpsc::channel(1);
+    let mut subscriptions = HashMap::new();
+    execute_command(
+        chat,
+        participant_id,
+        envelope,
+        &outbound,
+        &mut subscriptions,
+    )
+    .await
+}
+
 async fn disconnect(
     chat: &ChatEngine,
     participant_id: &UserId,
@@ -660,7 +680,7 @@ fn spawn_subscription(
     })
 }
 
-fn error_event(error: ChatError) -> ServerEvent {
+pub(crate) fn error_event(error: ChatError) -> ServerEvent {
     let code = match &error {
         ChatError::EngineStopped => "engine_stopped",
         ChatError::Repository(RepositoryError::Conflict) => "conflict",

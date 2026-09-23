@@ -50,6 +50,7 @@ use crate::{
         correlate_process, get_process, inspect_process, set_heart_feature, start_process,
     },
     web::socket::ws_handler,
+    web::stream::{command_handler, events_handler},
     web::system::{add_security_headers, app_readyz, versionz},
 };
 
@@ -202,6 +203,11 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route("/api/v1/media/{id}", get(download_media))
         .route("/api/v1/media/{id}/preview", get(download_media_preview))
         .route("/ws", get(ws_handler))
+        .route(
+            "/api/v1/commands",
+            post(command_handler).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route("/api/v1/events", get(events_handler))
         .route("/api/v1/processes", post(start_process))
         .route("/api/v1/processes/{id}", get(get_process))
         .route("/api/v1/processes/{id}/inspect", post(inspect_process))
