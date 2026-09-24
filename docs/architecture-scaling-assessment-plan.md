@@ -13,15 +13,13 @@ implementert; avgjerder her kan førast dit når dei blir kode.
 
 ## Kjent utgangspunkt
 
-- Delt PostgreSQL-pool er versjonert i Sprøyt-commit `997eec6`, på grein
-  `codex/shared-database-pool`. Han deler pool mellom repository, push og
+- Delt PostgreSQL-pool er versjonert i Sprøyt-commit `997eec6`, no i `main`
+  via [#161](https://github.com/hbjoroy/sproyt/pull/161). Han deler pool mellom repository, push og
   bilethandsaming, set maksimum og ventetidsgrense og har PostgreSQL-prøver.
   Dette er den avgrensa delen av tiltak 1 som alt er implementert.
-- Kjelde-PR [#161](https://github.com/hbjoroy/sproyt/pull/161) er open oppå
-  [#160](https://github.com/hbjoroy/sproyt/pull/160). At poolen ikkje synest
-  i `main` eller i ei arbeidsmappe på den eldre SSE-greina, tyder ikkje at han
-  er lagt inn manuelt utan Git. Før vidare arbeid må PR-stabelen og
-  merge-vegen avklarast, utan å duplisere endringa.
+- Kjelde-PR-ane #158–#161 var opphavleg ein stabel. Dei er no fletta i
+  `main` med merge-commitar som bevarer dei utrulla commitane. Ei arbeidsmappe
+  på ei eldre grein vil framleis ikkje vise poolen utan å oppdatere grein.
 - GitOps-PR [#155](https://github.com/hbjoroy/rocket-applications/pull/155)
   og [#156](https://github.com/hbjoroy/rocket-applications/pull/156) er
   fletta. Driftsrapporten dokumenterer utrulling av det uforanderlege imaget
@@ -35,36 +33,30 @@ implementert; avgjerder her kan førast dit når dei blir kode.
 
 ## Steg 1: kjelde og utrulling kontrollert 24. september 2026
 
-Dette er ei avgrensa, lesande kontroll av GitHub, GitOps og Kubernetes-context
-`default`, pluss offentlege versjons-/readiness-endepunkt. Han omfattar ikkje
+Dette starta som ein avgrensa, lesande kontroll av GitHub, GitOps og
+Kubernetes-context `default`, pluss offentlege versjons-/readiness-endepunkt.
+Kontrollen omfattar ikkje
 autentisert chat, lasttest eller måling av PostgreSQL under belastning.
 
 | Kjelde | Stadfesta tilstand |
 | --- | --- |
-| Sprøyt `main` | `59e06d5`. Pool-commitet `997eec6` er ikkje fletta dit. |
-| Open kjelde-PR-stabel | [#158](https://github.com/hbjoroy/sproyt/pull/158) GFM → `main`; [#159](https://github.com/hbjoroy/sproyt/pull/159) React-avslutning → #158; [#160](https://github.com/hbjoroy/sproyt/pull/160) SSE → #159; [#161](https://github.com/hbjoroy/sproyt/pull/161) delt pool → #160; [#162](https://github.com/hbjoroy/sproyt/pull/162) denne planen → #161. Alle var opne og mergeable ved kontrollen. Dei to vanlege CI-testjobbane viste grønt; fleire release-jobbar var markerte som hoppa over i PR-køyringane. |
+| Sprøyt `main` før samanslåing | `59e06d5`. Pool-commitet `997eec6` var ikkje fletta dit. |
+| Kjelde-PR-stabel ved første kontroll | [#158](https://github.com/hbjoroy/sproyt/pull/158) GFM → `main`; [#159](https://github.com/hbjoroy/sproyt/pull/159) React-avslutning → #158; [#160](https://github.com/hbjoroy/sproyt/pull/160) SSE → #159; [#161](https://github.com/hbjoroy/sproyt/pull/161) delt pool → #160; [#162](https://github.com/hbjoroy/sproyt/pull/162) denne planen → #161. Alle var opne og mergeable ved første kontroll. Dei to vanlege CI-testjobbane viste grønt; fleire release-jobbar var markerte som hoppa over i PR-køyringane. |
 | GitOps `main` | `b89af0b`; [#155](https://github.com/hbjoroy/rocket-applications/pull/155) og [#156](https://github.com/hbjoroy/rocket-applications/pull/156) er fletta. Både produksjon og canary har chart-kjelde låst til `997eec6` og image-digest `sha256:97e7191f2a5a8b6fad3e4dad84990cfcef7206ac09fdac9cc1a64d441212e73c`. Migreringsimaget er separat pinna. |
 | Levande Argo og Kubernetes | Begge applikasjonar er `Synced/Healthy`. Argo viser GitOps `b89af0b` og chart `997eec6`. Produksjon har 2/2 klare poddar og canary 1/1; alle tre brukar image-digesten ovanfor. ConfigMap-taka er høvesvis 4 og 2. |
 | Ekstern teneste | `/versionz` returnerte `997eec6` og `/readyz` HTTP 200 for begge miljø. |
 
-**Avviket:** Kode og chart er versjonerte og utrulla frå ein uforanderleg
-commit, men denne commiten er enno ikkje del av Sprøyt `main`. Det er ikkje
-ein uversjonert produksjonspatch. Likevel er utrullinga avhengig av at Git
-framleis kan levere commitobjektet når Argo treng ny rendering; ikkje slett
-eller omskriv greinene i stabelen før kjeldehistoria er integrert i `main`.
-Den lokale Rocket-klonen er eldre enn GitOps `main` og må ikkje brukast som
-bevis for noverande produksjonskonfigurasjon.
+**Samanslåing av kjeldehistorikken:** #158, #159, #160 og #161 vart fletta i
+denne rekkjefølgja med merge-commit. Basen for neste PR vart sett til `main`
+etter kvart steg; filsettet i PR-diffen var likt før og etter. Sprøyt `main`
+er no `fb30b3a` og inneheld både `ab7531f` (SSE) og `997eec6` (delt pool)
+som forfedrar. `src/`, `frontend/` og `helm/sproyt/` i `main` er identiske
+med det utrulla `997eec6`-treet. Dokument-PR #162 kjem i tillegg.
 
-**Trygg veg til `main` (forslag, ikkje utført):** Gå gjennom PR-diffane i
-rekkjefølgja #158 → #159 → #160 → #161 → #162. GitHub-repoet tillèt
-merge-commit; bruk det i denne stabelen for å bevare dei opphavlege commitane
-og forfedretilhøvet, særleg GitOps-pinna `997eec6`. Etter kvart steg: rett
-basen for neste PR til oppdatert `main`, kontroller at diffen berre inneheld
-den PR-en si eiga endring, køyr relevante testar og sjekk at GitOps-pinna
-chart-commit framleis er tilgjengeleg. Stopp ved konflikt eller uventa diff
-og avklar han før neste samanslåing. Endeleg `main` skal innehalde `997eec6`,
-og GitOps skal framleis peike på same verifiserte image til ei eiga leveranse
-blir bestilt. Ingen samanslåing eller utrulling er gjort i dette steget.
+Dette lukkar avviket der CD peika på kode utanfor `main`. GitOps peikar framleis
+på den same verifiserte chart-commiten og image-digesten; ingen ny appversjon
+vart rulla ut ved samanslåinga. Den lokale Rocket-klonen er eldre enn GitOps
+`main` og må ikkje brukast som bevis for noverande produksjonskonfigurasjon.
 
 ## Vurdering i rekkjefølgje
 
