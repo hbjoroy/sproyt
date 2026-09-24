@@ -49,14 +49,14 @@ autentisert chat, lasttest eller måling av PostgreSQL under belastning.
 **Samanslåing av kjeldehistorikken:** #158, #159, #160 og #161 vart fletta i
 denne rekkjefølgja med merge-commit. Basen for neste PR vart sett til `main`
 etter kvart steg; filsettet i PR-diffen var likt før og etter. Sprøyt `main`
-er no `fb30b3a` og inneheld både `ab7531f` (SSE) og `997eec6` (delt pool)
+er no `c0de238` etter dokument-PR #162 og inneheld både `ab7531f` (SSE) og `997eec6` (delt pool)
 som forfedrar. `src/`, `frontend/` og `helm/sproyt/` i `main` er identiske
-med det utrulla `997eec6`-treet. Dokument-PR #162 kjem i tillegg.
+med det utrulla `997eec6`-treet.
 
 Dette lukkar avviket der CD peika på kode utanfor `main`. GitOps peikar framleis
 på den same verifiserte chart-commiten og image-digesten; ingen ny appversjon
-vart rulla ut ved samanslåinga. Den lokale Rocket-klonen er eldre enn GitOps
-`main` og må ikkje brukast som bevis for noverande produksjonskonfigurasjon.
+vart rulla ut ved samanslåinga. Den lokale Rocket-klonen var eldre ved første
+kontroll, men vart fast-forwarda til GitOps `main` (`b89af0b`).
 
 ## Vurdering i rekkjefølgje
 
@@ -72,6 +72,9 @@ vart rulla ut ved samanslåinga. Den lokale Rocket-klonen er eldre enn GitOps
    Vurder klientnamn og ein eksplisitt driftsreserve før nytt pooltak blir
    foreslått. Dersom delt pool skaper intern konkurranse, undersøk først kva
    arbeid som held ei tilkopling lenge.
+   [Første samla måling](database-capacity-assessment-2026-09-24.md) er gjord;
+   dokumenterte tak og poolventemålingar for alle klientane står att før
+   budsjettet kan godkjennast.
 3. **Kartlegg leveringskontraktane.** Spor kvittering mot database-commit,
    `NOTIFY` etter commit, listener-reconnect, innhenting av etterslep,
    edit/delete/reaction, request-id og utgåtte/overtatte leases. Skil ei
