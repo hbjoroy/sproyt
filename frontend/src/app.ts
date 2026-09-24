@@ -13,6 +13,7 @@
       import { AgentApi, EnrollmentApi, HttpClient, IntegrationApi, NotificationApi, ProcessApi, isEnrollmentNotConfigured, type CreatedAgent, type ProcessView } from "./api";
       import { requireElement, requireElements } from "./dom";
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
+      import { createSseSocketFactory } from "./sse-socket";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
       import { NavigationController } from "./navigation";
       import { createSendAdmissionPolicy } from "./send-admission-wasm";
@@ -283,6 +284,8 @@
 
       let sessionController: SessionController;
       const connectionSupervisor = createConnectionController({
+        createFallbackSocket: createSseSocketFactory(),
+        forceFallback: new URLSearchParams(window.location.search).get("transport") === "sse",
         websocketUrl: () => {
           const protocol = window.location.protocol === "https:" ? "wss" : "ws";
           const url = new URL(`${protocol}://${window.location.host}/ws`);
@@ -850,8 +853,8 @@
       window.addEventListener("input", noteUserActivity, { passive: true });
 
       window.addEventListener("pageshow", (event) => resumeAfterBackground(event.persisted));
-      window.addEventListener("focus", () => resumeAfterBackground(false));
-      window.addEventListener("online", () => resumeAfterBackground(true));
+      window.addEventListener("focus", () => { resumeAfterBackground(false); connectionSupervisor.probeWebsocket(); });
+      window.addEventListener("online", () => { resumeAfterBackground(true); connectionSupervisor.probeWebsocket(); });
       window.addEventListener("pageshow", refreshVisibleInvitationCards);
       window.addEventListener("focus", refreshVisibleInvitationCards);
 
@@ -3410,7 +3413,7 @@
           if (knownChannels.find(channel => channel.id === event.payload.channel_id)?.is_direct) {
             sendCommand("list_channel_users", { channel_id: event.payload.channel_id });
           }
-          setConnectionStatus("Tilkopla");
+          setConnectionStatus(connectionSupervisor.snapshot().transport === "sse" ? "Tilkopla via reserve" : "Tilkopla");
           renderConversationIdentity();
           event.payload.history.forEach(appendTimelineMessage);
           reconcileUncertainDeliveries(event.payload.channel_id, event.payload.history);
@@ -3423,7 +3426,7 @@
           attachMediaButton.disabled = false;
           messageEmojiPicker.setAttribute("aria-disabled", "false");
           syncComposerState();
-          setConnected(true, "Tilkopla");
+          setConnected(true, connectionSupervisor.snapshot().transport === "sse" ? "Tilkopla via reserve" : "Tilkopla");
           // A journal entry is replayed only after both identity (hello) and
           // this channel subscription exist.  It retains the same request id.
           void durableJournalReady.then(() => replayDurableSends(event.payload.channel_id));

@@ -19,6 +19,124 @@ use tokio_tungstenite::{
 
 type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
+#[tokio::test]
+async fn http_command_fallback_rejects_cross_origin_requests() {
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+    let client = reqwest::Client::new();
+    let url = format!("http://{address}/api/v1/commands?participant=fallback-user");
+    let command = serde_json::json!({
+        "protocol": "sproyt.chat.v1", "request_id": "fallback-hello", "type": "hello"
+    });
+
+    let rejected = client
+        .post(&url)
+        .header("origin", "https://other.example")
+        .json(&command)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), axum::http::StatusCode::FORBIDDEN);
+
+    let stream = client
+        .get(format!(
+            "http://{address}/api/v1/events?participant=fallback-user&bootstrap=true"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), axum::http::StatusCode::OK);
+    assert!(
+        stream.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+    assert_eq!(stream.headers()["x-accel-buffering"], "no");
+
+    let accepted = client
+        .post(&url)
+        .header("origin", format!("http://{address}"))
+        .json(&command)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), axum::http::StatusCode::OK);
+    let event: serde_json::Value = accepted.json().await.unwrap();
+    assert_eq!(event["type"], "hello");
+    assert_eq!(event["request_id"], "fallback-hello");
+    server.abort();
+}
+
+#[tokio::test]
+async fn event_stream_reports_a_gap_beyond_recent_history() {
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server, state) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    let principal = state
+        .auth
+        .authenticate_request(Some("gap-reader".to_owned()), None)
+        .await
+        .unwrap();
+    state
+        .chat
+        .ensure_user(principal.user.clone())
+        .await
+        .unwrap();
+    let channel = state
+        .chat
+        .list_channels(principal.user.id.clone())
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    for index in 1..=60 {
+        state
+            .chat
+            .send_message(
+                channel.id.clone(),
+                principal.user.id.clone(),
+                crate::domain::MessageBody::new(format!("message {index}")).unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    let mut response = reqwest::Client::new()
+        .get(format!("http://{address}/api/v1/events?participant=gap-reader&channel_id={}&request_id=gap-subscription&after=1", channel.id))
+        .send().await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut body = String::new();
+        while !body.contains("\"type\":\"lagged\"") {
+            let chunk = response
+                .chunk()
+                .await
+                .unwrap()
+                .expect("stream closed before lagged event");
+            body.push_str(std::str::from_utf8(&chunk).unwrap());
+        }
+        body
+    })
+    .await
+    .unwrap();
+    assert!(body.contains("\"type\":\"subscription_started\""));
+    assert!(body.contains("\"last_seen_sequence\":1"));
+    assert!(body.contains("\"latest_known_sequence\":60"));
+    assert!(body.contains("\"skipped\":9"));
+    server.abort();
+}
+
 struct BrowserClient;
 
 impl BrowserClient {
@@ -1436,8 +1554,10 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         BROWSER_CLIENT.contains("const url = new URL(`${protocol}://${window.location.host}/ws`)")
     );
     assert!(
-        CONNECTION_SOURCE.contains("const nextSocket = createSocket(dependencies.websocketUrl())")
+        CONNECTION_SOURCE
+            .contains("const nextSocket = useFallback ? dependencies.createFallbackSocket!")
     );
+    assert!(CONNECTION_SOURCE.contains(": createSocket(dependencies.websocketUrl())"));
     assert!(!BROWSER_CLIENT.contains("let subscribedChannelId = null"));
     assert!(
         BROWSER_CLIENT
@@ -1643,8 +1763,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         "window.addEventListener(\"pageshow\", (event) => resumeAfterBackground(event.persisted))"
     ));
     assert!(
-        BROWSER_CLIENT
-            .contains("window.addEventListener(\"online\", () => resumeAfterBackground(true))")
+        BROWSER_CLIENT.contains("window.addEventListener(\"online\", () => { resumeAfterBackground(true); connectionSupervisor.probeWebsocket(); })")
     );
     assert!(
         BROWSER_CLIENT
@@ -1955,7 +2074,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("grid-template-rows: 52px minmax(0, 1fr) auto;"));
     assert!(BROWSER_CLIENT.contains("form.send { grid-template-columns: minmax(0, 1fr) auto"));
     assert!(BROWSER_CLIENT.contains(".connection-status-toggle[aria-expanded=\"true\"] + .status"));
-    assert!(BROWSER_CLIENT.contains("setConnectionStatus(\"Tilkopla\")"));
+    assert!(BROWSER_CLIENT.contains("setConnectionStatus(connectionSupervisor.snapshot().transport === \"sse\" ? \"Tilkopla via reserve\" : \"Tilkopla\")"));
     assert!(
         BROWSER_CLIENT
             .contains("mobileNavigationToggle.setAttribute(\"aria-expanded\", String(open))")
