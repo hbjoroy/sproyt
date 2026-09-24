@@ -50,9 +50,8 @@ hostnames and URLs without this explicit query retain the default UI.
    actions and selection/search callbacks. Group IDs must not be display names.
 5. Supply timeline messages, the active channel ID, existing timestamp formatting,
    permitted actions, pagination and scroll/read policy. `MarkdownContent` owns
-   safe Markdown and local Mermaid rendering. `SafeDomContent` temporarily hosts
-   invitation controls in an isolated node; return cleanup for host-owned listeners.
-   Keep its render callback stable until the rendered content actually changes.
+   safe Markdown and local Mermaid rendering. Invitation cards are React-owned
+   and subscribe to the application invitation state owner.
 6. Pass the adapted composer as `composer`, the design-system `ThreadPane` as
    `thread`, and focused dialogs as `overlays`. These slots deliberately do not
    replace attachment-only sending, drafts, invitations or reaction policy with

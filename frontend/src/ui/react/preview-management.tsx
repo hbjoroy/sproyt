@@ -12,9 +12,8 @@ export type ManagementDestination =
 
 /** Focused management tasks share the host's commands and state. Opening the
  * directory never creates invitations, credentials or processes. */
-export function PreviewManagement({ snapshot, onNavigate, capabilities, settings, community, advanced }: {
+export function PreviewManagement({ snapshot, capabilities, settings, community, advanced }: {
   snapshot: ConversationSnapshot;
-  onNavigate: (destination: ManagementDestination) => void;
   capabilities: { agent: boolean; heart: boolean };
   settings: PreviewSettingsHost;
   community: CommunityHost;
@@ -39,7 +38,7 @@ export function PreviewManagement({ snapshot, onNavigate, capabilities, settings
       } else if (destination.kind === "agent" || destination.kind === "heart") {
         advancedTrigger.current = event.currentTarget;
         setAdvancedKind(destination.kind);
-      } else onNavigate(destination);
+      }
     }}>{label}</Button>;
   return <>
     <Button onClick={event => {

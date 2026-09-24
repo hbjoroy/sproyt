@@ -31,6 +31,27 @@ async function enter(page: Page, participant: string, preview = true) {
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
 }
 
+test("the compact composer closes an explicitly opened tool tray after its draft is sent or cleared", async ({ page }) => {
+  await enter(page, "composer-compact-tools");
+  const preview = page.locator("#sproyt-react-preview");
+  const input = preview.getByRole("textbox", { name: "Skriv melding" });
+  const toggle = preview.getByRole("button", { name: "Skriveverktøy", exact: true });
+  const tray = preview.locator(".sp-composer-tools");
+
+  await toggle.click();
+  await expect(tray).toBeVisible();
+  await input.fill("rydde vekk verktøy");
+  await input.press("Enter");
+  await expect(input).toHaveValue("");
+  await expect(tray).toBeHidden();
+
+  await toggle.click();
+  await expect(tray).toBeVisible();
+  await input.fill("mellombels tekst");
+  await input.fill("");
+  await expect(tray).toBeHidden();
+});
+
 test("emoji replaces the current selection and restores the caret in channel and thread drafts", async ({ page }) => {
   await enter(page, "emoji-composer");
   const preview = page.locator("#sproyt-react-preview");

@@ -1,8 +1,8 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
-import { useCallback, useState, type PointerEvent } from "react";
+import { useState, type PointerEvent } from "react";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import type { ApplicationRuntime } from "../../application/runtime";
-import type { SproytThemeMode } from "../design-system";
+import { installSproytStyles, type SproytThemeMode } from "../design-system";
 import { createConversationViewProps } from "./host-adapter";
 import type { ComposerTarget } from "./host-adapter";
 import { mountConversationView } from "./mount";
@@ -11,8 +11,9 @@ import type { PreviewReactionHost } from "./preview-reactions";
 import { PreviewComposer, type PreviewComposerHost } from "./preview-composer";
 import { PreviewMediaContent } from "./preview-media";
 export type { PreviewComposerState } from "./preview-composer";
-import { PreviewManagement, type ManagementDestination } from "./preview-management";
-import { SafeDomContent } from "./safe-dom-content";
+import { PreviewManagement } from "./preview-management";
+import { InvitationCard } from "./invitation-card";
+import { invitationTokensFromMessage, type InvitationCards } from "../../application/invitation-cards";
 import type { ChatMessage } from "../../types";
 import type { PreviewSettingsHost } from "./preview-settings";
 import { PreviewCommunity, type CommunityHost } from "./preview-community";
@@ -49,16 +50,13 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
     threadRevealMessageId: string | null;
   }>;
   readonly messageStatus: (message: ChatMessage) => string | undefined;
-  /** The host still owns live invitation actions. Markdown and Mermaid are
-   * rendered locally by React; media uses PreviewMediaContent below. */
-  readonly renderMessageDecorations: (message: ChatMessage, target: HTMLDivElement) => void | (() => void);
+  readonly invitations: InvitationCards;
   readonly threadLoad: () => { readonly loading: boolean; readonly error?: string };
   readonly canEditMessage: (message: ChatMessage) => boolean;
   readonly editMessage: (messageId: string, body: string) => void;
   readonly deleteMessage: (messageId: string) => void;
   readonly returnToComposer: (target?: ComposerTarget) => void;
   readonly managementCapabilities: () => { agent: boolean; heart: boolean };
-  readonly openManagement: (destination: ManagementDestination) => void;
   readonly setChannelNotifications: (channelId: string, enabled: boolean) => void;
   /** Persists both host-owned composer scopes before starting login. */
   readonly reauthenticateNow: () => void;
@@ -93,7 +91,7 @@ function ChannelMembersIcon() {
   </svg>;
 }
 
-function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost }) {
+function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -105,10 +103,10 @@ function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSna
   const notifications = conversation?.notifications;
   const openDetails = () => { setOpen(false); requestAnimationFrame(() => setDetailsOpen(true)); };
   return <>
-    <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
+    {!compact && <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
       aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={openDetails}><ChannelMembersIcon /></Button>
-    <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
-      aria-label="Kanalval" title="Kanalval" onClick={() => setOpen(true)}><span aria-hidden="true">⋯</span></Button>
+    }<Button className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"} variant="quiet"
+      aria-label="Kanalval" title="Kanalval" onClick={() => setOpen(true)}><span aria-hidden="true">⋯</span>{compact && <span>Kanalval</span>}</Button>
     <Dialog open={open} title={`Kanalval: ${channel.name}`} closeLabel="Lukk kanalvala"
       onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
       <div className="sp-channel-menu-dialog">
@@ -139,10 +137,9 @@ function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSna
 }
 
 function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
-  const render = useCallback((target: HTMLDivElement) => host.renderMessageDecorations(message, target), [host, message]);
   return <div className="sp-message-content">
     <MarkdownContent source={markdownTextFromMessage(message.body)} />
-    <SafeDomContent render={render} />
+    {invitationTokensFromMessage(message.body).map((token, index) => <InvitationCard key={`${token}-${index}`} token={token} host={host.invitations} />)}
   </div>;
 }
 
@@ -186,6 +183,7 @@ function PreviewMessageMutations({ host, message }: { readonly host: Development
 /** Local preview. Domain state, transport and commands retain their
  * existing owner; incomplete mutation/media flows stay in the full interface. */
 export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
+  installSproytStyles();
   const container = document.createElement("section");
   container.id = "sproyt-react-preview";
   container.setAttribute("aria-label", "Sprøyt");
@@ -259,25 +257,32 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       revealMessageId: revealThreadMessage
     });
     previousSnapshot = snapshot;
+    const compactContext = snapshot.activeChannel?.is_direct ? "Direkte" : snapshot.activeChannel?.circle_id
+      ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel?.circle_id)?.name ?? "Vennekrets"
+      : snapshot.activeChannel ? "Felles" : undefined;
+    const backToConversations = () => { view = "list"; update(); };
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view,
     header: <>{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
-      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}>
+      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}
+        compactConversation={view === "detail" ? {
+          context: compactContext, title: snapshot.title, onBack: backToConversations
+        } : undefined}>
+      {view === "detail" && <div className="sp-mobile-channel-menu"><ChannelActions compact snapshot={snapshot} host={host} /></div>}
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
       <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced}
-        community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }}
-        onNavigate={destination => { close(); host.openManagement(destination); }} /></HeaderActions></>,
+        community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions></>,
     navigationActions: null,
     contextActions: <ChannelActions snapshot={snapshot} host={host} />,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}
       error={conversation.notifications.error} onChange={host.setChannelNotifications} /> : null,
-    onBack() { view = "list"; update(); },
+    onBack: backToConversations,
     onQueryChange(query) { host.search(query); update(); },
     onSelect(channelId) { reactionPicker.close(); host.select(channelId); view = "detail"; update(); },
     onCloseThread() {
@@ -304,9 +309,10 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       formatTime: sentAt => new Date(sentAt).toLocaleTimeString(["nn-NO", "nb-NO"], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
       formatAuthor: message => {
         const profile = host.settings.profileFor?.(message.sender_id);
-        return [host.isOwnMessage(message) ? "Du" : message.sender_display_name,
+        return [host.isOwnMessage(message) ? "Du" : message.sender_display_name, profile?.early_adopter ? "✨" : "",
           profile?.status_emoji.trim(), profile?.status_text.trim()].filter(Boolean).join(" · ");
       },
+      earlyAdopter: message => Boolean(host.settings.profileFor?.(message.sender_id)?.early_adopter),
       messageStatus: host.messageStatus,
       onReactionRequest: reactionPicker.open,
       renderActions: (message, context) => {
@@ -320,9 +326,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         return <PreviewReactionActions message={message} host={host} open={reactionPicker.open}
           primaryAction={threadAction} overflowActions={<PreviewMessageMutations message={message} host={host} />} />;
       },
-      // The established DOM renderer is a deliberately isolated island. It
-      // preserves the existing safe Markdown, Mermaid, media and invitation
-      // behavior while React owns the surrounding message component.
+      // React owns all visible message content, including Markdown, Mermaid,
+      // media and invitation cards. The host supplies state and commands only.
       renderContent: message => host.renderMode() === "raw"
         ? <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.body}</pre>
         : <><PreviewMessageContent host={host} message={message} /><PreviewMediaContent body={message.body} mediaOnly /></>

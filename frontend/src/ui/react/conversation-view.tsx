@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type { ReactNode, Ref } from "react";
 import { AppShell, Button, ConversationList, Message, Status, TextField, Theme } from "@sproyt/ui/react";
 import type { Conversation, ThemeMode } from "@sproyt/ui/react";
@@ -67,7 +67,9 @@ export interface TimelineProps {
   readonly notices?: readonly string[];
   readonly formatTime: (sentAt: string) => string;
   readonly formatAuthor?: (message: ChatMessage) => string;
-  /** Use the existing safe renderer (SafeDomContent is available as a bridge). */
+  /** Marks public first-50 members without exposing their private signup number. */
+  readonly earlyAdopter?: (message: ChatMessage) => boolean;
+  /** Render safe React-owned message content. */
   readonly renderContent: (message: ChatMessage) => ReactNode;
   /** Permission checks, replies, reaction counts, edit and delete stay with the host. */
   readonly renderActions?: (message: ChatMessage, context?: { readonly threadParent: boolean }) => ReactNode;
@@ -107,7 +109,7 @@ export function ConversationTimeline(props: TimelineProps) {
   </div>;
 }
 
-export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "renderContent" | "renderActions" | "messageStatus" | "onReactionRequest">;
+export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderContent" | "renderActions" | "messageStatus" | "onReactionRequest">;
 
 export function formatMessageDateTime(sentAt: string): string {
   return new Date(sentAt).toLocaleString(["nn-NO", "nb-NO"], { dateStyle: "full", timeStyle: "medium" });
@@ -121,6 +123,8 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   latestMessage.current = message;
   const fullTimestamp = formatMessageDateTime(message.sent_at);
   const timestampTooltipId = `message-time-${message.id}`;
+  const earlyAdopter = props.earlyAdopter?.(message) ?? false;
+  const earlyAdopterTooltipId = `early-adopter-${message.id}`;
   const requestReaction = props.onReactionRequest;
   const deliveryStatus = props.messageStatus?.(message);
   const visibleStatus = deliveryStatus === "Sendt" ? undefined : deliveryStatus?.replace(/^Sendt · /, "");
@@ -205,11 +209,44 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   }, [fullTimestamp, timestampTooltipId]);
   useEffect(() => {
     const author = wrapper.current?.querySelector(".sp-message-meta strong");
-    if (author instanceof HTMLElement) author.title = author.textContent ?? "";
-  }, [message.sender_display_name, props.formatAuthor]);
+    if (!(author instanceof HTMLElement)) return;
+    author.title = earlyAdopter ? "Blant dei første 50 på Sprøyt" : author.textContent ?? "";
+    if (!earlyAdopter) return;
+    author.tabIndex = 0;
+    author.setAttribute("role", "button");
+    author.setAttribute("aria-describedby", earlyAdopterTooltipId);
+    author.setAttribute("aria-expanded", "false");
+    const stopGesture = (event: Event) => event.stopPropagation();
+    const toggle = (event: Event) => {
+      if (event instanceof KeyboardEvent && event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault(); event.stopPropagation();
+      const owner = wrapper.current;
+      if (!owner) return;
+      const open = owner.dataset.earlyAdopterOpen !== "true";
+      if (open) owner.dataset.earlyAdopterOpen = "true";
+      else delete owner.dataset.earlyAdopterOpen;
+      author.setAttribute("aria-expanded", String(open));
+    };
+    const close = (event: Event) => {
+      if (event.target instanceof Node && author.contains(event.target)) return;
+      if (wrapper.current) delete wrapper.current.dataset.earlyAdopterOpen;
+      author.setAttribute("aria-expanded", "false");
+    };
+    author.addEventListener("pointerdown", stopGesture);
+    author.addEventListener("click", toggle);
+    author.addEventListener("keydown", toggle);
+    document.addEventListener("pointerdown", close, true);
+    return () => {
+      author.removeEventListener("pointerdown", stopGesture);
+      author.removeEventListener("click", toggle);
+      author.removeEventListener("keydown", toggle);
+      document.removeEventListener("pointerdown", close, true);
+    };
+  }, [earlyAdopter, earlyAdopterTooltipId, message.sender_display_name, props.formatAuthor]);
+  const author = props.formatAuthor?.(message) ?? message.sender_display_name;
   return <div ref={wrapper} data-message-id={message.id} data-date-start={props.dateLabel ? "true" : undefined}>
     {props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
-    <Message author={props.formatAuthor?.(message) ?? message.sender_display_name} dateTime={message.sent_at}
+    <Message author={author} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
         actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}
@@ -218,6 +255,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
         {message.deleted_at ? <p>Meldinga er sletta.</p> : props.renderContent(message)}
     </Message>
     <span id={timestampTooltipId} className="sp-message-time-tooltip" role="tooltip">{fullTimestamp}</span>
+    {earlyAdopter && <span id={earlyAdopterTooltipId} className="sp-early-adopter-tooltip" role="tooltip">Blant dei første 50 på Sprøyt</span>}
   </div>;
 }
 
@@ -251,15 +289,14 @@ function ConnectionIndicator({ connected, status }: { readonly connected: boolea
 
 export function ConversationView(props: ConversationViewProps) {
   const snapshot = useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
-  const titleId = useId();
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
     <AppShell view={props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
       header={<>{props.header}{snapshot.connection.status && <ConnectionIndicator {...snapshot.connection} />}</>}>
       <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}>
-        <section className="sp-channel-pane" aria-labelledby={titleId}>
+        <section className="sp-channel-pane" aria-label={props.title}>
           <header className="sp-context">
             <Button className="sp-only-compact" onClick={props.onBack}>← Samtalar</Button>
-            <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 id={titleId} className="sp-heading">{props.title}</h1></div>
+            <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 className="sp-heading">{props.title}</h1></div>
             {props.contextActions}
           </header>
           <ConversationTimeline {...props.timeline} />

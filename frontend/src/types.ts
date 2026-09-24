@@ -4,7 +4,7 @@ export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export interface JsonObject { readonly [field: string]: JsonValue; }
 export type Identifier = string;
 /** `handle` is the stable, server-assigned mention name without its `@`. */
-export interface UserProfile { id: string; kind: "human" | "agent"; display_name: string; handle: string | null; external_provider: string | null; external_subject: string | null; created_at: string; status_text: string; status_emoji: string; status_expires_at: string | null; }
+export interface UserProfile { id: string; kind: "human" | "agent"; display_name: string; handle: string | null; external_provider: string | null; external_subject: string | null; created_at: string; status_text: string; status_emoji: string; status_expires_at: string | null; early_adopter: boolean; }
 export interface ChannelBase { id: string; slug: string; name: string; kind: "public" | "local" | "private"; circle_id: string | null; created_by: string; }
 /** Rust ChannelSummary: deliberately does not include Channel.created_by. */
 export interface Channel { id: string; slug: string; name: string; kind: "public" | "local" | "private"; circle_id: string | null; direct_user_id: string | null; /** Missing only while a new browser overlaps an older pod. */ is_direct?: boolean; description: string; role: "owner" | "moderator" | "member" | "observer"; last_read_sequence: number; latest_sequence: number; }
@@ -119,10 +119,10 @@ const isNullableString = (value: unknown): value is string | null => value === n
 const isOneOf = <T extends string>(value: unknown, choices: readonly T[]): value is T => isString(value) && choices.some((choice) => choice === value);
 const objectWith = (value: unknown, required: Readonly<Record<string, (entry: unknown) => boolean>>): value is Record<string, unknown> => isRecord(value) && Object.entries(required).every(([key, validate]) => validate(value[key]));
 const listOf = <T>(guard: (value: unknown) => value is T) => (value: unknown): value is T[] => Array.isArray(value) && value.every(guard);
-/** Older pods omit `handle` during a rolling deployment; normalise that to null. */
-type WireUserProfile = Omit<UserProfile, "handle"> & { handle?: string | null };
-const isUser = (value: unknown): value is WireUserProfile => objectWith(value, { id: isString, kind: (v) => isOneOf(v, ["human", "agent"]), display_name: isString, handle: (entry) => entry === undefined || isNullableString(entry), external_provider: isNullableString, external_subject: isNullableString, created_at: isString, status_text: isString, status_emoji: isString, status_expires_at: isNullableString });
-const userFromWire = (user: WireUserProfile): UserProfile => ({ ...user, handle: user.handle ?? null });
+/** Older pods omit newer profile fields during a rolling deployment. */
+type WireUserProfile = Omit<UserProfile, "handle" | "early_adopter"> & { handle?: string | null; early_adopter?: boolean };
+const isUser = (value: unknown): value is WireUserProfile => objectWith(value, { id: isString, kind: (v) => isOneOf(v, ["human", "agent"]), display_name: isString, handle: (entry) => entry === undefined || isNullableString(entry), external_provider: isNullableString, external_subject: isNullableString, created_at: isString, status_text: isString, status_emoji: isString, status_expires_at: isNullableString, early_adopter: (entry) => entry === undefined || isBoolean(entry) });
+const userFromWire = (user: WireUserProfile): UserProfile => ({ ...user, handle: user.handle ?? null, early_adopter: user.early_adopter ?? false });
 const isChannelBase = (value: unknown): value is ChannelBase => objectWith(value, { id: isString, slug: isString, name: isString, kind: (v) => isOneOf(v, ["public", "local", "private"]), circle_id: isNullableString, created_by: isString });
 const isChannel = (value: unknown): value is Channel => objectWith(value, { id: isString, slug: isString, name: isString, kind: (v) => isOneOf(v, ["public", "local", "private"]), circle_id: isNullableString, direct_user_id: isNullableString, is_direct: (entry) => entry === undefined || isBoolean(entry), description: isString, role: (v) => isOneOf(v, ["owner", "moderator", "member", "observer"]), last_read_sequence: isCount, latest_sequence: isCount });
 type WireMessage = Omit<ChatMessage, "parent_message_id" | "edited_at" | "deleted_at"> & { parent_message_id?: string | null; edited_at?: string | null; deleted_at?: string | null };

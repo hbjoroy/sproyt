@@ -47,7 +47,9 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }
     await expect(timestampTooltip).toBeHidden();
     await expect(composer).toHaveValue("");
     await composer.fill("Kanalutkast som skal bli verande");
-    await channel.getByRole("button", { name: "← Samtalar" }).click();
+    const compactHeader = app.locator(".sp-mobile-conversation-context");
+    await expect(compactHeader).toBeVisible();
+    await compactHeader.getByRole("button", { name: "Samtalar", exact: true }).click();
     const navigation = app.getByRole("navigation", { name: "Samtalar", exact: true });
     await expect(navigation).toBeVisible();
     await navigation.locator("button[aria-current=page]").click();
@@ -79,11 +81,25 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   const channel = app.locator(".sp-channel-pane");
   const composer = channel.getByRole("textbox", { name: "Skriv melding" });
   await expect(composer).toBeEnabled({ timeout: 15_000 });
+  await expect(app.locator(".sp-sproyt-brand img")).toBeVisible();
+  await expect(app.locator(".sp-sproyt-brand-label")).toBeHidden();
+  await expect(channel.locator(":scope > .sp-context")).toBeHidden();
+  const compactTitle = app.locator(".sp-mobile-conversation-title");
+  await expect(compactTitle).toBeVisible();
+  await compactTitle.click();
+  await expect(app.locator(".sp-mobile-conversation-name")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(app.locator(".sp-mobile-conversation-name")).toBeHidden();
+  await expect(compactTitle).toBeFocused();
+  await compactTitle.click();
+  await expect(app.locator(".sp-mobile-conversation-name")).toBeVisible();
   await composer.fill("Bevar mobilutkastet");
   const height = (await channel.locator(".sp-timeline").boundingBox())!.height;
   const menu = app.getByRole("button", { name: "Meny", exact: true });
   await menu.click();
+  await expect(app.locator(".sp-mobile-conversation-name")).toBeHidden();
   await expect(menu).toHaveAttribute("aria-expanded", "true");
+  await expect(app.getByRole("button", { name: "Kanalval", exact: true })).toBeVisible();
   await app.getByRole("button", { name: "Byt tema", exact: true }).click();
   await app.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
   const dialog = app.getByRole("dialog", { name: "Meny og innstillingar" });
@@ -248,6 +264,9 @@ test("channel overflow keeps notification and confirmed leave actions together",
   await page.goto("/?participant=preview-channel-overflow&ui=react");
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15_000 });
+  if (await preview.locator(".sp-mobile-conversation-context").isVisible()) {
+    await preview.getByRole("button", { name: "Meny", exact: true }).click();
+  }
   await preview.getByRole("button", { name: "Kanalval" }).click();
   const menu = preview.getByRole("dialog", { name: /Kanalval:/ });
   await expect(menu.getByRole("button", { name: /Varsel (på|av)/ })).toBeVisible();

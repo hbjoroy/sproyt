@@ -201,11 +201,10 @@ where
         })
         .await
         .unwrap();
-    assert!(
-        !serde_json::to_string(&repository.list_user_profiles(actor.clone()).await.unwrap())
-            .unwrap()
-            .contains("signup_ordinal")
-    );
+    let profiles = repository.list_user_profiles(actor.clone()).await.unwrap();
+    let public_profiles = serde_json::to_string(&profiles).unwrap();
+    assert!(!public_profiles.contains("signup_ordinal"));
+    assert!(public_profiles.contains("early_adopter"));
     assert_eq!(
         repository
             .export_user_data(actor.clone())

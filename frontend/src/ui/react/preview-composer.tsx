@@ -1,6 +1,6 @@
 import { Button, Dialog, Status, openReactionPicker, reactionEmoji } from "@sproyt/ui/react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { MediaObject } from "../../types";
+import type { ComposerSnapshot } from "../../application/composer-controller";
 import type { ComposerTarget } from "./host-adapter";
 import { DraftComposer } from "./draft-composer";
 import { PreviewAttachments } from "./preview-media";
@@ -12,15 +12,7 @@ export interface PreviewMention {
   readonly expandsDirect: boolean;
 }
 
-export interface PreviewComposerState {
-  readonly value: string;
-  readonly disabled: boolean;
-  readonly busy: boolean;
-  readonly sendOnEnter: boolean;
-  readonly media: readonly MediaObject[];
-  readonly uploadStatus?: string;
-  readonly error?: string;
-}
+export type PreviewComposerState = ComposerSnapshot;
 
 export interface PreviewComposerHost {
   readonly composer: (target: ComposerTarget) => PreviewComposerState;

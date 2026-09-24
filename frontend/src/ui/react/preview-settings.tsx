@@ -39,6 +39,9 @@ export function PreviewProfile({ host }: { host: PreviewSettingsHost }) {
   }
   if (!profile) return <Status>Profilen blir lasta. Lukk og opne innstillingane igjen om det tek lang tid.</Status>;
   return <div style={{ display: "grid", gap: 16 }}>
+    {profile.early_adopter && <p className="sp-profile-early-adopter" title="Du er blant dei første 50 på Sprøyt">
+      <span aria-hidden="true">✨</span> Første 50 på Sprøyt
+    </p>}
     {profile.handle && <p>Offentleg brukarnamn: @{profile.handle}</p>}
     <form onSubmit={event => { event.preventDefault(); void save(() => host.saveName(name.trim()), "Namnet er lagra."); }}>
       <TextField label="Visningsnamn" value={name} onChange={event => setName(event.target.value)} required disabled={busy} autoFocus />

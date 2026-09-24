@@ -264,7 +264,7 @@ impl ChatRepository for SqliteChatRepository {
             if result.rows_affected() != 1 {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let row = sqlx::query("select id,kind,display_name,handle,external_provider,external_subject,created_at,status_text,status_emoji,status_expires_at from users where id=?")
+            let row = sqlx::query("select id,kind,display_name,handle,external_provider,external_subject,created_at,status_text,status_emoji,status_expires_at,exists(select 1 from signup_ordinals where user_id=users.id and ordinal<=50) early_adopter from users where id=?")
                 .bind(actor.to_string()).fetch_one(&self.pool).await.map_err(sql_error)?;
             user_profile_from_row(row)
         })
@@ -298,7 +298,7 @@ impl ChatRepository for SqliteChatRepository {
             if exists.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at from users where kind = 'human' order by display_name collate nocase, id")
+            let rows = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at, exists(select 1 from signup_ordinals where user_id=users.id and ordinal<=50) early_adopter from users where kind = 'human' order by display_name collate nocase, id")
                 .fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -321,7 +321,7 @@ impl ChatRepository for SqliteChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join circle_memberships m on m.user_id=u.id where m.circle_id=? and u.kind='human' order by u.display_name collate nocase,u.id")
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at,exists(select 1 from signup_ordinals where user_id=u.id and ordinal<=50) early_adopter from users u join circle_memberships m on m.user_id=u.id where m.circle_id=? and u.kind='human' order by u.display_name collate nocase,u.id")
                 .bind(circle_id.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -341,7 +341,7 @@ impl ChatRepository for SqliteChatRepository {
             if result.rows_affected() == 0 {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let row = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at from users where id = ?")
+            let row = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at, exists(select 1 from signup_ordinals where user_id=users.id and ordinal<=50) early_adopter from users where id = ?")
                 .bind(actor.to_string()).fetch_one(&self.pool).await.map_err(sql_error)?;
             user_profile_from_row(row)
         })
@@ -1397,7 +1397,7 @@ impl ChatRepository for SqliteChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at from users u join channel_memberships m on m.user_id=u.id where m.channel_id=? and u.kind='human' order by u.display_name collate nocase,u.id")
+            let rows = sqlx::query("select u.id,u.kind,u.display_name,u.handle,u.external_provider,u.external_subject,u.created_at,u.status_text,u.status_emoji,u.status_expires_at,exists(select 1 from signup_ordinals where user_id=u.id and ordinal<=50) early_adopter from users u join channel_memberships m on m.user_id=u.id where m.channel_id=? and u.kind='human' order by u.display_name collate nocase,u.id")
                 .bind(channel_id.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(user_profile_from_row).collect()
         })
@@ -2845,6 +2845,7 @@ fn user_profile_from_row(row: sqlx::sqlite::SqliteRow) -> Result<UserProfile, Re
             external_subject: row.try_get("external_subject").map_err(sql_error)?,
             created_at: row.try_get("created_at").map_err(sql_error)?,
         },
+        early_adopter: row.try_get("early_adopter").map_err(sql_error)?,
         status_text: if expired {
             String::new()
         } else {
