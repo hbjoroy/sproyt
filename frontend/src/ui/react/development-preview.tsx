@@ -23,6 +23,7 @@ import { PreviewImageGeneration } from "./preview-imagegen";
 import type { ImageGenerationOwner } from "../../imagegen";
 import { PreviewInboxes, type PreviewInboxHost, type PreviewInboxState } from "./preview-inboxes";
 import { HeaderActions } from "./header-actions";
+import { MarkdownContent, markdownTextFromMessage } from "./markdown-content";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly imageGeneration: ImageGenerationOwner;
@@ -48,9 +49,9 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
     threadRevealMessageId: string | null;
   }>;
   readonly messageStatus: (message: ChatMessage) => string | undefined;
-  /** The established host renderer owns safe Markdown, media URLs, invitation
-   * actions and Mermaid loading. React only gives it an isolated node. */
-  readonly renderMessageContent: (message: ChatMessage, target: HTMLDivElement) => void | (() => void);
+  /** The host still owns live invitation actions. Markdown and Mermaid are
+   * rendered locally by React; media uses PreviewMediaContent below. */
+  readonly renderMessageDecorations: (message: ChatMessage, target: HTMLDivElement) => void | (() => void);
   readonly threadLoad: () => { readonly loading: boolean; readonly error?: string };
   readonly canEditMessage: (message: ChatMessage) => boolean;
   readonly editMessage: (messageId: string, body: string) => void;
@@ -138,8 +139,11 @@ function ChannelActions({ snapshot, host }: { readonly snapshot: ConversationSna
 }
 
 function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
-  const render = useCallback((target: HTMLDivElement) => host.renderMessageContent(message, target), [host, message]);
-  return <SafeDomContent className="sp-message-content" render={render} />;
+  const render = useCallback((target: HTMLDivElement) => host.renderMessageDecorations(message, target), [host, message]);
+  return <div className="sp-message-content">
+    <MarkdownContent source={markdownTextFromMessage(message.body)} />
+    <SafeDomContent render={render} />
+  </div>;
 }
 
 function PreviewMessageMutations({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {

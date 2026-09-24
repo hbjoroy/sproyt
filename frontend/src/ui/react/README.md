@@ -18,9 +18,11 @@ when narrow without unmounting the channel. Closing returns focus to the root's
 reply button. The hidden legacy thread remains inert and nonmodal until a
 handoff promotes it to the full modal composer.
 Mentions and image generation hand back to the full composer without sending or
-clearing the draft. Markdown, Mermaid diagrams, message media and invitation
-cards use the established safe renderer inside an isolated React-owned node;
-their command and response handling remains host-owned. Attached media uploads
+clearing the draft. Message Markdown is rendered by `react-markdown` with
+`remark-gfm`, so tables, strikethrough, lists, links and fenced code use a
+maintained parser while raw HTML remains inert. Mermaid is bundled locally and
+renders fenced `mermaid` blocks with strict security. Media is React-owned;
+live invitation cards remain in an isolated host-owned node. Attached media uploads
 through the existing host transport. Administration and other incomplete parity
 flows remain in that full UI. Other
 hostnames and URLs without this explicit query retain the default UI.
@@ -47,10 +49,10 @@ hostnames and URLs without this explicit query retain the default UI.
    host-filtered navigation groups with stable IDs, labels, unread counts, group
    actions and selection/search callbacks. Group IDs must not be display names.
 5. Supply timeline messages, the active channel ID, existing timestamp formatting,
-   safe content rendering, permitted actions, pagination and scroll/read policy.
-   `SafeDomContent` can host the current safe Markdown/media renderer in an isolated
-   node; return cleanup that cancels asynchronous rendering and listeners. Keep
-   its render callback stable until the rendered content actually changes.
+   permitted actions, pagination and scroll/read policy. `MarkdownContent` owns
+   safe Markdown and local Mermaid rendering. `SafeDomContent` temporarily hosts
+   invitation controls in an isolated node; return cleanup for host-owned listeners.
+   Keep its render callback stable until the rendered content actually changes.
 6. Pass the adapted composer as `composer`, the design-system `ThreadPane` as
    `thread`, and focused dialogs as `overlays`. These slots deliberately do not
    replace attachment-only sending, drafts, invitations or reaction policy with

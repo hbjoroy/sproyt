@@ -2,7 +2,7 @@
 
 Dato: 2026-09-16. Sist oppdatert: 2026-09-18. Status: fase 1–5 er gjennomførte og funksjonsmatrisa er migrert. Fase 6 er i arbeid: React er den einaste ordinære synlege brukarflata, medan den gamle DOM-verten enno finst gøymd som ein mellombels runtime-adapter.
 
-Den siste paritetsrunden la til synleg samla indikator for ulest, omtalar og opne oppgåver i innboksen, kanaloppretting i Felles, global registreringsinvitasjon til Sprøyt og direkte tilgang til medlemslista i ein kanal. Global registreringsinvitasjon krev database-migrasjon `0039`, som gjer kretsomfang valfritt utan å endre eksisterande kretsinvitasjonar. Den trygge rendereradapteren heiter `SafeDomContent`; han bevarer Markdown, Mermaid og anna rikt meldingsinnhald fram til rendererutskiljinga er ferdig.
+Den siste paritetsrunden la til synleg samla indikator for ulest, omtalar og opne oppgåver i innboksen, kanaloppretting i Felles, global registreringsinvitasjon til Sprøyt og direkte tilgang til medlemslista i ein kanal. Global registreringsinvitasjon krev database-migrasjon `0039`, som gjer kretsomfang valfritt utan å endre eksisterande kretsinvitasjonar. `MarkdownContent` brukar lokalt installert `react-markdown`, `remark-gfm` og Mermaid; rå HTML er avslått. `SafeDomContent` er no avgrensa til mellombelse interaktive invitasjonskort.
 
 ## Mål og avgrensing
 
