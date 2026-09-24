@@ -6,7 +6,9 @@ pub use postgres::PostgresChatRepository;
 #[allow(unused_imports)]
 pub use sqlite::SqliteChatRepository;
 
+use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::agent::{AgentRepository, SharedAgentRepository};
 use crate::config::{DatabaseConfig, DatabaseKind};
@@ -56,6 +58,7 @@ pub async fn migrate(config: &DatabaseConfig) -> Result<(), RepositoryError> {
 
 pub async fn connect_repositories(
     config: &DatabaseConfig,
+    postgres_pool: Option<&PgPool>,
 ) -> Result<Repositories, RepositoryError> {
     match config.kind() {
         DatabaseKind::Sqlite => {
@@ -72,7 +75,10 @@ pub async fn connect_repositories(
             })
         }
         DatabaseKind::Postgres => {
-            let repository = Arc::new(PostgresChatRepository::connect(config.url()).await?);
+            let pool = postgres_pool.ok_or_else(|| storage("PostgreSQL pool is missing"))?;
+            let repository = Arc::new(
+                PostgresChatRepository::connect_with_pool(config.url(), pool.clone()).await?,
+            );
             let chat: Arc<dyn ChatRepository> = repository.clone();
             let process: Arc<dyn ProcessRepository> = repository.clone();
             let agent: Arc<dyn AgentRepository> = repository.clone();
@@ -85,6 +91,24 @@ pub async fn connect_repositories(
             })
         }
     }
+}
+
+pub async fn connect_postgres_pool(
+    config: &DatabaseConfig,
+    max_connections: u32,
+) -> Result<Option<PgPool>, RepositoryError> {
+    if config.kind() == DatabaseKind::Sqlite {
+        return Ok(None);
+    }
+    let pool = PgPoolOptions::new()
+        .max_connections(max_connections)
+        .min_connections(0)
+        .acquire_timeout(Duration::from_secs(5))
+        .idle_timeout(Duration::from_secs(60))
+        .connect(config.url())
+        .await
+        .map_err(sql_error)?;
+    Ok(Some(pool))
 }
 
 fn storage(error: impl std::fmt::Display) -> RepositoryError {

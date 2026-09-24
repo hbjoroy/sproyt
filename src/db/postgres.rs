@@ -127,6 +127,10 @@ pub struct PostgresChatRepository {
 impl PostgresChatRepository {
     pub async fn connect(url: &str) -> Result<Self, RepositoryError> {
         let pool = PgPool::connect(url).await.map_err(sql_error)?;
+        Self::connect_with_pool(url, pool).await
+    }
+
+    pub async fn connect_with_pool(url: &str, pool: PgPool) -> Result<Self, RepositoryError> {
         let mut listener = PgListener::connect(url).await.map_err(sql_error)?;
         listener
             .listen("sproyt_messages")

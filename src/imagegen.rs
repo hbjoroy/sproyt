@@ -78,7 +78,10 @@ fn now() -> i64 {
 }
 
 impl ImageGeneration {
-    pub async fn from_env(config: &DatabaseConfig) -> Result<Option<Self>, Error> {
+    pub async fn from_env(
+        config: &DatabaseConfig,
+        postgres_pool: Option<&PgPool>,
+    ) -> Result<Option<Self>, Error> {
         let Ok(base) = std::env::var("SPROYT_COMFYUI_URL") else {
             return Ok(None);
         };
@@ -92,10 +95,7 @@ impl ImageGeneration {
         {
             return Err("invalid SPROYT_COMFYUI_URL".into());
         }
-        let store = match config.kind() {
-            DatabaseKind::Postgres => Store::Postgres(PgPool::connect(config.url()).await?),
-            DatabaseKind::Sqlite => Store::Sqlite(SqlitePool::connect(config.url()).await?),
-        };
+        let store = Self::connect_store(config, postgres_pool).await?;
         Ok(Some(Self {
             store,
             gateway: Arc::new(Gateway {
@@ -107,6 +107,19 @@ impl ImageGeneration {
                     .build()?,
             }),
         }))
+    }
+
+    async fn connect_store(
+        config: &DatabaseConfig,
+        postgres_pool: Option<&PgPool>,
+    ) -> Result<Store, Error> {
+        let store = match config.kind() {
+            DatabaseKind::Postgres => {
+                Store::Postgres(postgres_pool.ok_or("PostgreSQL pool is missing")?.clone())
+            }
+            DatabaseKind::Sqlite => Store::Sqlite(SqlitePool::connect(config.url()).await?),
+        };
+        Ok(store)
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<Job>, Error> {
@@ -614,6 +627,43 @@ impl ImageGeneration {
 mod tests {
     use super::*;
     use crate::domain::ChannelId;
+
+    #[tokio::test]
+    async fn postgres_imagegen_uses_the_shared_connection_budget() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .min_connections(0)
+            .acquire_timeout(Duration::from_millis(100))
+            .connect(&url)
+            .await
+            .unwrap();
+        let config = DatabaseConfig::new(url).unwrap();
+        let Store::Postgres(imagegen_pool) = ImageGeneration::connect_store(&config, Some(&pool))
+            .await
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        let held = pool.acquire().await.unwrap();
+        assert!(matches!(
+            sqlx::query_scalar::<_, i32>("select 1")
+                .fetch_one(&imagegen_pool)
+                .await,
+            Err(sqlx::Error::PoolTimedOut)
+        ));
+        drop(held);
+        assert_eq!(
+            sqlx::query_scalar::<_, i32>("select 1")
+                .fetch_one(&imagegen_pool)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(pool.size(), 1);
+    }
 
     #[test]
     fn draft_references_take_priority_and_never_exceed_three_slots() {

@@ -38,6 +38,14 @@ only `DATABASE_URL` and the log format: it does not initialize OIDC and remains
 available during provider outages, client-secret changes, and session-key
 rotation.
 
+`config.dbMaxConnections` bounds the one PostgreSQL SQLx pool shared by chat,
+processes, agents, integrations, notifications, and optional image generation.
+The default is 4 per application pod; the accepted range is 1–32. The realtime
+PostgreSQL listener keeps one dedicated connection outside that pool, so budget
+`dbMaxConnections + 1` per pod (plus the separate migration Job during release).
+Idle pooled connections close after 60 seconds and pool acquisition times out
+after 5 seconds. SQLite operation is unchanged.
+
 Heart is an optional internal component of this same Helm release, not a
 separate ArgoCD application. Enabling `heart.enabled` creates a private
 ClusterIP Service, Deployment, migration Job, PDB, and NetworkPolicy in the
