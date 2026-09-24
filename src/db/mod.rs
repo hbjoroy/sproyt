@@ -49,10 +49,7 @@ pub async fn migrate(config: &DatabaseConfig) -> Result<(), RepositoryError> {
             let repository = SqliteChatRepository::connect(config.url()).await?;
             repository.migrate().await
         }
-        DatabaseKind::Postgres => {
-            let repository = PostgresChatRepository::connect(config.url()).await?;
-            repository.migrate().await
-        }
+        DatabaseKind::Postgres => postgres::migrate(config.url()).await,
     }
 }
 

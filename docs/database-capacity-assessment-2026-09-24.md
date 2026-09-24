@@ -48,14 +48,15 @@ att. Dette reknar ikkje med migrering, Heart-rullering, backup eller endringar
 i andre appar. Verken Authentik-observasjonen eller låg Sprøyt-bruk er øvre
 grenser for dei tenestene.
 
-Ein særleg viktig detalj: `sproyt migrate` opprettar i dag
-`PostgresChatRepository::connect()`. Det opnar både ein vanleg SQLx-pool og
-ein separat realtime-lyttar. Den brukte SQLx 0.8.6-versjonen har standard
-`max_connections=10`, så **konfigurasjonstaket er opptil 11 per
-migreringsjobb**. Migreringa ser ut til å bruke langt færre i praksis, men
-jobben har ikkje eit eksplisitt lågt tak. Produksjon og canary kan ha kvar sin
-pre-upgrade-jobb; Heart har dessutan ein eigen migreringsjobb. Dei må reknast
-med i eit worst-case-budsjett før fleire samtidige utrullingar blir tillatne.
+`sproyt migrate` hadde tidlegare ein vanleg SQLx-pool med standardtak 10 og
+ein separat realtime-lyttar. **11 var eit konfigurasjonstak, ikkje målt eller
+sannsynleg normalbruk:** SQLx-migratoren nyttar normalt éi pooltilkopling om
+gongen, pluss lyttaren. Ein eigen migreringspool med maks éi tilkopling og
+utan lyttar avgrensar no kvar Sprøyt-migreringsjobb til éi tilkopling. Dette
+sparer normalt berre éi tilkopling per jobb og løyser ikkje clusterbudsjettet.
+Produksjon og canary kan ha kvar sin pre-upgrade-jobb; Heart har dessutan ein
+eigen migreringsjobb. Desse må framleis reknast med før fleire samtidige
+utrullingar blir tillatne.
 
 ## Målehol og konklusjon
 
@@ -80,9 +81,9 @@ desse punktprøvene. Eit godkjent clusterbudsjett må få dokumenterte tak for
 Authentik, Heart, banktenestene, backup og migrering, eit realistisk
 utrullingsscenario og ein uttrykkeleg driftsreserve under 97-plassgrensa.
 
-Første avgrensa oppfølging bør vere å gi Sprøyt-migrering eit eige, lågt
-tilkoplingstak utan realtime-lyttar, og å måle poolventing/timeouts samt
-namngje Sprøyt-sambanda. Etterpå kan ein samle tidsseriar og gjere ei
+Første avgrensa oppfølging er eit eige tilkoplingstak for Sprøyt-migrering
+utan realtime-lyttar. Vidare trengst måling av poolventing/timeouts og
+namngjeving av Sprøyt-sambanda. Etterpå kan ein samle tidsseriar og gjere ei
 kontrollert kapasitetsprøve utan å risikere produksjonsdatabasen. Val av
 konkrete tal og eventuell eksportør/varsling høyrer til ei eiga implementerings-
 og driftsavgjerd; denne kartlegginga endrar ikkje dei tala.

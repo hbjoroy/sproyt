@@ -6,7 +6,7 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{
     PgPool, Row,
-    postgres::{PgListener, PgRow},
+    postgres::{PgListener, PgPoolOptions, PgRow},
 };
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -114,6 +114,17 @@ async fn insert_integration_message_postgres(
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
 
+pub(super) async fn migrate(url: &str) -> Result<(), RepositoryError> {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(url)
+        .await
+        .map_err(sql_error)?;
+    let result = MIGRATOR.run(&pool).await.map_err(storage);
+    pool.close().await;
+    result
+}
+
 #[derive(Clone)]
 pub struct PostgresChatRepository {
     pool: PgPool,
@@ -125,6 +136,7 @@ pub struct PostgresChatRepository {
 }
 
 impl PostgresChatRepository {
+    #[cfg(test)]
     pub async fn connect(url: &str) -> Result<Self, RepositoryError> {
         let pool = PgPool::connect(url).await.map_err(sql_error)?;
         Self::connect_with_pool(url, pool).await
@@ -286,6 +298,7 @@ impl PostgresChatRepository {
         })
     }
 
+    #[cfg(test)]
     pub async fn migrate(&self) -> Result<(), RepositoryError> {
         MIGRATOR.run(&self.pool).await.map_err(storage)
     }
@@ -3462,6 +3475,19 @@ mod tests {
     use super::*;
     use crate::domain::{PrincipalKind, User};
     use tokio::sync::Barrier;
+
+    #[tokio::test]
+    async fn postgres_migration_path_can_run_repeatedly_and_concurrently() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let config = crate::config::DatabaseConfig::new(url).unwrap();
+        crate::db::migrate(&config).await.unwrap();
+        let (first, second) =
+            tokio::join!(crate::db::migrate(&config), crate::db::migrate(&config));
+        first.unwrap();
+        second.unwrap();
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn postgres_integration_delivery_is_atomic_under_race() {
