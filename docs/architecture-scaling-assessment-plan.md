@@ -33,6 +33,39 @@ implementert; avgjerder her kan førast dit når dei blir kode.
   Dei rapporterte 13 Sprøyt-sambanda er eit konfigurasjonstak ved normal drift,
   ikkje ein kapasitetstest eller eit budsjett for Authentik og andre appar.
 
+## Steg 1: kjelde og utrulling kontrollert 24. september 2026
+
+Dette er ei avgrensa, lesande kontroll av GitHub, GitOps og Kubernetes-context
+`default`, pluss offentlege versjons-/readiness-endepunkt. Han omfattar ikkje
+autentisert chat, lasttest eller måling av PostgreSQL under belastning.
+
+| Kjelde | Stadfesta tilstand |
+| --- | --- |
+| Sprøyt `main` | `59e06d5`. Pool-commitet `997eec6` er ikkje fletta dit. |
+| Open kjelde-PR-stabel | [#158](https://github.com/hbjoroy/sproyt/pull/158) GFM → `main`; [#159](https://github.com/hbjoroy/sproyt/pull/159) React-avslutning → #158; [#160](https://github.com/hbjoroy/sproyt/pull/160) SSE → #159; [#161](https://github.com/hbjoroy/sproyt/pull/161) delt pool → #160; [#162](https://github.com/hbjoroy/sproyt/pull/162) denne planen → #161. Alle var opne og mergeable ved kontrollen. Dei to vanlege CI-testjobbane viste grønt; fleire release-jobbar var markerte som hoppa over i PR-køyringane. |
+| GitOps `main` | `b89af0b`; [#155](https://github.com/hbjoroy/rocket-applications/pull/155) og [#156](https://github.com/hbjoroy/rocket-applications/pull/156) er fletta. Både produksjon og canary har chart-kjelde låst til `997eec6` og image-digest `sha256:97e7191f2a5a8b6fad3e4dad84990cfcef7206ac09fdac9cc1a64d441212e73c`. Migreringsimaget er separat pinna. |
+| Levande Argo og Kubernetes | Begge applikasjonar er `Synced/Healthy`. Argo viser GitOps `b89af0b` og chart `997eec6`. Produksjon har 2/2 klare poddar og canary 1/1; alle tre brukar image-digesten ovanfor. ConfigMap-taka er høvesvis 4 og 2. |
+| Ekstern teneste | `/versionz` returnerte `997eec6` og `/readyz` HTTP 200 for begge miljø. |
+
+**Avviket:** Kode og chart er versjonerte og utrulla frå ein uforanderleg
+commit, men denne commiten er enno ikkje del av Sprøyt `main`. Det er ikkje
+ein uversjonert produksjonspatch. Likevel er utrullinga avhengig av at Git
+framleis kan levere commitobjektet når Argo treng ny rendering; ikkje slett
+eller omskriv greinene i stabelen før kjeldehistoria er integrert i `main`.
+Den lokale Rocket-klonen er eldre enn GitOps `main` og må ikkje brukast som
+bevis for noverande produksjonskonfigurasjon.
+
+**Trygg veg til `main` (forslag, ikkje utført):** Gå gjennom PR-diffane i
+rekkjefølgja #158 → #159 → #160 → #161 → #162. GitHub-repoet tillèt
+merge-commit; bruk det i denne stabelen for å bevare dei opphavlege commitane
+og forfedretilhøvet, særleg GitOps-pinna `997eec6`. Etter kvart steg: rett
+basen for neste PR til oppdatert `main`, kontroller at diffen berre inneheld
+den PR-en si eiga endring, køyr relevante testar og sjekk at GitOps-pinna
+chart-commit framleis er tilgjengeleg. Stopp ved konflikt eller uventa diff
+og avklar han før neste samanslåing. Endeleg `main` skal innehalde `997eec6`,
+og GitOps skal framleis peike på same verifiserte image til ei eiga leveranse
+blir bestilt. Ingen samanslåing eller utrulling er gjort i dette steget.
+
 ## Vurdering i rekkjefølgje
 
 1. **Lukk kjelde- og driftsbiletet.** Kartlegg PR-status, kva som ligg i
