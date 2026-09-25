@@ -40,10 +40,10 @@ pub(crate) fn safe_chat_return_to(
         if let Some(thread) = thread.and_then(|value| uuid::Uuid::parse_str(value).ok()) {
             path.push_str(&format!("&thread={thread}"));
         }
-        if let Some(sequence) = sequence.and_then(|value| value.parse::<u64>().ok()) {
-            if sequence > 0 {
-                path.push_str(&format!("&sequence={sequence}"));
-            }
+        if let Some(sequence) = sequence.and_then(|value| value.parse::<u64>().ok())
+            && sequence > 0
+        {
+            path.push_str(&format!("&sequence={sequence}"));
         }
     }
     Some(path)
