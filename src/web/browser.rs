@@ -47,10 +47,14 @@ pub(crate) async fn index(
                     .as_deref()
                     .filter(|token| is_safe_invitation_token(token))
                     .map(|token| format!("/?invite={token}"))
-                    .or_else(|| crate::web::auth::safe_chat_return_to(
-                        query.channel.as_deref(), query.message.as_deref(),
-                        query.thread.as_deref(), query.sequence.as_deref(),
-                    ))
+                    .or_else(|| {
+                        crate::web::auth::safe_chat_return_to(
+                            query.channel.as_deref(),
+                            query.message.as_deref(),
+                            query.thread.as_deref(),
+                            query.sequence.as_deref(),
+                        )
+                    })
                     .unwrap_or_else(|| "/".to_owned());
                 return crate::web::auth::redirect_with_cookies(
                     &return_to,
@@ -62,16 +66,16 @@ pub(crate) async fn index(
                 .as_deref()
                 .filter(|token| is_safe_invitation_token(token))
                 .map(|token| format!("/auth/login?invite={token}"))
-                .or_else(|| crate::web::auth::safe_chat_login_location(
-                    query.channel.as_deref(), query.message.as_deref(),
-                    query.thread.as_deref(), query.sequence.as_deref(),
-                ))
+                .or_else(|| {
+                    crate::web::auth::safe_chat_login_location(
+                        query.channel.as_deref(),
+                        query.message.as_deref(),
+                        query.thread.as_deref(),
+                        query.sequence.as_deref(),
+                    )
+                })
                 .unwrap_or_else(|| "/auth/login".to_owned());
-            return (
-                axum::http::StatusCode::SEE_OTHER,
-                [(LOCATION, return_to)],
-            )
-                .into_response();
+            return (axum::http::StatusCode::SEE_OTHER, [(LOCATION, return_to)]).into_response();
         }
         Err(error) => return auth_error_response(error),
     };

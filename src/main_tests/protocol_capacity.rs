@@ -1050,7 +1050,9 @@ fn browser_exposes_compact_durable_message_threads() {
     assert!(BROWSER_CLIENT.contains("sendCommand(\"mark_thread_read\""));
     assert!(BROWSER_CLIENT.contains("event.type === \"thread_loaded\""));
     assert!(BROWSER_CLIENT.contains("summary?.unread_count"));
-    assert!(BROWSER_CLIENT.contains("navigateToMessage({ channelId: mention.message.channel_id, messageId: mention.message.id"));
+    assert!(BROWSER_CLIENT.contains(
+        "navigateToMessage({ channelId: mention.message.channel_id, messageId: mention.message.id"
+    ));
 }
 
 #[test]
@@ -1851,11 +1853,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("function loadOlderHistory()"));
     assert!(BROWSER_CLIENT.contains("before: oldest.sequence"));
     assert!(BROWSER_CLIENT.contains("renderTimeline({ preserveScroll: true })"));
-    assert!(
-        BROWSER_CLIENT.contains(
-            "renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) })"
-        )
-    );
+    assert!(BROWSER_CLIENT.contains(
+        "renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) })"
+    ));
     assert!(BROWSER_CLIENT.contains("function settleConversationAtBottom()"));
     assert!(!BROWSER_CLIENT.contains("sendForm.scrollIntoView"));
     assert!(BROWSER_CLIENT.contains("const offsetTop = layoutMatchesVisual ? 0 : visualOffsetTop"));

@@ -771,7 +771,10 @@ fn push_job_pg(row: sqlx::postgres::PgRow) -> Result<PushJob, RepositoryError> {
         body: row.try_get(8).map_err(storage)?,
         kind: row.try_get(9).map_err(storage)?,
         sequence: row.try_get(10).map_err(storage)?,
-        parent_message_id: row.try_get::<Option<Uuid>, _>(11).map_err(storage)?.map(|id| id.to_string()),
+        parent_message_id: row
+            .try_get::<Option<Uuid>, _>(11)
+            .map_err(storage)?
+            .map(|id| id.to_string()),
     })
 }
 fn push_job_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<PushJob, RepositoryError> {
@@ -794,7 +797,10 @@ fn push_job_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<PushJob, RepositoryEr
 }
 
 fn notification_path(job: &PushJob) -> String {
-    let mut path = format!("/?channel={}&message={}&sequence={}", job.channel, job.message_id, job.sequence);
+    let mut path = format!(
+        "/?channel={}&message={}&sequence={}",
+        job.channel, job.message_id, job.sequence
+    );
     if let Some(root) = &job.parent_message_id {
         path.push_str(&format!("&thread={root}"));
     }
@@ -830,12 +836,23 @@ mod tests {
         let message_id = Uuid::new_v4();
         let root = Uuid::new_v4().to_string();
         let job = PushJob {
-            subscription_id: Uuid::new_v4(), message_id, endpoint: String::new(),
-            p256dh: String::new(), auth: String::new(), sender: String::new(),
-            channel: channel.clone(), channel_name: String::new(), sequence: 42,
-            parent_message_id: Some(root.clone()), body: String::new(), kind: String::new(),
+            subscription_id: Uuid::new_v4(),
+            message_id,
+            endpoint: String::new(),
+            p256dh: String::new(),
+            auth: String::new(),
+            sender: String::new(),
+            channel: channel.clone(),
+            channel_name: String::new(),
+            sequence: 42,
+            parent_message_id: Some(root.clone()),
+            body: String::new(),
+            kind: String::new(),
         };
-        assert_eq!(notification_path(&job), format!("/?channel={channel}&message={message_id}&sequence=42&thread={root}"));
+        assert_eq!(
+            notification_path(&job),
+            format!("/?channel={channel}&message={message_id}&sequence=42&thread={root}")
+        );
     }
 
     #[tokio::test]

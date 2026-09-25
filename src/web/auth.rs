@@ -28,7 +28,10 @@ pub(crate) struct LoginQuery {
 }
 
 pub(crate) fn safe_chat_return_to(
-    channel: Option<&str>, message: Option<&str>, thread: Option<&str>, sequence: Option<&str>,
+    channel: Option<&str>,
+    message: Option<&str>,
+    thread: Option<&str>,
+    sequence: Option<&str>,
 ) -> Option<String> {
     let channel = uuid::Uuid::parse_str(channel?).ok()?;
     let mut path = format!("/?channel={channel}");
@@ -47,7 +50,10 @@ pub(crate) fn safe_chat_return_to(
 }
 
 pub(crate) fn safe_chat_login_location(
-    channel: Option<&str>, message: Option<&str>, thread: Option<&str>, sequence: Option<&str>,
+    channel: Option<&str>,
+    message: Option<&str>,
+    thread: Option<&str>,
+    sequence: Option<&str>,
 ) -> Option<String> {
     safe_chat_return_to(channel, message, thread, sequence)
         .map(|path| path.replacen("/", "/auth/login", 1))
@@ -73,10 +79,14 @@ pub(crate) async fn auth_login(
         .invite
         .filter(|token| is_safe_invitation_token(token))
         .map(|token| format!("/?invite={token}"))
-        .or_else(|| safe_chat_return_to(
-            query.channel.as_deref(), query.message.as_deref(),
-            query.thread.as_deref(), query.sequence.as_deref(),
-        ));
+        .or_else(|| {
+            safe_chat_return_to(
+                query.channel.as_deref(),
+                query.message.as_deref(),
+                query.thread.as_deref(),
+                query.sequence.as_deref(),
+            )
+        });
     match state.auth.login(return_to) {
         Ok(login) => redirect_with_cookies(&login.authorization_url, &[login.set_cookie]),
         Err(error) => auth_error_response(error),
@@ -260,10 +270,22 @@ mod tests {
         let message = uuid::Uuid::new_v4().to_string();
         let thread = uuid::Uuid::new_v4().to_string();
         let path = format!("/?channel={channel}&message={message}&thread={thread}&sequence=42");
-        assert_eq!(safe_chat_return_to(Some(&channel), Some(&message), Some(&thread), Some("42")), Some(path.clone()));
-        assert_eq!(safe_chat_login_location(Some(&channel), Some(&message), Some(&thread), Some("42")), Some(path.replacen("/", "/auth/login", 1)));
-        assert_eq!(safe_chat_return_to(Some("https://evil.test"), Some(&message), None, None), None);
-        assert_eq!(safe_chat_return_to(Some(&channel), Some("https://evil.test"), None, None), Some(format!("/?channel={channel}")));
+        assert_eq!(
+            safe_chat_return_to(Some(&channel), Some(&message), Some(&thread), Some("42")),
+            Some(path.clone())
+        );
+        assert_eq!(
+            safe_chat_login_location(Some(&channel), Some(&message), Some(&thread), Some("42")),
+            Some(path.replacen("/", "/auth/login", 1))
+        );
+        assert_eq!(
+            safe_chat_return_to(Some("https://evil.test"), Some(&message), None, None),
+            None
+        );
+        assert_eq!(
+            safe_chat_return_to(Some(&channel), Some("https://evil.test"), None, None),
+            Some(format!("/?channel={channel}"))
+        );
     }
     use crate::{
         agent::AgentService,
