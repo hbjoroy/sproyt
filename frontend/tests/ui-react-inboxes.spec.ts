@@ -141,6 +141,20 @@ test("React inbox handles unread, mentions and tasks while preserving the conver
     return Boolean(viewport && card.top >= viewport.top && card.top < viewport.bottom);
   })).toBe(true);
   await expect(composer).toHaveValue("utkastet skal overleve innboksen");
+
+  const linked = await page.evaluate(() => (window as typeof window & { __inboxFixture: {
+    source: { id: string; channel_id: string; sequence: number }
+  } }).__inboxFixture.source);
+  await page.goto(`/?channel=${linked.channel_id}&message=${linked.id}&sequence=${linked.sequence}&ui=react`,
+    { waitUntil: "domcontentloaded" });
+  const linkedCard = page.locator("#sproyt-react-preview .sp-channel-pane [data-message-id]")
+    .filter({ hasText: "Kjeldemelding for omtale" });
+  await expect(linkedCard).toBeVisible();
+  await expect.poll(async () => linkedCard.evaluate(element => {
+    const viewport = element.closest(".sp-timeline")?.getBoundingClientRect();
+    const card = element.getBoundingClientRect();
+    return Boolean(viewport && card.top >= viewport.top && card.top < viewport.bottom);
+  })).toBe(true);
 });
 
 test("closing the React inbox restores focus and keeps an open thread draft", async ({ page }) => {

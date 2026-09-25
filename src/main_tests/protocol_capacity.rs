@@ -1530,7 +1530,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(body.contains(&format!(
         "<meta name=\"sproyt-client-core\" content=\"/assets/client-core/{client_core_fingerprint}/client-core.wasm\">"
     )));
-    assert_eq!(body.matches("<script").count(), 1);
+    assert_eq!(body.matches("<script").count(), 2);
+    assert!(body.contains(&format!("<script nonce=\"{nonce}\">")));
     assert!(
         INDEX_HTML
             .contains("<script type=\"module\" nonce=\"{{NONCE}}\" src=\"{{APP_URL}}\"></script>")
