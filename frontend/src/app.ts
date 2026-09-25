@@ -411,6 +411,7 @@
       const navigation = new NavigationController(window.localStorage, window.location);
       let pendingMessageLink: MessageLink | null = readMessageLink(window.location);
       let messageLinkHistoryRequestId: string | null = null;
+      const messageLinkHistoryRequestIds = new Set<string>();
       let messageLinkSearchPages = 0;
       let pendingThreadRevealMessageId: string | null = null;
       // This is a render cache only. NavigationController is the sole state and
@@ -3586,7 +3587,8 @@
         }
 
         if (event.type === "messages_loaded") {
-          if (event.request_id === messageLinkHistoryRequestId) {
+          if (messageLinkHistoryRequestIds.delete(event.request_id ?? "")) {
+            if (event.request_id !== messageLinkHistoryRequestId) return;
             messageLinkHistoryRequestId = null;
             historyLoading = false;
             if (event.payload.channel_id !== activeChannelId) return;
@@ -3632,7 +3634,8 @@
         }
 
         if (event.type === "error") {
-          if (event.request_id === messageLinkHistoryRequestId) {
+          if (messageLinkHistoryRequestIds.delete(event.request_id ?? "")) {
+            if (event.request_id !== messageLinkHistoryRequestId) return;
             messageLinkHistoryRequestId = null;
             historyLoading = false;
             pendingMessageLink = null;
@@ -4790,7 +4793,8 @@
         messageLinkHistoryRequestId = sendCommand("load_recent_messages", {
           channel_id: link.channelId, before: oldest.sequence, limit: 200
         });
-        if (!messageLinkHistoryRequestId) historyLoading = false;
+        if (messageLinkHistoryRequestId) messageLinkHistoryRequestIds.add(messageLinkHistoryRequestId);
+        else historyLoading = false;
         return false;
       }
 
