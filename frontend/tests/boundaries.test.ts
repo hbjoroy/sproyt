@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AgentApi, EnrollmentApi, HttpClient, HttpError, IntegrationApi, NotificationApi, ProcessApi, decodeEnrollmentInvitation, isEnrollmentNotConfigured, readJson, sameOriginJson } from "../src/api";
 import { clientCommandTypes, createConnectionController, isClientCommand, parseSocketEvent, resetTransientRequestsAfterDisconnect, shouldForceResume, type ConnectionSocket } from "../src/connection";
-import { NavigationController, restoreNavigation } from "../src/navigation";
+import { NavigationController, readMessageLink, restoreNavigation } from "../src/navigation";
 import { createDurableOutbox, type DurableOutboxStorage, type DurableSend } from "../src/durable-outbox";
 import { createOutbox } from "../src/outbox";
 import { admitPersistedSend } from "../src/send-admission";
@@ -25,6 +25,15 @@ class MemoryStorage implements Storage {
   removeItem(key: string): void { this.#values.delete(key); }
   setItem(key: string, value: string): void { this.#values.set(key, value); }
 }
+
+test("notification links keep the message, sequence and thread target", () => {
+  const target = new URL("https://chat.example.test/?channel=channel-1&message=message-7&sequence=42&thread=root-2");
+  assert.deepEqual(readMessageLink(target), {
+    channelId: "channel-1", messageId: "message-7", sequence: 42, threadId: "root-2"
+  });
+  assert.equal(readMessageLink(new URL("https://chat.example.test/?channel=channel-1")), null);
+  assert.equal(readMessageLink(new URL("https://chat.example.test/?channel=channel-1&message=message-7&sequence=no"))?.sequence, null);
+});
 
 class MemoryDurableOutboxStorage implements DurableOutboxStorage {
   readonly entries = new Map<string, DurableSend>();

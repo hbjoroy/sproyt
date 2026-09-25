@@ -101,6 +101,8 @@ struct PushJob {
     sender: String,
     channel: String,
     channel_name: String,
+    sequence: i64,
+    parent_message_id: Option<String>,
     body: String,
     kind: String,
 }
@@ -504,7 +506,7 @@ impl NotificationService {
     }
 
     async fn claim(&self) -> Result<Option<PushJob>, RepositoryError> {
-        let select_pg = "select o.subscription_id,o.message_id,s.endpoint,s.p256dh,s.auth,m.sender_display_name,c.id,c.name,m.body,o.kind from notification_outbox o join push_subscriptions s on s.id=o.subscription_id join messages m on m.id=o.message_id join channels c on c.id=m.channel_id where o.delivered_at is null and o.available_at<=now() and (o.leased_until is null or o.leased_until<now()) order by o.created_at limit 1";
+        let select_pg = "select o.subscription_id,o.message_id,s.endpoint,s.p256dh,s.auth,m.sender_display_name,c.id,c.name,m.body,o.kind,m.sequence,m.parent_message_id from notification_outbox o join push_subscriptions s on s.id=o.subscription_id join messages m on m.id=o.message_id join channels c on c.id=m.channel_id where o.delivered_at is null and o.available_at<=now() and (o.leased_until is null or o.leased_until<now()) order by o.created_at limit 1";
         let row = match &self.store {
             NotificationStore::Postgres(pool) => sqlx::query(select_pg)
                 .fetch_optional(pool)
@@ -696,7 +698,7 @@ impl PushSender {
                 "channel_message" => format!("{} i #{}", job.sender, job.channel_name),
                 _ => format!("Melding frå {}", job.sender),
             };
-            let payload = serde_json::to_vec(&serde_json::json!({"web_push":8030,"notification":{"title":title,"body":notification_body(&job.body),"navigate":format!("/?channel={}&message={}",job.channel,job.message_id),"tag":format!("message-{}",job.message_id)}})).map_err(|error| error.to_string())?;
+            let payload = serde_json::to_vec(&serde_json::json!({"web_push":8030,"notification":{"title":title,"body":notification_body(&job.body),"navigate":notification_path(job),"tag":format!("message-{}",job.message_id)}})).map_err(|error| error.to_string())?;
             builder.build(payload).map_err(|error| error.to_string())
         })();
         let request = match result {
@@ -768,6 +770,8 @@ fn push_job_pg(row: sqlx::postgres::PgRow) -> Result<PushJob, RepositoryError> {
         channel_name: row.try_get(7).map_err(storage)?,
         body: row.try_get(8).map_err(storage)?,
         kind: row.try_get(9).map_err(storage)?,
+        sequence: row.try_get(10).map_err(storage)?,
+        parent_message_id: row.try_get::<Option<Uuid>, _>(11).map_err(storage)?.map(|id| id.to_string()),
     })
 }
 fn push_job_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<PushJob, RepositoryError> {
@@ -784,7 +788,17 @@ fn push_job_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<PushJob, RepositoryEr
         channel_name: row.try_get(7).map_err(storage)?,
         body: row.try_get(8).map_err(storage)?,
         kind: row.try_get(9).map_err(storage)?,
+        sequence: row.try_get(10).map_err(storage)?,
+        parent_message_id: row.try_get(11).map_err(storage)?,
     })
+}
+
+fn notification_path(job: &PushJob) -> String {
+    let mut path = format!("/?channel={}&message={}&sequence={}", job.channel, job.message_id, job.sequence);
+    if let Some(root) = &job.parent_message_id {
+        path.push_str(&format!("&thread={root}"));
+    }
+    path
 }
 fn redact_error(error: String) -> String {
     error.chars().take(240).collect()
@@ -809,6 +823,20 @@ fn storage(error: impl std::fmt::Display) -> RepositoryError {
 mod tests {
     use super::*;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    #[test]
+    fn push_link_targets_reply_in_its_thread() {
+        let channel = Uuid::new_v4().to_string();
+        let message_id = Uuid::new_v4();
+        let root = Uuid::new_v4().to_string();
+        let job = PushJob {
+            subscription_id: Uuid::new_v4(), message_id, endpoint: String::new(),
+            p256dh: String::new(), auth: String::new(), sender: String::new(),
+            channel: channel.clone(), channel_name: String::new(), sequence: 42,
+            parent_message_id: Some(root.clone()), body: String::new(), kind: String::new(),
+        };
+        assert_eq!(notification_path(&job), format!("/?channel={channel}&message={message_id}&sequence=42&thread={root}"));
+    }
 
     #[tokio::test]
     async fn postgres_notifications_share_the_repository_connection_budget() {

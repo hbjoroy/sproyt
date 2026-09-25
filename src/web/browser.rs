@@ -23,6 +23,10 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct InviteQuery {
     pub(crate) invite: Option<String>,
+    pub(crate) channel: Option<String>,
+    pub(crate) message: Option<String>,
+    pub(crate) thread: Option<String>,
+    pub(crate) sequence: Option<String>,
 }
 
 pub(crate) async fn index(
@@ -42,22 +46,30 @@ pub(crate) async fn index(
                     .invite
                     .as_deref()
                     .filter(|token| is_safe_invitation_token(token))
-                    .map_or_else(|| "/".to_owned(), |token| format!("/?invite={token}"));
+                    .map(|token| format!("/?invite={token}"))
+                    .or_else(|| crate::web::auth::safe_chat_return_to(
+                        query.channel.as_deref(), query.message.as_deref(),
+                        query.thread.as_deref(), query.sequence.as_deref(),
+                    ))
+                    .unwrap_or_else(|| "/".to_owned());
                 return crate::web::auth::redirect_with_cookies(
                     &return_to,
                     &[renewal.set_cookie, renewal.set_refresh_cookie],
                 );
             }
-            let login_location = query
+            let return_to = query
                 .invite
+                .as_deref()
                 .filter(|token| is_safe_invitation_token(token))
-                .map_or_else(
-                    || "/auth/login".to_owned(),
-                    |token| format!("/auth/login?invite={token}"),
-                );
+                .map(|token| format!("/auth/login?invite={token}"))
+                .or_else(|| crate::web::auth::safe_chat_login_location(
+                    query.channel.as_deref(), query.message.as_deref(),
+                    query.thread.as_deref(), query.sequence.as_deref(),
+                ))
+                .unwrap_or_else(|| "/auth/login".to_owned());
             return (
                 axum::http::StatusCode::SEE_OTHER,
-                [(LOCATION, login_location)],
+                [(LOCATION, return_to)],
             )
                 .into_response();
         }

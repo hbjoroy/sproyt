@@ -1050,7 +1050,7 @@ fn browser_exposes_compact_durable_message_threads() {
     assert!(BROWSER_CLIENT.contains("sendCommand(\"mark_thread_read\""));
     assert!(BROWSER_CLIENT.contains("event.type === \"thread_loaded\""));
     assert!(BROWSER_CLIENT.contains("summary?.unread_count"));
-    assert!(BROWSER_CLIENT.contains("pendingThreadToOpen = mention.message.parent_message_id"));
+    assert!(BROWSER_CLIENT.contains("navigateToMessage({ channelId: mention.message.channel_id, messageId: mention.message.id"));
 }
 
 #[test]
@@ -1720,7 +1720,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("function restoreActiveDraft()"));
     assert!(NAVIGATION_SOURCE.contains("writeStorage(this.storage, key, draft)"));
     assert!(BROWSER_CLIENT.contains(
-            "if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;\n        composerScopeGeneration += 1;\n        persistActiveDraft();"
+            "if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;\n        if (pendingMessageLink && pendingMessageLink.channelId !== channel.id) pendingMessageLink = null;\n        messageLinkHistoryRequestId = null;\n        composerScopeGeneration += 1;\n        persistActiveDraft();"
         ));
     assert!(BROWSER_CLIENT.contains(
         "navigation.setActiveChannel(channel);\n        syncRenderedNavigation();\n        restoreActiveDraft();"
@@ -1852,7 +1852,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("renderTimeline({ preserveScroll: true })"));
     assert!(
         BROWSER_CLIENT.contains(
-            "renderTimeline({ forceBottom: scrollOffset === null || scrollOffset < 80 })"
+            "renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) })"
         )
     );
     assert!(BROWSER_CLIENT.contains("function settleConversationAtBottom()"));

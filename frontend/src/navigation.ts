@@ -3,6 +3,21 @@ import { parseStoredStringMap, type Identifier, type StoredStringMap } from "./t
 export type RootScope = "shared" | "circle" | "direct";
 export type NavigationChannel = Readonly<{ id: Identifier; slug: string; name: string; circle_id: Identifier | null; direct_user_id: Identifier | null }>;
 export type NavigationSnapshot = Readonly<{ activeChannelId: Identifier | null; activeCircleId: Identifier | null; activeRootScope: RootScope; restoredChannelId: Identifier | null; restoredCircleId: Identifier | null; lastChannelByCircle: StoredStringMap }>;
+export type MessageLink = Readonly<{ channelId: Identifier; messageId: Identifier; sequence: number | null; threadId: Identifier | null }>;
+
+export function readMessageLink(location: Pick<Location, "href">): MessageLink | null {
+  const params = new URL(location.href).searchParams;
+  const channelId = storedIdentifier(params.get("channel"));
+  const messageId = storedIdentifier(params.get("message"));
+  if (!channelId || !messageId) return null;
+  const rawSequence = params.get("sequence");
+  const parsedSequence = rawSequence && /^\d+$/.test(rawSequence) ? Number(rawSequence) : NaN;
+  return {
+    channelId, messageId,
+    sequence: Number.isSafeInteger(parsedSequence) && parsedSequence > 0 ? parsedSequence : null,
+    threadId: storedIdentifier(params.get("thread"))
+  };
+}
 
 const activeChannelKey = "sproyt.active-channel.v1";
 const activeCircleKey = "sproyt.active-circle.v1";
