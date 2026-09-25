@@ -29,14 +29,19 @@ export function installSproytDesignSystem(root: HTMLElement): SproytThemeMode {
   root.dataset.accent = "citron";
   root.dataset.density = "comfortable";
   const mode = storedTheme();
-  root.dataset.theme = mode;
+  applyTheme(root, mode);
 
   return mode;
 }
 
 export function setSproytTheme(root: HTMLElement, mode: SproytThemeMode): void {
-  root.dataset.theme = mode;
+  applyTheme(root, mode);
   try { window.localStorage.setItem(themeStorageKey, mode); } catch { /* optional persistence */ }
+}
+
+function applyTheme(root: HTMLElement, mode: SproytThemeMode): void {
+  root.dataset.theme = mode;
+  document.documentElement.dataset.theme = mode;
 }
 
 function storedTheme(): SproytThemeMode {

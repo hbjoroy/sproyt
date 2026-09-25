@@ -1050,7 +1050,9 @@ fn browser_exposes_compact_durable_message_threads() {
     assert!(BROWSER_CLIENT.contains("sendCommand(\"mark_thread_read\""));
     assert!(BROWSER_CLIENT.contains("event.type === \"thread_loaded\""));
     assert!(BROWSER_CLIENT.contains("summary?.unread_count"));
-    assert!(BROWSER_CLIENT.contains("pendingThreadToOpen = mention.message.parent_message_id"));
+    assert!(BROWSER_CLIENT.contains(
+        "navigateToMessage({ channelId: mention.message.channel_id, messageId: mention.message.id"
+    ));
 }
 
 #[test]
@@ -1530,7 +1532,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(body.contains(&format!(
         "<meta name=\"sproyt-client-core\" content=\"/assets/client-core/{client_core_fingerprint}/client-core.wasm\">"
     )));
-    assert_eq!(body.matches("<script").count(), 1);
+    assert_eq!(body.matches("<script").count(), 2);
+    assert!(body.contains(&format!("<script nonce=\"{nonce}\">")));
     assert!(
         INDEX_HTML
             .contains("<script type=\"module\" nonce=\"{{NONCE}}\" src=\"{{APP_URL}}\"></script>")
@@ -1720,7 +1723,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("function restoreActiveDraft()"));
     assert!(NAVIGATION_SOURCE.contains("writeStorage(this.storage, key, draft)"));
     assert!(BROWSER_CLIENT.contains(
-            "if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;\n        composerScopeGeneration += 1;\n        persistActiveDraft();"
+            "if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;\n        if (pendingMessageLink && pendingMessageLink.channelId !== channel.id) pendingMessageLink = null;\n        messageLinkHistoryRequestId = null;\n        composerScopeGeneration += 1;\n        persistActiveDraft();"
         ));
     assert!(BROWSER_CLIENT.contains(
         "navigation.setActiveChannel(channel);\n        syncRenderedNavigation();\n        restoreActiveDraft();"
@@ -1850,11 +1853,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("function loadOlderHistory()"));
     assert!(BROWSER_CLIENT.contains("before: oldest.sequence"));
     assert!(BROWSER_CLIENT.contains("renderTimeline({ preserveScroll: true })"));
-    assert!(
-        BROWSER_CLIENT.contains(
-            "renderTimeline({ forceBottom: scrollOffset === null || scrollOffset < 80 })"
-        )
-    );
+    assert!(BROWSER_CLIENT.contains(
+        "renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) })"
+    ));
     assert!(BROWSER_CLIENT.contains("function settleConversationAtBottom()"));
     assert!(!BROWSER_CLIENT.contains("sendForm.scrollIntoView"));
     assert!(BROWSER_CLIENT.contains("const offsetTop = layoutMatchesVisual ? 0 : visualOffsetTop"));

@@ -16,6 +16,7 @@ export interface PreviewInboxHost {
   load(kind: "mentions" | "tasks"): Promise<void>;
   openChannel(channelId: string): void;
   openMentionSource(mention: Mention): void;
+  openTaskSource(task: UserTask): void;
   markMentionRead(messageId: string): Promise<void>;
   createTask(input: Readonly<{ sourceMessageId: string; title: string; processLinkId: string | null }>): Promise<void>;
   setTaskDone(taskId: string, done: boolean): Promise<void>;
@@ -72,7 +73,7 @@ function MentionRow({ mention, host, onTaskCreated, onOpenSource }: {
   </Message>;
 }
 
-function TaskRow({ task, host }: { readonly task: UserTask; readonly host: PreviewInboxHost }) {
+function TaskRow({ task, host, onOpenSource }: { readonly task: UserTask; readonly host: PreviewInboxHost; readonly onOpenSource: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const done = task.status === "done";
@@ -84,6 +85,7 @@ function TaskRow({ task, host }: { readonly task: UserTask; readonly host: Previ
       setBusy(true); setError("");
       void host.setTaskDone(task.id, !done).catch(error => setError(errorText(error))).finally(() => setBusy(false));
     }}>{done ? "Opne igjen" : "Ferdig"}</Button>
+    <Button onClick={onOpenSource}>Opne kjelda</Button>
     {error && <Status tone="error">{error}</Status>}
   </article>;
 }
@@ -144,7 +146,8 @@ export function PreviewInboxes({ state, host }: { readonly state: PreviewInboxSt
       </section>}
       {!loading && !error && kind === "tasks" && <section aria-label="Oppgåver">
         {state.tasks.length === 0 ? <><h3>Ingen oppgåver</h3><p>Du kan gjere ei @omtale om til ei oppgåve.</p></>
-          : state.tasks.map(task => <TaskRow key={task.id} task={task} host={host} />)}
+          : state.tasks.map(task => <TaskRow key={task.id} task={task} host={host}
+            onOpenSource={() => { host.openTaskSource(task); setOpen(false); }} />)}
       </section>}
     </Dialog>
   </>;

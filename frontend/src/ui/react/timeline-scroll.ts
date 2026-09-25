@@ -80,6 +80,14 @@ export function createTimelineScrollController(options: TimelineScrollController
     if (viewport) setScrollTop(viewport.scrollHeight - viewport.clientHeight);
   };
 
+  const scrollToMessage = (id: string): boolean => {
+    const message = messageElement(id);
+    if (!viewport || !message) return false;
+    const offset = Math.min(24, viewport.clientHeight * 0.1);
+    setScrollTop(viewport.scrollTop + message.getBoundingClientRect().top - viewport.getBoundingClientRect().top - offset);
+    return true;
+  };
+
   const restoreAnchor = (position: ReadingPosition): boolean => {
     if (!viewport || !position.anchorId) return false;
     const anchor = messageElement(position.anchorId);
@@ -106,16 +114,17 @@ export function createTimelineScrollController(options: TimelineScrollController
       const restore = pending;
       pending = null;
       revealMessageId = restore.revealMessageId;
-      if (revealMessageId && messageElement(revealMessageId)) {
-        scrollToBottom();
-        followBottom = true;
+      if (revealMessageId && scrollToMessage(revealMessageId)) {
+        revealMessageId = null;
+        followBottom = false;
       }
       else if (restore.forceBottom) scrollToBottom();
       else if (restore.position && !restoreAnchor(restore.position)) {
         setScrollTop(viewport.scrollHeight - viewport.clientHeight - restore.position.distanceFromBottom);
       }
-    } else if (revealMessageId && revealMessageId === model.messageIds.at(-1)) {
-      scrollToBottom();
+    } else if (revealMessageId && scrollToMessage(revealMessageId)) {
+      revealMessageId = null;
+      followBottom = false;
     } else if (followBottom) {
       scrollToBottom();
     } else {
@@ -184,13 +193,12 @@ export function createTimelineScrollController(options: TimelineScrollController
     // commit (for example accepted reply + cleared composer). Keep a reveal
     // intent until the corresponding message has reached the DOM.
     const carriedReveal = pending?.revealMessageId ?? revealMessageId;
-    const explicitReveal = next.revealMessageId
-      ?? (carriedReveal && next.messageIds.includes(carriedReveal) ? carriedReveal : null);
+    const explicitReveal = next.revealMessageId ?? (keyChanged ? null : carriedReveal);
     const wasNearBottom = previous ? previous.distanceFromBottom <= nearEdge : true;
     pending = {
       keyChanged,
       position: keyChanged ? stored : previous,
-      forceBottom: keyChanged ? !stored : (Boolean(explicitReveal) || (appended && wasNearBottom)),
+      forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && appended && wasNearBottom),
       revealMessageId: explicitReveal
     };
     followBottom = pending.forceBottom || (pending.position?.distanceFromBottom ?? 0) <= nearEdge;

@@ -89,6 +89,10 @@ test("React inbox handles unread, mentions and tasks while preserving the conver
   await expect(composer).toBeEnabled({ timeout: 15_000 });
   await composer.fill("Kjeldemelding for omtale"); await composer.press("Enter");
   await expect(preview.locator("[data-message-id]").filter({ hasText: "Kjeldemelding for omtale" })).toBeVisible();
+  for (let index = 0; index < 12; index += 1) {
+    await composer.fill(`Seinare melding ${index}`); await composer.press("Enter");
+  }
+  await expect(preview.locator("[data-message-id]").filter({ hasText: "Seinare melding 11" })).toBeVisible();
   await composer.fill("utkastet skal overleve innboksen");
   await page.evaluate(() => (window as typeof window & { __inboxFixture: { activate(): void } }).__inboxFixture.activate());
 
@@ -129,8 +133,28 @@ test("React inbox handles unread, mentions and tasks while preserving the conver
   await dialog.getByRole("button", { name: "Omtalar" }).click();
   await mention.getByRole("button", { name: "Opne kjelda" }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(preview.locator(".sp-channel-pane").getByText("Kjeldemelding for omtale", { exact: true })).toBeVisible();
+  const source = preview.locator(".sp-channel-pane [data-message-id]").filter({ hasText: "Kjeldemelding for omtale" });
+  await expect(source).toBeVisible();
+  await expect.poll(async () => source.evaluate(element => {
+    const viewport = element.closest(".sp-timeline")?.getBoundingClientRect();
+    const card = element.getBoundingClientRect();
+    return Boolean(viewport && card.top >= viewport.top && card.top < viewport.bottom);
+  })).toBe(true);
   await expect(composer).toHaveValue("utkastet skal overleve innboksen");
+
+  const linked = await page.evaluate(() => (window as typeof window & { __inboxFixture: {
+    source: { id: string; channel_id: string; sequence: number }
+  } }).__inboxFixture.source);
+  await page.goto(`/?channel=${linked.channel_id}&message=${linked.id}&sequence=${linked.sequence}&ui=react`,
+    { waitUntil: "domcontentloaded" });
+  const linkedCard = page.locator("#sproyt-react-preview .sp-channel-pane [data-message-id]")
+    .filter({ hasText: "Kjeldemelding for omtale" });
+  await expect(linkedCard).toBeVisible();
+  await expect.poll(async () => linkedCard.evaluate(element => {
+    const viewport = element.closest(".sp-timeline")?.getBoundingClientRect();
+    const card = element.getBoundingClientRect();
+    return Boolean(viewport && card.top >= viewport.top && card.top < viewport.bottom);
+  })).toBe(true);
 });
 
 test("closing the React inbox restores focus and keeps an open thread draft", async ({ page }) => {

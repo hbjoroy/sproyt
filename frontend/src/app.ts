@@ -15,7 +15,7 @@
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
       import { createSseSocketFactory } from "./sse-socket";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
-      import { NavigationController } from "./navigation";
+      import { NavigationController, readMessageLink, type MessageLink } from "./navigation";
       import { createSendAdmissionPolicy } from "./send-admission-wasm";
       import { createSessionController, fetchWithTimeout, sessionRefreshAfterSeconds, type SessionController } from "./session";
       import { isJsonObject, isRecord, mediaFromUpload } from "./types";
@@ -409,6 +409,11 @@
       let pendingManagedChannelRequestId: string | null = null;
       let reconnectScrollOffset: number | null = null;
       const navigation = new NavigationController(window.localStorage, window.location);
+      let pendingMessageLink: MessageLink | null = readMessageLink(window.location);
+      let messageLinkHistoryRequestId: string | null = null;
+      const messageLinkHistoryRequestIds = new Set<string>();
+      let messageLinkSearchPages = 0;
+      let pendingThreadRevealMessageId: string | null = null;
       // This is a render cache only. NavigationController is the sole state and
       // persistence owner; UI code refreshes this snapshot after an intent.
       let restoredChannelId = navigation.restoredChannelId;
@@ -443,7 +448,6 @@
         retriedUncertainRequests, historyRequestIds
       } = pendingRequests;
       let activeThreadRootId: string | null = null;
-      let pendingThreadToOpen: string | null = null;
       const seenMessageIds = new Set<string>();
       const catchUpTargets = new Map<string, number>();
       // Requests from the member browser are independent: a slow DM open must
@@ -3433,12 +3437,8 @@
           renderChannels();
           const scrollOffset = reconnectScrollOffset;
           reconnectScrollOffset = null;
-          renderTimeline({ forceBottom: scrollOffset === null || scrollOffset < 80 });
-          if (pendingThreadToOpen) {
-            const rootMessageId = pendingThreadToOpen;
-            pendingThreadToOpen = null;
-            window.setTimeout(() => openThread(rootMessageId), 0);
-          }
+          const revealed = seekPendingMessageLink();
+          renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) });
           if (scrollOffset !== null && scrollOffset >= 80) restoreConversationScrollOffset(scrollOffset);
           updateAgentAccessControls();
           return;
@@ -3487,6 +3487,10 @@
           const threadChannelId = root?.channel_id ?? replies[0]?.channel_id;
           if (threadChannelId) reconcileUncertainDeliveries(threadChannelId, event.payload.messages);
           if (activeThreadRootId === event.payload.root_message_id) {
+            if (pendingThreadRevealMessageId && event.payload.messages.some(message => message.id === pendingThreadRevealMessageId)) {
+              developmentThreadRevealMessageId = pendingThreadRevealMessageId;
+              pendingThreadRevealMessageId = null;
+            }
             renderThread();
             const latest = replies.at(-1)?.sequence;
             if (latest !== undefined) sendCommand("mark_thread_read", { root_message_id: event.payload.root_message_id, sequence: latest });
@@ -3583,6 +3587,18 @@
         }
 
         if (event.type === "messages_loaded") {
+          if (messageLinkHistoryRequestIds.delete(event.request_id ?? "")) {
+            if (event.request_id !== messageLinkHistoryRequestId) return;
+            messageLinkHistoryRequestId = null;
+            historyLoading = false;
+            if (event.payload.channel_id !== activeChannelId) return;
+            prependTimelineMessages(event.payload.messages);
+            historyHasMore = event.payload.messages.length === 200;
+            const revealed = seekPendingMessageLink();
+            renderTimeline({ preserveScroll: !revealed,
+              revealMessageId: revealed ? developmentChannelRevealMessageId : null });
+            return;
+          }
           const olderHistory = historyRequestIds.delete(event.request_id);
           if (olderHistory) {
             historyLoading = false;
@@ -3618,6 +3634,14 @@
         }
 
         if (event.type === "error") {
+          if (messageLinkHistoryRequestIds.delete(event.request_id ?? "")) {
+            if (event.request_id !== messageLinkHistoryRequestId) return;
+            messageLinkHistoryRequestId = null;
+            historyLoading = false;
+            pendingMessageLink = null;
+            setConnectionStatus("Kunne ikkje finne meldinga frå varselet. Prøv igjen.");
+            return;
+          }
           if (previewInboxRequest) return;
           if (developmentPreviewActive && developmentThreadLoad && developmentThreadLoad.requestId === event.request_id) {
             developmentThreadLoad.loading = false;
@@ -4305,11 +4329,8 @@
           open.type = "button";
           open.textContent = "Opne samtalen";
           open.addEventListener("click", () => {
-            const channel = knownChannels.find((item) => item.id === mention.message.channel_id);
-            if (channel) {
-              pendingThreadToOpen = mention.message.parent_message_id || null;
-              selectChannel(channel);
-            }
+            navigateToMessage({ channelId: mention.message.channel_id, messageId: mention.message.id,
+              sequence: mention.message.sequence, threadId: mention.message.parent_message_id });
           });
           actions.append(open);
           if (!mention.read) {
@@ -4390,6 +4411,8 @@
       function selectChannel(channel: Channel): void {
         if (!channel) return;
         if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;
+        if (pendingMessageLink && pendingMessageLink.channelId !== channel.id) pendingMessageLink = null;
+        messageLinkHistoryRequestId = null;
         composerScopeGeneration += 1;
         persistActiveDraft();
         setMobileNavigationOpen(false);
@@ -4546,6 +4569,7 @@
 
       function renderTimeline({ preserveScroll = false, forceBottom = false, revealMessageId = null }: Readonly<{ preserveScroll?: boolean; forceBottom?: boolean; revealMessageId?: string | null }> = {}): void {
         if (revealMessageId) developmentChannelRevealMessageId = revealMessageId;
+        if (developmentPreviewActive) refreshDevelopmentPreview();
         const previousHeight = messagesEl.scrollHeight;
         const previousTop = messagesEl.scrollTop;
         const wasNearBottom = previousHeight - previousTop - messagesEl.clientHeight < 80;
@@ -4723,6 +4747,55 @@
           older.push({ type: "message", message });
         }
         timeline.unshift(...older);
+      }
+
+      function navigateToMessage(link: MessageLink): void {
+        const channel = knownChannels.find(item => item.id === link.channelId);
+        if (!channel) return;
+        pendingMessageLink = link;
+        messageLinkHistoryRequestId = null;
+        messageLinkSearchPages = 0;
+        if (channel.id !== activeChannelId || connectionSupervisor.snapshot().subscribedChannelId !== channel.id) {
+          selectChannel(channel);
+          return;
+        }
+        const revealed = seekPendingMessageLink();
+        if (revealed) renderTimeline({ revealMessageId: developmentChannelRevealMessageId });
+      }
+
+      function seekPendingMessageLink(): boolean {
+        const link = pendingMessageLink;
+        if (!link || link.channelId !== activeChannelId) return false;
+        const root = timeline.find(item => item.type === "message" && item.message.id === link.messageId);
+        const reply = [...threadReplies.values()].flat().find(message => message.id === link.messageId);
+        const threadId = link.threadId ?? reply?.parent_message_id ?? null;
+        if (threadId) {
+          pendingMessageLink = null;
+          pendingThreadRevealMessageId = link.messageId;
+          openThread(threadId);
+          return true;
+        }
+        if (root) {
+          pendingMessageLink = null;
+          developmentChannelRevealMessageId = link.messageId;
+          return true;
+        }
+        if (messageLinkHistoryRequestId) return false;
+        const oldest = timeline.find(item => item.type === "message")?.message;
+        if (!historyHasMore || !oldest || messageLinkSearchPages >= 25
+          || (link.sequence !== null && oldest.sequence <= link.sequence)) {
+          pendingMessageLink = null;
+          setConnectionStatus("Meldinga frå varselet er ikkje tilgjengeleg i samtalen.");
+          return false;
+        }
+        messageLinkSearchPages += 1;
+        historyLoading = true;
+        messageLinkHistoryRequestId = sendCommand("load_recent_messages", {
+          channel_id: link.channelId, before: oldest.sequence, limit: 200
+        });
+        if (messageLinkHistoryRequestId) messageLinkHistoryRequestIds.add(messageLinkHistoryRequestId);
+        else historyLoading = false;
+        return false;
       }
 
       function openThreadState(messageId: string): void {
@@ -5663,21 +5736,11 @@
             openMentionSource: mention => {
               persistActiveDraft();
               persistThreadDraft();
-              const channel = knownChannels.find(item => item.id === mention.message.channel_id);
-              if (!channel) return;
-              const rootId = mention.message.parent_message_id;
-              if (channel.id === activeChannelId) {
-                if (rootId) openThread(rootId);
-                else {
-                  developmentChannelRevealMessageId = mention.message.id;
-                  refreshDevelopmentPreview();
-                }
-                return;
-              }
-              if (rootId) pendingThreadToOpen = rootId;
-              selectChannel(channel);
-              if (!rootId) developmentChannelRevealMessageId = mention.message.id;
+              navigateToMessage({ channelId: mention.message.channel_id, messageId: mention.message.id,
+                sequence: mention.message.sequence, threadId: mention.message.parent_message_id });
             },
+            openTaskSource: task => navigateToMessage({ channelId: task.channel_id,
+              messageId: task.source_message_id, sequence: null, threadId: null }),
             markMentionRead: messageId => runPreviewInboxRequest("mention_read",
               () => sendCommand("mark_mention_read", { message_id: messageId })),
             createTask: ({ sourceMessageId, title, processLinkId }) => {

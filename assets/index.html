@@ -13,6 +13,14 @@
     <link rel="icon" href="/assets/sproyt-wave-icon-512.png" type="image/png">
     <link rel="apple-touch-icon" href="/assets/sproyt-wave-icon-192.png">
     <title>Sprøyt</title>
+    <script nonce="{{NONCE}}">
+      try {
+        const theme = window.localStorage.getItem("sproyt.theme.v1");
+        if (theme === "light" || theme === "dark" || theme === "system") {
+          document.documentElement.dataset.theme = theme;
+        }
+      } catch { /* Theme persistence is optional. */ }
+    </script>
     <style nonce="{{NONCE}}">
       :root {
         --app-height: 100dvh;
@@ -524,6 +532,21 @@
         padding: 8px 10px;
         background-color: var(--control);
         color: var(--ink);
+        caret-color: var(--ink);
+      }
+
+      /* This dialog is a body sibling, so it does not inherit the app-scoped
+         control styling above.  Keep enrollment and share-link fields on the
+         same tokens as the manually selected app theme. */
+      .channel-details-dialog input {
+        min-height: 40px;
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background-color: var(--control);
+        color: var(--ink);
+        font: inherit;
         caret-color: var(--ink);
       }
 
@@ -1061,8 +1084,31 @@
         }
       }
 
+      :root[data-theme="dark"] {
+        --canvas: #101512;
+        --paper: #19211c;
+        --surface: #202a23;
+        --surface-raised: #242f28;
+        --surface-hover: #304137;
+        --control: #111713;
+        --ink: #f2f6f2;
+        --muted: #c5d0c8;
+        --subtle: #aab8ae;
+        --border: #536158;
+        --line: #3d4941;
+        --accent: #4c9a73;
+        --accent-hover: #72ba91;
+        --accent-ink: #07130d;
+        --focus: #f2a950;
+        --danger: #ffb4ad;
+        --danger-surface: #321d1b;
+        background: var(--canvas);
+        color: var(--ink);
+      }
+
       @media (prefers-color-scheme: dark) {
-        :root {
+        :root:not([data-theme]),
+        :root[data-theme="system"] {
           --canvas: #101512;
           --paper: #19211c;
           --surface: #202a23;

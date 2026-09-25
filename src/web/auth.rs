@@ -21,6 +21,42 @@ use serde::Deserialize;
 pub(crate) struct LoginQuery {
     pub(crate) invite: Option<String>,
     pub(crate) enrollment: Option<String>,
+    pub(crate) channel: Option<String>,
+    pub(crate) message: Option<String>,
+    pub(crate) thread: Option<String>,
+    pub(crate) sequence: Option<String>,
+}
+
+pub(crate) fn safe_chat_return_to(
+    channel: Option<&str>,
+    message: Option<&str>,
+    thread: Option<&str>,
+    sequence: Option<&str>,
+) -> Option<String> {
+    let channel = uuid::Uuid::parse_str(channel?).ok()?;
+    let mut path = format!("/?channel={channel}");
+    if let Some(message) = message.and_then(|value| uuid::Uuid::parse_str(value).ok()) {
+        path.push_str(&format!("&message={message}"));
+        if let Some(thread) = thread.and_then(|value| uuid::Uuid::parse_str(value).ok()) {
+            path.push_str(&format!("&thread={thread}"));
+        }
+        if let Some(sequence) = sequence.and_then(|value| value.parse::<u64>().ok())
+            && sequence > 0
+        {
+            path.push_str(&format!("&sequence={sequence}"));
+        }
+    }
+    Some(path)
+}
+
+pub(crate) fn safe_chat_login_location(
+    channel: Option<&str>,
+    message: Option<&str>,
+    thread: Option<&str>,
+    sequence: Option<&str>,
+) -> Option<String> {
+    safe_chat_return_to(channel, message, thread, sequence)
+        .map(|path| path.replacen("/", "/auth/login", 1))
 }
 
 pub(crate) async fn auth_login(
@@ -42,7 +78,15 @@ pub(crate) async fn auth_login(
     let return_to = query
         .invite
         .filter(|token| is_safe_invitation_token(token))
-        .map(|token| format!("/?invite={token}"));
+        .map(|token| format!("/?invite={token}"))
+        .or_else(|| {
+            safe_chat_return_to(
+                query.channel.as_deref(),
+                query.message.as_deref(),
+                query.thread.as_deref(),
+                query.sequence.as_deref(),
+            )
+        });
     match state.auth.login(return_to) {
         Ok(login) => redirect_with_cookies(&login.authorization_url, &[login.set_cookie]),
         Err(error) => auth_error_response(error),
@@ -219,6 +263,30 @@ fn response_with_cookies(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_return_path_survives_login_without_accepting_external_redirects() {
+        let channel = uuid::Uuid::new_v4().to_string();
+        let message = uuid::Uuid::new_v4().to_string();
+        let thread = uuid::Uuid::new_v4().to_string();
+        let path = format!("/?channel={channel}&message={message}&thread={thread}&sequence=42");
+        assert_eq!(
+            safe_chat_return_to(Some(&channel), Some(&message), Some(&thread), Some("42")),
+            Some(path.clone())
+        );
+        assert_eq!(
+            safe_chat_login_location(Some(&channel), Some(&message), Some(&thread), Some("42")),
+            Some(path.replacen("/", "/auth/login", 1))
+        );
+        assert_eq!(
+            safe_chat_return_to(Some("https://evil.test"), Some(&message), None, None),
+            None
+        );
+        assert_eq!(
+            safe_chat_return_to(Some(&channel), Some("https://evil.test"), None, None),
+            Some(format!("/?channel={channel}"))
+        );
+    }
     use crate::{
         agent::AgentService,
         auth::{AuthService, AuthenticatedPrincipal, LoginComplete},

@@ -348,3 +348,17 @@ test("the channel member browser opens a direct conversation without showing you
   await expect(page.locator("#conversation-title")).toContainText("playwright-dm-peer");
   await peer.close();
 });
+
+test("manual dark theme reaches the enrollment invitation dialog on a light system", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.addInitScript(() => window.localStorage.setItem("sproyt.theme.v1", "dark"));
+  await page.goto("/?participant=playwright-dark-enrollment&ui=legacy", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15_000 });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  const invitationDialog = page.locator("#circle-invite-dialog");
+  await invitationDialog.evaluate((dialog: HTMLDialogElement) => dialog.showModal());
+  await expect(invitationDialog).toBeVisible();
+  await expect(invitationDialog).toHaveCSS("background-color", "rgb(25, 33, 28)");
+  await expect(page.locator("#circle-enrollment-email")).toHaveCSS("background-color", "rgb(17, 23, 19)");
+});

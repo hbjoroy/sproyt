@@ -53,13 +53,16 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const destination = new URL(event.notification.data?.navigate || "/", self.location.origin).href;
+  const requested = new URL(event.notification.data?.navigate || "/", self.location.origin);
+  const destination = requested.origin === self.location.origin ? requested.href : self.location.origin + "/";
   event.waitUntil((async () => {
     const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
-    const existing = windows.find((client) => client.url.startsWith(self.location.origin));
+    const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
     if (existing) {
-      await existing.navigate(destination);
-      return existing.focus();
+      try {
+        const navigated = await existing.navigate(destination);
+        if (navigated) return navigated.focus();
+      } catch { /* An old tab may have closed while the push was opened. */ }
     }
     return clients.openWindow(destination);
   })());
