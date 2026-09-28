@@ -57,6 +57,8 @@ Deployment rolls. It creates no Ingress. Pin `heart.image.digest` and add
 ```yaml
 heart:
   enabled: true
+  runtimeV2:
+    enabled: true # Explicit canary opt-in; the chart default is false.
   image:
     digest: sha256:<reviewed-heart-digest>
 ```
