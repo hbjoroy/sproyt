@@ -3,12 +3,12 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HttpClient } from "./api";
-import { decodePilotTask, ProcessPilotApi, processTaskId, type PilotTask } from "./process-pilot";
+import { decodePilotConfiguration, decodePilotTask, ProcessPilotApi, processTaskId, type PilotTask } from "./process-pilot";
 import { ProcessTaskDetails, ProcessTaskMessage } from "./ui/react/process-pilot";
 
 const id = "c63ac052-a05a-4b5d-bfff-04429338df90";
 const task: PilotTask = { id, message_id: "message-1", instance_id: "instance-1", node_id: "first", status: "pending",
-  assignee_id: "user-1", assignee_name: "Harald", title: "Første oppgåve", can_complete: true, delivery_status: "ready" };
+  assignee_id: "user-1", assignee_name: "Harald", title: "Første oppgåve", can_complete: true, delivery_status: "ready", process_status: "waiting" };
 
 test("only exact task message bodies create task controls", () => {
   assert.equal(processTaskId(`[[process-task:${id}]]`), id);
@@ -24,6 +24,13 @@ test("task decoding requires explicit server permission and message binding", ()
   }
 });
 
+test("v2 pilot fields decode while older API fixtures retain v1 waiting defaults", () => {
+  assert.equal(decodePilotConfiguration({ configured: true, can_configure: false, can_start: true }).runtime_model, "v1");
+  assert.equal(decodePilotConfiguration({ configured: true, can_configure: false, can_start: true, runtime_model: "v2" }).runtime_model, "v2");
+  assert.equal(decodePilotTask({ ...task, process_status: undefined }).process_status, "waiting");
+  assert.equal(decodePilotTask({ ...task, status: "cancelled", process_status: "cancelled" }).status, "cancelled");
+});
+
 test("task disclosure starts collapsed and read-only viewers never get completion controls", () => {
   const api = new ProcessPilotApi(new HttpClient({ fetch: async () => { throw new Error("render must not fetch"); } }), () => "user-1");
   const collapsed = renderToStaticMarkup(createElement(ProcessTaskMessage, { api, taskId: id, messageId: task.message_id }));
@@ -34,6 +41,10 @@ test("task disclosure starts collapsed and read-only viewers never get completio
   assert.match(render(task), /Fullfør oppgåva/);
   assert.ok(!render({ ...task, can_complete: false }).includes("Fullfør oppgåva"));
   assert.ok(!render({ ...task, status: "completed" }).includes("Fullfør oppgåva"));
+  assert.match(render({ ...task, status: "cancelled" }), /Oppgåva er avbroten/);
+  assert.ok(!render({ ...task, process_status: "failed" }).includes("Fullfør oppgåva"));
+  assert.match(render({ ...task, process_status: "failed" }), /Prosessen feila/);
+  assert.match(render({ ...task, status: "cancelled", process_status: "failed" }), /Prosessen feila/);
   const delivering = render({ ...task, delivery_status: "pending" });
   assert.match(delivering, /Ventar på stadfesting/);
   assert.match(delivering, /disabled/);

@@ -2,8 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 
 const taskId = "c63ac052-a05a-4b5d-bfff-04429338df90";
 const macro = `[[process-task:${taskId}]]`;
+const parallelTaskIds = [taskId, "c63ac052-a05a-4b5d-bfff-04429338df91", "c63ac052-a05a-4b5d-bfff-04429338df92"];
 
-async function pilot(page: Page, canComplete: boolean) {
+async function pilot(page: Page, canComplete: boolean, runtimeModel: "v1" | "v2" = "v1") {
   await page.addInitScript(() => {
     const NativeSocket = WebSocket;
     window.WebSocket = class extends NativeSocket {
@@ -21,7 +22,7 @@ async function pilot(page: Page, canComplete: boolean) {
   const starts: string[] = [];
   await page.route(/\/api\/v1\/channels\/[^/]+\/process-pilot(?:\?.*)?$/, route => {
     if (route.request().method() === "POST") configured = true;
-    return route.fulfill({ json: { configured, can_configure: canComplete, can_start: configured && canComplete, assignee_name: "Harald" } });
+    return route.fulfill({ json: { configured, can_configure: canComplete, can_start: configured && canComplete, assignee_name: "Harald", runtime_model: runtimeModel } });
   });
   await page.route(/\/api\/v1\/channels\/[^/]+\/process-pilot\/start(?:\?.*)?$/, route => {
     starts.push(route.request().postDataJSON().request_id);
@@ -29,14 +30,15 @@ async function pilot(page: Page, canComplete: boolean) {
   });
   await page.route(/\/api\/v1\/process-pilot\/tasks\//, route => {
     const request = route.request();
+    const requestedTaskId = /\/tasks\/([^/?]+)(?:\/complete)?(?:\?|$)/.exec(new URL(request.url()).pathname)?.[1] ?? taskId;
     let messageId = new URL(request.url()).searchParams.get("message_id");
     if (request.method() === "POST") {
       const body = request.postDataJSON(); completions.push(body); messageId = body.message_id;
       if (rejectCompletion) { rejectCompletion = false; return route.fulfill({ status: 503, body: "Tenesta er mellombels utilgjengeleg." }); }
       completionAccepted = true;
     } else reads++;
-    return route.fulfill({ json: { id: taskId, message_id: messageId, instance_id: "instance-1", node_id: "first",
-      status: completed ? "completed" : "pending", title: "Første oppgåve", assignee_id: "assignee-1", assignee_name: "Harald",
+    return route.fulfill({ json: { id: requestedTaskId, message_id: messageId, instance_id: "instance-1", node_id: "first",
+      status: completed ? "completed" : "pending", title: `Oppgåve ${parallelTaskIds.indexOf(requestedTaskId) + 1}`, assignee_id: "assignee-1", assignee_name: "Harald",
       can_complete: canComplete && !completed, delivery_status: completionAccepted && !completed ? "pending" : "ready" } });
   });
   return { completions, starts, configured: () => configured, reads: () => reads, confirmCompletion: () => { completed = true; } };
@@ -53,8 +55,8 @@ async function isolatedChannel(page: Page) {
   await expect(preview.getByRole("region", { name: `# ${name}`, exact: true })).toBeVisible();
 }
 
-test("pilot requires explicit setup/start; assigned task is collapsed, retryable and preserves composer drafts", async ({ page }) => {
-  const state = await pilot(page, true);
+test("v2 pilot requires explicit setup/start; assigned task is collapsed, retryable and preserves composer drafts", async ({ page }) => {
+  const state = await pilot(page, true, "v2");
   await page.goto("/?participant=react-pilot-assignee&ui=react");
   await isolatedChannel(page);
   const preview = page.locator("#sproyt-react-preview");
@@ -65,14 +67,14 @@ test("pilot requires explicit setup/start; assigned task is collapsed, retryable
   await preview.getByRole("button", { name: "Kanalval", exact: true }).filter({ visible: true }).click();
   const dialog = preview.getByRole("dialog", { name: /^Kanalval:/ });
   await dialog.getByRole("button", { name: "Aktiver prosesspilot for meg" }).click();
-  await expect(dialog.getByRole("button", { name: "Start testprosess", exact: true })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "Start parallell prosessgjennomgang", exact: true })).toBeEnabled();
   expect(state.starts).toHaveLength(0);
-  await dialog.getByRole("button", { name: "Start testprosess", exact: true }).click();
+  await dialog.getByRole("button", { name: "Start parallell prosessgjennomgang", exact: true }).click();
   await expect(dialog).toContainText("Prosessen er starta");
   await dialog.getByRole("button", { name: "Lukk kanalvala" }).click();
   await input.fill(macro); await input.press("Enter");
   const task = preview.locator(".sp-process-task").last();
-  await expect(task.locator("summary")).toContainText("Første oppgåve");
+  await expect(task.locator("summary")).toContainText("Oppgåve 1");
   await expect(task).not.toHaveAttribute("open", "");
   await task.locator("summary").focus(); await page.keyboard.press("Enter");
   await input.fill("Utkastet skal bli verande");
@@ -96,7 +98,7 @@ test("pilot requires explicit setup/start; assigned task is collapsed, retryable
   await expect(task).not.toHaveAttribute("open", "");
 });
 
-test("channel members see read-only task details and malformed task markers stay ordinary messages", async ({ page }, testInfo) => {
+test("mobile channel members keep all three process task messages read-only and malformed markers ordinary", async ({ page }, testInfo) => {
   const state = await pilot(page, false);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/?participant=react-pilot-reader&ui=react");
@@ -107,9 +109,11 @@ test("channel members see read-only task details and malformed task markers stay
   await input.fill("[[process-task:not-a-uuid]]"); await input.press("Enter");
   await expect(preview.getByText("[[process-task:not-a-uuid]]", { exact: true })).toBeVisible();
   expect(state.reads()).toBe(0);
-  await input.fill(macro); await input.press("Enter");
-  const task = preview.locator(".sp-process-task").last();
-  await expect(task.locator("summary")).toContainText("Første oppgåve");
+  for (const id of parallelTaskIds) { await input.fill(`[[process-task:${id}]]`); await input.press("Enter"); }
+  const tasks = preview.locator(".sp-process-task");
+  await expect(tasks).toHaveCount(3);
+  const task = tasks.last();
+  await expect(task.locator("summary")).toContainText("Oppgåve 3");
   await task.locator("summary").click();
   await expect(task).toContainText("Tildelt Harald");
   await expect(task).toContainText("Berre personen som har fått oppgåva");

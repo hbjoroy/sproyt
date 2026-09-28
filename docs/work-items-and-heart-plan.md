@@ -334,6 +334,24 @@ canaryaksept er krav før produksjon. Dette vert neste føresetnad før
 steg 1–3 vert tekne i ekte bruk; den eksisterande minipiloten står som
 regresjonstest. Fleire små PR-ar, ikkje ei samla motoromskriving.
 
+### Status etter etappe 4 — 28. september 2026
+
+Heart PR6/7/8 er merga og etappe1/2 er i canary med grøn CI.
+Fork/join er implementert i Heart PR9 med150 Linux-testar og containerprøve;
+den parallelle motoren er enno ikkje merga/utrulla.
+Sprøyt-adapteren har no eksplisitt v1/v2-val for nye pilotstarter, stabile
+kvitteringar per aktivering og samanfalda meldingar for to parallelle
+vurderingar og siste stadfesting. V1-køyringar er bevarte; terminalstatus
+frå Heart sperrar handlingar. Lokal prøve mot den faktiske Heart-motoren
+har passert begge rekkjefølgjene, samtidighet, restart/replay og avbrot.
+Sjå [pilotdokumentasjonen](process-user-task-pilot.md) for detaljar.
+
+Review/merge av avhengige PR-ar, koordinert migrering/image-pinning og
+manuell canaryaksept står att. Generell rolle-/kanalruting og
+applikasjonsregisteret er ikkje del av dette adaptersteget. Start
+saksregisteret etter at Heart v2 MVP er akseptert; Prosesstest-policyen
+er ikkje ein generell oppgåvepolicy.
+
 ### Tidleg minipilot: to brukaroppgåver med overlevering
 
 Før saksregister, tittelforslag og GitHub-integrasjon byggjer vi ei svært

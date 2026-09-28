@@ -1,3 +1,9 @@
+{{- if not (has .Values.config.processPilotRuntime (list "v1" "v2")) }}
+{{- fail "config.processPilotRuntime must be v1 or v2" }}
+{{- end }}
+{{- if and .Values.config.processPilotEnabled (eq .Values.config.processPilotRuntime "v2") .Values.heart.enabled (not .Values.heart.runtimeV2.enabled) }}
+{{- fail "v2 pilot requires heart.runtimeV2.enabled with a parallel-capable Heart image" }}
+{{- end }}
 {{- if and .Values.config.processPilotEnabled (not .Values.heart.enabled) (not .Values.config.processPilotHeartUrl) }}
 {{- fail "processPilotEnabled requires the bundled Heart component or config.processPilotHeartUrl" }}
 {{- end }}
@@ -20,6 +26,7 @@ data:
   SPROYT_DB_MAX_CONNECTIONS: {{ .Values.config.dbMaxConnections | quote }}
   SPROYT_UI_ADVANCED_ENABLED: {{ .Values.config.uiAdvancedEnabled | quote }}
   SPROYT_UI_AGENT_ENABLED: {{ .Values.config.uiAgentEnabled | quote }}
+  SPROYT_PROCESS_PILOT_RUNTIME: {{ .Values.config.processPilotRuntime | quote }}
   SPROYT_PROCESS_PILOT_ENABLED: {{ .Values.config.processPilotEnabled | quote }}
   SPROYT_PROCESS_OUTBOX_ENABLED: {{ .Values.config.processOutboxEnabled | quote }}
   {{- if .Values.config.processPilotEnabled }}

@@ -1,0 +1,34 @@
+namespace: sproyt
+name: parallel-review-pilot
+version: '1.0.0'
+runtime: v2
+description: Two parallel reviews join into one final confirmation.
+nodes:
+  start:
+    type: start
+    next: review-fork
+  review-fork:
+    type: fork
+    join: review-join
+    branches:
+      product: product-review
+      technical: technical-review
+  product-review:
+    type: user-task
+    assignee_metadata_key: assignee_id
+    next: review-join
+  technical-review:
+    type: user-task
+    assignee_metadata_key: assignee_id
+    next: review-join
+  review-join:
+    type: join
+    fork: review-fork
+    results_key: review-results
+    next: final-confirmation
+  final-confirmation:
+    type: user-task
+    assignee_metadata_key: assignee_id
+    next: end
+  end:
+    type: end

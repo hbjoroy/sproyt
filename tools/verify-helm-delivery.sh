@@ -97,4 +97,19 @@ grep -F -q 'SPROYT_PROCESS_PILOT_HEART_URL: "http://sproyt-sproyt-heart:3000"' "
 grep -F -q 'args: ["bootstrap-definition", "/definitions/user-task-pilot.yaml"]' "$heart_rendered"
 grep -F -q 'HEART_DB_MAX_CONNECTIONS' "$heart_rendered"
 
+if "$helm_command" template sproyt "$chart" "${common[@]}" \
+  --set "image.digest=$digest" --set heart.enabled=true \
+  --set "heart.image.digest=$heart_digest" --set config.processPilotEnabled=true \
+  --set config.processPilotRuntime=v2 \
+  --set config.processPilotAssigneeId=00000000-0000-0000-0000-000000000001 >/dev/null 2>&1; then
+  echo "v2 pilot unexpectedly accepted disabled Heart v2" >&2
+  exit 1
+fi
+"$helm_command" template sproyt "$chart" "${common[@]}" \
+  --set "image.digest=$digest" --set heart.enabled=true \
+  --set "heart.image.digest=$heart_digest" --set heart.runtimeV2.enabled=true \
+  --set config.processPilotEnabled=true --set config.processPilotRuntime=v2 \
+  --set config.processPilotAssigneeId=00000000-0000-0000-0000-000000000001 >"$heart_rendered"
+grep -F -q 'SPROYT_PROCESS_PILOT_RUNTIME: "v2"' "$heart_rendered"
+
 echo "Helm delivery contract verified for $image with optional internal $heart_image"
