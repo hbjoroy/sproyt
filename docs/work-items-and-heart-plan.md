@@ -271,6 +271,41 @@ er separate tilstandar. Innboksen skal ikkje blande alle oppgåvetypar.
 
 ## Leveransesteg med stoppunkt
 
+### Føresetnad før ekte saksbehandling: Heart runtime v2 MVP
+
+Etter den sekvensielle minipiloten skal Heart få eit avgrensa MVP for
+blanda brukaroppgåver/Lua/val og parallelle greiner med ein parvis AND-join.
+Internt vert framdrift representert med varige token og aktiveringar;
+YAML er framleis prosessformatet. Første versjon er ein endeleg graf utan
+løkker eller nøsta forgreining. Avansert OR-join, queue/receive i v2,
+kandidatgrupper og automatisk konvertering av instansar kjem seinare.
+
+Spesifikasjonen ligg i Heart sitt
+[runtime-v2-mvp.md](https://github.com/hbjoroy/heart/blob/codex/user-task-pilot/docs/runtime-v2-mvp.md), med eige
+[migreringsgrunnlag](https://github.com/hbjoroy/heart/blob/codex/user-task-pilot/docs/runtime-v2-migration.md) for andre
+Heart-brukarar. Dette er planlagt arbeid, ikkje utrulla funksjonalitet.
+
+Sprøyt treng ikkje migrering av gamle forretningsprosessar: den tidlegare
+integrasjonen har ikkje vore teken i praktisk bruk. Eventuelle aksepterte
+Prosesstest-instansar skal likevel inventerast og fullførast/bevarast.
+Nye instansar får ein ny, pinna v2-definisjon. Heart held fram med v1
+for andre eksisterande brukarar og instansar; inga stille omtolking.
+
+Gjennomføring: (1) kontrakt/schema og v1-kompatibilitet, (2) sekvensiell
+blanda v2-motor med varig vidareføring/kansellering, (3) fork/join med
+konkurranse-/restart-testar, (4) generell Sprøyt-projeksjon og canaryprøve.
+Adapteren må slutte å føresetje to sekvensielle oppgåver og bruke faktisk
+aktiverings-ID ved projeksjon. Heart avgjer når join er ferdig.
+
+Canaryprøva i Rocket-admins → Prosesstest får to parallelle oppgåver for
+Harald, etterfølgde av ei siste stadfesting når begge er fullførte.
+Test begge rekkjefølgjer, samtidige fullføringar, restart, dobbelt trykk,
+kansellering, feil og lesetilgang for andre medlemmer. Ingen GitHub- eller
+utviklingsautomatikk vert aktivert. Astra-review, grøn CI og manuell
+canaryaksept er krav før produksjon. Dette vert neste føresetnad før
+steg 1–3 vert tekne i ekte bruk; den eksisterande minipiloten står som
+regresjonstest. Fleire små PR-ar, ikkje ei samla motoromskriving.
+
 ### Tidleg minipilot: to brukaroppgåver med overlevering
 
 Før saksregister, tittelforslag og GitHub-integrasjon byggjer vi ei svært
