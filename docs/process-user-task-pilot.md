@@ -101,4 +101,17 @@ att. Bevar den same Heart-databaseidentiteten for registrerte pilotinstansar; fl
 Status for GitOps, image-digest og faktisk canary-prøve skal førast
 her ved utrulling; denne kjeldedokumentasjonen åleine stadfestar ikkje
 at piloten er aktiv i clusteret.
+## Canary-førebuing 28. september 2026
 
+Harald sin verifiserte Sprøyt-identitet er `d293b6d3-32b5-5979-bf12-94266342cd29`.
+Prosesstest finst allereie (`01a0e7c1-5cae-7b71-afaf-bc74ae67c3cc`), og
+Harald er eigar av kanalen og Rocket-admins. Ingen medlemskap må endrast.
+
+Den nye databasen `heart_sproyt_canary` får ei eiga rolle med høgst fire
+samstundes tilkoplingar; runtime bruker to, og bootstrap/migrering éi kvar.
+Dette legg til ei tom database utan å endre eksisterande roller eller
+prosessdata. Secret-referansen er `sproyt-canary-heart` i `sproyt-canary`;
+passord vert ikkje lagra i Git. PostgreSQL sin eksisterande nattlege backup
+køyrde ferdig same dag; nye pilotdata må også vere med i vidare backup.
+Ved feil vert piloten deaktivert, medan database og Secret vert bevarte.
+Det er ikkje naudsynt eller planlagt å slette data for tilbakeføring.
