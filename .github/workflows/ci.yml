@@ -585,5 +585,9 @@ jobs:
       - name: Remove private archive and temporary registry login
         if: always()
         run: |
+          set -euo pipefail
           rm -f heart-arm64.tar heart-config-digest.txt existing-manifest.json registry-lookup-error.txt
-          rm -rf "$RUNNER_TEMP/heart-regctl-config"
+          # regctl runs as root, so its files need elevated cleanup on this runner.
+          cleanup_dir="$(realpath -m -- "$RUNNER_TEMP/heart-regctl-config")"
+          test "$cleanup_dir" = "$(realpath -- "$RUNNER_TEMP")/heart-regctl-config"
+          sudo rm -rf -- "$cleanup_dir"
