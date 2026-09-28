@@ -281,9 +281,16 @@ løkker eller nøsta forgreining. Avansert OR-join, queue/receive i v2,
 kandidatgrupper og automatisk konvertering av instansar kjem seinare.
 
 Spesifikasjonen ligg i Heart sitt
-[runtime-v2-mvp.md](https://github.com/hbjoroy/heart/blob/codex/user-task-pilot/docs/runtime-v2-mvp.md), med eige
-[migreringsgrunnlag](https://github.com/hbjoroy/heart/blob/codex/user-task-pilot/docs/runtime-v2-migration.md) for andre
-Heart-brukarar. Dette er planlagt arbeid, ikkje utrulla funksjonalitet.
+[runtime-v2-mvp.md](https://github.com/hbjoroy/heart/blob/codex/runtime-v2-contract/docs/runtime-v2-mvp.md), med eige
+[migreringsgrunnlag](https://github.com/hbjoroy/heart/blob/codex/runtime-v2-contract/docs/runtime-v2-migration.md) for andre
+Heart-brukarar. Første leveranse er implementert i
+[Heart PR 7](https://github.com/hbjoroy/heart/pull/7): eksplisitt runtime,
+avgrensa grafvalidering, v2-tilstandsformat og additivt schema 006 med eigne
+v2-tabellar. V1-oppgåver og fullføringskvitteringar vert bevarte, prova med
+ein faktisk PostgreSQL-oppgraderingsprøve. V2-start er framleis sperra.
+105 lokale workspace-testar, strict clippy og chart-rendering passerte;
+Astra har kontrollert arkitekturen og integrasjonsgrensa. Heart v2 er ikkje
+utrulla; vidareføring/kansellering og fork/join-motor er neste leveransar.
 
 Sprøyt treng ikkje migrering av gamle forretningsprosessar: den tidlegare
 integrasjonen har ikkje vore teken i praktisk bruk. Eventuelle aksepterte
