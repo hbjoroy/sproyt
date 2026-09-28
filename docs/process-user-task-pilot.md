@@ -152,3 +152,41 @@ med gamalt image og pilot av, og deretter aktivere nytt image/oppsett.
 Parent Application-pin og main-values er ikkje ei atomisk endring.
 ReplicaSet-kontrollen for denne utrullinga viste berre den rette nye
 chart-konfigurasjonen; ingen mellomliggjande gamal-chart/nytt-image-utrulling.
+
+## Heart v2-etappe 1/2 i canary — 28. september 2026
+
+Heart PR6/7/8 er merga; endeleg masterrevisjon er
+`9f0925a8aabd28296036a37fe5d4f65c58c5bf56`.
+[Heart CI36458710117](https://github.com/hbjoroy/heart/actions/runs/36458710117)
+passerte 144 testar, faktiske PostgreSQL-migreringar, native ARM64-containerprøve,
+SBOM og sikkerheitsskanning.
+[Publiserings-CI36460233926](https://github.com/hbjoroy/sproyt/actions/runs/36460233926)
+passerte alle kontrollar og publiserte det verifiserte imaget.
+
+GitOps PR[162](https://github.com/hbjoroy/rocket-applications/pull/162) førebudde
+chart3a7a608 med gammalt image/v2=false. Deretter aktiverte
+PR[163](https://github.com/hbjoroy/rocket-applications/pull/163), merge
+`27af07e3a4329803b42a803d580cf0e59510dfe1`, v2 med Heart-image
+`sha256:36eb8181e55487bacfa0466faba2ceefe5dd9662ca46eb27bbb54ab6e30c1671`.
+Sprøyt-image, databaseidentitet og produksjonsoppsett er uendra.
+
+Full canary-backup vart lesen, sjekksummert og restaurert på isolert PostgreSQL18.
+Prøva avdekte kjende CRLF-sjekksummar frå det eldre Windows-bygget, medan SQL-
+innhaldet i Git er uendra. Det avgrensa GitOps-operator-scriptet
+`scripts/heart/reconcile-legacy-crlf-checksums.sql` vart først prøvd på restore-
+kopien: ukjend hash avbryt atomisk, kjende hashpar blir retta, replay er uendra.
+Levande retting og migrering006/007 bevarte eksakte SHA-256-fingeravtrykk av
+v1-instansen, begge oppgåvene, definisjonane, startkvitteringane og dei andre
+felta i eksisterande migreringshistorikk. Heart migreringsfiler er no bundne til LF.
+
+Levande privat v2-prøve i namespace `ci-v2-smoke` passerte med to brukaroppgåver
+for same person, Lua/XOR-overgang, idempotent start/fullføring og terminaltilstand.
+Resultatet er éin fullført prøveinstans, to fullførte oppgåver og null aktive steg.
+V1-piloten kan framleis lesast via API. Argo er Synced/Healthy; canary/prod readyz
+svarar200. Produksjonsgenerasjonar120/1 og image-digestane er uendra.
+
+Sprøyt Prosesstest bruker framleis v1-adapteren; denne utrullinga prøver den nye
+v2-motoren direkte, utan å flytte eksisterande kanalprosessar. V2-adapter og
+fork/join står att som seinare etappar. Paus v2 ved å sette
+`heart.runtimeV2.enabled=false` med same nye image og database. Bevar schema
+og canonical-LF migreringsimage; ikkje bruk gammalt CRLF-image som blind rollback.
