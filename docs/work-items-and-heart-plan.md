@@ -2,6 +2,12 @@
 
 Dato: 2026-09-28. Status: den avgrensa iterasjonen 0a er implementert og testa mot ekte Heart. Resten av saksfunksjonaliteten er framleis ein plan. Sjå [pilotkontrakten og driftsstatus](process-user-task-pilot.md).
 
+Sjå òg [designnotatet om brukarskjema](process-forms-design-note.md).
+Saksregisteret i denne planen gjeld Sprøyt sine saker; andre prosessar kan
+bruke andre brukarflater og separate fagsystem som eigarar av saksdata.
+Skjemastøtte er utsett til behovet oppstår, med JSON Forms og prosessnære
+data som første omfang.
+
 ## Mål og første leveranse
 
 Ein brukar kan gjere ei melding om til ei sak for ei applikasjon som kanalen
@@ -290,7 +296,22 @@ v2-tabellar. V1-oppgåver og fullføringskvitteringar vert bevarte, prova med
 ein faktisk PostgreSQL-oppgraderingsprøve. V2-start er framleis sperra.
 105 lokale workspace-testar, strict clippy og chart-rendering passerte;
 Astra har kontrollert arkitekturen og integrasjonsgrensa. Heart v2 er ikkje
-utrulla; vidareføring/kansellering og fork/join-motor er neste leveransar.
+utrulla.
+
+Andre leveranse er implementert i
+[Heart PR 8](https://github.com/hbjoroy/heart/pull/8): sekvensiell blanda
+v2-motor, isolert avgrensa Lua, varig vidareføring, arbeidarleiger,
+fullføringskvitteringar og kansellering. Eige v2-API og bakgrunnsarbeidar
+er avslått som standard og krev eksplisitt konfigurasjon. Additivt schema
+007 lagrar kven som starta prosessen for kanselleringskontroll. Faktisk
+PostgreSQL- og HTTP-test viser to brukaroppgåver med Lua/val mellom,
+restart, retry, samtidige fullføringar og kansellering; ein separat prøve
+køyrer gjennom den faktiske tenaren og arbeidaren. Astra har kontrollert
+transaksjonar, sandbox og API-grensa. CI skal vere grøn før denne etappen
+vert rekna som leveringsklar. Sjå
+[leveransekontrakten](https://github.com/hbjoroy/heart/blob/codex/runtime-v2-sequential/docs/runtime-v2-sequential.md).
+Produksjon, canary og Sprøyt-bindinga er uendra. Fork/join-motor med
+konkurranse- og restart-testar er neste etappe.
 
 Sprøyt treng ikkje migrering av gamle forretningsprosessar: den tidlegare
 integrasjonen har ikkje vore teken i praktisk bruk. Eventuelle aksepterte
