@@ -477,6 +477,25 @@ impl ProcessPilot {
         }) {
             return Err(RepositoryError::Conflict);
         }
+        if runtime == Runtime::V2
+            && process_status == "completed"
+            && (tasks.len() != 3 || tasks.iter().any(|t| t.status != "completed"))
+        {
+            return Err(RepositoryError::Conflict);
+        }
+        let receipts = self
+            .store
+            .values(
+                "select heart_task_id from process_pilot_tasks where run_id=?",
+                &[id.into()],
+            )
+            .await?;
+        if receipts
+            .iter()
+            .any(|receipt| !tasks.iter().any(|task| task.id.to_string() == *receipt))
+        {
+            return Err(RepositoryError::Conflict);
+        }
         if matches!(process_status, "completed" | "cancelled" | "failed")
             && tasks.iter().any(|t| t.status == "pending")
         {
@@ -1371,6 +1390,8 @@ mod tests {
         let deployed = json!({"id":definition,"namespace":"sproyt","name":V2_DEFINITION,"version":"1.0.0","runtime":"v2"});
         let view = json!({"id":instance,"definition_id":definition,"runtime":"v2","namespace":"sproyt","status":"failed","input_metadata":{"assignee_id":owner.to_string(),"pilot_run_id":run}});
         let tasks = json!([{"id":task.id,"instance_id":instance,"assignee_id":owner.to_string(),"node_id":"product-review","status":"cancelled","scope":{"fork_activation_id":task.scope.as_ref().unwrap().fork_activation_id,"branch_id":"product"}}]);
+        let task_response = Arc::new(tokio::sync::Mutex::new(json!([])));
+        let response_state = task_response.clone();
         let app = axum::Router::new()
             .route(
                 "/api/v2/definitions",
@@ -1382,7 +1403,10 @@ mod tests {
             )
             .route(
                 "/api/v2/user-tasks",
-                axum::routing::get(move || async move { axum::Json(tasks) }),
+                axum::routing::get(move || {
+                    let state = response_state.clone();
+                    async move { axum::Json(state.lock().await.clone()) }
+                }),
             )
             .route(
                 "/api/v2/user-tasks/{id}/complete",
@@ -1416,6 +1440,19 @@ mod tests {
         );
         repo.migrate().await.unwrap();
         let chat = ChatEngine::start(repo);
+        // A response missing an already presented activation must not settle the run.
+        assert!(matches!(
+            pilot.sync_run(&chat, &run, "").await,
+            Err(RepositoryError::Conflict)
+        ));
+        let unchanged = pilot
+            .task(&owner, &local, &message.to_string())
+            .await
+            .unwrap();
+        assert_eq!(unchanged.process_status, "waiting");
+        assert_eq!(unchanged.status, "pending");
+        assert_eq!(unchanged.delivery_status, "pending");
+        *task_response.lock().await = tasks;
         pilot.sync_run(&chat, &run, "").await.unwrap();
         let view = pilot
             .task(&owner, &local, &message.to_string())
