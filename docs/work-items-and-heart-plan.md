@@ -1,6 +1,6 @@
 # Plan: applikasjonssaker gjennom Sprøyt og Heart
 
-Dato: 2026-09-28. Status: forslag; ingen funksjonalitet eller utrulling er starta.
+Dato: 2026-09-28. Status: den avgrensa iterasjonen 0a er implementert og testa mot ekte Heart. Resten av saksfunksjonaliteten er framleis ein plan. Sjå [pilotkontrakten og driftsstatus](process-user-task-pilot.md).
 
 ## Mål og første leveranse
 
@@ -16,7 +16,7 @@ samanfalda, interaktive meldingar i vanlege kanalar som er konfigurerte
 for den aktuelle oppgåvetypen og prosessrolla. Innboksen er ikkje ei
 samleliste for alle prosessoppgåver.
 
-## Utgangspunkt som er kontrollert i kode
+## Utgangspunkt ved den første planlegginga
 
 - `src/process.rs`: Heart-adapter, varig outbox, retry og prosesslenkjer.
 - `src/db/{postgres,sqlite}.rs`: prosessstart krev kanalmedlemskap og
@@ -408,7 +408,7 @@ Desse avklaringane skal ikkje låse same/separate kanalar for framtida.
 Astra har vurdert arkitekturen og gått gjennom utkastet i to separate
 avsjekkar. Funna om tilgang per handling, éin tildelingsautoritet,
 stegaktivering, separate statusar og usikker Heart-levering er innarbeidde.
-Dokumentet er ein plan; steg 0 må avklare kontraktane før implementering.
+Den sekvensielle Heart-kontrakten er no avklart og implementert for iterasjon 0a. Vidare saksregister, rolle-/kanalruting og andre grafkombinasjonar må avklarast i dei seinare stega.
 Etter brukaravklaring er innbokskøa erstatta med Heart-brukaroppgåver
 presenterte som samanfalda meldingar i rolle-/oppgåvekonfigurerte kanalar.
 Dette er eit pilotoppsett som skal prøvast og justerast, ikkje ein ferdig

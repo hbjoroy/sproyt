@@ -115,3 +115,40 @@ passord vert ikkje lagra i Git. PostgreSQL sin eksisterande nattlege backup
 køyrde ferdig same dag; nye pilotdata må også vere med i vidare backup.
 Ved feil vert piloten deaktivert, medan database og Secret vert bevarte.
 Det er ikkje naudsynt eller planlagt å slette data for tilbakeføring.
+## Utrulla canary — 28. september 2026
+
+GitOps PR [161](https://github.com/hbjoroy/rocket-applications/pull/161) er
+merga som `2a06298aa3cd10ac323203a4a2ef32b66746d500`.
+Canary-chart/app er frå `edf559b2d8b934de270a0ed4c9cdedac812e3d78`.
+Sprøyt-image: `sha256:bf7f9fff915b3751570e5092b57488dbdb5c913da70fccd67ccabe1b9b1a129e`.
+Heart-image: `sha256:0fbae5d490ded24ecdfab9e86a313277687c7c44309c1dcc6184e1c4ff9dc5f5`,
+frå `efaa7f80a55b7b6526de0ae7247d44a1c2de4d70`.
+
+Levande kontroll stadfestar begge image-digestane, klare podar, gjennomført
+Sprøyt0040 og Heart005, og begge definisjonane registrerte i den separate
+Heart-databasen. Canary ConfigMap har pilot=true og generell outbox=false.
+Argo rapporterer begge applikasjonane Synced/Healthy; offentleg readyz
+svarar200 for canary og produksjon. Ingen pilot er starta ved utrullinga;
+Harald må aktivere bindinga og velje Start testprosess i kanalmenyen.
+Den manuelle prøva med ekte innlogging, særleg på telefon, står att.
+
+Produksjonen sin migreringsjobb er pinna til det same Sprøyt-imaget, fordi
+SQLx elles vil avvise0040 som ukjend ved ein seinare sync med eit gammalt
+migreringsimage. Render mot eksakt produksjonschart356fa06f viste at berre
+migreringsjobben endra image. Produksjonsappen står på digest7b23e18e… og
+Deployment-generasjon120, som før denne utrullinga; Heart der er urørt.
+Bevar den nye migreringspinnen også ved eventuell rollback av appen.
+
+Heart-publiseringa bruker ein valfri, manuell CI-veg med fast registrymål,
+kontrollert privat TAR-sjekksum, revisjon, arkitektur og ikkje-root-identitet.
+Den mellombelse signerte URL-en vart berre lagra som kryptert miljøsecret
+og er sletta etter import. Import og digest-evidens lukkast; CI-runda
+36426375395 feila berre under sletting av root-eigd mellombels loginmappe.
+Den avgrensa oppryddingsrettinga er pusha som fcfcef6 og syntakskontrollert.
+Dette var ein publiseringsjobbfeil, ikkje ein feil i det utrulla imaget.
+
+Framtidige fleirkjelde-Argo-endringar bør først synkronisere ny chartpin
+med gamalt image og pilot av, og deretter aktivere nytt image/oppsett.
+Parent Application-pin og main-values er ikkje ei atomisk endring.
+ReplicaSet-kontrollen for denne utrullinga viste berre den rette nye
+chart-konfigurasjonen; ingen mellomliggjande gamal-chart/nytt-image-utrulling.
