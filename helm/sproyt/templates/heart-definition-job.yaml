@@ -49,6 +49,27 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+        {{- if .Values.config.processPilotEnabled }}
+        - name: bootstrap-user-task-pilot
+          image: {{ include "sproyt.heart.image" . | quote }}
+          imagePullPolicy: {{ .Values.heart.image.pullPolicy }}
+          args: ["bootstrap-definition", "/definitions/user-task-pilot.yaml"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.heart.secret.existingSecret }}
+                  key: {{ .Values.heart.secret.databaseUrlKey }}
+          volumeMounts:
+            - name: definitions
+              mountPath: /definitions
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+        {{- end }}
       volumes:
         - name: definitions
           configMap:

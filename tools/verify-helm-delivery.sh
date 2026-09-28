@@ -86,4 +86,15 @@ grep -F -q 'name: sproyt-sproyt-heart-definitions' "$heart_rendered"
 test "$(grep -F -c -- "- name: oci-pull-secret" "$heart_rendered")" -eq 5
 cmp processes/event-planning.yaml "$chart/definitions/event-planning.yaml"
 
+"$helm_command" template sproyt "$chart" "${common[@]}" \
+  --set "image.digest=$digest" --set heart.enabled=true \
+  --set "heart.image.digest=$heart_digest" \
+  --set config.processPilotEnabled=true \
+  --set config.processOutboxEnabled=false \
+  --set config.processPilotAssigneeId=00000000-0000-0000-0000-000000000001 >"$heart_rendered"
+grep -F -q 'SPROYT_PROCESS_OUTBOX_ENABLED: "false"' "$heart_rendered"
+grep -F -q 'SPROYT_PROCESS_PILOT_HEART_URL: "http://sproyt-sproyt-heart:3000"' "$heart_rendered"
+grep -F -q 'args: ["bootstrap-definition", "/definitions/user-task-pilot.yaml"]' "$heart_rendered"
+grep -F -q 'HEART_DB_MAX_CONNECTIONS' "$heart_rendered"
+
 echo "Helm delivery contract verified for $image with optional internal $heart_image"

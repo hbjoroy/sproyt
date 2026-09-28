@@ -25,8 +25,12 @@ import type { ImageGenerationOwner } from "../../imagegen";
 import { PreviewInboxes, type PreviewInboxHost, type PreviewInboxState } from "./preview-inboxes";
 import { HeaderActions } from "./header-actions";
 import { MarkdownContent, markdownTextFromMessage } from "./markdown-content";
+import { processTaskId, type ProcessPilotApi } from "../../process-pilot";
+import { ProcessPilotChannelAction, ProcessTaskMessage } from "./process-pilot";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
+  readonly processPilot: ProcessPilotApi;
+  readonly processPilotIdentity: () => string;
   readonly imageGeneration: ImageGenerationOwner;
   readonly legacyContainer: HTMLElement;
   readonly runtime: ApplicationRuntime;
@@ -116,6 +120,7 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
           <BellIcon muted={!notifications.enabled} /><span>Varsel {notifications.enabled ? "på" : "av"}</span>
         </Button>}
         {notifications?.error && <Status tone="error">{notifications.error}</Status>}
+        {open && <ProcessPilotChannelAction key={`${host.processPilotIdentity()}:${channel.id}`} api={host.processPilot} channelId={channel.id} />}
         {!confirmLeave ? <Button variant="danger" onClick={() => setConfirmLeave(true)}>Forlat kanalen</Button>
           : <div className="sp-leave-confirm" role="group" aria-label="Stadfest at du vil forlate kanalen">
             <p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p>
@@ -137,6 +142,8 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
 }
 
 function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
+  const taskId = processTaskId(message.body);
+  if (taskId) return <ProcessTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${taskId}`} api={host.processPilot} taskId={taskId} messageId={message.id} />;
   return <div className="sp-message-content">
     <MarkdownContent source={markdownTextFromMessage(message.body)} />
     {invitationTokensFromMessage(message.body).map((token, index) => <InvitationCard key={`${token}-${index}`} token={token} host={host.invitations} />)}

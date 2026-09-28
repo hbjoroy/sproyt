@@ -1,4 +1,5 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
+      import { ProcessPilotApi } from "./process-pilot";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
       import { createCommunityRequests } from "./application/community-requests";
@@ -5697,6 +5698,8 @@
               })
             }),
             imageGeneration,
+            processPilot: new ProcessPilotApi(http, () => currentParticipantId ?? ""),
+            processPilotIdentity: () => currentParticipantId ?? "",
             openImageGeneration: () => imageGeneration.open(),
             legacyContainer: sproytApp,
             runtime: applicationRuntime,

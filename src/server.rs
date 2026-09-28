@@ -64,6 +64,7 @@ pub(super) struct AppState {
     pub(super) integrations: IntegrationService,
     pub(super) notifications: NotificationService,
     pub(super) imagegen: Option<crate::imagegen::ImageGeneration>,
+    pub(super) process_pilot: Option<crate::process_pilot::ProcessPilot>,
     pub(super) enrollment: Option<EnrollmentService>,
     pub(super) websocket_idle_timeout: Duration,
     pub(super) advanced_ui_enabled: bool,
@@ -111,10 +112,18 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     if let Some(service) = &imagegen {
         service.start_worker(operations.subscribe_shutdown());
     }
+    let chat = ChatEngine::start(repositories.chat);
+    let process_pilot =
+        crate::process_pilot::ProcessPilot::from_env(config.database(), postgres_pool.as_ref())
+            .await?;
+    if let Some(pilot) = &process_pilot {
+        pilot.start_worker(chat.clone(), operations.subscribe_shutdown());
+    }
     let state = AppState {
+        process_pilot,
         imagegen,
         auth,
-        chat: ChatEngine::start(repositories.chat),
+        chat,
         operations: operations.clone(),
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),
@@ -214,6 +223,23 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         )
         .route("/api/v1/events", get(events_handler))
         .route("/api/v1/processes", post(start_process))
+        .route(
+            "/api/v1/channels/{id}/process-pilot",
+            get(crate::web::process_pilot::configuration)
+                .post(crate::web::process_pilot::configure),
+        )
+        .route(
+            "/api/v1/channels/{id}/process-pilot/start",
+            post(crate::web::process_pilot::start),
+        )
+        .route(
+            "/api/v1/process-pilot/tasks/{id}",
+            get(crate::web::process_pilot::task),
+        )
+        .route(
+            "/api/v1/process-pilot/tasks/{id}/complete",
+            post(crate::web::process_pilot::complete),
+        )
         .route("/api/v1/processes/{id}", get(get_process))
         .route("/api/v1/processes/{id}/inspect", post(inspect_process))
         .route("/api/v1/processes/{id}/messages", post(correlate_process))
@@ -261,11 +287,30 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
 
 fn process_gateway_from_env() -> Result<Option<SharedProcessGateway>, crate::process::ProcessError>
 {
+    if !process_outbox_enabled(
+        std::env::var("SPROYT_PROCESS_OUTBOX_ENABLED")
+            .ok()
+            .as_deref(),
+    ) {
+        return Ok(None);
+    }
     let Some(url) = std::env::var("SPROYT_HEART_URL").ok() else {
         return Ok(None);
     };
     let gateway = HeartGateway::new(url, Duration::from_secs(5), 2)?;
     Ok(Some(std::sync::Arc::new(gateway)))
+}
+
+fn process_outbox_enabled(value: Option<&str>) -> bool {
+    value != Some("false")
+}
+
+#[cfg(test)]
+#[test]
+fn canary_can_disable_generic_process_worker_without_disabling_pilot() {
+    assert!(!process_outbox_enabled(Some("false")));
+    assert!(process_outbox_enabled(None));
+    assert!(process_outbox_enabled(Some("true")));
 }
 
 fn init_tracing(log_format: LogFormat) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

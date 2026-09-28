@@ -12,4 +12,8 @@ metadata:
 data:
   event-planning.yaml: |
 {{ .Files.Get "definitions/event-planning.yaml" | indent 4 }}
+  {{- if .Values.config.processPilotEnabled }}
+  user-task-pilot.yaml: |
+{{ .Files.Get "definitions/user-task-pilot.yaml" | indent 4 }}
+  {{- end }}
 {{- end }}

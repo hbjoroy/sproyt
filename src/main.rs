@@ -11,6 +11,7 @@ mod integration;
 mod notification;
 mod operations;
 mod process;
+mod process_pilot;
 mod protocol;
 mod server;
 mod web;

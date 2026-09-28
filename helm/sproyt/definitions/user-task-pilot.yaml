@@ -1,0 +1,20 @@
+name: sproyt-user-task-pilot
+namespace: sproyt
+version: "1.0.0"
+description: Two real user tasks for one assignee, presented in the process test channel.
+nodes:
+  start:
+    type: start
+    next: first
+  first:
+    type: user-task
+    assignee_metadata_key: assignee_id
+    description: First confirmation
+    next: second
+  second:
+    type: user-task
+    assignee_metadata_key: assignee_id
+    description: Confirm handover
+    next: completed
+  completed:
+    type: end

@@ -284,6 +284,12 @@
   #sproyt-react-preview .sp-message-meta { grid-column: 1; grid-row: 1; }
   #sproyt-react-preview .sp-message-body { grid-column: 1 / -1; grid-row: 2; }
 }
+.sp-process-task { max-width: 100%; }
+.sp-process-task > summary { min-height: 44px; padding-block: 8px; cursor: pointer; overflow-wrap: anywhere; }
+.sp-process-task > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.sp-process-task-status { margin-inline-start: 12px; font-size: 12px; opacity: .75; white-space: nowrap; }
+.sp-process-task-details { padding-block: 4px 8px; }
+.sp-process-task-details > p { margin-block: 4px 8px; }
 @container sp-app (max-width: 480px) {
   .sp-community-dialog .sp-person > .sp-button:not(.sp-community-direct) {
     grid-column: 2 / -1; justify-self: stretch;
