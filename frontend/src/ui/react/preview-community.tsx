@@ -1,5 +1,5 @@
 import { Button, Dialog, PersonList, Status, TextField } from "@sproyt/ui/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Channel, Circle, UserProfile } from "../../types";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import { MarkdownContent } from "./markdown-content";
@@ -110,6 +110,14 @@ function ScopeChannels({ host, circle, channels, onClose, onNavigate, onSelectCh
   onSelectChannel?: (channelId: string) => void; createOnly?: boolean;
 }) {
   const [name, setName] = useState(""); const [kind, setKind] = useState<"public" | "local" | "private">("private");
+  const nameField = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!createOnly) return;
+    // React autofocus precedes native showModal(), which otherwise focuses
+    // the dialog's close button. Focus once after the modal is open.
+    const frame = requestAnimationFrame(() => nameField.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [createOnly]);
   const [joinable, setJoinable] = useState<Array<{ id: string; name: string; description: string }>>([]);
   const [confirm, setConfirm] = useState(false); const op = useOperation();
   const load = () => circle && op.run(async () => setJoinable(await host.joinable(circle.id)));
@@ -121,7 +129,7 @@ function ScopeChannels({ host, circle, channels, onClose, onNavigate, onSelectCh
       {onSelectChannel && <Button variant="quiet" aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={() => onNavigate({ kind: "channel", channelId: channel.id })}><span aria-hidden="true">⋯</span></Button>}
     </div>)}</div></>}
     {onSelectChannel && !createOnly ? <Button variant="quiet" onClick={() => onNavigate({ kind: "create-channel", circleId: circle?.id ?? null })}>Ny kanal i {scopeName}</Button> : <section aria-label="Ny kanal"><h3>Ny kanal i {scopeName}</h3><form onSubmit={event => { event.preventDefault(); void op.run(async () => { await host.createChannel(circle?.id ?? null, name.trim(), kind); onClose(); }); }}>
-      <TextField label="Kanalnamn" value={name} required autoFocus={createOnly} onChange={event => setName(event.target.value)} />
+      <TextField ref={nameField} label="Kanalnamn" value={name} required onChange={event => setName(event.target.value)} />
       <label htmlFor="community-kind">Kanaltype</label><select id="community-kind" value={kind} onChange={event => setKind(event.target.value as typeof kind)}><option value="private">Privat</option><option value="public">Open</option><option value="local">Lokal</option></select>
       <Button type="submit" busy={op.busy} disabled={!name.trim()}>Opprett kanal</Button>
     </form></section>}
