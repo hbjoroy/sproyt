@@ -27,6 +27,7 @@ import { HeaderActions } from "./header-actions";
 import { MarkdownContent, markdownTextFromMessage } from "./markdown-content";
 import { processTaskId, type ProcessPilotApi } from "../../process-pilot";
 import { ProcessPilotChannelAction, ProcessTaskMessage } from "./process-pilot";
+import { NavigationScopeActions } from "./navigation-scope-actions";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly processPilot: ProcessPilotApi;
@@ -98,6 +99,7 @@ function ChannelMembersIcon() {
 function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveError, setLeaveError] = useState("");
@@ -115,6 +117,9 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
       onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
       <div className="sp-channel-menu-dialog">
         <Button variant="quiet" onClick={openDetails}><ChannelMembersIcon /><span>Medlemmer og kanalomtale</span></Button>
+        {["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={openDetails}><ChannelMembersIcon /><span>Legg til eller inviter kanalmedlem</span></Button>}
+        {snapshot.circles.some(circle => circle.id === channel.circle_id && circle.role === "owner") && <Button variant="quiet"
+          onClick={() => { setOpen(false); setInviteOpen(true); }}>Inviter til kretsen</Button>}
         {notifications && <Button variant="quiet" disabled={notifications.pending} aria-pressed={notifications.enabled}
           onClick={() => host.setChannelNotifications(channel.id, !notifications.enabled)}>
           <BellIcon muted={!notifications.enabled} /><span>Varsel {notifications.enabled ? "på" : "av"}</span>
@@ -138,6 +143,8 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
     </Dialog>
     {detailsOpen && <PreviewCommunity destination={{ kind: "channel", channelId: channel.id }} snapshot={snapshot} host={host.community}
       onNavigate={() => {}} onClose={() => setDetailsOpen(false)} />}
+    {inviteOpen && channel.circle_id && <PreviewCommunity destination={{ kind: "invite", circleId: channel.circle_id }} snapshot={snapshot} host={host.community}
+      onNavigate={() => {}} onClose={() => setInviteOpen(false)} />}
   </>;
 }
 
@@ -284,6 +291,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced}
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions></>,
     navigationActions: null,
+    renderGroupActions: group => group.id === "scope:direct" ? null : <NavigationScopeActions
+      group={group} snapshot={snapshot} host={host.community}
+      onSelect={channelId => { reactionPicker.close(); host.select(channelId); view = "detail"; update(); }} />,
     contextActions: <ChannelActions snapshot={snapshot} host={host} />,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
