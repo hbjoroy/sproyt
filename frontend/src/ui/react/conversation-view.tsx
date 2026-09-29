@@ -30,9 +30,8 @@ export function ConversationNavigation(props: ConversationNavigationProps) {
       onChange={event => props.onQueryChange(event.currentTarget.value)} />
     {props.actions}
     {props.groups.map(group => <section key={group.id} data-conversation-group={group.id}>
-      {group.actions}
-      {group.conversations.some(item => item.action) ? <div className="sp-conversations">
-        <h2 className="sp-group-label sp-kicker">{group.name}</h2>
+      {group.actions || group.conversations.some(item => item.action) ? <div className="sp-conversations">
+        <div className="sp-navigation-group-heading"><h2 className="sp-group-label sp-kicker">{group.name}</h2>{group.actions}</div>
         {group.conversations.map(item => <div className="sp-conversation-row" key={item.id}>
           <button type="button" className="sp-conversation"
             aria-current={item.id === props.selectedId ? "page" : undefined}

@@ -24,6 +24,50 @@ async function createCircle(preview: Locator, name: string) {
   await expect(preview.getByRole("region", { name, exact: true })).toBeVisible();
 }
 
+for (const width of [1280, 390]) test(`navigation exposes scoped channel and invitation actions at ${width}px without the management menu`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  const commands: Array<{ type: string; payload?: any }> = [];
+  page.on("websocket", socket => socket.on("framesent", ({ payload }) => commands.push(JSON.parse(String(payload)))));
+  const preview = await enter(page, `scope-navigation-${width}-${Date.now()}`);
+  const circleName = `Navigasjonskrets ${width}`;
+  await createCircle(preview, circleName);
+  await page.keyboard.press("Escape");
+  await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast frå navigasjon");
+  if (width === 390) await preview.getByRole("button", { name: /Samtalar/ }).click();
+  const scope = preview.locator("[data-conversation-group]").filter({ has: page.getByRole("heading", { name: circleName, exact: true }) });
+  const create = scope.getByRole("button", { name: `Ny kanal i ${circleName}`, exact: true });
+  await create.click();
+  const channel = preview.getByRole("dialog", { name: `Ny kanal i ${circleName}`, exact: true });
+  await expect(channel.getByLabel("Kanalnamn")).toBeFocused();
+  await channel.getByLabel("Kanalnamn").fill("Frå kretslista");
+  await channel.getByLabel("Kanaltype").selectOption("public");
+  await channel.getByRole("button", { name: "Opprett kanal", exact: true }).click();
+  await expect(channel).toHaveCount(0);
+  const creation = commands.find(item => item.type === "create_channel" && item.payload?.name === "Frå kretslista");
+  expect(creation?.payload.circle_id).toBeTruthy();
+  const browse = scope.getByRole("button", { name: `Finn kanalar i ${circleName}`, exact: true });
+  await browse.click();
+  const directory = preview.getByRole("dialog", { name: `Kanalar i ${circleName}`, exact: true });
+  await directory.getByRole("button", { name: "# Prat Gå inn", exact: true }).click();
+  await expect(directory).toHaveCount(0);
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("utkast frå navigasjon");
+  if (width === 390) await preview.getByRole("button", { name: /Samtalar/ }).click();
+  const invite = scope.getByRole("button", { name: `Inviter til ${circleName}`, exact: true });
+  await invite.click();
+  await expect(preview.getByRole("dialog", { name: `Inviter til ${circleName}` })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(invite).toBeFocused();
+  const shared = preview.locator('[data-conversation-group="scope:shared"]');
+  await shared.getByRole("button", { name: "Ny kanal i Felles", exact: true }).click();
+  await expect(preview.getByRole("dialog", { name: "Ny kanal i Felles", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await shared.getByRole("button", { name: "Inviter ny brukar til Sprøyt", exact: true }).click();
+  await expect(preview.getByRole("dialog", { name: "Inviter ny brukar til Sprøyt", exact: true })).toBeVisible();
+  expect(commands.filter(item => item.type === "create_invitation")).toHaveLength(0);
+  const shell = await preview.boundingBox();
+  expect(shell?.width).toBeLessThanOrEqual(width);
+});
+
 test("real React circle creates Prat once, creates scoped channel, edits Markdown and confirms deletion", async ({ page }) => {
   const commands: Array<{ type: string; payload?: any }> = [];
   let sockets = 0;
@@ -59,6 +103,7 @@ test("real React circle creates Prat once, creates scoped channel, edits Markdow
 });
 
 test("Felles creates a global channel with a global slug and exposes its members directly", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
   const commands: Array<{ type: string; payload?: { name?: string; slug?: string; circle_id?: string | null } }> = [];
   page.on("websocket", socket => socket.on("framesent", ({ payload }) => commands.push(JSON.parse(String(payload)))));
   const participant = `community-global-${Date.now()}`;
@@ -79,6 +124,10 @@ test("Felles creates a global channel with a global slug and exposes its members
   await expect(details.getByRole("searchbox", { name: "Finn kanalmedlem" })).toBeVisible();
   await expect(details.getByRole("listitem")).toContainText(participant);
   await expect(details.getByRole("button", { name: "Last personlista på nytt" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await preview.getByRole("button", { name: "Kanalval", exact: true }).click();
+  await preview.getByRole("dialog", { name: "Kanalval: Felles prat" }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
+  await expect(details.getByLabel("Vel person", { exact: true })).toBeFocused();
 });
 
 test("Felles sends a global registration invitation without using a circle endpoint", async ({ page }) => {

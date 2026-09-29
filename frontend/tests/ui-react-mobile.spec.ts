@@ -1,5 +1,29 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+test("touch navigation exposes Felles actions, restores modal focus and preserves the channel draft", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, serviceWorkers: "block", viewport: { width: 320, height: 568 }, hasTouch: true, isMobile: true });
+  try {
+    const page = await context.newPage();
+    await page.goto(`/?participant=scope-touch-${Date.now()}`);
+    const app = page.locator("#sproyt-react-preview");
+    const composer = app.getByRole("textbox", { name: "Skriv melding" });
+    await expect(composer).toBeEnabled({ timeout: 15_000 });
+    await composer.fill("utkast etter kanaloversikt");
+    await app.getByRole("button", { name: "Samtalar", exact: true }).tap();
+    const navigation = app.getByRole("navigation", { name: "Samtalar", exact: true });
+    expect(await navigation.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const create = navigation.getByRole("button", { name: "Ny kanal i Felles", exact: true });
+    await create.tap();
+    const dialog = app.getByRole("dialog", { name: "Ny kanal i Felles", exact: true });
+    await expect(dialog.getByLabel("Kanalnamn")).toBeFocused();
+    await dialog.getByRole("button", { name: "Lukk", exact: true }).tap();
+    await expect(create).toBeFocused();
+    await navigation.getByRole("button", { name: "Finn kanalar i Felles", exact: true }).tap();
+    await app.getByRole("dialog", { name: "Kanalar i Felles", exact: true }).getByRole("button", { name: /^# general Gå inn$/i }).tap();
+    await expect(composer).toHaveValue("utkast etter kanaloversikt");
+  } finally { await context.close(); }
+});
+
 async function expectUsableConversation(page: Page, pane: Locator, minimumTimeline: number) {
   const viewport = page.viewportSize()!;
   const timeline = await pane.locator(".sp-thread-replies").count()

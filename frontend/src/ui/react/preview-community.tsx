@@ -1,10 +1,10 @@
 import { Button, Dialog, PersonList, Status, TextField } from "@sproyt/ui/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Channel, Circle, UserProfile } from "../../types";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import { MarkdownContent } from "./markdown-content";
 
-export type CommunityDestination = { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" } | { kind: "channel"; channelId: string } | { kind: "channels" | "invite"; circleId: string };
+export type CommunityDestination = { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" } | { kind: "create-channel"; circleId: string | null } | { kind: "channel"; channelId: string } | { kind: "channels" | "invite"; circleId: string };
 export interface CommunityHost {
   selfId(): string | null;
   users(): Promise<UserProfile[]>;
@@ -44,7 +44,7 @@ function Markdown({ text }: { text: string }) {
   return <MarkdownContent source={text} />;
 }
 
-function People({ host, channel, onClose }: { host: CommunityHost; channel?: Readonly<Channel>; onClose(): void }) {
+function People({ host, channel, onClose, focusMemberAction = false }: { host: CommunityHost; channel?: Readonly<Channel>; onClose(): void; focusMemberAction?: boolean }) {
   const [people, setPeople] = useState<UserProfile[]>([]);
   const [eligible, setEligible] = useState<UserProfile[]>([]);
   const [query, setQuery] = useState("");
@@ -53,6 +53,18 @@ function People({ host, channel, onClose }: { host: CommunityHost; channel?: Rea
   const [loaded, setLoaded] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const op = useOperation();
+  const memberField = useRef<HTMLSelectElement>(null);
+  const memberActionFocused = useRef(false);
+  useEffect(() => {
+    if (!focusMemberAction || !loaded || op.busy || memberActionFocused.current) return;
+    const frame = requestAnimationFrame(() => {
+      if (!memberField.current) return;
+      memberActionFocused.current = true;
+      memberField.current?.scrollIntoView({ block: "nearest" });
+      memberField.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusMemberAction, loaded, op.busy]);
   const load = () => op.run(async () => {
     const members = channel ? await host.members(channel.id) : await host.users();
     setPeople(members); setLoaded(true);
@@ -83,7 +95,7 @@ function People({ host, channel, onClose }: { host: CommunityHost; channel?: Rea
     {channel && ["owner", "moderator"].includes(channel.role) && <section aria-label="Legg til kanalmedlem">
       <h3>Legg til kanalmedlem</h3>
       <label htmlFor="community-member">Vel person</label>
-      <select id="community-member" value={selected} onChange={event => setSelected(event.target.value)}><option value="">Vel person</option>{eligible.map(person => <option key={person.id} value={person.id}>{person.display_name}</option>)}</select>
+      <select ref={memberField} id="community-member" value={selected} onChange={event => setSelected(event.target.value)}><option value="">Vel person</option>{eligible.map(person => <option key={person.id} value={person.id}>{person.display_name}</option>)}</select>
       <Button disabled={!selected || op.busy} onClick={() => void op.run(async () => { await host.addMember(channel.id, selected); setPeople(await host.members(channel.id)); setEligible(eligible.filter(person => person.id !== selected)); setSelected(""); }, "Personen er lagd til.")}>Legg til</Button>
       {channel.circle_id && <Button disabled={!selected || op.busy} onClick={() => void op.run(() => host.invite(channel.circle_id!, channel.id, selected), "Invitasjonen er sendt i direktemelding.")}>Inviter i direktemelding</Button>}
     </section>}
@@ -105,28 +117,38 @@ function CreateCircle({ host, onClose }: { host: CommunityHost; onClose(): void 
   </form>;
 }
 
-function ScopeChannels({ host, circle, channels, onClose, onNavigate }: {
+function ScopeChannels({ host, circle, channels, onClose, onNavigate, onSelectChannel, createOnly = false }: {
   host: CommunityHost; circle?: Readonly<Circle>; channels: readonly Readonly<Channel>[]; onClose(): void; onNavigate(destination: CommunityDestination): void;
+  onSelectChannel?: (channelId: string) => void; createOnly?: boolean;
 }) {
   const [name, setName] = useState(""); const [kind, setKind] = useState<"public" | "local" | "private">("private");
+  const nameField = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!createOnly) return;
+    // React autofocus precedes native showModal(), which otherwise focuses
+    // the dialog's close button. Focus once after the modal is open.
+    const frame = requestAnimationFrame(() => nameField.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [createOnly]);
   const [joinable, setJoinable] = useState<Array<{ id: string; name: string; description: string }>>([]);
   const [confirm, setConfirm] = useState(false); const op = useOperation();
   const load = () => circle && op.run(async () => setJoinable(await host.joinable(circle.id)));
-  useEffect(() => { if (circle) void load(); }, [circle?.id]);
+  useEffect(() => { if (circle && !createOnly) void load(); }, [circle?.id]);
   const scopeName = circle?.name ?? "Felles";
   return <>
-    <h3>Kanalar du er med i</h3><div className="sp-community-channel-list">{channels.filter(channel => channel.circle_id === (circle?.id ?? null)).map(channel => <Button key={channel.id} variant="quiet" onClick={() => onNavigate({ kind: "channel", channelId: channel.id })}>
-      <span>{channel.is_direct ? channel.name : `# ${channel.name}`}</span><span>Vis medlemmer</span>
-    </Button>)}</div>
-    <section aria-label="Ny kanal"><h3>Ny kanal i {scopeName}</h3><form onSubmit={event => { event.preventDefault(); void op.run(async () => { await host.createChannel(circle?.id ?? null, name.trim(), kind); onClose(); }); }}>
-      <TextField label="Kanalnamn" value={name} required onChange={event => setName(event.target.value)} />
+    {!createOnly && <><h3>Kanalar du er med i</h3><div className="sp-community-channel-list">{channels.filter(channel => !channel.is_direct && channel.circle_id === (circle?.id ?? null)).map(channel => <div className="sp-community-channel-row" key={channel.id}>
+      <Button variant="quiet" onClick={() => onSelectChannel ? onSelectChannel(channel.id) : onNavigate({ kind: "channel", channelId: channel.id })}><span># {channel.name}</span><span>{onSelectChannel ? "Gå inn" : "Vis medlemmer"}</span></Button>
+      {onSelectChannel && <Button variant="quiet" aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={() => onNavigate({ kind: "channel", channelId: channel.id })}><span aria-hidden="true">⋯</span></Button>}
+    </div>)}</div></>}
+    {onSelectChannel && !createOnly ? <Button variant="quiet" onClick={() => onNavigate({ kind: "create-channel", circleId: circle?.id ?? null })}>Ny kanal i {scopeName}</Button> : <section aria-label="Ny kanal"><h3>Ny kanal i {scopeName}</h3><form onSubmit={event => { event.preventDefault(); void op.run(async () => { await host.createChannel(circle?.id ?? null, name.trim(), kind); onClose(); }); }}>
+      <TextField ref={nameField} label="Kanalnamn" value={name} required onChange={event => setName(event.target.value)} />
       <label htmlFor="community-kind">Kanaltype</label><select id="community-kind" value={kind} onChange={event => setKind(event.target.value as typeof kind)}><option value="private">Privat</option><option value="public">Open</option><option value="local">Lokal</option></select>
       <Button type="submit" busy={op.busy} disabled={!name.trim()}>Opprett kanal</Button>
-    </form></section>
-    {!circle && <section aria-label="Registreringsinvitasjon til Sprøyt"><h3>Inviter ny brukar til Sprøyt</h3>
+    </form></section>}
+    {!createOnly && !circle && <section aria-label="Registreringsinvitasjon til Sprøyt"><h3>Inviter ny brukar til Sprøyt</h3>
       <Button onClick={() => onNavigate({ kind: "global-invite" })}>Lag registreringsinvitasjon</Button>
     </section>}
-    {circle && <><h3>Finn opne kanalar</h3><Button onClick={() => void load()} busy={op.busy}>Last kanalar på nytt</Button>
+    {!createOnly && circle && <><h3>Finn opne kanalar</h3><Button onClick={() => void load()} busy={op.busy}>Last kanalar på nytt</Button>
       {!joinable.length && <p>Ingen fleire opne kanalar akkurat no.</p>}
       {joinable.map(channel => <section key={channel.id}><h4>{channel.name}</h4><Markdown text={channel.description} /><Button disabled={op.busy} onClick={() => void op.run(async () => { await host.join(channel.id); onClose(); })}>Bli med i {channel.name}</Button></section>)}
       <Button variant="danger" disabled={op.busy} onClick={() => setConfirm(true)}>{circle.role === "owner" ? "Slett vennekrets" : "Forlat vennekrets"}</Button>
@@ -188,21 +210,24 @@ function GlobalInvite({ host }: { host: CommunityHost }) {
   </>;
 }
 
-export function PreviewCommunity({ destination, snapshot, host, onClose, onNavigate }: {
+export function PreviewCommunity({ destination, snapshot, host, onClose, onNavigate, onSelectChannel, focusMemberAction }: {
   destination: CommunityDestination; snapshot: ConversationSnapshot; host: CommunityHost; onClose(): void; onNavigate(destination: CommunityDestination): void;
+  onSelectChannel?: (channelId: string) => void;
+  focusMemberAction?: boolean;
 }) {
   const circle = "circleId" in destination ? snapshot.circles.find(item => item.id === destination.circleId) : undefined;
   const channel = destination.kind === "channel" ? snapshot.channels.find(item => item.id === destination.channelId) : undefined;
-  const title = destination.kind === "people" ? "Personar og ny direktemelding" : destination.kind === "channel" ? `Kanaldetaljar: ${channel?.name ?? "Kanal"}` : destination.kind === "create-circle" ? "Ny vennekrets" : destination.kind === "circles" ? "Kretsadministrasjon og invitasjonskode" : destination.kind === "global-channels" ? "Kanalar i Felles" : destination.kind === "global-invite" ? "Inviter ny brukar til Sprøyt" : destination.kind === "channels" ? `Kanalar i ${circle?.name ?? "vennekretsen"}` : `Inviter til ${circle?.name ?? "vennekretsen"}`;
+  const title = destination.kind === "create-channel" ? `Ny kanal i ${circle?.name ?? "Felles"}` : destination.kind === "people" ? "Personar og ny direktemelding" : destination.kind === "channel" ? `Kanaldetaljar: ${channel?.name ?? "Kanal"}` : destination.kind === "create-circle" ? "Ny vennekrets" : destination.kind === "circles" ? "Kretsadministrasjon og invitasjonskode" : destination.kind === "global-channels" ? "Kanalar i Felles" : destination.kind === "global-invite" ? "Inviter ny brukar til Sprøyt" : destination.kind === "channels" ? `Kanalar i ${circle?.name ?? "vennekretsen"}` : `Inviter til ${circle?.name ?? "vennekretsen"}`;
   return <Dialog open title={title} closeLabel="Lukk" onClose={onClose}>
     <div className="sp-community-dialog">
       {destination.kind === "people" && <People host={host} onClose={onClose} />}
-      {destination.kind === "channel" && (channel ? <People host={host} channel={channel} onClose={onClose} /> : <Status>Kanalen er ikkje lenger tilgjengeleg.</Status>)}
+      {destination.kind === "channel" && (channel ? <People host={host} channel={channel} onClose={onClose} focusMemberAction={focusMemberAction} /> : <Status>Kanalen er ikkje lenger tilgjengeleg.</Status>)}
       {destination.kind === "create-circle" && <CreateCircle host={host} onClose={onClose} />}
       {destination.kind === "circles" && <CircleAdmin host={host} circles={snapshot.circles} onSelect={circleId => onNavigate({ kind: "channels", circleId })} />}
-      {destination.kind === "global-channels" && <ScopeChannels host={host} channels={snapshot.channels} onClose={onClose} onNavigate={onNavigate} />}
+      {destination.kind === "global-channels" && <ScopeChannels host={host} channels={snapshot.channels} onClose={onClose} onNavigate={onNavigate} onSelectChannel={onSelectChannel} />}
+      {destination.kind === "create-channel" && (!destination.circleId || circle) && <ScopeChannels createOnly host={host} circle={circle} channels={snapshot.channels} onClose={onClose} onNavigate={onNavigate} />}
       {destination.kind === "global-invite" && <GlobalInvite host={host} />}
-      {destination.kind === "channels" && circle && <ScopeChannels host={host} circle={circle} channels={snapshot.channels} onClose={onClose} onNavigate={onNavigate} />}
+      {destination.kind === "channels" && circle && <ScopeChannels host={host} circle={circle} channels={snapshot.channels} onClose={onClose} onNavigate={onNavigate} onSelectChannel={onSelectChannel} />}
       {destination.kind === "invite" && circle && <Invite host={host} circle={circle} />}
     </div>
   </Dialog>;
