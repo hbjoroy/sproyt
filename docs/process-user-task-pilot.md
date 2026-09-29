@@ -190,3 +190,57 @@ v2-motoren direkte, utan å flytte eksisterande kanalprosessar. V2-adapter og
 fork/join står att som seinare etappar. Paus v2 ved å sette
 `heart.runtimeV2.enabled=false` med same nye image og database. Bevar schema
 og canonical-LF migreringsimage; ikkje bruk gammalt CRLF-image som blind rollback.
+
+## Heart v2-etappe 4: kanaladapter — 28. september 2026
+
+Implementert, men ikkje utrulla. Steget byggjer på Sprøyt PR166 og krev
+den parallelle motoren i [Heart PR9](https://github.com/hbjoroy/heart/pull/9).
+Levande canary har førebels den sekvensielle v2-motoren. Produksjon og
+kanalbinding er uendra.
+
+Nye starter kan velje `config.processPilotRuntime: v2`
+(`SPROYT_PROCESS_PILOT_RUNTIME=v2`), i tillegg til pilotaktivering og
+deltakar-ID. Standard er v1. V2 registrerer den innbygde, uforanderlege
+definisjonen `sproyt/parallel-review-pilot/1.0.0` gjennom det private API-et.
+To vurderingar blir samanfalda oppgåvemeldingar; Heart avgjer når begge
+er fullførte og opprettar den siste stadfestinga. Det er inga GitHub-,
+LLM- eller utviklingsautomatikk i denne piloten.
+
+Migrasjon0041 bevarer gamle meldingar/kommandoar og merkar historiske
+køyringar v1. Nye køyringar pin runtime, Heart-adresse og definisjonsversjon.
+Replay tolkar ikkje ei gammal køyring med nytt oppsett. Historiske
+v1-køyringar utan lagra adresse blir knytte til den konfigurerte adressa
+første gong dei blir avstemte. Inventer desse før adressebyte; ikkje la
+same URL peike på ein annan Heart-database.
+
+Kvitteringa er unik per køyring og Heart-aktiverings-ID, ikkje stegnamn.
+V2-meldingane får lokal projeksjons-ID som bevarer historiske referansar.
+Adapteren kontrollerer instans, innmeldingsmetadata, definisjon, assignee
+og fork-identitet før lagring. Dette er ein avgrensa pilotadapter;
+applikasjonsregister og generell rolle-/kanalruting er eigne leveransar.
+
+Fullføring blir vist først etter Heart-stadfesting. Timeout, restart og
+avvist fullføring stansar ikkje avstemming av kansellering/feil. Terminale
+prosessar sperrar handlingar både på serveren og i grensesnittet. Andre
+kanalmedlemmer får lesevising. Oppgåvene bevarer skrivefelt og utkast.
+
+Validering: Rust-testsettet, frontend unit/typekontroll/bygg og to Chromium
+UI-testar (inkludert390px) har passert. SQLite og PostgreSQL har faktiske
+oppgraderingsprøver med eksisterande v1-melding og ventande kommando; ingen
+audit-hendingar blir spelte på nytt. CI køyrer også PostgreSQL-projeksjon
+og oppgraderingsprøva. Faktisk lokal Heart-API/arbeidar prøvde begge
+fullføringsrekkjefølgjene, samtidige kommandoar med tapte svar, restart,
+replay, readonly og kansellering med ventande kommando: nøyaktig tre
+meldingar ved fullføring, to ved avbrot. Ein HTTP-kontrakttest prøver
+feilstatus etter avvist fullføring. Den faktiske Heart-prøva er opt-in og
+krev isolerte databasar; ho er ikkje del av vanleg Sprøyt-CI.
+
+Utrulling krev først review/merge av avhengigheitene og grøn CI, deretter
+nye uforanderlege image for Heart og Sprøyt. Ta backup av begge databasar
+og bevar ny migreringspin ved app-rollback. Canary og produksjon deler
+Sprøyt-database:0041 må koordinerast. Heart-databasane er separate. Pin
+parallell Heart før runtime=v2 blir valt i canary. Prøv Prosesstest manuelt
+på mobil og som ein annan kanalmedlem før produksjon blir vurdert.
+Ingen deploy eller GitOps-pin er endra her. Runtime=v1 stansar nye
+v2-starter; eksisterande v2-køyringar blir framleis avstemte på same
+engine-adresse. Pilot av stansar adapteren, men slettar ikkje data.

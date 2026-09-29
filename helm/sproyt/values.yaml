@@ -60,6 +60,7 @@ config:
   uiAdvancedEnabled: false
   uiAgentEnabled: false
   # Two-user-task pilot, separately bound to Rocket-admins / Prosesstest.
+  processPilotRuntime: "v1" # v2 selects the parallel pilot; existing runs remain pinned.
   processPilotEnabled: false
   processPilotAssigneeId: ""
 

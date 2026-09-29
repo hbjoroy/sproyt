@@ -3,11 +3,15 @@ import { isRecord } from "./types";
 
 export type PilotConfiguration = Readonly<{
   configured: boolean; can_configure: boolean; can_start: boolean; assignee_name?: string;
+  /** v1 is retained when reading configuration returned by older servers. */
+  runtime_model: "v1" | "v2";
 }>;
 export type PilotTask = Readonly<{
-  id: string; message_id: string; instance_id: string; node_id: string; status: "pending" | "completed";
+  id: string; message_id: string; instance_id: string; node_id: string; status: "pending" | "completed" | "cancelled";
   assignee_id: string; assignee_name?: string; title: string; can_complete: boolean;
   delivery_status: "ready" | "pending" | "failed";
+  /** Old pilot responses predate this run-level state and were always waiting for the next step. */
+  process_status: "starting" | "waiting" | "completed" | "cancelled" | "failed";
 }>;
 
 // Only a complete server message is a task reference. Quoted, embedded and
@@ -21,19 +25,23 @@ export function decodePilotConfiguration(value: unknown): PilotConfiguration {
     || typeof value.can_start !== "boolean" || (value.assignee_name != null && typeof value.assignee_name !== "string")) {
     throw new Error("Kunne ikkje lese prosessoppsettet.");
   }
+  if (value.runtime_model != null && value.runtime_model !== "v1" && value.runtime_model !== "v2") throw new Error("Kunne ikkje lese prosessoppsettet.");
   return { configured: value.configured, can_configure: value.can_configure, can_start: value.can_start,
-    assignee_name: typeof value.assignee_name === "string" ? value.assignee_name : undefined };
+    assignee_name: typeof value.assignee_name === "string" ? value.assignee_name : undefined,
+    runtime_model: value.runtime_model === "v2" ? "v2" : "v1" };
 }
 
 export function decodePilotTask(value: unknown): PilotTask {
   if (!isRecord(value) || !["id", "message_id", "instance_id", "node_id", "assignee_id", "title"].every(key => typeof value[key] === "string" && Boolean(value[key]))
-    || (value.status !== "pending" && value.status !== "completed") || typeof value.can_complete !== "boolean"
+    || !["pending", "completed", "cancelled"].includes(String(value.status)) || typeof value.can_complete !== "boolean"
     || !["ready", "pending", "failed"].includes(String(value.delivery_status))
+    || (value.process_status !== undefined && !["starting", "waiting", "completed", "cancelled", "failed"].includes(String(value.process_status)))
     || (value.assignee_name != null && typeof value.assignee_name !== "string")) throw new Error("Kunne ikkje lese oppgåva.");
   return { id: value.id as string, message_id: value.message_id as string, instance_id: value.instance_id as string, node_id: value.node_id as string,
-    assignee_id: value.assignee_id as string, title: value.title as string, status: value.status,
+    assignee_id: value.assignee_id as string, title: value.title as string, status: value.status as PilotTask["status"],
     can_complete: value.can_complete, delivery_status: value.delivery_status as PilotTask["delivery_status"],
-    assignee_name: typeof value.assignee_name === "string" ? value.assignee_name : undefined };
+    assignee_name: typeof value.assignee_name === "string" ? value.assignee_name : undefined,
+    process_status: value.process_status === undefined ? "waiting" : value.process_status as PilotTask["process_status"] };
 }
 
 const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
