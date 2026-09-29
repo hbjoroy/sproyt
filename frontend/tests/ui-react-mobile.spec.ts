@@ -12,12 +12,15 @@ test("touch navigation exposes Felles actions, restores modal focus and preserve
     await app.getByRole("button", { name: "Samtalar", exact: true }).tap();
     const navigation = app.getByRole("navigation", { name: "Samtalar", exact: true });
     expect(await navigation.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const scopeMenu = navigation.getByRole("button", { name: "Val for Felles", exact: true });
+    await scopeMenu.tap();
     const create = navigation.getByRole("button", { name: "Ny kanal i Felles", exact: true });
     await create.tap();
     const dialog = app.getByRole("dialog", { name: "Ny kanal i Felles", exact: true });
     await expect(dialog.getByLabel("Kanalnamn")).toBeFocused();
     await dialog.getByRole("button", { name: "Lukk", exact: true }).tap();
-    await expect(create).toBeFocused();
+    await expect(scopeMenu).toBeFocused();
+    await scopeMenu.tap();
     await navigation.getByRole("button", { name: "Finn kanalar i Felles", exact: true }).tap();
     await app.getByRole("dialog", { name: "Kanalar i Felles", exact: true }).getByRole("button", { name: /^# general Gå inn$/i }).tap();
     await expect(composer).toHaveValue("utkast etter kanaloversikt");
