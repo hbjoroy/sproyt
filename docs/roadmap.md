@@ -10,12 +10,20 @@ the next phase additive rather than requiring a rewrite.
 
 Sproyt owns conversations: circles, channels, membership, messages, read
 state, presence, permissions, and the presentation of human, agent, and
-process activity.
+process activity. For its application issues it also owns the bounded
+work-item register, business fields, access rules and audit history described
+in [the work-item plan](work-items-and-heart-plan.md).
 
 Heart owns processes: definitions, instances, transitions, receive points,
 work items, retries, and process metadata. Sproyt links conversations to Heart
 instances through stable identifiers; chat messages are never stored only as
 Heart metadata.
+
+For human-task forms, Heart owns process-local answers and their versioned
+schema contract. A field-specific system may own business data instead;
+neither Heart nor Sproyt becomes the universal case-data store. The form
+renderer is replaceable. See [the form architecture plan](process-forms-architecture-plan.md)
+for ownership, submission and delivery gates.
 
 ## Delivery principles
 

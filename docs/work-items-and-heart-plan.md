@@ -1,12 +1,18 @@
 # Plan: applikasjonssaker gjennom Sprøyt og Heart
 
-Dato: 2026-09-28. Status: den avgrensa iterasjonen 0a er implementert og testa mot ekte Heart. Resten av saksfunksjonaliteten er framleis ein plan. Sjå [pilotkontrakten og driftsstatus](process-user-task-pilot.md).
+Dato: 2026-09-28. Oppdatert 2026-09-30. Status: den avgrensa
+iterasjonen 0a og Heart v2-piloten er implementerte og utrulla;
+applikasjonsregister og saksbehandling i steg 1–6 er framleis ein plan.
+Sjå [pilotkontrakten](process-user-task-pilot.md) og aktuell GitOps-status
+for driftsdetaljar. Historiske statusavsnitt under er daterte augeblikkbilete.
 
-Sjå òg [designnotatet om brukarskjema](process-forms-design-note.md).
+Sjå òg [designnotatet om brukarskjema](process-forms-design-note.md) og
+[den granulerte skjema- og arkitekturplanen](process-forms-architecture-plan.md).
 Saksregisteret i denne planen gjeld Sprøyt sine saker; andre prosessar kan
 bruke andre brukarflater og separate fagsystem som eigarar av saksdata.
 Skjemastøtte er utsett til behovet oppstår, med JSON Forms og prosessnære
-data som første omfang.
+data som første omfang. Skjema-arbeidet er eit eige spor, ikkje ein
+føresetnad for applikasjonsregisteret eller første saksflyt.
 
 ## Mål og første leveranse
 
@@ -37,9 +43,10 @@ samleliste for alle prosessoppgåver.
 - `src/imagegen_prompt.rs`: Santorini vLLM-adapter finst, men har
   biletespesifikke instruksjonar. Gjenbruk transport og konfigurasjon,
   ikkje bileteprompten eller den lange arbeidsflyten.
-- Heart-kjeldene finst ikkje i den venta lokale katalogen
-  `S:/Source/heart`; gjennomgangen stadfestar Sprøyt-kontrakten, ikkje
-  full funksjonalitet i Heart.
+- Ved den første gjennomgangen fanst ikkje Heart-kjeldene i den venta
+  lokale katalogen. Per 2026-09-30 finst dei i `S:/Source/heart`;
+  [skjemaplanen](process-forms-architecture-plan.md) tek omsyn til
+  den faktiske v2-kontrakten.
 - `ProcessGateway::correlate` sender korrelasjonsheader, men ikkje
   dokumentert idempotensnøkkel. Inspeksjon lagrar ei hending utan å
   oppdatere statuskolonnen; endeleg transportfeil kan setje lenkja til
@@ -86,6 +93,14 @@ lage ei ny oppgåve utan å duplisere den førre.
 Eksisterande personlege gjeremål held fram separat. «Ferdig» på eit slikt
 gjeremål skal aldri fullføre eit Heart-steg. Innboksen kan seinare varsle
 og lenkje til oppgåvemeldingane, men sjølve behandlinga skjer i kanalen.
+
+Skjemakontrakten er ein eigen grense: Heart kan eige prosessnære
+oppgåvesvar og validere dei mot ei pinna skjemaversjon, medan Sprøyt eig
+kategori, prioritet og andre saksfelt. JSON Forms er ein mogleg renderar
+for den første typen svar; bruk av JSON Forms endrar ikkje eigarskapen
+til saksdata eller rettane til å utføre ei oppgåve. Fleirkjeldebinding
+og kontrollert tilgang til eksterne fagdata vert planlagde først ved
+eit konkret behov, som skildra i [arkitekturplanen](process-forms-architecture-plan.md).
 
 Steg 0 må kontrollere Heart-kontrakten for brukaroppgåver, tildeling,
 oppdagelse og fullføring. Dersom han manglar, planlegg nødvendige
@@ -412,6 +427,14 @@ den endelege sakshandsamingsmodellen.
 | 4 | Valfri GitHub-eksport | Testrepo først; timeout etter oppretting gjev ikkje dobbel issue; tilgang/eksportinnhald kontrollerte |
 | 5 | Eige produktbehandlarforløp for statusendring | Autoriserte overgangar, revisjonar og offentleg/intern visning; Start utvikling framleis utan automatisk utføring |
 | 6 | Avgrensa utviklingspilot | Først dry-run, deretter ei manuelt vald sak og éin aktiv jobb; eigen godkjenning av aktivering |
+
+Eit separat F-spor for skjemastøtte har eigne delsteg A0 og F0–F9 i
+[skjemaplanen](process-forms-architecture-plan.md). S1–S3 kan leverast
+med formålsbygde, Sprøyt-eigde felt. Når ein konkret Heart-oppgåve
+treng prosessnære skjema, må Heart først pinne og validere definisjonen,
+og Sprøyt må binde innsending/retry til aktivering, skjemaversjon og
+nøyaktig payload. «Vurder saka» flyttar ikkje kategori/prioritet inn
+i Heart berre for å ta i bruk ein skjemarenderar.
 
 Steg 3 omfattar minimale overgangar ny → til behandling → treng
 informasjon/ferdig vurdert/avvist. Å be om informasjon opprettar eit
