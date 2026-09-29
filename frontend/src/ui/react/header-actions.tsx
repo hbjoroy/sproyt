@@ -55,7 +55,7 @@ export function HeaderActions({ children, primary, compactConversation }: {
     </span>
     {compactConversation && <div className="sp-mobile-conversation-context">
       <Button className="sp-mobile-conversation-back" variant="quiet" aria-label="Samtalar" title="Samtalar"
-        onClick={compactConversation.onBack}><span aria-hidden="true">←</span></Button>
+        onClick={() => { setOpen(false); setConversationOpen(false); compactConversation.onBack(); }}><span aria-hidden="true">←</span></Button>
       <button ref={conversationTrigger} type="button" className="sp-mobile-conversation-title"
         aria-expanded={conversationOpen} aria-controls={`${id}-conversation-name`}
         aria-label={`${compactConversation.context ? `${compactConversation.context}, ` : ""}${compactConversation.title}. Vis fullt namn.`}

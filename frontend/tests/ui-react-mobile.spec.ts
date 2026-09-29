@@ -19,7 +19,7 @@ test("touch navigation exposes Felles actions, restores modal focus and preserve
     await dialog.getByRole("button", { name: "Lukk", exact: true }).tap();
     await expect(create).toBeFocused();
     await navigation.getByRole("button", { name: "Finn kanalar i Felles", exact: true }).tap();
-    await app.getByRole("dialog", { name: "Kanalar i Felles", exact: true }).getByRole("button", { name: "# general Gå inn", exact: true }).tap();
+    await app.getByRole("dialog", { name: "Kanalar i Felles", exact: true }).getByRole("button", { name: /^# general Gå inn$/i }).tap();
     await expect(composer).toHaveValue("utkast etter kanaloversikt");
   } finally { await context.close(); }
 });
