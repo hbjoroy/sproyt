@@ -103,6 +103,7 @@ test("real React circle creates Prat once, creates scoped channel, edits Markdow
 });
 
 test("Felles creates a global channel with a global slug and exposes its members directly", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
   const commands: Array<{ type: string; payload?: { name?: string; slug?: string; circle_id?: string | null } }> = [];
   page.on("websocket", socket => socket.on("framesent", ({ payload }) => commands.push(JSON.parse(String(payload)))));
   const participant = `community-global-${Date.now()}`;
