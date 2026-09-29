@@ -41,6 +41,7 @@ for (const width of [1280, 390]) test(`navigation exposes scoped channel and inv
   const dropdown = scope.getByRole("group", { name: `Val for ${circleName}`, exact: true });
   await expect(dropdown).toBeVisible();
   const bounds = await dropdown.boundingBox();
+  expect(bounds?.height).toBeLessThan(280);
   expect(bounds?.x).toBeGreaterThanOrEqual(0);
   expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(width);
   await preview.getByRole("searchbox", { name: "Finn samtale" }).click();
