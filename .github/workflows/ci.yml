@@ -20,6 +20,19 @@ on:
         required: false
         default: false
         type: boolean
+      publish_heart_image:
+        description: Publish a verified private Heart archive to its fixed immutable Heart tag
+        required: false
+        default: false
+        type: boolean
+      heart_revision:
+        description: Exact 40-character Heart commit reviewed and tested before publication
+        required: false
+        type: string
+      heart_archive_sha256:
+        description: Expected SHA256 of the verified private Heart image TAR
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -177,6 +190,7 @@ jobs:
           cargo test db::postgres::tests --locked
           cargo test postgres_notifications_share_the_repository_connection_budget --locked
           cargo test postgres_imagegen_uses_the_shared_connection_budget --locked
+          SPROYT_TEST_DATABASE_URL="$SPROYT_POSTGRES_TEST_URL" cargo test postgres_projection_permissions_and_completion_receipts --locked -- --ignored --test-threads=1
 
       - name: Verify expected tables
         run: |
@@ -295,7 +309,9 @@ jobs:
 
   delivery-arm64:
     name: ARM64 release image and delivery evidence
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
+    # A Heart-only publication reuses its separately tested image archive.
+    # Existing Sprøyt publication/release paths keep their complete build gates.
+    if: (github.event_name == 'workflow_dispatch' && (!inputs.publish_heart_image || inputs.publish_image)) || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -486,3 +502,92 @@ jobs:
           name: registry-evidence-${{ github.sha }}
           path: registry-evidence.json
           retention-days: 30
+
+
+  publish-heart-image:
+    name: Publish verified Heart image
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_heart_image
+    needs: [quality]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production-registry
+      deployment: false
+    env:
+      HEART_REVISION: ${{ inputs.heart_revision }}
+      HEART_ARCHIVE_SHA256: ${{ inputs.heart_archive_sha256 }}
+      REGCTL_IMAGE: regclient/regctl:v0.11.5@sha256:dbe356c6cf9f8f85e302b9e47fed481ef3f1b04807350e99b02ab2cadee0a993
+    steps:
+      # Only a short-lived signed URL crosses repositories, as an encrypted
+      # environment secret. Source and archive assets remain in private Heart.
+      - name: Download and verify private Heart archive
+        env:
+          HEART_IMAGE_ARCHIVE_URL: ${{ secrets.HEART_IMAGE_ARCHIVE_URL }}
+        run: |
+          set -euo pipefail
+          [[ "$HEART_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEART_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$HEART_IMAGE_ARCHIVE_URL" == https://release-assets.githubusercontent.com/* ]]
+          curl --fail --silent --show-error --proto '=https' --max-time 180 \
+            --output heart-arm64.tar "$HEART_IMAGE_ARCHIVE_URL"
+          printf '%s  heart-arm64.tar\n' "$HEART_ARCHIVE_SHA256" | sha256sum --check --status
+          docker load --input heart-arm64.tar
+          image="oci.bjoroy.me/sproyt/heart:$HEART_REVISION"
+          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = arm64
+          test "$(docker image inspect "$image" --format '{{.Os}}')" = linux
+          test "$(docker image inspect "$image" --format '{{.Config.User}}')" = 65532:65532
+          test "$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$HEART_REVISION"
+          docker image inspect "$image" --format '{{.Id}}' > heart-config-digest.txt
+
+      - name: Log in through the existing registry environment
+        env:
+          SPROYT_OCI_USERNAME: ${{ secrets.SPROYT_OCI_USERNAME }}
+          SPROYT_OCI_PASSWORD: ${{ secrets.SPROYT_OCI_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/heart-regctl-config"
+          printf '%s' "$SPROYT_OCI_PASSWORD" | docker run --rm -i --user 0:0 \
+            -e HOME=/config -v "$RUNNER_TEMP/heart-regctl-config:/config" \
+            "$REGCTL_IMAGE" registry login oci.bjoroy.me --user "$SPROYT_OCI_USERNAME" --pass-stdin
+
+      - name: Publish fixed immutable Heart target and record its digest
+        run: |
+          set -euo pipefail
+          image="oci.bjoroy.me/sproyt/heart:$HEART_REVISION"
+          regctl() {
+            docker run --rm --user 0:0 -e HOME=/config \
+              -v "$RUNNER_TEMP/heart-regctl-config:/config" -v "$PWD:/work:ro" \
+              "$REGCTL_IMAGE" "$@"
+          }
+          # Retries may resolve an already-published tag, but may never replace
+          # it with a different image, even if it has the same revision label.
+          if regctl manifest get "$image" --platform linux/arm64 --format raw-body > existing-manifest.json 2> registry-lookup-error.txt; then
+            test "$(jq -r '.config.digest' existing-manifest.json)" = "$(cat heart-config-digest.txt)"
+          else
+            grep -Eiq '(manifest unknown|not found|404)' registry-lookup-error.txt
+            regctl image import "$image" /work/heart-arm64.tar
+          fi
+          registry_digest=$(regctl image digest "$image")
+          [[ "$registry_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          jq --null-input --arg image "$image" --arg digest "$registry_digest" \
+            --arg revision "$HEART_REVISION" --arg archive_sha256 "$HEART_ARCHIVE_SHA256" \
+            --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{image:$image,digest:$digest,revision:$revision,archive_sha256:$archive_sha256,workflow_run:$workflow_run}' \
+            > heart-registry-evidence.json
+
+      - name: Upload only non-secret registry evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: heart-registry-evidence-${{ inputs.heart_revision }}
+          path: heart-registry-evidence.json
+          retention-days: 30
+
+      - name: Remove private archive and temporary registry login
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f heart-arm64.tar heart-config-digest.txt existing-manifest.json registry-lookup-error.txt
+          # regctl runs as root, so its files need elevated cleanup on this runner.
+          cleanup_dir="$(realpath -m -- "$RUNNER_TEMP/heart-regctl-config")"
+          test "$cleanup_dir" = "$(realpath -- "$RUNNER_TEMP")/heart-regctl-config"
+          sudo rm -rf -- "$cleanup_dir"

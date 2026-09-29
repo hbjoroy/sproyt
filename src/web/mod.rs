@@ -9,6 +9,7 @@ pub(crate) mod imagegen;
 pub(crate) mod integrations;
 pub(crate) mod mcp;
 pub(crate) mod media;
+pub(crate) mod process_pilot;
 pub(crate) mod processes;
 pub(crate) mod socket;
 pub(crate) mod stream;

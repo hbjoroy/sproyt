@@ -198,6 +198,11 @@ impl ProcessService {
         &self,
         command: EnqueueProcessStart,
     ) -> Result<ProcessLink, RepositoryError> {
+        // The user-task pilot has its own server-selected definition and
+        // channel/assignee policy. Generic HTTP/MCP process start cannot bypass it.
+        if command.definition_name == "sproyt-user-task-pilot" {
+            return Err(RepositoryError::PermissionDenied);
+        }
         self.repository.enqueue_start(command).await
     }
 

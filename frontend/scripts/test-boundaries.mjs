@@ -25,6 +25,8 @@ try {
     bundle: true,
     entryPoints: [fileURLToPath(new URL("../tests/boundaries.test.ts", import.meta.url))],
     format: "esm",
+    // React's server renderer uses Node builtins through CommonJS internally.
+    banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
     outfile: outputFile,
     platform: "node",
     target: "node24"

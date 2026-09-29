@@ -55,6 +55,10 @@ spec:
           env:
             - name: BIND_ADDR
               value: 0.0.0.0:3000
+            - name: HEART_DB_MAX_CONNECTIONS
+              value: {{ .Values.heart.dbMaxConnections | quote }}
+            - name: HEART_RUNTIME_V2_ENABLED
+              value: {{ .Values.heart.runtimeV2.enabled | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
