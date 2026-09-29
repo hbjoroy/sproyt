@@ -39,6 +39,7 @@ COPY crates/sproyt-client-core/src/. ./crates/sproyt-client-core/src/
 COPY crates/sproyt-protocol/src/. ./crates/sproyt-protocol/src/
 COPY build.rs ./
 COPY migrations ./migrations
+COPY helm/sproyt/definitions/parallel-user-task-pilot.yaml ./helm/sproyt/definitions/parallel-user-task-pilot.yaml
 COPY assets ./assets
 COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
 RUN test -f src/domain/mod.rs \
@@ -68,6 +69,7 @@ COPY crates/sproyt-client-core/src/. ./crates/sproyt-client-core/src/
 COPY crates/sproyt-protocol/src/. ./crates/sproyt-protocol/src/
 COPY build.rs ./
 COPY migrations ./migrations
+COPY helm/sproyt/definitions/parallel-user-task-pilot.yaml ./helm/sproyt/definitions/parallel-user-task-pilot.yaml
 COPY assets ./assets
 COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
 RUN test -f src/domain/mod.rs \
