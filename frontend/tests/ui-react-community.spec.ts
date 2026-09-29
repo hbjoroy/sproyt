@@ -123,6 +123,10 @@ test("Felles creates a global channel with a global slug and exposes its members
   await expect(details.getByRole("searchbox", { name: "Finn kanalmedlem" })).toBeVisible();
   await expect(details.getByRole("listitem")).toContainText(participant);
   await expect(details.getByRole("button", { name: "Last personlista på nytt" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await preview.getByRole("button", { name: "Kanalval", exact: true }).click();
+  await preview.getByRole("dialog", { name: "Kanalval: Felles prat" }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
+  await expect(details.getByLabel("Vel person", { exact: true })).toBeFocused();
 });
 
 test("Felles sends a global registration invitation without using a circle endpoint", async ({ page }) => {

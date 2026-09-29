@@ -99,6 +99,7 @@ function ChannelMembersIcon() {
 function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [focusMemberAction, setFocusMemberAction] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -107,7 +108,7 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
   const conversation = channel ? snapshot.groups.flatMap(group => group.conversations).find(item => item.id === channel.id) : undefined;
   if (!channel || channel.is_direct) return null;
   const notifications = conversation?.notifications;
-  const openDetails = () => { setOpen(false); requestAnimationFrame(() => setDetailsOpen(true)); };
+  const openDetails = () => { setFocusMemberAction(false); setOpen(false); requestAnimationFrame(() => setDetailsOpen(true)); };
   return <>
     {!compact && <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
       aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={openDetails}><ChannelMembersIcon /></Button>
@@ -117,7 +118,9 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
       onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
       <div className="sp-channel-menu-dialog">
         <Button variant="quiet" onClick={openDetails}><ChannelMembersIcon /><span>Medlemmer og kanalomtale</span></Button>
-        {["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={openDetails}><ChannelMembersIcon /><span>Legg til eller inviter kanalmedlem</span></Button>}
+        {["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
+          setFocusMemberAction(true); setOpen(false); requestAnimationFrame(() => setDetailsOpen(true));
+        }}><ChannelMembersIcon /><span>Legg til eller inviter kanalmedlem</span></Button>}
         {snapshot.circles.some(circle => circle.id === channel.circle_id && circle.role === "owner") && <Button variant="quiet"
           onClick={() => { setOpen(false); setInviteOpen(true); }}>Inviter til kretsen</Button>}
         {notifications && <Button variant="quiet" disabled={notifications.pending} aria-pressed={notifications.enabled}
@@ -141,7 +144,7 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
         {leaveError && <Status tone="error">{leaveError}</Status>}
       </div>
     </Dialog>
-    {detailsOpen && <PreviewCommunity destination={{ kind: "channel", channelId: channel.id }} snapshot={snapshot} host={host.community}
+    {detailsOpen && <PreviewCommunity destination={{ kind: "channel", channelId: channel.id }} snapshot={snapshot} host={host.community} focusMemberAction={focusMemberAction}
       onNavigate={() => {}} onClose={() => setDetailsOpen(false)} />}
     {inviteOpen && channel.circle_id && <PreviewCommunity destination={{ kind: "invite", circleId: channel.circle_id }} snapshot={snapshot} host={host.community}
       onNavigate={() => {}} onClose={() => setInviteOpen(false)} />}
