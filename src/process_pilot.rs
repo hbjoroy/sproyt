@@ -256,7 +256,11 @@ impl ProcessPilot {
             assignee_name: p[8].into(),
             title: match p[2] {
                 "first" => "Steg 1 – Første stadfesting",
-                _ => "Steg 2 – Stadfest overlevering",
+                "second" => "Steg 2 – Stadfest overlevering",
+                "product-review" => "Produktvurdering",
+                "technical-review" => "Teknisk vurdering",
+                "final-confirmation" => "Siste stadfesting",
+                _ => "Brukaroppgåve",
             }
             .into(),
             can_complete: p[3] == "pending"
@@ -1220,6 +1224,25 @@ mod tests {
                 .unwrap(),
             vec!["v1"]
         );
+        // Old adapter inserts omit heart_task_id. Multiple inserts must remain
+        // possible during rolling deployment, with activation IDs backfilled.
+        for sequence in 2..=3 {
+            let legacy_id = Uuid::now_v7().to_string();
+            let legacy_message = Uuid::now_v7().to_string();
+            pilot.store.execute("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values(?uuid,?uuid,?uuid,'Tester',?int,?)", &[legacy_message.clone(),channel.clone(),owner.to_string(),sequence.to_string(),format!("[[process-task:{legacy_id}]]")]).await.unwrap();
+            pilot.store.execute("insert into process_pilot_tasks(id,run_id,message_id,node_id,status) values(?,?,?uuid,'second','pending')", &[legacy_id.clone(),run.clone(),legacy_message]).await.unwrap();
+            assert_eq!(
+                pilot
+                    .store
+                    .values(
+                        "select heart_task_id from process_pilot_tasks where id=?",
+                        std::slice::from_ref(&legacy_id)
+                    )
+                    .await
+                    .unwrap(),
+                vec![legacy_id]
+            );
+        }
         if let Store::Sqlite(pool) = &pilot.store {
             assert!(
                 sqlx::query("pragma foreign_key_check")
@@ -1286,6 +1309,49 @@ mod tests {
             .pop()
             .unwrap();
         assert_ne!(projection, task.id.to_string());
+        assert_eq!(
+            pilot
+                .task(&owner, &projection, &message.to_string())
+                .await
+                .unwrap()
+                .title,
+            "Produktvurdering"
+        );
+        for (node, title) in [
+            ("technical-review", "Teknisk vurdering"),
+            ("final-confirmation", "Siste stadfesting"),
+        ] {
+            let titled_task = HeartTask {
+                id: Uuid::now_v7(),
+                instance_id: task.instance_id,
+                node_id: node.into(),
+                assignee_id: task.assignee_id,
+                status: "pending".into(),
+                scope: None,
+            };
+            let (titled_message, _) = pilot
+                .project(&run, &channel, "", &titled_task)
+                .await
+                .unwrap();
+            let local_id = pilot
+                .store
+                .values(
+                    "select id from process_pilot_tasks where heart_task_id=?",
+                    &[titled_task.id.to_string()],
+                )
+                .await
+                .unwrap()
+                .pop()
+                .unwrap();
+            assert_eq!(
+                pilot
+                    .task(&owner, &local_id, &titled_message.to_string())
+                    .await
+                    .unwrap()
+                    .title,
+                title
+            );
+        }
         assert!(
             !pilot
                 .task(&reader, &projection, &message.to_string())

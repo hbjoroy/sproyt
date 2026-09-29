@@ -28,12 +28,16 @@ create table process_pilot_tasks (
  status text not null check(status in ('pending','completed','cancelled')),
  command_id text not null default '',
  delivery_status text not null default 'ready' check(delivery_status in ('ready','pending')),
- heart_task_id text not null,
+ heart_task_id text not null default '',
  unique(run_id,heart_task_id)
 );
 insert into process_pilot_tasks(id,run_id,message_id,node_id,status,command_id,delivery_status,heart_task_id)
 select id,run_id,message_id,node_id,status,command_id,delivery_status,id from saved_process_pilot_tasks;
 drop table saved_process_pilot_tasks;
+-- Preserve inserts issued by the previous adapter during a rolling update.
+create trigger process_pilot_activation_compat after insert on process_pilot_tasks when new.heart_task_id='' begin
+ update process_pilot_tasks set heart_task_id=new.id where id=new.id;
+end;
 create trigger audit_process_pilot_started after insert on process_pilot_runs begin
  insert into audit_events(actor_id,action,target_kind,target_id) values(new.actor_id,'process.pilot_started','pilot_run',new.id);
 end;
