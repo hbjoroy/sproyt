@@ -47,7 +47,9 @@ use crate::{
     web::mcp::mcp_handler,
     web::media::{download_media, download_media_preview, upload_media},
     web::processes::{
-        correlate_process, get_process, inspect_process, set_heart_feature, start_process,
+        bind_process_application, configure_application, configure_application_processor,
+        configure_process_binding, configure_process_role, configure_task_route, correlate_process,
+        get_process, inspect_process, list_process_applications, set_heart_feature, start_process,
     },
     web::socket::ws_handler,
     web::stream::{command_handler, events_handler},
@@ -229,6 +231,30 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         )
         .route("/api/v1/events", get(events_handler))
         .route("/api/v1/processes", post(start_process))
+        .route(
+            "/api/v1/circles/{id}/work-applications",
+            post(configure_application),
+        )
+        .route(
+            "/api/v1/work-applications/{id}/processors",
+            post(configure_application_processor),
+        )
+        .route(
+            "/api/v1/work-applications/{id}/process-roles",
+            post(configure_process_role),
+        )
+        .route(
+            "/api/v1/channels/{id}/task-routes",
+            post(configure_task_route),
+        )
+        .route(
+            "/api/v1/channels/{id}/process-applications",
+            get(list_process_applications).post(bind_process_application),
+        )
+        .route(
+            "/api/v1/channels/{id}/process-bindings",
+            post(configure_process_binding),
+        )
         .route(
             "/api/v1/channels/{id}/process-pilot",
             get(crate::web::process_pilot::configuration)

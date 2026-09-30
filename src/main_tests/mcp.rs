@@ -277,6 +277,18 @@ async fn mcp_process_tools_enforce_separate_scopes_and_idempotency() {
         })
         .await
         .unwrap();
+    repository
+        .configure_process_binding(crate::process::ConfigureProcessBinding {
+            channel_id: channel.id.clone(),
+            actor: owner.clone(),
+            process_key: "event-planning".into(),
+            namespace: "friends".into(),
+            definition_name: "event-planning".into(),
+            definition_version: "".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
     let created = agents
         .create(CreateAgent {
             actor: owner.clone(),

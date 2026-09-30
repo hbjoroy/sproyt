@@ -2334,6 +2334,195 @@ async fn notify_presence(
 }
 
 impl ProcessRepository for PostgresChatRepository {
+    fn configure_task_route<'a>(
+        &'a self,
+        command: crate::process::ConfigureTaskRoute,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let binding: Option<Uuid> = sqlx::query_scalar("select b.id from channel_process_bindings b join channels source on source.id=b.channel_id join channels target on target.id=$1 and target.circle_id=source.circle_id join circle_memberships m on m.circle_id=source.circle_id and m.user_id=$2 and m.role='owner' where b.channel_id=$3 and b.process_key=$4")
+                .bind(*command.task_channel_id.as_uuid()).bind(*command.actor.as_uuid())
+                .bind(*command.source_channel_id.as_uuid()).bind(&command.process_key)
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            let binding = binding.ok_or(RepositoryError::PermissionDenied)?;
+            sqlx::query("insert into channel_task_routes(id,binding_id,channel_id,task_key,process_role,enabled) values($1,$2,$3,$4,$5,$6) on conflict(binding_id,task_key,process_role) do update set channel_id=excluded.channel_id,enabled=excluded.enabled")
+                .bind(Uuid::now_v7()).bind(binding).bind(*command.task_channel_id.as_uuid())
+                .bind(&command.task_key).bind(&command.process_role).bind(command.enabled)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'process.task_route_changed','channel',$2,$3)")
+                .bind(*command.actor.as_uuid()).bind(command.source_channel_id.to_string())
+                .bind(serde_json::json!({"process_key":command.process_key,"task_key":command.task_key,"process_role":command.process_role,"task_channel_id":command.task_channel_id,"enabled":command.enabled}))
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
+    fn configure_process_role<'a>(
+        &'a self,
+        command: crate::process::ConfigureProcessRole,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let allowed: Option<i32> = sqlx::query_scalar("select 1 from work_applications a join circle_memberships m on m.circle_id=a.owner_circle_id and m.user_id=$1 and m.role='owner' join users u on u.id=$2 and u.kind='human' where a.id=$3")
+                .bind(*command.actor.as_uuid()).bind(*command.user_id.as_uuid()).bind(command.application_id)
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if command.enabled {
+                sqlx::query("insert into application_process_roles(application_id,user_id,process_role) values($1,$2,$3) on conflict do nothing")
+                    .bind(command.application_id).bind(*command.user_id.as_uuid()).bind(&command.process_role)
+                    .execute(&mut *tx).await.map_err(sql_error)?;
+            } else {
+                sqlx::query("delete from application_process_roles where application_id=$1 and user_id=$2 and process_role=$3")
+                    .bind(command.application_id).bind(*command.user_id.as_uuid()).bind(&command.process_role)
+                    .execute(&mut *tx).await.map_err(sql_error)?;
+            }
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'work.process_role_changed','work_application',$2,$3)")
+                .bind(*command.actor.as_uuid()).bind(command.application_id.to_string())
+                .bind(serde_json::json!({"user_id":command.user_id,"process_role":command.process_role,"enabled":command.enabled}))
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+    fn configure_application_processor<'a>(
+        &'a self,
+        command: crate::process::ConfigureApplicationProcessor,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let allowed: Option<i32> = sqlx::query_scalar("select 1 from work_applications a join circle_memberships m on m.circle_id=a.owner_circle_id and m.user_id=$1 and m.role='owner' join users u on u.id=$2 and u.kind='human' where a.id=$3")
+                .bind(*command.actor.as_uuid()).bind(*command.user_id.as_uuid()).bind(command.application_id)
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("insert into application_processors(application_id,user_id,can_review,can_export,can_start_development) values($1,$2,$3,$4,$5) on conflict(application_id,user_id) do update set can_review=excluded.can_review,can_export=excluded.can_export,can_start_development=excluded.can_start_development")
+                .bind(command.application_id).bind(*command.user_id.as_uuid())
+                .bind(command.can_review).bind(command.can_export).bind(command.can_start_development)
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'work.processor_changed','work_application',$2,$3)")
+                .bind(*command.actor.as_uuid()).bind(command.application_id.to_string())
+                .bind(serde_json::json!({"user_id":command.user_id,"can_review":command.can_review,"can_export":command.can_export,"can_start_development":command.can_start_development}))
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+    fn configure_application<'a>(
+        &'a self,
+        command: crate::process::ConfigureApplication,
+    ) -> ProcessRepositoryFuture<'a, crate::process::WorkApplication> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let owner: Option<i32> = sqlx::query_scalar("select 1 from circle_memberships where circle_id=$1 and user_id=$2 and role='owner'")
+                .bind(*command.circle_id.as_uuid()).bind(*command.actor.as_uuid())
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if owner.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let row = sqlx::query("insert into work_applications(id,owner_circle_id,key,name,enabled,updated_by) values($1,$2,$3,$4,$5,$6) on conflict(key) do update set name=excluded.name,enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=now() where work_applications.owner_circle_id=excluded.owner_circle_id returning id,key,name")
+                .bind(Uuid::now_v7()).bind(*command.circle_id.as_uuid()).bind(&command.key)
+                .bind(command.name.trim()).bind(command.enabled).bind(*command.actor.as_uuid())
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?
+                .ok_or(RepositoryError::PermissionDenied)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(crate::process::WorkApplication {
+                id: row.try_get("id").map_err(storage)?,
+                key: row.try_get("key").map_err(storage)?,
+                name: row.try_get("name").map_err(storage)?,
+            })
+        })
+    }
+
+    fn bind_process_application<'a>(
+        &'a self,
+        command: crate::process::BindProcessApplication,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let binding: Option<Uuid> = sqlx::query_scalar("select b.id from channel_process_bindings b join channels c on c.id=b.channel_id join work_applications a on a.id=$1 and a.owner_circle_id=c.circle_id join circle_memberships m on m.circle_id=c.circle_id and m.user_id=$2 and m.role='owner' where b.channel_id=$3 and b.process_key=$4")
+                .bind(command.application_id).bind(*command.actor.as_uuid())
+                .bind(*command.channel_id.as_uuid()).bind(&command.process_key)
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            let binding = binding.ok_or(RepositoryError::PermissionDenied)?;
+            if command.enabled {
+                sqlx::query("insert into channel_process_applications(binding_id,application_id) values($1,$2) on conflict do nothing")
+                    .bind(binding).bind(command.application_id).execute(&mut *tx).await.map_err(sql_error)?;
+            } else {
+                sqlx::query("delete from channel_process_applications where binding_id=$1 and application_id=$2")
+                    .bind(binding).bind(command.application_id).execute(&mut *tx).await.map_err(sql_error)?;
+            }
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'work.application_binding_changed','work_application',$2,$3)")
+                .bind(*command.actor.as_uuid()).bind(command.application_id.to_string())
+                .bind(serde_json::json!({"channel_id":command.channel_id,"process_key":command.process_key,"enabled":command.enabled}))
+                .execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
+    fn list_process_applications<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        process_key: String,
+    ) -> ProcessRepositoryFuture<'a, Vec<crate::process::WorkApplication>> {
+        Box::pin(async move {
+            let role: Option<String> = sqlx::query_scalar(
+                "select role from channel_memberships where channel_id=$1 and user_id=$2",
+            )
+            .bind(*channel_id.as_uuid())
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if !Policy::can_send_to_channel(
+                role.as_deref().and_then(MembershipRole::parse).as_ref(),
+            ) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let rows = sqlx::query("select a.id,a.key,a.name from channel_process_bindings b join channel_process_applications ca on ca.binding_id=b.id join work_applications a on a.id=ca.application_id and a.enabled where b.channel_id=$1 and b.process_key=$2 and b.enabled order by a.name,a.id")
+                .bind(*channel_id.as_uuid()).bind(process_key).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter()
+                .map(|row| {
+                    Ok(crate::process::WorkApplication {
+                        id: row.try_get("id").map_err(storage)?,
+                        key: row.try_get("key").map_err(storage)?,
+                        name: row.try_get("name").map_err(storage)?,
+                    })
+                })
+                .collect()
+        })
+    }
+
+    fn configure_process_binding<'a>(
+        &'a self,
+        command: crate::process::ConfigureProcessBinding,
+    ) -> ProcessRepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let owner: Option<i32> = sqlx::query_scalar(
+                "select 1 from channels c join circle_memberships m on m.circle_id=c.circle_id and m.user_id=$1 and m.role='owner' where c.id=$2",
+            )
+            .bind(*command.actor.as_uuid())
+            .bind(*command.channel_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            if owner.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("insert into channel_process_bindings(id,channel_id,process_key,namespace,definition_name,definition_version,enabled,updated_by) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(channel_id,process_key) do update set namespace=excluded.namespace,definition_name=excluded.definition_name,definition_version=excluded.definition_version,enabled=excluded.enabled,revision=channel_process_bindings.revision+1,updated_by=excluded.updated_by,updated_at=now()")
+                .bind(Uuid::now_v7()).bind(*command.channel_id.as_uuid()).bind(&command.process_key)
+                .bind(&command.namespace).bind(&command.definition_name).bind(&command.definition_version)
+                .bind(command.enabled).bind(*command.actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
     fn enqueue_start<'a>(
         &'a self,
         command: EnqueueProcessStart,
@@ -2356,10 +2545,19 @@ impl ProcessRepository for PostgresChatRepository {
             if !Policy::can_start_process(role.as_ref()) {
                 return Err(RepositoryError::PermissionDenied);
             }
-            if let Some(row) = sqlx::query("select id,heart_instance_id,namespace,definition_name,definition_version,status from process_links where initiated_by=$1 and request_id=$2")
+            if let Some(row) = sqlx::query("select id,channel_id,heart_instance_id,namespace,definition_name,definition_version,status from process_links where initiated_by=$1 and request_id=$2")
                 .bind(*command.actor.as_uuid()).bind(&command.request_id).fetch_optional(&mut *tx).await.map_err(sql_error)? {
+                if row.try_get::<Uuid,_>("channel_id").map_err(storage)? != *command.channel_id.as_uuid() {
+                    return Err(RepositoryError::Conflict);
+                }
                 tx.commit().await.map_err(sql_error)?;
                 return process_link_from_postgres(row, command.channel_id, command.actor);
+            }
+            let bound: Option<i32> = sqlx::query_scalar("select 1 from channel_process_bindings where channel_id=$1 and namespace=$2 and definition_name=$3 and definition_version=coalesce($4,'') and enabled")
+                .bind(*command.channel_id.as_uuid()).bind(&command.namespace).bind(&command.definition_name)
+                .bind(&command.definition_version).fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if bound.is_none() {
+                return Err(RepositoryError::PermissionDenied);
             }
             let link_id = ProcessLinkId::generate();
             let outbox_id = OutboxId::generate();

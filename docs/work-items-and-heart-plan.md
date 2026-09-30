@@ -2,7 +2,9 @@
 
 Dato: 2026-09-28. Oppdatert 2026-09-30. Status: den avgrensa
 iterasjonen 0a og Heart v2-piloten er implementerte og utrulla;
-applikasjonsregister og saksbehandling i steg 1–6 er framleis ein plan.
+steg 1 for applikasjonsregister og kanalpolicy er under gjennomføring.
+Saksbehandling i steg 2–6 er framleis ein plan. Sjå
+[steg 1-kontrakten](work-item-policy.md) for den konkrete policygrensa.
 Sjå [pilotkontrakten](process-user-task-pilot.md) og aktuell GitOps-status
 for driftsdetaljar. Historiske statusavsnitt under er daterte augeblikkbilete.
 

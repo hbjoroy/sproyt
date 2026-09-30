@@ -2648,6 +2648,83 @@ async fn browser_process_pilot_exposes_durable_status_and_idempotent_inspect() {
             .await
             .unwrap();
     assert_eq!(feature.status(), reqwest::StatusCode::NO_CONTENT);
+    let binding = client
+        .post(format!(
+            "{base}/api/v1/channels/{channel_id}/process-bindings?participant=process-browser-owner"
+        ))
+        .json(&serde_json::json!({
+            "process_key":"event-planning", "namespace":"sproyt",
+            "definition_name":"event-planning", "definition_version":"1", "enabled":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(binding.status(), reqwest::StatusCode::NO_CONTENT);
+    let application = client
+        .post(format!(
+            "{base}/api/v1/circles/{circle_id}/work-applications?participant=process-browser-owner"
+        ))
+        .json(
+            &serde_json::json!({"key":"process-test-app","name":"Process test app","enabled":true}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(application.status(), reqwest::StatusCode::OK);
+    let application: serde_json::Value = application.json().await.unwrap();
+    let application_id = application["id"].as_str().unwrap();
+    let denied_binding = client
+        .post(format!("{base}/api/v1/channels/{channel_id}/process-applications?participant=process-stranger"))
+        .json(&serde_json::json!({"process_key":"event-planning","application_id":application_id,"enabled":true}))
+        .send().await.unwrap();
+    assert_eq!(denied_binding.status(), reqwest::StatusCode::FORBIDDEN);
+    let app_binding = client
+        .post(format!("{base}/api/v1/channels/{channel_id}/process-applications?participant=process-browser-owner"))
+        .json(&serde_json::json!({"process_key":"event-planning","application_id":application_id,"enabled":true}))
+        .send().await.unwrap();
+    assert_eq!(app_binding.status(), reqwest::StatusCode::NO_CONTENT);
+    let choices = client
+        .get(format!("{base}/api/v1/channels/{channel_id}/process-applications?process_key=event-planning&participant=process-browser-owner"))
+        .send().await.unwrap();
+    assert_eq!(choices.status(), reqwest::StatusCode::OK);
+    let choices: serde_json::Value = choices.json().await.unwrap();
+    assert_eq!(choices[0]["id"], application_id);
+    let hidden_choices = client
+        .get(format!("{base}/api/v1/channels/{channel_id}/process-applications?process_key=event-planning&participant=process-stranger"))
+        .send().await.unwrap();
+    assert_eq!(hidden_choices.status(), reqwest::StatusCode::FORBIDDEN);
+    let owner_id =
+        crate::domain::UserId::named("urn:sproyt:development:process-browser-owner").to_string();
+    let processor = client
+        .post(format!("{base}/api/v1/work-applications/{application_id}/processors?participant=process-browser-owner"))
+        .json(&serde_json::json!({"user_id":owner_id,"can_review":true,"can_export":false,"can_start_development":false}))
+        .send().await.unwrap();
+    assert_eq!(processor.status(), reqwest::StatusCode::NO_CONTENT);
+    let denied_processor = client
+        .post(format!("{base}/api/v1/work-applications/{application_id}/processors?participant=process-stranger"))
+        .json(&serde_json::json!({"user_id":owner_id,"can_review":true,"can_export":true,"can_start_development":false}))
+        .send().await.unwrap();
+    assert_eq!(denied_processor.status(), reqwest::StatusCode::FORBIDDEN);
+    let invalid_processor = client
+        .post(format!("{base}/api/v1/work-applications/{application_id}/processors?participant=process-browser-owner"))
+        .json(&serde_json::json!({"user_id":owner_id,"can_review":false,"can_export":true,"can_start_development":false}))
+        .send().await.unwrap();
+    assert_eq!(invalid_processor.status(), reqwest::StatusCode::CONFLICT);
+    let process_role = client
+        .post(format!("{base}/api/v1/work-applications/{application_id}/process-roles?participant=process-browser-owner"))
+        .json(&serde_json::json!({"user_id":owner_id,"process_role":"product-handler","enabled":true}))
+        .send().await.unwrap();
+    assert_eq!(process_role.status(), reqwest::StatusCode::NO_CONTENT);
+    let route = client
+        .post(format!("{base}/api/v1/channels/{channel_id}/task-routes?participant=process-browser-owner"))
+        .json(&serde_json::json!({"process_key":"event-planning","task_channel_id":channel_id,"task_key":"review","process_role":"product-handler","enabled":true}))
+        .send().await.unwrap();
+    assert_eq!(route.status(), reqwest::StatusCode::NO_CONTENT);
+    let denied_route = client
+        .post(format!("{base}/api/v1/channels/{channel_id}/task-routes?participant=process-stranger"))
+        .json(&serde_json::json!({"process_key":"event-planning","task_channel_id":channel_id,"task_key":"review","process_role":"product-handler","enabled":false}))
+        .send().await.unwrap();
+    assert_eq!(denied_route.status(), reqwest::StatusCode::FORBIDDEN);
     let started = client
         .post(format!(
             "{base}/api/v1/processes?participant=process-browser-owner"
@@ -2762,6 +2839,18 @@ async fn heart_unavailable_does_not_interrupt_chat_and_recovers_once() {
             .await
             .unwrap();
     assert_eq!(feature.status(), reqwest::StatusCode::NO_CONTENT);
+    let binding = client
+        .post(format!(
+            "{base}/api/v1/channels/{channel_id}/process-bindings?participant=heart-isolation-owner"
+        ))
+        .json(&serde_json::json!({
+            "process_key":"event-planning", "namespace":"sproyt",
+            "definition_name":"event-planning", "definition_version":"1", "enabled":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(binding.status(), reqwest::StatusCode::NO_CONTENT);
     let started = client
         .post(format!(
             "{base}/api/v1/processes?participant=heart-isolation-owner"

@@ -1282,6 +1282,162 @@ where
         })
         .await
         .unwrap();
+    assert_eq!(
+        repository.enqueue_start(process_start.clone()).await,
+        Err(RepositoryError::PermissionDenied),
+        "an enabled circle alone must not authorize a definition"
+    );
+    repository
+        .configure_process_binding(crate::process::ConfigureProcessBinding {
+            channel_id: process_channel.id.clone(),
+            actor: actor.clone(),
+            process_key: "contract".into(),
+            namespace: "contract".into(),
+            definition_name: "contract".into(),
+            definition_version: "".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let process_key = "work-item".to_owned();
+    assert_eq!(
+        repository
+            .list_process_applications(
+                actor.clone(),
+                process_channel.id.clone(),
+                process_key.clone()
+            )
+            .await,
+        Ok(Vec::new()),
+        "a channel has no applications until explicitly configured"
+    );
+    repository
+        .configure_process_binding(crate::process::ConfigureProcessBinding {
+            channel_id: process_channel.id.clone(),
+            actor: actor.clone(),
+            process_key: process_key.clone(),
+            namespace: "sproyt".into(),
+            definition_name: "work-item".into(),
+            definition_version: "1.0.0".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let application = repository
+        .configure_application(crate::process::ConfigureApplication {
+            actor: actor.clone(),
+            circle_id: circle.id.clone(),
+            key: format!("application-{suffix}"),
+            name: "Contract application".into(),
+            enabled: false,
+        })
+        .await
+        .unwrap();
+    repository
+        .bind_process_application(crate::process::BindProcessApplication {
+            actor: actor.clone(),
+            channel_id: process_channel.id.clone(),
+            process_key: process_key.clone(),
+            application_id: application.id,
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .list_process_applications(
+                actor.clone(),
+                process_channel.id.clone(),
+                process_key.clone()
+            )
+            .await,
+        Ok(Vec::new())
+    );
+    repository
+        .configure_application(crate::process::ConfigureApplication {
+            actor: actor.clone(),
+            circle_id: circle.id.clone(),
+            key: application.key.clone(),
+            name: application.name.clone(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .list_process_applications(
+                actor.clone(),
+                process_channel.id.clone(),
+                process_key.clone()
+            )
+            .await,
+        Ok(vec![application.clone()])
+    );
+    repository
+        .configure_application_processor(crate::process::ConfigureApplicationProcessor {
+            actor: actor.clone(),
+            application_id: application.id,
+            user_id: actor.clone(),
+            can_review: true,
+            can_export: false,
+            can_start_development: false,
+        })
+        .await
+        .unwrap();
+    repository
+        .configure_process_role(crate::process::ConfigureProcessRole {
+            actor: actor.clone(),
+            application_id: application.id,
+            user_id: actor.clone(),
+            process_role: "product-handler".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    repository
+        .configure_task_route(crate::process::ConfigureTaskRoute {
+            actor: actor.clone(),
+            source_channel_id: process_channel.id.clone(),
+            process_key: process_key.clone(),
+            task_channel_id: process_channel.id.clone(),
+            task_key: "review".into(),
+            process_role: "product-handler".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let other_circle = repository
+        .create_circle(CreateCircle {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("other-{suffix}")).unwrap(),
+            name: DisplayName::new("Other circle").unwrap(),
+        })
+        .await
+        .unwrap();
+    let other_channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("other-channel-{suffix}")).unwrap(),
+            name: DisplayName::new("Other channel").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: Some(other_circle.id),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .configure_task_route(crate::process::ConfigureTaskRoute {
+                actor: actor.clone(),
+                source_channel_id: process_channel.id.clone(),
+                process_key: process_key.clone(),
+                task_channel_id: other_channel.id,
+                task_key: "review".into(),
+                process_role: "product-handler".into(),
+                enabled: true,
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
     let invite = repository
         .create_circle_invitation(CreateCircleInvitation {
             actor: actor.clone(),
@@ -1326,6 +1482,41 @@ where
         })
         .await
         .unwrap();
+    assert_eq!(
+        repository
+            .list_process_applications(
+                member.clone(),
+                process_channel.id.clone(),
+                process_key.clone()
+            )
+            .await,
+        Ok(vec![application.clone()])
+    );
+    assert_eq!(
+        repository
+            .bind_process_application(crate::process::BindProcessApplication {
+                actor: member.clone(),
+                channel_id: process_channel.id.clone(),
+                process_key: process_key.clone(),
+                application_id: application.id,
+                enabled: false,
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .configure_application_processor(crate::process::ConfigureApplicationProcessor {
+                actor: member.clone(),
+                application_id: application.id,
+                user_id: member.clone(),
+                can_review: true,
+                can_export: false,
+                can_start_development: false,
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
 
     let created_agent = repository
         .create_agent(CreateAgent {
