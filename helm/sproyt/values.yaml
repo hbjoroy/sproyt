@@ -51,6 +51,7 @@ config:
   processPilotHeartUrl: ""
   comfyuiUrl: ""
   vllmUrl: ""
+  chatAgentsEnabled: false
   imagegenWebResearch: false
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60

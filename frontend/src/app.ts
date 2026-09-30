@@ -1,5 +1,6 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
       import { ProcessPilotApi } from "./process-pilot";
+      import { CircleChatAgentApi } from "./chat-agents";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
       import { createCommunityRequests } from "./application/community-requests";
@@ -560,6 +561,7 @@
       imageGeneration.subscribe(() => refreshDevelopmentPreview());
       const processesApi = new ProcessApi(http);
       const agentsApi = new AgentApi(http);
+      const circleChatAgentsApi = new CircleChatAgentApi(http);
       const integrationsApi = new IntegrationApi(http);
       const enrollmentApi = new EnrollmentApi(http);
 
@@ -5698,6 +5700,7 @@
               })
             }),
             imageGeneration,
+            chatAgents: circleChatAgentsApi,
             processPilot: new ProcessPilotApi(http, () => currentParticipantId ?? ""),
             processPilotIdentity: () => currentParticipantId ?? "",
             openImageGeneration: () => imageGeneration.open(),

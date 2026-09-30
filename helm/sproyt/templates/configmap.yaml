@@ -7,6 +7,9 @@
 {{- if and .Values.config.processPilotEnabled (not .Values.heart.enabled) (not .Values.config.processPilotHeartUrl) }}
 {{- fail "processPilotEnabled requires the bundled Heart component or config.processPilotHeartUrl" }}
 {{- end }}
+{{- if and .Values.config.chatAgentsEnabled (not .Values.config.vllmUrl) }}
+{{- fail "config.chatAgentsEnabled requires config.vllmUrl" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,6 +29,7 @@ data:
   SPROYT_DB_MAX_CONNECTIONS: {{ .Values.config.dbMaxConnections | quote }}
   SPROYT_UI_ADVANCED_ENABLED: {{ .Values.config.uiAdvancedEnabled | quote }}
   SPROYT_UI_AGENT_ENABLED: {{ .Values.config.uiAgentEnabled | quote }}
+  SPROYT_CHAT_AGENTS_ENABLED: {{ .Values.config.chatAgentsEnabled | quote }}
   SPROYT_PROCESS_PILOT_RUNTIME: {{ .Values.config.processPilotRuntime | quote }}
   SPROYT_PROCESS_PILOT_ENABLED: {{ .Values.config.processPilotEnabled | quote }}
   SPROYT_PROCESS_OUTBOX_ENABLED: {{ .Values.config.processOutboxEnabled | quote }}

@@ -1628,6 +1628,7 @@ impl ChatRepository for PostgresChatRepository {
             persist_mentions_postgres(&mut transaction, &message).await?;
             persist_attachments_postgres(&mut transaction, &message).await?;
             enqueue_message_postgres(&mut transaction, &message).await?;
+            crate::chatbot::enqueue_postgres(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())
@@ -1784,17 +1785,22 @@ impl ChatRepository for PostgresChatRepository {
                 }
                 return Ok(message);
             }
-            let membership: Option<String> = sqlx::query_scalar(
-                "select role from channel_memberships where channel_id = $1 and user_id = $2",
-            )
-            .bind(*command.channel_id.as_uuid())
-            .bind(*command.actor.as_uuid())
-            .fetch_optional(&mut *transaction)
-            .await
-            .map_err(sql_error)?;
-            let role = membership.as_deref().and_then(MembershipRole::parse);
-            if !Policy::can_send_to_channel(role.as_ref()) {
-                return Err(RepositoryError::PermissionDenied);
+            if request_id.starts_with("circle-chat-agent:") {
+                crate::chatbot::authorize_reply_postgres(&mut transaction, &command, &request_id)
+                    .await?;
+            } else {
+                let membership: Option<String> = sqlx::query_scalar(
+                    "select role from channel_memberships where channel_id = $1 and user_id = $2",
+                )
+                .bind(*command.channel_id.as_uuid())
+                .bind(*command.actor.as_uuid())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                let role = membership.as_deref().and_then(MembershipRole::parse);
+                if !Policy::can_send_to_channel(role.as_ref()) {
+                    return Err(RepositoryError::PermissionDenied);
+                }
             }
             validate_thread_parent_postgres(
                 &mut transaction,
@@ -1843,6 +1849,7 @@ impl ChatRepository for PostgresChatRepository {
             persist_mentions_postgres(&mut transaction, &message).await?;
             persist_attachments_postgres(&mut transaction, &message).await?;
             enqueue_message_postgres(&mut transaction, &message).await?;
+            crate::chatbot::enqueue_postgres(&mut transaction, &message).await?;
             sqlx::query("update command_receipts set message_id = $1 where principal_id = $2 and request_id = $3")
                 .bind(*message.id.as_uuid())
                 .bind(*message.sender_id.as_uuid())

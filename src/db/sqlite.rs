@@ -1520,6 +1520,7 @@ impl ChatRepository for SqliteChatRepository {
             persist_mentions_sqlite(&mut transaction, &message).await?;
             persist_attachments_sqlite(&mut transaction, &message).await?;
             enqueue_message_sqlite(&mut transaction, &message).await?;
+            crate::chatbot::enqueue_sqlite(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(message)
         })
@@ -1642,17 +1643,22 @@ impl ChatRepository for SqliteChatRepository {
                 }
                 return Ok(message);
             }
-            let membership: Option<String> = sqlx::query_scalar(
-                "select role from channel_memberships where channel_id = ? and user_id = ?",
-            )
-            .bind(command.channel_id.to_string())
-            .bind(command.actor.to_string())
-            .fetch_optional(&mut *transaction)
-            .await
-            .map_err(sql_error)?;
-            let role = membership.as_deref().and_then(MembershipRole::parse);
-            if !Policy::can_send_to_channel(role.as_ref()) {
-                return Err(RepositoryError::PermissionDenied);
+            if request_id.starts_with("circle-chat-agent:") {
+                crate::chatbot::authorize_reply_sqlite(&mut transaction, &command, &request_id)
+                    .await?;
+            } else {
+                let membership: Option<String> = sqlx::query_scalar(
+                    "select role from channel_memberships where channel_id = ? and user_id = ?",
+                )
+                .bind(command.channel_id.to_string())
+                .bind(command.actor.to_string())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                let role = membership.as_deref().and_then(MembershipRole::parse);
+                if !Policy::can_send_to_channel(role.as_ref()) {
+                    return Err(RepositoryError::PermissionDenied);
+                }
             }
             validate_thread_parent_sqlite(
                 &mut transaction,
@@ -1701,6 +1707,7 @@ impl ChatRepository for SqliteChatRepository {
             persist_mentions_sqlite(&mut transaction, &message).await?;
             persist_attachments_sqlite(&mut transaction, &message).await?;
             enqueue_message_sqlite(&mut transaction, &message).await?;
+            crate::chatbot::enqueue_sqlite(&mut transaction, &message).await?;
             sqlx::query("update command_receipts set message_id = ? where principal_id = ? and request_id = ?")
                 .bind(message.id.as_uuid().to_string())
                 .bind(message.sender_id.to_string())
