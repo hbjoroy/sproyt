@@ -28,11 +28,13 @@ import { MarkdownContent, markdownTextFromMessage } from "./markdown-content";
 import { processTaskId, type ProcessPilotApi } from "../../process-pilot";
 import { ProcessPilotChannelAction, ProcessTaskMessage } from "./process-pilot";
 import { NavigationScopeActions } from "./navigation-scope-actions";
+import type { CircleChatAgentApi } from "../../chat-agents";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly processPilot: ProcessPilotApi;
   readonly processPilotIdentity: () => string;
   readonly imageGeneration: ImageGenerationOwner;
+  readonly chatAgents: CircleChatAgentApi;
   readonly legacyContainer: HTMLElement;
   readonly runtime: ApplicationRuntime;
   readonly snapshot: () => ConversationSnapshot;
@@ -291,7 +293,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
-      <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced}
+      <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents}
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions></>,
     navigationActions: null,
     renderGroupActions: group => group.id === "scope:direct" ? null : <NavigationScopeActions

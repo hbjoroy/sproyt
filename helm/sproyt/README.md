@@ -46,6 +46,15 @@ PostgreSQL listener keeps one dedicated connection outside that pool, so budget
 Idle pooled connections close after 60 seconds and pool acquisition times out
 after 5 seconds. SQLite operation is unchanged.
 
+Circle chat agents are disabled by default. To test them in canary, set
+`config.chatAgentsEnabled=true` and `config.vllmUrl` to the existing Santorini
+OpenAI-compatible `/v1` endpoint. Supply an API key through
+`secret.vllmExistingSecret` when required, and allow only the model host through
+`networkPolicy.vllmCidrs`/`vllmPort`. Owners can save disabled agent setups
+before the worker is enabled. No agent replies are generated while the switch
+is off; disabling it again stops new processing without affecting ordinary
+messages.
+
 Heart is an optional internal component of this same Helm release, not a
 separate ArgoCD application. Enabling `heart.enabled` creates a private
 ClusterIP Service, Deployment, migration Job, PDB, and NetworkPolicy in the

@@ -1,6 +1,7 @@
 mod agent;
 mod auth;
 mod chat;
+mod chatbot;
 mod config;
 mod db;
 mod domain;

@@ -5,6 +5,8 @@ import { PreviewSettingsDialog, type PreviewSettingsHost } from "./preview-setti
 import { PreviewCommunity, type CommunityDestination, type CommunityHost } from "./preview-community";
 import { PreviewAdvanced } from "./preview-advanced";
 import type { AdvancedHost } from "../../application/advanced-host";
+import type { CircleChatAgentApi } from "../../chat-agents";
+import { CircleChatAgentsDialog } from "./circle-chat-agents";
 
 export type ManagementDestination =
   | { kind: "create-circle" | "circles" | "people" | "channel" | "global-channels" | "global-invite" | "profile" | "notifications" | "agent" | "heart" }
@@ -12,12 +14,13 @@ export type ManagementDestination =
 
 /** Focused management tasks share the host's commands and state. Opening the
  * directory never creates invitations, credentials or processes. */
-export function PreviewManagement({ snapshot, capabilities, settings, community, advanced }: {
+export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents }: {
   snapshot: ConversationSnapshot;
   capabilities: { agent: boolean; heart: boolean };
   settings: PreviewSettingsHost;
   community: CommunityHost;
   advanced: AdvancedHost;
+  chatAgents: CircleChatAgentApi;
 }) {
   const [open, setOpen] = useState(false);
   const [setting, setSetting] = useState<"profile" | "notifications">();
@@ -26,6 +29,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   const [destination, setDestination] = useState<CommunityDestination>();
   const communityTrigger = useRef<HTMLButtonElement | null>(null);
   const [advancedKind, setAdvancedKind] = useState<"agent" | "heart">();
+  const [chatAgentsCircle, setChatAgentsCircle] = useState<{ id: string; name: string }>();
   const advancedTrigger = useRef<HTMLButtonElement | null>(null);
   const action = (label: string, destination: ManagementDestination) =>
     <Button key={label} onClick={event => {
@@ -68,6 +72,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
             <h3>{circle.name}</h3>
             {action("Kanalar og medlemskap", { kind: "channels", circleId: circle.id })}
             {circle.role === "owner" && action("Inviter personar og nye brukarar", { kind: "invite", circleId: circle.id })}
+            {circle.role === "owner" && <Button onClick={() => { setOpen(false); setChatAgentsCircle({ id: circle.id, name: circle.name }); }}>Agentar</Button>}
           </section>)}
       </section>}
     </Dialog>
@@ -80,5 +85,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     {advancedKind && <PreviewAdvanced kind={advancedKind} host={advanced} snapshot={snapshot} onClose={() => {
       setAdvancedKind(undefined); requestAnimationFrame(() => advancedTrigger.current?.focus({ preventScroll: true }));
     }} />}
+    {chatAgentsCircle && <CircleChatAgentsDialog key={chatAgentsCircle.id} api={chatAgents} circleId={chatAgentsCircle.id}
+      circleName={chatAgentsCircle.name} onClose={() => { setChatAgentsCircle(undefined); setOpen(true); }} />}
   </>;
 }

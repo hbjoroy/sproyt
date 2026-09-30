@@ -61,6 +61,7 @@ pub(super) struct AppState {
     pub(super) operations: OperationalState,
     pub(super) processes: ProcessService,
     pub(super) agents: AgentService,
+    pub(super) chat_agents: Option<crate::chatbot::CircleChatAgents>,
     pub(super) integrations: IntegrationService,
     pub(super) notifications: NotificationService,
     pub(super) imagegen: Option<crate::imagegen::ImageGeneration>,
@@ -113,6 +114,10 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         service.start_worker(operations.subscribe_shutdown());
     }
     let chat = ChatEngine::start(repositories.chat);
+    let chat_agents =
+        crate::chatbot::CircleChatAgents::from_env(config.database(), postgres_pool.as_ref())
+            .await?;
+    chat_agents.start_worker(chat.clone(), operations.subscribe_shutdown());
     let process_pilot =
         crate::process_pilot::ProcessPilot::from_env(config.database(), postgres_pool.as_ref())
             .await?;
@@ -127,6 +132,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         operations: operations.clone(),
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),
+        chat_agents: Some(chat_agents),
         integrations: IntegrationService::new(repositories.integration),
         notifications,
         enrollment: EnrollmentService::from_env()?,
@@ -248,6 +254,14 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             post(set_heart_feature),
         )
         .route("/api/v1/agents", post(create_agent))
+        .route(
+            "/api/v1/circles/{id}/chat-agents",
+            get(crate::web::chatbot::list).post(crate::web::chatbot::create),
+        )
+        .route(
+            "/api/v1/circles/{id}/chat-agents/{agent_id}",
+            axum::routing::patch(crate::web::chatbot::update),
+        )
         .route("/api/v1/agents/{id}/grants", post(grant_agent))
         .route("/api/v1/agents/{id}/revoke", post(revoke_agent))
         .route(

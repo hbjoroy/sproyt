@@ -364,6 +364,7 @@ mod tests {
             operations: OperationalState::default(),
             processes: ProcessService::start(repository.clone(), None),
             agents: AgentService::new(repository.clone()),
+            chat_agents: None,
             integrations: crate::integration::IntegrationService::new(repository),
             notifications: NotificationService::test(),
             enrollment: None,

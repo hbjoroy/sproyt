@@ -313,3 +313,39 @@
   .sp-reaction-badge-wrap > .sp-button { min-width: 44px; min-height: 44px; }
   #sproyt-react-preview .sp-time { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; }
 }
+.sp-circle-agent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-top: 1px solid var(--sp-line);
+  padding-block: 0.5rem;
+}
+
+.sp-circle-agent-form {
+  display: grid;
+  gap: 0.55rem;
+  margin-block-start: 1rem;
+}
+
+.sp-circle-agent-form textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--sp-line);
+  border-radius: 0;
+  background: var(--sp-surface);
+  color: var(--sp-text);
+  padding: 0.7rem;
+  font: inherit;
+}
+
+.sp-circle-agent-enabled {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 44px;
+}
+
+.sp-circle-agent-enabled input { width: 1.1rem; height: 1.1rem; }
