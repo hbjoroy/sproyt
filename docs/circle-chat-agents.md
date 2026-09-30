@@ -110,5 +110,5 @@ kretsisolasjon, private kanalar, triggergrenser, 20-minuttsvindauge,
 trådar, endring/sletting medan modellen arbeider, idempotens, restart og
 parallelle arbeidarar. Ein falsk vLLM gir deterministiske testar;
 ein avgrensa manuell test mot Santorini provar modelloppdaging og eitt
-faktisk svar. Teljarar for kø, fullførte/hoppa over/feila jobbar og
-modell-latens skal ikkje innehalde meldingstekst.
+faktisk svar. Eit seinare driftssteg bør leggje til teljarar for kø,
+fullførte/hoppa over/feila jobbar og modell-latens utan meldingstekst.

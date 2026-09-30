@@ -880,6 +880,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn model_request_identifies_trigger_target_and_response_guidance() {
+        use axum::{
+            Json, Router,
+            routing::{get, post},
+        };
+        let captured = Arc::new(tokio::sync::Mutex::new(None::<Value>));
+        let record = captured.clone();
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { Json(json!({"data":[{"id":"qwen-test"}]})) }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(move |Json(request): Json<Value>| {
+                    let record = record.clone();
+                    async move {
+                        *record.lock().await = Some(request);
+                        Json(json!({"choices":[{"message":{"content":"Hei, Kari!"}}]}))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let model = VllmChat {
+            base: format!("http://{address}/v1"),
+            key: None,
+            http: reqwest::Client::new(),
+        };
+        let target = Uuid::now_v7().to_string();
+        let reply = model
+            .reply(
+                "Hjelpar",
+                &["hjelp".into()],
+                &["Eg kan hjelpe".into()],
+                &target,
+                &[ContextMessage {
+                    id: target.clone(),
+                    author: "Kari".into(),
+                    body: "Hjelp meg".into(),
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply, "Hei, Kari!");
+        let request = captured.lock().await.clone().unwrap();
+        let prompt = request["messages"][1]["content"].as_str().unwrap();
+        assert!(prompt.contains(&target));
+        assert!(prompt.contains("hjelp"));
+        assert!(prompt.contains("Eg kan hjelpe"));
+        assert_eq!(request["model"], "qwen-test");
+        assert!(request.get("tools").is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn sqlite_configuration_and_trigger_job_stay_in_the_circle() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -995,6 +1054,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        assert!(service.list(&actor, &circle.to_string()).await.unwrap()[0].enabled);
         for (id, body) in [(channel, "Hjelp meg?"), (private, "Hjelp meg privat")] {
             let message_id = Uuid::now_v7();
             sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at) values(?,?,?,'Owner',1,?,?)")
@@ -1214,6 +1274,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        assert!(service.list(&actor, &circle.to_string()).await.unwrap()[0].enabled);
         let message_id = Uuid::now_v7();
         sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at) values($1,$2,$3,'Owner',1,'Hjelp meg',now())")
             .bind(message_id).bind(channel).bind(owner).execute(&pool).await.unwrap();
