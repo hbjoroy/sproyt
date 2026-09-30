@@ -6,12 +6,21 @@ dokumentet. Grunnlaget er [designnotatet](process-forms-design-note.md),
 
 ## Grense og rekkjefølgje
 
-Heart eig prosessdefinisjon, instans, oppgåveaktivering, tildeling, framdrift
-og prosessnære svar. Sprøyt eig sine saker, kategori/prioritet, sakshistorikk,
-tilgang til saka og oppgåvemeldinga i kanalen. Eit anna fagsystem kan eige
-saksdata i ein annan prosess. Ein skjemadefinisjon kan vere logisk del av
-Heart utan å krevje ei eiga teneste; JSON Forms er ein klientrenderar, ikkje
-ein føresetnad for Heart-motoren eller andre brukarflater.
+Når ein brukar vel **Lag Issue** frå ei melding, skal Sprøyt lagre saka:
+tittel, kategori, prioritet, historikk og kven som får lese henne. Heart
+får ei referanse til saka og styrer kva brukaroppgåve som er aktiv, kven
+som kan utføre henne og kva som skjer etterpå. Sprøyt viser oppgåva som
+ei melding i rett kanal.
+
+Kvar opplysning har éin eigar. Dersom eit skjema spør om noko som berre
+trengst for neste prosesssteg, til dømes «godkjenn eller avvis», kan Heart
+lagre svaret. Dersom behandlaren endrar sjølve saka, til dømes prioritet,
+skal Sprøyt lagre endringa; Heart treng berre resultatet som styrer flyten.
+I ein annan prosess kan eit fagsystem eige saksdataa i staden for Sprøyt.
+
+Skjemadefinisjonane kan høyre logisk til Heart utan ei eiga teneste.
+JSON Forms kan vise dei i Sprøyt, men Heart skal òg kunne brukast av
+andre brukarflater utan JSON Forms.
 
 To arbeidsspor må ikkje blandast:
 
