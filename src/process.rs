@@ -8,7 +8,7 @@ use tokio::time::{sleep, timeout};
 use tracing::{instrument, warn};
 use uuid::Uuid;
 
-use crate::domain::{ChannelId, RepositoryError, UserId};
+use crate::domain::{ChannelId, CircleId, RepositoryError, UserId};
 
 const HEART_CLIENT_ID: &str = "sproyt";
 
@@ -88,6 +88,72 @@ pub struct SetCircleFeature {
     pub enabled: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct ConfigureProcessBinding {
+    pub channel_id: ChannelId,
+    pub actor: UserId,
+    pub process_key: String,
+    pub namespace: String,
+    pub definition_name: String,
+    pub definition_version: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigureApplication {
+    pub actor: UserId,
+    pub circle_id: CircleId,
+    pub key: String,
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct BindProcessApplication {
+    pub actor: UserId,
+    pub channel_id: ChannelId,
+    pub process_key: String,
+    pub application_id: Uuid,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigureApplicationProcessor {
+    pub actor: UserId,
+    pub application_id: Uuid,
+    pub user_id: UserId,
+    pub can_review: bool,
+    pub can_export: bool,
+    pub can_start_development: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigureTaskRoute {
+    pub actor: UserId,
+    pub source_channel_id: ChannelId,
+    pub process_key: String,
+    pub task_channel_id: ChannelId,
+    pub task_key: String,
+    pub process_role: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigureProcessRole {
+    pub actor: UserId,
+    pub application_id: Uuid,
+    pub user_id: UserId,
+    pub process_role: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WorkApplication {
+    pub id: Uuid,
+    pub key: String,
+    pub name: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProcessLink {
     pub id: ProcessLinkId,
@@ -153,6 +219,36 @@ pub trait ProcessRepository: Send + Sync + 'static {
         &'a self,
         command: SetCircleFeature,
     ) -> ProcessRepositoryFuture<'a, ()>;
+    fn configure_process_binding<'a>(
+        &'a self,
+        command: ConfigureProcessBinding,
+    ) -> ProcessRepositoryFuture<'a, ()>;
+    fn configure_application<'a>(
+        &'a self,
+        command: ConfigureApplication,
+    ) -> ProcessRepositoryFuture<'a, WorkApplication>;
+    fn bind_process_application<'a>(
+        &'a self,
+        command: BindProcessApplication,
+    ) -> ProcessRepositoryFuture<'a, ()>;
+    fn configure_application_processor<'a>(
+        &'a self,
+        command: ConfigureApplicationProcessor,
+    ) -> ProcessRepositoryFuture<'a, ()>;
+    fn configure_task_route<'a>(
+        &'a self,
+        command: ConfigureTaskRoute,
+    ) -> ProcessRepositoryFuture<'a, ()>;
+    fn configure_process_role<'a>(
+        &'a self,
+        command: ConfigureProcessRole,
+    ) -> ProcessRepositoryFuture<'a, ()>;
+    fn list_process_applications<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        process_key: String,
+    ) -> ProcessRepositoryFuture<'a, Vec<WorkApplication>>;
     fn lease_next<'a>(
         &'a self,
         lease_for: Duration,
@@ -234,6 +330,110 @@ impl ProcessService {
     ) -> Result<(), RepositoryError> {
         self.repository.set_circle_feature(command).await
     }
+
+    pub async fn configure_process_binding(
+        &self,
+        command: ConfigureProcessBinding,
+    ) -> Result<(), RepositoryError> {
+        if !valid_policy_key(&command.process_key)
+            || !valid_policy_key(&command.namespace)
+            || !valid_policy_key(&command.definition_name)
+            || command.definition_version.len() > 120
+            || command.definition_version.chars().any(char::is_control)
+        {
+            return Err(RepositoryError::Conflict);
+        }
+        self.repository.configure_process_binding(command).await
+    }
+
+    pub async fn configure_application(
+        &self,
+        command: ConfigureApplication,
+    ) -> Result<WorkApplication, RepositoryError> {
+        if !valid_application_key(&command.key)
+            || command.name.trim().is_empty()
+            || command.name.trim().chars().count() > 120
+            || command.name.chars().any(char::is_control)
+        {
+            return Err(RepositoryError::Conflict);
+        }
+        self.repository.configure_application(command).await
+    }
+
+    pub async fn bind_process_application(
+        &self,
+        command: BindProcessApplication,
+    ) -> Result<(), RepositoryError> {
+        if !valid_policy_key(&command.process_key) {
+            return Err(RepositoryError::Conflict);
+        }
+        self.repository.bind_process_application(command).await
+    }
+
+    pub async fn configure_application_processor(
+        &self,
+        command: ConfigureApplicationProcessor,
+    ) -> Result<(), RepositoryError> {
+        if (command.can_export || command.can_start_development) && !command.can_review {
+            return Err(RepositoryError::Conflict);
+        }
+        self.repository
+            .configure_application_processor(command)
+            .await
+    }
+
+    pub async fn configure_task_route(
+        &self,
+        command: ConfigureTaskRoute,
+    ) -> Result<(), RepositoryError> {
+        if !valid_policy_key(&command.process_key)
+            || !valid_policy_key(&command.task_key)
+            || !valid_policy_key(&command.process_role)
+        {
+            return Err(RepositoryError::Conflict);
+        }
+        self.repository.configure_task_route(command).await
+    }
+
+    pub async fn configure_process_role(
+        &self,
+        command: ConfigureProcessRole,
+    ) -> Result<(), RepositoryError> {
+        if !valid_policy_key(&command.process_role) {
+            return Err(RepositoryError::Conflict);
+        }
+        self.repository.configure_process_role(command).await
+    }
+
+    pub async fn list_process_applications(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+        process_key: String,
+    ) -> Result<Vec<WorkApplication>, RepositoryError> {
+        if !valid_policy_key(&process_key) {
+            return Err(RepositoryError::Conflict);
+        }
+        self.repository
+            .list_process_applications(actor, channel_id, process_key)
+            .await
+    }
+}
+
+fn valid_application_key(value: &str) -> bool {
+    (2..=64).contains(&value.len())
+        && value.starts_with(|character: char| character.is_ascii_lowercase())
+        && value.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+}
+
+fn valid_policy_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 120
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
 }
 
 async fn run_outbox(repository: SharedProcessRepository, gateway: SharedProcessGateway) {
