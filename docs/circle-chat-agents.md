@@ -89,7 +89,15 @@ Systemprompten vert bygd deterministisk av validert konfigurasjon:
 agentnamn, triggeruttrykk som tema for kvifor agenten vart kalla inn,
 svarfrasar som føringar, eit kort og naturleg svar på den
 utpeikte siste meldinga, og høve til å nemne avsendaren. Eldre meldingar
-er bakgrunn. Samtaletekst og konfigurasjonsverdiar vert sende som
+er bakgrunn. Svarfeltet blir vist som stikkord og svarføringar i
+grensesnittet. Lengre ferdigskrivne svar som modellen kopierer ordrett,
+blir prøvde på nytt éin gong med krav om å svare på kjeldemeldinga; ved
+ny kopiering blir jobben feila utan å publisere eit standardsvar. Korte
+helsingar kan framleis vere identiske når det er naturleg. Denne regelen
+garanterer ikkje kvalitet: canary-prøver med ulike kjeldemeldingar må
+vise at svaret faktisk varierer.
+
+Samtaletekst og konfigurasjonsverdiar vert sende som
 serialiserte data; dei kan ikkje endre API-rollene, velje kanal eller
 opne verktøy. Modellen får ingen tools eller nettverkstilgang gjennom
 Sprøyt. Berre eit ikkje-tomt, lengdeavgrensa `assistant.content` blir

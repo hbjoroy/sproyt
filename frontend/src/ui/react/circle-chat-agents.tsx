@@ -64,8 +64,9 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       <TextField label="Namn" value={name} maxLength={80} onChange={event => setName(event.target.value)} />
       <label htmlFor="circle-agent-triggers">Triggerord eller -frasar, eitt per linje</label>
       <textarea id="circle-agent-triggers" rows={4} value={triggers} onChange={event => setTriggers(event.target.value)} />
-      <label htmlFor="circle-agent-phrases">Svarord eller -setningar, eitt per linje</label>
+      <label htmlFor="circle-agent-phrases">Stikkord og svarføringar, eitt per linje</label>
       <textarea id="circle-agent-phrases" rows={4} value={phrases} onChange={event => setPhrases(event.target.value)} />
+      <p>Agenten brukar dette som innhald og tone, ikkje som eit ferdig svar. Skriv gjerne kva han bør vite eller spørje om.</p>
       <label className="sp-circle-agent-enabled"><input type="checkbox" checked={enabled}
         disabled={!available && !enabled} onChange={event => setEnabled(event.target.checked)} />Aktiv</label>
       {error && <Status tone="error">{error}</Status>}
