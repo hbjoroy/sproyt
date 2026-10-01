@@ -62,7 +62,7 @@ function ReactionBadge({ reaction, onToggle, onPointerDown }: {
 /** Presentation only: all counts, identities and mutations remain host-owned. */
 export function PreviewReactionActions({ message, host, open, primaryAction, overflowActions }: {
   message: ChatMessage; host: PreviewReactionHost; open: (message: ChatMessage, anchor: HTMLElement) => void;
-  primaryAction?: ReactNode; overflowActions?: ReactNode;
+  primaryAction?: ReactNode; overflowActions?: (close: () => void) => ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const reactions = host.reactions(message.id).filter(reaction => reaction.count > 0);
@@ -82,7 +82,7 @@ export function PreviewReactionActions({ message, host, open, primaryAction, ove
         onPointerDown={keepPointerTarget} onClick={() => setMenuOpen(true)}><span aria-hidden="true">⋯</span></Button>
       <Dialog open={menuOpen} title="Meldingsval" closeLabel="Lukk meldingsvala" onClose={() => setMenuOpen(false)}>
         <div className="sp-message-menu-dialog">
-        {overflowActions}
+        {overflowActions?.(() => setMenuOpen(false))}
         </div>
       </Dialog>
     </div>
