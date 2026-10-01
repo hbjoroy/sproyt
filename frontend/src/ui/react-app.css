@@ -123,6 +123,13 @@
 .sp-media-figure figcaption a, .sp-media-original { color: var(--sp-muted); text-underline-offset: 3px; white-space: nowrap; }
 .sp-media-original { display: inline-flex; align-items: center; min-height: 44px; border: 0; padding: 0; background: transparent; cursor: pointer; text-decoration: underline; }
 .sp-media-download { display: inline-grid; place-items: center; flex: 0 0 44px; min-height: 44px; font-size: 1.2rem; text-decoration: none; }
+.sp-media-download-notice {
+  position: fixed; z-index: 30; top: calc(env(safe-area-inset-top) + 4.5rem); left: 50%;
+  transform: translateX(-50%); width: max-content; max-width: calc(100vw - 2rem);
+  padding: .5rem .75rem; border: 1px solid var(--sp-rule); background: var(--sp-surface);
+  color: var(--sp-text); font-size: .875rem; line-height: 1.25; text-align: center;
+  pointer-events: none;
+}
 .sp-image-viewer {
   position: fixed; inset: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none;
   margin: 0; padding: 0; border: 0; overflow: hidden; background: #111; color: #fff;

@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent } from "react";
+import { ImageDownloadLink } from "./image-download-link";
 
 type View = { scale: number; x: number; y: number };
 type Point = { x: number; y: number };
@@ -120,8 +121,7 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     <header className="sp-image-viewer-head">
       <h2 id={titleId}>{name}</h2>
       <div className="sp-image-viewer-actions">
-        <a className="sp-image-viewer-control" href={downloadSrc} download={name}
-          aria-label={`Last ned ${name}`} title={`Last ned ${name}`}>↓</a>
+        <ImageDownloadLink className="sp-image-viewer-control" href={downloadSrc} name={name} />
         <button type="button" className="sp-image-viewer-control" aria-label="Lukk bilete" title="Lukk bilete" onClick={onClose}>×</button>
       </div>
     </header>
