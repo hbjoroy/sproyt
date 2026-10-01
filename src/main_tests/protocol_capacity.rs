@@ -1316,6 +1316,7 @@ async fn start_test_server_with_state(
     let state = AppState {
         imagegen: None,
         process_pilot: None,
+        work_items: None,
         auth: AuthService::development(),
         chat: ChatEngine::start(chat_repository),
         operations: operations.clone(),
@@ -1351,6 +1352,7 @@ async fn start_postgres_test_server(
     let state = AppState {
         imagegen: None,
         process_pilot: None,
+        work_items: None,
         auth: AuthService::development(),
         chat: ChatEngine::start(chat_repository),
         operations: operations.clone(),
@@ -1386,6 +1388,7 @@ async fn start_test_server_with_gateway(
     let state = AppState {
         imagegen: None,
         process_pilot: None,
+        work_items: None,
         auth: AuthService::development(),
         chat: ChatEngine::start(chat_repository),
         operations: operations.clone(),

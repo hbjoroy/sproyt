@@ -16,6 +16,7 @@ mod process_pilot;
 mod protocol;
 mod server;
 mod web;
+mod work_items;
 mod ws;
 
 #[cfg(test)]

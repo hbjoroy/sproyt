@@ -1,5 +1,6 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
       import { ProcessPilotApi } from "./process-pilot";
+      import { WorkItemApi } from "./work-items";
       import { CircleChatAgentApi } from "./chat-agents";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
@@ -5702,6 +5703,7 @@
             imageGeneration,
             chatAgents: circleChatAgentsApi,
             processPilot: new ProcessPilotApi(http, () => currentParticipantId ?? ""),
+            workItems: new WorkItemApi(http, () => currentParticipantId ?? ""),
             processPilotIdentity: () => currentParticipantId ?? "",
             openImageGeneration: () => imageGeneration.open(),
             legacyContainer: sproytApp,

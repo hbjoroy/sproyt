@@ -1,5 +1,5 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
-import { useState, type PointerEvent } from "react";
+import { useEffect, useState, type PointerEvent } from "react";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import type { ApplicationRuntime } from "../../application/runtime";
 import { installSproytStyles, type SproytThemeMode } from "../design-system";
@@ -29,9 +29,12 @@ import { processTaskId, type ProcessPilotApi } from "../../process-pilot";
 import { ProcessPilotChannelAction, ProcessTaskMessage } from "./process-pilot";
 import { NavigationScopeActions } from "./navigation-scope-actions";
 import type { CircleChatAgentApi } from "../../chat-agents";
+import type { WorkApplication, WorkItemApi } from "../../work-items";
+import { WorkItemRegistration } from "./work-item-registration";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly processPilot: ProcessPilotApi;
+  readonly workItems: WorkItemApi;
   readonly processPilotIdentity: () => string;
   readonly imageGeneration: ImageGenerationOwner;
   readonly chatAgents: CircleChatAgentApi;
@@ -198,6 +201,30 @@ function PreviewMessageMutations({ host, message }: { readonly host: Development
   </>;
 }
 
+function MessageActions({ host, message, threadAction, openReaction }: {
+  readonly host: DevelopmentPreviewHost; readonly message: ChatMessage;
+  readonly threadAction: React.ReactNode;
+  readonly openReaction: (message: ChatMessage, anchor: HTMLElement) => void;
+}) {
+  const [apps, setApps] = useState<readonly WorkApplication[]>([]);
+  const [issueOpen, setIssueOpen] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void host.workItems.applications(message.channel_id)
+      .then(value => { if (active) setApps(value); })
+      .catch(() => { if (active) setApps([]); });
+    return () => { active = false; };
+  }, [host.workItems, message.channel_id]);
+  return <>
+    <PreviewReactionActions message={message} host={host} open={openReaction} primaryAction={threadAction}
+      overflowActions={close => <>
+        <PreviewMessageMutations message={message} host={host} />
+        {apps.length > 0 && <Button onClick={() => { close(); setIssueOpen(true); }}>Lag Issue</Button>}
+      </>} />
+    {issueOpen && <WorkItemRegistration api={host.workItems} message={message} open onClose={() => setIssueOpen(false)} />}
+  </>;
+}
+
 
 /** Local preview. Domain state, transport and commands retain their
  * existing owner; incomplete mutation/media flows stay in the full interface. */
@@ -345,8 +372,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
           data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
           onPointerDown={event => { if (event.pointerType === "mouse" && event.button === 0) event.preventDefault(); }}
           onClick={() => { host.openThread(message.id); update(); }}><span aria-hidden="true">↩</span>{replies > 0 && <span>{replies}</span>}</Button> : null;
-        return <PreviewReactionActions message={message} host={host} open={reactionPicker.open}
-          primaryAction={threadAction} overflowActions={<PreviewMessageMutations message={message} host={host} />} />;
+        return <MessageActions message={message} host={host} openReaction={reactionPicker.open}
+          threadAction={threadAction} />;
       },
       // React owns all visible message content, including Markdown, Mermaid,
       // media and invitation cards. The host supplies state and commands only.

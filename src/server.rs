@@ -68,6 +68,7 @@ pub(super) struct AppState {
     pub(super) notifications: NotificationService,
     pub(super) imagegen: Option<crate::imagegen::ImageGeneration>,
     pub(super) process_pilot: Option<crate::process_pilot::ProcessPilot>,
+    pub(super) work_items: Option<crate::work_items::WorkItems>,
     pub(super) enrollment: Option<EnrollmentService>,
     pub(super) websocket_idle_timeout: Duration,
     pub(super) advanced_ui_enabled: bool,
@@ -126,8 +127,12 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     if let Some(pilot) = &process_pilot {
         pilot.start_worker(chat.clone(), operations.subscribe_shutdown());
     }
+    let work_items =
+        crate::work_items::WorkItems::from_env(config.database(), postgres_pool.as_ref()).await?;
+    work_items.start_worker(operations.subscribe_shutdown());
     let state = AppState {
         process_pilot,
+        work_items: Some(work_items),
         imagegen,
         auth,
         chat,
@@ -254,6 +259,18 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route(
             "/api/v1/channels/{id}/process-applications",
             get(list_process_applications).post(bind_process_application),
+        )
+        .route(
+            "/api/v1/channels/{id}/work-items/draft/{message_id}",
+            get(crate::web::work_items::draft),
+        )
+        .route(
+            "/api/v1/channels/{id}/work-items/applications",
+            get(crate::web::work_items::applications),
+        )
+        .route(
+            "/api/v1/channels/{id}/work-items",
+            post(crate::web::work_items::register),
         )
         .route(
             "/api/v1/channels/{id}/process-bindings",

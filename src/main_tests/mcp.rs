@@ -77,6 +77,7 @@ async fn mcp_uses_agent_scope_idempotency_and_immediate_revocation() {
     let state = AppState {
         imagegen: None,
         process_pilot: None,
+        work_items: None,
         auth: AuthService::development(),
         chat,
         operations: OperationalState::default(),
@@ -316,6 +317,7 @@ async fn mcp_process_tools_enforce_separate_scopes_and_idempotency() {
     let state = AppState {
         imagegen: None,
         process_pilot: None,
+        work_items: None,
         auth: AuthService::development(),
         chat,
         operations: OperationalState::default(),
@@ -545,6 +547,7 @@ async fn mcp_rejects_incompatible_transport_requests_before_dispatch() {
     let state = AppState {
         imagegen: None,
         process_pilot: None,
+        work_items: None,
         auth: AuthService::development(),
         chat: ChatEngine::start(repository.clone()),
         operations: OperationalState::default(),

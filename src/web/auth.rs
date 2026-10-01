@@ -359,6 +359,7 @@ mod tests {
         let state = AppState {
             imagegen: None,
             process_pilot: None,
+            work_items: None,
             auth: AuthService::development(),
             chat: chat.clone(),
             operations: OperationalState::default(),
