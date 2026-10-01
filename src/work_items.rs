@@ -410,11 +410,12 @@ impl WorkItems {
         let request = command.request_id.to_string();
         macro_rules! register { ($pool:expr,$pg:expr) => {{
             let mut tx = $pool.begin().await.map_err(storage)?;
-            let existing = sql("select cast(id as text) as id,cast(source_message_id as text) as source_message_id,cast(application_id as text) as application_id,title,description,status,start_status,cast(heart_instance_id as text) as heart_instance_id,cast(source_channel_id as text) as source_channel_id from work_items where requested_by=?uuid and request_id=?uuid",$pg);
+            let existing = sql("select cast(id as text) as id,cast(source_message_id as text) as source_message_id,cast(application_id as text) as application_id,source_body,title,description,status,start_status,cast(heart_instance_id as text) as heart_instance_id,cast(source_channel_id as text) as source_channel_id from work_items where requested_by=?uuid and request_id=?uuid",$pg);
             if let Some(row) = sqlx::query(&existing).bind(&actor).bind(&request).fetch_optional(&mut *tx).await.map_err(storage)? {
                 let view = work_item_view(&row)?;
                 if row.try_get::<String,_>("source_channel_id").map_err(storage)? != channel
                     || view.source_message_id != command.source_message_id || view.application_id != command.application_id
+                    || row.try_get::<String,_>("source_body").map_err(storage)? != command.expected_source_body
                     || view.title != command.title.trim() || view.description != command.description.trim() {
                     return Err(RepositoryError::Conflict);
                 }
@@ -432,7 +433,7 @@ impl WorkItems {
             let body: String = row.try_get("body").map_err(storage)?;
             if body != command.expected_source_body { return Err(RepositoryError::Conflict); }
             let edited: Option<String> = row.try_get("edited_at").map_err(storage)?;
-            let insert = sql("insert into work_items(id,source_channel_id,source_message_id,source_body,source_edited_at,application_id,binding_id,binding_revision,title,description,requested_by,request_id,reviewer_id,task_channel_id) values(?uuid,?uuid,?uuid,?, ?,?uuid,?uuid,?,?,?,?,?uuid,?uuid,?uuid) on conflict(requested_by,request_id) do nothing",$pg);
+            let insert = sql("insert into work_items(id,source_channel_id,source_message_id,source_body,source_edited_at,application_id,binding_id,binding_revision,title,description,requested_by,request_id,reviewer_id,task_channel_id) values(?uuid,?uuid,?uuid,?, ?,?uuid,?uuid,?,?,?,?uuid,?uuid,?uuid,?uuid) on conflict(requested_by,request_id) do nothing",$pg);
             // source_edited_at is stored as text-compatible input in both DBs.
             let inserted = sqlx::query(&insert).bind(&id).bind(&channel).bind(&source).bind(&body).bind(&edited)
                 .bind(&app).bind(&binding).bind(revision).bind(command.title.trim()).bind(command.description.trim())
@@ -443,6 +444,7 @@ impl WorkItems {
                 let view = work_item_view(&row)?;
                 if row.try_get::<String,_>("source_channel_id").map_err(storage)? != channel
                     || view.source_message_id != command.source_message_id || view.application_id != command.application_id
+                    || row.try_get::<String,_>("source_body").map_err(storage)? != command.expected_source_body
                     || view.title != command.title.trim() || view.description != command.description.trim() {
                     return Err(RepositoryError::Conflict);
                 }
@@ -941,6 +943,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first.id, repeat.id);
+        let mut changed_snapshot = command.clone();
+        changed_snapshot.expected_source_body = "Different source text".into();
+        assert!(matches!(
+            service
+                .register(UserId::from_uuid(owner), channel, changed_snapshot)
+                .await,
+            Err(RepositoryError::Conflict)
+        ));
         let count: i64 = sqlx::query_scalar("select count(*) from work_items")
             .fetch_one(&pool)
             .await
