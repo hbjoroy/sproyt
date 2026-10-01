@@ -9,7 +9,8 @@ const app = "d45a5746-6aba-46a5-9658-4ef56b9bf353";
 const task: WorkItemTask = { id, message_id: message, work_item_id: app, revision: 1,
   application_name: "Sprøyt", title: "Feil på mobil", description: "Skrivefeltet forsvinn", status: "pending",
   process_status: "waiting", delivery_status: "ready", category: null, priority: null, decision_status: null,
-  assignee_name: "Harald", can_decide: true, blocked: false };
+  assignee_name: "Harald", can_decide: true, blocked: false, node_id: "review", can_request_information: true,
+  information_request: null, information_response: null };
 
 test("only a complete work-item marker becomes a task card", () => {
   assert.equal(workItemTaskId(`[[work-item-task:${id}]]`), id);
@@ -20,9 +21,23 @@ test("only a complete work-item marker becomes a task card", () => {
 
 test("task decoding requires explicit server permission and known state", () => {
   assert.deepEqual(decodeWorkItemTask(task),task);
-  for (const invalid of [{ ...task, can_decide: undefined },{ ...task, blocked: "false" },{ ...task, status: "invented" },{ ...task, message_id: null }]) {
+  for (const invalid of [{ ...task, can_decide: undefined },{ ...task, blocked: "false" },{ ...task, status: "invented" },{ ...task, message_id: null },{ ...task, node_id: "invented" },{ ...task, node_id: "followup-review", can_request_information: true },{ ...task, information_request: {} }]) {
     assert.throws(() => decodeWorkItemTask(invalid));
   }
+});
+
+test("information retries keep the accepted revision and exact text after refresh", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const api = new WorkItemApi(new HttpClient({ fetch: async (_url, init) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    if (bodies.length === 1) throw new Error("accepted response lost");
+    return Response.json(task);
+  } }), () => "user-1");
+  await assert.rejects(() => api.decide(task, "bug", "high", "needs_information", "Which browser?"));
+  await api.decide({ ...task, revision: 2 }, "bug", "high", "needs_information", "Which browser?");
+  assert.deepEqual(bodies[0], bodies[1]);
+  assert.equal(bodies[1]!.expected_revision, 1);
+  assert.equal(bodies[1]!.note, "Which browser?");
 });
 
 test("registration and decision retries reuse their admission key after an uncertain response", async () => {

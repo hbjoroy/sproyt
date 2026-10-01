@@ -1,0 +1,35 @@
+namespace: sproyt
+name: work-item-review
+version: '1.1.0'
+runtime: v2
+description: Review a work item with one optional information handoff.
+nodes:
+  start:
+    type: start
+    next: review
+  review:
+    type: user-task
+    assignee_metadata_key: reviewer_id
+    next: interpret-review
+  interpret-review:
+    type: task
+    mode: lua
+    script: |
+      metadata.needs_information = results["review"].value.status == "needs_information"
+    next: review-route
+  review-route:
+    type: gate
+    conditions:
+      - when: return metadata.needs_information == true
+        next: provide-information
+    default: end
+  provide-information:
+    type: user-task
+    assignee_metadata_key: requester_id
+    next: followup-review
+  followup-review:
+    type: user-task
+    assignee_metadata_key: reviewer_id
+    next: end
+  end:
+    type: end

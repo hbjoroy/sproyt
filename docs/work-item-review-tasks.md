@@ -26,11 +26,10 @@ som feila. Ingen GitHub-eksport eller automatisk utviklingsstart finst her.
 Om behandlarrett eller kanalmedlemskap blir trekt attende, er kortet framleis
 synleg for kanalmedlemmene og merkt blokkert; serveren avviser nye avgjerder.
 
-Denne første Heart-definisjonen avsluttar prosessen etter behandlaravgjerda.
-Difor er berre endelege avgjerder tilgjengelege. «Treng informasjon» og
-«til behandling» krev eit nytt, versjonert Heart-forløp med ei synleg
-overlevering og skal ikkje lagrast som om prosessen venta på svar; sjå
-[oppfølgingssak #190](https://github.com/hbjoroy/sproyt/issues/190).
+Heart-definisjon 1.0.0 avsluttar prosessen etter behandlaravgjerda og
+tilbyr berre endelege avgjerder. Definisjon 1.1.0 har ei faktisk
+[informasjonsoverlevering](work-item-information-handoff.md) med
+spørsmål til innmeldar, svar og ei ny behandlaroppgåve.
 
 Før canaryaksept må vi konfigurere ei avgrensa kjeldekanalbinding,
 applikasjon, review-rute og behandlar. Test med to kanalmedlemmer:
