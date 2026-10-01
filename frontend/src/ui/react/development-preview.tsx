@@ -31,6 +31,8 @@ import { NavigationScopeActions } from "./navigation-scope-actions";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
 import { WorkItemRegistration } from "./work-item-registration";
+import { WorkItemTaskMessage } from "./work-item-task";
+import { workItemTaskId } from "../../work-items";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly processPilot: ProcessPilotApi;
@@ -157,6 +159,8 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
 }
 
 function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
+  const workTask = workItemTaskId(message.body);
+  if (workTask) return <WorkItemTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${workTask}`} api={host.workItems} taskId={workTask} messageId={message.id} />;
   const taskId = processTaskId(message.body);
   if (taskId) return <ProcessTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${taskId}`} api={host.processPilot} taskId={taskId} messageId={message.id} />;
   return <div className="sp-message-content">
@@ -208,13 +212,17 @@ function MessageActions({ host, message, threadAction, openReaction }: {
 }) {
   const [apps, setApps] = useState<readonly WorkApplication[]>([]);
   const [issueOpen, setIssueOpen] = useState(false);
+  const isAgent = host.settings.profileFor?.(message.sender_id)?.kind === "agent";
   useEffect(() => {
+    if (isAgent || workItemTaskId(message.body) || processTaskId(message.body)) {
+      setApps([]); return;
+    }
     let active = true;
     void host.workItems.applications(message.channel_id)
       .then(value => { if (active) setApps(value); })
       .catch(() => { if (active) setApps([]); });
     return () => { active = false; };
-  }, [host.workItems, message.channel_id]);
+  }, [host.workItems, isAgent, message.body, message.channel_id]);
   return <>
     <PreviewReactionActions message={message} host={host} open={openReaction} primaryAction={threadAction}
       overflowActions={close => <>

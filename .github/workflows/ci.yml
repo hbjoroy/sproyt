@@ -190,6 +190,7 @@ jobs:
           cargo test db::postgres::tests --locked
           cargo test postgres_notifications_share_the_repository_connection_budget --locked
           cargo test postgres_imagegen_uses_the_shared_connection_budget --locked
+          cargo test postgres_work_item_registration_and_task_projection --locked
           SPROYT_TEST_DATABASE_URL="$SPROYT_POSTGRES_TEST_URL" cargo test postgres_projection_permissions_and_completion_receipts --locked -- --ignored --test-threads=1
           SPROYT_TEST_DATABASE_URL="$SPROYT_POSTGRES_TEST_URL" cargo test postgres_v2_projection_terminal_actions --locked -- --ignored --test-threads=1
           psql --host 127.0.0.1 --username sproyt --dbname sproyt --command 'create database sproyt_pilot_upgrade;'

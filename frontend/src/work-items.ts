@@ -4,8 +4,36 @@ import { isRecord } from "./types";
 export type WorkApplication = Readonly<{ id: string; key: string; name: string }>;
 export type WorkItemDraft = Readonly<{ source_body: string; title: string; suggested_by_model: boolean }>;
 export type WorkItemReceipt = Readonly<{ id: string; title: string; status: string; start_status: string }>;
+export type WorkItemTask = Readonly<{
+  id: string; message_id: string; work_item_id: string; revision: number;
+  application_name: string; title: string; description: string; status: "pending" | "completed" | "cancelled";
+  process_status: string; delivery_status: "ready" | "pending" | "failed";
+  category: string | null; priority: string | null; decision_status: string | null;
+  assignee_name: string; can_decide: boolean;
+  blocked: boolean;
+}>;
+
+export function workItemTaskId(body: string): string | null {
+  return /^\[\[work-item-task:([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\]\]$/iu.exec(body)?.[1] ?? null;
+}
 
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu.test(value);
+
+export function decodeWorkItemTask(value: unknown): WorkItemTask {
+  if (!isRecord(value) || !uuid(value.id) || !uuid(value.message_id) || !uuid(value.work_item_id)
+    || typeof value.title !== "string" || typeof value.description !== "string" || typeof value.application_name !== "string"
+    || typeof value.revision !== "number" || !Number.isSafeInteger(value.revision) || value.revision < 1
+    || !["pending", "completed", "cancelled"].includes(String(value.status))
+    || !["starting", "waiting", "completed", "cancelled", "failed"].includes(String(value.process_status))
+    || !["ready", "pending", "failed"].includes(String(value.delivery_status)) || typeof value.can_decide !== "boolean"
+    || typeof value.assignee_name !== "string" || typeof value.blocked !== "boolean"
+    || !["bug", "change", "question", null].includes(value.category as string | null)
+    || !["untriaged", "low", "normal", "high", "critical", null].includes(value.priority as string | null)
+    || !["reviewing", "needs_information", "planned", "resolved", "rejected", null].includes(value.decision_status as string | null)) {
+    throw new Error("Kunne ikkje lese behandlaroppgåva.");
+  }
+  return value as WorkItemTask;
+}
 
 export class WorkItemApi {
   private readonly applicationsCache = new Map<string, Promise<readonly WorkApplication[]>>();
@@ -55,5 +83,36 @@ export class WorkItemApi {
     this.admissions.delete(key);
     try { sessionStorage.removeItem(key); } catch { /* optional storage */ }
     return receipt;
+  }
+
+  async task(id: string, messageId: string, signal?: AbortSignal): Promise<WorkItemTask> {
+    const task = await this.http.json(`/api/v1/work-item-tasks/${encodeURIComponent(id)}?message_id=${encodeURIComponent(messageId)}`, decodeWorkItemTask, { signal });
+    if (task.id !== id || task.message_id !== messageId) throw new Error("Svaret gjeld ei anna oppgåve.");
+    return task;
+  }
+
+  async decide(task: WorkItemTask, category: string, priority: string, status: string): Promise<WorkItemTask> {
+    const payload = JSON.stringify({ task: task.id, message: task.message_id, revision: task.revision, category, priority, status });
+    const key = `sproyt-work-item-decision:${this.identity()}:${task.id}`;
+    let admission = this.admissions.get(key);
+    if (!admission) {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem(key) || "null") as unknown;
+        if (isRecord(saved) && saved.payload === payload && uuid(saved.id)) admission = { payload, id: saved.id };
+      } catch { /* optional storage */ }
+    }
+    if (!admission || admission.payload !== payload) {
+      admission = { payload, id: crypto.randomUUID() };
+      this.admissions.set(key, admission);
+      try { sessionStorage.setItem(key, JSON.stringify(admission)); } catch { /* optional storage */ }
+    }
+    const result = await this.http.json(`/api/v1/work-item-tasks/${encodeURIComponent(task.id)}/decide`, decodeWorkItemTask,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      message_id: task.message_id, request_id: admission.id, expected_revision: task.revision, category, priority, status
+    }) });
+    if (result.id !== task.id || result.message_id !== task.message_id) throw new Error("Avgjerda gjeld ei anna oppgåve.");
+    this.admissions.delete(key);
+    try { sessionStorage.removeItem(key); } catch { /* optional storage */ }
+    return result;
   }
 }
