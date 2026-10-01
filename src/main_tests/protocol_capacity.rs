@@ -455,6 +455,39 @@ async fn imagegen_http_preview_review_and_unpublished_attachment_contract() {
         value["media"]["original_filename"],
         "bla-sjo-i-solnedgang.png"
     );
+    let media_url = format!(
+        "http://{address}/api/v1/media/{}/download",
+        value["media"]["id"].as_str().unwrap()
+    );
+    let download = client
+        .get(format!("{media_url}?participant=image-owner"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(download.status(), 200);
+    assert_eq!(download.headers()["content-type"], "image/png");
+    assert!(
+        download.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .contains("filename*=UTF-8''bla-sjo-i-solnedgang.png")
+    );
+    assert!(
+        download
+            .bytes()
+            .await
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n")
+    );
+    assert_eq!(
+        client
+            .get(format!("{media_url}?participant=not-a-member"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
     let again: serde_json::Value = client
         .post(format!("{base}/review?participant=image-owner"))
         .json(&serde_json::json!({"decision":"accept"}))

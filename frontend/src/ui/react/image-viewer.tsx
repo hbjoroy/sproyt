@@ -12,7 +12,7 @@ const clamp = (value: number, minimum: number, maximum: number) => Math.min(maxi
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
-export function ImageViewer({ src, name, onClose }: { src: string; name: string; onClose(): void }) {
+export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; downloadSrc: string; name: string; onClose(): void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const surface = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
@@ -119,7 +119,11 @@ export function ImageViewer({ src, name, onClose }: { src: string; name: string;
     }}>
     <header className="sp-image-viewer-head">
       <h2 id={titleId}>{name}</h2>
-      <button type="button" className="sp-image-viewer-control" aria-label="Lukk bilete" title="Lukk bilete" onClick={onClose}>×</button>
+      <div className="sp-image-viewer-actions">
+        <a className="sp-image-viewer-control" href={downloadSrc} download={name}
+          aria-label={`Last ned ${name}`} title={`Last ned ${name}`}>↓</a>
+        <button type="button" className="sp-image-viewer-control" aria-label="Lukk bilete" title="Lukk bilete" onClick={onClose}>×</button>
+      </div>
     </header>
     <div ref={surface} className="sp-image-viewer-surface" onPointerDown={pointerDown} onPointerMove={pointerMove}
       onPointerUp={pointerEnd} onPointerCancel={pointerCancel} onDoubleClick={toggleZoom} onWheel={wheel}>
