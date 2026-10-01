@@ -52,7 +52,7 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
           <option value="high">Høg</option><option value="critical">Kritisk</option>
         </select></label>
         <label>Avgjerd<select value={decision} onChange={event => setDecision(event.currentTarget.value)}>
-          <option value="planned">Planlagt</option><option value="needs_information">Treng informasjon</option>
+          <option value="planned">Planlagt</option>
           <option value="resolved">Løyst</option><option value="rejected">Avvist</option>
         </select></label>
         <Button type="submit" disabled={saving} busy={saving}>Lagre avgjerd</Button>
