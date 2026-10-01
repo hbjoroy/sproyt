@@ -605,13 +605,27 @@ mod tests {
         assert_eq!(count, 1);
         let unavailable = WorkItems {
             heart_url: Some("http://127.0.0.1:1".into()),
-            http: reqwest::Client::builder().timeout(Duration::from_millis(200)).build().unwrap(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_millis(200))
+                .build()
+                .unwrap(),
             ..service.clone()
         };
-        assert!(unavailable.start_one(&first.id.to_string(), Utc::now().timestamp()).await.is_err());
+        assert!(
+            unavailable
+                .start_one(&first.id.to_string(), Utc::now().timestamp())
+                .await
+                .is_err()
+        );
         let state: String = sqlx::query_scalar("select start_status from work_items where id=?")
-            .bind(first.id.to_string()).fetch_one(&pool).await.unwrap();
-        assert_eq!(state, "pending", "Heart outage must leave the accepted item retryable");
+            .bind(first.id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            state, "pending",
+            "Heart outage must leave the accepted item retryable"
+        );
         let mut changed = command.clone();
         changed.title = "Different".into();
         assert!(matches!(
