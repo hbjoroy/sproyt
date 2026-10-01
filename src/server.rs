@@ -129,7 +129,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     }
     let work_items =
         crate::work_items::WorkItems::from_env(config.database(), postgres_pool.as_ref()).await?;
-    work_items.start_worker(operations.subscribe_shutdown());
+    work_items.start_worker(chat.clone(), operations.subscribe_shutdown());
     let state = AppState {
         process_pilot,
         work_items: Some(work_items),
@@ -271,6 +271,14 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route(
             "/api/v1/channels/{id}/work-items",
             post(crate::web::work_items::register),
+        )
+        .route(
+            "/api/v1/work-item-tasks/{id}",
+            get(crate::web::work_items::task),
+        )
+        .route(
+            "/api/v1/work-item-tasks/{id}/decide",
+            post(crate::web::work_items::decide),
         )
         .route(
             "/api/v1/channels/{id}/process-bindings",
