@@ -1,6 +1,7 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
 import { useState } from "react";
 import type { MediaObject } from "../../types";
+import { ImageDownloadLink } from "./image-download-link";
 import { ImageViewer } from "./image-viewer";
 
 /** URLs are constructed from validated server IDs, never from user-authored URLs. */
@@ -25,8 +26,7 @@ function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: 
     <figcaption><span title={name}>{name}</span>{onOpen
       ? <><button type="button" className="sp-media-original" onClick={onOpen}
           aria-label="Vis originalbiletet">Original</button>
-        <a className="sp-media-download" href={mediaUrl(id, "/download")} download={name}
-          aria-label={`Last ned ${name}`} title={`Last ned ${name}`}>↓</a></>
+        <ImageDownloadLink className="sp-media-download" href={mediaUrl(id, "/download")} name={name} /></>
       : isVideo && <a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer">Original ↗</a>}</figcaption>
   </figure>;
 }

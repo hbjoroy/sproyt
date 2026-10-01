@@ -45,11 +45,10 @@ test("React sends real attachment-only messages and opens a full-screen zoomable
   const lightbox = preview.getByRole("dialog", { name: "landskap.png" });
   const original = lightbox.getByRole("img", { name: "landskap.png" });
   await expect(original).toBeVisible();
-  const [saved] = await Promise.all([
-    page.waitForEvent("download"),
-    lightbox.getByRole("link", { name: "Last ned landskap.png" }).click()
-  ]);
-  expect(saved.suggestedFilename()).toBe("landskap.png");
+  const viewerDownload = page.waitForEvent("download");
+  await lightbox.getByRole("link", { name: "Last ned landskap.png" }).click();
+  await expect(lightbox.locator(".sp-media-download-notice")).toHaveText("Nedlasting starta");
+  expect((await viewerDownload).suggestedFilename()).toBe("landskap.png");
   const viewport = page.viewportSize()!;
   const viewerBox = await lightbox.boundingBox();
   expect(viewerBox?.width).toBe(viewport.width);
@@ -76,6 +75,10 @@ test("React sends real attachment-only messages and opens a full-screen zoomable
   expect(url).toMatch(/^\/api\/v1\/media\/[0-9a-f-]+\?participant=/);
   await page.keyboard.press("Escape");
   await expect(lightbox).toHaveCount(0);
+  const captionDownload = page.waitForEvent("download");
+  await message.getByRole("link", { name: "Last ned landskap.png" }).click();
+  await expect(message.locator(".sp-media-download-notice")).toHaveText("Nedlasting starta");
+  expect((await captionDownload).suggestedFilename()).toBe("landskap.png");
   const response = await page.request.get(url!);
   expect(response.ok()).toBe(true);
   expect(sends).toHaveLength(1);
