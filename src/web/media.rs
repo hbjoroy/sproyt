@@ -253,6 +253,25 @@ pub(crate) async fn download_media(
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
+    serve_media(state, id, query, headers, false).await
+}
+
+pub(crate) async fn download_media_attachment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    serve_media(state, id, query, headers, true).await
+}
+
+async fn serve_media(
+    state: AppState,
+    id: String,
+    query: WsQuery,
+    headers: HeaderMap,
+    attachment: bool,
+) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
         Err(error) => return auth_error_response(error),
@@ -281,7 +300,75 @@ pub(crate) async fn download_media(
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
     );
+    if attachment {
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_DISPOSITION,
+            attachment_disposition(&media.original_filename, &media.id, &media.content_type),
+        );
+    }
     response
+}
+
+fn attachment_disposition(filename: &str, id: &MediaId, content_type: &str) -> HeaderValue {
+    let extension = match content_type {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/avif" => "avif",
+        "image/heic" => "heic",
+        _ => "bin",
+    };
+    let fallback = format!("sproyt-media-{id}.{extension}");
+    let cleaned = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(180)
+        .collect::<String>();
+    let cleaned = cleaned.trim();
+    let name = if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        &fallback
+    } else {
+        cleaned
+    };
+    let encoded = name
+        .as_bytes()
+        .iter()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                (*byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect::<String>();
+    let mut ascii = String::new();
+    for ch in name.chars() {
+        match ch {
+            'æ' => ascii.push_str("ae"),
+            'Æ' => ascii.push_str("Ae"),
+            'ø' | 'ö' => ascii.push('o'),
+            'Ø' | 'Ö' => ascii.push('O'),
+            'å' | 'ä' => ascii.push('a'),
+            'Å' | 'Ä' => ascii.push('A'),
+            ch if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.' | '(' | ')') => {
+                ascii.push(ch)
+            }
+            _ => ascii.push('_'),
+        }
+    }
+    let ascii = ascii.trim_matches([' ', '_']);
+    let ascii = if ascii.is_empty() || ascii == "." || ascii == ".." {
+        &fallback
+    } else {
+        ascii
+    };
+    HeaderValue::from_str(&format!(
+        "attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}"
+    ))
+    .unwrap_or_else(|_| HeaderValue::from_static("attachment"))
 }
 
 pub(crate) async fn download_media_preview(
@@ -358,4 +445,21 @@ pub(crate) fn detected_media_type(content: &[u8], declared: &str) -> Option<Stri
         None
     };
     detected.map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_name_cannot_escape_the_attachment_header() {
+        let id = MediaId::new(uuid::Uuid::now_v7().to_string()).unwrap();
+        let header = attachment_disposition("C:\\Bilder\\Måne\"\r\n.png", &id, "image/png");
+        let value = header.to_str().unwrap();
+        assert!(value.starts_with("attachment; filename=\"Mane_.png\""));
+        assert!(value.contains("filename*=UTF-8''M%C3%A5ne%22.png"));
+        assert!(!value.contains("\r"));
+        assert!(!value.contains("\n"));
+        assert!(!value.contains("Bilder"));
+    }
 }

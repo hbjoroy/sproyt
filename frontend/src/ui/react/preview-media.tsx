@@ -4,9 +4,9 @@ import type { MediaObject } from "../../types";
 import { ImageViewer } from "./image-viewer";
 
 /** URLs are constructed from validated server IDs, never from user-authored URLs. */
-function mediaUrl(id: string, preview = false) {
+function mediaUrl(id: string, suffix: "" | "/preview" | "/download" = "") {
   const participant = new URL(window.location.href).searchParams.get("participant");
-  return `/api/v1/media/${id}${preview ? "/preview" : ""}${participant ? `?participant=${encodeURIComponent(participant)}` : ""}`;
+  return `/api/v1/media/${id}${suffix}${participant ? `?participant=${encodeURIComponent(participant)}` : ""}`;
 }
 
 function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: {
@@ -19,12 +19,14 @@ function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: 
       : onOpen
         ? <button type="button" aria-label={`Vis ${name} i full storleik`} onClick={onOpen}
             className="sp-media-open">
-            <img src={mediaUrl(id, true)} alt={name} loading="lazy" />
+            <img src={mediaUrl(id, "/preview")} alt={name} loading="lazy" />
           </button>
-        : <img src={mediaUrl(id, !fullResolution)} alt={name} loading="lazy" />}
+        : <img src={mediaUrl(id, fullResolution ? "" : "/preview")} alt={name} loading="lazy" />}
     <figcaption><span title={name}>{name}</span>{onOpen
-      ? <button type="button" className="sp-media-original" onClick={onOpen}
+      ? <><button type="button" className="sp-media-original" onClick={onOpen}
           aria-label="Vis originalbiletet">Original</button>
+        <a className="sp-media-download" href={mediaUrl(id, "/download")} download={name}
+          aria-label={`Last ned ${name}`} title={`Last ned ${name}`}>↓</a></>
       : isVideo && <a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer">Original ↗</a>}</figcaption>
   </figure>;
 }
@@ -38,14 +40,14 @@ export function PreviewAttachments({ media, status, busy, onRemove }: {
     {media.map(item => <div className="sp-draft-attachment" key={item.id}>
       <button className="sp-draft-thumbnail" type="button" title={`Vis ${item.original_filename}`}
         aria-label={`Vis ${item.original_filename}`} onClick={() => setExpanded(item.id)}>
-        {item.content_type.startsWith("image/") ? <img src={mediaUrl(item.id, true)} alt="" /> : <span aria-hidden="true">▶</span>}
+        {item.content_type.startsWith("image/") ? <img src={mediaUrl(item.id, "/preview")} alt="" /> : <span aria-hidden="true">▶</span>}
       </button>
       <span className="sp-draft-filename" title={item.original_filename}>{item.original_filename}</span>
       <Button variant="quiet" disabled={busy} aria-label={`Fjern ${item.original_filename}`} title={`Fjern ${item.original_filename}`}
         onClick={() => onRemove(item.id)}><span aria-hidden="true">×</span></Button>
     </div>)}
     {status && <Status>{status}</Status>}
-    {expandedItem?.content_type.startsWith("image/") && <ImageViewer src={mediaUrl(expandedItem.id)} name={expandedItem.original_filename} onClose={() => setExpanded(null)} />}
+    {expandedItem?.content_type.startsWith("image/") && <ImageViewer src={mediaUrl(expandedItem.id)} downloadSrc={mediaUrl(expandedItem.id, "/download")} name={expandedItem.original_filename} onClose={() => setExpanded(null)} />}
     {expandedItem && !expandedItem.content_type.startsWith("image/") && <Dialog open title={expandedItem.original_filename}
       closeLabel="Lukk førehandsvisinga" onClose={() => setExpanded(null)}>
       <MediaFigure id={expandedItem.id} contentType={expandedItem.content_type} name={expandedItem.original_filename} fullResolution />
@@ -65,5 +67,5 @@ export function PreviewMediaContent({ body, mediaOnly = false }: { body: string;
   return <>{!mediaOnly && text && <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</div>}
     {attachments.map((media, index) => <MediaFigure key={`${media.id}:${index}`} {...media}
       onOpen={media.contentType.startsWith("image/") ? () => setLightbox({ id: media.id, name: media.name }) : undefined} />)}
-    {lightbox && <ImageViewer src={mediaUrl(lightbox.id)} name={lightbox.name} onClose={() => setLightbox(null)} />}</>;
+    {lightbox && <ImageViewer src={mediaUrl(lightbox.id)} downloadSrc={mediaUrl(lightbox.id, "/download")} name={lightbox.name} onClose={() => setLightbox(null)} />}</>;
 }

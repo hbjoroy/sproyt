@@ -40,10 +40,16 @@ test("React sends real attachment-only messages and opens a full-screen zoomable
   await expect(message).toBeVisible();
   const image = message.getByRole("img");
   await expect(image).toHaveCSS("object-fit", "contain");
+  await expect(message.getByRole("link", { name: "Last ned landskap.png" })).toHaveAttribute("download", "landskap.png");
   await message.getByRole("button", { name: "Vis originalbiletet" }).click();
   const lightbox = preview.getByRole("dialog", { name: "landskap.png" });
   const original = lightbox.getByRole("img", { name: "landskap.png" });
   await expect(original).toBeVisible();
+  const [saved] = await Promise.all([
+    page.waitForEvent("download"),
+    lightbox.getByRole("link", { name: "Last ned landskap.png" }).click()
+  ]);
+  expect(saved.suggestedFilename()).toBe("landskap.png");
   const viewport = page.viewportSize()!;
   const viewerBox = await lightbox.boundingBox();
   expect(viewerBox?.width).toBe(viewport.width);

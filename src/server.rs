@@ -45,7 +45,7 @@ use crate::{
         rotate_integration_credential,
     },
     web::mcp::mcp_handler,
-    web::media::{download_media, download_media_preview, upload_media},
+    web::media::{download_media, download_media_attachment, download_media_preview, upload_media},
     web::processes::{
         bind_process_application, configure_application, configure_application_processor,
         configure_process_binding, configure_process_role, configure_task_route, correlate_process,
@@ -223,6 +223,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             post(crate::web::imagegen::review),
         )
         .route("/api/v1/media/{id}", get(download_media))
+        .route(
+            "/api/v1/media/{id}/download",
+            get(download_media_attachment),
+        )
         .route("/api/v1/media/{id}/preview", get(download_media_preview))
         .route("/ws", get(ws_handler))
         .route(
