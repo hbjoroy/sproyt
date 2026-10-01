@@ -259,10 +259,7 @@ impl WorkItems {
                 command.priority.as_str(),
                 "untriaged" | "low" | "normal" | "high" | "critical"
             )
-            || !matches!(
-                command.status.as_str(),
-                "reviewing" | "needs_information" | "planned" | "resolved" | "rejected"
-            )
+            || !matches!(command.status.as_str(), "planned" | "resolved" | "rejected")
             || command.expected_revision < 1
         {
             return Err(RepositoryError::Conflict);
@@ -1038,6 +1035,21 @@ mod tests {
             priority: "high".into(),
             status: "planned".into(),
         };
+        for unsupported_status in ["reviewing", "needs_information"] {
+            assert!(matches!(
+                service
+                    .decide(
+                        UserId::from_uuid(reviewer),
+                        heart_task.id,
+                        Decision {
+                            status: unsupported_status.into(),
+                            ..decision.clone()
+                        }
+                    )
+                    .await,
+                Err(RepositoryError::Conflict)
+            ));
+        }
         sqlx::query(
             "update application_processors set can_review=0 where application_id=? and user_id=?",
         )
