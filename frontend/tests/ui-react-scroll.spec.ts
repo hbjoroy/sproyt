@@ -40,11 +40,15 @@ test("React timeline loads older history at the top and keeps the visible messag
   const initialCount = await timeline.locator("[data-message-id]").count();
   await expect(timeline.getByRole("button", { name: "Last eldre meldingar" })).toBeVisible();
 
-  await timeline.evaluate((element: HTMLElement) => {
+  const anchor = await timeline.evaluate((element: HTMLElement) => {
     element.scrollTop = 0;
+    const top = element.getBoundingClientRect().top;
+    const message = [...element.querySelectorAll<HTMLElement>("[data-message-id]")]
+      .find(candidate => candidate.getBoundingClientRect().bottom > top + 1)!;
+    const anchor = { id: message.dataset.messageId!, offset: message.getBoundingClientRect().top - top };
     element.dispatchEvent(new Event("scroll"));
+    return anchor;
   });
-  const anchor = await visibleAnchor(page, "#sproyt-react-preview .sp-channel-pane > .sp-timeline");
   await expect.poll(() => olderRequests).toBeGreaterThan(0);
   // The test database is shared by the named-suite run, so earlier tests may
   // already have added enough messages to fetch several older pages while the

@@ -1870,9 +1870,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         BROWSER_CLIENT
             .contains("window.addEventListener(\"focus\", refreshVisibleInvitationCards)")
     );
-    assert!(BROWSER_CLIENT.contains(
-        "historyHasMore = false;\n            console.error(\"Kunne ikkje laste eldre meldingar\""
-    ));
+    // History failure/retry is covered by ui-react-history.spec.ts. Do not
+    // require failures to disable pagination permanently in this CSP test.
     // Navigation persistence is now owned by the typed controller rather than
     // ad-hoc DOM code, while retaining the durable active-channel behaviour.
     assert!(APP_SOURCE.contains("navigation.setActiveChannel(channel)"));

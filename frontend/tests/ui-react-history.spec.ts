@@ -7,6 +7,13 @@ const message = (sequence: number, reply = false): ChatMessage => ({ id: `histor
   body: `Historisk melding ${sequence} ${"lang melding ".repeat(30)}`, sequence, sent_at: "2025-01-01T12:00:00Z",
   edited_at: null, deleted_at: null });
 
+async function selectConversation(page: Page, name: string) {
+  const app = page.locator("#sproyt-react-preview");
+  const back = app.getByRole("button", { name: "Samtalar", exact: true });
+  if (await back.isVisible()) await back.click();
+  await app.getByRole("button", { name, exact: true }).click();
+}
+
 async function historyServer(page: Page, messages: ChatMessage[], options: { link?: string; hold?: boolean } = {}) {
   const requests: Command[] = [];
   let socket: WebSocketRoute;
@@ -71,17 +78,29 @@ test("older pages skip reply-only gaps, retain own-message anchor and handle ima
   await page.setViewportSize({ width: 1200, height: 650 });
   const messages = Array.from({ length: 211 }, (_, index) => message(index + 1, index >= 60 && index < 160));
   const server = await historyServer(page, messages);
+  // Wait for initial React layout/scroll restoration before beginning a new
+  // reading gesture. DOM message count alone does not imply restored geometry.
+  await server.timeline.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   server.mode("hold");
-  await server.timeline.evaluate((element: HTMLElement) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  const anchor = await server.timeline.evaluate((element: HTMLElement) => {
+    element.scrollTop = 0;
+    const message = element.querySelector<HTMLElement>("[data-message-id]")!;
+    const anchor = { id: message.dataset.messageId!,
+      offset: message.getBoundingClientRect().top - element.getBoundingClientRect().top };
+    element.dispatchEvent(new Event("scroll"));
+    // Explicit action also covers an initial React commit still restoring its
+    // position; user paging must work independently of automatic edge events.
+    element.querySelector<HTMLButtonElement>("button")!.click();
+    return anchor;
+  });
   await expect.poll(() => server.requests.length).toBe(1);
-  const anchor = await server.timeline.locator("[data-message-id]").first().evaluate(element => ({
-    id: (element as HTMLElement).dataset.messageId!, offset: element.getBoundingClientRect().top - element.parentElement!.getBoundingClientRect().top
-  }));
   server.release();
   await expect(server.timeline.locator("[data-message-id]")).toHaveCount(51);
   await server.timeline.getByRole("button", { name: "Last eldre meldingar" }).evaluate(button => (button as HTMLButtonElement).click());
-  await expect(server.timeline.locator("[data-message-id]")).toHaveCount(100);
-  expect(server.requests.map(command => command.payload.before)).toEqual([162, 112, 62]);
+  // WebKit can publish an additional top-edge scroll after restoration. It may
+  // fetch the final page too; the same message content must remain anchored.
+  await expect.poll(() => server.timeline.locator("[data-message-id]").count()).toBeGreaterThanOrEqual(100);
+  expect(server.requests.slice(0, 3).map(command => command.payload.before)).toEqual([162, 112, 62]);
   const anchorOffset = () => server.timeline.locator(`[data-message-id="${anchor.id}"]`).evaluate(element =>
     element.getBoundingClientRect().top - element.parentElement!.getBoundingClientRect().top);
   await expect.poll(async () => Math.abs(await anchorOffset() - anchor.offset)).toBeLessThan(3);
@@ -92,7 +111,8 @@ test("older pages skip reply-only gaps, retain own-message anchor and handle ima
     image.style.height = "300px"; element.append(image);
   });
   await expect.poll(async () => Math.abs(await anchorOffset() - anchor.offset)).toBeLessThan(3);
-  await server.timeline.getByRole("button", { name: "Last eldre meldingar" }).evaluate(button => (button as HTMLButtonElement).click());
+  const older = server.timeline.getByRole("button", { name: "Last eldre meldingar" });
+  if (await older.count()) await older.evaluate(button => (button as HTMLButtonElement).click());
   await expect(server.timeline.locator("[data-message-id]")).toHaveCount(111);
   await expect(server.timeline).toContainText("Starten på samtalen");
 });
@@ -108,11 +128,11 @@ test("history errors retry the same cursor and late pages cannot contaminate cha
   server.mode("hold");
   await server.timeline.getByRole("button", { name: "Last eldre meldingar" }).evaluate(button => (button as HTMLButtonElement).click());
   await expect.poll(() => server.requests.length).toBe(3);
-  await page.locator("#sproyt-react-preview").getByRole("button", { name: "# empty", exact: true }).click();
+  await selectConversation(page, "# empty");
   await expect(server.timeline).toContainText("Ingen meldingar enno.");
   // Return to the same channel before the stale response: channel id alone is
   // insufficient to correlate a response with the current selection.
-  await page.locator("#sproyt-react-preview").getByRole("button", { name: "# history", exact: true }).click();
+  await selectConversation(page, "# history");
   await expect(server.timeline.locator("[data-message-id]")).toHaveCount(50);
   server.release();
   await expect(server.timeline.locator("[data-message-id]")).toHaveCount(50);
