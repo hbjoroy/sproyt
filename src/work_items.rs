@@ -19,6 +19,8 @@ use uuid::Uuid;
 
 mod github_export;
 pub(crate) use github_export::{ExportCommand, ExportView};
+mod status_change;
+pub(crate) use status_change::{StatusDecision, StatusStart};
 
 const DEFINITION: &str = include_str!("../helm/sproyt/definitions/work-item-review.yaml");
 const INFORMATION_DEFINITION: &str =
@@ -153,6 +155,7 @@ pub(crate) struct TaskView {
     pub information_request: Option<String>,
     pub information_response: Option<String>,
     pub github_export: Option<ExportView>,
+    pub lifecycle: Option<status_change::Lifecycle>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -261,6 +264,9 @@ impl WorkItems {
     }
 
     pub async fn task(&self, actor: UserId, id: Uuid, message: Uuid) -> Result<TaskView> {
+        if let Some(view) = self.status_task(actor.clone(), id, message).await? {
+            return Ok(view);
+        }
         let actor = actor.to_string();
         let id = id.to_string();
         let message = message.to_string();
@@ -286,12 +292,18 @@ impl WorkItems {
                 blocked: status=="pending" && assigned_allowed.is_none(),
                 can_request_information: node=="review" && row.try_get::<String,_>("definition_version").map_err(storage)?=="1.1.0",
                 node_id: node, information_request: row.try_get("information_request").map_err(storage)?,
-                information_response: row.try_get("information_response").map_err(storage)?, github_export: None })
+                information_response: row.try_get("information_response").map_err(storage)?, github_export: None, lifecycle: None })
         }}; }
         let mut view = match &self.store {
             Store::Pg(pool) => read!(pool, true),
             Store::Sqlite(pool) => read!(pool, false),
         }?;
+        view.lifecycle = self
+            .lifecycle(
+                UserId::from_uuid(Uuid::parse_str(&actor).map_err(storage)?),
+                view.work_item_id,
+            )
+            .await?;
         if view.node_id == "publish-github" {
             view.github_export = Some(
                 self.export_view(
@@ -533,6 +545,7 @@ impl WorkItems {
         }
         self.sync_tasks(chat, now).await?;
         self.sync_exports(chat, now).await?;
+        self.sync_status_changes(chat, now).await?;
         Ok(())
     }
 

@@ -1,9 +1,12 @@
 # Plan: applikasjonssaker gjennom Sprøyt og Heart
 
-Dato: 2026-09-28. Oppdatert 2026-09-30. Status: den avgrensa
-iterasjonen 0a og Heart v2-piloten er implementerte og utrulla;
-steg 1 for applikasjonsregister og kanalpolicy er under gjennomføring.
-Saksbehandling i steg 2–6 er framleis ein plan. Sjå
+Dato: 2026-09-28. Oppdatert 2026-10-02. Status: iterasjon 0a,
+Heart v2-piloten og steg 1–3 er implementerte og utrulla. Informasjonsrunden
+er akseptert av eigaren etter utprøving med to brukarar (#190).
+Steg 4, manuell GitHub-oppgåve, er implementert; faktisk publisering ventar
+på brukarprøve. Eigaren har valt hbjoroy/sproyt som første målrepo.
+Steg 5, [statusendring](work-item-status-lifecycle.md), er under gjennomføring
+og skal først prøvast i canary. Seinare automatisering er framleis ein plan. Sjå
 [steg 1-kontrakten](work-item-policy.md) for den konkrete policygrensa.
 Sjå [pilotkontrakten](process-user-task-pilot.md) og aktuell GitOps-status
 for driftsdetaljar. Historiske statusavsnitt under er daterte augeblikkbilete.

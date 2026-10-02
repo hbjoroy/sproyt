@@ -32,7 +32,8 @@ import type { CircleChatAgentApi } from "../../chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
 import { WorkItemRegistration } from "./work-item-registration";
 import { WorkItemTaskMessage } from "./work-item-task";
-import { workItemTaskId } from "../../work-items";
+import { WorkItemStatusMessage } from "./work-item-status";
+import { workItemStatusId, workItemTaskId } from "../../work-items";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly processPilot: ProcessPilotApi;
@@ -161,6 +162,8 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
 function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
   const workTask = workItemTaskId(message.body);
   if (workTask) return <WorkItemTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${workTask}`} api={host.workItems} taskId={workTask} messageId={message.id} />;
+  const workStatus = workItemStatusId(message.body);
+  if (workStatus) return <WorkItemStatusMessage key={`${host.processPilotIdentity()}:${message.id}:${workStatus}`} api={host.workItems} itemId={workStatus} messageId={message.id} />;
   const taskId = processTaskId(message.body);
   if (taskId) return <ProcessTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${taskId}`} api={host.processPilot} taskId={taskId} messageId={message.id} />;
   return <div className="sp-message-content">
@@ -214,7 +217,7 @@ function MessageActions({ host, message, threadAction, openReaction }: {
   const [issueOpen, setIssueOpen] = useState(false);
   const isAgent = host.settings.profileFor?.(message.sender_id)?.kind === "agent";
   useEffect(() => {
-    if (isAgent || workItemTaskId(message.body) || processTaskId(message.body)) {
+    if (isAgent || workItemTaskId(message.body) || workItemStatusId(message.body) || processTaskId(message.body)) {
       setApps([]); return;
     }
     let active = true;
