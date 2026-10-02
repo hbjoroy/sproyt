@@ -8,6 +8,7 @@
       import { createCommunityHost } from "./application/community-host";
       import { createAdvancedHost } from "./application/advanced-host";
       import { projectConversationSnapshot, type ConversationTimelineItem as TimelineItem } from "./application/conversation-snapshot";
+      import { historyPage } from "./application/history-pagination";
       import { createPendingRequests, type PendingMessage } from "./application/pending-requests";
       import { createInvitationCards, type Invitation } from "./application/invitation-cards";
       import { createComposerController, type ComposerTarget, type ComposerSnapshot } from "./application/composer-controller";
@@ -342,7 +343,7 @@
           pendingDirectChannelUsers.clear();
           failPendingCircleInvitations("Sambandet vart brote. Prøv invitasjonen igjen.");
           resetTransientRequestsAfterDisconnect({ historyRequestIds, pendingCommands, pendingInvitationResponses, pendingInvitationInspections, pendingChannelInvitationRecipients, pendingDirectInvitationMessages }, {
-            setHistoryLoading: (loading) => { historyLoading = loading; },
+            setHistoryLoading: () => { failHistoryLoad("Sambandet vart brote. Prøv å laste meldingane igjen."); },
             failInspection: (token) => {
               const message = "Invitasjonen kunne ikkje hentast fordi sambandet vart brote. Prøv igjen.";
               invitationInspectionCache.set(token, { status: "failed", message });
@@ -358,7 +359,9 @@
             finishPendingProfileUpdate("Sambandet vart brote. Namnet er ikkje lagra – prøv igjen.", requestId);
             if (pendingMessages.has(requestId)) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
             if (pendingThreadReplies.has(requestId)) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
-            historyRequestIds.delete(requestId);
+            if (requestId === activeHistoryRequestId || requestId === messageLinkHistoryRequestId || requestId === historySubscriptionRequestId) {
+              failHistoryLoad("Sambandet vart brote. Prøv å laste meldingane igjen.");
+            }
             pendingCommands.delete(requestId);
             failPendingPeopleDirectRequest(requestId, "Sambandet vart brote. Prøv igjen.");
             failPendingCircleInvitationRequest(requestId, "Sambandet vart brote. Prøv invitasjonen igjen.");
@@ -469,6 +472,11 @@
       const historyPageSize = 50;
       let historyHasMore = false;
       let historyLoading = false;
+      let historyBefore: number | null = null;
+      let historyError: string | undefined;
+      let activeHistoryRequestId: string | null = null;
+      let historySubscriptionRequestId: string | null = null;
+      let historyTimer: ReturnType<typeof setTimeout> | null = null;
       let mermaidPromise: Promise<MermaidApi> | null = null;
       let knownChannels: Channel[] = [];
       let knownUsers: UserProfile[] = [];
@@ -518,7 +526,7 @@
           channels: knownChannels, circles: knownCircles,
           activeChannelId, activeCircleId, activeRootScope, activeInboxKind,
           query: conversationQuery, timeline, threadReplies, threadRoots,
-          threadSummaries, activeThreadRootId, historyLoading, historyHasMore,
+          threadSummaries, activeThreadRootId, historyLoading, historyHasMore, historyError,
           connection: applicationStore.snapshot.connection,
           channelNotificationIds, pendingChannelNotificationIds, channelNotificationErrors, directChannelLabel
         });
@@ -3426,8 +3434,14 @@
           event.payload.history.forEach(appendTimelineMessage);
           reconcileUncertainDeliveries(event.payload.channel_id, event.payload.history);
           sendCommand("list_thread_summaries", { channel_id: event.payload.channel_id });
-          historyHasMore = event.payload.history.length === historyPageSize;
-          historyLoading = false;
+          const page = historyPage(event.payload.history, historyPageSize);
+          // A reconnect returns the latest page. Retain a cursor already advanced
+          // through older pages, rather than skipping back across loaded history.
+          if (historyBefore === null || (page.before !== null && page.before < historyBefore)) {
+            historyBefore = page.before;
+            historyHasMore = page.hasMore;
+          }
+          finishHistoryLoad();
           acknowledgeLatest(event.payload.channel_id, event.payload.history);
           bodyInput.disabled = false;
           sendButton.disabled = false;
@@ -3444,6 +3458,7 @@
           const revealed = seekPendingMessageLink();
           renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) });
           if (scrollOffset !== null && scrollOffset >= 80) restoreConversationScrollOffset(scrollOffset);
+          if (!revealed && !messageLinkHistoryRequestId && !timeline.some(item => item.type === "message") && historyHasMore) loadOlderHistory();
           updateAgentAccessControls();
           return;
         }
@@ -3594,10 +3609,10 @@
           if (messageLinkHistoryRequestIds.delete(event.request_id ?? "")) {
             if (event.request_id !== messageLinkHistoryRequestId) return;
             messageLinkHistoryRequestId = null;
-            historyLoading = false;
+            finishHistoryLoad();
             if (event.payload.channel_id !== activeChannelId) return;
             prependTimelineMessages(event.payload.messages);
-            historyHasMore = event.payload.messages.length === 200;
+            updateHistoryPage(event.payload.messages, 200);
             const revealed = seekPendingMessageLink();
             renderTimeline({ preserveScroll: !revealed,
               revealMessageId: revealed ? developmentChannelRevealMessageId : null });
@@ -3605,13 +3620,19 @@
           }
           const olderHistory = historyRequestIds.delete(event.request_id);
           if (olderHistory) {
-            historyLoading = false;
-            if (event.payload.channel_id !== activeChannelId) return;
-            historyHasMore = event.payload.messages.length === historyPageSize;
+            if (event.request_id !== activeHistoryRequestId || event.payload.channel_id !== activeChannelId) return;
+            finishHistoryLoad();
+            const page = updateHistoryPage(event.payload.messages, historyPageSize);
             prependTimelineMessages(event.payload.messages);
-            renderTimeline({ preserveScroll: true });
+            const revealed = seekPendingMessageLink();
+            renderTimeline({ preserveScroll: !revealed,
+              revealMessageId: revealed ? developmentChannelRevealMessageId : null });
+            // A page containing only replies still advances the raw cursor. Keep
+            // walking until the requested root history becomes visible or ends.
+            if (!revealed && !messageLinkHistoryRequestId && !page.hasRoots && historyHasMore && !historyError) loadOlderHistory();
             return;
           }
+          if (event.payload.channel_id !== activeChannelId) return;
           event.payload.messages.forEach(appendTimelineMessage);
           reconcileUncertainDeliveries(event.payload.channel_id, event.payload.messages);
           acknowledgeLatest(event.payload.channel_id, event.payload.messages);
@@ -3641,8 +3662,7 @@
           if (messageLinkHistoryRequestIds.delete(event.request_id ?? "")) {
             if (event.request_id !== messageLinkHistoryRequestId) return;
             messageLinkHistoryRequestId = null;
-            historyLoading = false;
-            pendingMessageLink = null;
+            failHistoryLoad("Kunne ikkje laste meldingane. Prøv igjen.");
             setConnectionStatus("Kunne ikkje finne meldinga frå varselet. Prøv igjen.");
             return;
           }
@@ -3655,8 +3675,8 @@
           }
           const failedHistory = historyRequestIds.delete(event.request_id);
           if (failedHistory) {
-            historyLoading = false;
-            historyHasMore = false;
+            if (event.request_id !== activeHistoryRequestId) return;
+            failHistoryLoad("Kunne ikkje laste eldre meldingar. Prøv igjen.");
             console.error("Kunne ikkje laste eldre meldingar", {
               requestId: event.request_id,
               command: requestedCommand,
@@ -3665,6 +3685,10 @@
               channelId: activeChannelId
             });
             setConnectionStatus("Kunne ikkje laste eldre meldingar. Nyare meldingar er framleis tilgjengelege.");
+            return;
+          }
+          if (event.request_id === historySubscriptionRequestId) {
+            failHistoryLoad("Kunne ikkje laste meldingane i samtalen. Prøv igjen.");
             return;
           }
           if (requestedCommand === "send_message") {
@@ -4251,7 +4275,7 @@
         if (threadPanel.open) threadPanel.close();
         messageReactions.clear();
         seenMessageIds.clear();
-        historyRequestIds.clear();
+        resetHistory();
         historyHasMore = false;
         historyLoading = false;
         bodyInput.disabled = true;
@@ -4429,9 +4453,9 @@
         threadSummaries.clear();
         if (threadPanel.open) threadPanel.close();
         seenMessageIds.clear();
-        historyRequestIds.clear();
+        resetHistory();
         historyHasMore = false;
-        historyLoading = false;
+        historyLoading = true;
         messagesEl.replaceChildren();
         navigation.setActiveChannel(channel);
         syncRenderedNavigation();
@@ -4457,8 +4481,11 @@
         attachMediaButton.disabled = true;
         messageEmojiPicker.setAttribute("aria-disabled", "true");
         setConnectionStatus("Koplar til samtalen …");
-        if (!sendCommand("subscribe_channel", { channel_id: channel.id })) {
-          setConnectionStatus("Vent på samband – trykk på samtalen for å prøve igjen");
+        historySubscriptionRequestId = sendCommand("subscribe_channel", { channel_id: channel.id });
+        if (historySubscriptionRequestId) startHistoryTimeout(historySubscriptionRequestId);
+        else {
+          failHistoryLoad("Vent på samband og prøv å laste meldingane igjen.");
+          setConnectionStatus("Vent på samband - trykk på samtalen for å prøve igjen");
         }
       }
 
@@ -4554,20 +4581,80 @@
 
       function loadOlderHistory() {
         if (!activeChannelId || !historyHasMore || historyLoading || connectionSupervisor.snapshot().subscribedChannelId !== activeChannelId) return;
-        const oldestItem = timeline.find((item): item is Readonly<{ type: "message"; message: ChatMessage }> => item.type === "message");
-        const oldest = oldestItem?.message;
-        if (!oldest) return;
+        if (historyBefore === null) return;
         historyLoading = true;
+        historyError = undefined;
         refreshDevelopmentPreview();
         const requestId = sendCommand("load_recent_messages", {
           channel_id: activeChannelId,
-          before: oldest.sequence,
+          before: historyBefore,
           limit: historyPageSize
         });
-        if (requestId) historyRequestIds.add(requestId);
+        if (requestId) {
+          historyRequestIds.add(requestId);
+          activeHistoryRequestId = requestId;
+          startHistoryTimeout(requestId);
+        } else failHistoryLoad("Vent på samband og prøv å laste eldre meldingar igjen.");
+      }
+
+      function finishHistoryLoad() {
+        if (historyTimer !== null) clearTimeout(historyTimer);
+        historyTimer = null;
+        activeHistoryRequestId = null;
+        historySubscriptionRequestId = null;
+        historyLoading = false;
+        historyError = undefined;
+      }
+
+      function resetHistory() {
+        finishHistoryLoad();
+        historyBefore = null;
+        historyHasMore = false;
+        // Retain outstanding ids until their responses arrive. A late page from
+        // a previous selection must not fall through as a live catch-up response.
+      }
+
+      function failHistoryLoad(message: string) {
+        const wasLoading = historyLoading;
+        const previousError = historyError;
+        finishHistoryLoad();
+        messageLinkHistoryRequestId = null;
+        historyError = wasLoading ? message : previousError;
+        refreshDevelopmentPreview();
+      }
+
+      function startHistoryTimeout(requestId: string) {
+        if (historyTimer !== null) clearTimeout(historyTimer);
+        historyTimer = setTimeout(() => {
+          if (requestId === activeHistoryRequestId || requestId === historySubscriptionRequestId || requestId === messageLinkHistoryRequestId) {
+            failHistoryLoad("Lastinga tok for lang tid. Prøv igjen.");
+          }
+        }, 20_000);
+      }
+
+      function updateHistoryPage(messages: ChatMessage[], limit: number) {
+        const page = historyPage(messages, limit);
+        if (page.before !== null && historyBefore !== null && page.before >= historyBefore) {
+          historyError = "Historikken kunne ikkje lastast vidare. Prøv igjen.";
+          return { ...page, hasRoots: true };
+        }
+        if (page.before !== null) historyBefore = page.before;
+        historyHasMore = page.hasMore;
+        return page;
+      }
+
+      function retryHistory() {
+        if (connectionSupervisor.snapshot().subscribedChannelId === activeChannelId && historyBefore !== null) {
+          if (pendingMessageLink) {
+            historyError = undefined;
+            const revealed = seekPendingMessageLink();
+            renderTimeline({ preserveScroll: !revealed,
+              revealMessageId: revealed ? developmentChannelRevealMessageId : null });
+          } else loadOlderHistory();
+        }
         else {
-          historyLoading = false;
-          refreshDevelopmentPreview();
+          const channel = knownChannels.find(item => item.id === activeChannelId);
+          if (channel) selectChannel(channel);
         }
       }
 
@@ -4784,21 +4871,23 @@
           developmentChannelRevealMessageId = link.messageId;
           return true;
         }
-        if (messageLinkHistoryRequestId) return false;
-        const oldest = timeline.find(item => item.type === "message")?.message;
-        if (!historyHasMore || !oldest || messageLinkSearchPages >= 25
-          || (link.sequence !== null && oldest.sequence <= link.sequence)) {
+        if (historyLoading || historyError || messageLinkHistoryRequestId) return false;
+        if (!historyHasMore || historyBefore === null || messageLinkSearchPages >= 25
+          || (link.sequence !== null && historyBefore <= link.sequence)) {
           pendingMessageLink = null;
           setConnectionStatus("Meldinga frå varselet er ikkje tilgjengeleg i samtalen.");
           return false;
         }
         messageLinkSearchPages += 1;
         historyLoading = true;
+        historyError = undefined;
         messageLinkHistoryRequestId = sendCommand("load_recent_messages", {
-          channel_id: link.channelId, before: oldest.sequence, limit: 200
+          channel_id: link.channelId, before: historyBefore, limit: 200
         });
-        if (messageLinkHistoryRequestId) messageLinkHistoryRequestIds.add(messageLinkHistoryRequestId);
-        else historyLoading = false;
+        if (messageLinkHistoryRequestId) {
+          messageLinkHistoryRequestIds.add(messageLinkHistoryRequestId);
+          startHistoryTimeout(messageLinkHistoryRequestId);
+        } else failHistoryLoad("Vent på samband og prøv å laste meldingane igjen.");
         return false;
       }
 
@@ -5776,6 +5865,7 @@
             openThread: openThreadState,
             closeThread: closeThreadState,
             loadOlder: loadOlderHistory,
+            retryHistory,
             isOwnMessage: (message) => message.sender_id === currentParticipantId,
             takeScrollIntent: () => {
               const intent = {

@@ -93,10 +93,11 @@ export function ConversationTimeline(props: TimelineProps) {
       && item.message.parent_message_id === (props.parentMessageId ?? null)));
   return <div className="sp-timeline" ref={props.viewportRef} onScroll={props.onScroll}
     aria-label={props.parentMessageId ? "Svar i tråden" : "Meldingar"} aria-busy={props.loading || undefined}>
-    {props.hasOlder && props.onLoadOlder && <Button busy={props.loading} onClick={props.onLoadOlder}>Last eldre meldingar</Button>}
+    {props.hasOlder && !props.error && props.onLoadOlder && <Button busy={props.loading} disabled={props.loading} onClick={props.onLoadOlder}>Last eldre meldingar</Button>}
     {props.error && <Status tone="error">{props.error}{props.onRetry && <Button onClick={props.onRetry}>Prøv igjen</Button>}</Status>}
     {props.loading && <Status>Lastar meldingar …</Status>}
-    {!props.loading && !props.error && visibleEntries.length === 0 && <Status>Ingen meldingar enno.</Status>}
+    {!props.loading && !props.error && !props.hasOlder && visibleEntries.length === 0 && <Status>Ingen meldingar enno.</Status>}
+    {!props.loading && !props.error && !props.hasOlder && messages.length > 0 && props.onLoadOlder && <Status>Starten på samtalen</Status>}
     {visibleEntries.map((item, index) => item.type === "system"
       ? <Status key={`notice-${index}`}>{item.text}</Status>
       : <ConversationMessage key={item.message.id} message={item.message} {...props}
@@ -243,8 +244,8 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     };
   }, [earlyAdopter, earlyAdopterTooltipId, message.sender_display_name, props.formatAuthor]);
   const author = props.formatAuthor?.(message) ?? message.sender_display_name;
-  return <div ref={wrapper} data-message-id={message.id} data-date-start={props.dateLabel ? "true" : undefined}>
-    {props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
+  return <>{props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
+    <div ref={wrapper} data-message-id={message.id} data-date-start={props.dateLabel ? "true" : undefined}>
     <Message author={author} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
@@ -255,7 +256,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     </Message>
     <span id={timestampTooltipId} className="sp-message-time-tooltip" role="tooltip">{fullTimestamp}</span>
     {earlyAdopter && <span id={earlyAdopterTooltipId} className="sp-early-adopter-tooltip" role="tooltip">Blant dei første 50 på Sprøyt</span>}
-  </div>;
+  </div></>;
 }
 
 export interface ConversationViewProps {

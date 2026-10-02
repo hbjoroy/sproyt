@@ -57,6 +57,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly openThread: (rootId: string) => void;
   readonly closeThread: () => void;
   readonly loadOlder: () => void;
+  readonly retryHistory: () => void;
   readonly isOwnMessage: (message: ChatMessage) => boolean;
   readonly takeScrollIntent: () => Readonly<{
     channelRevealMessageId: string | null;
@@ -290,13 +291,14 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const channelMessageIds = snapshot.timeline.messages.map(message => message.id);
     const previousChannelIds = previousSnapshot?.selection.channelId === snapshot.selection.channelId
       ? new Set(previousSnapshot.timeline.messages.map(message => message.id)) : null;
+    const previousLatestSequence = previousChannelIds ? previousSnapshot!.timeline.messages.at(-1)?.sequence ?? 0 : 0;
     const revealChannelMessage = scrollIntent.channelRevealMessageId ?? (previousChannelIds
-      ? [...snapshot.timeline.messages].reverse().find(message => !previousChannelIds.has(message.id) && host.isOwnMessage(message))?.id ?? null
+      ? [...snapshot.timeline.messages].reverse().find(message => message.sequence > previousLatestSequence && !previousChannelIds.has(message.id) && host.isOwnMessage(message))?.id ?? null
       : null);
     channelScroll.prepare({
       key: snapshot.selection.channelId ? `channel:${snapshot.selection.channelId}` : null,
       messageIds: channelMessageIds,
-      hasOlder: snapshot.timeline.hasOlder,
+      hasOlder: snapshot.timeline.hasOlder && !snapshot.timeline.loading && !snapshot.timeline.error,
       revealMessageId: revealChannelMessage
     });
     const threadMessageIds = snapshot.thread
@@ -362,6 +364,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     },
     timeline: {
       onLoadOlder: host.loadOlder,
+      onRetry: host.retryHistory,
       viewportRef: channelScroll.viewportRef,
       onScroll: channelScroll.onScroll
     },
