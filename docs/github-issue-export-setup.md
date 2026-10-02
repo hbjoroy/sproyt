@@ -40,10 +40,29 @@ The owner performs credential creation and repository permission approval.
 On 2026-10-02 the owner registered `sproyt-issues-hbjoroy`, App ID
 `5160764`, generated its first private key and installed the app on hbjoroy,
 Installation ID `167150170`. The installed settings were verified in GitHub:
-all repositories, Issues read/write and Metadata read-only. Local credential
-import is still pending. The wider installation does not authorize arbitrary
+all repositories, Issues read/write and Metadata read-only. The wider installation does not authorize arbitrary
 Sprøyt applications to export into those repositories; each application needs
 its own approved binding. Installation alone does not enable export.
+
+At 12:33 Europe/Bucharest on 2026-10-02 the supplied RSA private key was
+validated and imported into `sproyt-canary/sproyt-github-app` on Kubernetes
+context `default`. A read-back comparison verified the exact local key and
+App ID without printing credential values. No existing Secret was replaced,
+no application rollout occurred and export remains disabled.
+
+An authentication probe verified the App and hbjoroy installation, then obtained
+a token restricted to repository ID `1272543078`, Issues write and Metadata
+read. Reading `hbjoroy/sproyt` confirmed the exact repository and enabled issues.
+No issue was created; the probe token was explicitly revoked afterwards.
+This verifies credential and declared permission configuration, not yet the
+end-to-end export feature.
+
+The dedicated Secret is manually managed and is not yet mounted by a workload.
+Its setup rollback is removal of that unused Secret; local key recovery is
+available from the owner-held PEM, or by generating a replacement in GitHub.
+Neither operation needs a database restore. Do not remove it after deployment
+plumbing starts without checking its consumers. Unused GitHub keys can be
+revoked by the owner once the retained key's fingerprint is identified.
 
 Official references:
 - [Registration](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
