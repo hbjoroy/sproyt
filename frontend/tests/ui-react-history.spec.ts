@@ -153,17 +153,12 @@ test("a lost history request does not lock paging after reconnect", async ({ pag
 });
 
 test("a timed-out notification history search resumes and reveals its target on retry", async ({ page }) => {
-  await page.clock.install();
+  test.setTimeout(60_000);
   const server = await historyServer(page, Array.from({ length: 110 }, (_, index) => message(index + 1)), {
     link: "&message=history-1&sequence=1", hold: true
   });
   await expect.poll(() => server.requests.length).toBe(1);
-  // The route observes the outbound frame before the client's send call has
-  // necessarily returned and installed its timeout. Let that task finish.
-  await page.evaluate(() => new Promise<void>(resolve => setTimeout(resolve, 0)));
-  await page.clock.fastForward(20_001);
-  await page.clock.runFor(100);
-  await expect(server.timeline).toContainText("Lastinga tok for lang tid");
+  await expect(server.timeline.getByRole("alert")).toContainText("Lastinga tok for lang tid", { timeout: 25_000 });
   server.mode("normal");
   await server.timeline.getByRole("button", { name: "Prøv igjen" }).click();
   await expect(server.timeline.locator("[data-message-id]")).toHaveCount(110);
