@@ -26,6 +26,29 @@ the expanded prompt, normalized to a bounded safe `.png` filename. If absent,
 including on older jobs, a name is derived from the original prompt. Previously
 accepted attachments retain their existing filenames.
 
+## Maria character
+
+Use `/imagegen "Maria drikk kaffi på ein kafé på Paros"` to depict the
+recurring fictional adult Maria. The name is matched as a complete word,
+case-insensitively, including `$maria`. Her character instructions are supplied
+to prompt interpretation and expansion, and appended to the final image prompt.
+They also apply when vLLM is disabled or unavailable.
+
+The canonical identity photo is embedded in the server binary and uploaded to
+ComfyUI automatically for each Maria job. No manual copying to Santorini or
+connection to a personal Codex skills folder is required. Draft reference images
+come first, followed by Maria's identity photo, then geographic references if
+slots remain. Maria requests support at most two draft images; three are rejected
+with an explanation before admission. Maria's identity takes priority over
+optional ferry/waterfront references. Her outfit, expression, pose and medium
+follow the request; the identity photo's background and pose are not copied.
+
+The original character package and all ten reference images are preserved under
+`assets/imagegen-characters/maria/`. Runtime uses the canonical JPEG and the
+compact `identity.txt` instructions; the remaining images document expression,
+wardrobe, rear/profile and style variations. A new server build and deployment
+are required to activate this integration on an existing installation.
+
 ## Configuration
 
 Set `SPROYT_COMFYUI_URL` to the private ComfyUI image server, for example

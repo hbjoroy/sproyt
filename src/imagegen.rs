@@ -9,7 +9,7 @@ use sqlx::{PgPool, SqlitePool};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use crate::imagegen_prompt::Scene;
+use crate::imagegen_prompt::{Scene, maria_requested, original_expansion};
 use crate::{
     config::{DatabaseConfig, DatabaseKind},
     domain::{MediaObject, UserId},
@@ -17,6 +17,8 @@ use crate::{
 
 const MAX_IMAGE: usize = 8 * 1024 * 1024;
 const RETENTION: i64 = 7 * 24 * 3600;
+const MARIA_IMAGE: &[u8] =
+    include_bytes!("../assets/imagegen-characters/maria/references/00-canonical-maria.jpg");
 
 #[derive(Clone)]
 enum Store {
@@ -64,7 +66,16 @@ impl Job {
             "prompt":self.prompt,"created_at":self.created_at,"error":self.error,
             "media":self.media,"expansion":self.expansion,
             "reference_count":self.reference_ids.len(),
-            "visual_references":visual_references(self.expansion.as_ref().map(|e| e.scene).unwrap_or_default()).into_iter().take(3usize.saturating_sub(self.reference_ids.len())).collect::<Vec<_>>()})
+            "character_id":maria_requested(&self.prompt).then_some("maria"),
+            "visual_references":self.geographic_references()})
+    }
+    fn geographic_references(&self) -> Vec<Value> {
+        visual_references(self.expansion.as_ref().map(|e| e.scene).unwrap_or_default())
+            .into_iter()
+            .take(3usize.saturating_sub(
+                self.reference_ids.len() + usize::from(maria_requested(&self.prompt)),
+            ))
+            .collect()
     }
     pub fn transition(&mut self, state: &str) {
         self.state = state.into();
@@ -222,6 +233,9 @@ impl ImageGeneration {
     ) -> Result<Job, Error> {
         if references.len() > 3 {
             return Err("too many reference images".into());
+        }
+        if maria_requested(&prompt) && references.len() > 2 {
+            return Err("Maria needs one reference slot; use at most two draft images".into());
         }
         let (reference_ids, reference_images): (Vec<_>, Vec<_>) = references.into_iter().unzip();
         let id = Uuid::new_v5(
@@ -403,14 +417,20 @@ impl ImageGeneration {
                 job.transition("failed");
                 job.error = Some("The server restarted during submission. The image may still be in ComfyUI; it was not queued again automatically.".into());
             } else if job.state == "queued" {
-                if job.expansion.is_none()
-                    && let Some(expander) = &self.gateway.expander
-                {
-                    job.expansion = Some(
-                        expander
-                            .expand_with_references(&job.prompt, job.reference_ids.len())
-                            .await,
-                    );
+                if job.expansion.is_none() {
+                    if let Some(expander) = &self.gateway.expander {
+                        job.expansion = Some(
+                            expander
+                                .expand_with_references(&job.prompt, job.reference_ids.len())
+                                .await,
+                        );
+                    } else if maria_requested(&job.prompt) {
+                        job.expansion = Some(original_expansion(
+                            &job.prompt,
+                            job.reference_ids.len(),
+                            None,
+                        ));
+                    }
                     if !self.save(&mut job).await? {
                         continue;
                     }
@@ -463,11 +483,22 @@ impl ImageGeneration {
 impl Gateway {
     async fn submit(&self, job: &Job) -> Result<String, Error> {
         let mut uploaded = vec![];
-        for (index, image) in job.reference_images.iter().enumerate() {
+        let mut images = job
+            .reference_images
+            .iter()
+            .map(|image| STANDARD.decode(image))
+            .collect::<Result<Vec<_>, _>>()?;
+        if maria_requested(&job.prompt) {
+            if images.len() > 2 {
+                return Err("Maria needs one reference slot".into());
+            }
+            images.push(MARIA_IMAGE.to_vec());
+        }
+        for (index, image) in images.iter().enumerate() {
             let filename = format!("{}-{index}.jpg", job.id);
             let boundary = format!("sproyt-{}", job.id);
             let mut body = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"subfolder\"\r\n\r\nsproyt-private\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{filename}\"\r\nContent-Type: image/jpeg\r\n\r\n").into_bytes();
-            body.extend(STANDARD.decode(image)?);
+            body.extend_from_slice(image);
             body.extend(format!("\r\n--{boundary}--\r\n").as_bytes());
             let result: Value = self
                 .http
@@ -489,7 +520,7 @@ impl Gateway {
         }
         let response: Value = self.http.post(format!("{}/prompt", self.base))
             .json(&json!({"prompt": workflow(job.expansion.as_ref().map(|e| e.prompt.as_str()).unwrap_or(&job.prompt), job.created_at as u64, job.expansion.as_ref().map(|e| e.scene).unwrap_or_default(), &uploaded), "client_id":job.id,
-                "extra_data":{"extra_pnginfo":{"reference_photos":visual_references(job.expansion.as_ref().map(|e| e.scene).unwrap_or_default()).into_iter().take(3usize.saturating_sub(uploaded.len())).collect::<Vec<_>>()}}}))
+                "extra_data":{"extra_pnginfo":{"reference_photos":job.geographic_references(),"character_id":maria_requested(&job.prompt).then_some("maria")}}}))
             .send().await?.error_for_status()?.json().await?;
         let id = response["prompt_id"].as_str().ok_or("missing prompt id")?;
         Uuid::parse_str(id)?;
@@ -975,6 +1006,115 @@ mod tests {
         assert_eq!(
             submitted["prompt"]["1"]["inputs"]["unet_name"],
             "qwen_image_edit_2511_fp8mixed.safetensors"
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn maria_worker_uploads_embedded_identity_without_vllm() {
+        use axum::{Json, Router, routing::post};
+        let captured = Arc::new(tokio::sync::Mutex::new(Value::Null));
+        let sink = captured.clone();
+        let uploads = Arc::new(tokio::sync::Mutex::new(0usize));
+        let upload_count = uploads.clone();
+        let app = Router::new()
+            .route(
+                "/upload/image",
+                post(move |body: axum::body::Bytes| {
+                    let uploads = upload_count.clone();
+                    async move {
+                        let mut count = uploads.lock().await;
+                        let marker = b"Content-Type: image/jpeg\r\n\r\n";
+                        let header_end = body
+                            .windows(marker.len())
+                            .position(|w| w == marker)
+                            .unwrap()
+                            + marker.len();
+                        let header = String::from_utf8_lossy(&body[..header_end]);
+                        let filename = header
+                            .split("filename=\"")
+                            .nth(1)
+                            .unwrap()
+                            .split('"')
+                            .next()
+                            .unwrap();
+                        let expected: &[u8] = if *count == 0 {
+                            b"draft scene"
+                        } else {
+                            MARIA_IMAGE
+                        };
+                        assert_eq!(&body[header_end..header_end + expected.len()], expected);
+                        *count += 1;
+                        Json(json!({"name":filename,"subfolder":"sproyt-private","type":"input"}))
+                    }
+                }),
+            )
+            .route(
+                "/prompt",
+                post(move |Json(value): Json<Value>| {
+                    let sink = sink.clone();
+                    async move {
+                        *sink.lock().await = value;
+                        Json(json!({"prompt_id":Uuid::now_v7().to_string()}))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let service = ImageGeneration::test(&format!("http://{address}")).await;
+        let owner = UserId::named("maria-owner");
+        let channel = ChannelId::generate();
+        assert!(
+            service
+                .enqueue_with_references(
+                    owner.clone(),
+                    channel.clone(),
+                    Uuid::now_v7(),
+                    "Maria".into(),
+                    (0..3)
+                        .map(|i| (i.to_string(), STANDARD.encode(b"draft scene")))
+                        .collect()
+                )
+                .await
+                .is_err()
+        );
+        let job = service
+            .enqueue_with_references(
+                owner,
+                channel,
+                Uuid::now_v7(),
+                "Maria in this kitchen".into(),
+                vec![("scene-id".into(), STANDARD.encode(b"draft scene"))],
+            )
+            .await
+            .unwrap();
+        service.tick().await.unwrap();
+        let saved = service.get(&job.id).await.unwrap().unwrap();
+        assert_eq!(saved.state, "running");
+        assert_eq!(*uploads.lock().await, 2);
+        assert!(saved.reference_images.is_empty());
+        assert_eq!(saved.view()["character_id"], "maria");
+        assert_eq!(saved.view()["reference_count"], 1);
+        let submitted = captured.lock().await;
+        assert_eq!(
+            submitted["prompt"]["20"]["inputs"]["image"],
+            format!("sproyt-private/{}-0.jpg", job.id)
+        );
+        assert_eq!(
+            submitted["prompt"]["24"]["inputs"]["image"],
+            format!("sproyt-private/{}-1.jpg", job.id)
+        );
+        assert!(
+            submitted["prompt"]["4"]["inputs"]["prompt"]
+                .as_str()
+                .unwrap()
+                .contains("image 2 exclusively as Maria")
+        );
+        assert!(submitted["prompt"].get("28").is_none());
+        assert_eq!(
+            submitted["extra_data"]["extra_pnginfo"]["character_id"],
+            "maria"
         );
         task.abort();
     }
