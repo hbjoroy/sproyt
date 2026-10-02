@@ -46,6 +46,15 @@ spec:
             - configMapRef:
                 name: {{ include "sproyt.fullname" . }}
           env:
+            {{- if .Values.github.existingSecret }}
+            - name: SPROYT_GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.github.existingSecret }}
+                  key: {{ .Values.github.appIdKey }}
+            - name: SPROYT_GITHUB_PRIVATE_KEY_PATH
+              value: /var/run/sproyt-github/private-key.pem
+            {{- end }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -128,9 +137,23 @@ spec:
             capabilities:
               drop: ["ALL"]
           volumeMounts:
+            {{- if .Values.github.existingSecret }}
+            - name: github-app
+              mountPath: /var/run/sproyt-github
+              readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
       volumes:
+        {{- if .Values.github.existingSecret }}
+        - name: github-app
+          secret:
+            secretName: {{ .Values.github.existingSecret }}
+            defaultMode: 0444
+            items:
+              - key: {{ .Values.github.privateKeyKey }}
+                path: private-key.pem
+        {{- end }}
         - name: tmp
           emptyDir:
             sizeLimit: 16Mi

@@ -1,0 +1,15 @@
+namespace: sproyt
+name: work-item-github-export
+version: '1.0.0'
+runtime: v2
+description: Explicit publication decision after a completed work-item review.
+nodes:
+  start:
+    type: start
+    next: publish-github
+  publish-github:
+    type: user-task
+    assignee_metadata_key: reviewer_id
+    next: end
+  end:
+    type: end

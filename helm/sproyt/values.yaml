@@ -116,6 +116,12 @@ secret:
   # Change this opaque value when externally managed secret contents change.
   rolloutChecksum: ""
 
+# Server-side GitHub App credentials are external to Helm and disabled by default.
+github:
+  existingSecret: ""
+  appIdKey: app-id
+  privateKeyKey: private-key.pem
+
 resources:
   requests:
     cpu: 50m

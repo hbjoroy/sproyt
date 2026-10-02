@@ -1,7 +1,7 @@
 use crate::{
     server::AppState,
     web::http::{WsQuery, auth_error_response, authenticate_http, repository_response},
-    work_items::{Decision, Registration},
+    work_items::{Decision, ExportCommand, Registration},
 };
 use axum::{
     Json,
@@ -59,6 +59,26 @@ pub(crate) async fn decide(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     match service.decide(principal.user.id, id, body).await {
+        Ok(value) => ([(header::CACHE_CONTROL, "private, no-store")], Json(value)).into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+pub(crate) async fn export_github(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(body): Json<ExportCommand>,
+) -> Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(p) => p,
+        Err(e) => return auth_error_response(e),
+    };
+    let Some(service) = state.work_items else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match service.export_github(principal.user.id, id, body).await {
         Ok(value) => ([(header::CACHE_CONTROL, "private, no-store")], Json(value)).into_response(),
         Err(error) => repository_response(error),
     }
