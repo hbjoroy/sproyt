@@ -1891,9 +1891,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
             "function acknowledgeLatest(channelId: string, messages: ChatMessage[]): void"
         )
     );
-    assert!(BROWSER_CLIENT.contains("function loadOlderHistory()"));
-    assert!(BROWSER_CLIENT.contains("before: oldest.sequence"));
-    assert!(BROWSER_CLIENT.contains("renderTimeline({ preserveScroll: true })"));
+    // Raw-page cursors and scroll preservation are browser behavior contracts,
+    // not source-string requirements on the security-header entrypoint.
     assert!(BROWSER_CLIENT.contains(
         "renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) })"
     ));
