@@ -1425,7 +1425,9 @@ mod tests {
             axum::serve(listener, mock).await.unwrap();
         });
         connected
-            .start_one(&item.id.to_string(), Utc::now().timestamp())
+            // PostgreSQL's default casts epoch to bigint by rounding, while
+            // the worker clock floors seconds. Claim past that initial boundary.
+            .start_one(&item.id.to_string(), Utc::now().timestamp() + 2)
             .await
             .unwrap();
         let token = Uuid::now_v7();

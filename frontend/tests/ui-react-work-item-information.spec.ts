@@ -41,7 +41,12 @@ test("compact information tasks preserve drafts and distinguish requester from r
     protocol: "sproyt.chat.v1", type: "create_channel", request_id: crypto.randomUUID(), payload: { name, slug: name.toLowerCase(), kind: "public" }
   })), name);
   await expect(preview.getByRole("region", { name: `# ${name}`, exact: true })).toBeVisible();
-  for (const id of ids) { await input.fill(`[[work-item-task:${id}]]`); await input.press("Enter"); }
+  await expect(input).toBeEnabled();
+  for (const id of ids) {
+    await input.fill(`[[work-item-task:${id}]]`);
+    await preview.getByRole("button", { name: /^Send / }).click();
+    await expect(input).toHaveValue("");
+  }
   const cards = preview.locator(".sp-work-item-task");
   await expect(cards).toHaveCount(3);
   const review = cards.nth(0); const information = cards.nth(1); const followup = cards.nth(2);
