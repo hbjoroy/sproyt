@@ -1870,9 +1870,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         BROWSER_CLIENT
             .contains("window.addEventListener(\"focus\", refreshVisibleInvitationCards)")
     );
-    assert!(BROWSER_CLIENT.contains(
-        "historyHasMore = false;\n            console.error(\"Kunne ikkje laste eldre meldingar\""
-    ));
+    // History failure/retry is covered by ui-react-history.spec.ts. Do not
+    // require failures to disable pagination permanently in this CSP test.
     // Navigation persistence is now owned by the typed controller rather than
     // ad-hoc DOM code, while retaining the durable active-channel behaviour.
     assert!(APP_SOURCE.contains("navigation.setActiveChannel(channel)"));
@@ -1892,9 +1891,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
             "function acknowledgeLatest(channelId: string, messages: ChatMessage[]): void"
         )
     );
-    assert!(BROWSER_CLIENT.contains("function loadOlderHistory()"));
-    assert!(BROWSER_CLIENT.contains("before: oldest.sequence"));
-    assert!(BROWSER_CLIENT.contains("renderTimeline({ preserveScroll: true })"));
+    // Raw-page cursors and scroll preservation are browser behavior contracts,
+    // not source-string requirements on the security-header entrypoint.
     assert!(BROWSER_CLIENT.contains(
         "renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) })"
     ));

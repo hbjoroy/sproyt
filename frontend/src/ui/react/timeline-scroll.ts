@@ -39,6 +39,8 @@ export function createTimelineScrollController(options: TimelineScrollController
   let resizeObserver: ResizeObserver | null = null;
   let scheduled = false;
   let applying = false;
+  let scrollApplication = 0;
+  let appliedScrollTop: number | null = null;
   let followBottom = true;
   let revealMessageId: string | null = null;
   let requestedOlderAt: string | null = null;
@@ -72,8 +74,13 @@ export function createTimelineScrollController(options: TimelineScrollController
   const setScrollTop = (value: number) => {
     if (!viewport) return;
     applying = true;
+    const application = ++scrollApplication;
     viewport.scrollTop = Math.max(0, value);
-    queueMicrotask(() => { applying = false; });
+    appliedScrollTop = viewport.scrollTop;
+    // WebKit delivers scroll events in the rendering step, after microtasks.
+    // Keep restored positions separate from user scrolls through that step so
+    // an older-page restore cannot trigger another fetch or overwrite its anchor.
+    requestAnimationFrame(() => { if (application === scrollApplication) applying = false; });
   };
 
   const scrollToBottom = () => {
@@ -149,7 +156,8 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const onScroll = () => {
-    if (!viewport || applying) return;
+    if (!viewport || applying || pending || viewport.scrollTop === appliedScrollTop) return;
+    appliedScrollTop = null;
     const position = save();
     if (!position) return;
     followBottom = position.distanceFromBottom <= nearEdge;
@@ -185,8 +193,15 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const prepare = (next: TimelineScrollModel) => {
-    const previous = save();
+    // A resize/mutation reconciliation may still be queued after a React commit.
+    // Its DOM geometry is not yet the reader's restored position.
+    const previous = (pending || scheduled || applying) && model.key
+      ? pending?.position ?? positions.get(model.key) ?? capture()
+      : save();
     const keyChanged = model.key !== next.key;
+    // Several history responses/publications may arrive before the next frame
+    // restores the DOM. Keep the original reading anchor through that batch.
+    const position = !keyChanged && pending ? pending.position : previous;
     const stored = next.key ? positions.get(next.key) ?? null : null;
     const appended = !keyChanged && next.messageIds.at(-1) !== model.messageIds.at(-1);
     // Several host publications can be coalesced into one concurrent React
@@ -194,10 +209,10 @@ export function createTimelineScrollController(options: TimelineScrollController
     // intent until the corresponding message has reached the DOM.
     const carriedReveal = pending?.revealMessageId ?? revealMessageId;
     const explicitReveal = next.revealMessageId ?? (keyChanged ? null : carriedReveal);
-    const wasNearBottom = previous ? previous.distanceFromBottom <= nearEdge : true;
+    const wasNearBottom = position ? position.distanceFromBottom <= nearEdge : true;
     pending = {
       keyChanged,
-      position: keyChanged ? stored : previous,
+      position: keyChanged ? stored : position,
       forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && appended && wasNearBottom),
       revealMessageId: explicitReveal
     };
