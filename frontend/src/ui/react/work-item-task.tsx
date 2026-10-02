@@ -31,7 +31,8 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
     setSaving(true); setError("");
     try { setTask(await api.decide(task, task.node_id === "provide-information" ? "" : category,
       task.node_id === "provide-information" ? "" : priority,
-      task.node_id === "provide-information" ? "" : decision, note)); }
+      task.node_id === "provide-information" ? "" : decision,
+      task.node_id === "provide-information" || decision === "needs_information" ? note : "")); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Kunne ikkje lagre avgjerda."); }
     finally { setSaving(false); }
   };
