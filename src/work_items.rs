@@ -17,6 +17,9 @@ use std::time::Duration;
 use tokio::sync::watch;
 use uuid::Uuid;
 
+mod github_export;
+pub(crate) use github_export::{ExportCommand, ExportView};
+
 const DEFINITION: &str = include_str!("../helm/sproyt/definitions/work-item-review.yaml");
 const INFORMATION_DEFINITION: &str =
     include_str!("../helm/sproyt/definitions/work-item-review-information.yaml");
@@ -60,6 +63,7 @@ pub(crate) struct WorkItems {
     vllm_url: Option<String>,
     vllm_key: Option<String>,
     http: reqwest::Client,
+    github: Option<crate::github::GitHub>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -116,7 +120,10 @@ fn completion_result(
     status: Option<String>,
     note: Option<String>,
 ) -> Value {
-    if node == "provide-information" {
+    if node == "publish-github" {
+        note.and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or(Value::Null)
+    } else if node == "provide-information" {
         json!({"information":note.unwrap_or_default()})
     } else {
         json!({"category":category,"priority":priority,"status":status,"question":note.unwrap_or_default()})
@@ -145,6 +152,7 @@ pub(crate) struct TaskView {
     pub can_request_information: bool,
     pub information_request: Option<String>,
     pub information_response: Option<String>,
+    pub github_export: Option<ExportView>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -199,6 +207,7 @@ impl WorkItems {
             vllm_url: checked_url("SPROYT_VLLM_URL")?,
             vllm_key: std::env::var("SPROYT_VLLM_API_KEY").ok(),
             http,
+            github: crate::github::GitHub::from_env().map_err(storage)?,
         })
     }
 
@@ -256,10 +265,10 @@ impl WorkItems {
         let id = id.to_string();
         let message = message.to_string();
         macro_rules! read { ($pool:expr,$pg:expr) => {{
-            let query = sql("select cast(t.id as text) as id,cast(t.message_id as text) as message_id,cast(w.id as text) as work_item_id,w.revision,w.definition_version,t.node_id,a.name as application_name,w.title,w.description,t.status,w.process_status,t.delivery_status,case when t.node_id='provide-information' then null else coalesce(t.decision_category,w.category) end as decision_category,case when t.node_id='provide-information' then null else coalesce(t.decision_priority,w.priority) end as decision_priority,t.decision_status,u.display_name as assignee_name,cast(t.assignee_id as text) as assignee_id,(select decision_note from work_item_tasks where work_item_id=w.id and node_id='review' and decision_status='needs_information') as information_request,(select decision_note from work_item_tasks where work_item_id=w.id and node_id='provide-information') as information_response from work_item_tasks t join work_items w on w.id=t.work_item_id join work_applications a on a.id=w.application_id join users u on u.id=t.assignee_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid where t.id=?uuid and t.message_id=?uuid",$pg);
+            let query = sql("select cast(t.id as text) as id,cast(t.message_id as text) as message_id,cast(w.id as text) as work_item_id,w.revision,w.definition_version,t.node_id,a.name as application_name,w.title,w.description,t.status,case when t.node_id='publish-github' then coalesce((select status from work_item_export_processes where work_item_id=w.id),'failed') else w.process_status end as process_status,t.delivery_status,case when t.node_id='provide-information' then null else coalesce(t.decision_category,w.category) end as decision_category,case when t.node_id='provide-information' then null else coalesce(t.decision_priority,w.priority) end as decision_priority,t.decision_status,u.display_name as assignee_name,cast(t.assignee_id as text) as assignee_id,(select decision_note from work_item_tasks where work_item_id=w.id and node_id='review' and decision_status='needs_information') as information_request,(select decision_note from work_item_tasks where work_item_id=w.id and node_id='provide-information') as information_response from work_item_tasks t join work_items w on w.id=t.work_item_id join work_applications a on a.id=w.application_id join users u on u.id=t.assignee_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid where t.id=?uuid and t.message_id=?uuid",$pg);
             let row = sqlx::query(&query).bind(&actor).bind(&id).bind(&message).fetch_optional($pool).await.map_err(storage)?.ok_or(RepositoryError::NotFound)?;
             let assignee: String = row.try_get("assignee_id").map_err(storage)?;
-            let permission = sql("select 1 from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=t.assignee_id and cm.role<>'observer' where t.id=?uuid and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
+            let permission = sql("select 1 from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=t.assignee_id and cm.role<>'observer' where t.id=?uuid and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review','publish-github') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
             let assigned_allowed: Option<i32> = sqlx::query_scalar(&permission).bind(&id).fetch_optional($pool).await.map_err(storage)?;
             let node: String = row.try_get("node_id").map_err(storage)?;
             let status: String = row.try_get("status").map_err(storage)?;
@@ -277,12 +286,22 @@ impl WorkItems {
                 blocked: status=="pending" && assigned_allowed.is_none(),
                 can_request_information: node=="review" && row.try_get::<String,_>("definition_version").map_err(storage)?=="1.1.0",
                 node_id: node, information_request: row.try_get("information_request").map_err(storage)?,
-                information_response: row.try_get("information_response").map_err(storage)? })
+                information_response: row.try_get("information_response").map_err(storage)?, github_export: None })
         }}; }
-        match &self.store {
+        let mut view = match &self.store {
             Store::Pg(pool) => read!(pool, true),
             Store::Sqlite(pool) => read!(pool, false),
+        }?;
+        if view.node_id == "publish-github" {
+            view.github_export = Some(
+                self.export_view(
+                    UserId::from_uuid(Uuid::parse_str(&actor).map_err(storage)?),
+                    view.work_item_id,
+                )
+                .await?,
+            );
         }
+        Ok(view)
     }
 
     pub async fn decide(&self, actor: UserId, id: Uuid, command: Decision) -> Result<TaskView> {
@@ -294,11 +313,11 @@ impl WorkItems {
         let message = command.message_id.to_string();
         macro_rules! save { ($pool:expr,$pg:expr) => {{
             let mut tx = $pool.begin().await.map_err(storage)?;
-            let rights = sql("select cast(w.id as text) as work_item_id,w.revision,w.process_status,w.definition_version,t.node_id,cast(t.assignee_id as text) as assignee_id,t.status,cast(t.decision_request_id as text) as decision_request_id,t.decision_revision,t.decision_note,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid and cm.role<>'observer' where t.id=?uuid and t.message_id=?uuid and t.assignee_id=cm.user_id and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
+            let rights = sql("select cast(w.id as text) as work_item_id,w.revision,w.process_status,w.definition_version,t.node_id,cast(t.assignee_id as text) as assignee_id,t.status,cast(t.decision_request_id as text) as decision_request_id,t.decision_revision,t.decision_note,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid and cm.role<>'observer' where t.id=?uuid and t.message_id=?uuid and t.assignee_id=cm.user_id and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review','publish-github') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
             let row = sqlx::query(&rights).bind(&actor_string).bind(&id_string).bind(&message).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
             if row.try_get::<String,_>("assignee_id").map_err(storage)? != actor_string { return Err(RepositoryError::PermissionDenied); }
             let node: String = row.try_get("node_id").map_err(storage)?;
-            let information = node=="provide-information";
+            if node=="publish-github" { return Err(RepositoryError::Conflict); } let information = node=="provide-information";
             let can_request = node=="review" && row.try_get::<String,_>("definition_version").map_err(storage)?=="1.1.0";
             if information {
                 if !command.category.is_empty() || !command.priority.is_empty() || !command.status.is_empty() || command.note.trim().is_empty() { return Err(RepositoryError::Conflict); }
@@ -513,6 +532,7 @@ impl WorkItems {
             }
         }
         self.sync_tasks(chat, now).await?;
+        self.sync_exports(chat, now).await?;
         Ok(())
     }
 
@@ -649,7 +669,7 @@ impl WorkItems {
                 Store::Sqlite(pool) => details!(pool, false),
             };
         macro_rules! commands { ($pool:expr,$pg:expr) => {{
-            let query = sql("select cast(t.id as text) as id,cast(t.assignee_id as text) as actor_id,cast(t.decision_request_id as text) as request_id,t.node_id,t.decision_note,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t where t.work_item_id=?uuid and t.status='pending' and t.decision_request_id is not null",$pg);
+            let query = sql("select cast(t.id as text) as id,cast(t.assignee_id as text) as actor_id,cast(t.decision_request_id as text) as request_id,t.node_id,t.decision_note,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t where t.work_item_id=?uuid and t.node_id<>'publish-github' and t.status='pending' and t.decision_request_id is not null",$pg);
             let rows = sqlx::query(&query).bind(id).fetch_all($pool).await.map_err(storage)?;
             rows.into_iter().map(|row| Ok(HeartCompletion {id:row.try_get("id").map_err(storage)?,request:row.try_get("request_id").map_err(storage)?,actor:row.try_get("actor_id").map_err(storage)?,
                 result:completion_result(&row.try_get::<String,_>("node_id").map_err(storage)?,row.try_get("decision_category").map_err(storage)?,row.try_get("decision_priority").map_err(storage)?,row.try_get("decision_status").map_err(storage)?,row.try_get("decision_note").map_err(storage)?)})).collect::<Result<Vec<HeartCompletion>>>()?
@@ -799,15 +819,20 @@ impl WorkItems {
     ) -> Result<Option<Uuid>> {
         macro_rules! project { ($pool:expr,$pg:expr,$notify:path) => {{
             let mut tx = $pool.begin().await.map_err(storage)?;
-            let lease = sql("update work_items set sync_lease_until=sync_lease_until where id=?uuid and sync_lease_token=?uuid and ((?='provide-information' and source_channel_id=?uuid and requested_by=?uuid and definition_version='1.1.0') or (? in ('review','followup-review') and task_channel_id=?uuid and reviewer_id=?uuid and (?='review' or definition_version='1.1.0')))",$pg);
-            if sqlx::query(&lease).bind(item).bind(token).bind(&task.node_id).bind(channel).bind(task.assignee_id.to_string()).bind(&task.node_id).bind(channel).bind(task.assignee_id.to_string()).bind(&task.node_id).execute(&mut *tx).await.map_err(storage)?.rows_affected()!=1 { return Err(RepositoryError::Conflict); }
+            if task.node_id=="publish-github" {
+                let lease=sql("update work_item_export_processes set lease_until=lease_until where work_item_id=?uuid and lease_token=?uuid and channel_id=?uuid and assignee_id=?uuid and status='waiting'",$pg);
+                if sqlx::query(&lease).bind(item).bind(token).bind(channel).bind(task.assignee_id.to_string()).execute(&mut *tx).await.map_err(storage)?.rows_affected()!=1 {return Err(RepositoryError::Conflict);}
+            } else {
+                let lease = sql("update work_items set sync_lease_until=sync_lease_until where id=?uuid and sync_lease_token=?uuid and ((?='provide-information' and source_channel_id=?uuid and requested_by=?uuid and definition_version='1.1.0') or (? in ('review','followup-review') and task_channel_id=?uuid and reviewer_id=?uuid and (?='review' or definition_version='1.1.0')))",$pg);
+                if sqlx::query(&lease).bind(item).bind(token).bind(&task.node_id).bind(channel).bind(task.assignee_id.to_string()).bind(&task.node_id).bind(channel).bind(task.assignee_id.to_string()).bind(&task.node_id).execute(&mut *tx).await.map_err(storage)?.rows_affected()!=1 { return Err(RepositoryError::Conflict); }
+            }
             let version_query=sql("select definition_version from work_items where id=?uuid",$pg);
             let version:String=sqlx::query_scalar(&version_query).bind(item).fetch_one(&mut *tx).await.map_err(storage)?;
             let existing = sql("select cast(message_id as text) as message_id,status,decision_note,cast(decision_request_id as text) as decision_request_id,decision_category,decision_priority,decision_status from work_item_tasks where id=?uuid and work_item_id=?uuid",$pg);
             if let Some(row) = sqlx::query(&existing).bind(task.id.to_string()).bind(item).fetch_optional(&mut *tx).await.map_err(storage)? {
                 let old: String = row.try_get("status").map_err(storage)?;
                 if old!="pending" && task.status!=old { return Err(RepositoryError::Conflict); }
-                if task.status=="completed" && version=="1.1.0" {
+                if task.status=="completed" && (version=="1.1.0" || task.node_id=="publish-github") {
                     let request:Option<String>=row.try_get("decision_request_id").map_err(storage)?;
                     let expected=completion_result(&task.node_id,row.try_get("decision_category").map_err(storage)?,row.try_get("decision_priority").map_err(storage)?,row.try_get("decision_status").map_err(storage)?,row.try_get("decision_note").map_err(storage)?);
                     if request.is_none() || task.result_metadata.as_ref()!=Some(&expected) {return Err(RepositoryError::Conflict);}
@@ -829,7 +854,7 @@ impl WorkItems {
                 tx.commit().await.map_err(storage)?;
                 Ok(None)
             } else {
-                if version=="1.1.0" && task.status=="completed" {return Err(RepositoryError::Conflict);}
+                if (version=="1.1.0" || task.node_id=="publish-github") && task.status=="completed" {return Err(RepositoryError::Conflict);}
                 if matches!(task.node_id.as_str(),"provide-information"|"followup-review") {
                     let previous=if task.node_id=="provide-information" {"review"} else {"provide-information"};
                     let predecessor=sql("select 1 from work_item_tasks where work_item_id=?uuid and node_id=? and status='completed' and (?<>'review' or decision_status='needs_information')",$pg);
@@ -996,6 +1021,7 @@ mod tests {
             vllm_url: None,
             vllm_key: None,
             http: reqwest::Client::new(),
+            github: None,
         };
         assert_eq!(
             service
@@ -1833,6 +1859,7 @@ mod tests {
             vllm_url: None,
             vllm_key: None,
             http: reqwest::Client::new(),
+            github: None,
         };
         assert_eq!(
             service

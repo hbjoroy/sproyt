@@ -6,6 +6,7 @@ mod config;
 mod db;
 mod domain;
 mod enrollment;
+mod github;
 mod imagegen;
 mod imagegen_prompt;
 mod integration;

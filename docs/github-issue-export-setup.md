@@ -7,9 +7,10 @@ is **public**. This is an explicit destination choice, not authorization to
 publish arbitrary channel history or private attachments.
 
 The application record `sproyt` belongs to Sprøyt - apptilbakemeldingar.
-Testkanal is enabled for work-item review 1.1.0. GitHub export is not implemented
-or enabled yet. The existing `github_repository_id` and `can_export` fields
-are a foundation, not a working connection.
+Testkanal is enabled for work-item review 1.1.0. The manual GitHub user task is
+implemented in [the export continuation](work-item-github-export.md). Deployment
+and explicit application/channel enablement are required before it is usable;
+the existing `github_repository_id` field alone is not a working connection.
 
 ## Owner's GitHub steps
 
@@ -84,7 +85,12 @@ No database migration is needed to import this independent credential. The
 export implementation below requires its own additive migrations, CI/release
 gates and canary delivery. Do not set `can_export=true` prematurely.
 
-## Next implementation slices (step 4)
+## Implementation slices (step 4)
+
+The implementation is described in [the publication-task contract](work-item-github-export.md).
+Its linked export-only Heart process preserves completed review instances,
+including historical cases. The slices below record the original preparation;
+release/canary acceptance is tracked separately from credential verification.
 
 1. **GitHub client and deployment plumbing.** Load App ID/key from a dedicated
    Secret, sign short-lived JWTs, acquire installation tokens and renew before

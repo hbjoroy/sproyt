@@ -26,6 +26,71 @@ test("task decoding requires explicit server permission and known state", () => 
   }
 });
 
+test("GitHub export decoding requires a complete, explicit server capability", () => {
+  const github = { repository: "owner/public-repo", repository_id: 42, binding_revision: 3, can_publish: true, status: "ready", issue_url: null,
+    title: "Feil på mobil", body: "Skrivefeltet forsvinn" };
+  const exportTask = { ...task, node_id: "publish-github", can_request_information: false, github_export: github };
+  assert.deepEqual(decodeWorkItemTask(exportTask), exportTask);
+  for (const invalid of [
+    { ...exportTask, github_export: null },
+    { ...exportTask, github_export: { ...github, can_publish: "true" } },
+    { ...exportTask, github_export: { ...github, repository_id: "42" } },
+    { ...exportTask, github_export: { ...github, status: "unknown" } },
+    { ...exportTask, github_export: { ...github, issue_url: 3 } }
+  ]) assert.throws(() => decodeWorkItemTask(invalid));
+});
+
+test("GitHub retry reuses exact command and accepted revision, even after a new API instance", async () => {
+  const githubTask: WorkItemTask = { ...task, node_id: "publish-github", can_request_information: false, github_export: {
+    repository: "owner/public-repo", repository_id: 42, binding_revision: 3, can_publish: true, status: "ready", issue_url: null,
+    title: task.title, body: task.description } };
+  const storage = new Map<string, string>();
+  const previousStorage = globalThis.sessionStorage;
+  Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => { storage.set(key, value); },
+    removeItem: (key: string) => { storage.delete(key); }
+  } });
+  try {
+    const bodies: Record<string, unknown>[] = [];
+    let fail = true;
+    const http = new HttpClient({ fetch: async (url, init) => {
+      assert.match(String(url), /\/work-item-tasks\/.*\/github$/);
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (fail) { fail = false; throw new Error("accepted response lost"); }
+      return Response.json({ ...githubTask, revision: 2, can_decide: false, github_export: {
+        ...githubTask.github_export, status: "pending" } });
+    } });
+    const first = new WorkItemApi(http, () => "github-user");
+    await assert.rejects(() => first.exportGithub(githubTask, "Edited title", "Edited body", true));
+    assert.deepEqual(first.pendingGithubExport(githubTask), { title: "Edited title", body: "Edited body", send: true,
+      expected_repository_id: 42, expected_binding_revision: 3 });
+    const second = new WorkItemApi(http, () => "github-user");
+    await assert.rejects(() => second.exportGithub({ ...githubTask, revision: 2 }, "Different", "Edited body", true), /same innhald/);
+    await second.exportGithub({ ...githubTask, revision: 2 }, "Edited title", "Edited body", true);
+    assert.deepEqual(bodies[0], bodies[1]);
+    assert.equal(bodies[1]!.expected_revision, 1);
+    assert.equal(bodies[1]!.send, true);
+    assert.equal(bodies[1]!.expected_repository_id, 42);
+    assert.equal(bodies[1]!.expected_binding_revision, 3);
+    assert.equal(second.pendingGithubExport(githubTask), null);
+  } finally {
+    if (previousStorage === undefined) delete (globalThis as { sessionStorage?: Storage }).sessionStorage;
+    else Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: previousStorage });
+  }
+});
+
+test("GitHub export refuses a changed repository binding before sending", async () => {
+  let calls = 0;
+  const taskWithGithub: WorkItemTask = { ...task, node_id: "publish-github", can_request_information: false,
+    github_export: { repository: "owner/repo", repository_id: 42, binding_revision: 4, can_publish: true,
+      status: "ready", issue_url: null, title: null, body: null } };
+  const api = new WorkItemApi(new HttpClient({ fetch: async () => { calls++; return Response.json(taskWithGithub); } }), () => "binding-user");
+  await assert.rejects(() => api.exportGithub(taskWithGithub, "Reviewed bug", "Approved body", true,
+    { repository_id: 42, binding_revision: 3 }), /målet er endra/);
+  assert.equal(calls, 0);
+});
+
 test("information retries keep the accepted revision and exact text after refresh", async () => {
   const bodies: Record<string, unknown>[] = [];
   const api = new WorkItemApi(new HttpClient({ fetch: async (_url, init) => {
