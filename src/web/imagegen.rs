@@ -93,6 +93,13 @@ pub(crate) async fn enqueue(
             .into_response();
     }
     let mut references = Vec::new();
+    if crate::imagegen_prompt::maria_requested(prompt) && body.reference_ids.len() > 2 {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Maria treng ein referanseplass. Bruk opptil to bilete frå utkastet.",
+        )
+            .into_response();
+    }
     for id in &body.reference_ids {
         let media_id = match MediaId::new(id.clone()) {
             Ok(id) => id,
