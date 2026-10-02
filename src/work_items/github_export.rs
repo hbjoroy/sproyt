@@ -7,7 +7,7 @@ const DEFINITION: &str = include_str!("../../helm/sproyt/definitions/work-item-g
 
 #[cfg(test)]
 #[path = "github_export_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct ExportCommand {

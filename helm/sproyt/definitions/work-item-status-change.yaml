@@ -1,0 +1,15 @@
+namespace: sproyt
+name: work-item-status-change
+version: '1.0.0'
+runtime: v2
+description: A manually approved status change of an existing reviewed case.
+nodes:
+  start:
+    type: start
+    next: change-status
+  change-status:
+    type: user-task
+    assignee_metadata_key: handler_id
+    next: end
+  end:
+    type: end

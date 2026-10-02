@@ -285,6 +285,18 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             post(crate::web::work_items::export_github),
         )
         .route(
+            "/api/v1/work-items/{id}/status-change",
+            post(crate::web::work_items::start_status),
+        )
+        .route(
+            "/api/v1/work-item-tasks/{id}/status",
+            post(crate::web::work_items::change_status),
+        )
+        .route(
+            "/api/v1/work-items/{id}/status",
+            get(crate::web::work_items::public_status),
+        )
+        .route(
             "/api/v1/channels/{id}/process-bindings",
             post(configure_process_binding),
         )

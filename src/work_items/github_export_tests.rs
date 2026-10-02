@@ -6,22 +6,22 @@ use std::sync::{
 };
 use tokio::sync::Mutex;
 
-struct Fixture {
-    service: WorkItems,
-    owner: Uuid,
-    reviewer: Uuid,
-    outsider: Uuid,
-    channel: Uuid,
-    application: Uuid,
-    item: Uuid,
-    task: Uuid,
-    message: Uuid,
+pub(crate) struct Fixture {
+    pub(crate) service: WorkItems,
+    pub(crate) owner: Uuid,
+    pub(crate) reviewer: Uuid,
+    pub(crate) outsider: Uuid,
+    pub(crate) channel: Uuid,
+    pub(crate) application: Uuid,
+    pub(crate) item: Uuid,
+    pub(crate) task: Uuid,
+    pub(crate) message: Uuid,
     lease: Uuid,
     export_instance: Uuid,
 }
 
 impl Fixture {
-    async fn sqlite(projected: bool) -> Self {
+    pub(crate) async fn sqlite(projected: bool) -> Self {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -33,7 +33,7 @@ impl Fixture {
             .unwrap();
         Self::create(Store::Sqlite(pool), projected).await
     }
-    async fn postgres(projected: bool) -> Option<Self> {
+    pub(crate) async fn postgres(projected: bool) -> Option<Self> {
         let url = std::env::var("SPROYT_POSTGRES_TEST_URL").ok()?;
         let pool = PgPool::connect(&url).await.unwrap();
         sqlx::migrate!("./migrations/postgres")
@@ -219,7 +219,7 @@ impl Fixture {
             expected_binding_revision: send.then_some(3),
         }
     }
-    async fn count(&self, table: &str) -> i64 {
+    pub(crate) async fn count(&self, table: &str) -> i64 {
         let query = format!("select count(*) from {table} where work_item_id=?uuid");
         match &self.service.store {
             Store::Pg(pool) => sqlx::query_scalar::<_, i64>(&sql(&query, true))

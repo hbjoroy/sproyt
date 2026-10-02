@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HttpClient } from "./api";
-import { WorkItemApi, decodeWorkItemTask, workItemTaskId, type WorkItemTask } from "./work-items";
+import { WorkItemApi, decodePublicWorkItemStatus, decodeWorkItemTask, workItemStatusId, workItemTaskId, type WorkItemTask } from "./work-items";
 
 const id = "c63ac052-a05a-4b5d-bfff-04429338df90";
 const message = "28f01db0-20f1-42f0-953a-176bc76ce0d1";
@@ -16,6 +16,81 @@ test("only a complete work-item marker becomes a task card", () => {
   assert.equal(workItemTaskId(`[[work-item-task:${id}]]`), id);
   for (const body of [`Look [[work-item-task:${id}]]`, `[[work-item-task:${id}]]\n`, "[[work-item-task:wrong]]"]) {
     assert.equal(workItemTaskId(body), null);
+  }
+});
+
+test("public status marker and decoder never expose internal notes", () => {
+  assert.equal(workItemStatusId(`[[work-item-status:${id}]]`), id);
+  assert.equal(workItemStatusId(`Text [[work-item-status:${id}]]`), null);
+  assert.equal(workItemStatusId(`[[work-item-status:${id}]]\n`), null);
+  assert.deepEqual(decodePublicWorkItemStatus({ visible: false }), { visible: false });
+  assert.throws(() => decodePublicWorkItemStatus({ visible: false, title: "Secret" }));
+  const visible = { visible: true, title: "Mobile bug", application_name: "Sprøyt", status: "planned",
+    public_feedback: "Queued", history: [{ from_status: "new", to_status: "planned", created_at: 123, public_feedback: "Queued" }] };
+  assert.deepEqual(decodePublicWorkItemStatus(visible), visible);
+  assert.throws(() => decodePublicWorkItemStatus({ ...visible, internal_note: null }));
+  assert.throws(() => decodePublicWorkItemStatus({ ...visible, history: [{ ...visible.history[0], internal_note: "Private" }] }));
+});
+
+test("public status reads carry the exact message proof", async () => {
+  const requests: string[] = [];
+  const api = new WorkItemApi(new HttpClient({ fetch: async url => {
+    requests.push(String(url)); return Response.json({ visible: false });
+  } }), () => "status-reader");
+  assert.deepEqual(await api.publicStatus(id, message), { visible: false });
+  assert.match(requests[0]!, new RegExp(`/work-items/${id}/status\\?message_id=${message}$`));
+});
+
+test("status task decoder requires explicit lifecycle and valid history", () => {
+  const lifecycle = { case_status: "planned", can_start: false, allowed_statuses: ["in_development", "resolved", "rejected"],
+    internal_note: null, public_feedback: null, history: [{ from_status: "new", to_status: "planned", actor_name: "Harald",
+      created_at: 123, internal_note: "Private", public_feedback: "Queued" }] };
+  const statusTask = { ...task, node_id: "change-status", can_request_information: false, lifecycle };
+  assert.deepEqual(decodeWorkItemTask(statusTask), statusTask);
+  assert.throws(() => decodeWorkItemTask({ ...statusTask, lifecycle: null }));
+  assert.throws(() => decodeWorkItemTask({ ...statusTask, lifecycle: { ...lifecycle, can_start: "yes" } }));
+  assert.throws(() => decodeWorkItemTask({ ...statusTask, lifecycle: { ...lifecycle, history: [{ ...lifecycle.history[0], internal_note: {} }] } }));
+});
+
+test("status start and decision retries preserve exact payload and revision", async () => {
+  const statusTask: WorkItemTask = { ...task, node_id: "change-status", can_request_information: false,
+    lifecycle: { case_status: "planned", can_start: true, allowed_statuses: ["in_development", "resolved", "rejected"],
+      internal_note: null, public_feedback: null, history: [] } };
+  const saved = new Map<string, string>();
+  const previous = globalThis.sessionStorage;
+  Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: {
+    getItem: (key: string) => saved.get(key) ?? null,
+    setItem: (key: string, value: string) => { saved.set(key, value); },
+    removeItem: (key: string) => { saved.delete(key); }
+  } });
+  try {
+    const requests: Record<string, unknown>[] = [];
+    let fail = true;
+    const http = new HttpClient({ fetch: async (url, init) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (fail) { fail = false; throw new Error("response lost"); }
+      return Response.json(String(url).endsWith("/status-change")
+        ? { id, work_item_id: app, channel_name: "# Review", start_status: "pending" }
+        : { ...statusTask, revision: 2, can_decide: false, delivery_status: "pending" });
+    } });
+    const first = new WorkItemApi(http, () => "status-user");
+    await assert.rejects(() => first.startStatusChange(statusTask));
+    const second = new WorkItemApi(http, () => "status-user");
+    await second.startStatusChange({ ...statusTask, revision: 2 });
+    assert.deepEqual(requests[0], requests[1]);
+    assert.equal(requests[1]!.expected_revision, 1);
+    fail = true;
+    await assert.rejects(() => second.changeStatus(statusTask, "in_development", "Private", "Public", false));
+    assert.deepEqual(second.pendingStatusChange(statusTask), { status: "in_development", internal_note: "Private",
+      public_feedback: "Public", no_change: false });
+    const third = new WorkItemApi(http, () => "status-user");
+    await assert.rejects(() => third.changeStatus(statusTask, "resolved", "Private", "Public", false), /same val/);
+    await third.changeStatus({ ...statusTask, revision: 2 }, "in_development", "Private", "Public", false);
+    assert.deepEqual(requests[2], requests[3]);
+    assert.equal(requests[3]!.expected_revision, 1);
+  } finally {
+    if (previous === undefined) delete (globalThis as { sessionStorage?: Storage }).sessionStorage;
+    else Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: previous });
   }
 });
 

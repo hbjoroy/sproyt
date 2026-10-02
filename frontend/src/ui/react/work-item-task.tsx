@@ -1,6 +1,9 @@
 import { Button, Status } from "@sproyt/ui/react";
 import { useEffect, useRef, useState } from "react";
-import type { GithubExport, WorkItemApi, WorkItemTask } from "../../work-items";
+import type { GithubExport, StatusChangeReceipt, WorkItemApi, WorkItemTask } from "../../work-items";
+
+const statusName = (value: string): string => ({ planned: "Planlagt", in_development: "Under utvikling",
+  resolved: "Løyst", rejected: "Avvist" })[value as "planned" | "in_development" | "resolved" | "rejected"] ?? value;
 
 function safeIssueUrl(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -25,6 +28,14 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
   const [githubTarget, setGithubTarget] = useState<Pick<GithubExport, "repository" | "repository_id" | "binding_revision"> | null>(null);
   const githubDraftTouched = useRef(false);
   const githubDraftInitialized = useRef(false);
+  const [statusChoice, setStatusChoice] = useState("");
+  const [internalNote, setInternalNote] = useState("");
+  const [publicFeedback, setPublicFeedback] = useState("");
+  const [statusRetry, setStatusRetry] = useState<{ status: string; internal_note: string; public_feedback: string; no_change: boolean } | null>(null);
+  const [startReceipt, setStartReceipt] = useState<StatusChangeReceipt | null>(null);
+  const [startingStatus, setStartingStatus] = useState(false);
+  const statusDraftInitialized = useRef(false);
+  const statusDraftTouched = useRef(false);
   useEffect(() => {
     const controller = new AbortController();
     let initial = true;
@@ -42,6 +53,14 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
             setGithubBody(value.description);
           }
           githubDraftInitialized.current = true;
+        }
+        if (value.node_id === "change-status" && !statusDraftInitialized.current) {
+          const pending = api.pendingStatusChange(value);
+          if (pending) {
+            setStatusChoice(pending.status); setInternalNote(pending.internal_note);
+            setPublicFeedback(pending.public_feedback); setStatusRetry(pending);
+          } else if (!statusDraftTouched.current) setStatusChoice(value.lifecycle?.allowed_statuses[0] ?? "");
+          statusDraftInitialized.current = true;
         }
         setTask(value); setError("");
       } })
@@ -77,10 +96,32 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
       setError(cause instanceof Error ? cause.message : "Kunne ikkje lese svaret frå GitHub-innsendinga.");
     } finally { setSaving(false); }
   };
+  const startStatus = async () => {
+    if (!task || startingStatus || !task.lifecycle?.can_start) return;
+    setStartingStatus(true); setError("");
+    try { setStartReceipt(await api.startStatusChange(task)); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Kunne ikkje starte statusoppgåva."); }
+    finally { setStartingStatus(false); }
+  };
+  const submitStatus = async (noChange: boolean) => {
+    if (!task || saving || !task.can_decide || !task.lifecycle) return;
+    const pending = statusRetry ?? api.pendingStatusChange(task);
+    const actual = pending ?? { status: noChange ? "" : statusChoice, internal_note: noChange ? "" : internalNote,
+      public_feedback: noChange ? "" : publicFeedback, no_change: noChange };
+    setSaving(true); setError("");
+    try {
+      setTask(await api.changeStatus(task, actual.status, actual.internal_note, actual.public_feedback, actual.no_change));
+      setStatusRetry(null);
+    } catch (cause) {
+      setStatusRetry(api.pendingStatusChange(task));
+      setError(cause instanceof Error ? cause.message : "Kunne ikkje lese svaret frå statusendringa.");
+    } finally { setSaving(false); }
+  };
   if (!task) return <div className="sp-work-item-task"><Status tone={error ? "error" : undefined}>{error || "Hentar behandlaroppgåva …"}</Status></div>;
   const information = task.node_id === "provide-information";
   const githubTask = task.node_id === "publish-github";
-  const taskLabel = githubTask ? "Send til GitHub" : information ? "Svar på spørsmål" : task.node_id === "followup-review" ? "Vurder etter svar" : "Vurder saka";
+  const statusTask = task.node_id === "change-status";
+  const taskLabel = statusTask ? "Endre status" : githubTask ? "Send til GitHub" : information ? "Svar på spørsmål" : task.node_id === "followup-review" ? "Vurder etter svar" : "Vurder saka";
   const githubState = task.github_export?.status === "sent" ? "Sendt til GitHub"
     : task.github_export?.status === "skipped" ? "Berre internt"
     : task.github_export?.status === "uncertain" ? "Uvisst om GitHub tok imot saka"
@@ -94,6 +135,7 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
     || githubTarget.binding_revision !== task.github_export?.binding_revision);
   const state = task.process_status === "failed" ? "Prosessen feila" : task.process_status === "cancelled" ? "Prosessen er avbroten"
     : githubTask && task.github_export?.status !== "ready" ? githubState
+    : statusTask && task.delivery_status === "pending" ? "Status lagra · ventar på Heart"
     : task.status === "completed" ? "Fullført" : task.status === "cancelled" ? "Avbroten"
     : task.delivery_status === "failed" ? "Avgjerda kunne ikkje leverast"
     : task.blocked ? "Blokkert: rett eller kanaltilgang manglar"
@@ -104,11 +146,28 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
       <span><strong>{task.title}</strong><small>{task.application_name} · {state} · {task.assignee_name}</small></span>
     </Button>
     {expanded && <div className="sp-work-item-task-details">
+    {task.status === "completed" && task.lifecycle?.can_start && <div className="sp-work-item-task-details">
+      <Button variant="secondary" disabled={startingStatus || !!startReceipt} busy={startingStatus} onClick={() => void startStatus()}>
+        {api.pendingStatusStart(task) ? "Prøv same start igjen" : "Endre status"}
+      </Button>
+      {startReceipt && <Status>Statusoppgåva er sett i kø i {startReceipt.channel_name} ({startReceipt.start_status}).</Status>}
+    </div>}
+
       <p>{task.description}</p>
       {task.information_request && <div className="sp-work-item-information"><strong>Spørsmål frå behandlar</strong><p>{task.information_request}</p></div>}
       {task.information_response && <div className="sp-work-item-information"><strong>Svar frå innmeldar</strong><p>{task.information_response}</p></div>}
       {task.blocked && <Status tone="error">Den tildelte personen manglar rett eller kanaltilgang. Kretsansvarleg må rette oppsettet.</Status>}
       {task.category && task.decision_status && <p>Kategori: {task.category} · Prioritet: {task.priority} · Status: {task.decision_status}</p>}
+      {task.lifecycle && <>
+        <p>Saksstatus: <strong>{statusName(task.lifecycle.case_status)}</strong></p>
+        {task.lifecycle.history.length > 0 && <div className="sp-work-item-information"><strong>Statushistorikk</strong>
+          <ol>{task.lifecycle.history.map((entry, index) => <li key={`${entry.created_at}-${index}`}>
+            {statusName(entry.from_status)} → {statusName(entry.to_status)} · {entry.actor_name}
+            {entry.public_feedback && <p>Til innmeldar: {entry.public_feedback}</p>}
+            {entry.internal_note && <p>Internt notat: {entry.internal_note}</p>}
+          </li>)}</ol>
+        </div>}
+      </>}
       {githubTask && task.github_export ? <>
         {issueUrl && task.github_export.status === "sent" && <p><a href={issueUrl} target="_blank" rel="noopener noreferrer">Opne GitHub-saka</a></p>}
         {task.github_export.status === "uncertain" && <Status tone="error">Det er uvisst om GitHub tok imot saka. Vent på avklaring; ikkje send ei ny sak.</Status>}
@@ -126,7 +185,16 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
           <Button type="submit" disabled={saving || !!githubTargetChanged || !task.github_export.can_publish || !githubTarget?.repository || !githubTitle.trim() || !!githubRetry && !githubRetry.send} busy={saving}>{githubRetry?.send ? "Prøv same innsending igjen" : "Send til GitHub"}</Button>
           <Button type="button" variant="secondary" disabled={saving || !!githubRetry && githubRetry.send} onClick={() => void exportGithub(false)}>{githubRetry && !githubRetry.send ? "Prøv same val igjen" : "Berre internt"}</Button>
         </form> : task.github_export.status === "ready" && <Status>{state}</Status>}
-      </> : task.can_decide ? <form onSubmit={event => { event.preventDefault(); void save(); }}>
+      </> : statusTask ? task.can_decide && task.lifecycle ? <form onSubmit={event => { event.preventDefault(); void submitStatus(false); }}>
+        <label>Ny status<select required value={statusChoice} disabled={saving || !!statusRetry} onChange={event => { statusDraftTouched.current = true; setStatusChoice(event.currentTarget.value); }}>
+          {task.lifecycle.allowed_statuses.map(value => <option key={value} value={value}>{statusName(value)}</option>)}
+        </select></label>
+        <label>Internt notat<textarea maxLength={2000} rows={3} value={internalNote} disabled={saving || !!statusRetry} onChange={event => { statusDraftTouched.current = true; setInternalNote(event.currentTarget.value); }} /></label>
+        <label>Tilbakemelding til innmeldaren<textarea maxLength={2000} rows={3} value={publicFeedback} disabled={saving || !!statusRetry} onChange={event => { statusDraftTouched.current = true; setPublicFeedback(event.currentTarget.value); }} /></label>
+        {statusRetry && <Status tone="error">Førre svar er uklart. Same avgjerd kan prøvast igjen med same innhald.</Status>}
+        <Button type="submit" busy={saving} disabled={saving || !statusChoice || !!statusRetry && statusRetry.no_change}>{statusRetry && !statusRetry.no_change ? "Prøv same status igjen" : "Lagre status"}</Button>
+        <Button type="button" variant="secondary" disabled={saving || !!statusRetry && !statusRetry.no_change} onClick={() => void submitStatus(true)}>{statusRetry?.no_change ? "Prøv same val igjen" : "Avslutt utan endring"}</Button>
+      </form> : <Status>{state}</Status> : task.can_decide ? <form onSubmit={event => { event.preventDefault(); void save(); }}>
         {information ? <label>Svar til behandlar<textarea required maxLength={8000} rows={3} value={note} onChange={event => setNote(event.currentTarget.value)} /></label> : <>
         <label>Kategori<select value={category} onChange={event => setCategory(event.currentTarget.value)}>
           <option value="bug">Feil</option><option value="change">Endringsønske</option><option value="question">Spørsmål/anna</option>
