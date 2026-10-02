@@ -18,6 +18,8 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 const DEFINITION: &str = include_str!("../helm/sproyt/definitions/work-item-review.yaml");
+const INFORMATION_DEFINITION: &str =
+    include_str!("../helm/sproyt/definitions/work-item-review-information.yaml");
 type Result<T> = std::result::Result<T, RepositoryError>;
 
 #[derive(Clone)]
@@ -96,6 +98,29 @@ struct HeartTask {
     node_id: String,
     assignee_id: Uuid,
     status: String,
+    #[serde(default)]
+    result_metadata: Option<Value>,
+}
+
+struct HeartCompletion {
+    id: String,
+    request: String,
+    actor: String,
+    result: Value,
+}
+
+fn completion_result(
+    node: &str,
+    category: Option<String>,
+    priority: Option<String>,
+    status: Option<String>,
+    note: Option<String>,
+) -> Value {
+    if node == "provide-information" {
+        json!({"information":note.unwrap_or_default()})
+    } else {
+        json!({"category":category,"priority":priority,"status":status,"question":note.unwrap_or_default()})
+    }
 }
 
 #[derive(Serialize)]
@@ -116,6 +141,10 @@ pub(crate) struct TaskView {
     pub assignee_name: String,
     pub can_decide: bool,
     pub blocked: bool,
+    pub node_id: String,
+    pub can_request_information: bool,
+    pub information_request: Option<String>,
+    pub information_response: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -126,6 +155,8 @@ pub(crate) struct Decision {
     pub category: String,
     pub priority: String,
     pub status: String,
+    #[serde(default)]
+    pub note: String,
 }
 
 impl WorkItems {
@@ -225,14 +256,12 @@ impl WorkItems {
         let id = id.to_string();
         let message = message.to_string();
         macro_rules! read { ($pool:expr,$pg:expr) => {{
-            let query = sql("select cast(t.id as text) as id,cast(t.message_id as text) as message_id,cast(w.id as text) as work_item_id,w.revision,a.name as application_name,w.title,w.description,t.status,w.process_status,t.delivery_status,t.decision_category,t.decision_priority,t.decision_status,u.display_name as assignee_name,cast(t.assignee_id as text) as assignee_id,cast(w.application_id as text) as application_id,cast(t.channel_id as text) as task_channel_id from work_item_tasks t join work_items w on w.id=t.work_item_id join work_applications a on a.id=w.application_id join users u on u.id=t.assignee_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid where t.id=?uuid and t.message_id=?uuid",$pg);
+            let query = sql("select cast(t.id as text) as id,cast(t.message_id as text) as message_id,cast(w.id as text) as work_item_id,w.revision,w.definition_version,t.node_id,a.name as application_name,w.title,w.description,t.status,w.process_status,t.delivery_status,case when t.node_id='provide-information' then null else coalesce(t.decision_category,w.category) end as decision_category,case when t.node_id='provide-information' then null else coalesce(t.decision_priority,w.priority) end as decision_priority,t.decision_status,u.display_name as assignee_name,cast(t.assignee_id as text) as assignee_id,(select decision_note from work_item_tasks where work_item_id=w.id and node_id='review' and decision_status='needs_information') as information_request,(select decision_note from work_item_tasks where work_item_id=w.id and node_id='provide-information') as information_response from work_item_tasks t join work_items w on w.id=t.work_item_id join work_applications a on a.id=w.application_id join users u on u.id=t.assignee_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid where t.id=?uuid and t.message_id=?uuid",$pg);
             let row = sqlx::query(&query).bind(&actor).bind(&id).bind(&message).fetch_optional($pool).await.map_err(storage)?.ok_or(RepositoryError::NotFound)?;
             let assignee: String = row.try_get("assignee_id").map_err(storage)?;
-            let application: String = row.try_get("application_id").map_err(storage)?;
-            let channel: String = row.try_get("task_channel_id").map_err(storage)?;
-            let permission = sql("select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' join channel_memberships cm on cm.user_id=p.user_id and cm.channel_id=?uuid and cm.role<>'observer' where p.application_id=?uuid and p.user_id=?uuid and p.can_review",$pg);
-            let allowed: Option<i32> = sqlx::query_scalar(&permission).bind(&channel).bind(&application).bind(&actor).fetch_optional($pool).await.map_err(storage)?;
-            let assigned_allowed: Option<i32> = sqlx::query_scalar(&permission).bind(&channel).bind(&application).bind(&assignee).fetch_optional($pool).await.map_err(storage)?;
+            let permission = sql("select 1 from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=t.assignee_id and cm.role<>'observer' where t.id=?uuid and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
+            let assigned_allowed: Option<i32> = sqlx::query_scalar(&permission).bind(&id).fetch_optional($pool).await.map_err(storage)?;
+            let node: String = row.try_get("node_id").map_err(storage)?;
             let status: String = row.try_get("status").map_err(storage)?;
             let process_status: String = row.try_get("process_status").map_err(storage)?;
             let delivery: String = row.try_get("delivery_status").map_err(storage)?;
@@ -244,8 +273,11 @@ impl WorkItems {
                 delivery_status: delivery.clone(), category: row.try_get("decision_category").map_err(storage)?,
                 priority: row.try_get("decision_priority").map_err(storage)?, decision_status: row.try_get("decision_status").map_err(storage)?,
                 assignee_name: row.try_get("assignee_name").map_err(storage)?,
-                can_decide: assignee==actor && allowed.is_some() && status=="pending" && process_status=="waiting" && delivery=="ready",
-                blocked: status=="pending" && assigned_allowed.is_none() })
+                can_decide: assignee==actor && assigned_allowed.is_some() && status=="pending" && process_status=="waiting" && delivery=="ready",
+                blocked: status=="pending" && assigned_allowed.is_none(),
+                can_request_information: node=="review" && row.try_get::<String,_>("definition_version").map_err(storage)?=="1.1.0",
+                node_id: node, information_request: row.try_get("information_request").map_err(storage)?,
+                information_response: row.try_get("information_response").map_err(storage)? })
         }}; }
         match &self.store {
             Store::Pg(pool) => read!(pool, true),
@@ -254,14 +286,7 @@ impl WorkItems {
     }
 
     pub async fn decide(&self, actor: UserId, id: Uuid, command: Decision) -> Result<TaskView> {
-        if !matches!(command.category.as_str(), "bug" | "change" | "question")
-            || !matches!(
-                command.priority.as_str(),
-                "untriaged" | "low" | "normal" | "high" | "critical"
-            )
-            || !matches!(command.status.as_str(), "planned" | "resolved" | "rejected")
-            || command.expected_revision < 1
-        {
+        if command.expected_revision < 1 || command.note.len() > 8000 {
             return Err(RepositoryError::Conflict);
         }
         let actor_string = actor.to_string();
@@ -269,23 +294,35 @@ impl WorkItems {
         let message = command.message_id.to_string();
         macro_rules! save { ($pool:expr,$pg:expr) => {{
             let mut tx = $pool.begin().await.map_err(storage)?;
-            let rights = sql("select cast(w.id as text) as work_item_id,w.revision,w.process_status,cast(t.assignee_id as text) as assignee_id,t.status,cast(t.decision_request_id as text) as decision_request_id,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t join work_items w on w.id=t.work_item_id join application_processors p on p.application_id=w.application_id and p.user_id=?uuid and p.can_review join application_process_roles r on r.application_id=w.application_id and r.user_id=p.user_id and r.process_role='product-handler' join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=p.user_id and cm.role<>'observer' where t.id=?uuid and t.message_id=?uuid",$pg);
+            let rights = sql("select cast(w.id as text) as work_item_id,w.revision,w.process_status,w.definition_version,t.node_id,cast(t.assignee_id as text) as assignee_id,t.status,cast(t.decision_request_id as text) as decision_request_id,t.decision_revision,t.decision_note,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid and cm.role<>'observer' where t.id=?uuid and t.message_id=?uuid and t.assignee_id=cm.user_id and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
             let row = sqlx::query(&rights).bind(&actor_string).bind(&id_string).bind(&message).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
             if row.try_get::<String,_>("assignee_id").map_err(storage)? != actor_string { return Err(RepositoryError::PermissionDenied); }
+            let node: String = row.try_get("node_id").map_err(storage)?;
+            let information = node=="provide-information";
+            let can_request = node=="review" && row.try_get::<String,_>("definition_version").map_err(storage)?=="1.1.0";
+            if information {
+                if !command.category.is_empty() || !command.priority.is_empty() || !command.status.is_empty() || command.note.trim().is_empty() { return Err(RepositoryError::Conflict); }
+            } else if !matches!(command.category.as_str(),"bug"|"change"|"question")
+                || !matches!(command.priority.as_str(),"untriaged"|"low"|"normal"|"high"|"critical")
+                || !(matches!(command.status.as_str(),"planned"|"resolved"|"rejected") || (can_request && command.status=="needs_information" && !command.note.trim().is_empty())) {
+                return Err(RepositoryError::Conflict);
+            }
             let existing: Option<String> = row.try_get("decision_request_id").map_err(storage)?;
             if let Some(existing) = existing {
                 if existing != command.request_id.to_string()
-                    || row.try_get::<Option<String>,_>("decision_category").map_err(storage)?.as_deref()!=Some(&command.category)
-                    || row.try_get::<Option<String>,_>("decision_priority").map_err(storage)?.as_deref()!=Some(&command.priority)
-                    || row.try_get::<Option<String>,_>("decision_status").map_err(storage)?.as_deref()!=Some(&command.status) { return Err(RepositoryError::Conflict); }
+                    || row.try_get::<Option<String>,_>("decision_category").map_err(storage)?.unwrap_or_default()!=command.category
+                    || row.try_get::<Option<String>,_>("decision_priority").map_err(storage)?.unwrap_or_default()!=command.priority
+                    || row.try_get::<Option<String>,_>("decision_status").map_err(storage)?.unwrap_or_default()!=command.status
+                    || row.try_get::<Option<String>,_>("decision_note").map_err(storage)?.unwrap_or_default()!=command.note
+                    || row.try_get::<Option<i64>,_>("decision_revision").map_err(storage)?.is_some_and(|r| r!=command.expected_revision) { return Err(RepositoryError::Conflict); }
                 tx.commit().await.map_err(storage)?;
                 return self.task(actor,id,command.message_id).await;
             }
             if row.try_get::<String,_>("status").map_err(storage)? != "pending"
                 || row.try_get::<String,_>("process_status").map_err(storage)? != "waiting"
                 || row.try_get::<i64,_>("revision").map_err(storage)? != command.expected_revision { return Err(RepositoryError::Conflict); }
-            let update = sql("update work_item_tasks set decision_request_id=?uuid,decision_category=?,decision_priority=?,decision_status=?,delivery_status='pending' where id=?uuid and decision_request_id is null and status='pending'",$pg);
-            let changed = sqlx::query(&update).bind(command.request_id.to_string()).bind(&command.category).bind(&command.priority).bind(&command.status).bind(&id_string).execute(&mut *tx).await.map_err(storage)?.rows_affected();
+            let update = sql("update work_item_tasks set decision_request_id=?uuid,decision_category=?,decision_priority=?,decision_status=?,decision_note=?,decision_revision=?,delivery_status='pending' where id=?uuid and decision_request_id is null and status='pending'",$pg);
+            let changed = sqlx::query(&update).bind(command.request_id.to_string()).bind((!information).then_some(&command.category)).bind((!information).then_some(&command.priority)).bind((!information).then_some(&command.status)).bind(&command.note).bind(command.expected_revision).bind(&id_string).execute(&mut *tx).await.map_err(storage)?.rows_affected();
             if changed != 1 { return Err(RepositoryError::Conflict); }
             let item: String = row.try_get("work_item_id").map_err(storage)?;
             let bump = sql("update work_items set revision=revision+1 where id=?uuid and revision=?",$pg);
@@ -303,7 +340,7 @@ impl WorkItems {
         self.member(actor, channel).await?;
         let channel = channel.to_string();
         macro_rules! list { ($pool:expr,$pg:expr) => {{
-            let query = sql("select distinct cast(a.id as text) as id,a.key,a.name from channel_process_bindings b join channel_process_applications ca on ca.binding_id=b.id join work_applications a on a.id=ca.application_id and a.enabled join channel_task_routes r on r.binding_id=b.id and r.task_key='review' and r.process_role='product-handler' and r.enabled join application_process_roles pr on pr.application_id=a.id and pr.process_role='product-handler' join application_processors p on p.application_id=a.id and p.user_id=pr.user_id and p.can_review join channel_memberships cm on cm.channel_id=r.channel_id and cm.user_id=p.user_id and cm.role<>'observer' where b.channel_id=?uuid and b.process_key='work-item' and b.namespace='sproyt' and b.definition_name='work-item-review' and b.definition_version='1.0.0' and b.enabled order by name,id",$pg);
+            let query = sql("select distinct cast(a.id as text) as id,a.key,a.name from channel_process_bindings b join channel_process_applications ca on ca.binding_id=b.id join work_applications a on a.id=ca.application_id and a.enabled join channel_task_routes r on r.binding_id=b.id and r.task_key='review' and r.process_role='product-handler' and r.enabled join application_process_roles pr on pr.application_id=a.id and pr.process_role='product-handler' join application_processors p on p.application_id=a.id and p.user_id=pr.user_id and p.can_review join channel_memberships cm on cm.channel_id=r.channel_id and cm.user_id=p.user_id and cm.role<>'observer' where b.channel_id=?uuid and b.process_key='work-item' and b.namespace='sproyt' and b.definition_name='work-item-review' and b.definition_version in ('1.0.0','1.1.0') and b.enabled order by name,id",$pg);
             let rows = sqlx::query(&query).bind(&channel).fetch_all($pool).await.map_err(storage)?;
             rows.into_iter().map(|row| Ok(WorkApplication { id: Uuid::parse_str(&row.try_get::<String,_>("id").map_err(storage)?).map_err(storage)?,
                 key: row.try_get("key").map_err(storage)?, name: row.try_get("name").map_err(storage)? })).collect()
@@ -419,10 +456,11 @@ impl WorkItems {
                 tx.commit().await.map_err(storage)?;
                 return Ok(view);
             }
-            let policy = sql("select cast(b.id as text) as binding_id,b.revision,cast(r.channel_id as text) as task_channel_id,cast(p.user_id as text) as reviewer_id from channel_process_bindings b join channel_process_applications ca on ca.binding_id=b.id join work_applications a on a.id=ca.application_id and a.enabled join channel_task_routes r on r.binding_id=b.id and r.task_key='review' and r.process_role='product-handler' and r.enabled join application_process_roles pr on pr.application_id=a.id and pr.process_role='product-handler' join application_processors p on p.application_id=a.id and p.user_id=pr.user_id and p.can_review join channel_memberships cm on cm.channel_id=r.channel_id and cm.user_id=p.user_id and cm.role<>'observer' where b.channel_id=?uuid and b.process_key='work-item' and b.namespace='sproyt' and b.definition_name='work-item-review' and b.definition_version='1.0.0' and b.enabled and a.id=?uuid order by p.user_id limit 1",$pg);
+            let policy = sql("select cast(b.id as text) as binding_id,b.revision,b.definition_version,cast(r.channel_id as text) as task_channel_id,cast(p.user_id as text) as reviewer_id from channel_process_bindings b join channel_process_applications ca on ca.binding_id=b.id join work_applications a on a.id=ca.application_id and a.enabled join channel_task_routes r on r.binding_id=b.id and r.task_key='review' and r.process_role='product-handler' and r.enabled join application_process_roles pr on pr.application_id=a.id and pr.process_role='product-handler' join application_processors p on p.application_id=a.id and p.user_id=pr.user_id and p.can_review join channel_memberships cm on cm.channel_id=r.channel_id and cm.user_id=p.user_id and cm.role<>'observer' where b.channel_id=?uuid and b.process_key='work-item' and b.namespace='sproyt' and b.definition_name='work-item-review' and b.definition_version in ('1.0.0','1.1.0') and b.enabled and a.id=?uuid order by p.user_id limit 1",$pg);
             let policy = sqlx::query(&policy).bind(&channel).bind(&app).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
             let binding: String = policy.try_get("binding_id").map_err(storage)?;
             let revision: i64 = policy.try_get("revision").map_err(storage)?;
+            let version: String = policy.try_get("definition_version").map_err(storage)?;
             let task_channel: String = policy.try_get("task_channel_id").map_err(storage)?;
             let reviewer: String = policy.try_get("reviewer_id").map_err(storage)?;
             let source_query = sql("select m.body,cast(m.edited_at as text) as edited_at from messages m join users u on u.id=m.sender_id and u.kind='human' where m.id=?uuid and m.channel_id=?uuid and m.deleted_at is null",$pg);
@@ -430,11 +468,11 @@ impl WorkItems {
             let body: String = row.try_get("body").map_err(storage)?;
             if body != command.expected_source_body { return Err(RepositoryError::Conflict); }
             let edited: Option<String> = row.try_get("edited_at").map_err(storage)?;
-            let insert = sql("insert into work_items(id,source_channel_id,source_message_id,source_body,source_edited_at,application_id,binding_id,binding_revision,title,description,requested_by,request_id,reviewer_id,task_channel_id) values(?uuid,?uuid,?uuid,?, ?,?uuid,?uuid,?,?,?,?uuid,?uuid,?uuid,?uuid) on conflict(requested_by,request_id) do nothing",$pg);
+            let insert = sql("insert into work_items(id,source_channel_id,source_message_id,source_body,source_edited_at,application_id,binding_id,binding_revision,title,description,requested_by,request_id,reviewer_id,task_channel_id,definition_version) values(?uuid,?uuid,?uuid,?, ?,?uuid,?uuid,?,?,?,?uuid,?uuid,?uuid,?uuid,?) on conflict(requested_by,request_id) do nothing",$pg);
             // source_edited_at is stored as text-compatible input in both DBs.
             let inserted = sqlx::query(&insert).bind(&id).bind(&channel).bind(&source).bind(&body).bind(&edited)
                 .bind(&app).bind(&binding).bind(revision).bind(command.title.trim()).bind(command.description.trim())
-                .bind(&actor).bind(&request).bind(&reviewer).bind(&task_channel)
+                .bind(&actor).bind(&request).bind(&reviewer).bind(&task_channel).bind(&version)
                 .execute(&mut *tx).await.map_err(storage)?.rows_affected();
             if inserted == 0 {
                 let row = sqlx::query(&existing).bind(&actor).bind(&request).fetch_one(&mut *tx).await.map_err(storage)?;
@@ -513,11 +551,11 @@ impl WorkItems {
             .as_ref()
             .ok_or_else(|| storage("Heart not configured"))?;
         macro_rules! details { ($pool:expr,$pg:expr) => {{
-            let query = sql("select cast(reviewer_id as text) as reviewer_id,cast(requested_by as text) as requested_by,cast(application_id as text) as application_id,cast(source_channel_id as text) as source_channel_id from work_items where id=?uuid",$pg);
+            let query = sql("select definition_version,cast(reviewer_id as text) as reviewer_id,cast(requested_by as text) as requested_by,cast(application_id as text) as application_id,cast(source_channel_id as text) as source_channel_id from work_items where id=?uuid",$pg);
             let row = sqlx::query(&query).bind(id).fetch_one($pool).await.map_err(storage)?;
-            (row.try_get::<String,_>("reviewer_id").map_err(storage)?,row.try_get::<String,_>("requested_by").map_err(storage)?,row.try_get::<String,_>("application_id").map_err(storage)?,row.try_get::<String,_>("source_channel_id").map_err(storage)?)
+            (row.try_get::<String,_>("reviewer_id").map_err(storage)?,row.try_get::<String,_>("requested_by").map_err(storage)?,row.try_get::<String,_>("application_id").map_err(storage)?,row.try_get::<String,_>("source_channel_id").map_err(storage)?,row.try_get::<String,_>("definition_version").map_err(storage)?)
         }}; }
-        let (reviewer, requester, application, channel) = match &self.store {
+        let (reviewer, requester, application, channel, version) = match &self.store {
             Store::Pg(pool) => details!(pool, true),
             Store::Sqlite(pool) => details!(pool, false),
         };
@@ -526,12 +564,16 @@ impl WorkItems {
                 self.http
                     .post(format!("{base}/api/v2/definitions"))
                     .header("Content-Type", "application/yaml")
-                    .body(DEFINITION),
+                    .body(if version == "1.1.0" {
+                        INFORMATION_DEFINITION
+                    } else {
+                        DEFINITION
+                    }),
             )
             .await?;
         if definition["namespace"] != "sproyt"
             || definition["name"] != "work-item-review"
-            || definition["version"] != "1.0.0"
+            || definition["version"] != version
             || definition["runtime"] != "v2"
         {
             return Err(RepositoryError::Conflict);
@@ -540,7 +582,7 @@ impl WorkItems {
         let started: Value = self.heart_response(self.http.post(format!("{base}/api/v2/instances"))
             .header("X-Heart-Client","sproyt-work-items").header("Idempotency-Key",id)
             .json(&json!({"definition_id":definition_id,"actor_id":requester,
-                "input_metadata":{"reviewer_id":reviewer,"work_item_id":id,"application_id":application,"source_channel_id":channel}}))).await?;
+                "input_metadata":{"reviewer_id":reviewer,"requester_id":requester,"work_item_id":id,"application_id":application,"source_channel_id":channel}}))).await?;
         let instance = started["instance"]["id"]
             .as_str()
             .ok_or(RepositoryError::Conflict)?;
@@ -595,32 +637,45 @@ impl WorkItems {
             .as_ref()
             .ok_or_else(|| storage("Heart not configured"))?;
         macro_rules! details { ($pool:expr,$pg:expr) => {{
-            let query = sql("select cast(heart_instance_id as text) as instance_id,cast(reviewer_id as text) as reviewer_id,cast(application_id as text) as application_id,cast(task_channel_id as text) as task_channel_id from work_items where id=?uuid and sync_lease_token=?uuid",$pg);
+            let query = sql("select definition_version,cast(requested_by as text) as requester_id,cast(source_channel_id as text) as source_channel_id,cast(heart_instance_id as text) as instance_id,cast(reviewer_id as text) as reviewer_id,cast(application_id as text) as application_id,cast(task_channel_id as text) as task_channel_id from work_items where id=?uuid and sync_lease_token=?uuid",$pg);
             let row = sqlx::query(&query).bind(id).bind(token).fetch_optional($pool).await.map_err(storage)?.ok_or(RepositoryError::Conflict)?;
             (row.try_get::<String,_>("instance_id").map_err(storage)?,row.try_get::<String,_>("reviewer_id").map_err(storage)?,
-             row.try_get::<String,_>("application_id").map_err(storage)?,row.try_get::<String,_>("task_channel_id").map_err(storage)?)
+             row.try_get::<String,_>("application_id").map_err(storage)?,row.try_get::<String,_>("task_channel_id").map_err(storage)?,
+             row.try_get::<String,_>("requester_id").map_err(storage)?,row.try_get::<String,_>("source_channel_id").map_err(storage)?,row.try_get::<String,_>("definition_version").map_err(storage)?)
         }}; }
-        let (instance, reviewer, application, channel) = match &self.store {
-            Store::Pg(pool) => details!(pool, true),
-            Store::Sqlite(pool) => details!(pool, false),
-        };
+        let (instance, reviewer, application, channel, requester, source_channel, version) =
+            match &self.store {
+                Store::Pg(pool) => details!(pool, true),
+                Store::Sqlite(pool) => details!(pool, false),
+            };
         macro_rules! commands { ($pool:expr,$pg:expr) => {{
-            let query = sql("select cast(t.id as text) as id,cast(t.decision_request_id as text) as request_id,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t where t.work_item_id=?uuid and t.status='pending' and t.decision_request_id is not null",$pg);
+            let query = sql("select cast(t.id as text) as id,cast(t.assignee_id as text) as actor_id,cast(t.decision_request_id as text) as request_id,t.node_id,t.decision_note,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t where t.work_item_id=?uuid and t.status='pending' and t.decision_request_id is not null",$pg);
             let rows = sqlx::query(&query).bind(id).fetch_all($pool).await.map_err(storage)?;
-            rows.into_iter().map(|row| Ok((row.try_get::<String,_>("id").map_err(storage)?,row.try_get::<String,_>("request_id").map_err(storage)?,
-                row.try_get::<String,_>("decision_category").map_err(storage)?,row.try_get::<String,_>("decision_priority").map_err(storage)?,row.try_get::<String,_>("decision_status").map_err(storage)?))).collect::<Result<Vec<(String,String,String,String,String)>>>()?
+            rows.into_iter().map(|row| Ok(HeartCompletion {id:row.try_get("id").map_err(storage)?,request:row.try_get("request_id").map_err(storage)?,actor:row.try_get("actor_id").map_err(storage)?,
+                result:completion_result(&row.try_get::<String,_>("node_id").map_err(storage)?,row.try_get("decision_category").map_err(storage)?,row.try_get("decision_priority").map_err(storage)?,row.try_get("decision_status").map_err(storage)?,row.try_get("decision_note").map_err(storage)?)})).collect::<Result<Vec<HeartCompletion>>>()?
         }}; }
         let commands = match &self.store {
             Store::Pg(pool) => commands!(pool, true),
             Store::Sqlite(pool) => commands!(pool, false),
         };
-        for (task, request, category, priority, status) in commands {
+        for mut command in commands {
+            if version == "1.0.0" {
+                command
+                    .result
+                    .as_object_mut()
+                    .expect("completion is an object")
+                    .remove("question");
+            }
             // Heart v2 deduplicates by Idempotency-Key. On ambiguous failure we
             // still inspect the authoritative task state before retrying.
-            let _ = self.http.post(format!("{base}/api/v2/user-tasks/{task}/complete"))
-                .header("X-Heart-Client","sproyt-work-items").header("Idempotency-Key",request)
-                .json(&json!({"actor_id":reviewer,"result_metadata":{"category":category,"priority":priority,"status":status}}))
-                .send().await;
+            let _ = self
+                .http
+                .post(format!("{base}/api/v2/user-tasks/{}/complete", command.id))
+                .header("X-Heart-Client", "sproyt-work-items")
+                .header("Idempotency-Key", command.request)
+                .json(&json!({"actor_id":command.actor,"result_metadata":command.result}))
+                .send()
+                .await;
         }
         let view = self
             .heart_response(self.http.get(format!("{base}/api/v2/instances/{instance}")))
@@ -631,6 +686,7 @@ impl WorkItems {
             || view["input_metadata"]["work_item_id"] != id
             || view["input_metadata"]["reviewer_id"] != reviewer
             || view["input_metadata"]["application_id"] != application
+            || (version == "1.1.0" && view["input_metadata"]["requester_id"] != requester)
         {
             return Err(RepositoryError::Conflict);
         }
@@ -641,7 +697,7 @@ impl WorkItems {
         ) {
             return Err(RepositoryError::Conflict);
         }
-        let tasks: Vec<HeartTask> = serde_json::from_value(
+        let mut tasks: Vec<HeartTask> = serde_json::from_value(
             self.heart_response(
                 self.http
                     .get(format!("{base}/api/v2/user-tasks"))
@@ -650,19 +706,58 @@ impl WorkItems {
             .await?,
         )
         .map_err(storage)?;
-        if tasks.len() > 1
-            || (status == "completed" && tasks.len() != 1)
+        if tasks.len() > if version == "1.1.0" { 3 } else { 1 }
+            || (status == "completed"
+                && (tasks.is_empty() || tasks.iter().any(|t| t.status != "completed")))
+            || tasks.iter().filter(|t| t.status == "pending").count() > 1
+            || tasks
+                .iter()
+                .map(|t| &t.node_id)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != tasks.len()
             || tasks.iter().any(|task| {
                 task.instance_id.to_string() != instance
-                    || task.node_id != "review"
-                    || task.assignee_id.to_string() != reviewer
+                    || match task.node_id.as_str() {
+                        "review" => task.assignee_id.to_string() != reviewer,
+                        "provide-information" => {
+                            version != "1.1.0" || task.assignee_id.to_string() != requester
+                        }
+                        "followup-review" => {
+                            version != "1.1.0" || task.assignee_id.to_string() != reviewer
+                        }
+                        _ => true,
+                    }
                     || !matches!(task.status.as_str(), "pending" | "completed" | "cancelled")
             })
         {
             return Err(RepositoryError::Conflict);
         }
+        if version == "1.1.0" && status == "completed" {
+            let review = tasks
+                .iter()
+                .find(|task| task.node_id == "review")
+                .ok_or(RepositoryError::Conflict)?;
+            let needs_information = review
+                .result_metadata
+                .as_ref()
+                .is_some_and(|value| value["status"] == "needs_information");
+            if tasks.len() != if needs_information { 3 } else { 1 } {
+                return Err(RepositoryError::Conflict);
+            }
+        }
+        tasks.sort_by_key(|task| match task.node_id.as_str() {
+            "review" => 0,
+            "provide-information" => 1,
+            _ => 2,
+        });
         for task in &tasks {
-            let created = self.project(id, token, &channel, task).await?;
+            let target = if task.node_id == "provide-information" {
+                &source_channel
+            } else {
+                &channel
+            };
+            let created = self.project(id, token, target, task).await?;
             if let Some(message) = created {
                 chat.announce_persisted_message(MessageId::from_uuid(message))
                     .await
@@ -704,12 +799,19 @@ impl WorkItems {
     ) -> Result<Option<Uuid>> {
         macro_rules! project { ($pool:expr,$pg:expr,$notify:path) => {{
             let mut tx = $pool.begin().await.map_err(storage)?;
-            let lease = sql("update work_items set sync_lease_until=sync_lease_until where id=?uuid and sync_lease_token=?uuid and task_channel_id=?uuid",$pg);
-            if sqlx::query(&lease).bind(item).bind(token).bind(channel).execute(&mut *tx).await.map_err(storage)?.rows_affected()!=1 { return Err(RepositoryError::Conflict); }
-            let existing = sql("select cast(message_id as text) as message_id,status,decision_category,decision_priority,decision_status from work_item_tasks where id=?uuid and work_item_id=?uuid",$pg);
+            let lease = sql("update work_items set sync_lease_until=sync_lease_until where id=?uuid and sync_lease_token=?uuid and ((?='provide-information' and source_channel_id=?uuid and requested_by=?uuid and definition_version='1.1.0') or (? in ('review','followup-review') and task_channel_id=?uuid and reviewer_id=?uuid and (?='review' or definition_version='1.1.0')))",$pg);
+            if sqlx::query(&lease).bind(item).bind(token).bind(&task.node_id).bind(channel).bind(task.assignee_id.to_string()).bind(&task.node_id).bind(channel).bind(task.assignee_id.to_string()).bind(&task.node_id).execute(&mut *tx).await.map_err(storage)?.rows_affected()!=1 { return Err(RepositoryError::Conflict); }
+            let version_query=sql("select definition_version from work_items where id=?uuid",$pg);
+            let version:String=sqlx::query_scalar(&version_query).bind(item).fetch_one(&mut *tx).await.map_err(storage)?;
+            let existing = sql("select cast(message_id as text) as message_id,status,decision_note,cast(decision_request_id as text) as decision_request_id,decision_category,decision_priority,decision_status from work_item_tasks where id=?uuid and work_item_id=?uuid",$pg);
             if let Some(row) = sqlx::query(&existing).bind(task.id.to_string()).bind(item).fetch_optional(&mut *tx).await.map_err(storage)? {
                 let old: String = row.try_get("status").map_err(storage)?;
-                if old=="completed" && task.status!="completed" { return Err(RepositoryError::Conflict); }
+                if old!="pending" && task.status!=old { return Err(RepositoryError::Conflict); }
+                if task.status=="completed" && version=="1.1.0" {
+                    let request:Option<String>=row.try_get("decision_request_id").map_err(storage)?;
+                    let expected=completion_result(&task.node_id,row.try_get("decision_category").map_err(storage)?,row.try_get("decision_priority").map_err(storage)?,row.try_get("decision_status").map_err(storage)?,row.try_get("decision_note").map_err(storage)?);
+                    if request.is_none() || task.result_metadata.as_ref()!=Some(&expected) {return Err(RepositoryError::Conflict);}
+                }
                 let update = sql("update work_item_tasks set status=?,delivery_status=case when ?='completed' then 'ready' else delivery_status end where id=?uuid and work_item_id=?uuid",$pg);
                 sqlx::query(&update).bind(&task.status).bind(&task.status).bind(task.id.to_string()).bind(item).execute(&mut *tx).await.map_err(storage)?;
                 if task.status=="completed" {
@@ -719,11 +821,20 @@ impl WorkItems {
                     if let (Some(category),Some(priority),Some(decision)) = (category,priority,decision) {
                         let settle = sql("update work_items set category=?,priority=?,status=? where id=?uuid",$pg);
                         sqlx::query(&settle).bind(category).bind(priority).bind(decision).bind(item).execute(&mut *tx).await.map_err(storage)?;
+                    } else if task.node_id=="provide-information" {
+                        let settle=sql("update work_items set status='reviewing' where id=?uuid",$pg);
+                        sqlx::query(&settle).bind(item).execute(&mut *tx).await.map_err(storage)?;
                     }
                 }
                 tx.commit().await.map_err(storage)?;
                 Ok(None)
             } else {
+                if version=="1.1.0" && task.status=="completed" {return Err(RepositoryError::Conflict);}
+                if matches!(task.node_id.as_str(),"provide-information"|"followup-review") {
+                    let previous=if task.node_id=="provide-information" {"review"} else {"provide-information"};
+                    let predecessor=sql("select 1 from work_item_tasks where work_item_id=?uuid and node_id=? and status='completed' and (?<>'review' or decision_status='needs_information')",$pg);
+                    if sqlx::query_scalar::<_,i32>(&predecessor).bind(item).bind(previous).bind(previous).fetch_optional(&mut *tx).await.map_err(storage)?.is_none() {return Err(RepositoryError::Conflict);}
+                }
                 let sequence_query = sql("update channel_sequences set next_sequence=next_sequence+1 where channel_id=?uuid returning cast(next_sequence-1 as text)",$pg);
                 let sequence: String = sqlx::query_scalar(&sequence_query).bind(channel).fetch_one(&mut *tx).await.map_err(storage)?;
                 let bot = Uuid::new_v5(&Uuid::NAMESPACE_OID,format!("sproyt-work-item:{item}").as_bytes()).to_string();
@@ -986,6 +1097,7 @@ mod tests {
             node_id: "review".into(),
             assignee_id: reviewer,
             status: "pending".into(),
+            result_metadata: None,
         };
         let projected = service
             .project(
@@ -1034,6 +1146,7 @@ mod tests {
             category: "bug".into(),
             priority: "high".into(),
             status: "planned".into(),
+            note: String::new(),
         };
         for unsupported_status in ["reviewing", "needs_information"] {
             assert!(matches!(
@@ -1189,6 +1302,7 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(finalized, ("planned".into(), "bug".into(), "high".into()));
+        exercise_information_handoff(&service, owner, reviewer, channel, app, source).await;
         let mut changed = command.clone();
         changed.title = "Different".into();
         assert!(matches!(
@@ -1210,6 +1324,432 @@ mod tests {
                 .await,
             Err(RepositoryError::NotFound)
         ));
+    }
+
+    async fn exercise_information_handoff(
+        service: &WorkItems,
+        owner: Uuid,
+        reviewer: Uuid,
+        source_channel: Uuid,
+        application: Uuid,
+        source: Uuid,
+    ) {
+        let review_channel = Uuid::now_v7();
+        macro_rules! configure {($pool:expr,$pg:expr)=>{{
+            let create=sql("insert into channels(id,slug,name,kind,created_by,circle_id) select ?uuid,?,'Review','private',created_by,circle_id from channels where id=?uuid",$pg);
+            sqlx::query(&create).bind(review_channel.to_string()).bind(review_channel.to_string()).bind(source_channel.to_string()).execute($pool).await.unwrap();
+            let members=sql("insert into channel_memberships(channel_id,user_id,role) select ?uuid,user_id,role from channel_memberships where channel_id=?uuid",$pg);
+            sqlx::query(&members).bind(review_channel.to_string()).bind(source_channel.to_string()).execute($pool).await.unwrap();
+            let sequence=sql("insert into channel_sequences(channel_id) values(?uuid)",$pg);
+            sqlx::query(&sequence).bind(review_channel.to_string()).execute($pool).await.unwrap();
+            let route=sql("update channel_task_routes set channel_id=?uuid where binding_id in (select id from channel_process_bindings where channel_id=?uuid)",$pg);
+            sqlx::query(&route).bind(review_channel.to_string()).bind(source_channel.to_string()).execute($pool).await.unwrap();
+            let binding=sql("update channel_process_bindings set definition_version='1.1.0',revision=revision+1 where channel_id=?uuid",$pg);
+            sqlx::query(&binding).bind(source_channel.to_string()).execute($pool).await.unwrap();
+        }};}
+        match &service.store {
+            Store::Pg(pool) => configure!(pool, true),
+            Store::Sqlite(pool) => configure!(pool, false),
+        };
+        let item = service
+            .register(
+                UserId::from_uuid(owner),
+                source_channel,
+                Registration {
+                    source_message_id: source,
+                    application_id: application,
+                    title: "Information handoff".into(),
+                    description: "A concrete bug".into(),
+                    request_id: Uuid::now_v7(),
+                    expected_source_body: "A concrete bug".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let instance = Uuid::now_v7();
+        let task_ids = [Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7()];
+        let mock_tasks = std::sync::Arc::new(tokio::sync::Mutex::new(vec![
+            json!({"id":task_ids[0],"instance_id":instance,"node_id":"review","assignee_id":reviewer,"status":"pending"}),
+        ]));
+        let receipts = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            (String, Value),
+        >::new()));
+        let view_tasks = mock_tasks.clone();
+        let get_tasks = mock_tasks.clone();
+        let post_tasks = mock_tasks.clone();
+        let post_receipts = receipts.clone();
+        let mock=axum::Router::new()
+            .route("/api/v2/definitions",axum::routing::post(|body:String| async move {
+                assert!(body.contains("version: '1.1.0'"));
+                assert!(body.contains("next: provide-information"));
+                axum::Json(json!({"id":Uuid::now_v7(),"namespace":"sproyt","name":"work-item-review","version":"1.1.0","runtime":"v2"}))
+            }))
+            .route("/api/v2/instances",axum::routing::post(move |headers:axum::http::HeaderMap,axum::Json(body):axum::Json<Value>| async move {
+                assert_eq!(headers["Idempotency-Key"],item.id.to_string());
+                assert_eq!(body["actor_id"],owner.to_string());
+                assert_eq!(body["input_metadata"]["requester_id"],owner.to_string());
+                axum::Json(json!({"instance":{"id":instance}}))
+            }))
+            .route("/api/v2/instances/{id}",axum::routing::get(move || {
+                let tasks=view_tasks.clone();async move {
+                    let tasks=tasks.lock().await;
+                    let completed=tasks.last().is_some_and(|t|t["status"]=="completed");
+                    axum::Json(json!({"id":instance,"namespace":"sproyt","runtime":"v2","status":if completed {"completed"} else {"waiting"},"input_metadata":{"work_item_id":item.id,"reviewer_id":reviewer,"requester_id":owner,"application_id":application}}))
+                }
+            }))
+            .route("/api/v2/user-tasks",axum::routing::get(move || {let tasks=get_tasks.clone();async move {axum::Json(tasks.lock().await.clone())}}))
+            .route("/api/v2/user-tasks/{id}/complete",axum::routing::post(move |axum::extract::Path(id):axum::extract::Path<String>,headers:axum::http::HeaderMap,axum::Json(body):axum::Json<Value>| {
+                let tasks=post_tasks.clone();let receipts=post_receipts.clone();async move {
+                    let key=headers["Idempotency-Key"].to_str().unwrap().to_owned();
+                    let mut receipts=receipts.lock().await;
+                    if let Some(previous)=receipts.get(&id) {assert_eq!(previous,&(key,body));return axum::http::StatusCode::NO_CONTENT;}
+                    let mut tasks=tasks.lock().await;
+                    let task=tasks.iter_mut().find(|t|t["id"]==id).unwrap();
+                    assert_eq!(body["actor_id"],task["assignee_id"]);
+                    task["status"]=json!("completed");task["result_metadata"]=body["result_metadata"].clone();
+                    let node=task["node_id"].as_str().unwrap().to_owned();
+                    receipts.insert(id,(key,body.clone()));
+                    let successor=match node.as_str() {"review" if body["result_metadata"]["status"]=="needs_information"=>Some((task_ids[1],"provide-information",owner)),"provide-information"=>Some((task_ids[2],"followup-review",reviewer)),_=>None};
+                    if let Some((id,node,actor))=successor {tasks.push(json!({"id":id,"instance_id":instance,"node_id":node,"assignee_id":actor,"status":"pending"}));}
+                    // An accepted completion with a lost response must still be reconciled.
+                    axum::http::StatusCode::BAD_GATEWAY
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let connected = WorkItems {
+            heart_url: Some(format!("http://{}", listener.local_addr().unwrap())),
+            ..service.clone()
+        };
+        let server = tokio::spawn(async move {
+            axum::serve(listener, mock).await.unwrap();
+        });
+        connected
+            // PostgreSQL's default casts epoch to bigint by rounding, while
+            // the worker clock floors seconds. Claim past that initial boundary.
+            .start_one(&item.id.to_string(), Utc::now().timestamp() + 2)
+            .await
+            .unwrap();
+        let token = Uuid::now_v7();
+        macro_rules! lease {
+            ($pool:expr,$pg:expr) => {{
+                let query = sql(
+                    "update work_items set sync_lease_token=?uuid where id=?uuid",
+                    $pg,
+                );
+                sqlx::query(&query)
+                    .bind(token.to_string())
+                    .bind(item.id.to_string())
+                    .execute($pool)
+                    .await
+                    .unwrap();
+            }};
+        }
+        match &service.store {
+            Store::Pg(pool) => lease!(pool, true),
+            Store::Sqlite(pool) => lease!(pool, false),
+        };
+        let repository = std::sync::Arc::new(
+            crate::db::SqliteChatRepository::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        repository.migrate().await.unwrap();
+        let chat = ChatEngine::start(repository);
+        let item_id = item.id.to_string();
+        let lease_token = token.to_string();
+        connected
+            .reconcile(&chat, &item_id, &lease_token)
+            .await
+            .unwrap();
+        macro_rules! message {
+            ($pool:expr,$pg:expr,$task:expr) => {{
+                let query = sql(
+                    "select cast(message_id as text) from work_item_tasks where id=?uuid",
+                    $pg,
+                );
+                Uuid::parse_str(
+                    &sqlx::query_scalar::<_, String>(&query)
+                        .bind($task.to_string())
+                        .fetch_one($pool)
+                        .await
+                        .unwrap(),
+                )
+                .unwrap()
+            }};
+        }
+        macro_rules! message_id {
+            ($task:expr) => {
+                match &service.store {
+                    Store::Pg(pool) => message!(pool, true, $task),
+                    Store::Sqlite(pool) => message!(pool, false, $task),
+                }
+            };
+        }
+        let review_message = message_id!(task_ids[0]);
+        let wrong_route = HeartTask {
+            id: task_ids[0],
+            instance_id: instance,
+            node_id: "review".into(),
+            assignee_id: reviewer,
+            status: "pending".into(),
+            result_metadata: None,
+        };
+        assert!(matches!(
+            connected
+                .project(
+                    &item_id,
+                    &lease_token,
+                    &source_channel.to_string(),
+                    &wrong_route
+                )
+                .await,
+            Err(RepositoryError::Conflict)
+        ));
+        let task = connected
+            .task(UserId::from_uuid(reviewer), task_ids[0], review_message)
+            .await
+            .unwrap();
+        assert!(task.can_decide && task.can_request_information);
+        assert!(
+            !connected
+                .task(UserId::from_uuid(owner), task_ids[0], review_message)
+                .await
+                .unwrap()
+                .can_decide
+        );
+        let question = Decision {
+            message_id: review_message,
+            request_id: Uuid::now_v7(),
+            expected_revision: task.revision,
+            category: "bug".into(),
+            priority: "high".into(),
+            status: "needs_information".into(),
+            note: "Which browser and version?".into(),
+        };
+        connected
+            .decide(UserId::from_uuid(reviewer), task_ids[0], question.clone())
+            .await
+            .unwrap();
+        connected
+            .reconcile(&chat, &item_id, &lease_token)
+            .await
+            .unwrap();
+        connected
+            .reconcile(&chat, &item_id, &lease_token)
+            .await
+            .unwrap();
+        connected
+            .decide(UserId::from_uuid(reviewer), task_ids[0], question.clone())
+            .await
+            .unwrap();
+        assert!(matches!(
+            connected
+                .decide(
+                    UserId::from_uuid(reviewer),
+                    task_ids[0],
+                    Decision {
+                        note: "Different question".into(),
+                        ..question.clone()
+                    }
+                )
+                .await,
+            Err(RepositoryError::Conflict)
+        ));
+        let info_message = message_id!(task_ids[1]);
+        {
+            let mut tasks = mock_tasks.lock().await;
+            tasks[0]["result_metadata"]["question"] = json!("Forged question");
+        }
+        assert!(matches!(
+            connected.reconcile(&chat, &item_id, &lease_token).await,
+            Err(RepositoryError::Conflict)
+        ));
+        mock_tasks.lock().await[0]["result_metadata"]["question"] = json!(question.note);
+        let info = connected
+            .task(UserId::from_uuid(owner), task_ids[1], info_message)
+            .await
+            .unwrap();
+        assert_eq!(
+            info.information_request.as_deref(),
+            Some("Which browser and version?")
+        );
+        assert!(info.can_decide);
+        assert!(
+            !connected
+                .task(UserId::from_uuid(reviewer), task_ids[1], info_message)
+                .await
+                .unwrap()
+                .can_decide
+        );
+        assert!(matches!(
+            connected
+                .task(UserId::from_uuid(owner), task_ids[1], review_message)
+                .await,
+            Err(RepositoryError::NotFound)
+        ));
+        let answer = Decision {
+            message_id: info_message,
+            request_id: Uuid::now_v7(),
+            expected_revision: info.revision,
+            category: String::new(),
+            priority: String::new(),
+            status: String::new(),
+            note: "Edge on Android 16".into(),
+        };
+        assert!(matches!(
+            connected
+                .decide(UserId::from_uuid(reviewer), task_ids[1], answer.clone())
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        macro_rules! membership {($pool:expr,$pg:expr,$role:expr)=>{{
+            let query=sql("update channel_memberships set role=? where channel_id=?uuid and user_id=?uuid",$pg);
+            sqlx::query(&query).bind($role).bind(source_channel.to_string()).bind(owner.to_string()).execute($pool).await.unwrap();
+        }};}
+        match &service.store {
+            Store::Pg(pool) => membership!(pool, true, "observer"),
+            Store::Sqlite(pool) => membership!(pool, false, "observer"),
+        };
+        assert!(
+            connected
+                .task(UserId::from_uuid(owner), task_ids[1], info_message)
+                .await
+                .unwrap()
+                .blocked
+        );
+        assert!(matches!(
+            connected
+                .decide(UserId::from_uuid(owner), task_ids[1], answer.clone())
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        match &service.store {
+            Store::Pg(pool) => membership!(pool, true, "owner"),
+            Store::Sqlite(pool) => membership!(pool, false, "owner"),
+        };
+        assert!(matches!(
+            connected
+                .decide(
+                    UserId::from_uuid(owner),
+                    task_ids[1],
+                    Decision {
+                        note: " ".into(),
+                        ..answer.clone()
+                    }
+                )
+                .await,
+            Err(RepositoryError::Conflict)
+        ));
+        connected
+            .decide(UserId::from_uuid(owner), task_ids[1], answer.clone())
+            .await
+            .unwrap();
+        connected
+            .reconcile(&chat, &item_id, &lease_token)
+            .await
+            .unwrap();
+        connected
+            .decide(UserId::from_uuid(owner), task_ids[1], answer)
+            .await
+            .unwrap();
+        let final_message = message_id!(task_ids[2]);
+        let final_task = connected
+            .task(UserId::from_uuid(reviewer), task_ids[2], final_message)
+            .await
+            .unwrap();
+        assert!(final_task.can_decide && !final_task.can_request_information);
+        assert_eq!(final_task.category.as_deref(), Some("bug"));
+        assert_eq!(final_task.priority.as_deref(), Some("high"));
+        assert_eq!(
+            final_task.information_response.as_deref(),
+            Some("Edge on Android 16")
+        );
+        let final_decision = Decision {
+            message_id: final_message,
+            request_id: Uuid::now_v7(),
+            expected_revision: final_task.revision,
+            category: "bug".into(),
+            priority: "high".into(),
+            status: "resolved".into(),
+            note: String::new(),
+        };
+        assert!(matches!(
+            connected
+                .decide(
+                    UserId::from_uuid(reviewer),
+                    task_ids[2],
+                    Decision {
+                        status: "needs_information".into(),
+                        note: "Again?".into(),
+                        ..final_decision.clone()
+                    }
+                )
+                .await,
+            Err(RepositoryError::Conflict)
+        ));
+        connected
+            .decide(UserId::from_uuid(reviewer), task_ids[2], final_decision)
+            .await
+            .unwrap();
+        connected
+            .reconcile(&chat, &item_id, &lease_token)
+            .await
+            .unwrap();
+        // A new service instance must observe the same receipts and messages.
+        let restarted = connected.clone();
+        restarted
+            .reconcile(&chat, &item_id, &lease_token)
+            .await
+            .unwrap();
+        let finished = restarted
+            .task(UserId::from_uuid(reviewer), task_ids[2], final_message)
+            .await
+            .unwrap();
+        assert_eq!(finished.process_status, "completed");
+        assert_eq!(finished.decision_status.as_deref(), Some("resolved"));
+        macro_rules! count {
+            ($pool:expr,$pg:expr) => {{
+                let query = sql(
+                    "select count(*) from work_item_tasks where work_item_id=?uuid",
+                    $pg,
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(&query)
+                        .bind(&item_id)
+                        .fetch_one($pool)
+                        .await
+                        .unwrap(),
+                    3
+                );
+                let query = sql(
+                    "select cast(channel_id as text) from work_item_tasks where id=?uuid",
+                    $pg,
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(&query)
+                        .bind(task_ids[1].to_string())
+                        .fetch_one($pool)
+                        .await
+                        .unwrap(),
+                    source_channel.to_string()
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(&query)
+                        .bind(task_ids[2].to_string())
+                        .fetch_one($pool)
+                        .await
+                        .unwrap(),
+                    review_channel.to_string()
+                );
+            }};
+        }
+        match &service.store {
+            Store::Pg(pool) => count!(pool, true),
+            Store::Sqlite(pool) => count!(pool, false),
+        };
+        assert_eq!(receipts.lock().await.len(), 3);
+        server.abort();
     }
 
     #[tokio::test]
@@ -1330,6 +1870,7 @@ mod tests {
             node_id: "review".into(),
             assignee_id: reviewer,
             status: "pending".into(),
+            result_metadata: None,
         };
         let message = service
             .project(
@@ -1367,5 +1908,6 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        exercise_information_handoff(&service, owner, reviewer, channel, app, source).await;
     }
 }

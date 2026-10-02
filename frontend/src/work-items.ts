@@ -11,6 +11,9 @@ export type WorkItemTask = Readonly<{
   category: string | null; priority: string | null; decision_status: string | null;
   assignee_name: string; can_decide: boolean;
   blocked: boolean;
+  node_id: "review" | "provide-information" | "followup-review";
+  can_request_information: boolean;
+  information_request: string | null; information_response: string | null;
 }>;
 
 export function workItemTaskId(body: string): string | null {
@@ -27,6 +30,11 @@ export function decodeWorkItemTask(value: unknown): WorkItemTask {
     || !["starting", "waiting", "completed", "cancelled", "failed"].includes(String(value.process_status))
     || !["ready", "pending", "failed"].includes(String(value.delivery_status)) || typeof value.can_decide !== "boolean"
     || typeof value.assignee_name !== "string" || typeof value.blocked !== "boolean"
+    || !["review", "provide-information", "followup-review"].includes(String(value.node_id))
+    || typeof value.can_request_information !== "boolean"
+    || (value.can_request_information && value.node_id !== "review")
+    || !(value.information_request === null || typeof value.information_request === "string")
+    || !(value.information_response === null || typeof value.information_response === "string")
     || !["bug", "change", "question", null].includes(value.category as string | null)
     || !["untriaged", "low", "normal", "high", "critical", null].includes(value.priority as string | null)
     || !["reviewing", "needs_information", "planned", "resolved", "rejected", null].includes(value.decision_status as string | null)) {
@@ -37,7 +45,7 @@ export function decodeWorkItemTask(value: unknown): WorkItemTask {
 
 export class WorkItemApi {
   private readonly applicationsCache = new Map<string, Promise<readonly WorkApplication[]>>();
-  private readonly admissions = new Map<string, { payload: string; id: string }>();
+  private readonly admissions = new Map<string, { payload: string; id: string; revision?: number }>();
   constructor(private readonly http: HttpClient, private readonly identity: () => string) {}
 
   applications(channelId: string): Promise<readonly WorkApplication[]> {
@@ -91,24 +99,24 @@ export class WorkItemApi {
     return task;
   }
 
-  async decide(task: WorkItemTask, category: string, priority: string, status: string): Promise<WorkItemTask> {
-    const payload = JSON.stringify({ task: task.id, message: task.message_id, revision: task.revision, category, priority, status });
+  async decide(task: WorkItemTask, category: string, priority: string, status: string, note = ""): Promise<WorkItemTask> {
+    const payload = JSON.stringify({ task: task.id, message: task.message_id, category, priority, status, note });
     const key = `sproyt-work-item-decision:${this.identity()}:${task.id}`;
     let admission = this.admissions.get(key);
     if (!admission) {
       try {
         const saved = JSON.parse(sessionStorage.getItem(key) || "null") as unknown;
-        if (isRecord(saved) && saved.payload === payload && uuid(saved.id)) admission = { payload, id: saved.id };
+        if (isRecord(saved) && saved.payload === payload && uuid(saved.id) && Number.isSafeInteger(saved.revision) && Number(saved.revision) > 0) admission = { payload, id: saved.id, revision: Number(saved.revision) };
       } catch { /* optional storage */ }
     }
     if (!admission || admission.payload !== payload) {
-      admission = { payload, id: crypto.randomUUID() };
+      admission = { payload, id: crypto.randomUUID(), revision: task.revision };
       this.admissions.set(key, admission);
       try { sessionStorage.setItem(key, JSON.stringify(admission)); } catch { /* optional storage */ }
     }
     const result = await this.http.json(`/api/v1/work-item-tasks/${encodeURIComponent(task.id)}/decide`, decodeWorkItemTask,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-      message_id: task.message_id, request_id: admission.id, expected_revision: task.revision, category, priority, status
+      message_id: task.message_id, request_id: admission.id, expected_revision: admission.revision ?? task.revision, category, priority, status, note
     }) });
     if (result.id !== task.id || result.message_id !== task.message_id) throw new Error("Avgjerda gjeld ei anna oppgåve.");
     this.admissions.delete(key);
