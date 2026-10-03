@@ -309,7 +309,7 @@ impl CircleChatAgents {
                 let authority_query=sql("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role in ('owner','moderator')",$pg) + if $pg { " for share" } else { "" };
                 let owner: Option<String> = sqlx::query_scalar(&authority_query)
                     .bind(circle).bind(actor.to_string()).fetch_optional(&mut *tx).await.map_err(storage)?;
-                if owner.is_none() { return Err(RepositoryError::PermissionDenied); }
+                if owner.is_none() { tx.rollback().await.map_err(storage)?; return Err(RepositoryError::PermissionDenied); }
                 let count: i64 = sqlx::query_scalar(&sql("select count(*) from circle_chat_agents where circle_id=?uuid",$pg)).bind(circle).fetch_one(&mut *tx).await.map_err(storage)?;
                 if count >= 10 { return Err(RepositoryError::Conflict); }
                 sqlx::query(&sql("insert into users(id,kind,display_name,external_provider,external_subject,created_at) values(?uuid,'agent',?,?,?,current_timestamp)",$pg))
@@ -358,7 +358,7 @@ impl CircleChatAgents {
                 let authority_query=sql("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role in ('owner','moderator')",$pg) + if $pg { " for share" } else { "" };
                 let owner: Option<String> = sqlx::query_scalar(&authority_query)
                     .bind(circle).bind(actor.to_string()).fetch_optional(&mut *tx).await.map_err(storage)?;
-                if owner.is_none() { return Err(RepositoryError::PermissionDenied); }
+                if owner.is_none() { tx.rollback().await.map_err(storage)?; return Err(RepositoryError::PermissionDenied); }
                 let changed = sqlx::query(&sql("update circle_chat_agents set trigger_words=?,response_phrases=?,enabled=case when ?='true' then true else false end,revision=revision+1,updated_by=?uuid,updated_at=?int where agent_id=?uuid and circle_id=?uuid and revision=?int",$pg))
                     .bind(&triggers).bind(&phrases).bind(input.enabled.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(id).bind(circle).bind(expected.to_string())
                     .execute(&mut *tx).await.map_err(storage)?.rows_affected();

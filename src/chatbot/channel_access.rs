@@ -81,7 +81,13 @@ impl CircleChatAgents {
         }
         macro_rules! change {
             ($pool:expr, $pg:expr) => {{
-                let mut tx = $pool.begin().await.map_err(storage)?;
+                // Acquire SQLite's writer before reading authority/revision,
+                // avoiding a deferred read-to-write upgrade under contention.
+                let mut tx = if $pg {
+                    $pool.begin().await.map_err(storage)?
+                } else {
+                    $pool.begin_with("BEGIN IMMEDIATE").await.map_err(storage)?
+                };
                 // Circle authority precedes channel membership, matching
                 // leave_circle. Publication needs only channel -> agent.
                 let circle_query = sql("select cast(circle_id as text) from channels where id=?uuid", $pg);

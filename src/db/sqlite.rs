@@ -1654,6 +1654,7 @@ impl ChatRepository for SqliteChatRepository {
                     .fetch_optional(&mut *transaction)
                     .await
                     .map_err(sql_error)?;
+                transaction.rollback().await.map_err(sql_error)?;
                 return Err(if exists.is_some() {
                     RepositoryError::PermissionDenied
                 } else {
@@ -1689,6 +1690,7 @@ impl ChatRepository for SqliteChatRepository {
                     .fetch_optional(&mut *transaction)
                     .await
                     .map_err(sql_error)?;
+                transaction.rollback().await.map_err(sql_error)?;
                 return Err(if exists.is_some() {
                     RepositoryError::PermissionDenied
                 } else {
@@ -2818,6 +2820,7 @@ impl AgentRepository for SqliteChatRepository {
             .map_err(sql_error)?
             .rows_affected();
             if changed == 0 {
+                transaction.rollback().await.map_err(sql_error)?;
                 return Err(RepositoryError::PermissionDenied);
             }
             sqlx::query(
@@ -2858,6 +2861,7 @@ impl AgentRepository for SqliteChatRepository {
                 .bind(agent_id.to_string()).bind(actor.to_string()).bind(now)
                 .fetch_optional(&mut *tx).await.map_err(sql_error)?;
             if allowed.is_none() {
+                tx.rollback().await.map_err(sql_error)?;
                 return Err(RepositoryError::PermissionDenied);
             }
             sqlx::query(
