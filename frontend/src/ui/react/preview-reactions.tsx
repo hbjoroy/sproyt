@@ -1,6 +1,8 @@
-import { Button, Dialog, Status, openReactionPicker } from "@sproyt/ui/react";
+import { Button, Dialog, Status } from "@sproyt/ui/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { openEmojiPicker } from "./emoji-picker";
+import type { SavedEmojiApi } from "../../saved-emojis";
 import type { ChatMessage } from "../../types";
 
 export interface PreviewReaction {
@@ -11,6 +13,7 @@ export interface PreviewReaction {
 }
 
 export interface PreviewReactionHost {
+  readonly savedEmojis: SavedEmojiApi;
   readonly reactions: (messageId: string) => readonly PreviewReaction[];
   readonly reactionError: (messageId: string) => string | undefined;
   readonly toggleReaction: (messageId: string, emoji: string) => void;
@@ -106,7 +109,7 @@ export function createPreviewReactionPicker(host: PreviewReactionHost) {
       // invocations the same visible focus-return target as keyboard activation.
       const control = anchor.matches("button") ? anchor : anchor.querySelector("button");
       if (control instanceof HTMLElement) control.focus({ preventScroll: true });
-      close = openReactionPicker(anchor, {
+      close = openEmojiPicker(anchor, host.savedEmojis, {
         title: "Reager på meldinga", closeLabel: "Lukk reaksjonsveljaren",
         onSelect: emoji => host.toggleReaction(message.id, emoji)
       });
@@ -115,49 +118,6 @@ export function createPreviewReactionPicker(host: PreviewReactionHost) {
       const dialog = anchor.closest(".sp-theme")?.querySelector(".sp-reaction-picker");
       activeDialog = dialog;
       if (!dialog) return;
-      // Extend the focused native popup with the app's existing arbitrary
-      // Unicode reaction contract, preserving its Escape/focus restoration.
-      const custom = document.createElement("details");
-      custom.className = "sp-custom-reaction";
-      const disclosure = document.createElement("summary");
-      disclosure.textContent = "Eigen emoji";
-      const form = document.createElement("form");
-      const label = document.createElement("label");
-      label.className = "sp-label";
-      label.textContent = "Lim inn Unicode-emoji";
-      const input = document.createElement("input");
-      input.className = "sp-input";
-      input.maxLength = 32;
-      input.inputMode = "text";
-      input.autocomplete = "off";
-      input.placeholder = "🦀";
-      label.append(input);
-      const submit = document.createElement("button");
-      submit.type = "submit";
-      submit.className = "sp-button";
-      submit.textContent = "↑";
-      submit.title = "Bruk emoji";
-      submit.setAttribute("aria-label", "Bruk emoji");
-      submit.disabled = true;
-      input.addEventListener("input", () => { submit.disabled = !input.value.trim(); });
-      form.append(label, submit);
-      form.addEventListener("submit", event => {
-        event.preventDefault();
-        if (!input.value.trim()) return;
-        host.toggleReaction(message.id, input.value.trim());
-        close?.();
-      });
-      const keepInViewport = () => {
-        if (!(dialog instanceof HTMLElement)) return;
-        const viewport = window.visualViewport;
-        const bottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight) - 12;
-        const bounds = dialog.getBoundingClientRect();
-        if (bounds.bottom > bottom) dialog.style.top = `${Math.max((viewport?.offsetTop ?? 0) + 12, bottom - bounds.height)}px`;
-      };
-      custom.addEventListener("toggle", () => { if (custom.open) input.focus(); keepInViewport(); });
-      custom.append(disclosure, form);
-      dialog.append(custom);
-      keepInViewport();
       const sync = () => {
         const selected = new Set(host.reactions(message.id).filter(item => item.reactedByMe).map(item => item.emoji));
         dialog.querySelectorAll(".sp-emoji").forEach(button => button.setAttribute("aria-pressed", String(selected.has(button.textContent ?? ""))));

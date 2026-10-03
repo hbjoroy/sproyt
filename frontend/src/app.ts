@@ -1,6 +1,7 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
       import { ProcessPilotApi } from "./process-pilot";
       import { WorkItemApi } from "./work-items";
+      import { SavedEmojiApi } from "./saved-emojis";
       import { CircleChatAgentApi } from "./chat-agents";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
@@ -580,6 +581,7 @@
           }
         }
       });
+      const savedEmojisApi = new SavedEmojiApi(http);
       const notificationsApi = new NotificationApi(http);
       imageGeneration.subscribe(() => refreshDevelopmentPreview());
       const processesApi = new ProcessApi(http);
@@ -5988,6 +5990,7 @@
               emoji, count: reaction.count, reactedByMe: reaction.reactedByMe,
               names: reaction.userIds.map(userId => userId === currentParticipantId ? "Du" : activeProfile(userId)?.display_name || "Ein ven")
             })),
+            savedEmojis: savedEmojisApi,
             reactionError: (messageId) => developmentReactionErrors.get(messageId),
             toggleReaction: (messageId, emoji) => {
               developmentReactionErrors.delete(messageId);

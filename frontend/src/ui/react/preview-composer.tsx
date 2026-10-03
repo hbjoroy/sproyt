@@ -1,7 +1,9 @@
-import { Button, Dialog, Status, openReactionPicker, reactionEmoji } from "@sproyt/ui/react";
+import { Button, Dialog, Status } from "@sproyt/ui/react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ComposerSnapshot } from "../../application/composer-controller";
 import type { ComposerTarget } from "./host-adapter";
+import { openEmojiPicker } from "./emoji-picker";
+import { pastedEmoji, type SavedEmojiApi } from "../../saved-emojis";
 import { DraftComposer } from "./draft-composer";
 import { PreviewAttachments } from "./preview-media";
 
@@ -15,6 +17,7 @@ export interface PreviewMention {
 export type PreviewComposerState = ComposerSnapshot;
 
 export interface PreviewComposerHost {
+  readonly savedEmojis: SavedEmojiApi;
   readonly composer: (target: ComposerTarget) => PreviewComposerState;
   readonly changeDraft: (target: ComposerTarget, value: string) => void;
   readonly send: (target: ComposerTarget) => void;
@@ -37,6 +40,7 @@ export function PreviewComposer({ host, target }: {
   const closeEmoji = useRef<(() => void) | undefined>(undefined);
   const selection = useRef({ start: 0, end: 0 });
   const pendingSelection = useRef<number | null>(null);
+  const [emojiSaveError, setEmojiSaveError] = useState("");
   const [caret, setCaret] = useState<number | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [selected, setSelected] = useState(0);
@@ -144,6 +148,11 @@ export function PreviewComposer({ host, target }: {
       }
     }} onPasteCapture={event => {
       const files = [...event.clipboardData.files].filter(file => /^(image|video)\//.test(file.type));
+      const emoji = pastedEmoji(event.clipboardData.getData("text/plain"));
+      if (!files.length && emoji && !state.disabled && !state.busy) {
+        setEmojiSaveError("");
+        void host.savedEmojis.save(emoji).catch(error => setEmojiSaveError(`Emoji er sett inn, men kunne ikkje lagrast: ${error instanceof Error ? error.message : String(error)}. Bruk Eigen emoji i veljaren for å prøve igjen.`));
+      }
       if (files.length) {
         event.preventDefault();
         if (!state.disabled && !state.busy) host.upload(target, files);
@@ -164,6 +173,7 @@ export function PreviewComposer({ host, target }: {
       sendOnEnter={state.sendOnEnter} error={state.error}
       hint={state.sendOnEnter ? "Enter sender · Shift+Enter gir ny linje" : "Bruk Send for å sende"}
       leading={<>
+        {emojiSaveError && <Status tone="error">{emojiSaveError}</Status>}
         {matches.length > 0 && <div id={listId} role="listbox" aria-label="Omtaleforslag">
           {matches.map((person, index) => <Button key={person.id} id={`${listId}-${index}`} role="option"
             aria-selected={index === selectedIndex} onPointerDown={event => event.preventDefault()}
@@ -179,9 +189,8 @@ export function PreviewComposer({ host, target }: {
           const field = input();
           if (field) updateSelection(field);
           closeEmoji.current?.();
-          closeEmoji.current = openReactionPicker(event.currentTarget, {
-            title: "Set inn emoji", searchLabel: "Finn emoji",
-            items: [...reactionEmoji, ["😀", "Stort smil, glad"]],
+          closeEmoji.current = openEmojiPicker(event.currentTarget, host.savedEmojis, {
+            title: "Set inn emoji",
             onSelect: emoji => replaceSelection(emoji)
           });
         }}><span aria-hidden="true">☺</span></Button>

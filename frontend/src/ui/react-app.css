@@ -379,3 +379,11 @@
 }
 
 .sp-circle-agent-enabled input { width: 1.1rem; height: 1.1rem; }
+
+/* Personal choices share the compact six-column picker and touch targets. */
+.sp-personal-emoji-picker { box-shadow: none; }
+.sp-saved-emojis { border-bottom: 1px solid var(--sp-line); padding-bottom: 8px; margin-bottom: 8px; }
+.sp-saved-emoji-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .8125rem; }
+.sp-saved-emoji-head .sp-button { width: 44px; height: 44px; padding: 0; }
+.sp-saved-emoji-grid { max-height: 176px; overflow: auto; }
+.sp-saved-emojis .sp-help:empty { display: none; }

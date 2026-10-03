@@ -16,6 +16,81 @@ use crate::{
     },
 };
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SavedEmojiInput {
+    emoji: String,
+}
+
+pub(crate) async fn saved_emojis(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    if let Err(error) = state.chat.ensure_user(principal.user.clone()).await {
+        return chat_error_response(error);
+    }
+    match state.chat.saved_emojis(principal.user.id).await {
+        Ok(emojis) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Json(emojis),
+        )
+            .into_response(),
+        Err(error) => chat_error_response(error),
+    }
+}
+
+pub(crate) async fn add_saved_emoji(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(input): Json<SavedEmojiInput>,
+) -> axum::response::Response {
+    change_saved_emoji(state, query, headers, input, true).await
+}
+
+pub(crate) async fn remove_saved_emoji(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(input): Json<SavedEmojiInput>,
+) -> axum::response::Response {
+    change_saved_emoji(state, query, headers, input, false).await
+}
+
+async fn change_saved_emoji(
+    state: AppState,
+    query: WsQuery,
+    headers: HeaderMap,
+    input: SavedEmojiInput,
+    saved: bool,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    if let Err(error) = state.chat.ensure_user(principal.user.clone()).await {
+        return chat_error_response(error);
+    }
+    match state
+        .chat
+        .save_emoji(principal.user.id, input.emoji, saved)
+        .await
+    {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(crate::chat::ChatError::Repository(crate::domain::RepositoryError::Conflict)) => (
+            axum::http::StatusCode::CONFLICT,
+            "Du kan lagre høgst 50 emoji. Fjern ein før du legg til ein ny.",
+        )
+            .into_response(),
+        Err(error) => chat_error_response(error),
+    }
+}
+
 pub(crate) async fn enable_channel_notifications(
     State(state): State<AppState>,
     Path(channel): Path<String>,
