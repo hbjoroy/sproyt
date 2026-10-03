@@ -20,7 +20,7 @@ use crate::domain::{
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId, MessageLimit,
     MessageReactionChange, MessageReactionSummary, PrepareEnrollmentInvitation, PresenceLease,
-    RepositoryError, SendMessage, TextValidationError, User, UserId, UserProfile,
+    RenameCircle, RepositoryError, SendMessage, TextValidationError, User, UserId, UserProfile,
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
@@ -440,6 +440,26 @@ impl ChatEngine {
             .list_circles_for_user(actor)
             .await
             .map_err(ChatError::from)
+    }
+
+    pub fn subscribe_circle_updates(&self) -> Option<broadcast::Receiver<()>> {
+        self.repository.subscribe_circle_updates()
+    }
+
+    pub async fn rename_circle(
+        &self,
+        actor: UserId,
+        circle_id: crate::domain::CircleId,
+        name: DisplayName,
+    ) -> Result<Circle, ChatError> {
+        self.repository
+            .rename_circle(RenameCircle {
+                actor,
+                circle_id,
+                name,
+            })
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn delete_circle(

@@ -123,6 +123,10 @@ pub enum ClientCommand {
         slug: String,
         name: String,
     },
+    RenameCircle {
+        circle_id: crate::CircleId,
+        name: String,
+    },
     ListMyCircles,
     DeleteCircle {
         circle_id: crate::CircleId,
@@ -273,6 +277,11 @@ pub enum ServerEvent {
     CircleCreated {
         circle: crate::Circle,
     },
+    CircleRenamed {
+        circle: crate::Circle,
+    },
+    /// Privacy-preserving invalidation: clients reload only authorized circles and visible invites.
+    CirclesChanged,
     CirclesListed {
         circles: Vec<(crate::Circle, crate::CircleRole)>,
     },

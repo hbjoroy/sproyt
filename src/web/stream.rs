@@ -243,6 +243,7 @@ pub(crate) async fn events_handler(
     let mut shutdown = state.operations.subscribe_shutdown();
     let chat = state.chat;
     let auth = state.auth;
+    let mut circle_updates = chat.subscribe_circle_updates();
     let stream = async_stream::stream! {
         yield Ok::<Event, Infallible>(Event::default().comment("connected"));
         if let (Some(channel_id), Some(request_id), Some(mut subscription)) = (channel_id, request_id, subscription) {
@@ -266,6 +267,9 @@ pub(crate) async fn events_handler(
             heartbeat.tick().await;
             loop {
                 tokio::select! {
+                    changed = ws::next_circle_update(&mut circle_updates) => {
+                        if changed { yield frame(ServerEnvelope::event(ServerEvent::CirclesChanged)); } else { circle_updates = None; }
+                    }
                     result = subscription.receiver.recv() => match result {
                         Ok(event) => {
                             if !channel_visible(&chat, &participant_id, &channel_id).await { break; }
@@ -302,6 +306,9 @@ pub(crate) async fn events_handler(
             heartbeat.tick().await;
             loop {
                 tokio::select! {
+                    changed = ws::next_circle_update(&mut circle_updates) => {
+                        if changed { yield frame(ServerEnvelope::event(ServerEvent::CirclesChanged)); } else { circle_updates = None; }
+                    }
                     _ = auth_tick.tick() => if auth.authenticate_request(requested_name.clone(), cookie.as_deref()).await.is_err() { break; },
                     _ = heartbeat.tick() => yield Ok::<Event, Infallible>(Event::default().event("heartbeat").data("1")),
                     result = shutdown.changed() => if result.is_err() || *shutdown.borrow() { break; },

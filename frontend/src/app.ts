@@ -466,6 +466,7 @@
       const peopleDirectStatuses = new Map<string, string>();
       const circleInvitePersonStatuses = new Map<string, string>();
       const invitationInspectionCache = new Map<string, InvitationCache>();
+      const invalidatedInvitationInspections = new Set<string>();
       const invitationCards = createInvitationCards({
         participantId: () => currentParticipantId,
         inspect: requestInvitationInspection,
@@ -3188,6 +3189,7 @@
           if (restoredCircle) sendCommand("list_joinable_channels", { circle_id: restoredCircle });
           updateOnboardingButtons();
           renderChannels();
+          refreshVisibleInvitationCards();
           return;
         }
         if (event.type === "circle_created") {
@@ -3211,6 +3213,17 @@
           sendCommand("create_channel", {
             slug: scopedCircleChannelSlug(event.payload.circle.id, "prat"), name: "Prat", kind: "private", circle_id: event.payload.circle.id
           });
+          return;
+        }
+        if (event.type === "circles_changed") {
+          sendCommand("list_my_circles");
+          return;
+        }
+        if (event.type === "circle_renamed") {
+          const existing = knownCircles.get(event.payload.circle.id);
+          if (existing) knownCircles.set(existing.id, { ...existing, ...event.payload.circle });
+          sendCommand("list_my_circles");
+          renderChannels();
           return;
         }
         if (event.type === "circle_deleted") {
@@ -3291,6 +3304,7 @@
           return;
         }
         if (event.type === "invitation_inspected" || event.type === "invitation_declined") {
+          if (event.type === "invitation_inspected" && refreshInvalidatedInvitationInspection(event.payload.token)) return;
           if (event.type === "invitation_declined") invitationCards.update(event.payload.token, { pending: undefined, error: undefined });
           invitationInspectionCache.set(event.payload.token, { status: "resolved", invitation: { ...event.payload.invitation, response: event.payload.invitation.response ?? undefined } });
           updateInvitationCards(event.payload.token, event.payload.invitation);
@@ -3751,6 +3765,7 @@
             return;
           }
           if (requestedCommand === "inspect_invitation") {
+            if (inspectedInvitationToken && refreshInvalidatedInvitationInspection(inspectedInvitationToken)) return;
             const message = event.payload.code === "not_found"
               ? "Invitasjonen finst ikkje eller er ikkje gyldig lenger."
               : "Invitasjonen kunne ikkje hentast no.";
@@ -5484,9 +5499,17 @@
         requestInvitationInspection(token);
       }
 
+      function refreshInvalidatedInvitationInspection(token: string): boolean {
+        if (!invalidatedInvitationInspections.delete(token)) return false;
+        invitationInspectionCache.delete(token);
+        requestInvitationInspection(token, true);
+        return true;
+      }
+
       function requestInvitationInspection(token: string, force: boolean = false): void {
         const cached = invitationInspectionCache.get(token);
         if (cached?.status === "pending") {
+          if (force) invalidatedInvitationInspections.add(token);
           return;
         }
         if (cached?.status === "missing" || (!force && cached?.status === "failed")) {

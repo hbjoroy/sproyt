@@ -7,8 +7,12 @@ impl Policy {
         matches!(role, Some(CircleRole::Owner))
     }
 
-    pub fn can_delete_circle(role: Option<&CircleRole>) -> bool {
+    pub fn can_rename_circle(role: Option<&CircleRole>) -> bool {
         matches!(role, Some(CircleRole::Owner))
+    }
+
+    pub fn can_delete_circle(role: Option<&CircleRole>) -> bool {
+        Self::can_rename_circle(role)
     }
 
     pub fn can_leave_circle(role: Option<&CircleRole>) -> bool {

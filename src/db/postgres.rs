@@ -27,9 +27,9 @@ use crate::domain::{
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
     PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PrepareEnrollmentInvitation,
-    PresenceLease, RepositoryError, RepositoryFuture, SendMessage, UpdateChannelDescription, User,
-    UserId, UserProfile, UserTask, enrollment_email_hash, enrollment_token_hash,
-    generate_enrollment_token,
+    PresenceLease, RenameCircle, RepositoryError, RepositoryFuture, SendMessage,
+    UpdateChannelDescription, User, UserId, UserProfile, UserTask, enrollment_email_hash,
+    enrollment_token_hash, generate_enrollment_token,
 };
 use crate::integration::{
     AlertState, DeliveryResult, GRAFANA_PROVIDER, IncomingAlert, IncomingReport, IntegrationFuture,
@@ -133,6 +133,7 @@ pub struct PostgresChatRepository {
     reactions: broadcast::Sender<ChatEvent>,
     message_updates: broadcast::Sender<ChatEvent>,
     channel_updates: broadcast::Sender<ChatEvent>,
+    circle_updates: broadcast::Sender<()>,
 }
 
 impl PostgresChatRepository {
@@ -168,6 +169,12 @@ impl PostgresChatRepository {
         let (presence, _) = broadcast::channel(1024);
         let (reactions, _) = broadcast::channel(1024);
         let (message_updates, _) = broadcast::channel(1024);
+        listener
+            .listen("sproyt_circle_updates")
+            .await
+            .map_err(sql_error)?;
+        let (circle_updates, _) = broadcast::channel(128);
+        let circle_publisher = circle_updates.clone();
         let (channel_updates, _) = broadcast::channel(1024);
         let message_publisher = messages.clone();
         let presence_publisher = presence.clone();
@@ -226,6 +233,9 @@ impl PostgresChatRepository {
                             ),
                         }
                     }
+                    Ok(notification) if notification.channel() == "sproyt_circle_updates" => {
+                        let _ = circle_publisher.send(());
+                    }
                     Ok(notification) if notification.channel() == "sproyt_channel_updates" => {
                         match serde_json::from_str::<ChatEvent>(notification.payload()) {
                             Ok(
@@ -263,7 +273,10 @@ impl PostgresChatRepository {
                                         replacement.listen("sproyt_message_updates").await;
                                     let channels_ready =
                                         replacement.listen("sproyt_channel_updates").await;
-                                    if messages_ready.is_ok()
+                                    let circles_ready =
+                                        replacement.listen("sproyt_circle_updates").await;
+                                    if circles_ready.is_ok()
+                                        && messages_ready.is_ok()
                                         && presence_ready.is_ok()
                                         && reactions_ready.is_ok()
                                         && updates_ready.is_ok()
@@ -295,6 +308,7 @@ impl PostgresChatRepository {
             reactions,
             message_updates,
             channel_updates,
+            circle_updates,
         })
     }
 
@@ -906,6 +920,26 @@ impl ChatRepository for PostgresChatRepository {
             let rows = sqlx::query("select c.id,c.slug,c.name,c.created_by,c.created_at,m.role from circles c join circle_memberships m on m.circle_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(circle_with_role).collect()
+        })
+    }
+
+    fn subscribe_circle_updates(&self) -> Option<broadcast::Receiver<()>> {
+        Some(self.circle_updates.subscribe())
+    }
+
+    fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let row = sqlx::query("update circles set name=$1 where id=$2 and exists(select 1 from circle_memberships where circle_id=circles.id and user_id=$3 and role='owner') returning *, 'owner' as role")
+                .bind(command.name.as_str()).bind(*command.circle_id.as_uuid()).bind(*command.actor.as_uuid())
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?.ok_or(RepositoryError::PermissionDenied)?;
+            let circle = circle_with_role(row)?.0;
+            sqlx::query("select pg_notify('sproyt_circle_updates','')")
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(circle)
         })
     }
 
@@ -3343,8 +3377,10 @@ async fn load_postgres_invitation(
     };
     Ok(InvitationPreview {
         target,
-        circle_name: DisplayName::new(row.try_get::<String, _>("circle_name").map_err(storage)?)
-            .map_err(storage)?,
+        circle_name: DisplayName::circle_name(
+            row.try_get::<String, _>("circle_name").map_err(storage)?,
+        )
+        .map_err(storage)?,
         channel_name: row
             .try_get::<Option<String>, _>("channel_name")
             .map_err(storage)?
@@ -3532,7 +3568,7 @@ fn circle_with_role(row: PgRow) -> Result<(Circle, CircleRole), RepositoryError>
             id: CircleId::from_uuid(row.try_get("id").map_err(storage)?),
             slug: ChannelSlug::new(row.try_get::<String, _>("slug").map_err(storage)?)
                 .map_err(storage)?,
-            name: DisplayName::new(row.try_get::<String, _>("name").map_err(storage)?)
+            name: DisplayName::circle_name(row.try_get::<String, _>("name").map_err(storage)?)
                 .map_err(storage)?,
             created_by: UserId::from_uuid(row.try_get("created_by").map_err(storage)?),
             created_at: row.try_get("created_at").map_err(storage)?,
@@ -4206,6 +4242,35 @@ mod tests {
             .await
             .unwrap();
         let replica = PostgresChatRepository::connect(&url).await.unwrap();
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: alice.clone(),
+                slug: ChannelSlug::new(format!("rename-pg-{suffix}")).unwrap(),
+                name: DisplayName::new("Before").unwrap(),
+            })
+            .await
+            .unwrap();
+        let mut replica_circles = replica.subscribe_circle_updates().unwrap();
+        repository
+            .rename_circle(RenameCircle {
+                actor: alice.clone(),
+                circle_id: circle.id.clone(),
+                name: DisplayName::circle_name("After").unwrap(),
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), replica_circles.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            replica
+                .list_circles_for_user(alice.clone())
+                .await
+                .unwrap()
+                .iter()
+                .any(|(c, _)| c.id == circle.id && c.name.as_str() == "After")
+        );
         let mut replica_events = replica.subscribe_messages().unwrap();
         let mut replica_updates = replica.subscribe_message_updates().unwrap();
         let message = repository

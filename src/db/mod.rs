@@ -849,7 +849,63 @@ where
             .await
             .unwrap();
     }
+    // Compare persisted timestamps: PostgreSQL stores microsecond precision.
+    let persisted_circle = repository
+        .list_circles_for_user(actor.clone())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|(entry, _)| entry.id == circle.id)
+        .unwrap()
+        .0;
+    // Existing IDs, roles, invitations and complete history survive rename.
+    let rename_invite = repository
+        .create_circle_invitation(CreateCircleInvitation {
+            actor: actor.clone(),
+            circle_id: circle.id.clone(),
+        })
+        .await
+        .unwrap();
+    for denied in [&member, &UserId::named(format!("rename-outsider-{suffix}"))] {
+        assert_eq!(
+            repository
+                .rename_circle(crate::domain::RenameCircle {
+                    actor: denied.clone(),
+                    circle_id: circle.id.clone(),
+                    name: DisplayName::circle_name("Denied").unwrap(),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
+    }
+    let mut rename_events = repository.subscribe_circle_updates().unwrap();
+    let renamed = repository
+        .rename_circle(crate::domain::RenameCircle {
+            actor: actor.clone(),
+            circle_id: circle.id.clone(),
+            name: DisplayName::circle_name(format!("  {}  ", "Ω".repeat(120))).unwrap(),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rename_events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(renamed.id, circle.id);
+    assert_eq!(renamed.slug, circle.slug);
+    assert_eq!(renamed.created_at, persisted_circle.created_at);
+    assert_eq!(renamed.created_by, circle.created_by);
+    assert_eq!(renamed.name.as_str(), "Ω".repeat(120));
+    let accepted = repository
+        .accept_circle_invitation(AcceptCircleInvitation {
+            actor: UserId::named(format!("chat-contract-outsider-{suffix}")),
+            token: rename_invite.token,
+        })
+        .await
+        .unwrap();
+    assert_eq!(accepted.circle_id, circle.id);
     let export = repository.export_user_data(member.clone()).await.unwrap();
+    assert_eq!(export.circles[0].circle, renamed);
     assert_eq!(export.format, PORTABLE_USER_EXPORT_FORMAT);
     assert_eq!(export.user.id, member);
     assert_eq!(export.circles.len(), 1);

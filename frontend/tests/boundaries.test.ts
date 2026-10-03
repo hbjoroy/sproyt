@@ -1060,3 +1060,9 @@ test("imagegen command distinguishes chat, strips quotes, and bounds prompt text
   assert.throws(() => imagePrompt("/imagegen"));
   assert.throws(() => imagePrompt("/imagegen " + "a".repeat(2001)));
 });
+
+test("circle invalidation carries no private circle metadata and rename frames remain validated", () => {
+  assert.equal(asWireEvent({ protocol: protocolId, type: "circles_changed" })?.type, "circles_changed");
+  assert.equal(asWireEvent({ protocol: protocolId, type: "circles_changed", payload: { circle_id: "private" } }), null);
+  assert.equal(asWireEvent({ protocol: protocolId, type: "circle_renamed", payload: { circle: { id: "x", name: "invalid" } } }), null);
+});

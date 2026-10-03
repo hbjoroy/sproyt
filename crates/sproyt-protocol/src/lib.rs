@@ -216,6 +216,7 @@ mod tests {
                 crate::ClientCommand::Ping => "ping",
                 crate::ClientCommand::CreateCircle { .. } => "create_circle",
                 crate::ClientCommand::ListMyCircles => "list_my_circles",
+                crate::ClientCommand::RenameCircle { .. } => "rename_circle",
                 crate::ClientCommand::DeleteCircle { .. } => "delete_circle",
                 crate::ClientCommand::LeaveCircle { .. } => "leave_circle",
                 crate::ClientCommand::CreateCircleInvitation { .. } => "create_circle_invitation",

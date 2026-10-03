@@ -17,6 +17,17 @@ use crate::{
     },
 };
 
+/// Lag also invalidates caches; an unavailable stream must not spin the socket.
+pub(crate) async fn next_circle_update(receiver: &mut Option<broadcast::Receiver<()>>) -> bool {
+    match receiver {
+        Some(receiver) => match receiver.recv().await {
+            Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => true,
+            Err(broadcast::error::RecvError::Closed) => false,
+        },
+        None => std::future::pending().await,
+    }
+}
+
 pub struct SocketAuthentication {
     service: AuthService,
     principal: AuthenticatedPrincipal,
@@ -70,6 +81,7 @@ pub async fn handle_socket(
 
     let (outbound, mut outbound_events) = mpsc::channel::<ServerEnvelope>(256);
     let mut subscriptions: HashMap<ChannelId, ActiveSubscription> = HashMap::new();
+    let mut circle_updates = chat.subscribe_circle_updates();
     let idle = tokio::time::sleep(idle_timeout);
     tokio::pin!(idle);
     let mut reauthentication = tokio::time::interval(Duration::from_secs(30));
@@ -106,6 +118,10 @@ pub async fn handle_socket(
                     }))).await;
                     break;
                 }
+            }
+            changed = next_circle_update(&mut circle_updates) => {
+                if !changed { circle_updates = None; continue; }
+                if send(&mut socket, &ServerEnvelope::event(ServerEvent::CirclesChanged)).await.is_err() { break; }
             }
             Some(message) = outbound_events.recv() => {
                 if send(&mut socket, &message).await.is_err() {
@@ -488,6 +504,15 @@ pub(crate) async fn execute_command(
                     )
                     .await?;
                 Ok(ServerEvent::CircleCreated { circle })
+            }
+            .await
+        }
+        ClientCommand::RenameCircle { circle_id, name } => {
+            async {
+                let name = DisplayName::circle_name(name)?;
+                chat.rename_circle(participant_id.clone(), circle_id, name)
+                    .await
+                    .map(|circle| ServerEvent::CircleRenamed { circle })
             }
             .await
         }
