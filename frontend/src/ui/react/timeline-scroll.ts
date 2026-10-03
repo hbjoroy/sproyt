@@ -369,14 +369,14 @@ export function createTimelineScrollController(options: TimelineScrollController
     const carriedReveal = pending?.revealMessageId ?? revealMessageId;
     const carriedBottom = !keyChanged && !scrollIntent && pending?.forceBottom;
     const explicitReveal = next.revealMessageId ?? (keyChanged ? null : carriedReveal);
-    const wasNearBottom = position ? position.distanceFromBottom <= nearEdge : true;
+    const wasNearBottom = followBottom && (position ? position.distanceFromBottom <= nearEdge : true);
     pending = {
       keyChanged,
       position: keyChanged ? stored : position,
       forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && (carriedBottom || (appended && wasNearBottom))),
       revealMessageId: explicitReveal
     };
-    followBottom = pending.forceBottom || (pending.position?.distanceFromBottom ?? 0) <= nearEdge;
+    followBottom = pending.forceBottom || ((keyChanged || followBottom) && (pending.position?.distanceFromBottom ?? 0) <= nearEdge);
     if (keyChanged || next.messageIds[0] !== model.messageIds[0]) requestedOlderAt = null;
     if (keyChanged) reportedBottomAt = null;
     model = next;
