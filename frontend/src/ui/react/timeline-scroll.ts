@@ -90,6 +90,14 @@ export function createTimelineScrollController(options: TimelineScrollController
     geometry = viewport ? { height: viewport.scrollHeight, viewportHeight: viewport.clientHeight } : null;
   };
 
+  const trace = (stage: string) => {
+    if (!new URLSearchParams(window.location.search).has("reading_trace")) return;
+    console.log("reading_trace " + JSON.stringify({ stage, key: model.key, followBottom, pending, opening,
+      geometry, stored: model.key ? positions.get(model.key) : null,
+      measured: viewport ? { top: viewport.scrollTop, height: viewport.scrollHeight, viewportHeight: viewport.clientHeight,
+        distance: viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight } : null }));
+  };
+
   const setScrollTop = (value: number) => {
     if (!viewport) return;
     applying = true;
@@ -161,6 +169,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const reconcile = () => {
+    trace("reconcile");
     scheduled = false;
     if (!viewport || !model.key) return;
     const bounds = viewport.getBoundingClientRect();
@@ -248,6 +257,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const onScroll = () => {
+    trace("scroll");
     if (!viewport || pending || viewport.scrollTop === appliedScrollTop) return;
     // WebKit can deliver layout-induced scroll before ResizeObserver. Media
     // growth is not evidence that the reader stopped following the bottom.
@@ -331,6 +341,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const prepare = (next: TimelineScrollModel) => {
+    trace("prepare-before");
     // A resize/mutation reconciliation may still be queued after a React commit.
     // Its DOM geometry is not yet the reader's restored position.
     const previous = (pending || scheduled || applying) && model.key
@@ -364,6 +375,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     if (keyChanged || next.messageIds[0] !== model.messageIds[0]) requestedOlderAt = null;
     if (keyChanged) reportedBottomAt = null;
     model = next;
+    trace("prepare-after");
     scheduleReconcile();
   };
 

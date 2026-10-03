@@ -62,6 +62,7 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
       return message;
     },
     install: async (page: Page, link = "") => {
+      page.on("console", message => { if (message.text().startsWith("reading_trace ")) console.log(message.text()); });
       await page.routeWebSocket(/\/ws(?:\?|$)/, socket => {
         sockets.set(page, socket);
         socket.onMessage(data => {
@@ -109,7 +110,7 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
           }
         });
       });
-      await page.goto(`/?participant=reading-regression&channel=a${link}`);
+      await page.goto(`/?participant=reading-regression&channel=a${link}&reading_trace=1`);
       await expect(page.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
       await page.bringToFront();
     }
