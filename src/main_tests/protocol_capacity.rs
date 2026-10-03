@@ -3621,7 +3621,15 @@ async fn circle_rename_is_owner_only_and_invalidates_unsubscribed_clients() {
     )
     .await;
     let circle_id = created["payload"]["circle"]["id"].clone();
-    let denied = command(
+    let invitation = command(
+        &mut owner,
+        "invite",
+        "create_invitation",
+        serde_json::json!({"target":{"type":"circle", "circle_id":circle_id}}),
+    )
+    .await;
+    let invite_token = invitation["payload"]["invitation"]["token"].clone();
+    let denied = command_response(
         &mut outsider,
         "denied",
         "rename_circle",
@@ -3630,7 +3638,7 @@ async fn circle_rename_is_owner_only_and_invalidates_unsubscribed_clients() {
     .await;
     assert_eq!(denied["payload"]["code"], "permission_denied");
     for (index, name) in ["   ".to_owned(), "Ω".repeat(121)].iter().enumerate() {
-        let invalid = command(
+        let invalid = command_response(
             &mut owner,
             &format!("invalid-{index}"),
             "rename_circle",
@@ -3650,6 +3658,18 @@ async fn circle_rename_is_owner_only_and_invalidates_unsubscribed_clients() {
     assert_eq!(renamed["payload"]["circle"]["id"], circle_id);
     assert_eq!(renamed["payload"]["circle"]["slug"], "rename-identity");
     assert_eq!(renamed["payload"]["circle"]["name"], "Ω");
+    let preview = command(
+        &mut owner,
+        "preview",
+        "inspect_invitation",
+        serde_json::json!({"token":invite_token}),
+    )
+    .await;
+    assert_eq!(preview["payload"]["invitation"]["circle_name"], "Ω");
+    assert_eq!(
+        preview["payload"]["invitation"]["target"]["circle_id"],
+        circle_id
+    );
     let event = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let ClientMessage::Text(text) = outsider.next().await.unwrap().unwrap() {
