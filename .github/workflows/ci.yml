@@ -102,27 +102,10 @@ jobs:
       - name: Install Chromium and WebKit for browser contracts
         run: npx --prefix frontend playwright install --with-deps chromium webkit
 
-      - name: Run targeted Linux WebKit reading diagnosis
-        env:
-          SPROYT_E2E_WEBKIT: "1"
-        run: |
-          cp frontend/src/ui/react/timeline-scroll.ts "$RUNNER_TEMP/reading-controller-fixed.ts"
-          git fetch --depth=1 origin 645205a7de9cde220c110436f8b9cbe083f9392b
-          git show 645205a7de9cde220c110436f8b9cbe083f9392b:frontend/src/ui/react/timeline-scroll.ts > frontend/src/ui/react/timeline-scroll.ts
-          npm --prefix frontend run build
-          set +e
-          node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-reading.spec.ts --grep 'coalesced host|media-clamped' --reporter=line 2>&1 | tee "$RUNNER_TEMP/reading-before.log"
-          before_status=${PIPESTATUS[0]}
-          set -e
-          cp "$RUNNER_TEMP/reading-controller-fixed.ts" frontend/src/ui/react/timeline-scroll.ts
-          test "$before_status" -eq 1
-          grep -q '2 failed' "$RUNNER_TEMP/reading-before.log"
-          grep -q 'Received:.*200' "$RUNNER_TEMP/reading-before.log"
-          npm --prefix frontend run build
-          node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-reading.spec.ts --repeat-each=2
+      - name: Run browser smoke contracts
+        run: npm --prefix frontend run test:e2e
 
       - name: Run WebKit mobile interaction contracts
-        if: false
         env:
           SPROYT_E2E_WEBKIT: "1"
         run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts
