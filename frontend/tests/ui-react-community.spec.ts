@@ -137,7 +137,15 @@ test("Felles creates a global channel with a global slug and exposes its members
     circle_id: null, kind: "public", name: "Felles prat", slug: "felles-prat"
   });
   await expect(preview.getByRole("button", { name: "# Felles prat" })).toBeVisible();
-  await page.keyboard.press("Escape");
+  const management = preview.getByRole("dialog", { name: "Meny og innstillingar", exact: true });
+  await expect(management).toBeVisible();
+  await management.getByRole("button", { name: /^Lukk menyen/ }).click();
+  await expect(management).toHaveCount(0);
+  // The toolbar panel remains after management closes. Close it explicitly so
+  // the real member control is unobstructed.
+  const toolbarMenu = preview.getByRole("button", { name: "Meny", exact: true });
+  await toolbarMenu.click();
+  await expect(toolbarMenu).toHaveAttribute("aria-expanded", "false");
   await preview.getByRole("button", { name: "Medlemmer i Felles prat" }).click();
   const details = preview.getByRole("dialog", { name: "Kanaldetaljar: Felles prat" });
   await expect(details.getByRole("searchbox", { name: "Finn kanalmedlem" })).toBeVisible();
