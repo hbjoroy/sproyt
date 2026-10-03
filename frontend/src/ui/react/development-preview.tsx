@@ -58,6 +58,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly closeThread: () => void;
   readonly loadOlder: () => void;
   readonly retryHistory: () => void;
+  readonly acknowledgeVisible: (key: string, messageIds: readonly string[]) => void;
   readonly isOwnMessage: (message: ChatMessage) => boolean;
   readonly takeScrollIntent: () => Readonly<{
     channelRevealMessageId: string | null;
@@ -260,10 +261,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let disposed = false;
   let unsubscribe = () => {};
   let mounted: ReturnType<typeof mountConversationView> | undefined;
-  let previousSnapshot: ConversationSnapshot | null = null;
   const reactionPicker = createPreviewReactionPicker(host);
-  const channelScroll = createTimelineScrollController({ onNearStart: host.loadOlder });
-  const threadScroll = createTimelineScrollController();
+  const channelScroll = createTimelineScrollController({ onNearStart: host.loadOlder, onVisibleMessages: host.acknowledgeVisible });
+  const threadScroll = createTimelineScrollController({ onVisibleMessages: host.acknowledgeVisible });
   const close = (target?: ComposerTarget) => {
     if (disposed) return;
     disposed = true;
@@ -289,33 +289,26 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const snapshot = host.snapshot();
     const scrollIntent = host.takeScrollIntent();
     const channelMessageIds = snapshot.timeline.messages.map(message => message.id);
-    const previousChannelIds = previousSnapshot?.selection.channelId === snapshot.selection.channelId
-      ? new Set(previousSnapshot.timeline.messages.map(message => message.id)) : null;
-    const previousLatestSequence = previousChannelIds ? previousSnapshot!.timeline.messages.at(-1)?.sequence ?? 0 : 0;
-    const revealChannelMessage = scrollIntent.channelRevealMessageId ?? (previousChannelIds
-      ? [...snapshot.timeline.messages].reverse().find(message => message.sequence > previousLatestSequence && !previousChannelIds.has(message.id) && host.isOwnMessage(message))?.id ?? null
-      : null);
     channelScroll.prepare({
       key: snapshot.selection.channelId ? `channel:${snapshot.selection.channelId}` : null,
       messageIds: channelMessageIds,
-      hasOlder: snapshot.timeline.hasOlder && !snapshot.timeline.loading && !snapshot.timeline.error,
-      revealMessageId: revealChannelMessage
+      messageSequences: snapshot.timeline.messages.map(message => message.sequence),
+      initialReadSequence: snapshot.activeChannel?.last_read_sequence,
+      hasOlder: snapshot.timeline.hasOlder,
+      loading: snapshot.timeline.loading,
+      error: snapshot.timeline.error,
+      waitingForLink: snapshot.timeline.waitingForMessageLink,
+      revealMessageId: scrollIntent.channelRevealMessageId
     });
     const threadMessageIds = snapshot.thread
       ? [snapshot.thread.root?.id, ...snapshot.thread.replies.map(message => message.id)].filter((id): id is string => Boolean(id))
       : [];
-    const previousThread = previousSnapshot?.thread;
-    const previousThreadIds = previousThread && snapshot.thread && previousThread.rootMessageId === snapshot.thread.rootMessageId
-      ? new Set([previousThread.root?.id, ...previousThread.replies.map(message => message.id)].filter(Boolean)) : null;
-    const revealThreadMessage = scrollIntent.threadRevealMessageId ?? (previousThreadIds && snapshot.thread
-      ? [...snapshot.thread.replies].reverse().find(message => !previousThreadIds.has(message.id) && host.isOwnMessage(message))?.id ?? null
-      : null);
     threadScroll.prepare({
       key: snapshot.thread ? `thread:${snapshot.thread.rootMessageId}` : null,
       messageIds: threadMessageIds,
-      revealMessageId: revealThreadMessage
+      loading: host.threadLoad().loading,
+      revealMessageId: scrollIntent.threadRevealMessageId
     });
-    previousSnapshot = snapshot;
     const compactContext = snapshot.activeChannel?.is_direct ? "Direkte" : snapshot.activeChannel?.circle_id
       ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel?.circle_id)?.name ?? "Vennekrets"
       : snapshot.activeChannel ? "Felles" : undefined;
@@ -329,7 +322,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         compactConversation={view === "detail" ? {
           context: compactContext, title: snapshot.title, onBack: backToConversations
         } : undefined}>
-      {view === "detail" && <div className="sp-mobile-channel-menu"><ChannelActions compact snapshot={snapshot} host={host} /></div>}
+      {view === "detail" && <div className="sp-mobile-channel-menu"><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ChannelActions compact snapshot={snapshot} host={host} /></div>}
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
@@ -339,7 +332,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     renderGroupActions: group => group.id === "scope:direct" ? null : <NavigationScopeActions
       group={group} snapshot={snapshot} host={host.community}
       onSelect={channelId => { reactionPicker.close(); host.select(channelId); view = "detail"; update(); }} />,
-    contextActions: <ChannelActions snapshot={snapshot} host={host} />,
+    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ChannelActions snapshot={snapshot} host={host} /></>,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}
@@ -365,6 +358,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     timeline: {
       onLoadOlder: host.loadOlder,
       onRetry: host.retryHistory,
+      unreadAfterSequence: channelScroll.unreadAfterSequence(),
       viewportRef: channelScroll.viewportRef,
       onScroll: channelScroll.onScroll
     },

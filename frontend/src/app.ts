@@ -9,6 +9,8 @@
       import { createAdvancedHost } from "./application/advanced-host";
       import { projectConversationSnapshot, type ConversationTimelineItem as TimelineItem } from "./application/conversation-snapshot";
       import { historyPage } from "./application/history-pagination";
+      import { createVisibleReadPolicy } from "./application/visible-read";
+      import { createTimelineScrollController } from "./ui/react/timeline-scroll";
       import { createPendingRequests, type PendingMessage } from "./application/pending-requests";
       import { createInvitationCards, type Invitation } from "./application/invitation-cards";
       import { createComposerController, type ComposerTarget, type ComposerSnapshot } from "./application/composer-controller";
@@ -302,6 +304,7 @@
           pendingCommands.set(requestId, command.type);
           if (command.type === "list_my_channels") latestChannelListRequestId = requestId;
           if (command.type === "list_my_circles") latestCircleListRequestId = requestId;
+          if (command.type === "subscribe_channel") latestSubscriptionRequestId = requestId;
         },
         onBeforeConnect: () => {
           catchUpTargets.clear();
@@ -321,6 +324,7 @@
         onDisconnected: () => reportClientEvent("websocket_disconnected"),
         onSocketError: () => reportClientEvent("websocket_error"),
         onConnectionLost: () => {
+          visibleRead.disconnect();
           if (developmentThreadLoad?.loading) {
             developmentThreadLoad.loading = false;
             developmentThreadLoad.error = "Sambandet vart brote. Prøv å laste tråden igjen.";
@@ -355,6 +359,7 @@
         },
         onRequestsLost: (requestIds) => {
           for (const requestId of requestIds) {
+            visibleRead.fail(requestId);
             failPreviewInboxRequest(requestId, "Sambandet vart brote. Prøv igjen.");
             finishPendingProfileUpdate("Sambandet vart brote. Namnet er ikkje lagra – prøv igjen.", requestId);
             if (pendingMessages.has(requestId)) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
@@ -472,10 +477,17 @@
       const historyPageSize = 50;
       let historyHasMore = false;
       let historyLoading = false;
+      const visibleRead = createVisibleReadPolicy();
+      const legacyChannelScroll = createTimelineScrollController({ onNearStart: loadOlderHistory, onVisibleMessages: acknowledgeVisible });
+      const legacyThreadScroll = createTimelineScrollController({ onVisibleMessages: acknowledgeVisible });
+      legacyChannelScroll.viewportRef(messagesEl);
+      legacyThreadScroll.viewportRef(threadMessages);
+      threadMessages.addEventListener("scroll", legacyThreadScroll.onScroll, { passive: true });
       let historyBefore: number | null = null;
       let historyError: string | undefined;
       let activeHistoryRequestId: string | null = null;
       let historySubscriptionRequestId: string | null = null;
+      let latestSubscriptionRequestId: string | null = null;
       let historyTimer: ReturnType<typeof setTimeout> | null = null;
       let mermaidPromise: Promise<MermaidApi> | null = null;
       let knownChannels: Channel[] = [];
@@ -527,6 +539,7 @@
           activeChannelId, activeCircleId, activeRootScope, activeInboxKind,
           query: conversationQuery, timeline, threadReplies, threadRoots,
           threadSummaries, activeThreadRootId, historyLoading, historyHasMore, historyError,
+          waitingForMessageLink: pendingMessageLink !== null,
           connection: applicationStore.snapshot.connection,
           channelNotificationIds, pendingChannelNotificationIds, channelNotificationErrors, directChannelLabel
         });
@@ -2246,7 +2259,7 @@
         }
       });
       messagesEl.addEventListener("scroll", () => {
-        if (messagesEl.scrollTop <= 80) loadOlderHistory();
+        if (!developmentPreviewActive) legacyChannelScroll.onScroll();
       }, { passive: true });
       exportButton.addEventListener("click", async () => {
         try {
@@ -3309,7 +3322,11 @@
         if (event.type === "channels_listed") {
           if (event.request_id !== latestChannelListRequestId) return;
           latestChannelListRequestId = null;
-          knownChannels = event.payload.channels;
+          knownChannels = event.payload.channels.map(channel => {
+            const previous = knownChannels.find(item => item.id === channel.id);
+            return { ...channel, last_read_sequence: Math.max(channel.last_read_sequence, previous?.last_read_sequence ?? 0),
+              latest_sequence: Math.max(channel.latest_sequence, previous?.latest_sequence ?? 0) };
+          });
           renderChannels();
           renderConversationIdentity();
           updateAgentAccessControls();
@@ -3423,6 +3440,8 @@
             sendCommand("unsubscribe_channel", { channel_id: event.payload.channel_id });
             return;
           }
+          if (event.request_id !== latestSubscriptionRequestId) return;
+          latestSubscriptionRequestId = null;
           connectionSupervisor.setSubscribedChannel(event.payload.channel_id);
           // Direct-message mentions offer expansion only after the actual
           // membership is known, including after reload/reconnection.
@@ -3431,7 +3450,7 @@
           }
           setConnectionStatus(connectionSupervisor.snapshot().transport === "sse" ? "Tilkopla via reserve" : "Tilkopla");
           renderConversationIdentity();
-          event.payload.history.forEach(appendTimelineMessage);
+          event.payload.history.forEach(message => appendTimelineMessage(message));
           reconcileUncertainDeliveries(event.payload.channel_id, event.payload.history);
           sendCommand("list_thread_summaries", { channel_id: event.payload.channel_id });
           const page = historyPage(event.payload.history, historyPageSize);
@@ -3442,7 +3461,6 @@
             historyHasMore = page.hasMore;
           }
           finishHistoryLoad();
-          acknowledgeLatest(event.payload.channel_id, event.payload.history);
           bodyInput.disabled = false;
           sendButton.disabled = false;
           attachMediaButton.disabled = false;
@@ -3457,7 +3475,7 @@
           reconnectScrollOffset = null;
           const revealed = seekPendingMessageLink();
           renderTimeline({ forceBottom: !revealed && (scrollOffset === null || scrollOffset < 80) });
-          if (scrollOffset !== null && scrollOffset >= 80) restoreConversationScrollOffset(scrollOffset);
+          if (developmentPreviewActive && scrollOffset !== null && scrollOffset >= 80) restoreConversationScrollOffset(scrollOffset);
           if (!revealed && !messageLinkHistoryRequestId && !timeline.some(item => item.type === "message") && historyHasMore) loadOlderHistory();
           updateAgentAccessControls();
           return;
@@ -3498,6 +3516,7 @@
         }
 
         if (event.type === "thread_loaded") {
+          if (developmentThreadLoad?.requestId !== event.request_id) return;
           if (developmentThreadLoad?.rootId === event.payload.root_message_id) developmentThreadLoad.loading = false;
           const root = event.payload.messages.find((message) => message.id === event.payload.root_message_id);
           const replies = event.payload.messages.filter((message) => message.parent_message_id === event.payload.root_message_id);
@@ -3511,13 +3530,12 @@
               pendingThreadRevealMessageId = null;
             }
             renderThread();
-            const latest = replies.at(-1)?.sequence;
-            if (latest !== undefined) sendCommand("mark_thread_read", { root_message_id: event.payload.root_message_id, sequence: latest });
           }
           return;
         }
 
         if (event.type === "thread_read_updated") {
+          visibleRead.complete(event.request_id);
           threadSummaries.set(event.payload.summary.root_message_id, event.payload.summary);
           renderTimeline({ preserveScroll: true });
           return;
@@ -3530,12 +3548,16 @@
             // normal list refresh is enough to reveal it without switching the
             // recipient away from the conversation they are reading.
             sendCommand("list_my_channels");
+          } else if (chatEvent.type === "read_marker_updated" && chatEvent.user_id === currentParticipantId) {
+            const channel = knownChannels.find(item => item.id === chatEvent.channel_id);
+            if (channel) channel.last_read_sequence = Math.max(channel.last_read_sequence, chatEvent.sequence);
+            visibleRead.confirm(`channel:${chatEvent.channel_id}`, chatEvent.sequence);
+            renderChannels();
           } else if (chatEvent.type === "message_accepted") {
             updateLatestSequence(chatEvent.message.channel_id, chatEvent.message.sequence);
             if (chatEvent.message.channel_id === activeChannelId) {
               const revealOwnMessage = pendingMessageToReveal(chatEvent.message);
-              appendTimelineMessage(chatEvent.message);
-              acknowledgeLatest(chatEvent.message.channel_id, [chatEvent.message]);
+              appendTimelineMessage(chatEvent.message, true);
               renderTimeline({ revealMessageId: revealOwnMessage ? chatEvent.message.id : null });
             } else {
               renderChannels();
@@ -3566,8 +3588,7 @@
           updateLatestSequence(event.payload.message.channel_id, event.payload.message.sequence);
           if (event.payload.message.channel_id === activeChannelId) {
             const revealOwnMessage = pendingMessageToReveal(event.payload.message, event.request_id);
-            appendTimelineMessage(event.payload.message);
-            acknowledgeLatest(event.payload.message.channel_id, [event.payload.message]);
+            appendTimelineMessage(event.payload.message, true);
               renderTimeline({ revealMessageId: revealOwnMessage ? event.payload.message.id : null });
           } else {
             renderChannels();
@@ -3633,9 +3654,8 @@
             return;
           }
           if (event.payload.channel_id !== activeChannelId) return;
-          event.payload.messages.forEach(appendTimelineMessage);
+          event.payload.messages.forEach(message => appendTimelineMessage(message));
           reconcileUncertainDeliveries(event.payload.channel_id, event.payload.messages);
-          acknowledgeLatest(event.payload.channel_id, event.payload.messages);
           renderTimeline();
           const target = catchUpTargets.get(event.payload.channel_id);
           const last = event.payload.messages.at(-1);
@@ -3653,12 +3673,14 @@
 
         if (event.type === "read_marker_updated") {
           const channel = knownChannels.find((item) => item.id === event.payload.membership.channel_id);
-          if (channel) channel.last_read_sequence = event.payload.membership.last_read_sequence;
+          if (channel) channel.last_read_sequence = Math.max(channel.last_read_sequence, event.payload.membership.last_read_sequence);
+          visibleRead.confirm(`channel:${event.payload.membership.channel_id}`, event.payload.membership.last_read_sequence);
           renderChannels();
           return;
         }
 
         if (event.type === "error") {
+          if (event.request_id) visibleRead.fail(event.request_id);
           if (messageLinkHistoryRequestIds.delete(event.request_id ?? "")) {
             if (event.request_id !== messageLinkHistoryRequestId) return;
             messageLinkHistoryRequestId = null;
@@ -4447,6 +4469,8 @@
         activeInboxKind = null;
         const previousChannelId = connectionSupervisor.takeSubscribedChannel();
         if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
+        if (!developmentPreviewActive) legacyChannelScroll.prepare({ key: `channel:${channel.id}`, messageIds: [],
+          initialReadSequence: channel.last_read_sequence, loading: true });
         timeline.length = 0;
         threadReplies.clear();
         threadRoots.clear();
@@ -4552,13 +4576,24 @@
         if (channel) channel.latest_sequence = Math.max(channel.latest_sequence || 0, sequence);
       }
 
-      function acknowledgeLatest(channelId: string, messages: ChatMessage[]): void {
-        if (channelId !== activeChannelId || messages.length === 0 || document.visibilityState === "hidden") return;
-        const latestMessage = messages.at(-1);
-        if (!latestMessage) return;
-        const sequence = latestMessage.sequence;
-        updateLatestSequence(channelId, sequence);
-        sendCommand("mark_read", { channel_id: channelId, sequence });
+      function acknowledgeVisible(key: string, messageIds: readonly string[]): void {
+        if (!activeChannelId || document.visibilityState === "hidden" || !document.hasFocus()) return;
+        const thread = key === `thread:${activeThreadRootId}` && activeThreadRootId !== null;
+        if (key !== `channel:${activeChannelId}` && !thread) return;
+        const roots = timeline.flatMap(item => item.type === "message" ? [item.message] : []);
+        const candidates = thread ? [...roots, ...(threadReplies.get(activeThreadRootId!) ?? []),
+          ...(threadRoots.has(activeThreadRootId!) ? [threadRoots.get(activeThreadRootId!)!] : [])] : roots;
+        const visible = candidates.filter(message => message.channel_id === activeChannelId && messageIds.includes(message.id));
+        const sequence = Math.max(0, ...visible.map(message => message.sequence));
+        const channel = knownChannels.find(item => item.id === activeChannelId);
+        visibleRead.confirm(`channel:${activeChannelId}`, channel?.last_read_sequence ?? 0);
+        visibleRead.acknowledge(`channel:${activeChannelId}`, sequence,
+          () => sendCommand("mark_read", { channel_id: activeChannelId!, sequence }));
+        if (thread) {
+          const replySequence = Math.max(0, ...visible.filter(message => message.parent_message_id === activeThreadRootId).map(message => message.sequence));
+          visibleRead.acknowledge(key, replySequence,
+            () => sendCommand("mark_thread_read", { root_message_id: activeThreadRootId!, sequence: replySequence }));
+        }
       }
 
       document.addEventListener("visibilitychange", () => {
@@ -4566,12 +4601,6 @@
         resumeAfterBackground(false);
         hiddenSince = null;
         sendCommand("list_my_channels");
-        if (!activeChannelId) return;
-        const visibleMessages = timeline
-          .filter((item): item is Readonly<{ type: "message"; message: ChatMessage }> => item.type === "message")
-          .filter((item) => item.message.channel_id === activeChannelId)
-          .map((item) => item.message);
-        acknowledgeLatest(activeChannelId, visibleMessages);
       });
 
       function pushSystem(text: string): void {
@@ -4661,6 +4690,14 @@
       function renderTimeline({ preserveScroll = false, forceBottom = false, revealMessageId = null }: Readonly<{ preserveScroll?: boolean; forceBottom?: boolean; revealMessageId?: string | null }> = {}): void {
         if (revealMessageId) developmentChannelRevealMessageId = revealMessageId;
         if (developmentPreviewActive) refreshDevelopmentPreview();
+        else {
+          const messages = timeline.flatMap(item => item.type === "message" ? [item.message] : []).sort((a, b) => a.sequence - b.sequence);
+          legacyChannelScroll.prepare({ key: activeChannelId ? `channel:${activeChannelId}` : null,
+            messageIds: messages.map(message => message.id), messageSequences: messages.map(message => message.sequence),
+            initialReadSequence: knownChannels.find(channel => channel.id === activeChannelId)?.last_read_sequence,
+            loading: historyLoading, hasOlder: historyHasMore, error: historyError,
+            waitingForLink: pendingMessageLink !== null, revealMessageId });
+        }
         const previousHeight = messagesEl.scrollHeight;
         const previousTop = messagesEl.scrollTop;
         const wasNearBottom = previousHeight - previousTop - messagesEl.clientHeight < 80;
@@ -4675,6 +4712,7 @@
         }
         renderMermaidDiagrams();
         restoreMessageInteraction(messagesEl, interaction);
+        if (!developmentPreviewActive) return; // The shared controller restores the visible legacy viewport.
         if (preserveScroll) {
           messagesEl.scrollTop = messagesEl.scrollHeight - previousHeight + previousTop;
         } else if (revealMessageId) {
@@ -4774,7 +4812,7 @@
         renderTimeline();
       }
 
-      function appendTimelineMessage(message: ChatMessage): void {
+      function appendTimelineMessage(message: ChatMessage, live = false): void {
         if (seenMessageIds.has(message.id)) return;
         seenMessageIds.add(message.id);
         if (message.parent_message_id) {
@@ -4783,17 +4821,16 @@
           replies.sort((left, right) => left.sequence - right.sequence);
           threadReplies.set(message.parent_message_id, replies);
           const previous = threadSummaries.get(message.parent_message_id);
-          threadSummaries.set(message.parent_message_id, {
+          if (live) threadSummaries.set(message.parent_message_id, {
             root_message_id: message.parent_message_id,
             reply_count: (previous?.reply_count || 0) + 1,
-            unread_count: activeThreadRootId === message.parent_message_id || message.sender_id === currentParticipantId
-              ? (previous?.unread_count || 0)
-              : (previous?.unread_count || 0) + 1,
+            unread_count: (previous?.unread_count || 0) + 1,
             latest_sequence: message.sequence
           });
           if (activeThreadRootId === message.parent_message_id) {
-            renderThread({ revealOwn: message.sender_id === currentParticipantId });
-            sendCommand("mark_thread_read", { root_message_id: message.parent_message_id, sequence: message.sequence });
+            const localReply = message.sender_id === currentParticipantId && [...pendingThreadReplies.values()]
+              .some(pending => pending.rootId === message.parent_message_id && pending.body === message.body);
+            renderThread({ revealOwn: localReply });
           }
           return;
         }
@@ -4808,7 +4845,7 @@
           else replies.push(message);
           replies.sort((left, right) => left.sequence - right.sequence);
           threadReplies.set(message.parent_message_id, replies);
-          if (activeThreadRootId === message.parent_message_id) renderThread({ revealOwn: message.sender_id === currentParticipantId });
+          if (activeThreadRootId === message.parent_message_id) renderThread();
           return;
         }
         if (threadRoots.has(message.id)) {
@@ -4923,14 +4960,13 @@
         if (!activeThreadRootId) return;
         if (revealOwn) developmentThreadRevealMessageId = (threadReplies.get(activeThreadRootId) || []).at(-1)?.id ?? null;
         if (developmentPreviewActive) { refreshDevelopmentPreview(); return; }
-        const previousHeight = threadMessages.scrollHeight;
-        const previousTop = threadMessages.scrollTop;
-        const distanceFromBottom = previousHeight - previousTop - threadMessages.clientHeight;
-        const wasNearBottom = distanceFromBottom <= 80;
         const rootItem = timeline.find((item): item is Readonly<{ type: "message"; message: ChatMessage }> => item.type === "message" && item.message.id === activeThreadRootId);
         const root = rootItem?.message
           || threadRoots.get(activeThreadRootId);
         if (!root) return;
+        legacyThreadScroll.prepare({ key: `thread:${activeThreadRootId}`,
+          messageIds: [root.id, ...(threadReplies.get(activeThreadRootId) ?? []).map(message => message.id)],
+          loading: developmentThreadLoad?.loading, revealMessageId: revealOwn ? developmentThreadRevealMessageId : null });
         threadForm.hidden = Boolean(root.deleted_at);
         threadMessages.replaceChildren();
         const rootContainer = document.createElement("div");
@@ -4940,8 +4976,7 @@
         for (const reply of threadReplies.get(activeThreadRootId) || []) {
           appendMessage(reply, threadMessages, false);
         }
-        if (revealOwn || wasNearBottom) settleThreadAtBottom();
-        else threadMessages.scrollTop = threadMessages.scrollHeight - previousHeight + previousTop;
+        // The shared viewport controller owns placement and visible read reports.
       }
 
       function settleThreadAtBottom() {
@@ -5129,6 +5164,7 @@
         const wrapper = document.createElement("article");
         wrapper.className = "message sp-message";
         wrapper.dataset.messageId = message.id;
+        wrapper.dataset.messageSequence = String(message.sequence);
 
         const meta = document.createElement("div");
         meta.className = "meta sp-message-meta";
@@ -5780,6 +5816,8 @@
       if (shouldMountReactInterface(window.location)) {
         void import("./ui/react/development-preview").then(({ mountDevelopmentPreview }) => {
           developmentPreviewActive = true;
+          legacyChannelScroll.viewportRef(null);
+          legacyThreadScroll.viewportRef(null);
           const preview = mountDevelopmentPreview({
             advanced: createAdvancedHost({
               agents: agentsApi, integrations: integrationsApi, processes: processesApi,
@@ -5866,6 +5904,7 @@
             closeThread: closeThreadState,
             loadOlder: loadOlderHistory,
             retryHistory,
+            acknowledgeVisible,
             isOwnMessage: (message) => message.sender_id === currentParticipantId,
             takeScrollIntent: () => {
               const intent = {
@@ -5957,6 +5996,8 @@
             returnToComposer: (target) => {
               refreshDevelopmentPreview = () => {};
               developmentPreviewActive = false;
+              legacyChannelScroll.viewportRef(messagesEl);
+              legacyThreadScroll.viewportRef(threadMessages);
               syncComposerState();
               syncThreadComposer();
               threadPanel.inert = false;

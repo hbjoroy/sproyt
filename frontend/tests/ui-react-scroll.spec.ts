@@ -29,13 +29,27 @@ test("React timeline loads older history at the top and keeps the visible messag
 
   const page = await browser.newPage({ viewport: { width: 1200, height: 650 } });
   let olderRequests = 0;
-  page.on("websocket", socket => socket.on("framesent", ({ payload }) => {
+  let readSequence = 0;
+  page.on("websocket", socket => {
+    socket.on("framereceived", ({ payload }) => {
+      const event = JSON.parse(String(payload));
+      if (event.type === "read_marker_updated") readSequence = Math.max(readSequence, event.payload.membership.last_read_sequence);
+    });
+    socket.on("framesent", ({ payload }) => {
     const command = JSON.parse(String(payload));
     if (command.type === "load_recent_messages" && command.payload.before) olderRequests++;
-  }));
+    });
+  });
   await page.goto("/?participant=playwright-scroll-reader&ui=react", { waitUntil: "domcontentloaded" });
   const preview = page.locator("#sproyt-react-preview");
   const timeline = preview.locator(".sp-channel-pane > .sp-timeline");
+  // A new reader starts at first unread. Explicitly read to the end, then open
+  // a new session so this contract exercises manual paging from the latest page.
+  await expect(preview.getByRole("button", { name: "Gå til siste", exact: true }).filter({ visible: true })).toBeVisible();
+  await preview.getByRole("button", { name: "Gå til siste", exact: true }).filter({ visible: true }).click();
+  await expect.poll(() => readSequence).toBeGreaterThan(0);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  olderRequests = 0;
   await expect.poll(() => timeline.locator("[data-message-id]").count(), { timeout: 15_000 }).toBeGreaterThan(0);
   const initialCount = await timeline.locator("[data-message-id]").count();
   await expect(timeline.getByRole("button", { name: "Last eldre meldingar" })).toBeVisible();

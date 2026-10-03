@@ -23,6 +23,7 @@ export interface ConversationSnapshotSource {
   readonly historyLoading: boolean;
   readonly historyHasMore: boolean;
   readonly historyError?: string;
+  readonly waitingForMessageLink?: boolean;
   readonly connection: RuntimeSnapshot["connection"];
   readonly channelNotificationIds: ReadonlySet<string>;
   readonly pendingChannelNotificationIds: ReadonlySet<string>;
@@ -127,7 +128,8 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
       messages: orderedMessages(timelineMessages, source.activeChannelId, null),
       items: timelineItems,
       notices: Object.freeze(source.timeline.flatMap(item => item.type === "system" ? [item.text] : [])),
-      loading: source.historyLoading, hasOlder: source.historyHasMore, error: source.historyError }),
+      loading: source.historyLoading, hasOlder: source.historyHasMore, error: source.historyError,
+      waitingForMessageLink: source.waitingForMessageLink ?? false }),
     thread,
     threadSummaries: Object.freeze([...source.threadSummaries.values()].map(summary => Object.freeze({ ...summary }))),
     connection: Object.freeze({ ...source.connection })

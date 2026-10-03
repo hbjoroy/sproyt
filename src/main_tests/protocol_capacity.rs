@@ -1886,11 +1886,8 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     );
     assert!(!BROWSER_CLIENT.contains("window.location.reload()"));
     assert!(CONNECTION_SOURCE.contains("Fråkopla (${detail})"));
-    assert!(
-        APP_SOURCE.contains(
-            "function acknowledgeLatest(channelId: string, messages: ChatMessage[]): void"
-        )
-    );
+    // Visible read acknowledgement and opening/return priorities are verified
+    // by ui-react-reading.spec.ts, not an implementation name in this CSP test.
     // Raw-page cursors and scroll preservation are browser behavior contracts,
     // not source-string requirements on the security-header entrypoint.
     assert!(BROWSER_CLIENT.contains(

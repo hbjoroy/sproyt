@@ -8,7 +8,7 @@ import type { ComposerTarget } from "../../application/composer-controller";
 export type { ComposerTarget } from "../../application/composer-controller";
 
 export type TimelineControls = Pick<TimelineProps,
-  "viewportRef" | "onScroll" | "error" | "onRetry" | "onLoadOlder">;
+  "viewportRef" | "onScroll" | "error" | "onRetry" | "onLoadOlder" | "unreadAfterSequence">;
 
 /** Commands and feature renderers belong to the host. The adapter neither sends
  * messages nor replaces the host's draft, attachment, reaction or modal state. */
