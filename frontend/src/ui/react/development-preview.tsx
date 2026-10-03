@@ -30,6 +30,7 @@ import { processTaskId, type ProcessPilotApi } from "../../process-pilot";
 import { ProcessPilotChannelAction, ProcessTaskMessage } from "./process-pilot";
 import { NavigationScopeActions } from "./navigation-scope-actions";
 import type { CircleChatAgentApi } from "../../chat-agents";
+import { ChannelChatAgentsDialog } from "./channel-chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
 import { WorkItemRegistration } from "./work-item-registration";
 import { WorkItemTaskMessage } from "./work-item-task";
@@ -113,6 +114,7 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [focusMemberAction, setFocusMemberAction] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveError, setLeaveError] = useState("");
@@ -130,6 +132,10 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
       onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
       <div className="sp-channel-menu-dialog">
         <Button variant="quiet" onClick={openDetails}><ChannelMembersIcon /><span>Medlemmer og kanalomtale</span></Button>
+        {channel.circle_id && (["owner", "moderator"].includes(channel.role)
+          || (channel.kind !== "private" && channel.role === "member" && snapshot.circles.some(circle =>
+            circle.id === channel.circle_id && ["owner", "moderator"].includes(circle.role))))
+          && <Button variant="quiet" onClick={() => { setOpen(false); setAgentsOpen(true); }}>Agentar i kanalen</Button>}
         {["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
           setFocusMemberAction(true); setOpen(false); requestAnimationFrame(() => setDetailsOpen(true));
         }}><ChannelMembersIcon /><span>Legg til eller inviter kanalmedlem</span></Button>}
@@ -158,6 +164,8 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
     </Dialog>
     {detailsOpen && <PreviewCommunity destination={{ kind: "channel", channelId: channel.id }} snapshot={snapshot} host={host.community} focusMemberAction={focusMemberAction}
       onNavigate={() => {}} onClose={() => setDetailsOpen(false)} />}
+    {agentsOpen && <ChannelChatAgentsDialog key={channel.id} api={host.chatAgents} channelId={channel.id} channelName={channel.name}
+      privateChannel={channel.kind === "private"} onClose={() => setAgentsOpen(false)} />}
     {inviteOpen && channel.circle_id && <PreviewCommunity destination={{ kind: "invite", circleId: channel.circle_id }} snapshot={snapshot} host={host.community}
       onNavigate={() => {}} onClose={() => setInviteOpen(false)} />}
   </>;

@@ -49,7 +49,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     finally { setSaving(false); }
   };
   return <Dialog open title={`Agentar i ${circleName}`} closeLabel="Lukk agentar" onClose={onClose}>
-    <p>Agentar svarar når ei ny melding inneheld eit triggeruttrykk. Dei les berre dei siste 20 minutta i same opne kanal eller tråd. Private kanalar og direktemeldingar er ikkje med.</p>
+    <p>Agentar svarar når ei ny melding inneheld eit triggeruttrykk. Dei les berre dei siste 20 minutta i same kanal eller tråd. Kanalvala styrer tilgangen; private kanalar krev eit uttrykkeleg val. Direktemeldingar er ikkje med.</p>
     {!available && <Status tone="error">Modelltenesta for samtaleagentar er ikkje aktiv. Du kan lagre oppsettet, men ikkje slå på ein agent enno.</Status>}
     {loading ? <Status>Lastar agentar …</Status> : <div style={{ display: "grid", gap: 8 }}>
       {agents.length === 0 && <Status>Ingen agentar i denne kretsen enno.</Status>}

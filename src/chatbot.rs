@@ -24,6 +24,11 @@ const WINDOW_SECONDS: i64 = 20 * 60;
 const MAX_CONTEXT_BYTES: usize = 12_000;
 const MAX_REPLY_CHARS: usize = 2_000;
 
+mod channel_access;
+pub(crate) use channel_access::ChannelAgentInput;
+#[cfg(test)]
+mod channel_access_tests;
+
 #[derive(Clone)]
 enum Store {
     Pg(PgPool),
@@ -304,7 +309,7 @@ impl CircleChatAgents {
                 let authority_query=sql("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role in ('owner','moderator')",$pg) + if $pg { " for share" } else { "" };
                 let owner: Option<String> = sqlx::query_scalar(&authority_query)
                     .bind(circle).bind(actor.to_string()).fetch_optional(&mut *tx).await.map_err(storage)?;
-                if owner.is_none() { return Err(RepositoryError::PermissionDenied); }
+                if owner.is_none() { tx.rollback().await.map_err(storage)?; return Err(RepositoryError::PermissionDenied); }
                 let count: i64 = sqlx::query_scalar(&sql("select count(*) from circle_chat_agents where circle_id=?uuid",$pg)).bind(circle).fetch_one(&mut *tx).await.map_err(storage)?;
                 if count >= 10 { return Err(RepositoryError::Conflict); }
                 sqlx::query(&sql("insert into users(id,kind,display_name,external_provider,external_subject,created_at) values(?uuid,'agent',?,?,?,current_timestamp)",$pg))
@@ -353,7 +358,7 @@ impl CircleChatAgents {
                 let authority_query=sql("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role in ('owner','moderator')",$pg) + if $pg { " for share" } else { "" };
                 let owner: Option<String> = sqlx::query_scalar(&authority_query)
                     .bind(circle).bind(actor.to_string()).fetch_optional(&mut *tx).await.map_err(storage)?;
-                if owner.is_none() { return Err(RepositoryError::PermissionDenied); }
+                if owner.is_none() { tx.rollback().await.map_err(storage)?; return Err(RepositoryError::PermissionDenied); }
                 let changed = sqlx::query(&sql("update circle_chat_agents set trigger_words=?,response_phrases=?,enabled=case when ?='true' then true else false end,revision=revision+1,updated_by=?uuid,updated_at=?int where agent_id=?uuid and circle_id=?uuid and revision=?int",$pg))
                     .bind(&triggers).bind(&phrases).bind(input.enabled.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(id).bind(circle).bind(expected.to_string())
                     .execute(&mut *tx).await.map_err(storage)?.rows_affected();
@@ -600,7 +605,7 @@ impl CircleChatAgents {
             "json_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',m.parent_message_id,'sequence',m.sequence)"
         };
         let query = format!(
-            "select {object} from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users u on u.id=j.agent_id join messages m on m.id=j.source_message_id join users source_user on source_user.id=m.sender_id join message_provenance provenance on provenance.message_id=m.id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and a.enabled=true and a.revision=j.config_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and c.circle_id=a.circle_id and c.kind!='private' and m.channel_id=c.id and m.edited_at is null and m.deleted_at is null and source_user.kind='human' and provenance.provenance='human' and m.created_at>=?"
+            "select {object} from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users u on u.id=j.agent_id join messages m on m.id=j.source_message_id join users source_user on source_user.id=m.sender_id join message_provenance provenance on provenance.message_id=m.id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and a.enabled=true and a.revision=j.config_revision and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=c.id and m.edited_at is null and m.deleted_at is null and source_user.kind='human' and provenance.provenance='human' and m.created_at>=?"
         );
         let cutoff: DateTime<Utc> = Utc::now() - chrono::Duration::seconds(WINDOW_SECONDS);
         let values = match &self.store {
@@ -634,11 +639,13 @@ impl CircleChatAgents {
             "json_object('id',m.id,'author',m.sender_display_name,'body',m.body)"
         };
         let query = format!(
-            "select {object} from messages m where m.channel_id=?uuid and coalesce(cast(m.parent_message_id as text),'')=? and m.deleted_at is null and m.created_at>=? and m.sequence<=?int order by m.sequence desc limit 100"
+            "select {object} from messages m join circle_chat_agent_jobs j on j.channel_id=m.channel_id join circle_chat_agents a on a.agent_id=j.agent_id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and a.enabled=true and a.revision=j.config_revision and c.chat_agent_access_revision=j.access_revision and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=?uuid and coalesce(cast(m.parent_message_id as text),'')=? and m.deleted_at is null and m.created_at>=? and m.sequence<=?int order by m.sequence desc limit 100"
         );
         let cutoff: DateTime<Utc> = Utc::now() - chrono::Duration::seconds(WINDOW_SECONDS);
         let values = match &self.store {
             Store::Pg(pool) => sqlx::query_scalar::<_, String>(&sql(&query, true))
+                .bind(&job.id)
+                .bind(&job.lease_token)
                 .bind(&job.channel_id)
                 .bind(source.parent_message_id.as_deref().unwrap_or(""))
                 .bind(cutoff)
@@ -647,6 +654,8 @@ impl CircleChatAgents {
                 .await
                 .map_err(storage)?,
             Store::Sqlite(pool) => sqlx::query_scalar::<_, String>(&sql(&query, false))
+                .bind(&job.id)
+                .bind(&job.lease_token)
                 .bind(&job.channel_id)
                 .bind(source.parent_message_id.as_deref().unwrap_or(""))
                 .bind(cutoff)
@@ -816,21 +825,22 @@ pub(crate) async fn enqueue_postgres(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     message: &crate::domain::ChatMessage,
 ) -> Result<()> {
-    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,a.trigger_words,a.revision from circle_chat_agents a join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and c.kind!='private' and sender.kind='human' and a.enabled=true")
+    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,a.trigger_words,a.revision,c.chat_agent_access_revision as access_revision from circle_chat_agents a join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true")
         .bind(*message.channel_id.as_uuid()).bind(*message.sender_id.as_uuid())
         .fetch_all(&mut **tx).await.map_err(storage)?;
     for row in rows {
         let agent_id: String = row.try_get("agent_id").map_err(storage)?;
         let words: String = row.try_get("trigger_words").map_err(storage)?;
         let revision: i64 = row.try_get("revision").map_err(storage)?;
+        let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
         let words: Vec<String> = serde_json::from_str(&words).map_err(storage)?;
         if !matches_trigger(message.body.as_str(), &words) {
             continue;
         }
         let now = Utc::now().timestamp();
-        sqlx::query("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,created_at) values($1,$2::uuid,$3,$4,$5,'pending',$6,$6) on conflict(agent_id,source_message_id) do nothing")
+        sqlx::query("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,access_revision,status,available_at,created_at) values($1,$2::uuid,$3,$4,$5,$6,'pending',$7,$7) on conflict(agent_id,source_message_id) do nothing")
             .bind(Uuid::now_v7()).bind(&agent_id).bind(*message.id.as_uuid())
-            .bind(*message.channel_id.as_uuid()).bind(revision).bind(now)
+            .bind(*message.channel_id.as_uuid()).bind(revision).bind(access_revision).bind(now)
             .execute(&mut **tx).await.map_err(storage)?;
     }
     Ok(())
@@ -840,21 +850,22 @@ pub(crate) async fn enqueue_sqlite(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     message: &crate::domain::ChatMessage,
 ) -> Result<()> {
-    let rows = sqlx::query("select a.agent_id,a.trigger_words,a.revision from circle_chat_agents a join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and c.kind!='private' and sender.kind='human' and a.enabled=1")
+    let rows = sqlx::query("select a.agent_id,a.trigger_words,a.revision,c.chat_agent_access_revision as access_revision from circle_chat_agents a join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1")
         .bind(message.sender_id.to_string()).bind(message.channel_id.to_string())
         .fetch_all(&mut **tx).await.map_err(storage)?;
     for row in rows {
         let agent_id: String = row.try_get("agent_id").map_err(storage)?;
         let words: String = row.try_get("trigger_words").map_err(storage)?;
         let revision: i64 = row.try_get("revision").map_err(storage)?;
+        let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
         let words: Vec<String> = serde_json::from_str(&words).map_err(storage)?;
         if !matches_trigger(message.body.as_str(), &words) {
             continue;
         }
         let now = Utc::now().timestamp();
-        sqlx::query("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,created_at) values(?,?,?,?,?,'pending',?,?) on conflict(agent_id,source_message_id) do nothing")
+        sqlx::query("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,access_revision,status,available_at,created_at) values(?,?,?,?,?,?,'pending',?,?) on conflict(agent_id,source_message_id) do nothing")
             .bind(Uuid::now_v7().to_string()).bind(&agent_id).bind(message.id.as_uuid().to_string())
-            .bind(message.channel_id.to_string()).bind(revision).bind(now).bind(now)
+            .bind(message.channel_id.to_string()).bind(revision).bind(access_revision).bind(now).bind(now)
             .execute(&mut **tx).await.map_err(storage)?;
     }
     Ok(())
@@ -869,7 +880,13 @@ pub(crate) async fn authorize_reply_postgres(
         .strip_prefix("circle-chat-agent:")
         .ok_or(RepositoryError::PermissionDenied)?;
     let job = Uuid::parse_str(id).map_err(|_| RepositoryError::PermissionDenied)?;
-    let allowed: Option<i32> = sqlx::query_scalar("select 1 from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users bot on bot.id=j.agent_id join channels c on c.id=j.channel_id join messages source on source.id=j.source_message_id join users author on author.id=source.sender_id join message_provenance provenance on provenance.message_id=source.id where j.id=$1 and j.agent_id=$2 and j.channel_id=$3 and j.status='leased' and j.lease_token is not null and j.leased_until>$4 and j.reply_body=$5 and a.enabled=true and a.revision=j.config_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and bot.kind='agent' and c.circle_id=a.circle_id and c.kind!='private' and source.channel_id=c.id and source.parent_message_id is not distinct from $6 and source.edited_at is null and source.deleted_at is null and source.created_at>$7 and author.kind='human' and provenance.provenance='human' for share of a")
+    sqlx::query("select id from channels where id=$1 for share")
+        .bind(*command.channel_id.as_uuid())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(storage)?
+        .ok_or(RepositoryError::PermissionDenied)?;
+    let allowed: Option<i32> = sqlx::query_scalar("select 1 from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users bot on bot.id=j.agent_id join channels c on c.id=j.channel_id join messages source on source.id=j.source_message_id join users author on author.id=source.sender_id join message_provenance provenance on provenance.message_id=source.id where j.id=$1 and j.agent_id=$2 and j.channel_id=$3 and j.status='leased' and j.lease_token is not null and j.leased_until>$4 and j.reply_body=$5 and a.enabled=true and a.revision=j.config_revision and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and bot.kind='agent' and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and source.channel_id=c.id and source.parent_message_id is not distinct from $6 and source.edited_at is null and source.deleted_at is null and source.created_at>$7 and author.kind='human' and provenance.provenance='human' for share of a")
         .bind(job).bind(*command.actor.as_uuid()).bind(*command.channel_id.as_uuid())
         .bind(Utc::now().timestamp()).bind(command.body.as_str())
         .bind(command.parent_message_id.map(|id| *id.as_uuid()))
@@ -892,7 +909,7 @@ pub(crate) async fn authorize_reply_sqlite(
         .ok_or(RepositoryError::PermissionDenied)?;
     Uuid::parse_str(id).map_err(|_| RepositoryError::PermissionDenied)?;
     let parent = command.parent_message_id.map(|id| id.as_uuid().to_string());
-    let allowed: Option<i64> = sqlx::query_scalar("select 1 from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users bot on bot.id=j.agent_id join channels c on c.id=j.channel_id join messages source on source.id=j.source_message_id join users author on author.id=source.sender_id join message_provenance provenance on provenance.message_id=source.id where j.id=? and j.agent_id=? and j.channel_id=? and j.status='leased' and j.lease_token is not null and j.leased_until>? and j.reply_body=? and a.enabled=1 and a.revision=j.config_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and bot.kind='agent' and c.circle_id=a.circle_id and c.kind!='private' and source.channel_id=c.id and (source.parent_message_id=? or (source.parent_message_id is null and ? is null)) and source.edited_at is null and source.deleted_at is null and source.created_at>? and author.kind='human' and provenance.provenance='human'")
+    let allowed: Option<i64> = sqlx::query_scalar("select 1 from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users bot on bot.id=j.agent_id join channels c on c.id=j.channel_id join messages source on source.id=j.source_message_id join users author on author.id=source.sender_id join message_provenance provenance on provenance.message_id=source.id where j.id=? and j.agent_id=? and j.channel_id=? and j.status='leased' and j.lease_token is not null and j.leased_until>? and j.reply_body=? and a.enabled=1 and a.revision=j.config_revision and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and bot.kind='agent' and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and source.channel_id=c.id and (source.parent_message_id=? or (source.parent_message_id is null and ? is null)) and source.edited_at is null and source.deleted_at is null and source.created_at>? and author.kind='human' and provenance.provenance='human'")
         .bind(id).bind(command.actor.to_string()).bind(command.channel_id.to_string())
         .bind(Utc::now().timestamp()).bind(command.body.as_str())
         .bind(&parent).bind(&parent)

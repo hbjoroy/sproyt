@@ -6,10 +6,75 @@ use axum::{
 };
 
 use crate::{
-    chatbot::AgentInput,
+    chatbot::{AgentInput, ChannelAgentInput},
     server::AppState,
     web::http::{WsQuery, auth_error_response, authenticate_http, repository_response},
 };
+
+pub(crate) async fn list_channel(
+    State(state): State<AppState>,
+    Path(channel): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return auth_error_response(error),
+    };
+    if uuid::Uuid::parse_str(&channel).is_err() {
+        return (axum::http::StatusCode::BAD_REQUEST, "invalid channel id").into_response();
+    }
+    let Some(service) = &state.chat_agents else {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match service.list_channel(&principal.user.id, &channel).await {
+        Ok(agents) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Json(agents),
+        )
+            .into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+pub(crate) async fn update_channel(
+    State(state): State<AppState>,
+    Path((channel, agent)): Path<(String, String)>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(input): Json<ChannelAgentInput>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return auth_error_response(error),
+    };
+    if uuid::Uuid::parse_str(&channel).is_err() || uuid::Uuid::parse_str(&agent).is_err() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "invalid channel or agent id",
+        )
+            .into_response();
+    }
+    let Some(service) = &state.chat_agents else {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    // First roll out compatible workers in both environments sharing this DB,
+    // then enable channel mutations. The worker always enforces stored choices.
+    if !crate::chatbot::CircleChatAgents::channel_selection_available() {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Kanalval for agentar blir aktivert når utrullinga er ferdig.",
+        )
+            .into_response();
+    }
+    match service
+        .update_channel(&principal.user.id, &channel, &agent, input)
+        .await
+    {
+        Ok(agents) => Json(agents).into_response(),
+        Err(error) => repository_response(error),
+    }
+}
 
 pub(crate) async fn list(
     State(state): State<AppState>,
