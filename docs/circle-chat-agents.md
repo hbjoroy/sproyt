@@ -18,9 +18,10 @@ denne meldinga og kan bruke avsendaren sitt viste namn. Ei melding som
 allereie er meir enn 20 minutt gammal når jobben blir handsama, får ikkje
 eit forsinka svar. Eit trådsvar kjem i same tråd; eit kanalsvar i kanalen.
 
-Første versjon gjeld vanlege, ikkje-private kanalar i kretsen.
-Direktemeldingar, gruppedirektemeldingar, private kanalar og kanalar i
-Felles er utanfor. Ingen eksisterande meldingar vert kølagde når ein
+Opne kretskanalar (`public` og `local`) har tilgang som standard.
+Private kretskanalar krev eit uttrykkeleg kanalval. Direktemeldingar,
+gruppedirektemeldingar og kanalar i Felles er utanfor.
+Ingen eksisterande meldingar vert kølagde når ein
 agent blir aktivert. Agentmeldingar er merkte som genererte og kan aldri
 trigge ein annan agent.
 
@@ -120,3 +121,46 @@ parallelle arbeidarar. Ein falsk vLLM gir deterministiske testar;
 ein avgrensa manuell test mot Santorini provar modelloppdaging og eitt
 faktisk svar. Eit seinare driftssteg bør leggje til teljarar for kø,
 fullførte/hoppa over/feila jobbar og modell-latens utan meldingstekst.
+
+## Agentval per kanal (#205)
+
+Migrasjon 0051 legg til `channel_chat_agent_settings`, ein stigande
+`channels.chat_agent_access_revision` og den fangste revisjonen på kvar
+svarjobb. Manglande val betyr på i opne kretskanalar og av i private;
+eit uttrykkeleg av-val vinn. Agenten må alltid tilhøyre same krets.
+Kanalval endrar ikkje agenten sin globale aktivbrytar eller konfigurasjon.
+
+`GET /api/v1/channels/{id}/chat-agents` viser namn, global aktivstatus,
+kanalval, tilgangsrevisjon og `selection_available`; ikkje trigger/prompt.
+`PATCH /api/v1/channels/{id}/chat-agents/{agent_id}` tek `enabled` og venta
+`access_revision`. Forelda revisjon gir konflikt; kanalval og revisjonsauke
+blir lagra atomisk med aktør i auditloggen.
+
+Begge API krev faktisk kanalmedlemskap. Kanalowner/moderator kan velje.
+I opne kretskanalar kan også kretseigar/moderator med skrivetilgang velje.
+Kretsrolla gir ikkje tilgang til private kanalar. Lesing sjekkar rett og
+data i same statement; endring låser autoritetsmedlemskap i transaksjonen.
+
+Jobben bind både konfigurasjons- og kanaltilgangsrevisjonen. Tilgang blir
+kontrollert ved kølegging, kjelde-/kontekstlesing og publisering. Av→på
+kan ikkje vekkje gamle jobbar. Endring av éin agent kan konservativt stoppe
+andre ventande jobbar i kanalen. PostgreSQL publisering låser kanal før
+agent; SQLite serialiserer skrivinga. Ein modellførespurnad som allereie er
+send, kan ikkje trekkjast attende, men eit seinare svar kan stoppast.
+Historiske svar blir bevarte.
+
+### Første aktivering og tilbakerulling
+
+Prod og canary deler chatdatabasen. Første imageutrulling skal ha
+`config.channelChatAgentsEnabled: false`
+(`SPROYT_CHANNEL_CHAT_AGENTS_ENABLED=false`) i begge miljø. Dette sperrar
+HTTP-endringar og deaktiverer kanalvala i UI; workerane handhever alltid
+lagra val. Med ingen tidlegare kanalval bevarer default revisjon 1 dei
+historiske, opne svarjobbane, medan private kanalar framleis er av.
+
+Kontroller at alle gamle workerprosessar i begge miljø er avslutta, og at
+alle app-replikaer køyrer ny image/revisjon, før ei eiga GitOps-endring
+set flagget til true. Ein gammal worker kan elles ta ein privat jobb og
+skippe han, eller ignorere eit nytt av-val. Etter aktivering er av-flagget
+åleine ikkje trygg tilbakerulling til kode utan kanalval; bruk ein kompatibel
+image som handhever lagra val og revisjonar.

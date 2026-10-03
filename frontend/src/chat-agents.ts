@@ -20,6 +20,23 @@ export type CircleChatAgentInput = Readonly<{
   revision?: number;
 }>;
 
+export type ChannelChatAgents = Readonly<{
+  accessRevision: number;
+  selectionAvailable: boolean;
+  agents: readonly Readonly<{ agentId: string; displayName: string; agentEnabled: boolean; enabled: boolean }>[];
+}>;
+
+function decodeChannelAgents(value: unknown): ChannelChatAgents {
+  if (!isRecord(value) || !Number.isSafeInteger(value.access_revision) || Number(value.access_revision) < 1
+    || typeof value.selection_available !== "boolean" || !Array.isArray(value.agents) || value.agents.length > 10) throw new Error("Ugyldig kanalagentsvar frå tenaren.");
+  return { accessRevision: Number(value.access_revision), selectionAvailable: value.selection_available, agents: value.agents.map(agent => {
+    if (!isRecord(agent) || typeof agent.agent_id !== "string" || typeof agent.display_name !== "string"
+      || typeof agent.agent_enabled !== "boolean" || typeof agent.enabled !== "boolean")
+      throw new Error("Ugyldig kanalagent frå tenaren.");
+    return { agentId: agent.agent_id, displayName: agent.display_name, agentEnabled: agent.agent_enabled, enabled: agent.enabled };
+  }) };
+}
+
 function decodeAgent(value: unknown): CircleChatAgent {
   if (!isRecord(value) || typeof value.agent_id !== "string" || typeof value.circle_id !== "string"
     || typeof value.display_name !== "string" || !Array.isArray(value.trigger_words)
@@ -34,6 +51,15 @@ function decodeAgent(value: unknown): CircleChatAgent {
 
 export class CircleChatAgentApi {
   constructor(private readonly http: HttpClient) {}
+
+  listChannel(channelId: string): Promise<ChannelChatAgents> {
+    return this.http.json(`/api/v1/channels/${encodeURIComponent(channelId)}/chat-agents`, decodeChannelAgents);
+  }
+
+  selectChannel(channelId: string, agentId: string, enabled: boolean, accessRevision: number): Promise<ChannelChatAgents> {
+    return this.http.json(`/api/v1/channels/${encodeURIComponent(channelId)}/chat-agents/${encodeURIComponent(agentId)}`, decodeChannelAgents,
+      { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled, access_revision: accessRevision }) });
+  }
 
   async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean }> {
     const response = await this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, value => value);

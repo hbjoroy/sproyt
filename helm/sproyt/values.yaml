@@ -52,6 +52,8 @@ config:
   comfyuiUrl: ""
   vllmUrl: ""
   chatAgentsEnabled: false
+  # Enable only after all workers sharing the chat DB run migration-0051 code.
+  channelChatAgentsEnabled: false
   imagegenWebResearch: false
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60

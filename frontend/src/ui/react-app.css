@@ -387,3 +387,6 @@
 .sp-saved-emoji-head .sp-button { width: 44px; height: 44px; padding: 0; }
 .sp-saved-emoji-grid { max-height: 176px; overflow: auto; }
 .sp-saved-emojis .sp-help:empty { display: none; }
+.sp-channel-agent-list { display: grid; gap: 4px; }
+.sp-channel-agent-choice { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--sp-line); padding-block: 6px; }
+.sp-channel-agent-choice small { display: block; color: var(--sp-muted); }

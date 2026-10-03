@@ -332,6 +332,14 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         )
         .route("/api/v1/agents", post(create_agent))
         .route(
+            "/api/v1/channels/{id}/chat-agents",
+            get(crate::web::chatbot::list_channel),
+        )
+        .route(
+            "/api/v1/channels/{id}/chat-agents/{agent_id}",
+            axum::routing::patch(crate::web::chatbot::update_channel),
+        )
+        .route(
             "/api/v1/circles/{id}/chat-agents",
             get(crate::web::chatbot::list).post(crate::web::chatbot::create),
         )
