@@ -1,3 +1,16 @@
+import type { ChatMessage } from "../types";
+
+/** Hidden tombstones immediately after visible content are already passed.
+ * Never cross an unknown sequence or a live message, including unseen replies. */
+export function readSequencePastDeleted(sequence: number, channelId: string, messages: readonly ChatMessage[]): number {
+  for (const message of messages.filter(message => message.channel_id === channelId && message.sequence > sequence)
+    .sort((left, right) => left.sequence - right.sequence)) {
+    if (message.sequence !== sequence + 1 || !message.deleted_at) break;
+    sequence = message.sequence;
+  }
+  return sequence;
+}
+
 /** A read watermark means read up to the furthest visible sequence, including
  * an explicit jump. Loading messages never calls this policy. Server responses
  * confirm progress; failed/lost requests remain eligible for a later retry. */

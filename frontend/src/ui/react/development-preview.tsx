@@ -4,6 +4,7 @@ import type { ConversationSnapshot } from "../../application/conversation-snapsh
 import type { ApplicationRuntime } from "../../application/runtime";
 import { installSproytStyles, type SproytThemeMode } from "../design-system";
 import { createConversationViewProps } from "./host-adapter";
+import { messagesForTimeline } from "./conversation-view";
 import type { ComposerTarget } from "./host-adapter";
 import { mountConversationView } from "./mount";
 import { createPreviewReactionPicker, PreviewReactionActions } from "./preview-reactions";
@@ -204,7 +205,7 @@ function PreviewMessageMutations({ host, message }: { readonly host: Development
       </form>
     </Dialog>}
     {deleting && <Dialog open title="Slett melding" closeLabel="Avbryt" onClose={() => setDeleting(false)}>
-      <p>Meldinga blir ståande som sletta i samtalen.</p>
+      <p>Meldinga blir fjerna frå samtalen. Eventuelle svar i tråden blir verande.</p>
       <Button variant="danger" onClick={() => { host.deleteMessage(message.id); setDeleting(false); }}>Slett melding</Button>
     </Dialog>}
   </>;
@@ -288,11 +289,12 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   const props = () => {
     const snapshot = host.snapshot();
     const scrollIntent = host.takeScrollIntent();
-    const channelMessageIds = snapshot.timeline.messages.map(message => message.id);
+    const channelMessages = messagesForTimeline({ ...snapshot.timeline });
+    const channelMessageIds = channelMessages.map(message => message.id);
     channelScroll.prepare({
       key: snapshot.selection.channelId ? `channel:${snapshot.selection.channelId}` : null,
       messageIds: channelMessageIds,
-      messageSequences: snapshot.timeline.messages.map(message => message.sequence),
+      messageSequences: channelMessages.map(message => message.sequence),
       initialReadSequence: snapshot.activeChannel?.last_read_sequence,
       hasOlder: snapshot.timeline.hasOlder,
       loading: snapshot.timeline.loading,
@@ -301,7 +303,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       revealMessageId: scrollIntent.channelRevealMessageId
     });
     const threadMessageIds = snapshot.thread
-      ? [snapshot.thread.root?.id, ...snapshot.thread.replies.map(message => message.id)].filter((id): id is string => Boolean(id))
+      ? [snapshot.thread.root?.id, ...snapshot.thread.replies.filter(message => !message.deleted_at).map(message => message.id)].filter((id): id is string => Boolean(id))
       : [];
     threadScroll.prepare({
       key: snapshot.thread ? `thread:${snapshot.thread.rootMessageId}` : null,
@@ -373,7 +375,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       messageStatus: host.messageStatus,
       onReactionRequest: reactionPicker.open,
       renderActions: (message, context) => {
-        if (message.deleted_at) return null;
+        if (message.deleted_at) return !context?.threadParent && snapshot.timeline.retainedDeletedRootIds.includes(message.id)
+          ? <Button variant="quiet" data-thread-trigger={message.id} onClick={() => { host.openThread(message.id); update(); }}>Opne tråd</Button>
+          : null;
         const replies = snapshot.threadSummaries.find(summary => summary.root_message_id === message.id)?.reply_count ?? 0;
         const threadAction = message.parent_message_id === null && !context?.threadParent ? <Button className="sp-message-symbol" variant="quiet"
           aria-label={replies ? `${replies} svar i tråd` : "Svar i tråd"} title={replies ? `${replies} svar i tråd` : "Svar i tråd"}
