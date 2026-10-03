@@ -233,7 +233,7 @@ test("returning from another channel keeps an anchor near the old bottom when ne
   await expect(page.getByRole("button", { name: /^# a 5 uleste$/, includeHidden: true })).toHaveCount(1);
 });
 
-test("channel return waits for a media-clamped anchor instead of following the temporary bottom", async ({ page }) => {
+test("channel return waits for a media-clamped anchor instead of following the temporary bottom", async ({ page, isMobile }) => {
   const media = "00000000-0000-7000-8000-000000000045";
   const messages = Array.from({ length: 45 }, (_, index) => ({ ...root("a", index + 1),
     body: `Bilete ${index + 1} [[media:${media}|image/svg+xml|image.svg]]` }));
@@ -247,7 +247,15 @@ test("channel return waits for a media-clamped anchor instead of following the t
   await server.install(page);
   await expect.poll(() => viewport(page).locator("img").last().evaluate(image => (image as HTMLImageElement).naturalHeight)).toBeGreaterThan(0);
   await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
-  await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("PageUp");
+  if (isMobile) {
+    await viewport(page).evaluate(async element => {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      element.scrollTop -= 450;
+      element.dispatchEvent(new Event("scroll"));
+    });
+  } else {
+    await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("PageUp");
+  }
   await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeGreaterThan(300);
   // PageUp is animated by the browser. Capture only after its scroll settles.
   await expect.poll(async () => {
@@ -274,16 +282,26 @@ test("channel return waits for a media-clamped anchor instead of following the t
   await expect.poll(() => viewport(page).locator("img").last().evaluate(image => (image as HTMLImageElement).naturalHeight)).toBeGreaterThan(0);
   await expectAnchor(page, saved);
   expect(server.reads.get("a")).toBe(45);
-  // A genuinely shorter history may make the old offset impossible. Keyboard
-  // navigation must supersede that restore rather than trapping the reader.
+  // A genuinely shorter history may make the old offset impossible. Even a
+  // wheel down at the already-clamped bottom must supersede the restore.
   await select(page, "b");
   await expect.poll(() => anchor(page).then(value => value.id)).toContain("b-");
   messages.forEach(message => { message.body = "Kort melding"; });
   await select(page, "a");
   await expect(viewport(page).locator('[data-message-id="a-46"]')).toHaveCount(1);
   expect(server.reads.get("a")).toBe(45);
-  await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("End");
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  const clampedTop = await viewport(page).evaluate(element => element.scrollTop);
+  if (isMobile) {
+    // Playwright's mobile WebKit has no wheel support; End at the same bottom
+    // exercises the identical no-scroll-event input boundary.
+    await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("End");
+  } else {
+    await viewport(page).hover();
+    await page.mouse.wheel(0, 120);
+  }
   await expect.poll(() => server.reads.get("a")).toBe(46);
+  expect(await viewport(page).evaluate(element => element.scrollTop)).toBe(clampedTop);
   server.append("a");
   await expect.poll(() => server.reads.get("a")).toBe(47);
 });

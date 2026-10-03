@@ -270,6 +270,8 @@ export function createTimelineScrollController(options: TimelineScrollController
     appliedScrollTop = null;
     const position = save();
     followBottom = (position?.distanceFromBottom ?? Infinity) <= nearEdge;
+    // End/wheel at an already-clamped bottom may not emit a scroll event.
+    scheduleReconcile();
   };
 
   const detachScrollIntent = () => {
