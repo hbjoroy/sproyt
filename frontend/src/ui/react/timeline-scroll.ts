@@ -51,7 +51,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   let scrollApplication = 0;
   let appliedScrollTop: number | null = null;
   let clampedAnchor = false;
-  let geometry: { height: number; viewportHeight: number } | null = null;
+  let geometry: { height: number; viewportHeight: number; top: number } | null = null;
   let scrollIntent = false;
   let scrollIntentGeneration = 0;
   let followBottom = true;
@@ -87,7 +87,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const rememberGeometry = () => {
-    geometry = viewport ? { height: viewport.scrollHeight, viewportHeight: viewport.clientHeight } : null;
+    geometry = viewport ? { height: viewport.scrollHeight, viewportHeight: viewport.clientHeight, top: viewport.scrollTop } : null;
   };
 
   const geometryChanged = () => !!viewport && !!geometry
@@ -258,13 +258,15 @@ export function createTimelineScrollController(options: TimelineScrollController
       scheduleReconcile();
       return;
     }
-    const hadScrollIntent = scrollIntent;
+    const movedUp = geometry !== null && viewport.scrollTop < geometry.top;
     scrollIntent = false;
     appliedScrollTop = null;
     const position = save();
     if (!position) return;
     rememberGeometry();
-    followBottom = position.distanceFromBottom <= nearEdge;
+    // Native smooth scrolling can begin with a tiny upward step. Respect that
+    // step even inside the near-bottom threshold instead of snapping it back.
+    followBottom = !movedUp && position.distanceFromBottom <= nearEdge;
     if (!followBottom) revealMessageId = null;
     if (viewport.scrollTop <= nearEdge && model.hasOlder) {
       const oldest = model.messageIds[0] ?? "";
@@ -277,7 +279,6 @@ export function createTimelineScrollController(options: TimelineScrollController
     }
     reportBottom();
     reportVisible();
-    if (hadScrollIntent) scheduleReconcile();
   };
 
   const onScrollIntent = (event: Event) => {

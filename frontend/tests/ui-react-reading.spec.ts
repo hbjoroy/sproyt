@@ -33,9 +33,14 @@ test("coalesced host publications retain bottom following until the DOM commit",
       const ids = [...timeline.querySelectorAll<HTMLElement>("[data-message-id]")].map(element => element.dataset.messageId!);
       controller.prepare({ key: "channel:a", messageIds: [...ids, id] });
       const tail = document.createElement("div"); tail.dataset.messageId = id; tail.style.height = "200px";
-      timeline.append(tail);
       timeline.dispatchEvent(type === "keydown" ? new KeyboardEvent(type, { key: "PageUp" }) : new Event(type));
-      timeline.scrollTop -= 300;
+      timeline.scrollTop -= 10;
+      controller.onScroll();
+      const firstTop = timeline.scrollTop;
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      inputOffsets.push(Math.abs(timeline.scrollTop - firstTop));
+      timeline.append(tail);
+      timeline.scrollTop -= 290;
       controller.onScroll();
       const top = timeline.scrollTop;
       await frame();
