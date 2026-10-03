@@ -48,6 +48,9 @@ for (const width of [1280,390]) {
     const server=await fixture(page,"owner");
     if(width===390) await server.preview.getByRole("button",{name:"Samtalar",exact:true}).click();
     await server.preview.getByRole("button",{name:"Val for Testkrets",exact:true}).click();
+    const menu=server.preview.getByRole("group",{name:"Val for Testkrets",exact:true});
+    expect((await menu.boundingBox())!.height).toBeLessThan(280);
+    for(const action of await menu.getByRole("button").all()) expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await server.preview.getByRole("button",{name:"Medlemmer og roller i Testkrets",exact:true}).click();
     const dialog=server.preview.getByRole("dialog",{name:"Kretsmedlemmer og roller",exact:true});
     await expect(dialog).toContainText("Eigaren");

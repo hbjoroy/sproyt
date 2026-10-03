@@ -50,28 +50,28 @@ export function NavigationScopeActions({ group, snapshot, host, onSelect }: {
     setDestination(undefined);
     requestAnimationFrame(() => { if (trigger.current?.isConnected) trigger.current.focus({ preventScroll: true }); });
   };
-  const action = (label: string, target: CommunityDestination, symbol: ReactNode) => <Button
+  const action = (label: string, target: CommunityDestination, symbol: ReactNode, visibleLabel = label) => <Button
     className="sp-scope-menu-action" variant="quiet" aria-label={label}
     onClick={event => {
       event.currentTarget.focus({ preventScroll: true });
       panel.current?.hidePopover();
       trigger.current?.focus({ preventScroll: true });
       setDestination(target);
-    }}><span className="sp-scope-menu-symbol" aria-hidden="true">{symbol}</span><span>{label}</span></Button>;
+    }}><span className="sp-scope-menu-symbol" aria-hidden="true">{symbol}</span><span>{visibleLabel}</span></Button>;
   return <>
     <div className="sp-scope-actions">
       <Button ref={trigger} className="sp-scope-action" variant="quiet" aria-label={`Val for ${group.name}`}
         title={`Val for ${group.name}`} aria-expanded={open} aria-controls={id} onClick={toggle}><span aria-hidden="true">⋯</span></Button>
       <div ref={panel} id={id} popover="auto" className="sp-scope-menu" role="group" aria-label={`Val for ${group.name}`}
         onToggle={event => setOpen(event.newState === "open")}>
-      {action(`Finn kanalar i ${group.name}`, circle ? { kind: "channels", circleId: circle.id } : { kind: "global-channels" }, "#")}
-      {action(`Ny kanal i ${group.name}`, { kind: "create-channel", circleId: circle?.id ?? null }, "+")}
-      {circle && action(`Medlemmer og roller i ${group.name}`, {kind:"circle-members",circleId:circle.id}, "♙")}
+      {action(`Finn kanalar i ${group.name}`, circle ? { kind: "channels", circleId: circle.id } : { kind: "global-channels" }, "#", "Finn kanalar")}
+      {action(`Ny kanal i ${group.name}`, { kind: "create-channel", circleId: circle?.id ?? null }, "+", "Ny kanal")}
+      {circle && action(`Medlemmer og roller i ${group.name}`, {kind:"circle-members",circleId:circle.id}, "♙", "Medlemmer og roller")}
       {circle && ["owner","moderator"].includes(circle.role) && host.chatAgents && <Button className="sp-scope-menu-action" variant="quiet" aria-label={`Agentar i ${group.name}`}
-        onClick={()=>{panel.current?.hidePopover();trigger.current?.focus({preventScroll:true});setAgentsOpen(true);}}><span className="sp-scope-menu-symbol" aria-hidden="true">⚙</span><span>Agentar i {group.name}</span></Button>}
-      {circle?.role === "owner" && action(`Endre namn på ${group.name}`, { kind: "rename-circle", circleId: circle.id }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m4 16 11-11 4 4-11 11-5 1 1-5ZM13 7l4 4" /></svg>)}
+        onClick={()=>{panel.current?.hidePopover();trigger.current?.focus({preventScroll:true});setAgentsOpen(true);}}><span className="sp-scope-menu-symbol" aria-hidden="true">⚙</span><span>Agentar</span></Button>}
+      {circle?.role === "owner" && action(`Endre namn på ${group.name}`, { kind: "rename-circle", circleId: circle.id }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m4 16 11-11 4 4-11 11-5 1 1-5ZM13 7l4 4" /></svg>, "Endre namn")}
       {(!circle || circle.role === "owner") && action(circle ? `Inviter til ${group.name}` : "Inviter ny brukar til Sprøyt",
-        circle ? { kind: "invite", circleId: circle.id } : { kind: "global-invite" }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="8" cy="7" r="3" /><path d="M2 21v-3a6 6 0 0 1 12 0v3M19 6v8M15 10h8" /></svg>)}
+        circle ? { kind: "invite", circleId: circle.id } : { kind: "global-invite" }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="8" cy="7" r="3" /><path d="M2 21v-3a6 6 0 0 1 12 0v3M19 6v8M15 10h8" /></svg>, circle ? "Inviter personar" : "Inviter ny brukar")}
       </div>
     </div>
     {agentsOpen && circle && ["owner","moderator"].includes(circle.role) && host.chatAgents && <CircleChatAgentsDialog key={circle.id} api={host.chatAgents} circleId={circle.id} circleName={circle.name}
