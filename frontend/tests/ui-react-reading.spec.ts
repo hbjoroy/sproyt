@@ -247,6 +247,20 @@ test("channel return waits for a media-clamped anchor instead of following the t
   await server.install(page);
   await expect.poll(() => viewport(page).locator("img").last().evaluate(image => (image as HTMLImageElement).naturalHeight)).toBeGreaterThan(0);
   await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  // Model native scroll anchoring when media above and below the visible
+  // content grows, before the ResizeObserver callback. No user input occurred.
+  await viewport(page).evaluate(element => {
+    const top = element.scrollTop;
+    const messages = element.querySelectorAll<HTMLElement>("[data-message-id]");
+    messages[0]!.style.paddingBottom = "100px";
+    messages[messages.length - 1]!.style.paddingBottom = "160px";
+    element.scrollTop = top + 100;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  // Remove the fixture layout before saving the return anchor.
+  await viewport(page).evaluate(element => element.querySelectorAll<HTMLElement>("[data-message-id]").forEach(message => { message.style.paddingBottom = ""; }));
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
   if (isMobile) {
     await viewport(page).evaluate(async element => {
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -254,6 +268,11 @@ test("channel return waits for a media-clamped anchor instead of following the t
       element.dispatchEvent(new Event("scroll"));
     });
   } else {
+    // A real key must still win when a media resize happens during its input
+    // event, before the scroll/resize callbacks can update their geometry.
+    await viewport(page).evaluate(element => element.addEventListener("keydown", () => {
+      (element.querySelectorAll<HTMLElement>("[data-message-id]").item(44)).style.paddingBottom = "100px";
+    }, { once: true }));
     await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("PageUp");
   }
   await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeGreaterThan(300);

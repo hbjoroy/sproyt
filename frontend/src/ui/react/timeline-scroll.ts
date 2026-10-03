@@ -51,6 +51,9 @@ export function createTimelineScrollController(options: TimelineScrollController
   let scrollApplication = 0;
   let appliedScrollTop: number | null = null;
   let clampedAnchor = false;
+  let geometry: { height: number; viewportHeight: number } | null = null;
+  let scrollIntent = false;
+  let scrollIntentGeneration = 0;
   let followBottom = true;
   let revealMessageId: string | null = null;
   let requestedOlderAt: string | null = null;
@@ -81,6 +84,10 @@ export function createTimelineScrollController(options: TimelineScrollController
     const position = capture();
     if (position?.anchorId && !opening) positions.set(model.key, position);
     return position;
+  };
+
+  const rememberGeometry = () => {
+    geometry = viewport ? { height: viewport.scrollHeight, viewportHeight: viewport.clientHeight } : null;
   };
 
   const setScrollTop = (value: number) => {
@@ -187,6 +194,7 @@ export function createTimelineScrollController(options: TimelineScrollController
       opening = null;
       pending = null;
       save();
+      rememberGeometry();
       reportVisible();
       return;
     }
@@ -220,6 +228,7 @@ export function createTimelineScrollController(options: TimelineScrollController
       }
     }
     save();
+    rememberGeometry();
     reportBottom();
     reportVisible();
   };
@@ -240,9 +249,17 @@ export function createTimelineScrollController(options: TimelineScrollController
 
   const onScroll = () => {
     if (!viewport || pending || viewport.scrollTop === appliedScrollTop) return;
+    // WebKit can deliver layout-induced scroll before ResizeObserver. Media
+    // growth is not evidence that the reader stopped following the bottom.
+    if (!scrollIntent && geometry && (geometry.height !== viewport.scrollHeight || geometry.viewportHeight !== viewport.clientHeight)) {
+      scheduleReconcile();
+      return;
+    }
+    scrollIntent = false;
     appliedScrollTop = null;
     const position = save();
     if (!position) return;
+    rememberGeometry();
     followBottom = position.distanceFromBottom <= nearEdge;
     if (!followBottom) revealMessageId = null;
     if (viewport.scrollTop <= nearEdge && model.hasOlder) {
@@ -259,9 +276,17 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const onScrollIntent = (event: Event) => {
-    if (!clampedAnchor || !viewport) return;
+    if (!viewport) return;
     if (event instanceof KeyboardEvent && !["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
     if (event.type === "pointerdown" && event.target !== viewport) return;
+    scrollIntent = true;
+    const generation = ++scrollIntentGeneration;
+    // Input that produces no scroll must not label a later layout event as
+    // user scrolling. WebKit may dispatch its scroll in the rendering step.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (generation === scrollIntentGeneration) scrollIntent = false;
+    }));
+    if (!clampedAnchor) return;
     // An unreachable offset must never trap the reader after genuine input
     // (for example if content was removed while they visited another channel).
     clampedAnchor = false;
@@ -290,6 +315,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     resizeObserver?.disconnect();
     detachScrollIntent();
     viewport = element;
+    geometry = null;
     if (!viewport) return;
     viewport.addEventListener("wheel", onScrollIntent, { passive: true });
     viewport.addEventListener("touchstart", onScrollIntent, { passive: true });
@@ -317,6 +343,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     const stored = next.key ? positions.get(next.key) ?? null : null;
     if (keyChanged) {
       clampedAnchor = false;
+      scrollIntent = false;
       opening = next.key ? { position: stored, readSequence: next.initialReadSequence ?? 0 } : null;
       if (next.key && !openingReadSequences.has(next.key)) openingReadSequences.set(next.key, next.initialReadSequence ?? 0);
     }
@@ -353,7 +380,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   document.addEventListener("visibilitychange", scheduleReconcile);
   const goToLatest = () => {
     opening = null; pending = null; clampedAnchor = false; revealMessageId = null; followBottom = true;
-    scrollToBottom(); save(); reportVisible();
+    scrollToBottom(); save(); rememberGeometry(); reportVisible();
   };
   const unreadAfterSequence = () => model.key ? openingReadSequences.get(model.key) : undefined;
   return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, dispose });

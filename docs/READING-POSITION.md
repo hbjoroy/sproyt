@@ -22,6 +22,8 @@ Om nettlesaren avgrensar scroll til ein mellombels botn, held klienten det
 opphavlege ankeret og kvitter ikkje denne plasseringa. Neste layoutendring
 prøver same offset igjen. Ekte scrollinput eller **Gå til siste** overstyrer
 restaureringa, også om endra innhald gjer den gamle offseten umogeleg.
+Scroll som kjem av endra bilete-/viewportgeometri utan fersk brukarinput,
+skal heller ikkje slå av normal følgjing av botnen.
 
 Historikklasting flyttar ikkje lesemarkøren. Etter ferdig plassering og ved
 scroll/fokus måler klienten meldingar som overlappar det synlege vindauget med
