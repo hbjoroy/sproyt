@@ -19,7 +19,7 @@ use crate::{
 };
 
 type Result<T> = std::result::Result<T, RepositoryError>;
-const PROVIDER: &str = "sproyt-circle-chat";
+const PROVIDER: &str = crate::agent::CIRCLE_CHAT_PROVIDER;
 const WINDOW_SECONDS: i64 = 20 * 60;
 const MAX_CONTEXT_BYTES: usize = 12_000;
 const MAX_REPLY_CHARS: usize = 2_000;
@@ -239,7 +239,7 @@ impl CircleChatAgents {
     }
 
     pub(crate) async fn list(&self, actor: &UserId, circle: &str) -> Result<Vec<AgentView>> {
-        self.require_owner(actor, circle).await?;
+        self.require_manager(actor, circle).await?;
         let pg = matches!(self.store, Store::Pg(_));
         let object = if pg {
             "cast(json_build_object('agent_id',cast(a.agent_id as text),'circle_id',cast(a.circle_id as text),'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',a.enabled,'revision',a.revision) as text)"
@@ -247,14 +247,18 @@ impl CircleChatAgents {
             "json_object('agent_id',a.agent_id,'circle_id',a.circle_id,'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',json(case when a.enabled=1 then 'true' else 'false' end),'revision',a.revision)"
         };
         let query = format!(
-            "select {object} from circle_chat_agents a join users u on u.id=a.agent_id where a.circle_id=?uuid order by lower(u.display_name),a.agent_id"
+            "select {object} from circle_chat_agents a join users u on u.id=a.agent_id where a.circle_id=?uuid and exists(select 1 from circle_memberships m where m.circle_id=a.circle_id and m.user_id=?uuid and m.role in ('owner','moderator')) order by lower(u.display_name),a.agent_id"
         );
-        self.store
-            .values(&query, &[circle.into()])
-            .await?
-            .into_iter()
-            .map(|raw| self.parse_view(&raw))
-            .collect()
+        let rows = self
+            .store
+            .values(&query, &[circle.into(), actor.to_string()])
+            .await?;
+        // An empty circle and a role revoked between queries have the same result.
+        // Recheck empty results for the correct status; the data query itself is gated.
+        if rows.is_empty() {
+            self.require_manager(actor, circle).await?;
+        }
+        rows.into_iter().map(|raw| self.parse_view(&raw)).collect()
     }
 
     fn parse_view(&self, raw: &str) -> Result<AgentView> {
@@ -271,8 +275,8 @@ impl CircleChatAgents {
         })
     }
 
-    async fn require_owner(&self, actor: &UserId, circle: &str) -> Result<()> {
-        let owner = self.store.values("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role='owner'", &[circle.into(), actor.to_string()]).await?;
+    async fn require_manager(&self, actor: &UserId, circle: &str) -> Result<()> {
+        let owner = self.store.values("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role in ('owner','moderator')", &[circle.into(), actor.to_string()]).await?;
         if owner.is_empty() {
             Err(RepositoryError::PermissionDenied)
         } else {
@@ -297,7 +301,8 @@ impl CircleChatAgents {
         macro_rules! create {
             ($pool:expr,$pg:expr) => {{
                 let mut tx = $pool.begin().await.map_err(storage)?;
-                let owner: Option<String> = sqlx::query_scalar(&sql("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role='owner'",$pg))
+                let authority_query=sql("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role in ('owner','moderator')",$pg) + if $pg { " for share" } else { "" };
+                let owner: Option<String> = sqlx::query_scalar(&authority_query)
                     .bind(circle).bind(actor.to_string()).fetch_optional(&mut *tx).await.map_err(storage)?;
                 if owner.is_none() { return Err(RepositoryError::PermissionDenied); }
                 let count: i64 = sqlx::query_scalar(&sql("select count(*) from circle_chat_agents where circle_id=?uuid",$pg)).bind(circle).fetch_one(&mut *tx).await.map_err(storage)?;
@@ -345,7 +350,8 @@ impl CircleChatAgents {
         macro_rules! update {
             ($pool:expr,$pg:expr) => {{
                 let mut tx = $pool.begin().await.map_err(storage)?;
-                let owner: Option<String> = sqlx::query_scalar(&sql("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role='owner'",$pg))
+                let authority_query=sql("select cast(circle_id as text) from circle_memberships where circle_id=?uuid and user_id=?uuid and role in ('owner','moderator')",$pg) + if $pg { " for share" } else { "" };
+                let owner: Option<String> = sqlx::query_scalar(&authority_query)
                     .bind(circle).bind(actor.to_string()).fetch_optional(&mut *tx).await.map_err(storage)?;
                 if owner.is_none() { return Err(RepositoryError::PermissionDenied); }
                 let changed = sqlx::query(&sql("update circle_chat_agents set trigger_words=?,response_phrases=?,enabled=case when ?='true' then true else false end,revision=revision+1,updated_by=?uuid,updated_at=?int where agent_id=?uuid and circle_id=?uuid and revision=?int",$pg))
@@ -1512,5 +1518,328 @@ mod tests {
             service.context(&job, &source).await.unwrap()[0].body,
             "Hjelp meg"
         );
+    }
+
+    async fn verify_moderator_agent_authority<
+        R: crate::domain::ChatRepository + crate::agent::AgentRepository,
+    >(
+        repository: &R,
+        service: &CircleChatAgents,
+    ) {
+        use crate::agent::{AgentScope, CIRCLE_CHAT_PROVIDER, CreateAgent, GrantAgent};
+        use crate::domain::*;
+        let suffix = Uuid::now_v7().simple().to_string();
+        let owner = UserId::from_uuid(Uuid::now_v7());
+        let moderator = UserId::from_uuid(Uuid::now_v7());
+        for id in [&owner, &moderator] {
+            repository
+                .upsert_user(User {
+                    id: id.clone(),
+                    kind: PrincipalKind::Human,
+                    display_name: DisplayName::new("Agent manager").unwrap(),
+                    handle: None,
+                    external_provider: None,
+                    external_subject: None,
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: owner.clone(),
+                slug: ChannelSlug::new(format!("mod-agent-{suffix}")).unwrap(),
+                name: DisplayName::new("Moderator agent contract").unwrap(),
+            })
+            .await
+            .unwrap();
+        let invite = repository
+            .create_circle_invitation(CreateCircleInvitation {
+                actor: owner.clone(),
+                circle_id: circle.id.clone(),
+            })
+            .await
+            .unwrap();
+        repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: moderator.clone(),
+                token: invite.token,
+            })
+            .await
+            .unwrap();
+        let input = AgentInput {
+            display_name: "Moderator bot".into(),
+            trigger_words: vec!["help".into()],
+            response_phrases: vec!["Useful context".into()],
+            enabled: false,
+            revision: None,
+        };
+        assert!(matches!(
+            service
+                .create(&moderator, &circle.id.to_string(), input.clone())
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        let role = |role| SetCircleMemberRole {
+            actor: owner.clone(),
+            circle_id: circle.id.clone(),
+            user_id: moderator.clone(),
+            role,
+        };
+        repository
+            .set_circle_member_role(role(CircleRole::Moderator))
+            .await
+            .unwrap();
+        let created = service
+            .create(&moderator, &circle.id.to_string(), input.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .list(&moderator, &circle.id.to_string())
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        let updated = service
+            .update(
+                &moderator,
+                &circle.id.to_string(),
+                &created.agent_id,
+                AgentInput {
+                    revision: Some(1),
+                    ..input.clone()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.revision, 2);
+        let bot = UserId::new(&created.agent_id).unwrap();
+        // System bots have no generic API keys, even while their creator is a manager.
+        assert!(matches!(
+            repository
+                .rotate_credential(moderator.clone(), bot.clone())
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        assert!(matches!(
+            repository
+                .grant_agent(GrantAgent {
+                    actor: moderator.clone(),
+                    agent_id: bot.clone(),
+                    circle_id: Some(circle.id.clone()),
+                    channel_id: None,
+                    scope: AgentScope::SendMessages,
+                    expires_at: None
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        repository
+            .set_circle_member_role(role(CircleRole::Member))
+            .await
+            .unwrap();
+        assert!(matches!(
+            service.list(&moderator, &circle.id.to_string()).await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        assert!(matches!(
+            service
+                .create(&moderator, &circle.id.to_string(), input.clone())
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        assert!(matches!(
+            service
+                .update(
+                    &moderator,
+                    &circle.id.to_string(),
+                    &created.agent_id,
+                    AgentInput {
+                        revision: Some(2),
+                        ..input.clone()
+                    }
+                )
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        assert!(matches!(
+            repository
+                .revoke_agent(moderator.clone(), bot.clone())
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        assert!(matches!(
+            repository
+                .rotate_credential(moderator.clone(), bot.clone())
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        let audit=service.store.values("select cast(count(*) as text) from audit_events where action='circle.member_role_changed' and actor_id=?uuid and target_id=?",&[owner.to_string(),circle.id.to_string()]).await.unwrap();
+        assert_eq!(audit, ["2"]);
+        // Read-only membership never gains deletion rights, and private channel moderation
+        // remains a channel role even when the same user has a circle moderator role.
+        repository
+            .set_circle_member_role(role(CircleRole::Moderator))
+            .await
+            .unwrap();
+        for (index, kind) in [ChannelKind::Public, ChannelKind::Private]
+            .into_iter()
+            .enumerate()
+        {
+            let channel = repository
+                .create_channel(CreateChannel {
+                    actor: owner.clone(),
+                    slug: ChannelSlug::new(format!("mod-rights-{index}-{suffix}")).unwrap(),
+                    name: DisplayName::new("Specific channel rights").unwrap(),
+                    kind: kind.clone(),
+                    circle_id: Some(circle.id.clone()),
+                })
+                .await
+                .unwrap();
+            repository
+                .add_channel_member(AddChannelMember {
+                    actor: owner.clone(),
+                    channel_id: channel.id.clone(),
+                    user_id: moderator.clone(),
+                })
+                .await
+                .unwrap();
+            let message = repository
+                .append_message(SendMessage {
+                    actor: owner.clone(),
+                    channel_id: channel.id.clone(),
+                    parent_message_id: None,
+                    body: MessageBody::new("Channel rights").unwrap(),
+                })
+                .await
+                .unwrap();
+            let channel_role = if kind == ChannelKind::Private {
+                "moderator"
+            } else {
+                "observer"
+            };
+            service.store.execute("update channel_memberships set role=? where channel_id=?uuid and user_id=?uuid",&[channel_role.into(),channel.id.to_string(),moderator.to_string()]).await.unwrap();
+            let deletion = repository
+                .delete_message(DeleteMessage {
+                    actor: moderator.clone(),
+                    message_id: message.id,
+                })
+                .await;
+            if kind == ChannelKind::Private {
+                assert!(deletion.unwrap().deleted_at.is_some());
+            } else {
+                assert_eq!(deletion, Err(RepositoryError::PermissionDenied));
+            }
+        }
+        repository
+            .set_circle_member_role(role(CircleRole::Member))
+            .await
+            .unwrap();
+        let system_keys = service
+            .store
+            .values(
+                "select cast(count(*) as text) from agent_credentials where agent_id=?uuid",
+                &[bot.to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(system_keys, ["0"]);
+        service
+            .update(
+                &owner,
+                &circle.id.to_string(),
+                &created.agent_id,
+                AgentInput {
+                    revision: Some(2),
+                    ..input
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            service.list(&owner, &circle.id.to_string()).await.unwrap()[0].revision,
+            3
+        );
+        let generic = |provider: &str| CreateAgent {
+            actor: moderator.clone(),
+            owner_id: moderator.clone(),
+            display_name: "MCP bot".into(),
+            provider: provider.into(),
+            service_identity: Uuid::now_v7().to_string(),
+            purpose: "Personal MCP".into(),
+            rate_limit_per_minute: 30,
+            expires_at: None,
+        };
+        assert!(matches!(
+            repository.create_agent(generic(CIRCLE_CHAT_PROVIDER)).await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        let ordinary = repository.create_agent(generic("mcp-test")).await.unwrap();
+        repository
+            .authenticate_agent(&ordinary.credential)
+            .await
+            .unwrap();
+        let rotated = repository
+            .rotate_credential(moderator.clone(), ordinary.agent_id.clone())
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository.authenticate_agent(&ordinary.credential).await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+        repository
+            .authenticate_agent(&rotated.credential)
+            .await
+            .unwrap();
+        repository
+            .revoke_agent(moderator, ordinary.agent_id)
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository.authenticate_agent(&rotated.credential).await,
+            Err(RepositoryError::PermissionDenied)
+        ));
+    }
+
+    #[tokio::test]
+    async fn sqlite_moderator_agent_authority_is_revocable_and_never_issues_system_keys() {
+        let path =
+            std::env::temp_dir().join(format!("sproyt-moderator-agents-{}.sqlite", Uuid::now_v7()));
+        let url = format!("sqlite://{}", path.to_string_lossy().replace('\\', "/"));
+        let repository = crate::db::SqliteChatRepository::connect(&url)
+            .await
+            .unwrap();
+        repository.migrate().await.unwrap();
+        let service = CircleChatAgents {
+            store: Store::Sqlite(SqlitePool::connect(&url).await.unwrap()),
+            model: None,
+            worker_enabled: false,
+        };
+        verify_moderator_agent_authority(&repository, &service).await;
+        if let Store::Sqlite(pool) = &service.store {
+            pool.close().await;
+        }
+        drop(service);
+        drop(repository);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn postgres_moderator_agent_authority_is_revocable_and_never_issues_system_keys() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let repository = crate::db::PostgresChatRepository::connect(&url)
+            .await
+            .unwrap();
+        repository.migrate().await.unwrap();
+        let service = CircleChatAgents {
+            store: Store::Pg(PgPool::connect(&url).await.unwrap()),
+            model: None,
+            worker_enabled: false,
+        };
+        verify_moderator_agent_authority(&repository, &service).await;
     }
 }

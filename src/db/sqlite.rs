@@ -22,9 +22,9 @@ use crate::domain::{
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
     PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PrepareEnrollmentInvitation,
-    RenameCircle, RepositoryError, RepositoryFuture, SendMessage, UpdateChannelDescription, User,
-    UserId, UserProfile, UserTask, enrollment_email_hash, enrollment_token_hash,
-    generate_enrollment_token,
+    RenameCircle, RepositoryError, RepositoryFuture, SendMessage, SetCircleMemberRole,
+    UpdateChannelDescription, User, UserId, UserProfile, UserTask, enrollment_email_hash,
+    enrollment_token_hash, generate_enrollment_token,
 };
 use crate::integration::{
     AlertState, DeliveryResult, GRAFANA_PROVIDER, IncomingAlert, IncomingReport, IntegrationFuture,
@@ -836,6 +836,50 @@ impl ChatRepository for SqliteChatRepository {
         Some(self.circle_updates.subscribe())
     }
 
+    fn circle_member_roles<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<(UserId, CircleRole)>> {
+        Box::pin(async move {
+            let rows=sqlx::query("select m.user_id,m.role from circle_memberships m where m.circle_id=? and exists(select 1 from circle_memberships actor where actor.circle_id=m.circle_id and actor.user_id=?)").bind(circle_id.to_string()).bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter()
+                .map(|row| {
+                    Ok((
+                        UserId::new(row.try_get::<String, _>("user_id").map_err(storage)?)
+                            .map_err(storage)?,
+                        CircleRole::parse(&row.try_get::<String, _>("role").map_err(storage)?)
+                            .ok_or_else(|| storage("invalid circle role"))?,
+                    ))
+                })
+                .collect()
+        })
+    }
+    fn set_circle_member_role<'a>(
+        &'a self,
+        command: SetCircleMemberRole,
+    ) -> RepositoryFuture<'a, CircleMembership> {
+        Box::pin(async move {
+            if command.role == CircleRole::Owner {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let row=sqlx::query("update circle_memberships set role=? where circle_id=? and user_id=? and role in ('member','moderator') and exists(select 1 from circle_memberships owner where owner.circle_id=circle_memberships.circle_id and owner.user_id=? and owner.role='owner') and exists(select 1 from users where id=circle_memberships.user_id and kind='human') returning joined_at").bind(command.role.as_str()).bind(command.circle_id.to_string()).bind(command.user_id.to_string()).bind(command.actor.to_string()).fetch_optional(&mut *tx).await.map_err(sql_error)?.ok_or(RepositoryError::PermissionDenied)?;
+            let membership = CircleMembership {
+                circle_id: command.circle_id.clone(),
+                user_id: command.user_id.clone(),
+                role: command.role.clone(),
+                joined_at: row.try_get("joined_at").map_err(storage)?,
+            };
+            let payload = serde_json::json!({"user_id":command.user_id,"role":command.role});
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values(?,'circle.member_role_changed','circle',?,?)").bind(command.actor.to_string()).bind(command.circle_id.to_string()).bind(payload.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+
+            tx.commit().await.map_err(sql_error)?;
+            let _ = self.circle_updates.send(());
+            Ok(membership)
+        })
+    }
+
     fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle> {
         Box::pin(async move {
             let row = sqlx::query("update circles set name=? where id=? and exists(select 1 from circle_memberships where circle_id=circles.id and user_id=? and role='owner') returning *, 'owner' as role")
@@ -1633,10 +1677,11 @@ impl ChatRepository for SqliteChatRepository {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             let deleted_at = persisted_now();
-            let row = sqlx::query("update messages set body='Meldinga er sletta.',edited_at=null,deleted_at=coalesce(deleted_at,?) where id=? and sender_id=? returning id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
+            let row = sqlx::query("update messages set body='Meldinga er sletta.',edited_at=null,deleted_at=coalesce(deleted_at,?) where id=? and (sender_id=? or exists(select 1 from channels c join channel_memberships m on m.channel_id=c.id where c.id=messages.channel_id and m.user_id=? and (m.role in ('owner','moderator') or (c.kind<>'private' and m.role='member' and exists(select 1 from circle_memberships r where r.circle_id=c.circle_id and r.user_id=? and r.role in ('owner','moderator')))))) returning id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
                 .bind(deleted_at)
                 .bind(command.message_id.as_uuid().to_string())
                 .bind(command.actor.to_string())
+                .bind(command.actor.to_string()).bind(command.actor.to_string())
                 .fetch_optional(&mut *transaction).await.map_err(sql_error)?;
             let Some(row) = row else {
                 let exists = sqlx::query_scalar::<_, i64>("select 1 from messages where id=?")
@@ -2653,7 +2698,8 @@ impl ProcessRepository for SqliteChatRepository {
 impl AgentRepository for SqliteChatRepository {
     fn create_agent<'a>(&'a self, command: CreateAgent) -> AgentFuture<'a, CreatedAgent> {
         Box::pin(async move {
-            if command.actor != command.owner_id
+            if command.provider == crate::agent::CIRCLE_CHAT_PROVIDER
+                || command.actor != command.owner_id
                 || !(1..=600).contains(&command.rate_limit_per_minute)
             {
                 return Err(RepositoryError::PermissionDenied);
@@ -2692,7 +2738,7 @@ impl AgentRepository for SqliteChatRepository {
             if command.circle_id.is_none() && command.channel_id.is_none() {
                 return Err(RepositoryError::Conflict);
             }
-            let owner: Option<i64> = sqlx::query_scalar("select 1 from agent_profiles where agent_id=? and owner_id=? and revoked_at is null and (expires_at is null or expires_at>?)")
+            let owner: Option<i64> = sqlx::query_scalar("select 1 from agent_profiles where provider<>'sproyt-circle-chat' and agent_id=? and owner_id=? and revoked_at is null and (expires_at is null or expires_at>?)")
                 .bind(command.agent_id.to_string()).bind(command.actor.to_string()).bind(Utc::now())
                 .fetch_optional(&self.pool).await.map_err(sql_error)?;
             if owner.is_none() {
@@ -2746,7 +2792,7 @@ impl AgentRepository for SqliteChatRepository {
 
     fn revoke_grant<'a>(&'a self, actor: UserId, grant_id: Uuid) -> AgentFuture<'a, ()> {
         Box::pin(async move {
-            let changed = sqlx::query("update agent_grants set revoked_at=?,revoked_by=? where id=? and revoked_at is null and agent_id in (select agent_id from agent_profiles where owner_id=?)")
+            let changed = sqlx::query("update agent_grants set revoked_at=?,revoked_by=? where id=? and revoked_at is null and agent_id in (select agent_id from agent_profiles where provider<>'sproyt-circle-chat' and owner_id=?)")
                 .bind(Utc::now()).bind(actor.to_string()).bind(grant_id.to_string()).bind(actor.to_string()).execute(&self.pool).await.map_err(sql_error)?.rows_affected();
             if changed == 0 {
                 return Err(RepositoryError::PermissionDenied);
@@ -2762,7 +2808,7 @@ impl AgentRepository for SqliteChatRepository {
             let agent_id = agent_id.to_string();
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             let changed = sqlx::query(
-                "update agent_profiles set revoked_at=? where agent_id=? and owner_id=? and revoked_at is null",
+                "update agent_profiles set revoked_at=? where provider<>'sproyt-circle-chat' and agent_id=? and owner_id=? and revoked_at is null",
             )
             .bind(now)
             .bind(&agent_id)
@@ -2808,7 +2854,7 @@ impl AgentRepository for SqliteChatRepository {
             let credential = URL_SAFE_NO_PAD.encode(secret);
             let hash = Sha256::digest(credential.as_bytes()).to_vec();
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
-            let allowed: Option<i64> = sqlx::query_scalar("select 1 from agent_profiles where agent_id=? and owner_id=? and revoked_at is null and (expires_at is null or expires_at>?)")
+            let allowed: Option<i64> = sqlx::query_scalar("select 1 from agent_profiles where provider<>'sproyt-circle-chat' and agent_id=? and owner_id=? and revoked_at is null and (expires_at is null or expires_at>?)")
                 .bind(agent_id.to_string()).bind(actor.to_string()).bind(now)
                 .fetch_optional(&mut *tx).await.map_err(sql_error)?;
             if allowed.is_none() {
@@ -2840,7 +2886,7 @@ impl AgentRepository for SqliteChatRepository {
         Box::pin(async move {
             let hash = Sha256::digest(credential.as_bytes()).to_vec();
             let now = Utc::now();
-            let row = sqlx::query("select c.id as credential_id,p.agent_id,p.owner_id,p.provider,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where c.token_hash=? and c.revoked_at is null and c.expires_at>? and p.revoked_at is null and (p.expires_at is null or p.expires_at>?)")
+            let row = sqlx::query("select c.id as credential_id,p.agent_id,p.owner_id,p.provider,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where p.provider<>'sproyt-circle-chat' and c.token_hash=? and c.revoked_at is null and c.expires_at>? and p.revoked_at is null and (p.expires_at is null or p.expires_at>?)")
                 .bind(hash).bind(now).bind(now).fetch_optional(&self.pool).await.map_err(sql_error)?
                 .ok_or(RepositoryError::PermissionDenied)?;
             sqlx::query("update agent_credentials set last_used_at=? where token_hash=?")
@@ -2930,7 +2976,7 @@ impl AgentRepository for SqliteChatRepository {
 
     fn approve_message<'a>(&'a self, actor: UserId, message_id: MessageId) -> AgentFuture<'a, ()> {
         Box::pin(async move {
-            let changed=sqlx::query("update message_provenance set provenance='human_approved',approved_by=?,approved_at=? where message_id=? and owner_id=? and agent_id is not null")
+            let changed=sqlx::query("update message_provenance set provenance='human_approved',approved_by=?,approved_at=? where message_id=? and owner_id=? and agent_id in(select agent_id from agent_profiles where provider<>'sproyt-circle-chat')")
                 .bind(actor.to_string()).bind(Utc::now()).bind(message_id.as_uuid().to_string()).bind(actor.to_string())
                 .execute(&self.pool).await.map_err(sql_error)?.rows_affected();
             if changed == 0 {
@@ -3594,6 +3640,128 @@ mod tests {
     use super::*;
     use crate::domain::{MessageLimit, PrincipalKind, User};
     use tokio::sync::Barrier;
+
+    #[tokio::test]
+    async fn moderator_migration_preserves_memberships_and_does_not_fabricate_join_audits() {
+        use sqlx::Executor;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        for migration in MIGRATOR.iter().filter(|m| m.version < 50) {
+            pool.execute(migration.sql.as_ref()).await.unwrap();
+        }
+        let owner = UserId::from_uuid(Uuid::now_v7());
+        let member = UserId::from_uuid(Uuid::now_v7());
+        let circle = crate::domain::CircleId::from_uuid(Uuid::now_v7());
+        for id in [&owner, &member] {
+            sqlx::query(
+                "insert into users(id,kind,display_name) values(?,'human','Migration member')",
+            )
+            .bind(id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("insert into circles(id,slug,name,created_by) values(?,'migration-moderators','Migration moderators',?)").bind(circle.to_string()).bind(owner.to_string()).execute(&pool).await.unwrap();
+        for (id, role) in [(&owner, "owner"), (&member, "member")] {
+            sqlx::query("insert into circle_memberships(circle_id,user_id,role,joined_at) values(?,?,?,'2026-01-01 12:34:56')").bind(circle.to_string()).bind(id.to_string()).bind(role).execute(&pool).await.unwrap();
+        }
+        let members = sqlx::query_as::<_, (String, String, String, String)>(
+            "select circle_id,user_id,role,joined_at from circle_memberships order by user_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let joins: i64 = sqlx::query_scalar(
+            "select count(*) from audit_events where action='circle.membership_joined'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        pool.execute(include_str!(
+            "../../migrations/sqlite/0050_circle_moderators.sql"
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            sqlx::query_as::<_, (String, String, String, String)>(
+                "select circle_id,user_id,role,joined_at from circle_memberships order by user_id"
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap(),
+            members
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "select count(*) from audit_events where action='circle.membership_joined'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            joins
+        );
+        assert!(
+            sqlx::query("pragma foreign_key_check")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            sqlx::query("pragma foreign_key_list(circle_memberships)")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(sqlx::query_scalar::<_,String>("select name from sqlite_master where type='index' and name='circle_memberships_user_idx'").fetch_optional(&pool).await.unwrap().is_some());
+        let repository = SqliteChatRepository {
+            pool: pool.clone(),
+            circle_updates: tokio::sync::broadcast::channel(128).0,
+        };
+        let updated = repository
+            .set_circle_member_role(SetCircleMemberRole {
+                actor: owner.clone(),
+                circle_id: circle.clone(),
+                user_id: member.clone(),
+                role: CircleRole::Moderator,
+            })
+            .await
+            .unwrap();
+        assert_eq!(updated.role, CircleRole::Moderator);
+        let audit=sqlx::query_as::<_,(String,String,String)>("select actor_id,target_id,payload from audit_events where action='circle.member_role_changed'").fetch_one(&pool).await.unwrap();
+        assert_eq!(audit.0, owner.to_string());
+        assert_eq!(audit.1, circle.to_string());
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&audit.2).unwrap(),
+            serde_json::json!({"user_id":member,"role":"moderator"})
+        );
+        let later = UserId::from_uuid(Uuid::now_v7());
+        sqlx::query("insert into users(id,kind,display_name) values(?,'human','Later member')")
+            .bind(later.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("insert into circle_memberships(circle_id,user_id,role) values(?,?,'member')")
+            .bind(circle.to_string())
+            .bind(later.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "select count(*) from audit_events where action='circle.membership_joined'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            joins + 1
+        );
+    }
 
     #[tokio::test]
     async fn sqlite_expanding_a_direct_conversation_creates_an_empty_group_direct() {

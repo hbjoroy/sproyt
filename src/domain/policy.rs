@@ -16,11 +16,14 @@ impl Policy {
     }
 
     pub fn can_leave_circle(role: Option<&CircleRole>) -> bool {
-        matches!(role, Some(CircleRole::Member))
+        matches!(role, Some(CircleRole::Member | CircleRole::Moderator))
     }
 
     pub fn can_create_channel_in_circle(role: Option<&CircleRole>) -> bool {
-        matches!(role, Some(CircleRole::Owner | CircleRole::Member))
+        matches!(
+            role,
+            Some(CircleRole::Owner | CircleRole::Moderator | CircleRole::Member)
+        )
     }
 
     pub fn can_read_channel(role: Option<&MembershipRole>) -> bool {
@@ -76,6 +79,16 @@ mod tests {
         assert!(!Policy::can_leave_circle(Some(&CircleRole::Owner)));
         assert!(Policy::can_create_channel_in_circle(Some(
             &CircleRole::Member
+        )));
+        assert!(Policy::can_leave_circle(Some(&CircleRole::Moderator)));
+        assert!(Policy::can_create_channel_in_circle(Some(
+            &CircleRole::Moderator
+        )));
+        assert!(!Policy::can_invite_to_circle(Some(&CircleRole::Moderator)));
+        assert!(!Policy::can_rename_circle(Some(&CircleRole::Moderator)));
+        assert!(!Policy::can_delete_circle(Some(&CircleRole::Moderator)));
+        assert!(!Policy::can_invite_agent_to_circle(Some(
+            &CircleRole::Moderator
         )));
         assert!(Policy::can_read_channel(Some(&MembershipRole::Observer)));
         assert!(!Policy::can_send_to_channel(Some(

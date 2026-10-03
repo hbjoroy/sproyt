@@ -1,17 +1,21 @@
 import { Button, Dialog, PersonList, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { CircleChatAgentApi } from "../../chat-agents";
 import type { Channel, Circle, UserProfile } from "../../types";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import { MarkdownContent } from "./markdown-content";
 
-export type CommunityDestination = { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" } | { kind: "create-channel"; circleId: string | null } | { kind: "channel"; channelId: string } | { kind: "channels" | "invite" | "rename-circle"; circleId: string };
+export type CommunityDestination = { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" } | { kind: "create-channel"; circleId: string | null } | { kind: "channel"; channelId: string } | { kind: "channels" | "invite" | "rename-circle" | "circle-members"; circleId: string };
 export interface CommunityHost {
+  chatAgents?: CircleChatAgentApi;
   selfId(): string | null;
   users(): Promise<UserProfile[]>;
   members(channelId: string): Promise<UserProfile[]>;
   circleMembers(circleId: string): Promise<UserProfile[]>;
   openDirect(userId: string): Promise<void>;
   createCircle(name: string): Promise<void>;
+  managedCircleMembers(circleId: string): Promise<[UserProfile, Circle["role"]][]>;
+  setCircleMemberRole(circleId: string, userId: string, role: "member" | "moderator"): Promise<void>;
   renameCircle(circleId: string, name: string): Promise<void>;
   createChannel(circleId: string | null, name: string, kind: "public" | "local" | "private"): Promise<void>;
   joinable(circleId: string): Promise<Array<{ id: string; name: string; description: string }>>;
@@ -116,6 +120,21 @@ function CreateCircle({ host, onClose }: { host: CommunityHost; onClose(): void 
     <TextField label="Namn på vennekrets" value={name} required minLength={2} onChange={event => setName(event.target.value)} />
     <Button type="submit" busy={op.busy} disabled={name.trim().length < 2}>Opprett vennekrets</Button>{op.feedback}
   </form>;
+}
+
+function CirclePeople({ host, circle }: { host: CommunityHost; circle: Readonly<Circle> }) {
+  const [members,setMembers]=useState<[UserProfile,Circle["role"]][]>([]); const [loaded,setLoaded]=useState(false); const op=useOperation();
+  const load=async()=>{setMembers(await host.managedCircleMembers(circle.id));setLoaded(true);};
+  useEffect(()=>{void op.run(load);},[circle.id]);
+  return <section aria-label="Kretsmedlemmer og roller"><p>Moderatorar kan slette meldingar i opne kretskanalar dei deltek i og konfigurere kretsagentar. Private kanalar har eigne rettar.</p>
+    <Button variant="quiet" busy={op.busy} onClick={()=>void op.run(load)}>Last medlemslista på nytt</Button>
+    {loaded && <PersonList people={members.map(([person,role])=>({id:person.id,name:person.display_name,detail:role==="owner"?"Eigar":role==="moderator"?"Moderator":"Medlem"}))}
+      emptyLabel="Ingen medlemmer." actions={item=>{
+        const [person,role]=members.find(([person])=>person.id===item.id)!;
+        return circle.role==="owner" && person.kind==="human" && role!=="owner" ? <Button variant="quiet" disabled={op.busy}
+          aria-label={role==="moderator"?`Fjern moderatorrolla frå ${person.display_name}`:`Gjer ${person.display_name} til moderator`}
+          onClick={()=>void op.run(async()=>{await host.setCircleMemberRole(circle.id,person.id,role==="moderator"?"member":"moderator");await load();},"Rolla er oppdatert.")}>{role==="moderator"?"Fjern moderator":"Gjer til moderator"}</Button> : null;
+      }} />}{op.feedback}</section>;
 }
 
 function RenameCircle({ host, circle, onClose }: { host: CommunityHost; circle: Readonly<Circle>; onClose(): void }) {
@@ -232,12 +251,13 @@ export function PreviewCommunity({ destination, snapshot, host, onClose, onNavig
 }) {
   const circle = "circleId" in destination ? snapshot.circles.find(item => item.id === destination.circleId) : undefined;
   const channel = destination.kind === "channel" ? snapshot.channels.find(item => item.id === destination.channelId) : undefined;
-  const title = destination.kind === "rename-circle" ? "Endre kretsnamn" : destination.kind === "create-channel" ? `Ny kanal i ${circle?.name ?? "Felles"}` : destination.kind === "people" ? "Personar og ny direktemelding" : destination.kind === "channel" ? `Kanaldetaljar: ${channel?.name ?? "Kanal"}` : destination.kind === "create-circle" ? "Ny vennekrets" : destination.kind === "circles" ? "Kretsadministrasjon og invitasjonskode" : destination.kind === "global-channels" ? "Kanalar i Felles" : destination.kind === "global-invite" ? "Inviter ny brukar til Sprøyt" : destination.kind === "channels" ? `Kanalar i ${circle?.name ?? "vennekretsen"}` : `Inviter til ${circle?.name ?? "vennekretsen"}`;
+  const title = destination.kind === "circle-members" ? "Kretsmedlemmer og roller" : destination.kind === "rename-circle" ? "Endre kretsnamn" : destination.kind === "create-channel" ? `Ny kanal i ${circle?.name ?? "Felles"}` : destination.kind === "people" ? "Personar og ny direktemelding" : destination.kind === "channel" ? `Kanaldetaljar: ${channel?.name ?? "Kanal"}` : destination.kind === "create-circle" ? "Ny vennekrets" : destination.kind === "circles" ? "Kretsadministrasjon og invitasjonskode" : destination.kind === "global-channels" ? "Kanalar i Felles" : destination.kind === "global-invite" ? "Inviter ny brukar til Sprøyt" : destination.kind === "channels" ? `Kanalar i ${circle?.name ?? "vennekretsen"}` : `Inviter til ${circle?.name ?? "vennekretsen"}`;
   return <Dialog open title={title} closeLabel="Lukk" onClose={onClose}>
     <div className="sp-community-dialog">
       {destination.kind === "people" && <People host={host} onClose={onClose} />}
       {destination.kind === "channel" && (channel ? <People host={host} channel={channel} onClose={onClose} focusMemberAction={focusMemberAction} /> : <Status>Kanalen er ikkje lenger tilgjengeleg.</Status>)}
       {destination.kind === "create-circle" && <CreateCircle host={host} onClose={onClose} />}
+      {destination.kind === "circle-members" && circle && <CirclePeople host={host} circle={circle} />}
       {destination.kind === "rename-circle" && (circle ? <RenameCircle host={host} circle={circle} onClose={onClose} /> : <Status>Kretsen er ikkje lenger tilgjengeleg.</Status>)}
       {destination.kind === "circles" && <CircleAdmin host={host} circles={snapshot.circles} onSelect={circleId => onNavigate({ kind: "channels", circleId })} />}
       {destination.kind === "global-channels" && <ScopeChannels host={host} channels={snapshot.channels} onClose={onClose} onNavigate={onNavigate} onSelectChannel={onSelectChannel} />}

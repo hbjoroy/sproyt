@@ -140,6 +140,7 @@ where
 
     repository.health_check().await.unwrap();
     verify_saved_emoji_contract(repository, suffix).await;
+    verify_circle_moderator_contract(repository, suffix).await;
     verify_enrollment_invitation_contract(repository, &format!("{suffix}-enrollment")).await;
     let actor = UserId::named(format!("chat-contract-actor-{suffix}"));
     repository
@@ -2057,5 +2058,349 @@ where
             .unwrap()
             .iter()
             .all(|listed| listed.circle_id.as_ref() != Some(&circle.id))
+    );
+}
+
+#[cfg(test)]
+async fn verify_circle_moderator_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+    use crate::domain::*;
+    use chrono::Utc;
+    let owner = UserId::named(format!("moderator-owner-{suffix}"));
+    let moderator = UserId::named(format!("moderator-member-{suffix}"));
+    let member = UserId::named(format!("moderator-author-{suffix}"));
+    let agent = UserId::named(format!("moderator-agent-{suffix}"));
+    for (id, kind) in [
+        (&owner, PrincipalKind::Human),
+        (&moderator, PrincipalKind::Human),
+        (&member, PrincipalKind::Human),
+        (&agent, PrincipalKind::Agent),
+    ] {
+        repository
+            .upsert_user(User {
+                id: id.clone(),
+                kind: kind.clone(),
+                display_name: DisplayName::new("Moderator contract").unwrap(),
+                handle: None,
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+    let circle = repository
+        .create_circle(CreateCircle {
+            actor: owner.clone(),
+            slug: ChannelSlug::new(format!("mods-{suffix}")).unwrap(),
+            name: DisplayName::new("Moderator contract").unwrap(),
+        })
+        .await
+        .unwrap();
+    for id in [&moderator, &member, &agent] {
+        let invitation = repository
+            .create_circle_invitation(CreateCircleInvitation {
+                actor: owner.clone(),
+                circle_id: circle.id.clone(),
+            })
+            .await
+            .unwrap();
+        repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: id.clone(),
+                token: invitation.token,
+            })
+            .await
+            .unwrap();
+    }
+    let role = |actor: &UserId, target: &UserId, role| SetCircleMemberRole {
+        actor: actor.clone(),
+        circle_id: circle.id.clone(),
+        user_id: target.clone(),
+        role,
+    };
+    for command in [
+        role(&member, &moderator, CircleRole::Moderator),
+        role(&owner, &owner, CircleRole::Member),
+        role(&owner, &member, CircleRole::Owner),
+        role(&owner, &agent, CircleRole::Moderator),
+    ] {
+        assert_eq!(
+            repository.set_circle_member_role(command).await,
+            Err(RepositoryError::PermissionDenied)
+        );
+    }
+    let mut events = repository.subscribe_circle_updates();
+    let promoted = repository
+        .set_circle_member_role(role(&owner, &moderator, CircleRole::Moderator))
+        .await
+        .unwrap();
+    assert_eq!(promoted.role, CircleRole::Moderator);
+    if let Some(events) = events.as_mut() {
+        tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    assert!(
+        repository
+            .list_circles_for_user(moderator.clone())
+            .await
+            .unwrap()
+            .iter()
+            .any(|(c, r)| c.id == circle.id && *r == CircleRole::Moderator)
+    );
+    assert_eq!(
+        repository
+            .set_circle_member_role(role(&moderator, &member, CircleRole::Moderator))
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .rename_circle(RenameCircle {
+                actor: moderator.clone(),
+                circle_id: circle.id.clone(),
+                name: DisplayName::circle_name("Forbidden").unwrap()
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .delete_circle(DeleteCircle {
+                actor: moderator.clone(),
+                circle_id: circle.id.clone()
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    for (index, kind) in [
+        ChannelKind::Public,
+        ChannelKind::Local,
+        ChannelKind::Private,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let channel = repository
+            .create_channel(CreateChannel {
+                actor: member.clone(),
+                slug: ChannelSlug::new(format!("mods-{index}-{suffix}")).unwrap(),
+                name: DisplayName::new("Moderated channel").unwrap(),
+                kind: kind.clone(),
+                circle_id: Some(circle.id.clone()),
+            })
+            .await
+            .unwrap();
+        let original = repository
+            .append_message(SendMessage {
+                actor: member.clone(),
+                channel_id: channel.id.clone(),
+                parent_message_id: None,
+                body: MessageBody::new("Original stays unchanged until deletion").unwrap(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repository
+                .delete_message(DeleteMessage {
+                    actor: moderator.clone(),
+                    message_id: original.id
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied),
+            "circle role without actual channel membership"
+        );
+        assert_eq!(
+            repository
+                .delete_message(DeleteMessage {
+                    actor: owner.clone(),
+                    message_id: original.id
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied),
+            "circle owner without actual channel membership"
+        );
+        if kind == ChannelKind::Private {
+            assert_eq!(
+                repository
+                    .load_recent_messages(LoadRecentMessages {
+                        actor: moderator.clone(),
+                        channel_id: channel.id.clone(),
+                        limit: MessageLimit::DEFAULT,
+                        after: None,
+                        before: None
+                    })
+                    .await,
+                Err(RepositoryError::PermissionDenied)
+            );
+        }
+        let joined = repository
+            .add_channel_member(AddChannelMember {
+                actor: member.clone(),
+                channel_id: channel.id.clone(),
+                user_id: moderator.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            joined.role,
+            MembershipRole::Member,
+            "circle role must not be copied to channel role"
+        );
+        assert_eq!(
+            repository
+                .edit_message(EditMessage {
+                    actor: moderator.clone(),
+                    message_id: original.id,
+                    body: MessageBody::new("Forbidden edit").unwrap()
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
+        let deletion = repository
+            .delete_message(DeleteMessage {
+                actor: moderator.clone(),
+                message_id: original.id,
+            })
+            .await;
+        if kind == ChannelKind::Private {
+            assert_eq!(
+                deletion,
+                Err(RepositoryError::PermissionDenied),
+                "private member receives no extra circle-role rights"
+            );
+            // Existing channel owner moderation remains valid in private channels.
+            assert!(
+                repository
+                    .delete_message(DeleteMessage {
+                        actor: member.clone(),
+                        message_id: original.id
+                    })
+                    .await
+                    .unwrap()
+                    .deleted_at
+                    .is_some()
+            );
+        } else {
+            assert!(deletion.unwrap().deleted_at.is_some());
+            let remaining = repository
+                .append_message(SendMessage {
+                    actor: member.clone(),
+                    channel_id: channel.id.clone(),
+                    parent_message_id: None,
+                    body: MessageBody::new("Revocation protects this message").unwrap(),
+                })
+                .await
+                .unwrap();
+            repository
+                .set_circle_member_role(role(&owner, &moderator, CircleRole::Member))
+                .await
+                .unwrap();
+            assert_eq!(
+                repository
+                    .delete_message(DeleteMessage {
+                        actor: moderator.clone(),
+                        message_id: remaining.id
+                    })
+                    .await,
+                Err(RepositoryError::PermissionDenied)
+            );
+            repository
+                .set_circle_member_role(role(&owner, &moderator, CircleRole::Moderator))
+                .await
+                .unwrap();
+            repository
+                .add_channel_member(AddChannelMember {
+                    actor: member.clone(),
+                    channel_id: channel.id.clone(),
+                    user_id: owner.clone(),
+                })
+                .await
+                .unwrap();
+            assert!(
+                repository
+                    .delete_message(DeleteMessage {
+                        actor: owner.clone(),
+                        message_id: remaining.id
+                    })
+                    .await
+                    .unwrap()
+                    .deleted_at
+                    .is_some()
+            );
+        }
+        let own = repository
+            .append_message(SendMessage {
+                actor: moderator.clone(),
+                channel_id: channel.id.clone(),
+                parent_message_id: None,
+                body: MessageBody::new("Own message").unwrap(),
+            })
+            .await
+            .unwrap();
+        repository
+            .edit_message(EditMessage {
+                actor: moderator.clone(),
+                message_id: own.id,
+                body: MessageBody::new("Own edit").unwrap(),
+            })
+            .await
+            .unwrap();
+        repository
+            .delete_message(DeleteMessage {
+                actor: moderator.clone(),
+                message_id: own.id,
+            })
+            .await
+            .unwrap();
+    }
+    let own_channel = repository
+        .create_channel(CreateChannel {
+            actor: moderator.clone(),
+            slug: ChannelSlug::new(format!("mods-created-{suffix}")).unwrap(),
+            name: DisplayName::new("Moderator can create").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: Some(circle.id.clone()),
+        })
+        .await
+        .unwrap();
+    let private_message = repository
+        .append_message(SendMessage {
+            actor: moderator.clone(),
+            channel_id: own_channel.id.clone(),
+            parent_message_id: None,
+            body: MessageBody::new("Private owner").unwrap(),
+        })
+        .await
+        .unwrap();
+    repository
+        .delete_message(DeleteMessage {
+            actor: moderator.clone(),
+            message_id: private_message.id,
+        })
+        .await
+        .unwrap();
+    repository
+        .leave_circle(LeaveCircle {
+            actor: moderator.clone(),
+            circle_id: circle.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .list_circles_for_user(moderator.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !repository
+            .circle_member_roles(owner, circle.id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|(id, _)| *id == moderator)
     );
 }

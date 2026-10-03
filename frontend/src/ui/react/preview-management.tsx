@@ -72,7 +72,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
             <h3>{circle.name}</h3>
             {action("Kanalar og medlemskap", { kind: "channels", circleId: circle.id })}
             {circle.role === "owner" && action("Inviter personar og nye brukarar", { kind: "invite", circleId: circle.id })}
-            {circle.role === "owner" && <Button onClick={() => { setOpen(false); setChatAgentsCircle({ id: circle.id, name: circle.name }); }}>Agentar</Button>}
+            {["owner","moderator"].includes(circle.role) && <Button onClick={() => { setOpen(false); setChatAgentsCircle({ id: circle.id, name: circle.name }); }}>Agentar</Button>}
           </section>)}
       </section>}
     </Dialog>
@@ -85,7 +85,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     {advancedKind && <PreviewAdvanced kind={advancedKind} host={advanced} snapshot={snapshot} onClose={() => {
       setAdvancedKind(undefined); requestAnimationFrame(() => advancedTrigger.current?.focus({ preventScroll: true }));
     }} />}
-    {chatAgentsCircle && <CircleChatAgentsDialog key={chatAgentsCircle.id} api={chatAgents} circleId={chatAgentsCircle.id}
+    {chatAgentsCircle && snapshot.circles.some(circle=>circle.id===chatAgentsCircle.id && ["owner","moderator"].includes(circle.role)) && <CircleChatAgentsDialog key={chatAgentsCircle.id} api={chatAgents} circleId={chatAgentsCircle.id}
       circleName={chatAgentsCircle.name} onClose={() => { setChatAgentsCircle(undefined); setOpen(true); }} />}
   </>;
 }

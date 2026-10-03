@@ -13,8 +13,8 @@ use super::{
     EditMessage, EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation,
     JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
     MediaVariant, Membership, MessageId, PortableUserExport, PrepareEnrollmentInvitation,
-    RenameCircle, SendMessage, ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile,
-    UserTask,
+    RenameCircle, SendMessage, SetCircleMemberRole, ThreadSummary, UpdateChannelDescription, User,
+    UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -105,6 +105,15 @@ pub trait ChatRepository: Send + Sync + 'static {
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
     fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle>;
     fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle>;
+    fn circle_member_roles<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<(UserId, CircleRole)>>;
+    fn set_circle_member_role<'a>(
+        &'a self,
+        command: SetCircleMemberRole,
+    ) -> RepositoryFuture<'a, CircleMembership>;
     fn subscribe_circle_updates(&self) -> Option<broadcast::Receiver<()>> {
         None
     }
@@ -975,6 +984,62 @@ impl ChatRepository for InMemoryChatRepository {
         Some(self.circle_updates.subscribe())
     }
 
+    fn circle_member_roles<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<(UserId, CircleRole)>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            if !state
+                .circle_memberships
+                .contains_key(&(circle_id.clone(), actor))
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(state
+                .circle_memberships
+                .values()
+                .filter(|m| m.circle_id == circle_id)
+                .map(|m| (m.user_id.clone(), m.role.clone()))
+                .collect())
+        })
+    }
+    fn set_circle_member_role<'a>(
+        &'a self,
+        command: SetCircleMemberRole,
+    ) -> RepositoryFuture<'a, CircleMembership> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            if command.role == CircleRole::Owner
+                || !matches!(
+                    state
+                        .circle_memberships
+                        .get(&(command.circle_id.clone(), command.actor))
+                        .map(|m| &m.role),
+                    Some(CircleRole::Owner)
+                )
+                || !state
+                    .users
+                    .get(&command.user_id)
+                    .is_some_and(|u| u.kind == super::PrincipalKind::Human)
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let member = state
+                .circle_memberships
+                .get_mut(&(command.circle_id, command.user_id))
+                .ok_or(RepositoryError::PermissionDenied)?;
+            if member.role == CircleRole::Owner {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            member.role = command.role;
+            let result = member.clone();
+            let _ = self.circle_updates.send(());
+            Ok(result)
+        })
+    }
+
     fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
@@ -1658,15 +1723,46 @@ impl ChatRepository for InMemoryChatRepository {
     fn delete_message<'a>(&'a self, command: DeleteMessage) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
+            let original = state
+                .messages
+                .values()
+                .flatten()
+                .find(|m| m.id == command.message_id)
+                .cloned()
+                .ok_or(RepositoryError::NotFound)?;
+            let membership = state
+                .memberships
+                .get(&(original.channel_id.clone(), command.actor.clone()));
+            let circle_moderates =
+                state
+                    .channels
+                    .get(&original.channel_id)
+                    .is_some_and(|channel| {
+                        channel.kind != super::ChannelKind::Private
+                            && channel.circle_id.as_ref().is_some_and(|id| {
+                                matches!(
+                                    state
+                                        .circle_memberships
+                                        .get(&(id.clone(), command.actor.clone()))
+                                        .map(|m| &m.role),
+                                    Some(CircleRole::Owner | CircleRole::Moderator)
+                                )
+                            })
+                    });
+            let allowed = original.sender_id == command.actor
+                || membership.is_some_and(|m| {
+                    Policy::can_moderate_channel(Some(&m.role))
+                        || (circle_moderates && Policy::can_send_to_channel(Some(&m.role)))
+                });
+            if !allowed {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let message = state
                 .messages
                 .values_mut()
                 .flatten()
-                .find(|message| message.id == command.message_id)
-                .ok_or(RepositoryError::NotFound)?;
-            if message.sender_id != command.actor {
-                return Err(RepositoryError::PermissionDenied);
-            }
+                .find(|m| m.id == command.message_id)
+                .expect("checked message");
             let changed = message.deleted_at.is_none();
             if changed {
                 message.body = super::MessageBody::new("Meldinga er sletta.")
