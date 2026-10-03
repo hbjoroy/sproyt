@@ -78,11 +78,14 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
     retry.hidden = true;
     notice.textContent = "Hentar lagra emoji …";
     try { emojis = await api.list(); notice.textContent = emojis.length ? "" : "Lim inn ein eigen emoji for å lagre han her."; draw(); }
-    catch (error) { notice.textContent = `Kunne ikkje hente lagra emoji: ${message(error)}`; retry.hidden = false; }
+    catch (error) { notice.textContent = `Kunne ikkje hente lagra emoji: ${emojiErrorMessage(error)}`; retry.hidden = false; }
     position();
   };
   retry.onclick = () => { void load(); };
   search?.addEventListener("input", draw);
+  const more = dialog.querySelector(".sp-reaction-more");
+  // Collapsing the native catalog clears search without emitting an input event.
+  more?.addEventListener("click", draw);
   const custom = document.createElement("details");
   custom.className = "sp-custom-reaction";
   const disclosure = document.createElement("summary");
@@ -117,7 +120,7 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
       if (!dialog.isConnected) return;
       if (saved) { options.onSelect(emoji); close(); }
       else { emojis = emojis.filter(item => item !== emoji); error.textContent = "Emoji er fjerna frå samlinga. Tidlegare meldingar og reaksjonar er uendra."; }
-    } catch (failure) { error.textContent = `Kunne ikkje ${saved ? "lagre" : "fjerne"} emoji: ${message(failure)}${saved ? " Du kan bruke han utan å lagre." : ""}`; }
+    } catch (failure) { error.textContent = `Kunne ikkje ${saved ? "lagre" : "fjerne"} emoji: ${emojiErrorMessage(failure)}${saved ? " Du kan bruke han utan å lagre." : ""}`; }
     finally { pending = false; input.disabled = false; submit.disabled = !input.value.trim(); draw(); }
   };
   input.oninput = () => { submit.disabled = pending || !input.value.trim(); useOnly.disabled = !input.value.trim(); };
@@ -126,7 +129,10 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
   form.append(label, submit);
   custom.append(disclosure, form, useOnly, error);
   dialog.append(custom);
-  dialog.addEventListener("close", () => search?.removeEventListener("input", draw), { once: true });
+  dialog.addEventListener("close", () => {
+    search?.removeEventListener("input", draw);
+    more?.removeEventListener("click", draw);
+  }, { once: true });
   void load();
   position();
   return close;
@@ -138,4 +144,4 @@ function button(label: string, text: string, className: string): HTMLButtonEleme
   element.setAttribute("aria-label", label); element.title = label;
   return element;
 }
-function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function emojiErrorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

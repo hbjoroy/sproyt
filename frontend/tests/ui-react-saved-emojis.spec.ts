@@ -53,6 +53,11 @@ test("saved personal emoji is shared by composer and reactions across pages, and
   const reaction = picker(page, "Reager på meldinga");
   const saved = reaction.getByRole("button", { name: `Bruk lagra ${emoji}`, exact: true });
   await expect(saved).toBeVisible();
+  await reaction.getByRole("button", { name: "Fleire emoji", exact: true }).click();
+  await reaction.getByRole("searchbox", { name: "Finn emoji", exact: true }).fill("unmatched");
+  await expect(saved).toHaveCount(0);
+  await reaction.getByRole("button", { name: "Færre emoji", exact: true }).click();
+  await expect(saved).toBeVisible();
   await saved.focus(); await saved.press("ArrowUp"); await expect(saved).toBeFocused();
   await saved.press("Enter");
   await expect(card.getByRole("button", { name: `${emoji}: 1 reaksjonar`, exact: true })).toBeVisible();

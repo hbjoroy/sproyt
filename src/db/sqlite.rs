@@ -3941,16 +3941,10 @@ mod tests {
         let repository = SqliteChatRepository::connect(&url).await.unwrap();
         repository.migrate().await.unwrap();
         let owner = UserId::named("persisted-emoji-owner");
-        repository
-            .upsert_user(User {
-                id: owner.clone(),
-                kind: crate::domain::PrincipalKind::Human,
-                display_name: DisplayName::new("Emoji owner").unwrap(),
-                handle: None,
-                external_provider: None,
-                external_subject: None,
-                created_at: Utc::now(),
-            })
+        // An unused account avoids unrelated General-membership audit retention.
+        sqlx::query("insert into users(id,kind,display_name) values(?,'human','Emoji owner')")
+            .bind(owner.to_string())
+            .execute(&repository.pool)
             .await
             .unwrap();
         repository
