@@ -54,6 +54,9 @@ config:
   chatAgentsEnabled: false
   # Enable only after all workers sharing the chat DB run migration-0051 code.
   channelChatAgentsEnabled: false
+  weatherUrl: ""
+  # Enable only after all shared-database workers support weather/followup jobs.
+  weatherAgentsEnabled: false
   imagegenWebResearch: false
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60

@@ -164,3 +164,7 @@ set flagget til true. Ein gammal worker kan elles ta ein privat jobb og
 skippe han, eller ignorere eit nytt av-val. Etter aktivering er av-flagget
 åleine ikkje trygg tilbakerulling til kode utan kanalval; bruk ein kompatibel
 image som handhever lagra val og revisjonar.
+
+## Vêrdata (#212)
+
+Ei avgrensa serverstyrt vêrfunksjon kan knytast til agentoppsettet. Sjå [vêragent](weather-agent.md) for stadval, grounded data, oppfølging, kontrakt og aktiveringshinder. Modellen får framleis ikkje generelle verktøy eller valfrie nettverksadresser.

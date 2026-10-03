@@ -31,6 +31,8 @@ data:
   SPROYT_UI_AGENT_ENABLED: {{ .Values.config.uiAgentEnabled | quote }}
   SPROYT_CHAT_AGENTS_ENABLED: {{ .Values.config.chatAgentsEnabled | quote }}
   SPROYT_CHANNEL_CHAT_AGENTS_ENABLED: {{ .Values.config.channelChatAgentsEnabled | quote }}
+  SPROYT_WEATHER_URL: {{ .Values.config.weatherUrl | quote }}
+  SPROYT_WEATHER_AGENTS_ENABLED: {{ .Values.config.weatherAgentsEnabled | quote }}
   SPROYT_PROCESS_PILOT_RUNTIME: {{ .Values.config.processPilotRuntime | quote }}
   SPROYT_PROCESS_PILOT_ENABLED: {{ .Values.config.processPilotEnabled | quote }}
   SPROYT_PROCESS_OUTBOX_ENABLED: {{ .Values.config.processOutboxEnabled | quote }}

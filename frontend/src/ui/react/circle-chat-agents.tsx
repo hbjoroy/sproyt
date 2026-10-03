@@ -1,6 +1,7 @@
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useState } from "react";
 import type { CircleChatAgent, CircleChatAgentApi, CircleChatAgentInput } from "../../chat-agents";
+import { validAgentWeather } from "../../chat-agents";
 
 const lines = (value: string) => value.split(/\r?\n/u).map(item => item.trim()).filter(Boolean);
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Prøv igjen.";
@@ -10,6 +11,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
 }) {
   const [agents, setAgents] = useState<CircleChatAgent[]>([]);
   const [available, setAvailable] = useState(false);
+  const [weatherAvailable, setWeatherAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -19,12 +21,19 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [triggers, setTriggers] = useState("");
   const [phrases, setPhrases] = useState("");
   const [enabled, setEnabled] = useState(false);
+  const [weatherEnabled, setWeatherEnabled] = useState(false);
+  const [location, setLocation] = useState("Parikia");
+  const [latitude, setLatitude] = useState("37.085");
+  const [longitude, setLongitude] = useState("25.148");
+  const weather = weatherEnabled ? { location: location.trim(), latitude: Number(latitude), longitude: Number(longitude) } : null;
+  const weatherValid = !weather || (!!latitude.trim() && !!longitude.trim() && validAgentWeather(weather));
+  const workerAvailable = weatherEnabled ? weatherAvailable && (selected?.workerAvailable ?? true) : selected?.workerAvailable ?? available;
 
   useEffect(() => {
     let live = true;
     void api.list(circleId).then(result => {
       if (!live) return;
-      setAgents(result.agents); setAvailable(result.workerAvailable); setLoading(false);
+      setAgents(result.agents); setAvailable(result.workerAvailable); setWeatherAvailable(result.weatherAvailable); setLoading(false);
     }).catch(cause => { if (live) { setError(errorText(cause)); setLoading(false); } });
     return () => { live = false; };
   }, [api, circleId]);
@@ -33,13 +42,15 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     setSelected(agent); setName(agent?.displayName ?? "");
     setTriggers(agent?.triggerWords.join("\n") ?? "");
     setPhrases(agent?.responsePhrases.join("\n") ?? "");
+    setWeatherEnabled(!!agent?.weather); setLocation(agent?.weather?.location ?? "Parikia");
+    setLatitude(String(agent?.weather?.latitude ?? 37.085)); setLongitude(String(agent?.weather?.longitude ?? 25.148));
     setEnabled(agent?.enabled ?? false); setError(""); setFormOpen(true);
   };
   const save = async () => {
-    if (saving) return;
+    if (saving || !weatherValid) return;
     setError(""); setSaving(true);
     const input: CircleChatAgentInput = { displayName: name.trim(), triggerWords: lines(triggers),
-      responsePhrases: lines(phrases), enabled, revision: selected?.revision };
+      responsePhrases: lines(phrases), enabled, revision: selected?.revision, weather };
     try {
       const saved = selected ? await api.update(circleId, selected.agentId, input) : await api.create(circleId, input);
       setAgents(previous => [...previous.filter(item => item.agentId !== saved.agentId), saved]
@@ -67,11 +78,21 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       <label htmlFor="circle-agent-phrases">Stikkord og svarføringar, eitt per linje</label>
       <textarea id="circle-agent-phrases" rows={4} value={phrases} onChange={event => setPhrases(event.target.value)} />
       <p>Agenten brukar dette som innhald og tone, ikkje som eit ferdig svar. Skriv gjerne kva han bør vite eller spørje om.</p>
+      <label className="sp-circle-agent-enabled"><input type="checkbox" checked={weatherEnabled}
+        disabled={saving} onChange={event => setWeatherEnabled(event.target.checked)} />Vêrdata</label>
+      {weatherEnabled && <>
+        <p>Hent vêrdata for ein fast stad. Koordinatane blir lagra i oppsettet; vi brukar ikkje GPS-posisjonen din.</p>
+        <TextField label="Stad" value={location} maxLength={80} disabled={saving} onChange={event => setLocation(event.target.value)} />
+        <TextField label="Breiddegrad" type="number" step="any" min={-90} max={90} value={latitude} disabled={saving} onChange={event => setLatitude(event.target.value)} />
+        <TextField label="Lengdegrad" type="number" step="any" min={-180} max={180} value={longitude} disabled={saving} onChange={event => setLongitude(event.target.value)} />
+        {!weatherValid && <Status tone="error">Skriv ein stad med 1–80 teikn, breiddegrad frå −90 til 90 og lengdegrad frå −180 til 180.</Status>}
+        {!weatherAvailable && <Status tone="error">Vêrtenesta er ikkje klar. Du kan lagre oppsettet, men ikkje aktivere vêragenten enno.</Status>}
+      </>}
       <label className="sp-circle-agent-enabled"><input type="checkbox" checked={enabled}
-        disabled={!available && !enabled} onChange={event => setEnabled(event.target.checked)} />Aktiv</label>
+        disabled={!workerAvailable && !enabled} onChange={event => setEnabled(event.target.checked)} />Aktiv</label>
       {error && <Status tone="error">{error}</Status>}
       <div className="sp-row"><Button type="button" onClick={() => { setFormOpen(false); setError(""); }}>Avbryt</Button>
-        <Button type="submit" busy={saving} disabled={!name.trim() || !lines(triggers).length || !lines(phrases).length || (enabled && !available)}>Lagre agent</Button></div>
+        <Button type="submit" busy={saving} disabled={!name.trim() || !lines(triggers).length || !lines(phrases).length || !weatherValid || (enabled && !workerAvailable)}>Lagre agent</Button></div>
     </form>}
     {!formOpen && error && <Status tone="error">{error}</Status>}
   </Dialog>;

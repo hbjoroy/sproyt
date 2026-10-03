@@ -108,7 +108,7 @@ jobs:
       - name: Run WebKit mobile interaction contracts
         env:
           SPROYT_E2E_WEBKIT: "1"
-        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts
+        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-weather-agent.spec.ts
 
       - name: Upload browser test evidence
         if: failure()
@@ -191,6 +191,7 @@ jobs:
           cargo test postgres_notifications_share_the_repository_connection_budget --locked
           cargo test postgres_imagegen_uses_the_shared_connection_budget --locked
           cargo test postgres_channel_agent_access_contract --locked
+          cargo test postgres_weather_followup_contract --locked
           cargo test chatbot::tests::postgres_ --locked -- --test-threads=1
           cargo test postgres_work_item_registration_and_task_projection --locked
           cargo test work_items::github_export::tests::postgres_ --locked -- --test-threads=1
