@@ -1,7 +1,52 @@
 import { expect as baseExpect, test, type Page, type WebSocketRoute } from "@playwright/test";
 import type { ChatMessage } from "../src/types";
+import { readFileSync } from "node:fs";
+import { transformSync } from "esbuild";
 const expect = baseExpect.configure({ timeout: 15_000 });
 test.setTimeout(60_000);
+
+test("coalesced host publications retain bottom following until the DOM commit", async ({ page }) => {
+  await page.setContent('<div id="timeline" style="height:400px;width:400px;overflow:auto"><div data-message-id="first" style="height:2000px"></div></div>');
+  await page.addScriptTag({ content: transformSync(readFileSync(new URL("../src/ui/react/timeline-scroll.ts", import.meta.url), "utf8"),
+    { loader: "ts", format: "iife", globalName: "ReadingController" }).code });
+  const result = await page.evaluate(async () => {
+    const api = (window as unknown as { ReadingController: typeof import("../src/ui/react/timeline-scroll") }).ReadingController;
+    const controller = api.createTimelineScrollController();
+    const timeline = document.getElementById("timeline")!;
+    const frame = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    controller.prepare({ key: "channel:a", messageIds: ["first"] });
+    controller.viewportRef(timeline);
+    await frame();
+    const next = { key: "channel:a", messageIds: ["first", "last"] };
+    controller.prepare(next);
+    controller.prepare(next);
+    const last = document.createElement("div");
+    last.dataset.messageId = "last"; last.style.height = "200px";
+    timeline.append(last);
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    const distance = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    const inputOffsets: number[] = [];
+    for (const type of ["keydown", "touchstart", "pointerdown"]) {
+      controller.goToLatest();
+      await frame();
+      const id = `input-${type}`;
+      const ids = [...timeline.querySelectorAll<HTMLElement>("[data-message-id]")].map(element => element.dataset.messageId!);
+      controller.prepare({ key: "channel:a", messageIds: [...ids, id] });
+      const tail = document.createElement("div"); tail.dataset.messageId = id; tail.style.height = "200px";
+      timeline.append(tail);
+      timeline.dispatchEvent(type === "keydown" ? new KeyboardEvent(type, { key: "PageUp" }) : new Event(type));
+      timeline.scrollTop -= 300;
+      controller.onScroll();
+      const top = timeline.scrollTop;
+      await frame();
+      inputOffsets.push(Math.abs(timeline.scrollTop - top));
+    }
+    controller.dispose();
+    return { distance, inputOffsets };
+  });
+  expect(result.distance).toBeLessThan(2);
+  expect(result.inputOffsets.every(offset => offset < 2)).toBe(true);
+});
 
 type Command = { type: string; request_id: string; payload: { channel_id?: string; before?: number; limit?: number; sequence?: number; root_message_id?: string } };
 const root = (channel: string, sequence: number): ChatMessage => ({ id: `${channel}-${sequence}`, channel_id: channel,
@@ -62,7 +107,6 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
       return message;
     },
     install: async (page: Page, link = "") => {
-      page.on("console", message => { if (message.text().startsWith("reading_trace ")) console.log(message.text()); });
       await page.routeWebSocket(/\/ws(?:\?|$)/, socket => {
         sockets.set(page, socket);
         socket.onMessage(data => {
@@ -110,7 +154,7 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
           }
         });
       });
-      await page.goto(`/?participant=reading-regression&channel=a${link}&reading_trace=1`);
+      await page.goto(`/?participant=reading-regression&channel=a${link}`);
       await expect(page.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
       await page.bringToFront();
     }
@@ -261,6 +305,21 @@ test("channel return waits for a media-clamped anchor instead of following the t
   await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
   // Remove the fixture layout before saving the return anchor.
   await viewport(page).evaluate(element => element.querySelectorAll<HTMLElement>("[data-message-id]").forEach(message => { message.style.paddingBottom = ""; }));
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  const theme = page.getByRole("button", { name: "Byt tema", exact: true });
+  if (!await theme.isVisible()) await page.getByRole("button", { name: "Meny", exact: true }).click();
+  await expect(theme).toBeVisible();
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  // Theme changes publish synchronously through the real host. A publication
+  // before ResizeObserver must not save this temporary distance from bottom.
+  await theme.evaluate(button => {
+    const timeline = document.querySelector<HTMLElement>("#sproyt-react-preview .sp-channel-pane > .sp-timeline")!;
+    [...timeline.querySelectorAll<HTMLElement>("[data-message-id]")].at(-1)!.style.paddingBottom = "160px";
+    (button as HTMLButtonElement).click();
+  });
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  await viewport(page).evaluate(element => element.querySelectorAll<HTMLElement>("[data-message-id]").forEach(message => { message.style.paddingBottom = ""; }));
+  if (await theme.isVisible()) await page.getByRole("button", { name: "Meny", exact: true }).click();
   await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
   if (isMobile) {
     await viewport(page).evaluate(async element => {

@@ -90,13 +90,8 @@ export function createTimelineScrollController(options: TimelineScrollController
     geometry = viewport ? { height: viewport.scrollHeight, viewportHeight: viewport.clientHeight } : null;
   };
 
-  const trace = (stage: string) => {
-    if (!new URLSearchParams(window.location.search).has("reading_trace")) return;
-    console.log("reading_trace " + JSON.stringify({ stage, key: model.key, followBottom, pending, opening,
-      geometry, stored: model.key ? positions.get(model.key) : null,
-      measured: viewport ? { top: viewport.scrollTop, height: viewport.scrollHeight, viewportHeight: viewport.clientHeight,
-        distance: viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight } : null }));
-  };
+  const geometryChanged = () => !!viewport && !!geometry
+    && (geometry.height !== viewport.scrollHeight || geometry.viewportHeight !== viewport.clientHeight);
 
   const setScrollTop = (value: number) => {
     if (!viewport) return;
@@ -169,9 +164,8 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const reconcile = () => {
-    trace("reconcile");
     scheduled = false;
-    if (!viewport || !model.key) return;
+    if (!viewport || !model.key || scrollIntent) return;
     const bounds = viewport.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
     // Concurrent React publications can precede the matching DOM commit.
@@ -257,14 +251,14 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const onScroll = () => {
-    trace("scroll");
     if (!viewport || pending || viewport.scrollTop === appliedScrollTop) return;
     // WebKit can deliver layout-induced scroll before ResizeObserver. Media
     // growth is not evidence that the reader stopped following the bottom.
-    if (!scrollIntent && geometry && (geometry.height !== viewport.scrollHeight || geometry.viewportHeight !== viewport.clientHeight)) {
+    if (!scrollIntent && geometryChanged()) {
       scheduleReconcile();
       return;
     }
+    const hadScrollIntent = scrollIntent;
     scrollIntent = false;
     appliedScrollTop = null;
     const position = save();
@@ -283,6 +277,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     }
     reportBottom();
     reportVisible();
+    if (hadScrollIntent) scheduleReconcile();
   };
 
   const onScrollIntent = (event: Event) => {
@@ -294,8 +289,17 @@ export function createTimelineScrollController(options: TimelineScrollController
     // Input that produces no scroll must not label a later layout event as
     // user scrolling. WebKit may dispatch its scroll in the rendering step.
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (generation === scrollIntentGeneration) scrollIntent = false;
+      if (generation === scrollIntentGeneration && scrollIntent) {
+        scrollIntent = false;
+        scheduleReconcile();
+      }
     }));
+    if (!opening && pending?.forceBottom && !pending.revealMessageId) {
+      pending = null;
+      appliedScrollTop = null;
+      const position = save();
+      followBottom = (position?.distanceFromBottom ?? Infinity) <= nearEdge;
+    }
     if (!clampedAnchor) return;
     // An unreachable offset must never trap the reader after genuine input
     // (for example if content was removed while they visited another channel).
@@ -318,7 +322,7 @@ export function createTimelineScrollController(options: TimelineScrollController
 
   const viewportRef = (element: HTMLElement | null) => {
     if (viewport === element) return;
-    if (viewport && !pending) {
+    if (viewport && !pending && (scrollIntent || !geometryChanged())) {
       save();
     }
     mutationObserver?.disconnect();
@@ -341,10 +345,9 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const prepare = (next: TimelineScrollModel) => {
-    trace("prepare-before");
     // A resize/mutation reconciliation may still be queued after a React commit.
     // Its DOM geometry is not yet the reader's restored position.
-    const previous = (pending || scheduled || applying) && model.key
+    const previous = (pending || scheduled || applying || (!scrollIntent && geometryChanged())) && model.key
       ? pending?.position ?? positions.get(model.key) ?? capture()
       : save();
     const keyChanged = model.key !== next.key;
@@ -363,19 +366,19 @@ export function createTimelineScrollController(options: TimelineScrollController
     // commit (for example accepted reply + cleared composer). Keep a reveal
     // intent until the corresponding message has reached the DOM.
     const carriedReveal = pending?.revealMessageId ?? revealMessageId;
+    const carriedBottom = !keyChanged && !scrollIntent && pending?.forceBottom;
     const explicitReveal = next.revealMessageId ?? (keyChanged ? null : carriedReveal);
     const wasNearBottom = position ? position.distanceFromBottom <= nearEdge : true;
     pending = {
       keyChanged,
       position: keyChanged ? stored : position,
-      forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && appended && wasNearBottom),
+      forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && (carriedBottom || (appended && wasNearBottom))),
       revealMessageId: explicitReveal
     };
     followBottom = pending.forceBottom || (pending.position?.distanceFromBottom ?? 0) <= nearEdge;
     if (keyChanged || next.messageIds[0] !== model.messageIds[0]) requestedOlderAt = null;
     if (keyChanged) reportedBottomAt = null;
     model = next;
-    trace("prepare-after");
     scheduleReconcile();
   };
 
