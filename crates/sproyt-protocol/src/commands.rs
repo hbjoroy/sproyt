@@ -168,3 +168,11 @@ impl From<MembershipRole> for &'static str {
         }
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct SetCircleMemberRole {
+    pub actor: UserId,
+    pub circle_id: CircleId,
+    pub user_id: UserId,
+    pub role: crate::CircleRole,
+}

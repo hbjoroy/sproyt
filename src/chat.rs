@@ -218,6 +218,38 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn list_circle_members(
+        &self,
+        actor: UserId,
+        circle_id: crate::domain::CircleId,
+    ) -> Result<Vec<(UserProfile, CircleRole)>, ChatError> {
+        let profiles = self
+            .repository
+            .list_circle_user_profiles(actor.clone(), circle_id.clone())
+            .await?;
+        let roles: HashMap<_, _> = self
+            .repository
+            .circle_member_roles(actor, circle_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(profiles
+            .into_iter()
+            .filter_map(|profile| {
+                roles
+                    .get(&profile.user.id)
+                    .cloned()
+                    .map(|role| (profile, role))
+            })
+            .collect())
+    }
+    pub async fn set_circle_member_role(
+        &self,
+        command: crate::domain::SetCircleMemberRole,
+    ) -> Result<CircleMembership, ChatError> {
+        Ok(self.repository.set_circle_member_role(command).await?)
+    }
+
     pub async fn list_circle_users(
         &self,
         actor: UserId,

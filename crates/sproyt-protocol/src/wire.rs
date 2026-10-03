@@ -10,6 +10,14 @@ use crate::{
 pub enum ClientCommand {
     Hello,
     ListUsers,
+    ListCircleMembers {
+        circle_id: crate::CircleId,
+    },
+    SetCircleMemberRole {
+        circle_id: crate::CircleId,
+        user_id: crate::UserId,
+        role: crate::CircleRole,
+    },
     ListCircleUsers {
         circle_id: crate::CircleId,
     },
@@ -164,6 +172,13 @@ pub enum ServerEvent {
     },
     UsersListed {
         users: Vec<crate::UserProfile>,
+    },
+    CircleMembersListed {
+        circle_id: crate::CircleId,
+        members: Vec<(crate::UserProfile, crate::CircleRole)>,
+    },
+    CircleMemberRoleChanged {
+        membership: crate::CircleMembership,
     },
     CircleUsersListed {
         circle_id: crate::CircleId,

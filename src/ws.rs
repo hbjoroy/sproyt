@@ -238,6 +238,23 @@ pub(crate) async fn execute_command(
             .list_users(participant_id.clone())
             .await
             .map(|users| ServerEvent::UsersListed { users }),
+        ClientCommand::ListCircleMembers { circle_id } => chat
+            .list_circle_members(participant_id.clone(), circle_id.clone())
+            .await
+            .map(|members| ServerEvent::CircleMembersListed { circle_id, members }),
+        ClientCommand::SetCircleMemberRole {
+            circle_id,
+            user_id,
+            role,
+        } => chat
+            .set_circle_member_role(crate::domain::SetCircleMemberRole {
+                actor: participant_id.clone(),
+                circle_id,
+                user_id,
+                role,
+            })
+            .await
+            .map(|membership| ServerEvent::CircleMemberRoleChanged { membership }),
         ClientCommand::ListCircleUsers { circle_id } => chat
             .list_circle_users(participant_id.clone(), circle_id.clone())
             .await

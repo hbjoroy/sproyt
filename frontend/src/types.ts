@@ -10,7 +10,7 @@ export interface ChannelBase { id: string; slug: string; name: string; kind: "pu
 export interface Channel { id: string; slug: string; name: string; kind: "public" | "local" | "private"; circle_id: string | null; direct_user_id: string | null; /** Missing only while a new browser overlaps an older pod. */ is_direct?: boolean; description: string; role: "owner" | "moderator" | "member" | "observer"; last_read_sequence: number; latest_sequence: number; }
 export interface ChatMessage { id: string; channel_id: string; parent_message_id: string | null; sender_id: string; sender_display_name: string; body: string; sequence: number; sent_at: string; edited_at: string | null; deleted_at: string | null; }
 export interface CircleBase { id: string; slug: string; name: string; created_by: string; created_at: string; }
-export interface Circle extends CircleBase { role: "owner" | "member"; }
+export interface Circle extends CircleBase { role: "owner" | "moderator" | "member"; }
 export interface Membership { channel_id: string; user_id: string; role: "owner" | "moderator" | "member" | "observer"; last_read_sequence: number; }
 export interface ThreadSummary { root_message_id: string; reply_count: number; unread_count: number; latest_sequence: number; }
 export interface MessageReactionSummary { message_id: string; emoji: string; count: number; reacted_by_me: boolean; user_ids: string[]; }
@@ -34,6 +34,8 @@ export type ClientCommand =
   | Command<"hello"> | Command<"list_users"> | Command<"list_my_channels">
   | Command<"list_thread_summaries", { channel_id: string }>
   | Command<"list_my_circles"> | Command<"list_mentions"> | Command<"list_tasks"> | Command<"ping">
+  | Command<"list_circle_members", { circle_id: string }>
+  | Command<"set_circle_member_role", { circle_id: string; user_id: string; role: "member" | "moderator" }>
   | Command<"list_circle_users", { circle_id: string }>
   | Command<"set_status", { text: string; emoji: string; expires_at: string | null }>
   | Command<"update_profile", { display_name: string }>
@@ -97,13 +99,14 @@ type Frame<T extends string, P = never> = T extends T
     : { protocol: typeof protocolId; type: T; request_id?: string; payload: P }
   : never;
 export type ServerEvent =
+ | Frame<"circle_members_listed", { circle_id: string; members: [UserProfile, Circle["role"]][] }> | Frame<"circle_member_role_changed", { membership: { circle_id: string; user_id: string; role: Circle["role"]; joined_at: string } }>
  | Frame<"hello", { participant_id: string; signup_ordinal: number | null }> | Frame<"users_listed", { users: UserProfile[] }> | Frame<"circle_users_listed", { circle_id: string; users: UserProfile[] }> | Frame<"status_updated" | "profile_updated", { profile: UserProfile }>
  | Frame<"direct_channel_opened" | "direct_channel_expanded" | "channel_created", { channel: ChannelBase }> | Frame<"membership_joined" | "channel_member_added" | "read_marker_updated", { membership: Membership }> | Frame<"membership_left" | "subscription_ended", { channel_id: string }>
  | Frame<"channels_listed", { channels: Channel[] }> | Frame<"channel_users_listed", { channel_id: string; users: UserProfile[] }> | Frame<"channel_description_updated", { channel_id: string; description: string }> | Frame<"joinable_channels_listed", { channels: { channel: ChannelBase; description: string }[] }>
  | Frame<"messages_loaded", { channel_id: string; messages: ChatMessage[] }> | Frame<"thread_loaded", { root_message_id: string; messages: ChatMessage[] }> | Frame<"thread_summaries_listed", { channel_id: string; summaries: ThreadSummary[] }> | Frame<"thread_read_updated", { summary: ThreadSummary }> | Frame<"subscription_started", { channel_id: string; history: ChatMessage[] }>
  | Frame<"message_accepted" | "message_edited" | "message_deleted", { message: ChatMessage }> | Frame<"channel_reactions_listed", { channel_id: string; reactions: MessageReactionSummary[] }> | Frame<"message_reaction_changed", { change: MessageReactionChange }> | Frame<"mentions_listed", { mentions: Mention[] }> | Frame<"mention_read", { message_id: string }> | Frame<"task_created" | "task_updated", { task: UserTask }> | Frame<"tasks_listed", { tasks: UserTask[] }> | Frame<"chat", { event: ChatEvent }>
- | Frame<"lagged", { channel_id: string; last_seen_sequence: number; latest_known_sequence: number; skipped: number; hint: string }> | Frame<"pong"> | Frame<"circle_created", { circle: CircleBase }> | Frame<"circle_renamed", { circle: CircleBase }> | Frame<"circles_changed"> | Frame<"circles_listed", { circles: [CircleBase, "owner" | "member"][] }> | Frame<"circle_deleted" | "circle_left", { circle_id: string }>
- | Frame<"circle_invitation_created", { invitation: { invitation: { id: string; circle_id: string; invited_by: string; expires_at: string }; token: string } }> | Frame<"circle_invitation_accepted", { membership: { circle_id: string; user_id: string; role: "owner" | "member"; joined_at: string } }> | Frame<"invitation_created", { invitation: { target: Target; token: string; expires_at: string } }> | Frame<"invitation_inspected" | "invitation_declined", { token: string; invitation: Preview }> | Frame<"invitation_accepted", { token: string; invitation: { target: Target; channel: ChannelBase } }> | Frame<"error", { code: string; message: string }>;
+ | Frame<"lagged", { channel_id: string; last_seen_sequence: number; latest_known_sequence: number; skipped: number; hint: string }> | Frame<"pong"> | Frame<"circle_created", { circle: CircleBase }> | Frame<"circle_renamed", { circle: CircleBase }> | Frame<"circles_changed"> | Frame<"circles_listed", { circles: [CircleBase, "owner" | "moderator" | "member"][] }> | Frame<"circle_deleted" | "circle_left", { circle_id: string }>
+ | Frame<"circle_invitation_created", { invitation: { invitation: { id: string; circle_id: string; invited_by: string; expires_at: string }; token: string } }> | Frame<"circle_invitation_accepted", { membership: { circle_id: string; user_id: string; role: "owner" | "moderator" | "member"; joined_at: string } }> | Frame<"invitation_created", { invitation: { target: Target; token: string; expires_at: string } }> | Frame<"invitation_inspected" | "invitation_declined", { token: string; invitation: Preview }> | Frame<"invitation_accepted", { token: string; invitation: { target: Target; channel: ChannelBase } }> | Frame<"error", { code: string; message: string }>;
 export type ServerEventType = ServerEvent["type"]; export type WireEvent = ServerEvent;
 export type StoredStringMap = Record<string, string>;
 export function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
@@ -151,9 +154,9 @@ const chatFromWire = (event: WireChatEvent): ChatEvent => {
   if (event.type === "message_reaction_changed") return { type: event.type, change: event.change };
   return { type: "read_marker_updated", channel_id: event.channel_id, user_id: event.user_id, sequence: event.sequence };
 };
-const isCirclePair = (value: unknown): value is [CircleBase, "owner" | "member"] => Array.isArray(value) && value.length === 2 && isCircle(value[0]) && isOneOf(value[1], ["owner", "member"]);
+const isCirclePair = (value: unknown): value is [CircleBase, "owner" | "moderator" | "member"] => Array.isArray(value) && value.length === 2 && isCircle(value[0]) && isOneOf(value[1], ["owner", "moderator", "member"]);
 const isIssuedCircleInvitation = (value: unknown): value is { invitation: { id: string; circle_id: string; invited_by: string; expires_at: string }; token: string } => objectWith(value, { invitation: (entry) => objectWith(entry, { id: isString, circle_id: isString, invited_by: isString, expires_at: isString }), token: isString });
-const isCircleMembership = (value: unknown): value is { circle_id: string; user_id: string; role: "owner" | "member"; joined_at: string } => objectWith(value, { circle_id: isString, user_id: isString, role: (entry) => isOneOf(entry, ["owner", "member"]), joined_at: isString });
+const isCircleMembership = (value: unknown): value is { circle_id: string; user_id: string; role: "owner" | "moderator" | "member"; joined_at: string } => objectWith(value, { circle_id: isString, user_id: isString, role: (entry) => isOneOf(entry, ["owner", "member"]), joined_at: isString });
 const isIssuedChatInvitation = (value: unknown): value is { target: Target; token: string; expires_at: string } => objectWith(value, { target: isTarget, token: isString, expires_at: isString });
 const isAcceptedChatInvitation = (value: unknown): value is { target: Target; channel: ChannelBase } => objectWith(value, { target: isTarget, channel: isChannelBase });
 
@@ -169,6 +172,8 @@ export function asWireEvent(value: unknown): ServerEvent | null {
     // Missing is normalised to null; malformed supplied values are rejected.
     case "hello": return isString(payload.participant_id) && (payload.signup_ordinal === undefined || payload.signup_ordinal === null || (isCount(payload.signup_ordinal) && payload.signup_ordinal > 0)) ? { protocol: protocolId, type: "hello", request_id, payload: { participant_id: payload.participant_id, signup_ordinal: payload.signup_ordinal ?? null } } : null;
     case "users_listed": return listOf(isUser)(payload.users) ? { protocol: protocolId, type: "users_listed", request_id, payload: { users: payload.users.map(userFromWire) } } : null;
+    case "circle_members_listed": return isString(payload.circle_id) && listOf((v): v is [WireUserProfile, Circle["role"]] => Array.isArray(v) && v.length===2 && isUser(v[0]) && isOneOf(v[1],["owner","moderator","member"]))(payload.members) ? {protocol:protocolId,type:value.type,request_id,payload:{circle_id:payload.circle_id,members:payload.members.map(([u,r])=>[userFromWire(u),r])}} : null;
+    case "circle_member_role_changed": return objectWith(payload.membership,{circle_id:isString,user_id:isString,role:(v)=>isOneOf(v,["owner","moderator","member"]),joined_at:isString}) ? {protocol:protocolId,type:value.type,request_id,payload:{membership:payload.membership as {circle_id:string;user_id:string;role:Circle["role"];joined_at:string}}}:null;
     case "circle_users_listed": return isString(payload.circle_id) && listOf(isUser)(payload.users) ? { protocol: protocolId, type: "circle_users_listed", request_id, payload: { circle_id: payload.circle_id, users: payload.users.map(userFromWire) } } : null;
     case "status_updated": case "profile_updated": return isUser(payload.profile) ? { protocol: protocolId, type: value.type, request_id, payload: { profile: userFromWire(payload.profile) } } : null;
     case "direct_channel_opened": case "direct_channel_expanded": case "channel_created": return isChannelBase(payload.channel) ? { protocol: protocolId, type: value.type, request_id, payload: { channel: payload.channel } } : null;

@@ -6,6 +6,9 @@ use uuid::Uuid;
 
 use crate::domain::{ChannelId, CircleId, MessageId, RepositoryError, UserId};
 
+// Circle chat agents are managed through current circle roles and never issue API credentials.
+pub(crate) const CIRCLE_CHAT_PROVIDER: &str = "sproyt-circle-chat";
+
 pub type AgentFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, RepositoryError>> + Send + 'a>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -1,3 +1,4 @@
+import type { CircleChatAgentApi } from "../chat-agents";
 import type { EnrollmentApi } from "../api";
 import { isEnrollmentNotConfigured } from "../api";
 import type { Channel, Circle, ClientCommand, ClientCommandArguments } from "../types";
@@ -15,6 +16,7 @@ export function createCommunityHost(deps: {
   channelSlug(circleId: string, name: string): string;
   invitationToken(value: string): string | null;
   enrollment: EnrollmentApi;
+  chatAgents?: CircleChatAgentApi;
 }): CommunityHost {
   const request = deps.requests.request;
   const circle = (id: string, owner = false) => {
@@ -28,6 +30,7 @@ export function createCommunityHost(deps: {
     return value;
   };
   return {
+    chatAgents: deps.chatAgents,
     selfId: deps.selfId,
     users: async () => (await request("users_listed", () => deps.send("list_users"))).payload.users,
     members: async id => (await request("channel_users_listed", () => deps.send("list_channel_users", { channel_id: id }))).payload.users,
@@ -38,6 +41,8 @@ export function createCommunityHost(deps: {
       // The existing circle_created handler creates Prat exactly once.
       await request("circle_created", () => deps.send("create_circle", { name, slug: deps.slugify(name) }));
     },
+    managedCircleMembers: async id => (await request("circle_members_listed", () => deps.send("list_circle_members", {circle_id:id}))).payload.members,
+    setCircleMemberRole: async (id,userId,role) => { circle(id,true); await request("circle_member_role_changed",()=>deps.send("set_circle_member_role",{circle_id:id,user_id:userId,role})); },
     renameCircle: async (id, name) => {
       circle(id, true);
       const trimmed = name.trim();

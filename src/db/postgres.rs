@@ -28,8 +28,8 @@ use crate::domain::{
     MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
     PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PrepareEnrollmentInvitation,
     PresenceLease, RenameCircle, RepositoryError, RepositoryFuture, SendMessage,
-    UpdateChannelDescription, User, UserId, UserProfile, UserTask, enrollment_email_hash,
-    enrollment_token_hash, generate_enrollment_token,
+    SetCircleMemberRole, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
+    enrollment_email_hash, enrollment_token_hash, generate_enrollment_token,
 };
 use crate::integration::{
     AlertState, DeliveryResult, GRAFANA_PROVIDER, IncomingAlert, IncomingReport, IntegrationFuture,
@@ -985,6 +985,52 @@ impl ChatRepository for PostgresChatRepository {
         Some(self.circle_updates.subscribe())
     }
 
+    fn circle_member_roles<'a>(
+        &'a self,
+        actor: UserId,
+        circle_id: CircleId,
+    ) -> RepositoryFuture<'a, Vec<(UserId, CircleRole)>> {
+        Box::pin(async move {
+            let rows=sqlx::query("select m.user_id,m.role from circle_memberships m where m.circle_id=$1 and exists(select 1 from circle_memberships actor where actor.circle_id=m.circle_id and actor.user_id=$2)").bind(*circle_id.as_uuid()).bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter()
+                .map(|row| {
+                    Ok((
+                        UserId::from_uuid(row.try_get("user_id").map_err(storage)?),
+                        CircleRole::parse(&row.try_get::<String, _>("role").map_err(storage)?)
+                            .ok_or_else(|| storage("invalid circle role"))?,
+                    ))
+                })
+                .collect()
+        })
+    }
+    fn set_circle_member_role<'a>(
+        &'a self,
+        command: SetCircleMemberRole,
+    ) -> RepositoryFuture<'a, CircleMembership> {
+        Box::pin(async move {
+            if command.role == CircleRole::Owner {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let row=sqlx::query("update circle_memberships set role=$1 where circle_id=$2 and user_id=$3 and role in ('member','moderator') and exists(select 1 from circle_memberships owner where owner.circle_id=circle_memberships.circle_id and owner.user_id=$4 and owner.role='owner') and exists(select 1 from users where id=circle_memberships.user_id and kind='human') returning joined_at").bind(command.role.as_str()).bind(*command.circle_id.as_uuid()).bind(*command.user_id.as_uuid()).bind(*command.actor.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)?.ok_or(RepositoryError::PermissionDenied)?;
+            let membership = CircleMembership {
+                circle_id: command.circle_id.clone(),
+                user_id: command.user_id.clone(),
+                role: command.role.clone(),
+                joined_at: row.try_get("joined_at").map_err(storage)?,
+            };
+            let payload = serde_json::json!({"user_id":command.user_id,"role":command.role});
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'circle.member_role_changed','circle',$2,$3)").bind(*command.actor.as_uuid()).bind(command.circle_id.to_string()).bind(payload).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("select pg_notify('sproyt_circle_updates','')")
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+
+            Ok(membership)
+        })
+    }
+
     fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle> {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
@@ -1782,9 +1828,18 @@ impl ChatRepository for PostgresChatRepository {
     fn delete_message<'a>(&'a self, command: DeleteMessage) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
-            let row = sqlx::query("update messages set body='Meldinga er sletta.',edited_at=null,deleted_at=coalesce(deleted_at,now()) where id=$1 and sender_id=$2 returning id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
+            // Serialize moderation against channel permission and circle role revocation.
+            // The update below still evaluates the current predicate after acquiring these locks.
+            sqlx::query("select r.user_id from messages msg join channels c on c.id=msg.channel_id join circle_memberships r on r.circle_id=c.circle_id where msg.id=$1 and r.user_id=$2 for share of r")
+                .bind(*command.message_id.as_uuid()).bind(*command.actor.as_uuid())
+                .fetch_optional(&mut *transaction).await.map_err(sql_error)?;
+            sqlx::query("select m.user_id from messages msg join channels c on c.id=msg.channel_id join channel_memberships m on m.channel_id=c.id where msg.id=$1 and m.user_id=$2 for share of m")
+                .bind(*command.message_id.as_uuid()).bind(*command.actor.as_uuid())
+                .fetch_optional(&mut *transaction).await.map_err(sql_error)?;
+            let row = sqlx::query("update messages set body='Meldinga er sletta.',edited_at=null,deleted_at=coalesce(deleted_at,now()) where id=$1 and (sender_id=$2 or exists(select 1 from channels c join channel_memberships m on m.channel_id=c.id where c.id=messages.channel_id and m.user_id=$3 and (m.role in ('owner','moderator') or (c.kind<>'private' and m.role='member' and exists(select 1 from circle_memberships r where r.circle_id=c.circle_id and r.user_id=$4 and r.role in ('owner','moderator')))))) returning id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at")
                 .bind(*command.message_id.as_uuid())
                 .bind(*command.actor.as_uuid())
+                .bind(*command.actor.as_uuid()).bind(*command.actor.as_uuid())
                 .fetch_optional(&mut *transaction).await.map_err(sql_error)?;
             let Some(row) = row else {
                 let exists = sqlx::query_scalar::<_, i32>("select 1 from messages where id=$1")
@@ -2921,7 +2976,8 @@ impl ProcessRepository for PostgresChatRepository {
 impl AgentRepository for PostgresChatRepository {
     fn create_agent<'a>(&'a self, command: CreateAgent) -> AgentFuture<'a, CreatedAgent> {
         Box::pin(async move {
-            if command.actor != command.owner_id
+            if command.provider == crate::agent::CIRCLE_CHAT_PROVIDER
+                || command.actor != command.owner_id
                 || !(1..=600).contains(&command.rate_limit_per_minute)
             {
                 return Err(RepositoryError::PermissionDenied);
@@ -2951,7 +3007,7 @@ impl AgentRepository for PostgresChatRepository {
             if command.circle_id.is_none() && command.channel_id.is_none() {
                 return Err(RepositoryError::Conflict);
             }
-            let owner:Option<i32>=sqlx::query_scalar("select 1 from agent_profiles where agent_id=$1 and owner_id=$2 and revoked_at is null and (expires_at is null or expires_at>$3)").bind(*command.agent_id.as_uuid()).bind(*command.actor.as_uuid()).bind(Utc::now()).fetch_optional(&self.pool).await.map_err(sql_error)?;
+            let owner:Option<i32>=sqlx::query_scalar("select 1 from agent_profiles where provider<>'sproyt-circle-chat' and agent_id=$1 and owner_id=$2 and revoked_at is null and (expires_at is null or expires_at>$3)").bind(*command.agent_id.as_uuid()).bind(*command.actor.as_uuid()).bind(Utc::now()).fetch_optional(&self.pool).await.map_err(sql_error)?;
             if owner.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
@@ -2998,7 +3054,7 @@ impl AgentRepository for PostgresChatRepository {
     }
     fn revoke_grant<'a>(&'a self, actor: UserId, grant_id: Uuid) -> AgentFuture<'a, ()> {
         Box::pin(async move {
-            let n=sqlx::query("update agent_grants set revoked_at=$1,revoked_by=$2 where id=$3 and revoked_at is null and agent_id in(select agent_id from agent_profiles where owner_id=$2)").bind(Utc::now()).bind(*actor.as_uuid()).bind(grant_id).execute(&self.pool).await.map_err(sql_error)?.rows_affected();
+            let n=sqlx::query("update agent_grants set revoked_at=$1,revoked_by=$2 where id=$3 and revoked_at is null and agent_id in(select agent_id from agent_profiles where provider<>'sproyt-circle-chat' and owner_id=$2)").bind(Utc::now()).bind(*actor.as_uuid()).bind(grant_id).execute(&self.pool).await.map_err(sql_error)?.rows_affected();
             if n == 0 {
                 return Err(RepositoryError::PermissionDenied);
             }
@@ -3012,7 +3068,7 @@ impl AgentRepository for PostgresChatRepository {
             let agent_id = *agent_id.as_uuid();
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             let changed = sqlx::query(
-                "update agent_profiles set revoked_at=$1 where agent_id=$2 and owner_id=$3 and revoked_at is null",
+                "update agent_profiles set revoked_at=$1 where provider<>'sproyt-circle-chat' and agent_id=$2 and owner_id=$3 and revoked_at is null",
             )
             .bind(now)
             .bind(agent_id)
@@ -3057,7 +3113,7 @@ impl AgentRepository for PostgresChatRepository {
             let credential = URL_SAFE_NO_PAD.encode(secret);
             let hash = Sha256::digest(credential.as_bytes()).to_vec();
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
-            let allowed: Option<i32> = sqlx::query_scalar("select 1 from agent_profiles where agent_id=$1 and owner_id=$2 and revoked_at is null and (expires_at is null or expires_at>$3)")
+            let allowed: Option<i32> = sqlx::query_scalar("select 1 from agent_profiles where provider<>'sproyt-circle-chat' and agent_id=$1 and owner_id=$2 and revoked_at is null and (expires_at is null or expires_at>$3)")
                 .bind(*agent_id.as_uuid()).bind(*actor.as_uuid()).bind(now)
                 .fetch_optional(&mut *tx).await.map_err(sql_error)?;
             if allowed.is_none() {
@@ -3082,7 +3138,7 @@ impl AgentRepository for PostgresChatRepository {
         Box::pin(async move {
             let hash = Sha256::digest(credential.as_bytes()).to_vec();
             let now = Utc::now();
-            let row=sqlx::query("select c.id as credential_id,p.agent_id,p.owner_id,p.provider,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where c.token_hash=$1 and c.revoked_at is null and c.expires_at>$2 and p.revoked_at is null and(p.expires_at is null or p.expires_at>$2)").bind(&hash).bind(now).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::PermissionDenied)?;
+            let row=sqlx::query("select c.id as credential_id,p.agent_id,p.owner_id,p.provider,p.purpose,p.rate_limit_per_minute from agent_credentials c join agent_profiles p on p.agent_id=c.agent_id where p.provider<>'sproyt-circle-chat' and c.token_hash=$1 and c.revoked_at is null and c.expires_at>$2 and p.revoked_at is null and(p.expires_at is null or p.expires_at>$2)").bind(&hash).bind(now).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::PermissionDenied)?;
             sqlx::query("update agent_credentials set last_used_at=$1 where token_hash=$2")
                 .bind(now)
                 .bind(hash)
@@ -3156,7 +3212,7 @@ impl AgentRepository for PostgresChatRepository {
     }
     fn approve_message<'a>(&'a self, actor: UserId, message_id: MessageId) -> AgentFuture<'a, ()> {
         Box::pin(async move {
-            let n=sqlx::query("update message_provenance set provenance='human_approved',approved_by=$1,approved_at=$2 where message_id=$3 and owner_id=$1 and agent_id is not null").bind(*actor.as_uuid()).bind(Utc::now()).bind(*message_id.as_uuid()).execute(&self.pool).await.map_err(sql_error)?.rows_affected();
+            let n=sqlx::query("update message_provenance set provenance='human_approved',approved_by=$1,approved_at=$2 where message_id=$3 and owner_id=$1 and agent_id in(select agent_id from agent_profiles where provider<>'sproyt-circle-chat')").bind(*actor.as_uuid()).bind(Utc::now()).bind(*message_id.as_uuid()).execute(&self.pool).await.map_err(sql_error)?.rows_affected();
             if n == 0 {
                 return Err(RepositoryError::PermissionDenied);
             }
@@ -3774,6 +3830,147 @@ mod tests {
     use super::*;
     use crate::domain::{PrincipalKind, User};
     use tokio::sync::Barrier;
+
+    #[tokio::test]
+    async fn postgres_moderated_delete_waits_for_role_revocation_and_rechecks_authority() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let repository = Arc::new(PostgresChatRepository::connect(&url).await.unwrap());
+        repository.migrate().await.unwrap();
+        let suffix = Uuid::now_v7().simple().to_string();
+        let owner = UserId::from_uuid(Uuid::now_v7());
+        let moderator = UserId::from_uuid(Uuid::now_v7());
+        for id in [&owner, &moderator] {
+            repository
+                .upsert_user(User {
+                    id: id.clone(),
+                    kind: PrincipalKind::Human,
+                    display_name: DisplayName::new("Revocation race").unwrap(),
+                    handle: None,
+                    external_provider: None,
+                    external_subject: None,
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: owner.clone(),
+                slug: ChannelSlug::new(format!("mod-race-{suffix}")).unwrap(),
+                name: DisplayName::new("Revocation race").unwrap(),
+            })
+            .await
+            .unwrap();
+        let invitation = repository
+            .create_circle_invitation(CreateCircleInvitation {
+                actor: owner.clone(),
+                circle_id: circle.id.clone(),
+            })
+            .await
+            .unwrap();
+        repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: moderator.clone(),
+                token: invitation.token,
+            })
+            .await
+            .unwrap();
+        repository
+            .set_circle_member_role(SetCircleMemberRole {
+                actor: owner.clone(),
+                circle_id: circle.id.clone(),
+                user_id: moderator.clone(),
+                role: CircleRole::Moderator,
+            })
+            .await
+            .unwrap();
+        let channel = repository
+            .create_channel(CreateChannel {
+                actor: owner.clone(),
+                slug: ChannelSlug::new(format!("mod-race-channel-{suffix}")).unwrap(),
+                name: DisplayName::new("Revocation race").unwrap(),
+                kind: ChannelKind::Public,
+                circle_id: Some(circle.id.clone()),
+            })
+            .await
+            .unwrap();
+        repository
+            .add_channel_member(crate::domain::AddChannelMember {
+                actor: owner.clone(),
+                channel_id: channel.id.clone(),
+                user_id: moderator.clone(),
+            })
+            .await
+            .unwrap();
+        let message = repository
+            .append_message(SendMessage {
+                actor: owner,
+                channel_id: channel.id,
+                parent_message_id: None,
+                body: MessageBody::new("Must survive revoked moderation").unwrap(),
+            })
+            .await
+            .unwrap();
+        let mut revocation = repository.pool.begin().await.unwrap();
+        let blocker: i32 = sqlx::query_scalar("select pg_backend_pid()")
+            .fetch_one(&mut *revocation)
+            .await
+            .unwrap();
+        sqlx::query(
+            "update circle_memberships set role='member' where circle_id=$1 and user_id=$2",
+        )
+        .bind(*circle.id.as_uuid())
+        .bind(*moderator.as_uuid())
+        .execute(&mut *revocation)
+        .await
+        .unwrap();
+        let deleting = repository.clone();
+        let pending = tokio::spawn(async move {
+            deleting
+                .delete_message(DeleteMessage {
+                    actor: moderator,
+                    message_id: message.id,
+                })
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let blocked: i64 = sqlx::query_scalar(
+                    "select count(*) from pg_stat_activity where $1=any(pg_blocking_pids(pid))",
+                )
+                .bind(blocker)
+                .fetch_one(&repository.pool)
+                .await
+                .unwrap();
+                if blocked > 0 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        revocation.commit().await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(RepositoryError::PermissionDenied)
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<chrono::DateTime<Utc>>>(
+                "select deleted_at from messages where id=$1"
+            )
+            .bind(*message.id.as_uuid())
+            .fetch_one(&repository.pool)
+            .await
+            .unwrap(),
+            None
+        );
+    }
 
     #[tokio::test]
     async fn postgres_migration_path_can_run_repeatedly_and_concurrently() {

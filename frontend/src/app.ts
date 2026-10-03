@@ -3217,6 +3217,7 @@
           });
           return;
         }
+        if (event.type === "circle_member_role_changed") { sendCommand("list_my_circles"); return; }
         if (event.type === "circles_changed") {
           sendCommand("list_my_circles");
           return;
@@ -5907,7 +5908,7 @@
               requests: communityRequests, send: sendCommand, openDirect: openDirectChannel,
               selfId: () => currentParticipantId, channels: () => knownChannels, circles: () => knownCircles,
               slugify, channelSlug: scopedCircleChannelSlug, invitationToken: invitationValueToToken,
-              enrollment: enrollmentApi
+              enrollment: enrollmentApi, chatAgents: circleChatAgentsApi
             }),
             inboxState: () => ({
               channels: knownChannels,
@@ -6023,6 +6024,7 @@
                 renderMediaPreviews();
               }
             },
+            canDeleteMessage: (message) => { if (message.deleted_at) return false; if (message.sender_id===currentParticipantId) return true; const channel=knownChannels.find(c=>c.id===message.channel_id); if (!channel) return false; if (["owner","moderator"].includes(channel.role)) return true; return channel.kind!=="private" && channel.role==="member" && !!channel.circle_id && ["owner","moderator"].includes(knownCircles.get(channel.circle_id)?.role??""); },
             canEditMessage: (message) => message.sender_id === currentParticipantId && !message.deleted_at,
             editMessage: (messageId, body) => { sendCommand("edit_message", { message_id: messageId, body }); },
             deleteMessage: (messageId) => { sendCommand("delete_message", { message_id: messageId }); },

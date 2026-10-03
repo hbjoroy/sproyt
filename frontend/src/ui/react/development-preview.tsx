@@ -68,6 +68,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly messageStatus: (message: ChatMessage) => string | undefined;
   readonly invitations: InvitationCards;
   readonly threadLoad: () => { readonly loading: boolean; readonly error?: string };
+  readonly canDeleteMessage: (message: ChatMessage) => boolean;
   readonly canEditMessage: (message: ChatMessage) => boolean;
   readonly editMessage: (messageId: string, body: string) => void;
   readonly deleteMessage: (messageId: string) => void;
@@ -186,15 +187,15 @@ function PreviewMessageMutations({ host, message }: { readonly host: Development
     // until click opens the dialog, as the reaction actions already do.
     if (event.pointerType === "mouse" && event.button === 0) event.preventDefault();
   };
-  if (!host.canEditMessage(message)) return null;
+  if (!host.canEditMessage(message) && !host.canDeleteMessage(message)) return null;
   const save = () => {
     const updated = [body.trim(), ...mediaTokens].filter(Boolean).join("\n");
     if (updated && updated !== message.body) host.editMessage(message.id, updated);
     setEditing(false);
   };
   return <>
-    <Button onPointerDown={keepPointerTarget} onClick={() => { setBody(message.body.replace(mediaTokenPattern, "").trim()); setEditing(true); }}>Rediger</Button>
-    <Button variant="danger" onPointerDown={keepPointerTarget} onClick={() => setDeleting(true)}>Slett</Button>
+    {host.canEditMessage(message) && <Button onPointerDown={keepPointerTarget} onClick={() => { setBody(message.body.replace(mediaTokenPattern, "").trim()); setEditing(true); }}>Rediger</Button>}
+    {host.canDeleteMessage(message) && <Button variant="danger" onPointerDown={keepPointerTarget} onClick={() => setDeleting(true)}>Slett</Button>}
     {editing && <Dialog open title="Rediger melding" closeLabel="Avbryt" onClose={() => setEditing(false)}>
       <form onSubmit={event => { event.preventDefault(); save(); }}>
         <label htmlFor={`edit-${message.id}`}>Melding</label>

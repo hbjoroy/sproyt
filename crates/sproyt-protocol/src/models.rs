@@ -97,13 +97,22 @@ pub enum MembershipRole {
 #[serde(rename_all = "snake_case")]
 pub enum CircleRole {
     Owner,
+    Moderator,
     Member,
 }
 
 impl CircleRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Moderator => "moderator",
+            Self::Member => "member",
+        }
+    }
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "owner" => Some(Self::Owner),
+            "moderator" => Some(Self::Moderator),
             "member" => Some(Self::Member),
             _ => None,
         }
