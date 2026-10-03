@@ -61,6 +61,7 @@ export type ClientCommand =
   | Command<"create_task", { source_message_id: string; assignee_id: string; title: string; process_link_id: string | null }>
   | Command<"set_task_done", { task_id: string; done: boolean }>
   | Command<"create_circle", { slug: string; name: string }>
+  | Command<"rename_circle", { circle_id: string; name: string }>
   | Command<"delete_circle", { circle_id: string }>
   | Command<"leave_circle", { circle_id: string }>
   | Command<"create_circle_invitation", { circle_id: string }>
@@ -101,7 +102,7 @@ export type ServerEvent =
  | Frame<"channels_listed", { channels: Channel[] }> | Frame<"channel_users_listed", { channel_id: string; users: UserProfile[] }> | Frame<"channel_description_updated", { channel_id: string; description: string }> | Frame<"joinable_channels_listed", { channels: { channel: ChannelBase; description: string }[] }>
  | Frame<"messages_loaded", { channel_id: string; messages: ChatMessage[] }> | Frame<"thread_loaded", { root_message_id: string; messages: ChatMessage[] }> | Frame<"thread_summaries_listed", { channel_id: string; summaries: ThreadSummary[] }> | Frame<"thread_read_updated", { summary: ThreadSummary }> | Frame<"subscription_started", { channel_id: string; history: ChatMessage[] }>
  | Frame<"message_accepted" | "message_edited" | "message_deleted", { message: ChatMessage }> | Frame<"channel_reactions_listed", { channel_id: string; reactions: MessageReactionSummary[] }> | Frame<"message_reaction_changed", { change: MessageReactionChange }> | Frame<"mentions_listed", { mentions: Mention[] }> | Frame<"mention_read", { message_id: string }> | Frame<"task_created" | "task_updated", { task: UserTask }> | Frame<"tasks_listed", { tasks: UserTask[] }> | Frame<"chat", { event: ChatEvent }>
- | Frame<"lagged", { channel_id: string; last_seen_sequence: number; latest_known_sequence: number; skipped: number; hint: string }> | Frame<"pong"> | Frame<"circle_created", { circle: CircleBase }> | Frame<"circles_listed", { circles: [CircleBase, "owner" | "member"][] }> | Frame<"circle_deleted" | "circle_left", { circle_id: string }>
+ | Frame<"lagged", { channel_id: string; last_seen_sequence: number; latest_known_sequence: number; skipped: number; hint: string }> | Frame<"pong"> | Frame<"circle_created", { circle: CircleBase }> | Frame<"circle_renamed", { circle: CircleBase }> | Frame<"circles_changed"> | Frame<"circles_listed", { circles: [CircleBase, "owner" | "member"][] }> | Frame<"circle_deleted" | "circle_left", { circle_id: string }>
  | Frame<"circle_invitation_created", { invitation: { invitation: { id: string; circle_id: string; invited_by: string; expires_at: string }; token: string } }> | Frame<"circle_invitation_accepted", { membership: { circle_id: string; user_id: string; role: "owner" | "member"; joined_at: string } }> | Frame<"invitation_created", { invitation: { target: Target; token: string; expires_at: string } }> | Frame<"invitation_inspected" | "invitation_declined", { token: string; invitation: Preview }> | Frame<"invitation_accepted", { token: string; invitation: { target: Target; channel: ChannelBase } }> | Frame<"error", { code: string; message: string }>;
 export type ServerEventType = ServerEvent["type"]; export type WireEvent = ServerEvent;
 export type StoredStringMap = Record<string, string>;
@@ -161,7 +162,7 @@ export function asWireEvent(value: unknown): ServerEvent | null {
   if (!isRecord(value) || value.protocol !== protocolId || !isString(value.type) || (value.request_id !== undefined && !isString(value.request_id))) return null;
   const request_id = value.request_id;
   const payload = value.payload;
-  if (value.type === "pong") return payload === undefined ? { protocol: protocolId, type: "pong", request_id } : null;
+  if (value.type === "pong" || value.type === "circles_changed") return payload === undefined ? { protocol: protocolId, type: value.type, request_id } : null;
   if (!isRecord(payload)) return null;
   switch (value.type) {
     // New clients must tolerate an older pod during a rolling deployment.
@@ -191,7 +192,7 @@ export function asWireEvent(value: unknown): ServerEvent | null {
     case "tasks_listed": return listOf(isTask)(payload.tasks) ? { protocol: protocolId, type: "tasks_listed", request_id, payload: { tasks: payload.tasks } } : null;
     case "chat": return isChat(payload.event) ? { protocol: protocolId, type: "chat", request_id, payload: { event: chatFromWire(payload.event) } } : null;
     case "lagged": return isString(payload.channel_id) && isCount(payload.last_seen_sequence) && isCount(payload.latest_known_sequence) && isCount(payload.skipped) && isString(payload.hint) ? { protocol: protocolId, type: "lagged", request_id, payload: { channel_id: payload.channel_id, last_seen_sequence: payload.last_seen_sequence, latest_known_sequence: payload.latest_known_sequence, skipped: payload.skipped, hint: payload.hint } } : null;
-    case "circle_created": return isCircle(payload.circle) ? { protocol: protocolId, type: "circle_created", request_id, payload: { circle: payload.circle } } : null;
+    case "circle_created": case "circle_renamed": return isCircle(payload.circle) ? { protocol: protocolId, type: value.type, request_id, payload: { circle: payload.circle } } : null;
     case "circles_listed": return listOf(isCirclePair)(payload.circles) ? { protocol: protocolId, type: "circles_listed", request_id, payload: { circles: payload.circles } } : null;
     case "circle_deleted": case "circle_left": return isString(payload.circle_id) ? { protocol: protocolId, type: value.type, request_id, payload: { circle_id: payload.circle_id } } : null;
     case "circle_invitation_created": return isIssuedCircleInvitation(payload.invitation) ? { protocol: protocolId, type: "circle_invitation_created", request_id, payload: { invitation: payload.invitation } } : null;

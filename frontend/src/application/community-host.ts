@@ -38,6 +38,12 @@ export function createCommunityHost(deps: {
       // The existing circle_created handler creates Prat exactly once.
       await request("circle_created", () => deps.send("create_circle", { name, slug: deps.slugify(name) }));
     },
+    renameCircle: async (id, name) => {
+      circle(id, true);
+      const trimmed = name.trim();
+      if (!trimmed || [...trimmed].length > 120) throw new Error("Kretsnamnet må ha 1–120 teikn.");
+      await request("circle_renamed", () => deps.send("rename_circle", { circle_id: id, name: trimmed }));
+    },
     createChannel: async (id, name, kind) => {
       if (id) circle(id);
       const trimmed = name.trim();

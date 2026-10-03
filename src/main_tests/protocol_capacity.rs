@@ -3601,3 +3601,89 @@ async fn leaving_circle_disconnects_inaccessible_websocket_channels() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn circle_rename_is_owner_only_and_invalidates_unsubscribed_clients() {
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server) = start_test_server(repository, Duration::from_secs(60)).await;
+    let mut owner = connect_as(address, "rename-owner").await;
+    let mut outsider = connect_as(address, "rename-outsider").await;
+    let created = command(
+        &mut owner,
+        "create",
+        "create_circle",
+        serde_json::json!({"slug":"rename-identity", "name":"Before"}),
+    )
+    .await;
+    let circle_id = created["payload"]["circle"]["id"].clone();
+    let denied = command(
+        &mut outsider,
+        "denied",
+        "rename_circle",
+        serde_json::json!({"circle_id":circle_id, "name":"Denied"}),
+    )
+    .await;
+    assert_eq!(denied["payload"]["code"], "permission_denied");
+    for (index, name) in ["   ".to_owned(), "Ω".repeat(121)].iter().enumerate() {
+        let invalid = command(
+            &mut owner,
+            &format!("invalid-{index}"),
+            "rename_circle",
+            serde_json::json!({"circle_id":circle_id, "name":name}),
+        )
+        .await;
+        assert_eq!(invalid["payload"]["code"], "validation_error");
+    }
+    let renamed = command(
+        &mut owner,
+        "rename",
+        "rename_circle",
+        serde_json::json!({"circle_id":circle_id, "name":"  Ω  "}),
+    )
+    .await;
+    assert_eq!(renamed["type"], "circle_renamed");
+    assert_eq!(renamed["payload"]["circle"]["id"], circle_id);
+    assert_eq!(renamed["payload"]["circle"]["slug"], "rename-identity");
+    assert_eq!(renamed["payload"]["circle"]["name"], "Ω");
+    let event = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let ClientMessage::Text(text) = outsider.next().await.unwrap().unwrap() {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if value["type"] == "circles_changed" {
+                    break value;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        event
+            .get("payload")
+            .is_none_or(|p| p.as_object().is_some_and(|p| p.is_empty()))
+    );
+    let visible = command(
+        &mut outsider,
+        "own-only",
+        "list_my_circles",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert!(visible["payload"]["circles"].as_array().unwrap().is_empty());
+    owner.close(None).await.unwrap();
+    let mut resumed = connect_as(address, "rename-owner").await;
+    let listed = command(
+        &mut resumed,
+        "reconnect",
+        "list_my_circles",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert_eq!(listed["payload"]["circles"][0][0]["name"], "Ω");
+    server.abort();
+}

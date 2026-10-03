@@ -9,6 +9,7 @@ pub enum TextValidationError {
     InvalidHandle,
     InvalidSequence,
     InvalidReaction,
+    InvalidCircleName,
     SequenceOverflow,
     InvalidUuid { field: &'static str },
     TooLarge { field: &'static str, max: usize },
@@ -26,6 +27,9 @@ impl fmt::Display for TextValidationError {
                 formatter.write_str("handle can only contain letters, numbers, '.', '-' and '_'")
             }
             Self::InvalidSequence => formatter.write_str("channel sequence cannot be negative"),
+            Self::InvalidCircleName => {
+                formatter.write_str("circle name must contain 1 to 120 characters")
+            }
             Self::InvalidReaction => formatter.write_str("reaction emoji is not supported"),
             Self::SequenceOverflow => formatter.write_str("channel sequence is exhausted"),
             Self::InvalidUuid { field } => write!(formatter, "{field} must be a UUID"),
@@ -93,6 +97,16 @@ impl fmt::Display for ChannelSlug {
 pub struct DisplayName(String);
 
 impl DisplayName {
+    /// Circle labels allow 120 Unicode characters, independently of user-name byte limits.
+    pub fn circle_name(value: impl Into<String>) -> Result<Self, TextValidationError> {
+        let value = value.into();
+        let value = value.trim();
+        if value.is_empty() || value.chars().count() > 120 {
+            return Err(TextValidationError::InvalidCircleName);
+        }
+        Ok(Self(value.to_owned()))
+    }
+
     const MAX_BYTES: usize = 120;
 
     pub fn new(value: impl Into<String>) -> Result<Self, TextValidationError> {
@@ -191,4 +205,26 @@ fn bounded_non_empty(
         return Err(TextValidationError::TooLarge { field, max });
     }
     Ok(value.to_owned())
+}
+
+#[cfg(test)]
+mod circle_name_tests {
+    use super::*;
+    #[test]
+    fn circle_names_are_trimmed_unicode_characters_without_changing_user_limits() {
+        assert_eq!(DisplayName::circle_name("  Ω  ").unwrap().as_str(), "Ω");
+        assert!(DisplayName::circle_name("Ω".repeat(120)).is_ok());
+        for invalid in [
+            "".to_owned(),
+            " \t\n".to_owned(),
+            "a".repeat(121),
+            "Ω".repeat(121),
+        ] {
+            assert_eq!(
+                DisplayName::circle_name(invalid),
+                Err(TextValidationError::InvalidCircleName)
+            );
+        }
+        assert!(DisplayName::new("Ω".repeat(120)).is_err());
+    }
 }

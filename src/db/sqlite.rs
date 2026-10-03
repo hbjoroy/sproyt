@@ -22,8 +22,9 @@ use crate::domain::{
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
     PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PrepareEnrollmentInvitation,
-    RepositoryError, RepositoryFuture, SendMessage, UpdateChannelDescription, User, UserId,
-    UserProfile, UserTask, enrollment_email_hash, enrollment_token_hash, generate_enrollment_token,
+    RenameCircle, RepositoryError, RepositoryFuture, SendMessage, UpdateChannelDescription, User,
+    UserId, UserProfile, UserTask, enrollment_email_hash, enrollment_token_hash,
+    generate_enrollment_token,
 };
 use crate::integration::{
     AlertState, DeliveryResult, GRAFANA_PROVIDER, IncomingAlert, IncomingReport, IntegrationFuture,
@@ -107,6 +108,7 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/sqlite")
 #[derive(Clone)]
 pub struct SqliteChatRepository {
     pool: SqlitePool,
+    circle_updates: tokio::sync::broadcast::Sender<()>,
 }
 
 impl SqliteChatRepository {
@@ -121,7 +123,10 @@ impl SqliteChatRepository {
             // to two people who happened to start the same DM together.
             .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePool::connect_with(options).await.map_err(sql_error)?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            circle_updates: tokio::sync::broadcast::channel(128).0,
+        })
     }
 
     pub async fn migrate(&self) -> Result<(), RepositoryError> {
@@ -774,6 +779,21 @@ impl ChatRepository for SqliteChatRepository {
             let rows = sqlx::query("select c.id, c.slug, c.name, c.created_by, c.created_at, m.role from circles c join circle_memberships m on m.circle_id = c.id where m.user_id = ? order by c.slug")
                 .bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(circle_with_role).collect()
+        })
+    }
+
+    fn subscribe_circle_updates(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
+        Some(self.circle_updates.subscribe())
+    }
+
+    fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle> {
+        Box::pin(async move {
+            let row = sqlx::query("update circles set name=? where id=? and exists(select 1 from circle_memberships where circle_id=circles.id and user_id=? and role='owner') returning *, 'owner' as role")
+                .bind(command.name.as_str()).bind(command.circle_id.to_string()).bind(command.actor.to_string())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::PermissionDenied)?;
+            let circle = circle_with_role(row)?.0;
+            let _ = self.circle_updates.send(());
+            Ok(circle)
         })
     }
 
@@ -3169,8 +3189,10 @@ async fn load_sqlite_invitation(
     };
     Ok(InvitationPreview {
         target,
-        circle_name: DisplayName::new(row.try_get::<String, _>("circle_name").map_err(storage)?)
-            .map_err(storage)?,
+        circle_name: DisplayName::circle_name(
+            row.try_get::<String, _>("circle_name").map_err(storage)?,
+        )
+        .map_err(storage)?,
         channel_name: row
             .try_get::<Option<String>, _>("channel_name")
             .map_err(storage)?
@@ -3385,7 +3407,7 @@ fn circle_with_role(row: sqlx::sqlite::SqliteRow) -> Result<(Circle, CircleRole)
             id: CircleId::from_uuid(id),
             slug: ChannelSlug::new(row.try_get::<String, _>("slug").map_err(storage)?)
                 .map_err(storage)?,
-            name: DisplayName::new(row.try_get::<String, _>("name").map_err(storage)?)
+            name: DisplayName::circle_name(row.try_get::<String, _>("name").map_err(storage)?)
                 .map_err(storage)?,
             created_by,
             created_at: row.try_get("created_at").map_err(storage)?,

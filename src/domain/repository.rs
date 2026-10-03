@@ -13,7 +13,8 @@ use super::{
     EditMessage, EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation,
     JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
     MediaVariant, Membership, MessageId, PortableUserExport, PrepareEnrollmentInvitation,
-    SendMessage, ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
+    RenameCircle, SendMessage, ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile,
+    UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -96,6 +97,10 @@ pub trait ChatRepository: Send + Sync + 'static {
     ) -> RepositoryFuture<'a, Channel>;
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
     fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle>;
+    fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle>;
+    fn subscribe_circle_updates(&self) -> Option<broadcast::Receiver<()>> {
+        None
+    }
     fn list_circles_for_user<'a>(
         &'a self,
         actor: UserId,
@@ -327,9 +332,20 @@ impl RepositoryError {
 impl std::error::Error for RepositoryError {}
 
 #[cfg(test)]
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct InMemoryChatRepository {
     state: Arc<Mutex<RepositoryState>>,
+    circle_updates: broadcast::Sender<()>,
+}
+
+#[cfg(test)]
+impl Default for InMemoryChatRepository {
+    fn default() -> Self {
+        Self {
+            state: Arc::default(),
+            circle_updates: broadcast::channel(128).0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -911,6 +927,31 @@ impl ChatRepository for InMemoryChatRepository {
                 .collect::<Vec<_>>();
             circles.sort_by(|left, right| left.0.slug.cmp(&right.0.slug));
             Ok(circles)
+        })
+    }
+
+    fn subscribe_circle_updates(&self) -> Option<broadcast::Receiver<()>> {
+        Some(self.circle_updates.subscribe())
+    }
+
+    fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let role = state
+                .circle_memberships
+                .get(&(command.circle_id.clone(), command.actor))
+                .map(|m| &m.role);
+            if !Policy::can_rename_circle(role) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let circle = state
+                .circles
+                .get_mut(&command.circle_id)
+                .ok_or(RepositoryError::NotFound)?;
+            circle.name = command.name;
+            let circle = circle.clone();
+            let _ = self.circle_updates.send(());
+            Ok(circle)
         })
     }
 
