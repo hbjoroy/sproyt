@@ -19,7 +19,9 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
   const image = useRef<HTMLImageElement>(null);
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<Gesture | null>(null);
-  const lastTap = useRef(0);
+  const tap = useRef<{ pointerId: number; point: Point; startedAt: number } | null>(null);
+  const lastTap = useRef<number | null>(null);
+  const lastPointerType = useRef("");
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const viewRef = useRef(view);
   const titleId = useId();
@@ -65,13 +67,24 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     else gesture.current = null;
   };
   const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    lastPointerType.current = event.pointerType;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (event.pointerType === "touch" && pointers.current.size === 1) {
+      tap.current = { pointerId: event.pointerId, point: { x: event.clientX, y: event.clientY }, startedAt: performance.now() };
+    } else {
+      tap.current = null;
+      lastTap.current = null;
+    }
     beginGesture();
   };
   const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!pointers.current.has(event.pointerId)) return;
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (tap.current?.pointerId === event.pointerId && distance(tap.current.point, { x: event.clientX, y: event.clientY }) >= 10) {
+      tap.current = null;
+      lastTap.current = null;
+    }
     const active = [...pointers.current.values()];
     const current = gesture.current;
     if (active.length >= 2) {
@@ -90,19 +103,22 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     }
   };
   const pointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const current = gesture.current;
-    const point = pointers.current.get(event.pointerId);
-    const isTap = event.pointerType === "touch" && pointers.current.size === 1 && current?.kind === "pan" && point
-      && distance(current.point, point) < 10;
+    const now = performance.now();
+    const isTap = event.pointerType === "touch" && tap.current?.pointerId === event.pointerId
+      && now - tap.current.startedAt < 320
+      && distance(tap.current.point, { x: event.clientX, y: event.clientY }) < 10;
+    tap.current = null;
     pointers.current.delete(event.pointerId);
     if (isTap) {
-      const now = performance.now();
-      if (now - lastTap.current < 320) { toggleZoom(); lastTap.current = 0; }
+      if (lastTap.current !== null && now - lastTap.current < 320) { toggleZoom(); lastTap.current = null; }
       else lastTap.current = now;
-    }
+    } else lastTap.current = null;
     beginGesture();
   };
   const pointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pointers.current.has(event.pointerId)) return;
+    tap.current = null;
+    lastTap.current = null;
     pointers.current.delete(event.pointerId);
     beginGesture();
   };
@@ -126,7 +142,9 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
       </div>
     </header>
     <div ref={surface} className="sp-image-viewer-surface" onPointerDown={pointerDown} onPointerMove={pointerMove}
-      onPointerUp={pointerEnd} onPointerCancel={pointerCancel} onDoubleClick={toggleZoom} onWheel={wheel}>
+      onPointerUp={pointerEnd} onPointerCancel={pointerCancel} onLostPointerCapture={pointerCancel}
+      // Touch double taps are already handled on pointerup; browsers may also emit dblclick.
+      onDoubleClick={() => { if (lastPointerType.current !== "touch") toggleZoom(); }} onWheel={wheel}>
       <img ref={image} src={src} alt={name} draggable={false}
         style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})` }} />
     </div>
