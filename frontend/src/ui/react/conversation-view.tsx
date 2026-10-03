@@ -53,6 +53,8 @@ export interface TimelineProps {
   readonly channelId: string | null;
   readonly parentMessageId?: string | null;
   readonly messages: readonly ChatMessage[];
+  /** Deleted roots survive only as navigation to an existing thread. */
+  readonly retainedDeletedRootIds?: readonly string[];
   /** Ordered host timeline. Keep system notices at their original position. */
   readonly items?: readonly ConversationTimelineItem[];
   readonly loading?: boolean;
@@ -77,10 +79,12 @@ export interface TimelineProps {
   readonly onReactionRequest?: (message: ChatMessage, anchor: HTMLElement) => void;
 }
 
-export function messagesForTimeline(props: Pick<TimelineProps, "messages" | "channelId" | "parentMessageId">): ChatMessage[] {
+export function messagesForTimeline(props: Pick<TimelineProps, "messages" | "channelId" | "parentMessageId" | "retainedDeletedRootIds">): ChatMessage[] {
   const parentId = props.parentMessageId ?? null;
   return props.messages.filter(message => message.channel_id === props.channelId
-    && message.parent_message_id === parentId).sort((a, b) => a.sequence - b.sequence);
+    && message.parent_message_id === parentId
+    && (!message.deleted_at || (!parentId && props.retainedDeletedRootIds?.includes(message.id))))
+    .sort((a, b) => a.sequence - b.sequence);
 }
 
 export function ConversationTimeline(props: TimelineProps) {
@@ -89,9 +93,9 @@ export function ConversationTimeline(props: TimelineProps) {
     ...(props.notices ?? []).map(text => ({ type: "system" as const, text })),
     ...messages.map(message => ({ type: "message" as const, message }))
   ];
+  const visibleIds = new Set(messages.map(message => message.id));
   const visibleEntries = entries.filter(item => item.type === "system"
-    || (item.message.channel_id === props.channelId
-      && item.message.parent_message_id === (props.parentMessageId ?? null)));
+    || visibleIds.has(item.message.id));
   return <div className="sp-timeline" ref={props.viewportRef} onScroll={props.onScroll}
     aria-label={props.parentMessageId ? "Svar i tråden" : "Meldingar"} aria-busy={props.loading || undefined}>
     {props.hasOlder && !props.error && props.onLoadOlder && <Button busy={props.loading} disabled={props.loading} onClick={props.onLoadOlder}>Last eldre meldingar</Button>}
@@ -247,6 +251,13 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     };
   }, [earlyAdopter, earlyAdopterTooltipId, message.sender_display_name, props.formatAuthor]);
   const author = props.formatAuthor?.(message) ?? message.sender_display_name;
+  if (message.deleted_at && !props.threadParent) return <>
+    {props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
+    {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
+    <div data-message-id={message.id} data-message-sequence={message.sequence}>
+      {props.renderActions?.(message, { threadParent: false })}
+    </div>
+  </>;
   return <>{props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
     {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
     <div ref={wrapper} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>

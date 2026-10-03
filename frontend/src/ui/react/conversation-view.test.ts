@@ -29,7 +29,8 @@ test("deleted body never reaches content renderer and ordinary text stays escape
   };
   const html = renderToStaticMarkup(createElement(ConversationTimeline, props));
   assert.deepEqual(rendered, ["visible"]);
-  assert.ok(html.includes("Meldinga er sletta."));
+  assert.ok(!html.includes("Meldinga er sletta."));
+  assert.ok(!html.includes('data-message-id="deleted"'));
   assert.ok(html.includes("Historisk namn"));
   assert.ok(html.includes("&lt;script&gt;visible&lt;/script&gt;"));
   assert.ok(!html.includes("<script>"));

@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createVisibleReadPolicy } from "../src/application/visible-read";
+import { createVisibleReadPolicy, readSequencePastDeleted } from "../src/application/visible-read";
+import type { ChatMessage } from "../src/types";
+
+test("visible endpoint passes only contiguous deleted sequences and stops at unknown or live replies", () => {
+  const message = (sequence: number, deleted = true, parent: string | null = null): ChatMessage => ({
+    id: String(sequence), sequence, channel_id: "a", parent_message_id: parent, sender_id: "u", sender_display_name: "U",
+    body: "", sent_at: "2025-01-01T00:00:00Z", edited_at: null, deleted_at: deleted ? "2025-02-01T00:00:00Z" : null
+  });
+  assert.equal(readSequencePastDeleted(1, "a", [message(2), message(3)]), 3);
+  assert.equal(readSequencePastDeleted(1, "a", [message(2), message(3, false, "root"), message(4)]), 2);
+  assert.equal(readSequencePastDeleted(1, "a", [message(3)]), 1);
+  assert.equal(readSequencePastDeleted(0, "a", [message(1), message(2)]), 2);
+  assert.equal(readSequencePastDeleted(0, "a", [message(2)]), 0);
+});
 
 test("visible read progress retries failed/lost sends and never regresses confirmed progress", () => {
   const policy = createVisibleReadPolicy();

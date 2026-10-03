@@ -231,7 +231,7 @@ test("preview edits and deletes an own message without leaving the shared runtim
   await editedCard.getByRole("button", { name: "Slett", exact: true }).click();
   const confirm = preview.getByRole("dialog", { name: "Slett melding" });
   await confirm.getByRole("button", { name: "Slett melding", exact: true }).click();
-  await expect(editedCard).toContainText("Sletta");
+  await expect(editedCard).toHaveCount(0);
   expect(commands).toEqual(["edit_message", "delete_message"]);
 });
 

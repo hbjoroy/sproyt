@@ -360,7 +360,16 @@ export function createTimelineScrollController(options: TimelineScrollController
     const keyChanged = model.key !== next.key;
     // Several history responses/publications may arrive before the next frame
     // restores the DOM. Keep the original reading anchor through that batch.
-    const position = !keyChanged && pending ? pending.position : previous;
+    let position = !keyChanged && pending ? pending.position : previous;
+    // Deletion can remove the current anchor. Capture a surviving neighbour
+    // before the DOM changes so its content keeps the same viewport offset.
+    if (!keyChanged && position?.anchorId && !next.messageIds.includes(position.anchorId) && viewport) {
+      const nextId = next.messageIds.find((_, index) => (next.messageSequences?.[index] ?? 0) >= (position?.sequence ?? 0))
+        ?? next.messageIds.at(-1);
+      const neighbour = nextId ? messageElement(nextId) : null;
+      if (neighbour) position = { ...position, anchorId: nextId!, sequence: Number(neighbour.dataset.messageSequence),
+        anchorOffset: neighbour.getBoundingClientRect().top - viewport.getBoundingClientRect().top };
+    }
     const stored = next.key ? positions.get(next.key) ?? null : null;
     if (keyChanged) {
       clampedAnchor = false;
