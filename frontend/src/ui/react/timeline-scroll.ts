@@ -50,6 +50,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   let applying = false;
   let scrollApplication = 0;
   let appliedScrollTop: number | null = null;
+  let clampedAnchor = false;
   let followBottom = true;
   let revealMessageId: string | null = null;
   let requestedOlderAt: string | null = null;
@@ -106,13 +107,18 @@ export function createTimelineScrollController(options: TimelineScrollController
     return true;
   };
 
-  const restoreAnchor = (position: ReadingPosition): boolean => {
-    if (!viewport || !position.anchorId) return false;
+  const restoreAnchor = (position: ReadingPosition): "missing" | "restored" | "clamped" => {
+    clampedAnchor = false;
+    if (!viewport || !position.anchorId) return "missing";
     const anchor = messageElement(position.anchorId);
-    if (!anchor) return false;
+    if (!anchor) return "missing";
     const delta = anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - position.anchorOffset;
     if (Math.abs(delta) > 0.5) setScrollTop(viewport.scrollTop + delta);
-    return true;
+    // Message wrappers commit before lazy media/diagrams have their final size.
+    // The browser may clamp the requested scroll to a temporary bottom. Keep
+    // the original offset until a later resize can actually reach it.
+    clampedAnchor = Math.abs(anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - position.anchorOffset) > 1;
+    return clampedAnchor ? "clamped" : "restored";
   };
 
   const reportBottom = () => {
@@ -163,7 +169,9 @@ export function createTimelineScrollController(options: TimelineScrollController
       if (model.loading || model.error) return;
       const target = opening.position;
       if (target?.anchorId) {
-        if (!restoreAnchor(target)) {
+        const restored = restoreAnchor(target);
+        if (restored === "clamped") return;
+        if (restored === "missing") {
           if (model.hasOlder) { requestOlder(); return; }
           const closest = model.messageIds.find((_, index) => (model.messageSequences?.[index] ?? 0) >= (target.sequence ?? 0));
           if (closest) scrollToMessage(closest);
@@ -188,21 +196,28 @@ export function createTimelineScrollController(options: TimelineScrollController
       revealMessageId = restore.revealMessageId;
       if (revealMessageId && scrollToMessage(revealMessageId)) {
         opening = null;
+        clampedAnchor = false;
         revealMessageId = null;
         followBottom = false;
       }
       else if (restore.forceBottom || (!restore.position && followBottom)) scrollToBottom();
-      else if (restore.position && !restoreAnchor(restore.position)) {
-        setScrollTop(viewport.scrollHeight - viewport.clientHeight - restore.position.distanceFromBottom);
+      else if (restore.position) {
+        const restored = restoreAnchor(restore.position);
+        if (restored === "clamped") { pending = restore; return; }
+        if (restored === "missing") setScrollTop(viewport.scrollHeight - viewport.clientHeight - restore.position.distanceFromBottom);
       }
     } else if (revealMessageId && scrollToMessage(revealMessageId)) {
       revealMessageId = null;
+      clampedAnchor = false;
       followBottom = false;
     } else if (followBottom) {
       scrollToBottom();
     } else {
       const position = positions.get(model.key);
-      if (position) restoreAnchor(position);
+      if (position && restoreAnchor(position) === "clamped") {
+        pending = { keyChanged: false, position, forceBottom: false, revealMessageId: null };
+        return;
+      }
     }
     save();
     reportBottom();
@@ -243,6 +258,27 @@ export function createTimelineScrollController(options: TimelineScrollController
     reportVisible();
   };
 
+  const onScrollIntent = (event: Event) => {
+    if (!clampedAnchor || !viewport) return;
+    if (event instanceof KeyboardEvent && !["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
+    if (event.type === "pointerdown" && event.target !== viewport) return;
+    // An unreachable offset must never trap the reader after genuine input
+    // (for example if content was removed while they visited another channel).
+    clampedAnchor = false;
+    opening = null;
+    pending = null;
+    appliedScrollTop = null;
+    const position = save();
+    followBottom = (position?.distanceFromBottom ?? Infinity) <= nearEdge;
+  };
+
+  const detachScrollIntent = () => {
+    viewport?.removeEventListener("wheel", onScrollIntent);
+    viewport?.removeEventListener("touchstart", onScrollIntent);
+    viewport?.removeEventListener("keydown", onScrollIntent);
+    viewport?.removeEventListener("pointerdown", onScrollIntent);
+  };
+
   const viewportRef = (element: HTMLElement | null) => {
     if (viewport === element) return;
     if (viewport && !pending) {
@@ -250,8 +286,13 @@ export function createTimelineScrollController(options: TimelineScrollController
     }
     mutationObserver?.disconnect();
     resizeObserver?.disconnect();
+    detachScrollIntent();
     viewport = element;
     if (!viewport) return;
+    viewport.addEventListener("wheel", onScrollIntent, { passive: true });
+    viewport.addEventListener("touchstart", onScrollIntent, { passive: true });
+    viewport.addEventListener("keydown", onScrollIntent);
+    viewport.addEventListener("pointerdown", onScrollIntent);
     mutationObserver = new MutationObserver(() => {
       observeMessages();
       scheduleReconcile();
@@ -273,6 +314,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     const position = !keyChanged && pending ? pending.position : previous;
     const stored = next.key ? positions.get(next.key) ?? null : null;
     if (keyChanged) {
+      clampedAnchor = false;
       opening = next.key ? { position: stored, readSequence: next.initialReadSequence ?? 0 } : null;
       if (next.key && !openingReadSequences.has(next.key)) openingReadSequences.set(next.key, next.initialReadSequence ?? 0);
     }
@@ -301,13 +343,14 @@ export function createTimelineScrollController(options: TimelineScrollController
     document.removeEventListener("visibilitychange", scheduleReconcile);
     mutationObserver?.disconnect();
     resizeObserver?.disconnect();
+    detachScrollIntent();
     viewport = null;
   };
 
   window.addEventListener("focus", scheduleReconcile);
   document.addEventListener("visibilitychange", scheduleReconcile);
   const goToLatest = () => {
-    opening = null; pending = null; revealMessageId = null; followBottom = true;
+    opening = null; pending = null; clampedAnchor = false; revealMessageId = null; followBottom = true;
     scrollToBottom(); save(); reportVisible();
   };
   const unreadAfterSequence = () => model.key ? openingReadSequences.get(model.key) : undefined;

@@ -28,8 +28,9 @@ async function expectAnchor(page: Page, saved: { id: string; offset: number }) {
   }).toBeLessThan(3);
 }
 
-function readingServer(initialRead = 40) {
+function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
   const messages = new Map(["a", "b"].map(channel => [channel, Array.from({ length: 160 }, (_, index) => root(channel, index + 1))]));
+  if (channelMessages) messages.set("a", channelMessages);
   const reads = new Map([["a", initialRead], ["b", 160]]);
   const sockets = new Map<Page, WebSocketRoute>();
   const acknowledgements: { page: Page; channel: string; sequence: number }[] = [];
@@ -230,4 +231,59 @@ test("returning from another channel keeps an anchor near the old bottom when ne
   await expectAnchor(page, saved);
   expect(server.reads.get("a")).toBe(160);
   await expect(page.getByRole("button", { name: /^# a 5 uleste$/, includeHidden: true })).toHaveCount(1);
+});
+
+test("channel return waits for a media-clamped anchor instead of following the temporary bottom", async ({ page }) => {
+  const media = "00000000-0000-7000-8000-000000000045";
+  const messages = Array.from({ length: 45 }, (_, index) => ({ ...root("a", index + 1),
+    body: `Bilete ${index + 1} [[media:${media}|image/svg+xml|image.svg]]` }));
+  const server = readingServer(45, messages);
+  let holdMedia = false;
+  const heldMedia: (() => void)[] = [];
+  await page.route(/\/api\/v1\/media\//, async route => {
+    if (holdMedia) await new Promise<void>(resolve => heldMedia.push(resolve));
+    await route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500"><rect width="500" height="500" fill="green"/></svg>' });
+  });
+  await server.install(page);
+  await expect.poll(() => viewport(page).locator("img").last().evaluate(image => (image as HTMLImageElement).naturalHeight)).toBeGreaterThan(0);
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("PageUp");
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeGreaterThan(300);
+  // PageUp is animated by the browser. Capture only after its scroll settles.
+  await expect.poll(async () => {
+    const before = await anchor(page);
+    await page.waitForTimeout(100);
+    const after = await anchor(page);
+    return before.id === after.id && Math.abs(before.offset - after.offset) < 1;
+  }).toBe(true);
+  const saved = await anchor(page);
+  await select(page, "b");
+  await expect.poll(() => anchor(page).then(value => value.id)).toContain("b-");
+  server.append("a");
+  // A new media URL avoids WebKit's decoded-image cache while preserving the
+  // same final geometry, so both engines exercise an actual delayed layout.
+  messages.forEach(message => { message.body = message.body.replace(media, "00000000-0000-7000-8000-000000000046"); });
+  holdMedia = true;
+  await select(page, "a");
+  await expect.poll(() => heldMedia.length).toBeGreaterThan(0);
+  await expect(viewport(page).locator('[data-message-id="a-46"]')).toHaveCount(1);
+  // Committed wrappers at a clamped bottom must not mark the new tail read.
+  expect(server.reads.get("a")).toBe(45);
+  holdMedia = false;
+  heldMedia.splice(0).forEach(resolve => resolve());
+  await expect.poll(() => viewport(page).locator("img").last().evaluate(image => (image as HTMLImageElement).naturalHeight)).toBeGreaterThan(0);
+  await expectAnchor(page, saved);
+  expect(server.reads.get("a")).toBe(45);
+  // A genuinely shorter history may make the old offset impossible. Keyboard
+  // navigation must supersede that restore rather than trapping the reader.
+  await select(page, "b");
+  await expect.poll(() => anchor(page).then(value => value.id)).toContain("b-");
+  messages.forEach(message => { message.body = "Kort melding"; });
+  await select(page, "a");
+  await expect(viewport(page).locator('[data-message-id="a-46"]')).toHaveCount(1);
+  expect(server.reads.get("a")).toBe(45);
+  await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("End");
+  await expect.poll(() => server.reads.get("a")).toBe(46);
+  server.append("a");
+  await expect.poll(() => server.reads.get("a")).toBe(47);
 });

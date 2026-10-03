@@ -17,6 +17,12 @@ til den faktiske starten er nådd. Tomme renderingar, svar utan røter og seint
 komande historiesvar skal ikkje erstatte målet. Den viste ulestgrensa er grensa
 ved opning; kvitteringar flyttar ikkje denne skiljelinja medan brukaren les.
 
+Ved kanalretur kan meldingane vere i DOM før bilete og diagram har fått høgd.
+Om nettlesaren avgrensar scroll til ein mellombels botn, held klienten det
+opphavlege ankeret og kvitter ikkje denne plasseringa. Neste layoutendring
+prøver same offset igjen. Ekte scrollinput eller **Gå til siste** overstyrer
+restaureringa, også om endra innhald gjer den gamle offseten umogeleg.
+
 Historikklasting flyttar ikkje lesemarkøren. Etter ferdig plassering og ved
 scroll/fokus måler klienten meldingar som overlappar det synlege vindauget med
 minst 24 px (eller heile høgda for kortare meldingar). Dokumentet må vere
