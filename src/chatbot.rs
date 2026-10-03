@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row, SqlitePool};
 use tokio::sync::watch;
+use unicode_normalization::UnicodeNormalization;
+use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
 
 use crate::{
@@ -177,14 +179,35 @@ fn normalized(input: AgentInput) -> Result<AgentInput> {
     })
 }
 
+fn normalize_trigger_text(text: &str) -> String {
+    let lowercase = text.to_lowercase();
+    let mut normalized = String::with_capacity(lowercase.len());
+    for grapheme in lowercase.graphemes(true) {
+        // Greek stress accents attach to vowels. Canonical decomposition handles
+        // tonos/oxia and combining forms without changing other scripts.
+        if matches!(
+            grapheme.nfd().next(),
+            Some('α' | 'ε' | 'η' | 'ι' | 'ο' | 'υ' | 'ω')
+        ) {
+            normalized.extend(
+                grapheme
+                    .nfd()
+                    // Varia, tonos/oxia, perispomeni; retain dialytika, breathing
+                    // marks, vowel length marks, and iota subscript.
+                    .filter(|ch| !matches!(ch, '\u{300}' | '\u{301}' | '\u{342}'))
+                    .nfc(),
+            );
+        } else {
+            normalized.push_str(grapheme);
+        }
+    }
+    normalized
+}
+
 pub(crate) fn matches_trigger(body: &str, triggers: &[String]) -> bool {
-    let haystack = body
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
+    let haystack = normalize_trigger_text(&body.split_whitespace().collect::<Vec<_>>().join(" "));
     triggers.iter().any(|trigger| {
-        let needle = trigger.to_lowercase();
+        let needle = normalize_trigger_text(trigger);
         haystack.match_indices(&needle).any(|(start, _)| {
             let before = haystack[..start].chars().next_back();
             let after = haystack[start + needle.len()..].chars().next();
@@ -888,6 +911,69 @@ mod tests {
         assert!(matches_trigger("Blir du med på   MØTE?", &words));
         assert!(matches_trigger("Ein øl?", &words));
         assert!(!matches_trigger("møtestad og ølkasse", &words));
+    }
+
+    #[test]
+    fn trigger_ignores_greek_stress_accents_and_unicode_encoding() {
+        let variants = [
+            "Καλημέρα",
+            "Καλήμερα",
+            "Καλημερα",
+            "ΚΑΛΗΜΈΡΑ",
+            "Καλημε\u{301}ρα",
+            "ΚΑΛΗ\u{301}ΜΕΡΑ",
+            "Καλημέρα",
+        ];
+        for trigger in variants {
+            let words = vec![trigger.to_owned()];
+            for body in variants {
+                assert!(matches_trigger(&format!("{body}! Σάββατο!"), &words));
+            }
+        }
+        for body in ["ή", "ὴ", "ῆ", "η\u{341}"] {
+            assert!(matches_trigger(body, &["η".into()]));
+        }
+    }
+
+    #[test]
+    fn greek_trigger_preserves_word_and_phrase_boundaries() {
+        let words = vec!["Καλημέρα".into()];
+        assert!(matches_trigger("(Καλήμερα!)", &words));
+        for body in ["Καλήμερακι", "πΚαλήμερα", "aΚαλήμερα", "Καλήμερα2"]
+        {
+            assert!(!matches_trigger(body, &words));
+        }
+        let phrases = vec!["Καλημέρα κόσμε".into()];
+        assert!(matches_trigger("ΚΑΛΗΜΕΡΑ\n  ΚΌΣΜΕ!", &phrases));
+        assert!(!matches_trigger("Καλημερα κοσμεκι", &phrases));
+        assert!(!matches_trigger("Καλημερα, κοσμε!", &phrases));
+    }
+
+    #[test]
+    fn greek_trigger_preserves_other_diacritics_and_original_text() {
+        for (accented, plain) in [
+            ("på", "pa"),
+            ("øl", "ol"),
+            ("café", "cafe"),
+            ("cafe\u{301}", "cafe"),
+            ("й", "и"),
+            ("ΐ", "ι"),
+            ("ἄ", "α"),
+            ("ᾴ", "α"),
+            ("ᾱ", "α"),
+        ] {
+            assert!(!matches_trigger(plain, &[accented.into()]));
+        }
+        for (accented, retained) in [("ΐ", "ϊ"), ("ἄ", "ἀ"), ("ᾴ", "ᾳ")] {
+            assert!(matches_trigger(accented, &[retained.into()]));
+            assert!(matches_trigger(retained, &[accented.into()]));
+        }
+        assert!(!matches_trigger("cafe\u{301}", &["café".into()]));
+        let body = String::from("Καλήμερα! Σάββατο!");
+        let words = vec![String::from("Καλημέρα")];
+        assert!(matches_trigger(&body, &words));
+        assert_eq!(body, "Καλήμερα! Σάββατο!");
+        assert_eq!(words, ["Καλημέρα"]);
     }
 
     #[test]
