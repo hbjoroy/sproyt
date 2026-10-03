@@ -68,6 +68,12 @@
   font-size: .8rem; font-weight: 700; letter-spacing: .02em;
 }
 #sproyt-react-preview .sp-date { margin-top: .65rem; }
+#sproyt-react-preview .sp-unread-boundary {
+  margin-block: .5rem;
+  border-block-end: 1px solid var(--sp-accent);
+  color: var(--sp-muted);
+  font-size: .75rem;
+}
 #sproyt-react-preview .sp-masthead { position: relative; flex-shrink: 0; }
 .sp-header-actions { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .sp-sproyt-brand { display: inline-flex; align-items: center; gap: .55rem; letter-spacing: -.055em; }

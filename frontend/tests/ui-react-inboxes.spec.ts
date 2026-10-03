@@ -5,9 +5,9 @@ async function installInboxFixture(page: Page) {
     type Wire = { protocol: string; type: string; request_id?: string; payload?: Record<string, unknown> };
     const fixture: {
       socket?: WebSocket; enabled: boolean; participantId: string; channel?: Record<string, unknown>;
-      source?: Record<string, unknown>; mentionRead: boolean; tasks: Record<string, unknown>[]; failReadOnce: boolean;
+      source?: Record<string, unknown>; latestSequence: number; mentionRead: boolean; tasks: Record<string, unknown>[]; failReadOnce: boolean;
       emit?: (event: Wire) => void; activate?: () => void;
-    } = { enabled: false, participantId: "", mentionRead: false, tasks: [], failReadOnce: true };
+    } = { enabled: false, participantId: "", latestSequence: 0, mentionRead: false, tasks: [], failReadOnce: true };
     const NativeWebSocket = window.WebSocket;
     const emit = (event: Wire) => fixture.socket?.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
     fixture.emit = emit;
@@ -23,7 +23,11 @@ async function installInboxFixture(page: Page) {
           try {
             const frame = JSON.parse(String(event.data));
             if (frame.type === "hello") fixture.participantId = frame.payload.participant_id;
-            if (frame.type === "channels_listed") fixture.channel = frame.payload.channels[0];
+            if (frame.type === "channels_listed") {
+              fixture.channel = frame.payload.channels[0];
+              if (!fixture.enabled) fixture.latestSequence = Math.max(fixture.latestSequence, Number(fixture.channel?.latest_sequence ?? 0));
+            }
+            if (frame.type === "message_accepted") fixture.latestSequence = Math.max(fixture.latestSequence, frame.payload.message.sequence);
             if (frame.type === "message_accepted" && frame.payload.message.body.includes("Kjeldemelding")) fixture.source = frame.payload.message;
           } catch { /* The application owns validation of actual frames. */ }
         });
@@ -35,7 +39,9 @@ async function installInboxFixture(page: Page) {
         const mention = source ? { read: fixture.mentionRead, channel_name: String(fixture.channel?.name ?? "general"), message: source } : null;
         if (command.type === "list_my_channels" && fixture.channel) {
           setTimeout(() => emit({ protocol: "sproyt.chat.v1", type: "channels_listed", request_id: command.request_id, payload: {
-            channels: [{ ...fixture.channel, last_read_sequence: 0, latest_sequence: 3 }]
+            // Unread inbox entries are later than messages already seen in this
+            // shared test channel; a stale lower marker must not regress reads.
+            channels: [{ ...fixture.channel, last_read_sequence: fixture.latestSequence, latest_sequence: fixture.latestSequence + 3 }]
           } }), 20); return;
         }
         if (command.type === "list_mentions") {

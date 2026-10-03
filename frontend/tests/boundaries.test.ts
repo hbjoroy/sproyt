@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import "./conversation-snapshot.test";
+import "./visible-read.test";
 import "../src/process-pilot.test";
 import "../src/work-items.test";
 import { readFileSync } from "node:fs";

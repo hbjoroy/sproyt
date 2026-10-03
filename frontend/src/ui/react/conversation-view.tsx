@@ -60,6 +60,7 @@ export interface TimelineProps {
   readonly onRetry?: () => void;
   readonly hasOlder?: boolean;
   readonly onLoadOlder?: () => void;
+  readonly unreadAfterSequence?: number;
   /** Host keeps scroll/read policy, including media resize and older-page anchoring. */
   readonly viewportRef?: Ref<HTMLDivElement>;
   readonly onScroll?: () => void;
@@ -101,6 +102,8 @@ export function ConversationTimeline(props: TimelineProps) {
     {visibleEntries.map((item, index) => item.type === "system"
       ? <Status key={`notice-${index}`}>{item.text}</Status>
       : <ConversationMessage key={item.message.id} message={item.message} {...props}
+          unreadBoundary={props.unreadAfterSequence !== undefined && item.message.sequence > props.unreadAfterSequence
+            && !visibleEntries.slice(0, index).some(entry => entry.type === "message" && entry.message.sequence > props.unreadAfterSequence!)}
           dateLabel={index === 0 || (() => {
             const previous = visibleEntries.slice(0, index).reverse().find(entry => entry.type === "message");
             return previous?.type !== "message" || new Date(previous.message.sent_at).toLocaleDateString(["nn-NO", "nb-NO"])
@@ -116,7 +119,7 @@ export function formatMessageDateTime(sentAt: string): string {
 }
 
 /** The thread parent uses the same safe rendering and permission policy as replies. */
-export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean; readonly dateLabel?: string }) {
+export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean; readonly dateLabel?: string; readonly unreadBoundary?: boolean }) {
   const message = props.message;
   const wrapper = useRef<HTMLDivElement>(null);
   const latestMessage = useRef(message);
@@ -245,7 +248,8 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   }, [earlyAdopter, earlyAdopterTooltipId, message.sender_display_name, props.formatAuthor]);
   const author = props.formatAuthor?.(message) ?? message.sender_display_name;
   return <>{props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
-    <div ref={wrapper} data-message-id={message.id} data-date-start={props.dateLabel ? "true" : undefined}>
+    {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
+    <div ref={wrapper} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
     <Message author={author} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
