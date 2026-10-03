@@ -25,6 +25,14 @@ test("coalesced host publications retain bottom following until the DOM commit",
     timeline.append(last);
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     const distance = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    last.style.paddingBottom = "160px";
+    controller.prepare(next);
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    controller.prepare(next);
+    await frame();
+    const layoutDistance = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    last.style.paddingBottom = "";
+    await frame();
     const inputOffsets: number[] = [];
     for (const type of ["keydown", "touchstart", "pointerdown"]) {
       controller.goToLatest();
@@ -35,26 +43,37 @@ test("coalesced host publications retain bottom following until the DOM commit",
       const tail = document.createElement("div"); tail.dataset.messageId = id; tail.style.height = "40px";
       timeline.append(tail);
       timeline.dispatchEvent(type === "keydown" ? new KeyboardEvent(type, { key: "PageUp" }) : new Event(type));
+      controller.prepare({ key: "channel:a", messageIds: [...ids, id] });
       timeline.scrollTop -= 10;
       controller.onScroll();
       const firstTop = timeline.scrollTop;
       const published = { key: "channel:a", messageIds: [...ids, id] };
       controller.prepare(published);
       const incoming = document.createElement("div"); incoming.dataset.messageId = `incoming-${type}`; incoming.style.height = "20px";
-      controller.prepare({ ...published, messageIds: [...published.messageIds, incoming.dataset.messageId] });
+      const incomingPublication = { ...published, messageIds: [...published.messageIds, incoming.dataset.messageId] };
+      controller.prepare(incomingPublication);
       timeline.append(incoming);
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
       inputOffsets.push(Math.abs(timeline.scrollTop - firstTop));
+      controller.prepare(incomingPublication);
       timeline.scrollTop -= 290;
       controller.onScroll();
       const top = timeline.scrollTop;
       await frame();
       inputOffsets.push(Math.abs(timeline.scrollTop - top));
+      controller.prepare(incomingPublication);
+      timeline.dispatchEvent(type === "keydown" ? new KeyboardEvent(type, { key: "PageUp" }) : new Event(type));
+      timeline.scrollTop -= 20;
+      controller.onScroll();
+      const ordinaryTop = timeline.scrollTop;
+      await frame();
+      inputOffsets.push(Math.abs(timeline.scrollTop - ordinaryTop));
     }
     controller.dispose();
-    return { distance, inputOffsets };
+    return { distance, layoutDistance, inputOffsets };
   });
   expect(result.distance).toBeLessThan(2);
+  expect(result.layoutDistance).toBeLessThan(2);
   expect(result.inputOffsets.every(offset => offset < 2)).toBe(true);
 });
 

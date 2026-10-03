@@ -53,6 +53,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   let clampedAnchor = false;
   let geometry: { height: number; viewportHeight: number; top: number } | null = null;
   let scrollIntent = false;
+  let scrollIntentTop = 0;
   let scrollIntentGeneration = 0;
   let followBottom = true;
   let revealMessageId: string | null = null;
@@ -250,6 +251,19 @@ export function createTimelineScrollController(options: TimelineScrollController
     for (const message of viewport.querySelectorAll<HTMLElement>("[data-message-id]")) resizeObserver.observe(message);
   };
 
+  const retainScrollIntent = () => {
+    scrollIntent = true;
+    const generation = ++scrollIntentGeneration;
+    // Keep the gesture through native smooth-scroll frames, but expire input
+    // that produces no movement or has stopped before a later layout change.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (generation === scrollIntentGeneration && scrollIntent) {
+        scrollIntent = false;
+        scheduleReconcile();
+      }
+    }));
+  };
+
   const onScroll = () => {
     if (!viewport || pending || viewport.scrollTop === appliedScrollTop) return;
     // WebKit can deliver layout-induced scroll before ResizeObserver. Media
@@ -258,8 +272,8 @@ export function createTimelineScrollController(options: TimelineScrollController
       scheduleReconcile();
       return;
     }
-    const movedUp = geometry !== null && viewport.scrollTop < geometry.top;
-    scrollIntent = false;
+    const movedUp = scrollIntent ? viewport.scrollTop < scrollIntentTop : geometry !== null && viewport.scrollTop < geometry.top;
+    if (scrollIntent) { scrollIntentTop = viewport.scrollTop; retainScrollIntent(); }
     appliedScrollTop = null;
     const position = save();
     if (!position) return;
@@ -285,21 +299,13 @@ export function createTimelineScrollController(options: TimelineScrollController
     if (!viewport) return;
     if (event instanceof KeyboardEvent && !["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
     if (event.type === "pointerdown" && event.target !== viewport) return;
-    scrollIntent = true;
-    const generation = ++scrollIntentGeneration;
-    // Input that produces no scroll must not label a later layout event as
-    // user scrolling. WebKit may dispatch its scroll in the rendering step.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (generation === scrollIntentGeneration && scrollIntent) {
-        scrollIntent = false;
-        scheduleReconcile();
-      }
-    }));
-    if (!opening && pending?.forceBottom && !pending.revealMessageId) {
+    scrollIntentTop = viewport.scrollTop;
+    retainScrollIntent();
+    if (!opening && pending && !pending.revealMessageId) {
       pending = null;
       appliedScrollTop = null;
       const position = save();
-      followBottom = (position?.distanceFromBottom ?? Infinity) <= nearEdge;
+      followBottom = followBottom && (position?.distanceFromBottom ?? Infinity) <= nearEdge;
     }
     if (!clampedAnchor) return;
     // An unreachable offset must never trap the reader after genuine input
@@ -362,7 +368,6 @@ export function createTimelineScrollController(options: TimelineScrollController
       opening = next.key ? { position: stored, readSequence: next.initialReadSequence ?? 0 } : null;
       if (next.key && !openingReadSequences.has(next.key)) openingReadSequences.set(next.key, next.initialReadSequence ?? 0);
     }
-    const appended = !keyChanged && next.messageIds.at(-1) !== model.messageIds.at(-1);
     // Several host publications can be coalesced into one concurrent React
     // commit (for example accepted reply + cleared composer). Keep a reveal
     // intent until the corresponding message has reached the DOM.
@@ -370,13 +375,16 @@ export function createTimelineScrollController(options: TimelineScrollController
     const carriedBottom = !keyChanged && !scrollIntent && pending?.forceBottom;
     const explicitReveal = next.revealMessageId ?? (keyChanged ? null : carriedReveal);
     const wasNearBottom = followBottom && (position ? position.distanceFromBottom <= nearEdge : true);
-    pending = {
+    // A publication during native scrolling must not install a restore that
+    // blocks the upcoming scroll event. Opening and explicit reveals retain
+    // their targets; ordinary same-channel input owns its actual position.
+    pending = !keyChanged && scrollIntent && !opening && !explicitReveal ? null : {
       keyChanged,
       position: keyChanged ? stored : position,
-      forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && (carriedBottom || (appended && wasNearBottom))),
+      forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && (carriedBottom || wasNearBottom)),
       revealMessageId: explicitReveal
     };
-    followBottom = pending.forceBottom || ((keyChanged || followBottom) && (pending.position?.distanceFromBottom ?? 0) <= nearEdge);
+    if (pending) followBottom = pending.forceBottom || ((keyChanged || followBottom) && (pending.position?.distanceFromBottom ?? 0) <= nearEdge);
     if (keyChanged || next.messageIds[0] !== model.messageIds[0]) requestedOlderAt = null;
     if (keyChanged) reportedBottomAt = null;
     model = next;
