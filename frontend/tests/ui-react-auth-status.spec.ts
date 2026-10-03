@@ -15,7 +15,15 @@ test("React preview keeps routine accepted status out of the message rhythm", as
 
 test("React reauthentication action persists channel and thread drafts before login", async ({ page }) => {
   let sockets = 0;
-  page.on("websocket", () => { sockets += 1; });
+  const rootBody = `reauth rot ${Date.now()}`;
+  let rootAccepted = false;
+  page.on("websocket", socket => {
+    sockets += 1;
+    socket.on("framereceived", ({ payload }) => {
+      const event = JSON.parse(String(payload));
+      if (event.type === "message_accepted" && event.payload.message.body === rootBody) rootAccepted = true;
+    });
+  });
   await page.addInitScript(() => {
     const NativeWebSocket = window.WebSocket;
     window.WebSocket = class extends NativeWebSocket {
@@ -30,9 +38,11 @@ test("React reauthentication action persists channel and thread drafts before lo
   const channelComposer = preview.locator(".sp-channel-pane").getByRole("textbox", { name: "Skriv melding" });
   await expect(channelComposer).toBeEnabled({ timeout: 15_000 });
 
-  const rootBody = `reauth rot ${Date.now()}`;
   await channelComposer.fill(rootBody);
   await channelComposer.press("Enter");
+  // Durable persistence and server delivery precede rendering. Keep their
+  // network deadline separate from the ordinary 5s DOM/reveal assertion.
+  await expect.poll(() => rootAccepted, { timeout: 15_000 }).toBe(true);
   const root = preview.locator(".sp-channel-pane [data-message-id]").filter({ hasText: rootBody });
   await expect(root).toBeVisible();
   const rootId = await root.getAttribute("data-message-id");
