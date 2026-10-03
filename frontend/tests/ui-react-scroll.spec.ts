@@ -20,13 +20,19 @@ async function visibleAnchor(page: Page, viewportSelector: string) {
   });
 }
 
-test("React timeline loads older history at the top and keeps the visible message anchored", async ({ browser }) => {
-  test.setTimeout(120_000);
+test.beforeAll(async ({ browser }) => {
+  test.setTimeout(180_000);
+  // UI provisioning has its own bounded fixture budget. In the shared CI
+  // database, these 58 accepted sends can otherwise consume almost the whole
+  // test deadline before the reader even opens the paging contract.
   const sender = await browser.newPage();
   await sender.goto("/?participant=playwright-scroll-seed&ui=legacy", { waitUntil: "domcontentloaded" });
   await sendMessages(sender, 58, `historikk-${Date.now()}`);
   await sender.close();
+});
 
+test("React timeline loads older history at the top and keeps the visible message anchored", async ({ browser }) => {
+  test.setTimeout(120_000);
   const page = await browser.newPage({ viewport: { width: 1200, height: 650 } });
   let olderRequests = 0;
   let readSequence = 0;
