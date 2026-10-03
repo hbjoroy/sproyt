@@ -1,6 +1,14 @@
 import { HttpClient } from "./api";
 import { isRecord } from "./types";
 
+export type AgentWeather = Readonly<{ location: string; latitude: number; longitude: number }>;
+
+export function validAgentWeather(value: AgentWeather): boolean {
+  const length = [...value.location.trim()].length;
+  return length >= 1 && length <= 80 && Number.isFinite(value.latitude) && Math.abs(value.latitude) <= 90
+    && Number.isFinite(value.longitude) && Math.abs(value.longitude) <= 180;
+}
+
 export type CircleChatAgent = Readonly<{
   agentId: string;
   circleId: string;
@@ -10,6 +18,7 @@ export type CircleChatAgent = Readonly<{
   enabled: boolean;
   revision: number;
   workerAvailable: boolean;
+  weather: AgentWeather | null;
 }>;
 
 export type CircleChatAgentInput = Readonly<{
@@ -18,6 +27,7 @@ export type CircleChatAgentInput = Readonly<{
   responsePhrases: readonly string[];
   enabled: boolean;
   revision?: number;
+  weather?: AgentWeather | null;
 }>;
 
 export type ChannelChatAgents = Readonly<{
@@ -44,9 +54,16 @@ function decodeAgent(value: unknown): CircleChatAgent {
     || !Array.isArray(value.response_phrases) || !value.response_phrases.every(item => typeof item === "string")
     || typeof value.enabled !== "boolean" || typeof value.revision !== "number"
     || typeof value.worker_available !== "boolean") throw new Error("Ugyldig agentsvar frå tenaren.");
+  let weather: AgentWeather | null = null;
+  if (value.weather !== undefined && value.weather !== null) {
+    if (!isRecord(value.weather) || typeof value.weather.location !== "string"
+      || typeof value.weather.latitude !== "number" || typeof value.weather.longitude !== "number"
+      || !validAgentWeather(value.weather as AgentWeather)) throw new Error("Ugyldig vêroppsett frå tenaren.");
+    weather = { location: value.weather.location, latitude: value.weather.latitude, longitude: value.weather.longitude };
+  }
   return { agentId: value.agent_id, circleId: value.circle_id, displayName: value.display_name,
     triggerWords: value.trigger_words, responsePhrases: value.response_phrases,
-    enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available };
+    enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available, weather };
 }
 
 export class CircleChatAgentApi {
@@ -61,11 +78,13 @@ export class CircleChatAgentApi {
       { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled, access_revision: accessRevision }) });
   }
 
-  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean }> {
+  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean }> {
     const response = await this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, value => value);
-    if (!isRecord(response) || !Array.isArray(response.agents) || typeof response.worker_available !== "boolean")
+    if (!isRecord(response) || !Array.isArray(response.agents) || typeof response.worker_available !== "boolean"
+      || (response.weather_available !== undefined && typeof response.weather_available !== "boolean"))
       throw new Error("Ugyldig agentliste frå tenaren.");
-    return { agents: response.agents.map(decodeAgent), workerAvailable: response.worker_available };
+    return { agents: response.agents.map(decodeAgent), workerAvailable: response.worker_available,
+      weatherAvailable: response.weather_available === true };
   }
 
   async create(circleId: string, input: CircleChatAgentInput): Promise<CircleChatAgent> {
@@ -80,6 +99,6 @@ export class CircleChatAgentApi {
 
   private body(input: CircleChatAgentInput) {
     return { display_name: input.displayName, trigger_words: input.triggerWords,
-      response_phrases: input.responsePhrases, enabled: input.enabled, revision: input.revision };
+      response_phrases: input.responsePhrases, enabled: input.enabled, revision: input.revision, weather: input.weather };
   }
 }
