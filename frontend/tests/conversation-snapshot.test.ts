@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { projectConversationSnapshot, type ConversationSnapshotSource } from "../src/application/conversation-snapshot";
+import { historyPage } from "../src/application/history-pagination";
 import type { ConversationNavigationProps, TimelineProps } from "../src/ui/react/conversation-view";
 import type { Channel, ChatMessage, Circle } from "../src/types";
 
@@ -17,6 +18,20 @@ const source = (overrides: Partial<ConversationSnapshotSource> = {}): Conversati
   threadRoots: new Map(), threadSummaries: new Map(), activeThreadRootId: null, historyLoading: false,
   historyHasMore: false, connection: { connected: true, status: "Tilkopla" }, channelNotificationIds: new Set(),
   pendingChannelNotificationIds: new Set(), directChannelLabel: item => item.name, ...overrides
+});
+
+test("deleted roots keep tombstones internally and retain navigation until loaded replies prove it empty", () => {
+  const root = message("deleted-root", 5, { deleted_at: "2026-09-17T00:00:00Z" });
+  const deletedReply = message("reply", 8, { parent_message_id: root.id, deleted_at: root.deleted_at });
+  const state = source({ timeline: [{ type: "message", message: root }],
+    threadSummaries: new Map([[root.id, { root_message_id: root.id, reply_count: 1, unread_count: 0, latest_sequence: 8 }]]) });
+  assert.deepEqual(projectConversationSnapshot(state).timeline.retainedDeletedRootIds, [root.id]);
+  const loaded = { ...state, threadRoots: new Map([[root.id, root]]), threadReplies: new Map([[root.id, [deletedReply]]]) };
+  const snapshot = projectConversationSnapshot(loaded);
+  assert.deepEqual(snapshot.timeline.retainedDeletedRootIds, []);
+  assert.equal(snapshot.timeline.messages[0]?.deleted_at, root.deleted_at);
+  assert.equal(state.timeline.length, 1);
+  assert.deepEqual(historyPage([root, deletedReply], 2), { before: 5, hasMore: true, hasRoots: false });
 });
 
 test("domain projection preserves stable circle/channel identities, empty circles and human DM labels", () => {

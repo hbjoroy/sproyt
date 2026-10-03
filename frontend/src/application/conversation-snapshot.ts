@@ -58,6 +58,12 @@ function orderedMessages(messages: readonly ChatMessage[], channelId: string | n
     .map(copyMessage));
 }
 
+/** Summaries can include tombstones. A fully loaded thread supplies the exact
+ * answer; until then keep its navigation available without claiming a count. */
+export function hasThreadContext(loadedReplies: readonly ChatMessage[] | undefined, replyCount: number): boolean {
+  return loadedReplies ? loadedReplies.some(message => !message.deleted_at) : replyCount > 0;
+}
+
 /** A detached, immutable point-in-time projection. Call after state changes and
  * pass the resulting props to the view; this is not a useSyncExternalStore getter
  * (each call produces a new snapshot). No unread/read markers are advanced here. */
@@ -98,6 +104,10 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
   appendGroup("scope:direct", "Direkte", null, channels.filter(channel => channel.is_direct));
 
   const timelineMessages = source.timeline.flatMap(item => item.type === "message" ? [item.message] : []);
+  const retainedDeletedRootIds = Object.freeze(timelineMessages.filter(message => message.deleted_at
+    && message.parent_message_id === null && hasThreadContext(
+      source.threadRoots.has(message.id) ? source.threadReplies.get(message.id) ?? [] : undefined,
+      source.threadSummaries.get(message.id)?.reply_count ?? 0)).map(message => message.id));
   const timelineItems: readonly ConversationTimelineItem[] = Object.freeze(source.timeline.reduce<ConversationTimelineItem[]>((items, item) => {
     if (item.type === "system") items.push(Object.freeze({ type: "system", text: item.text }));
     else if (item.message.channel_id === source.activeChannelId && item.message.parent_message_id === null) {
@@ -125,6 +135,7 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
     activeChannel,
     title: activeChannel ? (activeChannel.is_direct ? source.directChannelLabel(activeChannel) : `# ${activeChannel.name}`) : "Prat",
     timeline: Object.freeze({ channelId: source.activeChannelId,
+      retainedDeletedRootIds,
       messages: orderedMessages(timelineMessages, source.activeChannelId, null),
       items: timelineItems,
       notices: Object.freeze(source.timeline.flatMap(item => item.type === "system" ? [item.text] : [])),

@@ -7,9 +7,9 @@
       import { createCommunityRequests } from "./application/community-requests";
       import { createCommunityHost } from "./application/community-host";
       import { createAdvancedHost } from "./application/advanced-host";
-      import { projectConversationSnapshot, type ConversationTimelineItem as TimelineItem } from "./application/conversation-snapshot";
+      import { hasThreadContext, projectConversationSnapshot, type ConversationTimelineItem as TimelineItem } from "./application/conversation-snapshot";
       import { historyPage } from "./application/history-pagination";
-      import { createVisibleReadPolicy } from "./application/visible-read";
+      import { createVisibleReadPolicy, readSequencePastDeleted } from "./application/visible-read";
       import { createTimelineScrollController } from "./ui/react/timeline-scroll";
       import { createPendingRequests, type PendingMessage } from "./application/pending-requests";
       import { createInvitationCards, type Invitation } from "./application/invitation-cards";
@@ -3540,11 +3540,16 @@
           if (threadChannelId) reconcileUncertainDeliveries(threadChannelId, event.payload.messages);
           if (activeThreadRootId === event.payload.root_message_id) {
             if (pendingThreadRevealMessageId && event.payload.messages.some(message => message.id === pendingThreadRevealMessageId)) {
-              developmentThreadRevealMessageId = pendingThreadRevealMessageId;
+              const target = event.payload.messages.find(message => message.id === pendingThreadRevealMessageId)!;
+              if (target.deleted_at) {
+                setConnectionStatus("Meldinga frå lenkja er sletta.");
+                developmentThreadRevealMessageId = event.payload.messages.find(message => !message.deleted_at && message.sequence >= target.sequence)?.id ?? root?.id ?? null;
+              } else developmentThreadRevealMessageId = pendingThreadRevealMessageId;
               pendingThreadRevealMessageId = null;
             }
             renderThread();
           }
+          renderTimeline({ preserveScroll: true });
           return;
         }
 
@@ -4599,8 +4604,9 @@
         const candidates = thread ? [...roots, ...(threadReplies.get(activeThreadRootId!) ?? []),
           ...(threadRoots.has(activeThreadRootId!) ? [threadRoots.get(activeThreadRootId!)!] : [])] : roots;
         const visible = candidates.filter(message => message.channel_id === activeChannelId && messageIds.includes(message.id));
-        const sequence = Math.max(0, ...visible.map(message => message.sequence));
         const channel = knownChannels.find(item => item.id === activeChannelId);
+        const sequence = readSequencePastDeleted(Math.max(channel?.last_read_sequence ?? 0, ...visible.map(message => message.sequence)), activeChannelId,
+          [...roots, ...threadReplies.values()].flat());
         visibleRead.confirm(`channel:${activeChannelId}`, channel?.last_read_sequence ?? 0);
         visibleRead.acknowledge(`channel:${activeChannelId}`, sequence,
           () => sendCommand("mark_read", { channel_id: activeChannelId!, sequence }));
@@ -4706,7 +4712,7 @@
         if (revealMessageId) developmentChannelRevealMessageId = revealMessageId;
         if (developmentPreviewActive) refreshDevelopmentPreview();
         else {
-          const messages = timeline.flatMap(item => item.type === "message" ? [item.message] : []).sort((a, b) => a.sequence - b.sequence);
+          const messages = timeline.flatMap(item => item.type === "message" && visibleTimelineMessage(item.message) ? [item.message] : []).sort((a, b) => a.sequence - b.sequence);
           legacyChannelScroll.prepare({ key: activeChannelId ? `channel:${activeChannelId}` : null,
             messageIds: messages.map(message => message.id), messageSequences: messages.map(message => message.sequence),
             initialReadSequence: knownChannels.find(channel => channel.id === activeChannelId)?.last_read_sequence,
@@ -4719,9 +4725,9 @@
         const interaction = captureMessageInteraction(messagesEl);
         messagesEl.replaceChildren();
         for (const item of timeline) {
-          if (item.type === "message") {
+          if (item.type === "message" && visibleTimelineMessage(item.message)) {
             appendMessage(item.message);
-          } else {
+          } else if (item.type === "system") {
             appendSystem(item.text);
           }
         }
@@ -4918,9 +4924,14 @@
           openThread(threadId);
           return true;
         }
-        if (root) {
+        if (root?.type === "message") {
           pendingMessageLink = null;
-          developmentChannelRevealMessageId = link.messageId;
+          if (root.message.deleted_at) {
+            setConnectionStatus("Meldinga frå lenkja er sletta.");
+            const messages = timeline.flatMap(item => item.type === "message" && visibleTimelineMessage(item.message) ? [item.message] : [])
+              .sort((a, b) => a.sequence - b.sequence);
+            developmentChannelRevealMessageId = messages.find(message => message.sequence >= root.message.sequence)?.id ?? messages.at(-1)?.id ?? null;
+          } else developmentChannelRevealMessageId = link.messageId;
           return true;
         }
         if (historyLoading || historyError || messageLinkHistoryRequestId) return false;
@@ -4980,7 +4991,7 @@
           || threadRoots.get(activeThreadRootId);
         if (!root) return;
         legacyThreadScroll.prepare({ key: `thread:${activeThreadRootId}`,
-          messageIds: [root.id, ...(threadReplies.get(activeThreadRootId) ?? []).map(message => message.id)],
+          messageIds: [root.id, ...(threadReplies.get(activeThreadRootId) ?? []).filter(message => !message.deleted_at).map(message => message.id)],
           loading: developmentThreadLoad?.loading, revealMessageId: revealOwn ? developmentThreadRevealMessageId : null });
         threadForm.hidden = Boolean(root.deleted_at);
         threadMessages.replaceChildren();
@@ -4989,7 +5000,7 @@
         appendMessage(root, rootContainer, false);
         threadMessages.append(rootContainer);
         for (const reply of threadReplies.get(activeThreadRootId) || []) {
-          appendMessage(reply, threadMessages, false);
+          if (!reply.deleted_at) appendMessage(reply, threadMessages, false);
         }
         // The shared viewport controller owns placement and visible read reports.
       }
@@ -5175,7 +5186,25 @@
         return patched;
       }
 
+      function visibleTimelineMessage(message: ChatMessage): boolean {
+        return !message.deleted_at || (!message.parent_message_id && hasThreadContext(
+          threadRoots.has(message.id) ? threadReplies.get(message.id) ?? [] : undefined,
+          threadSummaries.get(message.id)?.reply_count ?? 0));
+      }
+
       function appendMessage(message: ChatMessage, target: HTMLElement = messagesEl, includeThread: boolean = true): void {
+        if (message.deleted_at && includeThread) {
+          const wrapper = document.createElement("div");
+          wrapper.dataset.messageId = message.id;
+          wrapper.dataset.messageSequence = String(message.sequence);
+          const thread = document.createElement("button");
+          thread.type = "button";
+          thread.textContent = "Opne tråd";
+          thread.addEventListener("click", () => openThread(message.id));
+          wrapper.append(thread);
+          target.append(wrapper);
+          return;
+        }
         const wrapper = document.createElement("article");
         wrapper.className = "message sp-message";
         wrapper.dataset.messageId = message.id;
@@ -5366,7 +5395,7 @@
             remove.type = "button";
             remove.textContent = "Slett";
             remove.addEventListener("click", () => {
-              if (window.confirm("Vil du slette meldinga? Ho blir ståande som ei sletta melding i samtalen.")) {
+              if (window.confirm("Vil du slette meldinga? Eventuelle svar i tråden blir verande.")) {
                 sendCommand("delete_message", { message_id: message.id });
               }
             });

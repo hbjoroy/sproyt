@@ -88,6 +88,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
       ...host.message, ...host.timeline,
       channelId: snapshot.timeline.channelId, messages: snapshot.timeline.messages,
       items: snapshot.timeline.items,
+      retainedDeletedRootIds: snapshot.timeline.retainedDeletedRootIds,
       loading: snapshot.timeline.loading, hasOlder: snapshot.timeline.hasOlder, error: snapshot.timeline.error, notices: snapshot.timeline.notices
     },
     composer: channelId !== null && snapshot.activeChannel !== null
