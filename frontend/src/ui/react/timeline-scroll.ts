@@ -50,6 +50,11 @@ export function createTimelineScrollController(options: TimelineScrollController
   let applying = false;
   let scrollApplication = 0;
   let appliedScrollTop: number | null = null;
+  let clampedAnchor = false;
+  let geometry: { height: number; viewportHeight: number; top: number } | null = null;
+  let scrollIntent = false;
+  let scrollIntentTop = 0;
+  let scrollIntentGeneration = 0;
   let followBottom = true;
   let revealMessageId: string | null = null;
   let requestedOlderAt: string | null = null;
@@ -82,6 +87,13 @@ export function createTimelineScrollController(options: TimelineScrollController
     return position;
   };
 
+  const rememberGeometry = () => {
+    geometry = viewport ? { height: viewport.scrollHeight, viewportHeight: viewport.clientHeight, top: viewport.scrollTop } : null;
+  };
+
+  const geometryChanged = () => !!viewport && !!geometry
+    && (geometry.height !== viewport.scrollHeight || geometry.viewportHeight !== viewport.clientHeight);
+
   const setScrollTop = (value: number) => {
     if (!viewport) return;
     applying = true;
@@ -106,13 +118,18 @@ export function createTimelineScrollController(options: TimelineScrollController
     return true;
   };
 
-  const restoreAnchor = (position: ReadingPosition): boolean => {
-    if (!viewport || !position.anchorId) return false;
+  const restoreAnchor = (position: ReadingPosition): "missing" | "restored" | "clamped" => {
+    clampedAnchor = false;
+    if (!viewport || !position.anchorId) return "missing";
     const anchor = messageElement(position.anchorId);
-    if (!anchor) return false;
+    if (!anchor) return "missing";
     const delta = anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - position.anchorOffset;
     if (Math.abs(delta) > 0.5) setScrollTop(viewport.scrollTop + delta);
-    return true;
+    // Message wrappers commit before lazy media/diagrams have their final size.
+    // The browser may clamp the requested scroll to a temporary bottom. Keep
+    // the original offset until a later resize can actually reach it.
+    clampedAnchor = Math.abs(anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - position.anchorOffset) > 1;
+    return clampedAnchor ? "clamped" : "restored";
   };
 
   const reportBottom = () => {
@@ -149,7 +166,7 @@ export function createTimelineScrollController(options: TimelineScrollController
 
   const reconcile = () => {
     scheduled = false;
-    if (!viewport || !model.key) return;
+    if (!viewport || !model.key || scrollIntent) return;
     const bounds = viewport.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
     // Concurrent React publications can precede the matching DOM commit.
@@ -163,7 +180,9 @@ export function createTimelineScrollController(options: TimelineScrollController
       if (model.loading || model.error) return;
       const target = opening.position;
       if (target?.anchorId) {
-        if (!restoreAnchor(target)) {
+        const restored = restoreAnchor(target);
+        if (restored === "clamped") return;
+        if (restored === "missing") {
           if (model.hasOlder) { requestOlder(); return; }
           const closest = model.messageIds.find((_, index) => (model.messageSequences?.[index] ?? 0) >= (target.sequence ?? 0));
           if (closest) scrollToMessage(closest);
@@ -179,6 +198,7 @@ export function createTimelineScrollController(options: TimelineScrollController
       opening = null;
       pending = null;
       save();
+      rememberGeometry();
       reportVisible();
       return;
     }
@@ -188,23 +208,31 @@ export function createTimelineScrollController(options: TimelineScrollController
       revealMessageId = restore.revealMessageId;
       if (revealMessageId && scrollToMessage(revealMessageId)) {
         opening = null;
+        clampedAnchor = false;
         revealMessageId = null;
         followBottom = false;
       }
       else if (restore.forceBottom || (!restore.position && followBottom)) scrollToBottom();
-      else if (restore.position && !restoreAnchor(restore.position)) {
-        setScrollTop(viewport.scrollHeight - viewport.clientHeight - restore.position.distanceFromBottom);
+      else if (restore.position) {
+        const restored = restoreAnchor(restore.position);
+        if (restored === "clamped") { pending = restore; return; }
+        if (restored === "missing") setScrollTop(viewport.scrollHeight - viewport.clientHeight - restore.position.distanceFromBottom);
       }
     } else if (revealMessageId && scrollToMessage(revealMessageId)) {
       revealMessageId = null;
+      clampedAnchor = false;
       followBottom = false;
     } else if (followBottom) {
       scrollToBottom();
     } else {
       const position = positions.get(model.key);
-      if (position) restoreAnchor(position);
+      if (position && restoreAnchor(position) === "clamped") {
+        pending = { keyChanged: false, position, forceBottom: false, revealMessageId: null };
+        return;
+      }
     }
     save();
+    rememberGeometry();
     reportBottom();
     reportVisible();
   };
@@ -223,12 +251,36 @@ export function createTimelineScrollController(options: TimelineScrollController
     for (const message of viewport.querySelectorAll<HTMLElement>("[data-message-id]")) resizeObserver.observe(message);
   };
 
+  const retainScrollIntent = () => {
+    scrollIntent = true;
+    const generation = ++scrollIntentGeneration;
+    // Keep the gesture through native smooth-scroll frames, but expire input
+    // that produces no movement or has stopped before a later layout change.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (generation === scrollIntentGeneration && scrollIntent) {
+        scrollIntent = false;
+        scheduleReconcile();
+      }
+    }));
+  };
+
   const onScroll = () => {
     if (!viewport || pending || viewport.scrollTop === appliedScrollTop) return;
+    // WebKit can deliver layout-induced scroll before ResizeObserver. Media
+    // growth is not evidence that the reader stopped following the bottom.
+    if (!scrollIntent && geometryChanged()) {
+      scheduleReconcile();
+      return;
+    }
+    const movedUp = scrollIntent ? viewport.scrollTop < scrollIntentTop : geometry !== null && viewport.scrollTop < geometry.top;
+    if (scrollIntent) { scrollIntentTop = viewport.scrollTop; retainScrollIntent(); }
     appliedScrollTop = null;
     const position = save();
     if (!position) return;
-    followBottom = position.distanceFromBottom <= nearEdge;
+    rememberGeometry();
+    // Native smooth scrolling can begin with a tiny upward step. Respect that
+    // step even inside the near-bottom threshold instead of snapping it back.
+    followBottom = !movedUp && position.distanceFromBottom <= nearEdge;
     if (!followBottom) revealMessageId = null;
     if (viewport.scrollTop <= nearEdge && model.hasOlder) {
       const oldest = model.messageIds[0] ?? "";
@@ -243,15 +295,53 @@ export function createTimelineScrollController(options: TimelineScrollController
     reportVisible();
   };
 
+  const onScrollIntent = (event: Event) => {
+    if (!viewport) return;
+    if (event instanceof KeyboardEvent && !["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
+    if (event.type === "pointerdown" && event.target !== viewport) return;
+    scrollIntentTop = viewport.scrollTop;
+    retainScrollIntent();
+    if (!opening && pending && !pending.revealMessageId) {
+      pending = null;
+      appliedScrollTop = null;
+      const position = save();
+      followBottom = followBottom && (position?.distanceFromBottom ?? Infinity) <= nearEdge;
+    }
+    if (!clampedAnchor) return;
+    // An unreachable offset must never trap the reader after genuine input
+    // (for example if content was removed while they visited another channel).
+    clampedAnchor = false;
+    opening = null;
+    pending = null;
+    appliedScrollTop = null;
+    const position = save();
+    followBottom = (position?.distanceFromBottom ?? Infinity) <= nearEdge;
+    // End/wheel at an already-clamped bottom may not emit a scroll event.
+    scheduleReconcile();
+  };
+
+  const detachScrollIntent = () => {
+    viewport?.removeEventListener("wheel", onScrollIntent);
+    viewport?.removeEventListener("touchstart", onScrollIntent);
+    viewport?.removeEventListener("keydown", onScrollIntent);
+    viewport?.removeEventListener("pointerdown", onScrollIntent);
+  };
+
   const viewportRef = (element: HTMLElement | null) => {
     if (viewport === element) return;
-    if (viewport && !pending) {
+    if (viewport && !pending && (scrollIntent || !geometryChanged())) {
       save();
     }
     mutationObserver?.disconnect();
     resizeObserver?.disconnect();
+    detachScrollIntent();
     viewport = element;
+    geometry = null;
     if (!viewport) return;
+    viewport.addEventListener("wheel", onScrollIntent, { passive: true });
+    viewport.addEventListener("touchstart", onScrollIntent, { passive: true });
+    viewport.addEventListener("keydown", onScrollIntent);
+    viewport.addEventListener("pointerdown", onScrollIntent);
     mutationObserver = new MutationObserver(() => {
       observeMessages();
       scheduleReconcile();
@@ -264,7 +354,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   const prepare = (next: TimelineScrollModel) => {
     // A resize/mutation reconciliation may still be queued after a React commit.
     // Its DOM geometry is not yet the reader's restored position.
-    const previous = (pending || scheduled || applying) && model.key
+    const previous = (pending || scheduled || applying || (!scrollIntent && geometryChanged())) && model.key
       ? pending?.position ?? positions.get(model.key) ?? capture()
       : save();
     const keyChanged = model.key !== next.key;
@@ -273,23 +363,28 @@ export function createTimelineScrollController(options: TimelineScrollController
     const position = !keyChanged && pending ? pending.position : previous;
     const stored = next.key ? positions.get(next.key) ?? null : null;
     if (keyChanged) {
+      clampedAnchor = false;
+      scrollIntent = false;
       opening = next.key ? { position: stored, readSequence: next.initialReadSequence ?? 0 } : null;
       if (next.key && !openingReadSequences.has(next.key)) openingReadSequences.set(next.key, next.initialReadSequence ?? 0);
     }
-    const appended = !keyChanged && next.messageIds.at(-1) !== model.messageIds.at(-1);
     // Several host publications can be coalesced into one concurrent React
     // commit (for example accepted reply + cleared composer). Keep a reveal
     // intent until the corresponding message has reached the DOM.
     const carriedReveal = pending?.revealMessageId ?? revealMessageId;
+    const carriedBottom = !keyChanged && !scrollIntent && pending?.forceBottom;
     const explicitReveal = next.revealMessageId ?? (keyChanged ? null : carriedReveal);
-    const wasNearBottom = position ? position.distanceFromBottom <= nearEdge : true;
-    pending = {
+    const wasNearBottom = followBottom && (position ? position.distanceFromBottom <= nearEdge : true);
+    // A publication during native scrolling must not install a restore that
+    // blocks the upcoming scroll event. Opening and explicit reveals retain
+    // their targets; ordinary same-channel input owns its actual position.
+    pending = !keyChanged && scrollIntent && !opening && !explicitReveal ? null : {
       keyChanged,
       position: keyChanged ? stored : position,
-      forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && appended && wasNearBottom),
+      forceBottom: keyChanged ? !stored && !explicitReveal : (!explicitReveal && (carriedBottom || wasNearBottom)),
       revealMessageId: explicitReveal
     };
-    followBottom = pending.forceBottom || (pending.position?.distanceFromBottom ?? 0) <= nearEdge;
+    if (pending) followBottom = pending.forceBottom || ((keyChanged || followBottom) && (pending.position?.distanceFromBottom ?? 0) <= nearEdge);
     if (keyChanged || next.messageIds[0] !== model.messageIds[0]) requestedOlderAt = null;
     if (keyChanged) reportedBottomAt = null;
     model = next;
@@ -301,14 +396,15 @@ export function createTimelineScrollController(options: TimelineScrollController
     document.removeEventListener("visibilitychange", scheduleReconcile);
     mutationObserver?.disconnect();
     resizeObserver?.disconnect();
+    detachScrollIntent();
     viewport = null;
   };
 
   window.addEventListener("focus", scheduleReconcile);
   document.addEventListener("visibilitychange", scheduleReconcile);
   const goToLatest = () => {
-    opening = null; pending = null; revealMessageId = null; followBottom = true;
-    scrollToBottom(); save(); reportVisible();
+    opening = null; pending = null; clampedAnchor = false; revealMessageId = null; followBottom = true;
+    scrollToBottom(); save(); rememberGeometry(); reportVisible();
   };
   const unreadAfterSequence = () => model.key ? openingReadSequences.get(model.key) : undefined;
   return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, dispose });

@@ -17,6 +17,18 @@ til den faktiske starten er nådd. Tomme renderingar, svar utan røter og seint
 komande historiesvar skal ikkje erstatte målet. Den viste ulestgrensa er grensa
 ved opning; kvitteringar flyttar ikkje denne skiljelinja medan brukaren les.
 
+Ved kanalretur kan meldingane vere i DOM før bilete og diagram har fått høgd.
+Om nettlesaren avgrensar scroll til ein mellombels botn, held klienten det
+opphavlege ankeret og kvitter ikkje denne plasseringa. Neste layoutendring
+prøver same offset igjen. Ekte scrollinput eller **Gå til siste** overstyrer
+restaureringa, også om endra innhald gjer den gamle offseten umogeleg.
+Scroll som kjem av endra bilete-/viewportgeometri utan fersk brukarinput,
+skal heller ikkje slå av normal følgjing av botnen.
+Fleire vertspubliseringar før same DOM-oppdatering held på både ankeret og
+aktiv botnfølging. Eit oppoverscroll slår følginga av frå første steg, også
+innanfor botnterskelen; nye publiseringar eller meldingar slår henne ikkje på
+igjen før brukaren går ned til botnen eller vel **Gå til siste**.
+
 Historikklasting flyttar ikkje lesemarkøren. Etter ferdig plassering og ved
 scroll/fokus måler klienten meldingar som overlappar det synlege vindauget med
 minst 24 px (eller heile høgda for kortare meldingar). Dokumentet må vere

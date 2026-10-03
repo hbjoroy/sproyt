@@ -1,7 +1,81 @@
 import { expect as baseExpect, test, type Page, type WebSocketRoute } from "@playwright/test";
 import type { ChatMessage } from "../src/types";
+import { readFileSync } from "node:fs";
+import { transformSync } from "esbuild";
 const expect = baseExpect.configure({ timeout: 15_000 });
 test.setTimeout(60_000);
+
+test("coalesced host publications retain bottom following until the DOM commit", async ({ page }) => {
+  await page.setContent('<div id="timeline" style="height:400px;width:400px;overflow:auto"><div data-message-id="first" style="height:2000px"></div></div>');
+  await page.addScriptTag({ content: transformSync(readFileSync(new URL("../src/ui/react/timeline-scroll.ts", import.meta.url), "utf8"),
+    { loader: "ts", format: "iife", globalName: "ReadingController" }).code });
+  const result = await page.evaluate(async () => {
+    const api = (window as unknown as { ReadingController: typeof import("../src/ui/react/timeline-scroll") }).ReadingController;
+    const controller = api.createTimelineScrollController();
+    const timeline = document.getElementById("timeline")!;
+    const frame = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    controller.prepare({ key: "channel:a", messageIds: ["first"] });
+    controller.viewportRef(timeline);
+    await frame();
+    const next = { key: "channel:a", messageIds: ["first", "last"] };
+    controller.prepare(next);
+    controller.prepare(next);
+    const last = document.createElement("div");
+    last.dataset.messageId = "last"; last.style.height = "200px";
+    timeline.append(last);
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    const distance = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    last.style.paddingBottom = "160px";
+    controller.prepare(next);
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    controller.prepare(next);
+    await frame();
+    const layoutDistance = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    last.style.paddingBottom = "";
+    await frame();
+    const inputOffsets: number[] = [];
+    for (const type of ["keydown", "touchstart", "pointerdown"]) {
+      controller.goToLatest();
+      await frame();
+      const id = `input-${type}`;
+      const ids = [...timeline.querySelectorAll<HTMLElement>("[data-message-id]")].map(element => element.dataset.messageId!);
+      controller.prepare({ key: "channel:a", messageIds: [...ids, id] });
+      const tail = document.createElement("div"); tail.dataset.messageId = id; tail.style.height = "40px";
+      timeline.append(tail);
+      timeline.dispatchEvent(type === "keydown" ? new KeyboardEvent(type, { key: "PageUp" }) : new Event(type));
+      controller.prepare({ key: "channel:a", messageIds: [...ids, id] });
+      timeline.scrollTop -= 10;
+      controller.onScroll();
+      const firstTop = timeline.scrollTop;
+      const published = { key: "channel:a", messageIds: [...ids, id] };
+      controller.prepare(published);
+      const incoming = document.createElement("div"); incoming.dataset.messageId = `incoming-${type}`; incoming.style.height = "20px";
+      const incomingPublication = { ...published, messageIds: [...published.messageIds, incoming.dataset.messageId] };
+      controller.prepare(incomingPublication);
+      timeline.append(incoming);
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      inputOffsets.push(Math.abs(timeline.scrollTop - firstTop));
+      controller.prepare(incomingPublication);
+      timeline.scrollTop -= 290;
+      controller.onScroll();
+      const top = timeline.scrollTop;
+      await frame();
+      inputOffsets.push(Math.abs(timeline.scrollTop - top));
+      controller.prepare(incomingPublication);
+      timeline.dispatchEvent(type === "keydown" ? new KeyboardEvent(type, { key: "PageUp" }) : new Event(type));
+      timeline.scrollTop -= 20;
+      controller.onScroll();
+      const ordinaryTop = timeline.scrollTop;
+      await frame();
+      inputOffsets.push(Math.abs(timeline.scrollTop - ordinaryTop));
+    }
+    controller.dispose();
+    return { distance, layoutDistance, inputOffsets };
+  });
+  expect(result.distance).toBeLessThan(2);
+  expect(result.layoutDistance).toBeLessThan(2);
+  expect(result.inputOffsets.every(offset => offset < 2)).toBe(true);
+});
 
 type Command = { type: string; request_id: string; payload: { channel_id?: string; before?: number; limit?: number; sequence?: number; root_message_id?: string } };
 const root = (channel: string, sequence: number): ChatMessage => ({ id: `${channel}-${sequence}`, channel_id: channel,
@@ -28,8 +102,9 @@ async function expectAnchor(page: Page, saved: { id: string; offset: number }) {
   }).toBeLessThan(3);
 }
 
-function readingServer(initialRead = 40) {
+function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
   const messages = new Map(["a", "b"].map(channel => [channel, Array.from({ length: 160 }, (_, index) => root(channel, index + 1))]));
+  if (channelMessages) messages.set("a", channelMessages);
   const reads = new Map([["a", initialRead], ["b", 160]]);
   const sockets = new Map<Page, WebSocketRoute>();
   const acknowledgements: { page: Page; channel: string; sequence: number }[] = [];
@@ -230,4 +305,111 @@ test("returning from another channel keeps an anchor near the old bottom when ne
   await expectAnchor(page, saved);
   expect(server.reads.get("a")).toBe(160);
   await expect(page.getByRole("button", { name: /^# a 5 uleste$/, includeHidden: true })).toHaveCount(1);
+});
+
+test("channel return waits for a media-clamped anchor instead of following the temporary bottom", async ({ page, isMobile }) => {
+  const media = "00000000-0000-7000-8000-000000000045";
+  const messages = Array.from({ length: 45 }, (_, index) => ({ ...root("a", index + 1),
+    body: `Bilete ${index + 1} [[media:${media}|image/svg+xml|image.svg]]` }));
+  const server = readingServer(45, messages);
+  let holdMedia = false;
+  const heldMedia: (() => void)[] = [];
+  await page.route(/\/api\/v1\/media\//, async route => {
+    if (holdMedia) await new Promise<void>(resolve => heldMedia.push(resolve));
+    await route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500"><rect width="500" height="500" fill="green"/></svg>' });
+  });
+  await server.install(page);
+  await expect.poll(() => viewport(page).locator("img").last().evaluate(image => (image as HTMLImageElement).naturalHeight)).toBeGreaterThan(0);
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  // Model native scroll anchoring when media above and below the visible
+  // content grows, before the ResizeObserver callback. No user input occurred.
+  await viewport(page).evaluate(element => {
+    const top = element.scrollTop;
+    const messages = element.querySelectorAll<HTMLElement>("[data-message-id]");
+    messages[0]!.style.paddingBottom = "100px";
+    messages[messages.length - 1]!.style.paddingBottom = "160px";
+    element.scrollTop = top + 100;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  // Remove the fixture layout before saving the return anchor.
+  await viewport(page).evaluate(element => element.querySelectorAll<HTMLElement>("[data-message-id]").forEach(message => { message.style.paddingBottom = ""; }));
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  const theme = page.getByRole("button", { name: "Byt tema", exact: true });
+  if (!await theme.isVisible()) await page.getByRole("button", { name: "Meny", exact: true }).click();
+  await expect(theme).toBeVisible();
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  // Theme changes publish synchronously through the real host. A publication
+  // before ResizeObserver must not save this temporary distance from bottom.
+  await theme.evaluate(button => {
+    const timeline = document.querySelector<HTMLElement>("#sproyt-react-preview .sp-channel-pane > .sp-timeline")!;
+    [...timeline.querySelectorAll<HTMLElement>("[data-message-id]")].at(-1)!.style.paddingBottom = "160px";
+    (button as HTMLButtonElement).click();
+  });
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  await viewport(page).evaluate(element => element.querySelectorAll<HTMLElement>("[data-message-id]").forEach(message => { message.style.paddingBottom = ""; }));
+  if (await theme.isVisible()) await page.getByRole("button", { name: "Meny", exact: true }).click();
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  if (isMobile) {
+    await viewport(page).evaluate(async element => {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      element.scrollTop -= 450;
+      element.dispatchEvent(new Event("scroll"));
+    });
+  } else {
+    // A real key must still win when a media resize happens during its input
+    // event, before the scroll/resize callbacks can update their geometry.
+    await viewport(page).evaluate(element => element.addEventListener("keydown", () => {
+      (element.querySelectorAll<HTMLElement>("[data-message-id]").item(44)).style.paddingBottom = "100px";
+    }, { once: true }));
+    await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("PageUp");
+  }
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeGreaterThan(300);
+  // PageUp is animated by the browser. Capture only after its scroll settles.
+  await expect.poll(async () => {
+    const before = await anchor(page);
+    await page.waitForTimeout(100);
+    const after = await anchor(page);
+    return before.id === after.id && Math.abs(before.offset - after.offset) < 1;
+  }).toBe(true);
+  const saved = await anchor(page);
+  await select(page, "b");
+  await expect.poll(() => anchor(page).then(value => value.id)).toContain("b-");
+  server.append("a");
+  // A new media URL avoids WebKit's decoded-image cache while preserving the
+  // same final geometry, so both engines exercise an actual delayed layout.
+  messages.forEach(message => { message.body = message.body.replace(media, "00000000-0000-7000-8000-000000000046"); });
+  holdMedia = true;
+  await select(page, "a");
+  await expect.poll(() => heldMedia.length).toBeGreaterThan(0);
+  await expect(viewport(page).locator('[data-message-id="a-46"]')).toHaveCount(1);
+  // Committed wrappers at a clamped bottom must not mark the new tail read.
+  expect(server.reads.get("a")).toBe(45);
+  holdMedia = false;
+  heldMedia.splice(0).forEach(resolve => resolve());
+  await expect.poll(() => viewport(page).locator("img").last().evaluate(image => (image as HTMLImageElement).naturalHeight)).toBeGreaterThan(0);
+  await expectAnchor(page, saved);
+  expect(server.reads.get("a")).toBe(45);
+  // A genuinely shorter history may make the old offset impossible. Even a
+  // wheel down at the already-clamped bottom must supersede the restore.
+  await select(page, "b");
+  await expect.poll(() => anchor(page).then(value => value.id)).toContain("b-");
+  messages.forEach(message => { message.body = "Kort melding"; });
+  await select(page, "a");
+  await expect(viewport(page).locator('[data-message-id="a-46"]')).toHaveCount(1);
+  expect(server.reads.get("a")).toBe(45);
+  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  const clampedTop = await viewport(page).evaluate(element => element.scrollTop);
+  if (isMobile) {
+    // Playwright's mobile WebKit has no wheel support; End at the same bottom
+    // exercises the identical no-scroll-event input boundary.
+    await viewport(page).locator("[data-message-id]").last().getByRole("button", { name: "Fleire meldingsval", exact: true }).press("End");
+  } else {
+    await viewport(page).hover();
+    await page.mouse.wheel(0, 120);
+  }
+  await expect.poll(() => server.reads.get("a")).toBe(46);
+  expect(await viewport(page).evaluate(element => element.scrollTop)).toBe(clampedTop);
+  server.append("a");
+  await expect.poll(() => server.reads.get("a")).toBe(47);
 });
