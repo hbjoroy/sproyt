@@ -365,6 +365,8 @@ pub struct PortableUserExport {
     /// The exported account's own early-adopter number. It is intentionally
     /// absent from public profile DTOs.
     pub signup_ordinal: Option<u64>,
+    #[serde(default)]
+    pub saved_emojis: Vec<String>,
     pub circles: Vec<ExportedCircle>,
     pub channels: Vec<ExportedChannel>,
 }

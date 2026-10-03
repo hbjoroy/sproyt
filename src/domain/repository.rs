@@ -95,6 +95,13 @@ pub trait ChatRepository: Send + Sync + 'static {
         source_channel_id: ChannelId,
         other: UserId,
     ) -> RepositoryFuture<'a, Channel>;
+    fn saved_emojis<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<String>>;
+    fn save_emoji<'a>(
+        &'a self,
+        actor: UserId,
+        emoji: String,
+        saved: bool,
+    ) -> RepositoryFuture<'a, ()>;
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
     fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle>;
     fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle>;
@@ -792,6 +799,39 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn saved_emojis<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            Ok(self
+                .lock_state()?
+                .saved_emojis
+                .get(&actor)
+                .cloned()
+                .unwrap_or_default())
+        })
+    }
+    fn save_emoji<'a>(
+        &'a self,
+        actor: UserId,
+        emoji: String,
+        saved: bool,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            if !state.users.contains_key(&actor) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let choices = state.saved_emojis.entry(actor).or_default();
+            if saved && !choices.contains(&emoji) {
+                if choices.len() >= 50 {
+                    return Err(RepositoryError::Conflict);
+                }
+                choices.push(emoji);
+            } else if !saved {
+                choices.retain(|item| item != &emoji);
+            }
+            Ok(())
+        })
+    }
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let state = self.lock_state()?;
@@ -868,6 +908,7 @@ impl ChatRepository for InMemoryChatRepository {
                 exported_at: Utc::now(),
                 user,
                 signup_ordinal: state.signup_ordinals.get(&actor).copied(),
+                saved_emojis: state.saved_emojis.get(&actor).cloned().unwrap_or_default(),
                 circles,
                 channels,
             })
@@ -2032,6 +2073,7 @@ struct RepositoryState {
     users: HashMap<UserId, User>,
     signup_ordinals: HashMap<UserId, u64>,
     next_signup_ordinal: u64,
+    saved_emojis: HashMap<UserId, Vec<String>>,
     user_statuses: HashMap<UserId, (String, String, Option<chrono::DateTime<chrono::Utc>>)>,
     media: HashMap<MediaId, (MediaObject, Vec<u8>)>,
     media_previews: HashMap<MediaId, MediaVariant>,

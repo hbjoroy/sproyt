@@ -26,9 +26,9 @@ use crate::{
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{HeartGateway, ProcessService, SharedProcessGateway},
     web::account::{
-        disable_channel_notifications, enable_channel_notifications, export_my_data,
-        notification_settings, record_client_event, save_notification_preferences, subscribe_push,
-        unsubscribe_push,
+        add_saved_emoji, disable_channel_notifications, enable_channel_notifications,
+        export_my_data, notification_settings, record_client_event, remove_saved_emoji,
+        save_notification_preferences, saved_emojis, subscribe_push, unsubscribe_push,
     },
     web::agents::{
         approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
@@ -193,6 +193,12 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route("/auth/refresh", post(auth_refresh))
         .route("/auth/logout", get(auth_logout))
         .route("/api/v1/me/export", get(export_my_data))
+        .route(
+            "/api/v1/me/emojis",
+            get(saved_emojis)
+                .post(add_saved_emoji)
+                .delete(remove_saved_emoji),
+        )
         .route("/api/v1/client-events", post(record_client_event))
         .route(
             "/api/v1/me/notifications",

@@ -342,6 +342,29 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn saved_emojis(&self, actor: UserId) -> Result<Vec<String>, ChatError> {
+        self.repository
+            .saved_emojis(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn save_emoji(
+        &self,
+        actor: UserId,
+        emoji: String,
+        saved: bool,
+    ) -> Result<(), ChatError> {
+        let emoji = emoji.trim().to_owned();
+        if !is_reaction_emoji(&emoji) {
+            return Err(TextValidationError::InvalidReaction.into());
+        }
+        self.repository
+            .save_emoji(actor, emoji, saved)
+            .await
+            .map_err(ChatError::from)
+    }
+
     /// Create a deterministic development principal for repository tests.
     #[cfg(test)]
     pub async fn prepare_development_user(

@@ -816,6 +816,56 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn saved_emojis<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            sqlx::query_scalar("select emoji from personal_emojis where user_id=$1 order by slot")
+                .bind(*actor.as_uuid())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(sql_error)
+        })
+    }
+    fn save_emoji<'a>(
+        &'a self,
+        actor: UserId,
+        emoji: String,
+        saved: bool,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            // Serialize per-account additions so competing devices cannot exceed the cap.
+            sqlx::query("select id from users where id=$1 for update")
+                .bind(*actor.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::PermissionDenied)?;
+            if saved {
+                sqlx::query("insert into personal_emojis(user_id,slot,emoji) select $1,slot,$2 from generate_series(1,50) as slots(slot) where not exists(select 1 from personal_emojis where user_id=$1 and slot=slots.slot) order by slot limit 1 on conflict(user_id,emoji) do nothing")
+                    .bind(*actor.as_uuid()).bind(&emoji).execute(&mut *tx).await.map_err(sql_error)?;
+                let exists: bool = sqlx::query_scalar(
+                    "select exists(select 1 from personal_emojis where user_id=$1 and emoji=$2)",
+                )
+                .bind(*actor.as_uuid())
+                .bind(&emoji)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                if !exists {
+                    return Err(RepositoryError::Conflict);
+                }
+            } else {
+                sqlx::query("delete from personal_emojis where user_id=$1 and emoji=$2")
+                    .bind(*actor.as_uuid())
+                    .bind(emoji)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+            }
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
@@ -879,12 +929,20 @@ impl ChatRepository for PostgresChatRepository {
                         .collect::<Result<Vec<_>, _>>()?,
                 });
             }
+            let saved_emojis = sqlx::query_scalar(
+                "select emoji from personal_emojis where user_id=$1 order by slot",
+            )
+            .bind(*actor.as_uuid())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(sql_error)?;
             tx.commit().await.map_err(sql_error)?;
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
                 exported_at: Utc::now(),
                 user,
                 signup_ordinal,
+                saved_emojis,
                 circles,
                 channels,
             })

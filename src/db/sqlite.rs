@@ -669,6 +669,48 @@ impl ChatRepository for SqliteChatRepository {
         })
     }
 
+    fn saved_emojis<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            sqlx::query_scalar("select emoji from personal_emojis where user_id=? order by slot")
+                .bind(actor.to_string())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(sql_error)
+        })
+    }
+    fn save_emoji<'a>(
+        &'a self,
+        actor: UserId,
+        emoji: String,
+        saved: bool,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            if saved {
+                // One write statement reserves a free slot atomically, including concurrent writers.
+                sqlx::query("with recursive slots(slot) as (select 1 union all select slot+1 from slots where slot<50) insert into personal_emojis(user_id,slot,emoji) select ?1,slot,?2 from slots where not exists(select 1 from personal_emojis where user_id=?1 and slot=slots.slot) and not exists(select 1 from personal_emojis where user_id=?1 and emoji=?2) order by slot limit 1")
+                    .bind(actor.to_string()).bind(&emoji).execute(&self.pool).await.map_err(sql_error)?;
+                let exists: bool = sqlx::query_scalar(
+                    "select exists(select 1 from personal_emojis where user_id=? and emoji=?)",
+                )
+                .bind(actor.to_string())
+                .bind(&emoji)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sql_error)?;
+                if !exists {
+                    return Err(RepositoryError::Conflict);
+                }
+            } else {
+                sqlx::query("delete from personal_emojis where user_id=? and emoji=?")
+                    .bind(actor.to_string())
+                    .bind(emoji)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(sql_error)?;
+            }
+            Ok(())
+        })
+    }
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
@@ -732,12 +774,20 @@ impl ChatRepository for SqliteChatRepository {
                         .collect::<Result<Vec<_>, _>>()?,
                 });
             }
+            let saved_emojis = sqlx::query_scalar(
+                "select emoji from personal_emojis where user_id=? order by slot",
+            )
+            .bind(actor.to_string())
+            .fetch_all(&mut *transaction)
+            .await
+            .map_err(sql_error)?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
                 exported_at: Utc::now(),
                 user,
                 signup_ordinal,
+                saved_emojis,
                 circles,
                 channels,
             })
@@ -3881,6 +3931,44 @@ mod tests {
                 .any(|event| event.0 == "process.correlated")
         );
         assert!(process_events.iter().all(|event| event.1.is_some()));
+    }
+
+    #[tokio::test]
+    async fn personal_emojis_survive_repository_reconnect() {
+        let path =
+            std::env::temp_dir().join(format!("sproyt-emojis-{}.sqlite", uuid::Uuid::now_v7()));
+        let url = format!("sqlite://{}", path.to_string_lossy().replace('\\', "/"));
+        let repository = SqliteChatRepository::connect(&url).await.unwrap();
+        repository.migrate().await.unwrap();
+        let owner = UserId::named("persisted-emoji-owner");
+        repository
+            .upsert_user(User {
+                id: owner.clone(),
+                kind: crate::domain::PrincipalKind::Human,
+                display_name: DisplayName::new("Emoji owner").unwrap(),
+                handle: None,
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        repository
+            .save_emoji(owner.clone(), "🧑🏽‍🚀".to_owned(), true)
+            .await
+            .unwrap();
+        repository.pool.close().await;
+        let reopened = SqliteChatRepository::connect(&url).await.unwrap();
+        assert_eq!(reopened.saved_emojis(owner.clone()).await.unwrap(), ["🧑🏽‍🚀"]);
+        // Account removal cascades only this private collection.
+        sqlx::query("delete from users where id=?")
+            .bind(owner.to_string())
+            .execute(&reopened.pool)
+            .await
+            .unwrap();
+        assert!(reopened.saved_emojis(owner).await.unwrap().is_empty());
+        reopened.pool.close().await;
+        std::fs::remove_file(path).unwrap();
     }
 
     #[tokio::test]

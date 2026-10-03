@@ -139,6 +139,7 @@ where
     use chrono::Utc;
 
     repository.health_check().await.unwrap();
+    verify_saved_emoji_contract(repository, suffix).await;
     verify_enrollment_invitation_contract(repository, &format!("{suffix}-enrollment")).await;
     let actor = UserId::named(format!("chat-contract-actor-{suffix}"));
     repository
@@ -996,6 +997,106 @@ where
             .await,
         Err(RepositoryError::NotFound)
     );
+}
+
+#[cfg(test)]
+async fn verify_saved_emoji_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+    use crate::domain::{DisplayName, PrincipalKind, User, UserId};
+    let owner = UserId::named(format!("emoji-owner-{suffix}"));
+    let other = UserId::named(format!("emoji-other-{suffix}"));
+    for id in [&owner, &other] {
+        repository
+            .upsert_user(User {
+                id: id.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Emoji owner").unwrap(),
+                handle: None,
+                external_provider: None,
+                external_subject: None,
+                created_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+    for emoji in ["🧑🏽‍🚀", "🇬🇷", "1️⃣"] {
+        repository
+            .save_emoji(owner.clone(), emoji.to_owned(), true)
+            .await
+            .unwrap();
+        repository
+            .save_emoji(owner.clone(), emoji.to_owned(), true)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        repository.saved_emojis(owner.clone()).await.unwrap().len(),
+        3
+    );
+    assert!(
+        repository
+            .saved_emojis(other.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for point in 0x1f600..0x1f62e {
+        repository
+            .save_emoji(
+                owner.clone(),
+                char::from_u32(point).unwrap().to_string(),
+                true,
+            )
+            .await
+            .unwrap();
+    }
+    // Two devices compete for the final slot. Exactly one can succeed.
+    let (first, second) = tokio::join!(
+        repository.save_emoji(owner.clone(), "🪿".to_owned(), true),
+        repository.save_emoji(owner.clone(), "🪼".to_owned(), true)
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    assert_eq!(
+        repository.saved_emojis(owner.clone()).await.unwrap().len(),
+        50
+    );
+    repository
+        .save_emoji(owner.clone(), "🇬🇷".to_owned(), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .export_user_data(owner.clone())
+            .await
+            .unwrap()
+            .saved_emojis
+            .len(),
+        50
+    );
+    repository
+        .save_emoji(other.clone(), "🇬🇷".to_owned(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.saved_emojis(owner.clone()).await.unwrap().len(),
+        50
+    );
+    repository
+        .save_emoji(owner.clone(), "🇬🇷".to_owned(), false)
+        .await
+        .unwrap();
+    repository
+        .save_emoji(owner.clone(), "🇬🇷".to_owned(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.saved_emojis(owner.clone()).await.unwrap().len(),
+        49
+    );
+    repository
+        .save_emoji(owner.clone(), "🦤".to_owned(), true)
+        .await
+        .unwrap();
+    assert_eq!(repository.saved_emojis(owner).await.unwrap().len(), 50);
 }
 
 #[cfg(test)]

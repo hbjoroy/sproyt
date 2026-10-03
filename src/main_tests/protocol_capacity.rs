@@ -3707,3 +3707,117 @@ async fn circle_rename_is_owner_only_and_invalidates_unsubscribed_clients() {
     assert_eq!(listed["payload"]["circles"][0][0]["name"], "Ω");
     server.abort();
 }
+
+#[tokio::test]
+async fn personal_emoji_http_contract_scopes_validates_and_exports_choices() {
+    let repository = std::sync::Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server, _) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    let client = reqwest::Client::new();
+    let owner = format!("http://{address}/api/v1/me/emojis?participant=emoji-http-owner");
+    let other = format!("http://{address}/api/v1/me/emojis?participant=emoji-http-other");
+    for emoji in [" 🧑🏽‍🚀 ", "🇬🇷", "1️⃣", "🇬🇷"] {
+        assert_eq!(
+            client
+                .post(&owner)
+                .json(&serde_json::json!({"emoji":emoji}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::NO_CONTENT
+        );
+    }
+    for emoji in ["", "hello", "😀😀", "🧑🏽‍🚀🧑🏽‍🚀"] {
+        assert_eq!(
+            client
+                .post(&owner)
+                .json(&serde_json::json!({"emoji":emoji}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::BAD_REQUEST
+        );
+    }
+    // No body-supplied identity can redirect a mutation to another account.
+    assert_eq!(
+        client
+            .post(&other)
+            .json(&serde_json::json!({"emoji":"😀","user_id":"emoji-http-owner"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        client
+            .get(&owner)
+            .send()
+            .await
+            .unwrap()
+            .json::<Vec<String>>()
+            .await
+            .unwrap(),
+        ["🧑🏽‍🚀", "🇬🇷", "1️⃣"]
+    );
+    assert!(
+        client
+            .get(&other)
+            .send()
+            .await
+            .unwrap()
+            .json::<Vec<String>>()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    client
+        .delete(&other)
+        .json(&serde_json::json!({"emoji":"🇬🇷"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let export: serde_json::Value = client
+        .get(format!(
+            "http://{address}/api/v1/me/export?participant=emoji-http-owner"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        export["saved_emojis"],
+        serde_json::json!(["🧑🏽‍🚀", "🇬🇷", "1️⃣"])
+    );
+    client
+        .delete(&owner)
+        .json(&serde_json::json!({"emoji":"🇬🇷"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert_eq!(
+        client
+            .get(&owner)
+            .send()
+            .await
+            .unwrap()
+            .json::<Vec<String>>()
+            .await
+            .unwrap(),
+        ["🧑🏽‍🚀", "1️⃣"]
+    );
+    server.abort();
+}
