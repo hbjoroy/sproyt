@@ -33,6 +33,8 @@ data:
   SPROYT_CHANNEL_CHAT_AGENTS_ENABLED: {{ .Values.config.channelChatAgentsEnabled | quote }}
   SPROYT_WEATHER_URL: {{ .Values.config.weatherUrl | quote }}
   SPROYT_WEATHER_AGENTS_ENABLED: {{ .Values.config.weatherAgentsEnabled | quote }}
+  SPROYT_FERRY_URL: {{ .Values.config.ferryUrl | quote }}
+  SPROYT_FERRY_AGENTS_ENABLED: {{ .Values.config.ferryAgentsEnabled | quote }}
   SPROYT_CHAT_AGENT_FOLLOWUPS_ENABLED: {{ .Values.config.chatAgentFollowupsEnabled | quote }}
   SPROYT_PROCESS_PILOT_RUNTIME: {{ .Values.config.processPilotRuntime | quote }}
   SPROYT_PROCESS_PILOT_ENABLED: {{ .Values.config.processPilotEnabled | quote }}

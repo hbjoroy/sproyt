@@ -92,6 +92,7 @@ async fn enqueue(store: &Store, message: &ChatMessage) {
 
 async fn contract(store: Store) {
     let service = CircleChatAgents {
+        ferry: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -150,6 +151,7 @@ async fn contract(store: Store) {
         execute(&store, "insert into channel_memberships(channel_id,user_id,role) values(?uuid,?uuid,'observer')", &[id, &observer.to_string()]).await;
     }
     let input = || AgentInput {
+        ferry_port: None,
         weather: None,
         display_name: "Kanalhjelpar".into(),
         trigger_words: vec!["hjelp".into()],

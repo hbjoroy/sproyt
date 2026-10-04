@@ -94,7 +94,7 @@ pub(crate) async fn list(
     };
     match service.list(&principal.user.id, &circle).await {
         Ok(agents) => {
-            Json(serde_json::json!({"agents":agents,"worker_available":service.available(),"weather_available":service.weather_available()}))
+            Json(serde_json::json!({"agents":agents,"worker_available":service.available(),"weather_available":service.weather_available(),"ferry_available":service.ferry_available()}))
                 .into_response()
         }
         Err(error) => repository_response(error),

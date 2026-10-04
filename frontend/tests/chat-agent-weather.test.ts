@@ -42,3 +42,30 @@ test("weather availability defaults closed for old lists and requires a boolean 
   reply = { agents: [], worker_available: true, weather_available: "yes" };
   await assert.rejects(api.list("circle"), /Ugyldig agentliste/);
 });
+
+test("ferry configuration preserves omitted updates, carries opt-in and rejects unknown ports", async () => {
+  const wire = { agent_id: "agent", circle_id: "circle", display_name: "Maria", trigger_words: ["hei"], response_phrases: ["Kort svar"], enabled: false, revision: 1, worker_available: false };
+  let reply: unknown = wire;
+  const bodies: Record<string, unknown>[] = [];
+  const api = new CircleChatAgentApi(new HttpClient({ fetch: async (_, init) => {
+    if (init?.body) bodies.push(JSON.parse(String(init.body)));
+    return Response.json(reply);
+  } }));
+  const input = { displayName: "Maria", triggerWords: ["hei"], responsePhrases: ["Kort svar"], enabled: false };
+  assert.equal((await api.update("circle", "agent", input)).ferryPort, null);
+  assert.ok(!("ferry_port" in bodies[0]!));
+  reply = { ...wire, ferry_port: "paros" };
+  assert.equal((await api.update("circle", "agent", { ...input, ferryPort: "paros" })).ferryPort, "paros");
+  assert.equal(bodies[1]!.ferry_port, "paros");
+  reply = { ...wire, ferry_port: null };
+  await api.update("circle", "agent", { ...input, ferryPort: null });
+  assert.equal(bodies[2]!.ferry_port, null);
+  reply = { ...wire, ferry_port: "naxos" };
+  await assert.rejects(api.create("circle", input), /Ugyldig fergehamn/);
+  reply = { agents: [], worker_available: true };
+  assert.equal((await api.list("circle")).ferryAvailable, false);
+  reply = { agents: [], worker_available: true, ferry_available: true };
+  assert.equal((await api.list("circle")).ferryAvailable, true);
+  reply = { agents: [], worker_available: true, ferry_available: "true" };
+  await assert.rejects(api.list("circle"), /Ugyldig agentliste/);
+});

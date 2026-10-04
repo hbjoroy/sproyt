@@ -193,6 +193,7 @@ jobs:
           cargo test postgres_channel_agent_access_contract --locked
           cargo test postgres_weather_followup_contract --locked
           cargo test postgres_conversation_followup_contract --locked
+          cargo test postgres_ferry_agent_contract --locked
           cargo test chatbot::tests::postgres_ --locked -- --test-threads=1
           cargo test postgres_work_item_registration_and_task_projection --locked
           cargo test work_items::github_export::tests::postgres_ --locked -- --test-threads=1
