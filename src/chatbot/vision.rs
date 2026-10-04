@@ -827,6 +827,8 @@ mod tests {
                 .iter()
                 .all(|value| parse(value).unwrap().images.is_empty())
         );
+        // Leave no runnable jobs for later shared-database worker contracts.
+        execute(&store,"update circle_chat_agent_jobs set status='skipped' where agent_id in (select agent_id from circle_chat_agents where circle_id=?uuid)",&[&circle]).await;
     }
 
     #[tokio::test]
