@@ -74,7 +74,16 @@ ein annan funksjon og vert verande skild.
 ### Oppfølging av automatiske svar (2026-10-04)
 
 Med `SPROYT_CHAT_AGENT_FOLLOWUPS_ENABLED=true` kan agentane svare på kommentarar
-utan eit nytt triggerord. Eit eksplisitt trådsvar til ei publisert agentmelding
+utan eit nytt triggerord. `@Agentnamn` er òg ei direkte adressering som ikkje
+krev triggerord eller eit tidlegare agentsvar. Bruk heile visingsnamnet, også
+når det inneheld mellomrom; store/små bokstavar og avsluttande teikn som `!`
+er støtta. Berre tilgjengelege agentar i den aktuelle kretsen og kanalen blir
+adresserte. Tvitydige like namn gir inga mention-utløysing. Ein direkte
+adressert agent svarar også på eit nytt tema; andre agentar blir ikkje kalla
+inn gjennom implisitt oppfølging av denne adresseringa. Dette er tekststøtte;
+den eksisterande person-autofullføringa listar framleis menneske.
+
+Eit eksplisitt trådsvar til ei publisert agentmelding
 som er trådrot, kan kome frå alle menneske med tilgang til kanalen innan
 20 minutt. Ei vanleg kanalmelding blir berre ein kandidat når same menneske
 som starta samtalen kommenterer innan tre minutt, og agentens svar er den

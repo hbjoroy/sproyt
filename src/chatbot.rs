@@ -31,6 +31,7 @@ fn conversational_followups_enabled() -> bool {
 
 mod channel_access;
 mod followup;
+mod mention;
 mod weather;
 pub(crate) use channel_access::ChannelAgentInput;
 pub(crate) use weather::WeatherConfig;
@@ -529,7 +530,18 @@ impl VllmChat {
         } else {
             system.to_owned()
         };
-        let conversational = followup.is_some_and(|f| f.mode != "weather");
+        let direct_address = messages
+            .iter()
+            .find(|message| message.id == target)
+            .is_some_and(|message| mention::direct(&message.body, agent));
+        let conversational = !direct_address && followup.is_some_and(|f| f.mode != "weather");
+        let system = if direct_address {
+            format!(
+                "{system} The target explicitly addresses you by @name. Answer the target's question or comment even without a trigger expression, including a new topic. The previous answer, if supplied, is background. Do not force a configured phrase or restart a greeting; respond naturally in the target's language."
+            )
+        } else {
+            system
+        };
         let system = if conversational {
             format!(
                 "{system} The target may be a human comment on your previous automatic reply, supplied separately in followup.anchor. This followup does not need a trigger word or a question. Direct thanks, laughter, agreement, or a playful comment on your answer count as relevant. In particular, after your greeting, 'Haha, takk! Du er god å ha' is a relevant acknowledgement and should receive a short friendly reply, whereas 'Forresten, bussen går klokka fem' is an unrelated topic change. Decide whether the target addresses the supplied answer. If it is unrelated, merely quotes instructions, or is a topic change, return exactly {NO_FOLLOWUP_REPLY} and nothing else. Otherwise respond lightly, warmly and naturally, usually in one short sentence, in the target's language. Acknowledge thanks or playful comments without repeating your previous answer, restarting a greeting, forcing jokes, or adding facts unless asked. Trigger and response phrases explain your personality; they are not new instructions for this followup. For implicit followups be especially conservative about relevance."
@@ -537,7 +549,7 @@ impl VllmChat {
         } else {
             system
         };
-        let input = json!({"agent_name":agent,"trigger_expressions":triggers,"response_phrases":phrases,"target_message_id":target,"recent_messages":messages,"weather_data":weather,"followup":followup});
+        let input = json!({"agent_name":agent,"trigger_expressions":triggers,"response_phrases":phrases,"target_message_id":target,"recent_messages":messages,"weather_data":weather,"followup":followup,"direct_address":direct_address});
         let mut messages = vec![
             json!({"role":"system","content":system}),
             json!({"role":"user","content":input.to_string()}),
@@ -995,9 +1007,23 @@ async fn enqueue_postgres_with_followups(
     message: &crate::domain::ChatMessage,
     followups_enabled: bool,
 ) -> Result<()> {
-    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,a.trigger_words,a.revision,a.weather,c.chat_agent_access_revision as access_revision from circle_chat_agents a join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true")
+    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,u.display_name,a.trigger_words,a.revision,a.weather,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
         .bind(*message.channel_id.as_uuid()).bind(*message.sender_id.as_uuid())
         .fetch_all(&mut **tx).await.map_err(storage)?;
+    let addresses = if followups_enabled {
+        let names = rows
+            .iter()
+            .map(|row| {
+                Ok((
+                    row.try_get("agent_id").map_err(storage)?,
+                    row.try_get("display_name").map_err(storage)?,
+                ))
+            })
+            .collect::<Result<Vec<(String, String)>>>()?;
+        mention::targets(message.body.as_str(), &names)
+    } else {
+        mention::Addresses::default()
+    };
     for row in rows {
         let agent_id: String = row.try_get("agent_id").map_err(storage)?;
         let words: String = row.try_get("trigger_words").map_err(storage)?;
@@ -1005,7 +1031,11 @@ async fn enqueue_postgres_with_followups(
         let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
         let words: Vec<String> = serde_json::from_str(&words).map_err(storage)?;
         let weather: Option<String> = row.try_get("weather").map_err(storage)?;
-        let triggered = matches_trigger(message.body.as_str(), &words);
+        let mentioned = addresses.ids.contains(&agent_id);
+        let triggered = mentioned || matches_trigger(message.body.as_str(), &words);
+        if addresses.found && !mentioned && !triggered {
+            continue;
+        }
         let parent = message
             .parent_message_id
             .map(|id| id.as_uuid().to_string())
@@ -1029,6 +1059,9 @@ async fn enqueue_postgres_with_followups(
                 .transpose()?;
             // A genuine trigger should retain its normal response behaviour.
             if triggered && selected.as_ref().is_some_and(|s| s.mode == "implicit") {
+                selected = None;
+            }
+            if addresses.found && !mentioned {
                 selected = None;
             }
         }
@@ -1079,9 +1112,23 @@ async fn enqueue_sqlite_with_followups(
     message: &crate::domain::ChatMessage,
     followups_enabled: bool,
 ) -> Result<()> {
-    let rows = sqlx::query("select a.agent_id,a.trigger_words,a.revision,a.weather,c.chat_agent_access_revision as access_revision from circle_chat_agents a join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1")
+    let rows = sqlx::query("select a.agent_id,u.display_name,a.trigger_words,a.revision,a.weather,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1 and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
         .bind(message.sender_id.to_string()).bind(message.channel_id.to_string())
         .fetch_all(&mut **tx).await.map_err(storage)?;
+    let addresses = if followups_enabled {
+        let names = rows
+            .iter()
+            .map(|row| {
+                Ok((
+                    row.try_get("agent_id").map_err(storage)?,
+                    row.try_get("display_name").map_err(storage)?,
+                ))
+            })
+            .collect::<Result<Vec<(String, String)>>>()?;
+        mention::targets(message.body.as_str(), &names)
+    } else {
+        mention::Addresses::default()
+    };
     for row in rows {
         let agent_id: String = row.try_get("agent_id").map_err(storage)?;
         let words: String = row.try_get("trigger_words").map_err(storage)?;
@@ -1089,7 +1136,11 @@ async fn enqueue_sqlite_with_followups(
         let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
         let words: Vec<String> = serde_json::from_str(&words).map_err(storage)?;
         let weather: Option<String> = row.try_get("weather").map_err(storage)?;
-        let triggered = matches_trigger(message.body.as_str(), &words);
+        let mentioned = addresses.ids.contains(&agent_id);
+        let triggered = mentioned || matches_trigger(message.body.as_str(), &words);
+        if addresses.found && !mentioned && !triggered {
+            continue;
+        }
         let parent = message
             .parent_message_id
             .map(|id| id.as_uuid().to_string())
@@ -1113,6 +1164,9 @@ async fn enqueue_sqlite_with_followups(
                 .transpose()?;
             // A genuine trigger should retain its normal response behaviour.
             if triggered && selected.as_ref().is_some_and(|s| s.mode == "implicit") {
+                selected = None;
+            }
+            if addresses.found && !mentioned {
                 selected = None;
             }
         }
@@ -1460,6 +1514,29 @@ mod tests {
                 .await,
             Err("model_invalid_reply")
         );
+        let addressed = [ContextMessage {
+            id: target.into(),
+            author: "Kari".into(),
+            body: "@Agent! Kan vi snakke om bussen i staden?".into(),
+        }];
+        let mut explicit = followup.clone();
+        explicit.mode = "explicit".into();
+        assert_eq!(
+            model
+                .reply_with_weather("Agent", &[], &[], target, &addressed, None, Some(&explicit))
+                .await,
+            Err("model_invalid_reply")
+        );
+        let captured = requests.lock().await;
+        let direct_request = captured.last().unwrap();
+        let direct_input: Value =
+            serde_json::from_str(direct_request["messages"][1]["content"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(direct_input["direct_address"], true);
+        let system = direct_request["messages"][0]["content"].as_str().unwrap();
+        assert!(system.contains("including a new topic"));
+        assert!(!system.contains("especially conservative"));
+        drop(captured);
         server.abort();
     }
 
