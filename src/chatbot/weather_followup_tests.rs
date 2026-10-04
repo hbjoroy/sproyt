@@ -700,6 +700,154 @@ async fn conversation_contract(store: Store) {
     )
     .await;
 
+    // Direct @name starts a job without either a trigger or a previous reply.
+    let mention_channel = conversation_channel(&store, &circle, &owner, &other).await;
+    let direct = message(
+        &store,
+        &mention_channel,
+        &other,
+        1,
+        "Hei @SAMTALEVENNEN! Korleis går det?",
+        None,
+    )
+    .await;
+    conversation_enqueue(&store, &direct, false).await;
+    no_conversation_job(&store, &direct).await;
+    conversation_enqueue(&store, &direct, true).await;
+    conversation_enqueue(&store, &direct, true).await;
+    let direct_job = service.claim().await.unwrap().unwrap();
+    assert_eq!(
+        direct_job.source_message_id,
+        direct.id.as_uuid().to_string()
+    );
+    let direct_source = service.source(&direct_job).await.unwrap().unwrap();
+    assert!(direct_source.followup.is_none());
+    assert_eq!(values(&store, "select cast(count(*) as text) from circle_chat_agent_jobs where source_message_id=?uuid", &[&direct.id.as_uuid().to_string()]).await, vec!["1"]);
+    execute(
+        &store,
+        "update circle_chat_agent_jobs set status='completed' where id=?uuid",
+        &[&direct_job.id],
+    )
+    .await;
+    for (seq, body) in [
+        (2, "@Samtalevennen_extra"),
+        (3, "mail@Samtalevennen"),
+        (4, "@Samtalevennen.example"),
+    ] {
+        let not_addressed = message(&store, &mention_channel, &owner, seq, body, None).await;
+        conversation_enqueue(&store, &not_addressed, true).await;
+        no_conversation_job(&store, &not_addressed).await;
+    }
+    execute(&store, "insert into channel_chat_agent_settings(channel_id,agent_id,enabled,updated_by,updated_at) values(?uuid,?uuid,false,?uuid,0)", &[&mention_channel, &agent.agent_id, &owner.to_string()]).await;
+    let disabled_mention =
+        message(&store, &mention_channel, &owner, 5, "@Samtalevennen!", None).await;
+    conversation_enqueue(&store, &disabled_mention, true).await;
+    no_conversation_job(&store, &disabled_mention).await;
+    execute(
+        &store,
+        "delete from channel_chat_agent_settings where channel_id=?uuid",
+        &[&mention_channel],
+    )
+    .await;
+    execute(
+        &store,
+        "update agent_profiles set revoked_at=current_timestamp where agent_id=?uuid",
+        &[&agent.agent_id],
+    )
+    .await;
+    let revoked_mention =
+        message(&store, &mention_channel, &owner, 6, "@Samtalevennen!", None).await;
+    conversation_enqueue(&store, &revoked_mention, true).await;
+    no_conversation_job(&store, &revoked_mention).await;
+    execute(
+        &store,
+        "update agent_profiles set revoked_at=null where agent_id=?uuid",
+        &[&agent.agent_id],
+    )
+    .await;
+    let agent_sender = UserId::new(&agent.agent_id).unwrap();
+    let agent_mention = message(
+        &store,
+        &mention_channel,
+        &agent_sender,
+        7,
+        "@Samtalevennen!",
+        None,
+    )
+    .await;
+    conversation_enqueue(&store, &agent_mention, true).await;
+    no_conversation_job(&store, &agent_mention).await;
+
+    let second = service
+        .create(
+            &owner,
+            &circle,
+            AgentInput {
+                weather: Some(None),
+                display_name: "Annan".into(),
+                trigger_words: vec!["eigen-trigger".into()],
+                response_phrases: vec!["Svar naturleg".into()],
+                enabled: false,
+                revision: None,
+            },
+        )
+        .await
+        .unwrap();
+    execute(
+        &store,
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+        &[&second.agent_id],
+    )
+    .await;
+    let routing_channel = conversation_channel(&store, &circle, &owner, &other).await;
+    conversation_anchor(&service, &routing_channel, &owner, &agent.agent_id).await;
+    let to_second = message(
+        &store,
+        &routing_channel,
+        &owner,
+        3,
+        "@Annan! Kva meiner du?",
+        None,
+    )
+    .await;
+    conversation_enqueue(&store, &to_second, true).await;
+    assert_eq!(values(&store, "select cast(agent_id as text) from circle_chat_agent_jobs where source_message_id=?uuid", &[&to_second.id.as_uuid().to_string()]).await, vec![second.agent_id.clone()], "explicit address must suppress the other agent's implicit followup");
+    let second_job = service.claim().await.unwrap().unwrap();
+    assert_eq!(second_job.agent_id, second.agent_id);
+    execute(
+        &store,
+        "update circle_chat_agent_jobs set status='completed' where id=?uuid",
+        &[&second_job.id],
+    )
+    .await;
+
+    execute(
+        &store,
+        "update users set display_name='SAMTALEVENNEN' where id=?uuid",
+        &[&second.agent_id],
+    )
+    .await;
+    let ambiguous = message(&store, &mention_channel, &owner, 8, "@Samtalevennen!", None).await;
+    conversation_enqueue(&store, &ambiguous, true).await;
+    no_conversation_job(&store, &ambiguous).await;
+    execute(
+        &store,
+        "update agent_profiles set revoked_at=current_timestamp where agent_id=?uuid",
+        &[&second.agent_id],
+    )
+    .await;
+    let unique_available =
+        message(&store, &mention_channel, &owner, 9, "@Samtalevennen!", None).await;
+    conversation_enqueue(&store, &unique_available, true).await;
+    let unique_job = service.claim().await.unwrap().unwrap();
+    assert_eq!(unique_job.agent_id, agent.agent_id);
+    execute(
+        &store,
+        "update circle_chat_agent_jobs set status='completed' where id=?uuid",
+        &[&unique_job.id],
+    )
+    .await;
+
     let explicit_channel = conversation_channel(&store, &circle, &owner, &other).await;
     let (original, anchor) =
         conversation_anchor(&service, &explicit_channel, &owner, &agent.agent_id).await;
