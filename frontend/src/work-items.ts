@@ -132,6 +132,10 @@ export class WorkItemApi {
   private readonly applicationsCache = new Map<string, Promise<readonly WorkApplication[]>>();
   private readonly admissions = new Map<string, { payload: string; id: string; revision?: number }>();
   constructor(private readonly http: HttpClient, private readonly identity: () => string) {}
+  canReload(): boolean {
+    try { return [...this.admissions].every(([key, value]) => sessionStorage.getItem(key) === JSON.stringify(value)); }
+    catch { return this.admissions.size === 0; }
+  }
 
   async sourceItems(channelId: string, messageId: string): Promise<SourceWorkItem[]> {
     return this.http.json(`/api/v1/channels/${encodeURIComponent(channelId)}/work-items/source/${encodeURIComponent(messageId)}`, value => {

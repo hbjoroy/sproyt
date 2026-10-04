@@ -20,6 +20,8 @@ export type CircleChatAgent = Readonly<{
   workerAvailable: boolean;
   weather: AgentWeather | null;
   ferryPort?: "paros" | null;
+  visionEnabled: boolean;
+  visionAvailable: boolean;
 }>;
 
 export type CircleChatAgentInput = Readonly<{
@@ -30,6 +32,7 @@ export type CircleChatAgentInput = Readonly<{
   revision?: number;
   weather?: AgentWeather | null;
   ferryPort?: "paros" | null;
+  visionEnabled?: boolean;
 }>;
 
 export type ChannelChatAgents = Readonly<{
@@ -55,7 +58,9 @@ function decodeAgent(value: unknown): CircleChatAgent {
     || !value.trigger_words.every(item => typeof item === "string")
     || !Array.isArray(value.response_phrases) || !value.response_phrases.every(item => typeof item === "string")
     || typeof value.enabled !== "boolean" || typeof value.revision !== "number"
-    || typeof value.worker_available !== "boolean") throw new Error("Ugyldig agentsvar frå tenaren.");
+    || typeof value.worker_available !== "boolean"
+    || (value.vision_enabled !== undefined && typeof value.vision_enabled !== "boolean")
+    || (value.vision_available !== undefined && typeof value.vision_available !== "boolean")) throw new Error("Ugyldig agentsvar frå tenaren.");
   let weather: AgentWeather | null = null;
   if (value.weather !== undefined && value.weather !== null) {
     if (!isRecord(value.weather) || typeof value.weather.location !== "string"
@@ -68,7 +73,8 @@ function decodeAgent(value: unknown): CircleChatAgent {
   return { agentId: value.agent_id, circleId: value.circle_id, displayName: value.display_name,
     triggerWords: value.trigger_words, responsePhrases: value.response_phrases,
     enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available, weather,
-    ferryPort: value.ferry_port === "paros" ? "paros" : null };
+    ferryPort: value.ferry_port === "paros" ? "paros" : null,
+    visionEnabled: value.vision_enabled === true, visionAvailable: value.vision_available === true };
 }
 
 export class CircleChatAgentApi {
@@ -83,14 +89,16 @@ export class CircleChatAgentApi {
       { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled, access_revision: accessRevision }) });
   }
 
-  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean; ferryAvailable: boolean }> {
+  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean; ferryAvailable: boolean; visionAvailable: boolean }> {
     const response = await this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, value => value);
     if (!isRecord(response) || !Array.isArray(response.agents) || typeof response.worker_available !== "boolean"
       || (response.weather_available !== undefined && typeof response.weather_available !== "boolean")
-      || (response.ferry_available !== undefined && typeof response.ferry_available !== "boolean"))
+      || (response.ferry_available !== undefined && typeof response.ferry_available !== "boolean")
+      || (response.vision_available !== undefined && typeof response.vision_available !== "boolean"))
       throw new Error("Ugyldig agentliste frå tenaren.");
     return { agents: response.agents.map(decodeAgent), workerAvailable: response.worker_available,
-      weatherAvailable: response.weather_available === true, ferryAvailable: response.ferry_available === true };
+      weatherAvailable: response.weather_available === true, ferryAvailable: response.ferry_available === true,
+      visionAvailable: response.vision_available === true };
   }
 
   async create(circleId: string, input: CircleChatAgentInput): Promise<CircleChatAgent> {
@@ -106,6 +114,6 @@ export class CircleChatAgentApi {
   private body(input: CircleChatAgentInput) {
     return { display_name: input.displayName, trigger_words: input.triggerWords,
       response_phrases: input.responsePhrases, enabled: input.enabled, revision: input.revision, weather: input.weather,
-      ferry_port: input.ferryPort };
+      ferry_port: input.ferryPort, vision_enabled: input.visionEnabled };
   }
 }

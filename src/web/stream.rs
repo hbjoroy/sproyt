@@ -244,7 +244,11 @@ pub(crate) async fn events_handler(
     let chat = state.chat;
     let auth = state.auth;
     let mut circle_updates = chat.subscribe_circle_updates();
+    let connection = state
+        .operations
+        .connection_started(crate::operations::Transport::Sse);
     let stream = async_stream::stream! {
+        let _connection = connection;
         yield Ok::<Event, Infallible>(Event::default().comment("connected"));
         if let (Some(channel_id), Some(request_id), Some(mut subscription)) = (channel_id, request_id, subscription) {
             let _presence = presence;

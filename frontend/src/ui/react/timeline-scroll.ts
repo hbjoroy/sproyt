@@ -10,7 +10,7 @@ export interface TimelineScrollModel {
   readonly revealMessageId?: string | null;
 }
 
-interface ReadingPosition {
+export interface ReadingPosition {
   readonly anchorId: string | null;
   readonly anchorOffset: number;
   readonly distanceFromBottom: number;
@@ -25,6 +25,7 @@ interface PendingRestore {
 }
 
 export interface TimelineScrollControllerOptions {
+  readonly restorePosition?: (key: string) => ReadingPosition | null;
   readonly onNearStart?: () => void;
   readonly onReachedBottom?: (lastMessageId: string | null) => void;
   readonly onVisibleMessages?: (key: string, messageIds: readonly string[]) => void;
@@ -370,7 +371,7 @@ export function createTimelineScrollController(options: TimelineScrollController
       if (neighbour) position = { ...position, anchorId: nextId!, sequence: Number(neighbour.dataset.messageSequence),
         anchorOffset: neighbour.getBoundingClientRect().top - viewport.getBoundingClientRect().top };
     }
-    const stored = next.key ? positions.get(next.key) ?? null : null;
+    const stored = next.key ? positions.get(next.key) ?? options.restorePosition?.(next.key) ?? null : null;
     if (keyChanged) {
       clampedAnchor = false;
       scrollIntent = false;
@@ -416,7 +417,8 @@ export function createTimelineScrollController(options: TimelineScrollController
     scrollToBottom(); save(); rememberGeometry(); reportVisible();
   };
   const unreadAfterSequence = () => model.key ? openingReadSequences.get(model.key) : undefined;
-  return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, dispose });
+  const readingPosition = () => { const position = save(); return model.key && position ? { key: model.key, position } : null; };
+  return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, readingPosition, dispose });
 }
 
 export type TimelineScrollController = ReturnType<typeof createTimelineScrollController>;

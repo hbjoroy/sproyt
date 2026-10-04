@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::{ChannelSequence, ChatMessage, DisplayName, MessageId, SendMessage};
 
-async fn execute(store: &Store, query: &str, args: &[&str]) {
+pub(super) async fn execute(store: &Store, query: &str, args: &[&str]) {
     store
         .execute(
             query,
@@ -21,7 +21,7 @@ async fn values(store: &Store, query: &str, args: &[&str]) -> Vec<String> {
         .unwrap()
 }
 
-async fn message(
+pub(super) async fn message(
     store: &Store,
     channel: &str,
     actor: &UserId,
@@ -143,6 +143,7 @@ fn input(weather: Option<WeatherConfig>, revision: Option<i64>) -> AgentInput {
         response_phrases: vec!["Bruk det oppgitte vêret".into()],
         enabled: false,
         revision,
+        vision_enabled: None,
     }
 }
 
@@ -150,6 +151,7 @@ async fn contract(store: Store) {
     // Configuration can be retained and edited while the external service is unavailable.
     let service = CircleChatAgents {
         ferry: None,
+        observations: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -445,6 +447,7 @@ async fn ferry_contract(store: Store) {
         worker_enabled: false,
         weather: None,
         ferry: None,
+        observations: None,
     };
     let owner = UserId::new(Uuid::now_v7().to_string()).unwrap();
     let other = UserId::new(Uuid::now_v7().to_string()).unwrap();
@@ -788,6 +791,7 @@ async fn age_conversation(
 async fn conversation_contract(store: Store) {
     let service = CircleChatAgents {
         ferry: None,
+        observations: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -825,6 +829,7 @@ async fn conversation_contract(store: Store) {
                 response_phrases: vec!["Svar på konkrete spørsmål".into()],
                 enabled: false,
                 revision: None,
+                vision_enabled: None,
             },
         )
         .await
@@ -926,6 +931,7 @@ async fn conversation_contract(store: Store) {
                 response_phrases: vec!["Svar naturleg".into()],
                 enabled: false,
                 revision: None,
+                vision_enabled: None,
             },
         )
         .await

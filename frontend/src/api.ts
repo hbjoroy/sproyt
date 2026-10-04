@@ -39,6 +39,8 @@ export type EventPlanningRequest = Readonly<{ channelId: string; requestId: stri
 export type HttpClientDependencies = Readonly<{ fetch?: FetchLike; refreshSession?: () => Promise<boolean>; participant?: () => string | null }>;
 
 export class HttpClient {
+  #pendingWrites = 0;
+  get pendingWrites(): number { return this.#pendingWrites; }
   readonly #fetch: FetchLike;
   readonly #refreshSession: (() => Promise<boolean>) | undefined;
   readonly #participant: () => string | null;
@@ -60,14 +62,22 @@ export class HttpClient {
   }
 
   async json<T>(path: string, decoder: (value: unknown) => T, options: RequestInit = {}): Promise<T> {
+    const write = options.method !== undefined && !["GET", "HEAD"].includes(options.method.toUpperCase());
+    if (write) this.#pendingWrites++;
+    try {
     const response = await this.request(path, options);
     if (!response.ok) throw await HttpClient.error(response);
     return decoder(await HttpClient.jsonBody(response));
+    } finally { if (write) this.#pendingWrites--; }
   }
 
   async empty(path: string, options: RequestInit = {}): Promise<void> {
+    const write = options.method !== undefined && !["GET", "HEAD"].includes(options.method.toUpperCase());
+    if (write) this.#pendingWrites++;
+    try {
     const response = await this.request(path, options);
     if (!response.ok) throw await HttpClient.error(response);
+    } finally { if (write) this.#pendingWrites--; }
   }
 
   static async jsonBody(response: Response): Promise<JsonValue | null> {

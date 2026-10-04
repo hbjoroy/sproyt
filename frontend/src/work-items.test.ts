@@ -75,6 +75,10 @@ test("status start and decision retries preserve exact payload and revision", as
     } });
     const first = new WorkItemApi(http, () => "status-user");
     await assert.rejects(() => first.startStatusChange(statusTask));
+    assert.equal(first.canReload(), true);
+    const persisted = [...saved]; saved.clear();
+    assert.equal(first.canReload(), false, "a missing durable command receipt must defer reload");
+    persisted.forEach(([key, value]) => saved.set(key, value));
     const second = new WorkItemApi(http, () => "status-user");
     await second.startStatusChange({ ...statusTask, revision: 2 });
     assert.deepEqual(requests[0], requests[1]);

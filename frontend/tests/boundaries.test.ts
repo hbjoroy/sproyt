@@ -3,6 +3,7 @@ import "./conversation-snapshot.test";
 import "./visible-read.test";
 import "./saved-emojis.test";
 import "./chat-agent-weather.test";
+import "./app-update.test";
 import "../src/process-pilot.test";
 import "../src/work-items.test";
 import { readFileSync } from "node:fs";

@@ -202,3 +202,35 @@ do not retain it for a later run.
 This MCP exercise proves the auditable agent write path and database latency;
 it does not substitute for the authenticated browser WebSocket reconnect and
 rolling-restart journey.
+
+## Server measurements (October 2026)
+
+HTTP metrics distinguish operational probes (/healthz, /readyz, /metrics,
+/versionz) from application traffic. The existing aggregate request,
+in-flight, server-error and duration counters now count application traffic
+only. sproyt_http_response_duration_seconds is a histogram in seconds,
+labelled by router template, bounded method/status classes and
+traffic="application" or traffic="probe". No raw path, query, account or
+channel ID is used. At most 512 detailed series are retained per process;
+additional combinations share two overflow series, one per traffic class.
+
+Application p95 across replicas over five minutes:
+
+    histogram_quantile(0.95,
+      sum by (le) (rate(sproyt_http_response_duration_seconds_bucket{traffic="application"}[5m])))
+
+Use 0.99 for p99 and retain route in the aggregation to inspect one route
+template. These measure time to response headers, not a WebSocket/SSE body's
+lifetime. Cancelled handlers have status_class="cancelled" and release the
+in-flight gauge.
+
+sproyt_connections_active has transport="websocket" or transport="sse" and is
+owned by the server's authenticated connection lifetime, including cancellation.
+sproyt_connections_opened_total and sproyt_connections_closed_total track
+those transitions. Sum gauges across replicas; use counter rates across
+restarts. SSE control and channel streams count individually. These are
+connections, not unique users or sessions; the browser telemetry counters
+remain separate and are never used to calculate these gauges.
+
+Dependency-specific latency/failure metrics, send/drop classification and the
+environment exercises in issue #170 remain separate acceptance work.

@@ -36,6 +36,8 @@ import { WorkItemRegistration } from "./work-item-registration";
 import { WorkItemTaskMessage } from "./work-item-task";
 import { WorkItemStatusMessage } from "./work-item-status";
 import { workItemStatusId, workItemTaskId } from "../../work-items";
+import type { AppUpdate, UpdatePosition } from "../../app-update";
+import { AppUpdateNotice } from "./app-update-action";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly processPilot: ProcessPilotApi;
@@ -78,6 +80,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly setChannelNotifications: (channelId: string, enabled: boolean) => void;
   /** Persists both host-owned composer scopes before starting login. */
   readonly reauthenticateNow: () => void;
+  readonly appUpdate: AppUpdate;
 }
 
 function ChannelNotificationControl({ channelId, channelName, enabled, pending, error, onChange }: {
@@ -295,9 +298,12 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let disposed = false;
   let unsubscribe = () => {};
   let mounted: ReturnType<typeof mountConversationView> | undefined;
+  let resumedThread = false;
   const reactionPicker = createPreviewReactionPicker(host);
-  const channelScroll = createTimelineScrollController({ onNearStart: host.loadOlder, onVisibleMessages: host.acknowledgeVisible });
-  const threadScroll = createTimelineScrollController({ onVisibleMessages: host.acknowledgeVisible });
+  const restorePosition = (key: string) => host.appUpdate.resumePosition(host.processPilotIdentity(), key);
+  const channelScroll = createTimelineScrollController({ onNearStart: host.loadOlder, onVisibleMessages: host.acknowledgeVisible, restorePosition });
+  const threadScroll = createTimelineScrollController({ onVisibleMessages: host.acknowledgeVisible, restorePosition });
+  const captureUpdatePosition = () => [channelScroll.readingPosition(), threadScroll.readingPosition()].filter((entry): entry is UpdatePosition => entry !== null);
   const close = (target?: ComposerTarget) => {
     if (disposed) return;
     disposed = true;
@@ -321,6 +327,11 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   const fullInterface = () => explicitPreview ? <Button onClick={() => close()}>Til fullt grensesnitt</Button> : null;
   const props = () => {
     const snapshot = host.snapshot();
+    if (!resumedThread && snapshot.selection.channelId && !snapshot.timeline.loading) {
+      resumedThread = true;
+      const rootId = host.appUpdate.resumeThread(host.processPilotIdentity(), snapshot.selection.channelId);
+      if (rootId) queueMicrotask(() => { if (!disposed) host.openThread(rootId); });
+    }
     const scrollIntent = host.takeScrollIntent();
     const channelMessages = messagesForTimeline({ ...snapshot.timeline });
     const channelMessageIds = channelMessages.map(message => message.id);
@@ -350,7 +361,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const backToConversations = () => { view = "list"; update(); };
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view,
-    header: <>{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
+    header: <><AppUpdateNotice update={host.appUpdate} />{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
       <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}
@@ -361,7 +372,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
-      <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents}
+      <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate} captureUpdatePosition={captureUpdatePosition}
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions></>,
     navigationActions: null,
     renderGroupActions: group => group.id === "scope:direct" ? null : <NavigationScopeActions
