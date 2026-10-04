@@ -71,6 +71,37 @@ ein annan funksjon og vert verande skild.
 
 ## Trigger, kontekst og prompt
 
+### Oppfølging av automatiske svar (2026-10-04)
+
+Med `SPROYT_CHAT_AGENT_FOLLOWUPS_ENABLED=true` kan agentane svare på kommentarar
+utan eit nytt triggerord. Eit eksplisitt trådsvar til ei publisert agentmelding
+som er trådrot, kan kome frå alle menneske med tilgang til kanalen innan
+20 minutt. Ei vanleg kanalmelding blir berre ein kandidat når same menneske
+som starta samtalen kommenterer innan tre minutt, og agentens svar er den
+næraste førre usletta meldinga i same samtalespor. Eit innlegg frå ein annan
+deltakar bryt denne implisitte koplinga. Agentmeldingar startar ingen nye jobbar.
+
+Modellen får det konkrete agentsvaret, avsendaren og kommentaren, og skal
+svare lett og naturleg, vanlegvis med ei kort setning. Han kan velje å vere
+stille ved temasifte eller uklår relevans. Den reserverte kontrollverdien
+for «ikkje svar» blir aldri publisert: jobben blir avslutta som `skipped`,
+utan nye forsøk eller eit nytt oppfølgingsanker. Modellen vel ikkje kanal,
+tilgang eller tidsvindauge. Vanlege triggerar og eksisterande vêroppfølging
+beheld åtferda si; vêroppfølging blir prioritert framfor implisitt småprat.
+
+Schema 0053 lagrar `followup_mode` saman med det eksisterande ankeret.
+Retry bruker same anker og modus. Oppfølging krev eit committed receipt,
+uendra konfig-/kanalrevisjon og usletta, uredigerte kjelde- og ankermeldingar
+både ved konteksthenting og publisering. Ei agentmelding inne i ei tråd er
+ikkje ei ny trådrot i dagens flate trådmodell. Eksplisitt rot blir prioritert
+framfor nyare implisitte kandidatar i tråden.
+
+Helm-verdien `config.chatAgentFollowupsEnabled` er av som standard.
+Rull ut schema 0053 og alle kompatible workerar til prod og canary før han
+blir slått på. Flagget styrer kølegging av nye samtaleoppfølgingar; det
+tilbakekallar ikkje allereie kølagde jobbar. Ved rollback skal slike jobbar
+drenerast eller stoppast før eldre workerar blir brukte.
+
 Triggertekst vert trimma, whitespace normalisert og samanlikna utan
 skilnad på store/små bokstavar. Heile uttrykket må treffast med
 bokstav-/talgrense rundt; brukerdefinert regex blir ikkje køyrd.
