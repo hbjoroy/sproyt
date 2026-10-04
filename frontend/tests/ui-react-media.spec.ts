@@ -41,10 +41,12 @@ test("React sends real attachment-only messages and opens a full-screen zoomable
   const image = message.getByRole("img");
   await expect(image).toHaveCSS("object-fit", "contain");
   await expect(message.getByRole("link", { name: "Last ned landskap.png" })).toHaveAttribute("download", "landskap.png");
+  await expect(message.getByRole("link", { name: "Last ned landskap.png" })).toHaveAttribute("target", "_blank");
   await message.getByRole("button", { name: "Vis originalbiletet" }).click();
   const lightbox = preview.getByRole("dialog", { name: "landskap.png" });
   const original = lightbox.getByRole("img", { name: "landskap.png" });
   await expect(original).toBeVisible();
+  await expect(lightbox.getByRole("link", { name: "Last ned landskap.png" })).toHaveAttribute("target", "_blank");
   const viewerDownload = page.waitForEvent("download");
   await lightbox.getByRole("link", { name: "Last ned landskap.png" }).click();
   await expect(lightbox.locator(".sp-media-download-notice")).toHaveText("Nedlasting starta");
