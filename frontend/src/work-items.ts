@@ -1,9 +1,12 @@
-import { HttpClient } from "./api";
+import { HttpClient, HttpError } from "./api";
 import { isRecord } from "./types";
 
 export type WorkApplication = Readonly<{ id: string; key: string; name: string }>;
 export type WorkItemDraft = Readonly<{ source_body: string; title: string; suggested_by_model: boolean }>;
 export type WorkItemReceipt = Readonly<{ id: string; title: string; status: string; start_status: string }>;
+export type WorkItemSupplement = Readonly<{ id: string; actor_name: string; body: string; created_at: string }>;
+export type SourceWorkItem = Readonly<{ id: string; source_message_id: string; revision: number; title: string;
+  description: string; application_name: string; status: string; can_supplement: boolean; supplements: readonly WorkItemSupplement[] }>;
 export type StatusChangeReceipt = Readonly<{ id: string; work_item_id: string; channel_name: string; start_status: "pending" | "waiting" | "completed" | "cancelled" | "failed" }>;
 export type WorkItemStatusHistory = Readonly<{ from_status: string; to_status: string; actor_name: string; created_at: string | number; internal_note: string | null; public_feedback: string | null }>;
 export type WorkItemLifecycle = Readonly<{ case_status: string; can_start: boolean; allowed_statuses: readonly string[];
@@ -29,6 +32,7 @@ export type WorkItemTask = Readonly<{
   lifecycle?: WorkItemLifecycle | null;
   can_request_information: boolean;
   information_request: string | null; information_response: string | null;
+  supplements?: readonly WorkItemSupplement[];
 }>;
 
 export function workItemTaskId(body: string): string | null {
@@ -42,6 +46,27 @@ const uuid = (value: unknown): value is string => typeof value === "string" && /
 const timestamp = (value: unknown): value is string | number =>
   (typeof value === "string" && value.length > 0) || (typeof value === "number" && Number.isFinite(value));
 const nullableText = (value: unknown): value is string | null => value === null || typeof value === "string";
+const supplement = (value: unknown): value is WorkItemSupplement => isRecord(value) && uuid(value.id)
+  && typeof value.actor_name === "string" && typeof value.body === "string" && typeof value.created_at === "string"
+  && value.created_at.length > 0
+  && Object.keys(value).every(key => ["id", "actor_name", "body", "created_at"].includes(key));
+
+export function decodeSourceWorkItem(value: unknown): SourceWorkItem {
+  if (!isRecord(value) || !uuid(value.id) || !uuid(value.source_message_id)
+    || !Number.isSafeInteger(value.revision) || Number(value.revision) < 1 || typeof value.title !== "string"
+    || typeof value.description !== "string" || typeof value.application_name !== "string" || typeof value.status !== "string"
+    || typeof value.can_supplement !== "boolean" || !Array.isArray(value.supplements) || !value.supplements.every(supplement)
+    || !Object.keys(value).every(key => ["id", "source_message_id", "revision", "title", "description", "application_name", "status", "can_supplement", "supplements"].includes(key)))
+    throw new Error("Kunne ikkje lese den registrerte saka.");
+  return value as SourceWorkItem;
+}
+
+export function githubWorkItemDraft(task: WorkItemTask): string {
+  const details = task.supplements?.map(entry => `### Tilleggsinformasjon frå ${entry.actor_name}\n\n${entry.body}`).join("\n\n");
+  return details ? `${task.description}\n\n${details}` : task.description;
+}
+
+export const validSupplementBody = (body: string): boolean => body.trim().length > 0 && new TextEncoder().encode(body).length <= 8000;
 const statusHistory = (value: unknown): value is WorkItemStatusHistory => isRecord(value)
   && typeof value.from_status === "string" && typeof value.to_status === "string"
   && typeof value.actor_name === "string" && timestamp(value.created_at)
@@ -78,6 +103,7 @@ export function decodeWorkItemTask(value: unknown): WorkItemTask {
     || typeof value.assignee_name !== "string" || typeof value.blocked !== "boolean"
     || !["review", "provide-information", "followup-review", "publish-github", "change-status"].includes(String(value.node_id))
     || typeof value.can_request_information !== "boolean"
+    || !(value.supplements === undefined || Array.isArray(value.supplements) && value.supplements.every(supplement))
     || (value.can_request_information && value.node_id !== "review")
     || !(value.information_request === null || typeof value.information_request === "string")
     || !(value.information_response === null || typeof value.information_response === "string")
@@ -106,6 +132,49 @@ export class WorkItemApi {
   private readonly applicationsCache = new Map<string, Promise<readonly WorkApplication[]>>();
   private readonly admissions = new Map<string, { payload: string; id: string; revision?: number }>();
   constructor(private readonly http: HttpClient, private readonly identity: () => string) {}
+
+  async sourceItems(channelId: string, messageId: string): Promise<SourceWorkItem[]> {
+    return this.http.json(`/api/v1/channels/${encodeURIComponent(channelId)}/work-items/source/${encodeURIComponent(messageId)}`, value => {
+      if (!Array.isArray(value)) throw new Error("Kunne ikkje lese dei registrerte sakene.");
+      const items = value.map(decodeSourceWorkItem);
+      if (items.some(item => item.source_message_id !== messageId)) throw new Error("Svaret gjeld ei anna melding.");
+      return items;
+    });
+  }
+
+  pendingSupplement(item: SourceWorkItem): string | null {
+    const saved = this.pendingAdmission(`sproyt-work-item-supplement:${this.identity()}:${item.id}:${item.source_message_id}`);
+    if (!saved) return null;
+    try { const value: unknown = JSON.parse(saved.payload);
+      return isRecord(value) && value.item === item.id && value.source_message_id === item.source_message_id && typeof value.body === "string" ? value.body : null;
+    } catch { return null; }
+  }
+
+  async supplement(item: SourceWorkItem, body: string): Promise<SourceWorkItem> {
+    if (!validSupplementBody(body)) throw new Error("Informasjonen er tom eller for lang.");
+    const key = `sproyt-work-item-supplement:${this.identity()}:${item.id}:${item.source_message_id}`;
+    const admission = this.admitCommand(key, JSON.stringify({ item: item.id, source_message_id: item.source_message_id, body }), item.revision);
+    try {
+      const result = await this.http.json(`/api/v1/work-items/${encodeURIComponent(item.id)}/supplements`, decodeSourceWorkItem,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          source_message_id: item.source_message_id, request_id: admission.id, expected_revision: admission.revision, body
+        }) });
+      if (result.id !== item.id || result.source_message_id !== item.source_message_id) throw new Error("Svaret gjeld ei anna sak.");
+      this.clearAdmission(key); return result;
+    } catch (cause) { if (cause instanceof HttpError && cause.status === 409) this.clearAdmission(key); throw cause; }
+  }
+
+  pendingDecision(task: WorkItemTask): { category: string; priority: string; status: string; note: string; expected_supplement_id: string | null } | null {
+    const saved = this.pendingAdmission(`sproyt-work-item-decision:${this.identity()}:${task.id}`);
+    if (!saved) return null;
+    try { const value: unknown = JSON.parse(saved.payload);
+      return isRecord(value) && value.task === task.id && value.message === task.message_id && typeof value.category === "string"
+        && typeof value.priority === "string" && typeof value.status === "string" && typeof value.note === "string"
+        && (value.expected_supplement_id === undefined || value.expected_supplement_id === null || uuid(value.expected_supplement_id))
+        ? { category: value.category, priority: value.priority, status: value.status, note: value.note,
+          expected_supplement_id: typeof value.expected_supplement_id === "string" ? value.expected_supplement_id : null } : null;
+    } catch { return null; }
+  }
 
   applications(channelId: string): Promise<readonly WorkApplication[]> {
     const cached = this.applicationsCache.get(channelId);
@@ -251,28 +320,21 @@ export class WorkItemApi {
   }
 
   async decide(task: WorkItemTask, category: string, priority: string, status: string, note = ""): Promise<WorkItemTask> {
-    const payload = JSON.stringify({ task: task.id, message: task.message_id, category, priority, status, note });
     const key = `sproyt-work-item-decision:${this.identity()}:${task.id}`;
-    let admission = this.admissions.get(key);
-    if (!admission) {
-      try {
-        const saved = JSON.parse(sessionStorage.getItem(key) || "null") as unknown;
-        if (isRecord(saved) && saved.payload === payload && uuid(saved.id) && Number.isSafeInteger(saved.revision) && Number(saved.revision) > 0) admission = { payload, id: saved.id, revision: Number(saved.revision) };
-      } catch { /* optional storage */ }
-    }
-    if (!admission || admission.payload !== payload) {
-      admission = { payload, id: crypto.randomUUID(), revision: task.revision };
-      this.admissions.set(key, admission);
-      try { sessionStorage.setItem(key, JSON.stringify(admission)); } catch { /* optional storage */ }
-    }
-    const result = await this.http.json(`/api/v1/work-item-tasks/${encodeURIComponent(task.id)}/decide`, decodeWorkItemTask,
+    const pending = this.pendingDecision(task);
+    const expected_supplement_id = pending ? pending.expected_supplement_id : task.supplements?.at(-1)?.id ?? null;
+    const payload = JSON.stringify({ task: task.id, message: task.message_id, category, priority, status, note, expected_supplement_id });
+    const saved = this.pendingAdmission(key);
+    const legacy = JSON.stringify({ task: task.id, message: task.message_id, category, priority, status, note });
+    const admission = expected_supplement_id === null && saved?.payload === legacy ? saved : this.admitCommand(key, payload, task.revision);
+    try {
+      const result = await this.http.json(`/api/v1/work-item-tasks/${encodeURIComponent(task.id)}/decide`, decodeWorkItemTask,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-      message_id: task.message_id, request_id: admission.id, expected_revision: admission.revision ?? task.revision, category, priority, status, note
+      message_id: task.message_id, request_id: admission.id, expected_revision: admission.revision ?? task.revision, category, priority, status, note, expected_supplement_id
     }) });
     if (result.id !== task.id || result.message_id !== task.message_id) throw new Error("Avgjerda gjeld ei anna oppgåve.");
-    this.admissions.delete(key);
-    try { sessionStorage.removeItem(key); } catch { /* optional storage */ }
-    return result;
+      this.clearAdmission(key); return result;
+    } catch (cause) { if (cause instanceof HttpError && cause.status === 409) this.clearAdmission(key); throw cause; }
   }
 
   private githubKey(task: WorkItemTask): string {

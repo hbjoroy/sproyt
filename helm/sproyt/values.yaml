@@ -60,6 +60,7 @@ config:
   ferryUrl: ""
   # Activate after all shared-database workers support schema 54 and ferry jobs.
   ferryAgentsEnabled: false
+  workItemSupplementsEnabled: false
   chatAgentFollowupsEnabled: false
   imagegenWebResearch: false
   mcpAllowedOrigins: https://sproyt.bjoroy.me

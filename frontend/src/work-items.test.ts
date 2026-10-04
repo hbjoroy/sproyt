@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HttpClient } from "./api";
-import { WorkItemApi, decodePublicWorkItemStatus, decodeWorkItemTask, workItemStatusId, workItemTaskId, type WorkItemTask } from "./work-items";
+import { WorkItemApi, decodePublicWorkItemStatus, decodeWorkItemTask, decodeSourceWorkItem, githubWorkItemDraft, validSupplementBody, workItemStatusId, workItemTaskId, type WorkItemTask } from "./work-items";
 
 const id = "c63ac052-a05a-4b5d-bfff-04429338df90";
 const message = "28f01db0-20f1-42f0-953a-176bc76ce0d1";
@@ -207,4 +207,89 @@ test("task reads are bound to the actual message and current identity", async ()
   assert.equal((await api.task(id, message)).message_id, message);
   assert.match(requests[0]!, /message_id=.*&participant=participant-1$/);
   await assert.rejects(() => api.task(id, "wrong-message"), /anna oppgåve/);
+});
+
+const sourceItem = { id: app, source_message_id: message, revision: 1, title: "Feil på mobil", description: "Skrivefeltet forsvinn",
+  application_name: "Sprøyt", status: "reviewing", can_supplement: true, supplements: [] };
+const extra = { id, actor_name: "Innmeldar", body: "Også på iPhone", created_at: "2026-10-04 20:30:00+00" };
+
+test("source case DTO rejects internal fields and requires source binding, explicit rights and public supplement history", async () => {
+  assert.deepEqual(decodeSourceWorkItem({ ...sourceItem, supplements: [extra] }).supplements, [extra]);
+  for (const value of [{ ...sourceItem, internal_note: "secret" }, { ...sourceItem, can_supplement: "yes" },
+    { ...sourceItem, revision: 0 }, { ...sourceItem, supplements: [{ ...extra, actor_id: "private" }] },
+    { ...sourceItem, supplements: [{ ...extra, created_at: 123 }] }]) assert.throws(() => decodeSourceWorkItem(value));
+  const api = new WorkItemApi(new HttpClient({ fetch: async () => Response.json([sourceItem]) }), () => "user");
+  await assert.rejects(api.sourceItems("channel", id), /anna melding/);
+  assert.ok(validSupplementBody("ø".repeat(4000))); assert.equal(validSupplementBody("ø".repeat(4001)), false);
+  assert.equal(validSupplementBody(" "), false);
+});
+
+test("supplement retry journal survives reload with exact original revision and clears only after acceptance or confirmed conflict", async () => {
+  const previousStorage = globalThis.sessionStorage;
+  const stored = new Map<string, string>();
+  Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: {
+    getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value), removeItem: (key: string) => stored.delete(key)
+  } });
+  try {
+    let result = "lost";
+    const bodies: Record<string, unknown>[] = [];
+    const http = new HttpClient({ fetch: async (_, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      if (result === "lost") throw new Error("accepted response lost");
+      if (result === "conflict") return new Response("Ny informasjon", { status: 409 });
+      return Response.json({ ...sourceItem, revision: 2, supplements: [extra] });
+    } });
+    const first = new WorkItemApi(http, () => "requester");
+    await assert.rejects(first.supplement(sourceItem, "Også på iPhone"));
+    const next = new WorkItemApi(http, () => "requester");
+    assert.equal(next.pendingSupplement(sourceItem), "Også på iPhone");
+    await assert.rejects(next.supplement({ ...sourceItem, revision: 2 }, "Endra tekst"), /same val/);
+    result = "accepted"; await next.supplement({ ...sourceItem, revision: 2 }, "Også på iPhone");
+    assert.deepEqual(bodies[0], bodies[1]); assert.equal(bodies[1]!.expected_revision, 1);
+    assert.equal(next.pendingSupplement(sourceItem), null);
+    result = "conflict"; await assert.rejects(next.supplement(sourceItem, "Ny tekst"));
+    const conflicted = bodies.at(-1)!; assert.equal(next.pendingSupplement(sourceItem), null);
+    result = "accepted"; await next.supplement({ ...sourceItem, revision: 3 }, "Ny tekst");
+    assert.equal(bodies.at(-1)!.expected_revision, 3); assert.notEqual(bodies.at(-1)!.request_id, conflicted.request_id);
+  } finally {
+    if (previousStorage === undefined) delete (globalThis as { sessionStorage?: Storage }).sessionStorage;
+    else Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: previousStorage });
+  }
+});
+
+test("review retries reject changed choices and GitHub initial draft includes supplements without rewriting server text", async () => {
+  const bodies: any[] = [];
+  const api = new WorkItemApi(new HttpClient({ fetch: async (_, init) => {
+    bodies.push(JSON.parse(String(init?.body))); if (bodies.length === 1) throw new Error("lost"); return Response.json(task);
+  } }), () => "reviewer");
+  await assert.rejects(api.decide(task, "bug", "high", "planned"));
+  await assert.rejects(api.decide({ ...task, revision: 2 }, "bug", "low", "planned"), /same val/);
+  await api.decide({ ...task, revision: 2 }, "bug", "high", "planned");
+  assert.deepEqual(bodies[0], bodies[1]); assert.equal(bodies[1].expected_revision, 1);
+  assert.match(githubWorkItemDraft({ ...task, supplements: [extra] }), /Skrivefeltet forsvinn[\s\S]*Innmeldar[\s\S]*Også på iPhone/);
+  assert.throws(() => decodeWorkItemTask({ ...task, supplements: [{ ...extra, internal_note: "private" }] }));
+});
+
+test("review admission freezes the last supplement marker across a new client and newly polled information", async () => {
+  const previousStorage = globalThis.sessionStorage;
+  const stored = new Map<string, string>();
+  Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: {
+    getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value), removeItem: (key: string) => stored.delete(key)
+  } });
+  try {
+    const bodies: any[] = [];
+    const http = new HttpClient({ fetch: async (_, init) => {
+      bodies.push(JSON.parse(String(init?.body))); if (bodies.length === 1) throw new Error("lost"); return Response.json(task);
+    } });
+    const first = new WorkItemApi(http, () => "marker-reviewer");
+    await assert.rejects(first.decide({ ...task, supplements: [extra] }, "bug", "high", "planned"));
+    const next = new WorkItemApi(http, () => "marker-reviewer");
+    const refreshed = { ...task, revision: 2, supplements: [extra, { ...extra, id: message, body: "Nyare informasjon" }] };
+    assert.equal(next.pendingDecision(refreshed)?.expected_supplement_id, extra.id);
+    await next.decide(refreshed, "bug", "high", "planned");
+    assert.deepEqual(bodies[0], bodies[1]); assert.equal(bodies[1].expected_supplement_id, extra.id); assert.equal(bodies[1].expected_revision, 1);
+  } finally {
+    if (previousStorage === undefined) delete (globalThis as { sessionStorage?: Storage }).sessionStorage;
+    else Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: previousStorage });
+  }
 });

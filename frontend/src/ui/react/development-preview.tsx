@@ -1,5 +1,5 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
-import { useEffect, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import type { ApplicationRuntime } from "../../application/runtime";
 import { installSproytStyles, type SproytThemeMode } from "../design-system";
@@ -220,6 +220,29 @@ function PreviewMessageMutations({ host, message }: { readonly host: Development
   </>;
 }
 
+function WorkItemMenuAction({ host, message, hasApplications, onOpen }: {
+  host: DevelopmentPreviewHost; message: ChatMessage; hasApplications: boolean; onOpen: () => void;
+}) {
+  const [hasItems, setHasItems] = useState(false);
+  const anchor = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (hasApplications) return;
+    let active = true;
+    let requested = false;
+    const dialog = anchor.current?.closest("dialog");
+    const load = () => {
+      if (!dialog?.open || requested) return;
+      requested = true;
+      void host.workItems.sourceItems(message.channel_id, message.id).then(items => { if (active) setHasItems(items.length > 0); }).catch(() => { requested = false; });
+    };
+    const observer = new MutationObserver(load);
+    if (dialog) observer.observe(dialog, { attributes: true, attributeFilter: ["open"] });
+    load();
+    return () => { active = false; observer.disconnect(); };
+  }, [host.workItems, message.channel_id, message.id, hasApplications]);
+  return <span ref={anchor}>{(hasApplications || hasItems) && <Button onClick={onOpen}>Arbeidssaker</Button>}</span>;
+}
+
 function MessageActions({ host, message, threadAction, openReaction }: {
   readonly host: DevelopmentPreviewHost; readonly message: ChatMessage;
   readonly threadAction: React.ReactNode;
@@ -242,7 +265,8 @@ function MessageActions({ host, message, threadAction, openReaction }: {
     <PreviewReactionActions message={message} host={host} open={openReaction} primaryAction={threadAction}
       overflowActions={close => <>
         <PreviewMessageMutations message={message} host={host} />
-        {apps.length > 0 && <Button onClick={() => { close(); setIssueOpen(true); }}>Lag Issue</Button>}
+        {!isAgent && !workItemTaskId(message.body) && !workItemStatusId(message.body) && !processTaskId(message.body)
+          && <WorkItemMenuAction host={host} message={message} hasApplications={apps.length > 0} onOpen={() => { close(); setIssueOpen(true); }} />}
       </>} />
     {issueOpen && <WorkItemRegistration api={host.workItems} message={message} open onClose={() => setIssueOpen(false)} />}
   </>;
