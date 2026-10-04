@@ -57,6 +57,7 @@ config:
   weatherUrl: ""
   # Enable only after all shared-database workers support weather/followup jobs.
   weatherAgentsEnabled: false
+  chatAgentFollowupsEnabled: false
   imagegenWebResearch: false
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60
