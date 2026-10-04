@@ -176,6 +176,7 @@ impl Fixture {
             );
         }
         let service = WorkItems {
+            supplements_enabled: true,
             store,
             heart_url: None,
             vllm_url: None,

@@ -21,6 +21,8 @@ mod github_export;
 pub(crate) use github_export::{ExportCommand, ExportView};
 mod status_change;
 pub(crate) use status_change::{StatusDecision, StatusStart};
+mod supplements;
+pub(crate) use supplements::SupplementCommand;
 
 const DEFINITION: &str = include_str!("../helm/sproyt/definitions/work-item-review.yaml");
 const INFORMATION_DEFINITION: &str =
@@ -66,6 +68,7 @@ pub(crate) struct WorkItems {
     vllm_key: Option<String>,
     http: reqwest::Client,
     github: Option<crate::github::GitHub>,
+    supplements_enabled: bool,
 }
 
 #[derive(Clone, Deserialize)]
@@ -154,6 +157,7 @@ pub(crate) struct TaskView {
     pub can_request_information: bool,
     pub information_request: Option<String>,
     pub information_response: Option<String>,
+    pub supplements: Vec<supplements::Supplement>,
     pub github_export: Option<ExportView>,
     pub lifecycle: Option<status_change::Lifecycle>,
 }
@@ -163,6 +167,8 @@ pub(crate) struct Decision {
     pub message_id: Uuid,
     pub request_id: Uuid,
     pub expected_revision: i64,
+    #[serde(default)]
+    pub expected_supplement_id: Option<Uuid>,
     pub category: String,
     pub priority: String,
     pub status: String,
@@ -211,6 +217,8 @@ impl WorkItems {
             vllm_key: std::env::var("SPROYT_VLLM_API_KEY").ok(),
             http,
             github: crate::github::GitHub::from_env().map_err(storage)?,
+            supplements_enabled: std::env::var("SPROYT_WORK_ITEM_SUPPLEMENTS_ENABLED")
+                .is_ok_and(|value| value == "true"),
         })
     }
 
@@ -264,7 +272,14 @@ impl WorkItems {
     }
 
     pub async fn task(&self, actor: UserId, id: Uuid, message: Uuid) -> Result<TaskView> {
-        if let Some(view) = self.status_task(actor.clone(), id, message).await? {
+        if let Some(mut view) = self.status_task(actor.clone(), id, message).await? {
+            view.supplements = self
+                .supplements(
+                    &actor.to_string(),
+                    view.work_item_id,
+                    supplements::SupplementScope::StatusTask { id, message },
+                )
+                .await?;
             return Ok(view);
         }
         let actor = actor.to_string();
@@ -292,12 +307,22 @@ impl WorkItems {
                 blocked: status=="pending" && assigned_allowed.is_none(),
                 can_request_information: node=="review" && row.try_get::<String,_>("definition_version").map_err(storage)?=="1.1.0",
                 node_id: node, information_request: row.try_get("information_request").map_err(storage)?,
-                information_response: row.try_get("information_response").map_err(storage)?, github_export: None, lifecycle: None })
+                information_response: row.try_get("information_response").map_err(storage)?, supplements: Vec::new(), github_export: None, lifecycle: None })
         }}; }
         let mut view = match &self.store {
             Store::Pg(pool) => read!(pool, true),
             Store::Sqlite(pool) => read!(pool, false),
         }?;
+        view.supplements = self
+            .supplements(
+                &actor,
+                view.work_item_id,
+                supplements::SupplementScope::Task {
+                    id: view.id,
+                    message: view.message_id,
+                },
+            )
+            .await?;
         view.lifecycle = self
             .lifecycle(
                 UserId::from_uuid(Uuid::parse_str(&actor).map_err(storage)?),
@@ -325,7 +350,7 @@ impl WorkItems {
         let message = command.message_id.to_string();
         macro_rules! save { ($pool:expr,$pg:expr) => {{
             let mut tx = $pool.begin().await.map_err(storage)?;
-            let rights = sql("select cast(w.id as text) as work_item_id,w.revision,w.process_status,w.definition_version,t.node_id,cast(t.assignee_id as text) as assignee_id,t.status,cast(t.decision_request_id as text) as decision_request_id,t.decision_revision,t.decision_note,t.decision_category,t.decision_priority,t.decision_status from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid and cm.role<>'observer' where t.id=?uuid and t.message_id=?uuid and t.assignee_id=cm.user_id and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review','publish-github') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
+            let rights = sql("select cast(w.id as text) as work_item_id,w.revision,w.process_status,w.definition_version,t.node_id,cast(t.assignee_id as text) as assignee_id,t.status,cast(t.decision_request_id as text) as decision_request_id,t.decision_revision,t.decision_note,t.decision_category,t.decision_priority,t.decision_status,cast(t.decision_supplement_id as text) as decision_supplement_id from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid and cm.role<>'observer' where t.id=?uuid and t.message_id=?uuid and t.assignee_id=cm.user_id and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review','publish-github') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
             let row = sqlx::query(&rights).bind(&actor_string).bind(&id_string).bind(&message).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
             if row.try_get::<String,_>("assignee_id").map_err(storage)? != actor_string { return Err(RepositoryError::PermissionDenied); }
             let node: String = row.try_get("node_id").map_err(storage)?;
@@ -345,6 +370,7 @@ impl WorkItems {
                     || row.try_get::<Option<String>,_>("decision_priority").map_err(storage)?.unwrap_or_default()!=command.priority
                     || row.try_get::<Option<String>,_>("decision_status").map_err(storage)?.unwrap_or_default()!=command.status
                     || row.try_get::<Option<String>,_>("decision_note").map_err(storage)?.unwrap_or_default()!=command.note
+                    || row.try_get::<Option<String>,_>("decision_supplement_id").map_err(storage)? != command.expected_supplement_id.map(|id| id.to_string())
                     || row.try_get::<Option<i64>,_>("decision_revision").map_err(storage)?.is_some_and(|r| r!=command.expected_revision) { return Err(RepositoryError::Conflict); }
                 tx.commit().await.map_err(storage)?;
                 return self.task(actor,id,command.message_id).await;
@@ -352,8 +378,10 @@ impl WorkItems {
             if row.try_get::<String,_>("status").map_err(storage)? != "pending"
                 || row.try_get::<String,_>("process_status").map_err(storage)? != "waiting"
                 || row.try_get::<i64,_>("revision").map_err(storage)? != command.expected_revision { return Err(RepositoryError::Conflict); }
-            let update = sql("update work_item_tasks set decision_request_id=?uuid,decision_category=?,decision_priority=?,decision_status=?,decision_note=?,decision_revision=?,delivery_status='pending' where id=?uuid and decision_request_id is null and status='pending'",$pg);
-            let changed = sqlx::query(&update).bind(command.request_id.to_string()).bind((!information).then_some(&command.category)).bind((!information).then_some(&command.priority)).bind((!information).then_some(&command.status)).bind(&command.note).bind(command.expected_revision).bind(&id_string).execute(&mut *tx).await.map_err(storage)?.rows_affected();
+            let seen=sqlx::query_scalar::<_,String>(&sql("select cast(id as text) from work_item_supplements where work_item_id=?uuid order by expected_revision desc limit 1",$pg)).bind(row.try_get::<String,_>("work_item_id").map_err(storage)?).fetch_optional(&mut *tx).await.map_err(storage)?;
+            if seen != command.expected_supplement_id.map(|id|id.to_string()) { return Err(RepositoryError::Conflict); }
+            let update = sql("update work_item_tasks set decision_request_id=?uuid,decision_category=?,decision_priority=?,decision_status=?,decision_note=?,decision_revision=?,decision_supplement_id=?uuid,delivery_status='pending' where id=?uuid and decision_request_id is null and status='pending'",$pg);
+            let changed = sqlx::query(&update).bind(command.request_id.to_string()).bind((!information).then_some(&command.category)).bind((!information).then_some(&command.priority)).bind((!information).then_some(&command.status)).bind(&command.note).bind(command.expected_revision).bind(command.expected_supplement_id.map(|id| id.to_string())).bind(&id_string).execute(&mut *tx).await.map_err(storage)?.rows_affected();
             if changed != 1 { return Err(RepositoryError::Conflict); }
             let item: String = row.try_get("work_item_id").map_err(storage)?;
             let bump = sql("update work_items set revision=revision+1 where id=?uuid and revision=?",$pg);
@@ -1035,6 +1063,7 @@ mod tests {
             vllm_key: None,
             http: reqwest::Client::new(),
             github: None,
+            supplements_enabled: true,
         };
         assert_eq!(
             service
@@ -1179,6 +1208,7 @@ mod tests {
             Err(RepositoryError::NotFound)
         ));
         let decision = Decision {
+            expected_supplement_id: None,
             message_id: projected,
             request_id: Uuid::now_v7(),
             expected_revision: task.revision,
@@ -1557,7 +1587,26 @@ mod tests {
                 .unwrap()
                 .can_decide
         );
+        let supplement = supplements::exercise_supplements(
+            &connected,
+            owner,
+            reviewer,
+            source_channel,
+            source,
+            &task,
+        )
+        .await;
+        assert_eq!(
+            receipts.lock().await.len(),
+            0,
+            "Supplement must not complete a Heart task"
+        );
+        let task = connected
+            .task(UserId::from_uuid(reviewer), task_ids[0], review_message)
+            .await
+            .unwrap();
         let question = Decision {
+            expected_supplement_id: task.supplements.last().map(|value| value.id),
             message_id: review_message,
             request_id: Uuid::now_v7(),
             expected_revision: task.revision,
@@ -1616,6 +1665,17 @@ mod tests {
         assert!(info.can_decide);
         assert!(
             !connected
+                .source_items(UserId::from_uuid(owner), source_channel, source)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|view| view.id == item.id)
+                .unwrap()
+                .can_supplement,
+            "Use the assigned information task while the handler awaits an answer"
+        );
+        assert!(
+            !connected
                 .task(UserId::from_uuid(reviewer), task_ids[1], info_message)
                 .await
                 .unwrap()
@@ -1628,6 +1688,7 @@ mod tests {
             Err(RepositoryError::NotFound)
         ));
         let answer = Decision {
+            expected_supplement_id: info.supplements.last().map(|value| value.id),
             message_id: info_message,
             request_id: Uuid::now_v7(),
             expected_revision: info.revision,
@@ -1705,6 +1766,7 @@ mod tests {
             Some("Edge on Android 16")
         );
         let final_decision = Decision {
+            expected_supplement_id: final_task.supplements.last().map(|value| value.id),
             message_id: final_message,
             request_id: Uuid::now_v7(),
             expected_revision: final_task.revision,
@@ -1727,10 +1789,43 @@ mod tests {
                 .await,
             Err(RepositoryError::Conflict)
         ));
-        connected
-            .decide(UserId::from_uuid(reviewer), task_ids[2], final_decision)
-            .await
-            .unwrap();
+        // Competing additions and decisions share one revision. Only one may win.
+        let racing_supplement = SupplementCommand {
+            request_id: Uuid::now_v7(),
+            expected_revision: final_task.revision,
+            body: "A final clarification before review completes".into(),
+            ..supplement.clone()
+        };
+        let (addition, decision) = tokio::join!(
+            connected.add_supplement(UserId::from_uuid(owner), item.id, racing_supplement),
+            connected.decide(
+                UserId::from_uuid(reviewer),
+                task_ids[2],
+                final_decision.clone()
+            ),
+        );
+        assert_ne!(
+            addition.is_ok(),
+            decision.is_ok(),
+            "Only one revision-CAS may succeed"
+        );
+        if let Ok(added) = addition {
+            assert!(matches!(decision, Err(RepositoryError::Conflict)));
+            connected
+                .decide(
+                    UserId::from_uuid(reviewer),
+                    task_ids[2],
+                    Decision {
+                        expected_revision: added.revision,
+                        expected_supplement_id: added.supplements.last().map(|value| value.id),
+                        ..final_decision
+                    },
+                )
+                .await
+                .unwrap();
+        } else {
+            assert!(matches!(addition, Err(RepositoryError::Conflict)));
+        }
         connected
             .reconcile(&chat, &item_id, &lease_token)
             .await
@@ -1747,6 +1842,34 @@ mod tests {
             .unwrap();
         assert_eq!(finished.process_status, "completed");
         assert_eq!(finished.decision_status.as_deref(), Some("resolved"));
+        let replay = restarted
+            .add_supplement(UserId::from_uuid(owner), item.id, supplement.clone())
+            .await
+            .unwrap();
+        assert!(
+            !replay.can_supplement,
+            "Completed cases reject new additions but retain exact receipts"
+        );
+        assert!(
+            replay
+                .supplements
+                .iter()
+                .any(|value| value.body == supplement.body)
+        );
+        assert!(matches!(
+            restarted
+                .add_supplement(
+                    UserId::from_uuid(owner),
+                    item.id,
+                    SupplementCommand {
+                        request_id: Uuid::now_v7(),
+                        expected_revision: replay.revision,
+                        ..supplement
+                    }
+                )
+                .await,
+            Err(RepositoryError::Conflict)
+        ));
         macro_rules! count {
             ($pool:expr,$pg:expr) => {{
                 let query = sql(
@@ -1873,6 +1996,7 @@ mod tests {
             vllm_key: None,
             http: reqwest::Client::new(),
             github: None,
+            supplements_enabled: true,
         };
         assert_eq!(
             service

@@ -283,6 +283,14 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             get(crate::web::work_items::task),
         )
         .route(
+            "/api/v1/channels/{id}/work-items/source/{message_id}",
+            get(crate::web::work_items::source_items),
+        )
+        .route(
+            "/api/v1/work-items/{id}/supplements",
+            post(crate::web::work_items::supplement),
+        )
+        .route(
             "/api/v1/work-item-tasks/{id}/decide",
             post(crate::web::work_items::decide),
         )
