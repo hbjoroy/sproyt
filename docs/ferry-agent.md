@@ -25,6 +25,11 @@ lagra krav i workerar. API-et rapporterer `ferry_available`.
 Kjelda sitt `fetched_at` blir bevart. Feil hamn/dato, framtidige eller for gamle
 data, ugyldige tider og for store svar blir avviste. Manglande tider og hamner
 blir ikkje fylte inn. Dato og klokkeslett bruker Europe/Athens, inkludert sommartid.
+Tenaren vel dei tre næraste kommande og tre nyaste tidlegare planlagde anløpa.
+Modellen får desse som kompakte tekstlinjer med kjeldemetadata, saman med
+målmeldinga og samtalekonteksten. Heile tabellen blir bevart i snapshotet.
+Eit tomt utval seier ikkje noko om faktiske anløp; ukjende fartøynamn blir ikkje
+oppdikta. Spørsmål utanfor utvalet kan krevje eit seinare, utvida oppslag.
 Snapshot og svar blir lagra atomisk på den leasa jobben. Snapshot er gyldig i
 høgst fem minutt og aldri over dato- eller kjeldealdergrensa. Retry og publisering
 kontrollerer fristen igjen. Feil i kjelda gir ikkje oppdikta fergefakta.

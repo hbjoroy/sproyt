@@ -194,6 +194,27 @@ fn normalize(
         }
         calls.push(normalized);
     }
+    // Select arrival facts on the server: the model must not confuse a route's
+    // destination with the port where these calls take place, or compare clocks.
+    let mut arrivals: Vec<_> = calls.iter().filter_map(|call| {
+        let time = NaiveTime::parse_from_str(call["scheduled_arrival_local"].as_str()?, "%H:%M").ok()?;
+        Some((time, json!({"port":"paros", "vessel":call["vessel"],
+            "from_port":call["from_port"], "scheduled_arrival_local":call["scheduled_arrival_local"]})))
+    }).collect();
+    arrivals.sort_by_key(|(time, _)| *time);
+    let next_arrivals: Vec<_> = arrivals
+        .iter()
+        .filter(|(time, _)| *time >= local_now.time())
+        .take(3)
+        .map(|(_, call)| call.clone())
+        .collect();
+    let recent_arrivals: Vec<_> = arrivals
+        .iter()
+        .rev()
+        .filter(|(time, _)| *time < local_now.time())
+        .take(3)
+        .map(|(_, call)| call.clone())
+        .collect();
     let midnight = local_now
         .date_naive()
         .succ_opt()
@@ -213,6 +234,8 @@ fn normalize(
         "port":"paros", "date":requested_date, "timezone":"Europe/Athens",
         "fetched_at":fetched_at, "fetched_at_epoch":fetched.timestamp(),
         "local_now":local_now.to_rfc3339(), "valid_until_epoch":valid_until,
+        "next_scheduled_arrivals":next_arrivals,
+        "most_recent_scheduled_arrivals":recent_arrivals,
         "count":calls.len(), "calls":calls
     }))
 }
@@ -243,9 +266,58 @@ mod tests {
         assert_eq!(snapshot["valid_until_epoch"], now().timestamp() + 300);
         assert_eq!(snapshot["scheduled_only"], true);
         assert_eq!(snapshot["live_tracking"], false);
+        assert_eq!(
+            snapshot["next_scheduled_arrivals"][0]["vessel"],
+            "Blue Star Naxos"
+        );
+        assert_eq!(snapshot["next_scheduled_arrivals"][0]["port"], "paros");
+        assert!(
+            snapshot["most_recent_scheduled_arrivals"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(snapshot["calls"][0]["scheduled_arrival_local"], "12:15");
         assert!(snapshot["calls"][0]["scheduled_departure_local"].is_null());
         assert_eq!(snapshot["source_url"], SOURCE_URL);
+    }
+
+    #[test]
+    fn arrival_summaries_use_call_times_not_onward_destinations() {
+        let mut response = fixture(now()); // Athens 12:00.
+        response["schedules"] = json!([
+            {"date":"04/10/2026","vessel":"Third","arriving":"18:45","to_port":"Piraeus"},
+            {"date":"04/10/2026","vessel":"Unknown","leaving":"23:05","to_port":"Katapola"},
+            {"date":"04/10/2026","vessel":"Recent","arriving":"11:30"},
+            {"date":"04/10/2026","vessel":"Second","arriving":"17:55","from_port":"Rafina"},
+            {"date":"04/10/2026","vessel":"First","arriving":"16:55","from_port":"Mykonos"},
+            {"date":"04/10/2026","vessel":"Older","arriving":"08:45"},
+            {"date":"04/10/2026","vessel":"Fourth","arriving":"20:00"}
+        ]);
+        response["count"] = json!(7);
+        let snapshot = normalize(&response, "04/10/2026", now()).unwrap();
+        let next = snapshot["next_scheduled_arrivals"].as_array().unwrap();
+        assert_eq!(next.len(), 3);
+        assert_eq!(
+            next.iter()
+                .map(|call| call["vessel"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["First", "Second", "Third"]
+        );
+        assert!(
+            next.iter()
+                .all(|call| call["port"] == "paros" && call.get("to_port").is_none())
+        );
+        let recent = snapshot["most_recent_scheduled_arrivals"]
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            recent
+                .iter()
+                .map(|call| call["vessel"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["Recent", "Older"]
+        );
     }
 
     #[test]
