@@ -33,8 +33,14 @@ pub(super) fn publication_clause(pg: bool) -> String {
     } else {
         "j.weather_valid_until > cast(strftime('%s','now') as integer)"
     };
+    let ferry_fresh = if pg {
+        "j.ferry_valid_until > extract(epoch from clock_timestamp())"
+    } else {
+        "j.ferry_valid_until > cast(strftime('%s','now') as integer)"
+    };
     format!(
         " and (a.weather is null or {weather_fresh}) \
+        and (a.ferry_port is null or {ferry_fresh}) \
         and (j.followup_anchor_message_id is null or exists( \
         select 1 from circle_chat_agent_jobs previous \
         join command_receipts receipt on receipt.principal_id=previous.agent_id and receipt.request_id='circle-chat-agent:' || cast(previous.id as text) \

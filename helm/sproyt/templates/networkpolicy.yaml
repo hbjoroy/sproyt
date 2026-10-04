@@ -28,6 +28,19 @@ spec:
         - protocol: TCP
           port: 9010
   egress:
+    {{- if .Values.config.ferryUrl }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ferries
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ferry-schedule
+              app.kubernetes.io/instance: ferry-schedule
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- end }}
     - to:
         - namespaceSelector:
             {{- toYaml .Values.networkPolicy.dnsNamespaceSelector | nindent 12 }}

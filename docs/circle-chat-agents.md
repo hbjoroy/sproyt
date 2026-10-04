@@ -208,3 +208,7 @@ image som handhever lagra val og revisjonar.
 ## Vêrdata (#212)
 
 Ei avgrensa serverstyrt vêrfunksjon kan knytast til agentoppsettet. Sjå [vêragent](weather-agent.md) for stadval, grounded data, oppfølging, kontrakt og aktiveringshinder. Modellen får framleis ikkje generelle verktøy eller valfrie nettverksadresser.
+
+## Fergeruter
+
+Agentoppsettet har eit val for dagens planlagde anløp i Paros. Sjå [fergeoppslag](ferry-agent.md) for kjelde, ferskleik, tilgang og utrulling. Dette stadfestar ikkje faktiske anløp eller AIS-posisjonar.

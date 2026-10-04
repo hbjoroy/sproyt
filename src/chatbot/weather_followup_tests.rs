@@ -136,6 +136,7 @@ fn weather() -> WeatherConfig {
 
 fn input(weather: Option<WeatherConfig>, revision: Option<i64>) -> AgentInput {
     AgentInput {
+        ferry_port: None,
         weather: Some(weather),
         display_name: "Vêrvennen".into(),
         trigger_words: vec!["vêret".into()],
@@ -148,6 +149,7 @@ fn input(weather: Option<WeatherConfig>, revision: Option<i64>) -> AgentInput {
 async fn contract(store: Store) {
     // Configuration can be retained and edited while the external service is unavailable.
     let service = CircleChatAgents {
+        ferry: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -436,6 +438,138 @@ async fn postgres_weather_followup_contract() {
     contract(Store::Pg(pool)).await;
 }
 
+async fn ferry_contract(store: Store) {
+    let service = CircleChatAgents {
+        store: store.clone(),
+        model: None,
+        worker_enabled: false,
+        weather: None,
+        ferry: None,
+    };
+    let owner = UserId::new(Uuid::now_v7().to_string()).unwrap();
+    let other = UserId::new(Uuid::now_v7().to_string()).unwrap();
+    for actor in [&owner, &other] {
+        execute(
+            &store,
+            "insert into users(id,kind,display_name) values(?uuid,'human','Ferry contract')",
+            &[&actor.to_string()],
+        )
+        .await;
+    }
+    let circle = Uuid::now_v7().to_string();
+    execute(
+        &store,
+        "insert into circles(id,slug,name,created_by) values(?uuid,?,'Ferry contract',?uuid)",
+        &[&circle, &format!("ferry-{circle}"), &owner.to_string()],
+    )
+    .await;
+    execute(
+        &store,
+        "insert into circle_memberships(circle_id,user_id,role) values(?uuid,?uuid,'owner')",
+        &[&circle, &owner.to_string()],
+    )
+    .await;
+    let channel = conversation_channel(&store, &circle, &owner, &other).await;
+    let mut config = input(None, None);
+    config.display_name = "Ferry contract agent".into();
+    config.trigger_words = vec!["hjelp".into()];
+    config.ferry_port = Some(Some("paros".into()));
+    let agent = service
+        .create(&owner, &circle, config.clone())
+        .await
+        .unwrap();
+    assert_eq!(agent.ferry_port.as_deref(), Some("paros"));
+    assert!(!agent.worker_available);
+    // Older clients omit the new field; saving must retain its authority.
+    config.revision = Some(agent.revision);
+    config.ferry_port = None;
+    let retained = service
+        .update(&owner, &circle, &agent.agent_id, config.clone())
+        .await
+        .unwrap();
+    assert_eq!(retained.ferry_port.as_deref(), Some("paros"));
+    config.revision = Some(retained.revision);
+    config.enabled = true;
+    assert!(matches!(
+        service
+            .update(&owner, &circle, &agent.agent_id, config.clone())
+            .await,
+        Err(RepositoryError::Conflict)
+    ));
+    execute(
+        &store,
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+        &[&agent.agent_id],
+    )
+    .await;
+    let target = message(&store, &channel, &owner, 1, "Hjelp med ferga", None).await;
+    enqueue(&store, &target).await;
+    let job = service.claim().await.unwrap().unwrap();
+    assert_eq!(
+        service
+            .source(&job)
+            .await
+            .unwrap()
+            .unwrap()
+            .ferry_port
+            .as_deref(),
+        Some("paros")
+    );
+    assert!(matches!(
+        publication(&store, &job).await,
+        Err(RepositoryError::PermissionDenied)
+    ));
+    let future = (Utc::now().timestamp() + 300).to_string();
+    execute(&store, "update circle_chat_agent_jobs set reply_body='Eit konkret vêrsvar',ferry_snapshot='{}',ferry_valid_until=?int where id=?uuid", &[&future, &job.id]).await;
+    assert!(service.source(&job).await.unwrap().is_some());
+    publication(&store, &job).await.unwrap();
+    execute(
+        &store,
+        "update circle_chat_agent_jobs set ferry_valid_until=0 where id=?uuid",
+        &[&job.id],
+    )
+    .await;
+    denied(&service, &job, "expired ferry data cannot publish or retry").await;
+    config.enabled = false;
+    config.ferry_port = Some(None);
+    let cleared = service
+        .update(&owner, &circle, &agent.agent_id, config)
+        .await
+        .unwrap();
+    assert!(cleared.ferry_port.is_none());
+    assert!(
+        service.source(&job).await.unwrap().is_none(),
+        "configuration revision invalidates the old job"
+    );
+}
+
+#[tokio::test]
+async fn sqlite_ferry_agent_contract() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    ferry_contract(Store::Sqlite(pool)).await;
+}
+
+#[tokio::test]
+async fn postgres_ferry_agent_contract() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    ferry_contract(Store::Pg(pool)).await;
+}
+
 async fn conversation_enqueue(store: &Store, message: &ChatMessage, enabled: bool) {
     match store {
         Store::Sqlite(pool) => {
@@ -653,6 +787,7 @@ async fn age_conversation(
 
 async fn conversation_contract(store: Store) {
     let service = CircleChatAgents {
+        ferry: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -683,6 +818,7 @@ async fn conversation_contract(store: Store) {
             &owner,
             &circle,
             AgentInput {
+                ferry_port: None,
                 weather: Some(None),
                 display_name: "Samtalevennen".into(),
                 trigger_words: vec!["hjelp".into()],
@@ -783,6 +919,7 @@ async fn conversation_contract(store: Store) {
             &owner,
             &circle,
             AgentInput {
+                ferry_port: None,
                 weather: Some(None),
                 display_name: "Annan".into(),
                 trigger_words: vec!["eigen-trigger".into()],

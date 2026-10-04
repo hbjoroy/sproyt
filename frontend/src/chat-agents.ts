@@ -19,6 +19,7 @@ export type CircleChatAgent = Readonly<{
   revision: number;
   workerAvailable: boolean;
   weather: AgentWeather | null;
+  ferryPort?: "paros" | null;
 }>;
 
 export type CircleChatAgentInput = Readonly<{
@@ -28,6 +29,7 @@ export type CircleChatAgentInput = Readonly<{
   enabled: boolean;
   revision?: number;
   weather?: AgentWeather | null;
+  ferryPort?: "paros" | null;
 }>;
 
 export type ChannelChatAgents = Readonly<{
@@ -61,9 +63,12 @@ function decodeAgent(value: unknown): CircleChatAgent {
       || !validAgentWeather(value.weather as AgentWeather)) throw new Error("Ugyldig vêroppsett frå tenaren.");
     weather = { location: value.weather.location, latitude: value.weather.latitude, longitude: value.weather.longitude };
   }
+  if (value.ferry_port !== undefined && value.ferry_port !== null && value.ferry_port !== "paros")
+    throw new Error("Ugyldig fergehamn frå tenaren.");
   return { agentId: value.agent_id, circleId: value.circle_id, displayName: value.display_name,
     triggerWords: value.trigger_words, responsePhrases: value.response_phrases,
-    enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available, weather };
+    enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available, weather,
+    ferryPort: value.ferry_port === "paros" ? "paros" : null };
 }
 
 export class CircleChatAgentApi {
@@ -78,13 +83,14 @@ export class CircleChatAgentApi {
       { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled, access_revision: accessRevision }) });
   }
 
-  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean }> {
+  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean; ferryAvailable: boolean }> {
     const response = await this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, value => value);
     if (!isRecord(response) || !Array.isArray(response.agents) || typeof response.worker_available !== "boolean"
-      || (response.weather_available !== undefined && typeof response.weather_available !== "boolean"))
+      || (response.weather_available !== undefined && typeof response.weather_available !== "boolean")
+      || (response.ferry_available !== undefined && typeof response.ferry_available !== "boolean"))
       throw new Error("Ugyldig agentliste frå tenaren.");
     return { agents: response.agents.map(decodeAgent), workerAvailable: response.worker_available,
-      weatherAvailable: response.weather_available === true };
+      weatherAvailable: response.weather_available === true, ferryAvailable: response.ferry_available === true };
   }
 
   async create(circleId: string, input: CircleChatAgentInput): Promise<CircleChatAgent> {
@@ -99,6 +105,7 @@ export class CircleChatAgentApi {
 
   private body(input: CircleChatAgentInput) {
     return { display_name: input.displayName, trigger_words: input.triggerWords,
-      response_phrases: input.responsePhrases, enabled: input.enabled, revision: input.revision, weather: input.weather };
+      response_phrases: input.responsePhrases, enabled: input.enabled, revision: input.revision, weather: input.weather,
+      ferry_port: input.ferryPort };
   }
 }
