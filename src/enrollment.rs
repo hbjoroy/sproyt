@@ -152,6 +152,16 @@ impl EnrollmentService {
         expires_at: DateTime<Utc>,
     ) -> Result<ProvisionedEnrollment, EnrollmentError> {
         let (email, display_name) = validate_invitee(email, display_name)?;
+        // This server-issued capability is transported in Authentik's
+        // invitation object. The post-invitation policy reads it from there,
+        // never from editable prompt data or a caller-supplied redirect URL.
+        if enrollment_token.len() != 43
+            || !enrollment_token
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(EnrollmentError::Validation("invalid enrollment token"));
+        }
         let remaining = expires_at.signed_duration_since(Utc::now());
         if remaining <= chrono::Duration::zero()
             || remaining > chrono::Duration::hours(INVITATION_LIFETIME_HOURS)
@@ -161,6 +171,10 @@ impl EnrollmentService {
         let expires = expires_at.to_rfc3339_opts(SecondsFormat::Secs, true);
         let mut fixed_data = serde_json::Map::new();
         fixed_data.insert("email".to_owned(), email.into());
+        fixed_data.insert(
+            "sproyt_enrollment_token".to_owned(),
+            enrollment_token.into(),
+        );
         if let Some(display_name) = display_name {
             fixed_data.insert("name".to_owned(), display_name.into());
         }
@@ -419,9 +433,30 @@ mod tests {
             "secret-service-token",
         )
         .unwrap();
+        for invalid in [
+            "short".to_owned(),
+            "a".repeat(44),
+            format!("{}&", "a".repeat(42)),
+        ] {
+            assert!(matches!(
+                service
+                    .create(
+                        &invalid,
+                        "ny@example.com",
+                        None,
+                        Utc::now() + chrono::Duration::hours(24)
+                    )
+                    .await,
+                Err(EnrollmentError::Validation(_))
+            ));
+        }
+        assert!(
+            capture.0.lock().unwrap().is_none(),
+            "invalid capabilities must not reach Authentik"
+        );
         let result = service
             .create(
-                "enrollment_token-A_B",
+                "abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF",
                 " ny@example.com ",
                 Some(" Ny Brukar "),
                 Utc::now() + chrono::Duration::hours(24),
@@ -434,7 +469,7 @@ mod tests {
         assert_eq!(query["itoken"], "dcde5ce9-ca43-4003-8d0c-762e8554650c");
         assert_eq!(
             query["next"],
-            "https://sproyt.example/auth/login?enrollment=enrollment_token-A_B"
+            "https://sproyt.example/auth/login?enrollment=abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF"
         );
         assert_eq!(
             result.authentik_invitation_id,
@@ -447,6 +482,10 @@ mod tests {
         assert_eq!(body["flow"], "dcde5ce9-ca43-4003-8d0c-762e8554650c");
         assert_eq!(body["fixed_data"]["email"], "ny@example.com");
         assert_eq!(body["fixed_data"]["name"], "Ny Brukar");
+        assert_eq!(
+            body["fixed_data"]["sproyt_enrollment_token"],
+            "abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF"
+        );
         server.abort();
     }
 

@@ -162,6 +162,40 @@ be logged, including when invitation cleanup fails. This does not establish that
 proxy or identity-provider logs are redacted; verify those separately without
 copying real invitation URLs into diagnostic reports.
 
+Authentik 2026.8.2's invitation `send_email` API creates its own link containing
+only `itoken`; it does not send Sprøyt's separately returned `next` parameter.
+Its executor also rejects an absolute `next` URL unless a trusted policy sets
+the post-flow redirect. Sprøyt therefore stores its 43-character opaque token
+under `fixed_data.sproyt_enrollment_token` on the single-use invitation.
+The versioned blueprint's order-35 guard rejects malformed present continuation
+data; its order-40 policy reads only the actual invitation object, sets
+`flow_plan.context["redirect"]` to the pinned production Sprøyt login endpoint,
+and removes the duplicated transport field from prompt data before User Write.
+No user attribute or OIDC claim stores this token. The normal email-verification,
+User Write and login stages still run; this must not use `plan.redirect()` to
+end registration early. A caller's `next` or prompt field cannot change the
+destination or choose a different invitation.
+
+Deploy the application that supplies this field before activating the updated
+blueprint through the existing Helm-managed mount. Have the running Authentik
+2026.8.2 importer dry-run the candidate first. Invitations with an entirely
+absent continuation key retain their existing registration flow; this grace
+does not add a redirect or grant circle access. Three active unused legacy
+invitations were identified during the 5 October rollout review. Their missing
+circle continuity still needs a fresh owner-issued invitation or a separately
+reviewed private backfill; they are not silently invalidated by this blueprint.
+A present null, blank or malformed key fails closed. Never recover invitations
+by accepting all pending invitations for an email address. The local policy test
+`python3 tools/test-enrollment-continuation.py` executes the actual expression
+blocks with controlled context, but is not an Authentik importer test or proof
+of registration acceptance. Finish with a genuinely new user's delivered email
+link through registration, OIDC callback and exactly one intended membership,
+recording deployed revisions and redacted paths only.
+
+Upstream contract: [invitation email API](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/stages/invitation/api.py),
+[invitation stage](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/stages/invitation/stage.py),
+and [flow completion](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/flows/views/executor.py).
+
 The production flow must have slug `sproyt-invitation-enrollment`, designation
 `enrollment`, authentication `require_unauthenticated`, and an Invitation stage
 with **Continue flow without invitation** disabled. The current production
