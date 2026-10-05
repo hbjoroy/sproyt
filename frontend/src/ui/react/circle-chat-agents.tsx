@@ -1,6 +1,6 @@
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useState } from "react";
-import type { CircleChatAgent, CircleChatAgentApi, CircleChatAgentInput } from "../../chat-agents";
+import type { AgentImageGeneration, AgentImageIdentity, CircleChatAgent, CircleChatAgentApi, CircleChatAgentInput } from "../../chat-agents";
 import { validAgentWeather } from "../../chat-agents";
 
 const lines = (value: string) => value.split(/\r?\n/u).map(item => item.trim()).filter(Boolean);
@@ -16,6 +16,11 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [ferryEnabled, setFerryEnabled] = useState(false);
   const [visionAvailable, setVisionAvailable] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
+  const [imagesAvailable, setImagesAvailable] = useState(false);
+  const [imageIdentities, setImageIdentities] = useState<AgentImageIdentity[]>([]);
+  const [imagesEnabled, setImagesEnabled] = useState(false);
+  const [imageIdentity, setImageIdentity] = useState("");
+  const [imagesOccasional, setImagesOccasional] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -32,6 +37,13 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const weather = weatherEnabled ? { location: location.trim(), latitude: Number(latitude), longitude: Number(longitude) } : null;
   const weatherValid = !weather || (!!latitude.trim() && !!longitude.trim() && validAgentWeather(weather));
   const canUseVision = selected ? selected.visionAvailable : visionAvailable;
+  const canUseImages = selected ? selected.imageGenerationAvailable : imagesAvailable;
+  const imageGeneration: AgentImageGeneration | null = imageIdentity
+    ? { identityId: imageIdentity, enabled: imagesEnabled, occasional: imagesEnabled && imagesOccasional } : null;
+  const previousImages = selected?.imageGeneration ?? null;
+  const imagesUnchanged = imageGeneration?.identityId === previousImages?.identityId
+    && imageGeneration?.enabled === previousImages?.enabled && imageGeneration?.occasional === previousImages?.occasional;
+  const imagesValid = !imagesEnabled || (imageIdentities.some(identity => identity.id === imageIdentity) && (canUseImages || imagesUnchanged));
   const workerAvailable = available && (!weatherEnabled || weatherAvailable) && (!ferryEnabled || ferryAvailable) && (!visionEnabled || canUseVision);
 
   useEffect(() => {
@@ -41,6 +53,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       setAgents(result.agents); setAvailable(result.workerAvailable); setWeatherAvailable(result.weatherAvailable); setLoading(false);
       setFerryAvailable(result.ferryAvailable);
       setVisionAvailable(result.visionAvailable);
+      setImagesAvailable(result.imageGenerationAvailable); setImageIdentities(result.imageIdentities);
     }).catch(cause => { if (live) { setError(errorText(cause)); setLoading(false); } });
     return () => { live = false; };
   }, [api, circleId]);
@@ -52,16 +65,20 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     setWeatherEnabled(!!agent?.weather); setLocation(agent?.weather?.location ?? "Parikia");
     setFerryEnabled(agent?.ferryPort === "paros");
     setVisionEnabled(agent?.visionEnabled ?? false);
+    setImagesEnabled(agent?.imageGeneration?.enabled ?? false);
+    setImageIdentity(agent?.imageGeneration?.identityId ?? "");
+    setImagesOccasional(agent?.imageGeneration?.occasional ?? false);
     setLatitude(String(agent?.weather?.latitude ?? 37.085)); setLongitude(String(agent?.weather?.longitude ?? 25.148));
     setEnabled(agent?.enabled ?? false); setError(""); setFormOpen(true);
   };
   const save = async () => {
-    if (saving || !weatherValid) return;
+    if (saving || !weatherValid || !imagesValid) return;
     setError(""); setSaving(true);
     const input: CircleChatAgentInput = { displayName: name.trim(), triggerWords: lines(triggers),
       responsePhrases: lines(phrases), enabled, revision: selected?.revision, weather,
       ferryPort: ferryEnabled ? "paros" : null,
-      visionEnabled: selected && visionEnabled === selected.visionEnabled ? undefined : visionEnabled };
+      visionEnabled: selected && visionEnabled === selected.visionEnabled ? undefined : visionEnabled,
+      imageGeneration: imagesUnchanged ? undefined : imageGeneration };
     try {
       const saved = selected ? await api.update(circleId, selected.agentId, input) : await api.create(circleId, input);
       setAgents(previous => [...previous.filter(item => item.agentId !== saved.agentId), saved]
@@ -93,6 +110,25 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
         disabled={saving || (!canUseVision && !visionEnabled)} onChange={event => setVisionEnabled(event.target.checked)} />Tolk bilete i meldingar</label>
       {visionEnabled && <p>Agenten kan tolke opptil to bilete i meldinga som utløyser svaret. Bileta blir tilpassa før tolking.</p>}
       {!canUseVision && <Status>Bilettolking er ikkje tilgjengeleg enno. Vanlege tekstsvar kan framleis brukast.</Status>}
+      <label className="sp-circle-agent-enabled"><input type="checkbox" checked={imagesEnabled}
+        disabled={saving || (!canUseImages && !imagesEnabled)} onChange={event => {
+          setImagesEnabled(event.target.checked); if (!event.target.checked) setImagesOccasional(false);
+        }} />Lag bilete av agenten</label>
+      {imagesEnabled && <div className="sp-agent-image-settings" role="group" aria-label="Bilete frå agenten">
+        <label htmlFor="circle-agent-image-identity">Visuell identitet</label>
+        <select id="circle-agent-image-identity" value={imageIdentity} disabled={saving || !canUseImages}
+          onChange={event => setImageIdentity(event.target.value)}>
+          <option value="">Vel identitet</option>
+          {imageIdentity && !imageIdentities.some(identity => identity.id === imageIdentity)
+            && <option value={imageIdentity}>Tidlegare identitet (ikkje tilgjengeleg)</option>}
+          {imageIdentities.map(identity => <option key={identity.id} value={identity.id}>{identity.label}</option>)}
+        </select>
+        <p>Agenten kan svare med eit generert bilete når nokon ber om det. Maksimalt to bilete per døgn.</p>
+        <label className="sp-circle-agent-enabled"><input type="checkbox" checked={imagesOccasional}
+          disabled={saving || !canUseImages} onChange={event => setImagesOccasional(event.target.checked)} />Del eit bilete av og til i samtalen</label>
+        <p>Dette er valfritt og skjer høgst éin gong per døgn, berre som del av ein aktiv samtale.</p>
+        {!canUseImages && <Status>Biletgenerering er ikkje tilgjengeleg no. Du kan slå henne av her.</Status>}
+      </div>}
       <label className="sp-circle-agent-enabled"><input type="checkbox" checked={weatherEnabled}
         disabled={saving} onChange={event => setWeatherEnabled(event.target.checked)} />Vêrdata</label>
       {weatherEnabled && <>
@@ -113,7 +149,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
         disabled={!workerAvailable && !enabled} onChange={event => setEnabled(event.target.checked)} />Aktiv</label>
       {error && <Status tone="error">{error}</Status>}
       <div className="sp-row"><Button type="button" onClick={() => { setFormOpen(false); setError(""); }}>Avbryt</Button>
-        <Button type="submit" busy={saving} disabled={!name.trim() || !lines(triggers).length || !lines(phrases).length || !weatherValid || (enabled && !workerAvailable)}>Lagre agent</Button></div>
+        <Button type="submit" busy={saving} disabled={!name.trim() || !lines(triggers).length || !lines(phrases).length || !weatherValid || !imagesValid || (enabled && !workerAvailable)}>Lagre agent</Button></div>
     </form>}
     {!formOpen && error && <Status tone="error">{error}</Status>}
   </Dialog>;

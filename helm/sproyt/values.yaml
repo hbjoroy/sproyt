@@ -65,6 +65,8 @@ config:
   aisAgentsEnabled: false
   # Enable only after schema 56 and compatible workers in both environments.
   chatAgentVisionEnabled: false
+  # Enable after schema 57 and compatible image publishers in both environments.
+  chatAgentImagesEnabled: false
   workItemSupplementsEnabled: false
   chatAgentFollowupsEnabled: false
   imagegenWebResearch: false
