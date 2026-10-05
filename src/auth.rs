@@ -421,12 +421,16 @@ impl OidcService {
             .unwrap_or(&subject);
         // The ID-token signature, issuer, audience, and nonce were verified
         // above; do not source identity data from an unverified endpoint.
-        // Enrollment is e-mail-bound, but Authentik's standard scope mapping
-        // emits `email_verified: false` even for its fixed invitation value.
-        // The e-mail is nevertheless from this signature-, issuer-, audience-
-        // and nonce-verified ID token; the local, opaque enrollment token is
-        // separately matched to its expected e-mail hash during acceptance.
         let email = normalized_email(claims.email().map(|email| email.as_str()));
+        // A signed email claim is not proof that the user controls the address.
+        // Only enrollment requires the provider's address-bound verification;
+        // ordinary login remains compatible with legacy unverified accounts.
+        // Acceptance separately matches this address to the invitation's hash.
+        if transaction.enrollment_token.is_some()
+            && (claims.email_verified() != Some(true) || email.is_none())
+        {
+            return Err(AuthError::Unauthorized);
+        }
         let principal = principal(
             &self.issuer,
             &subject,
@@ -896,6 +900,8 @@ mod tests {
         client_id: String,
         client_secret: String,
         nonce: Arc<Mutex<String>>,
+        email_verified: Arc<Mutex<Option<bool>>>,
+        email: Arc<Mutex<Option<String>>>,
         signing_key: Arc<Mutex<(String, RsaPrivateKey)>>,
         active: Arc<AtomicBool>,
     }
@@ -941,21 +947,23 @@ mod tests {
             .unwrap(),
         );
         let now = now_seconds();
-        let claims = URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&serde_json::json!({
-                "iss":provider.issuer,
-                "sub":"authentik-user-1",
-                "aud":provider.client_id,
-                "exp":now+300,
-                "iat":now,
-                "nonce":provider.nonce.lock().unwrap().clone(),
-                "name":"Authentik Test User",
-                "email":"  Authentik.User@Example.Test  ",
-                "email_verified":false,
-                "preferred_username":"ignored-fallback"
-            }))
-            .unwrap(),
-        );
+        let mut claims = serde_json::json!({
+            "iss":provider.issuer,
+            "sub":"authentik-user-1",
+            "aud":provider.client_id,
+            "exp":now+300,
+            "iat":now,
+            "nonce":provider.nonce.lock().unwrap().clone(),
+            "name":"Authentik Test User",
+            "preferred_username":"ignored-fallback"
+        });
+        if let Some(email) = provider.email.lock().unwrap().as_ref() {
+            claims["email"] = serde_json::json!(email);
+        }
+        if let Some(verified) = *provider.email_verified.lock().unwrap() {
+            claims["email_verified"] = serde_json::json!(verified);
+        }
+        let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
         let signing_input = format!("{header}.{claims}");
         let signature =
             SigningKey::<Sha256>::new(signing_key.1.clone()).sign(signing_input.as_bytes());
@@ -1037,6 +1045,8 @@ mod tests {
             client_id: "sproyt-test".to_owned(),
             client_secret: "test-client-secret-with-enough-entropy".to_owned(),
             nonce: Arc::new(Mutex::new(String::new())),
+            email_verified: Arc::new(Mutex::new(Some(false))),
+            email: Arc::new(Mutex::new(Some("  Authentik.User@Example.Test  ".into()))),
             signing_key: Arc::new(Mutex::new(generate_signing_key("key-a"))),
             active: Arc::new(AtomicBool::new(true)),
         };
@@ -1278,6 +1288,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn enrollment_requires_verified_email_without_restricting_ordinary_login() {
+        let (config, provider, server) = test_oidc_provider().await;
+        let auth = AuthService::oidc(&config).await.unwrap();
+        for verified in [Some(false), None, Some(true)] {
+            *provider.email_verified.lock().unwrap() = verified;
+            for enrollment in [false, true] {
+                let login = if enrollment {
+                    auth.login_enrollment("test-enrollment-capability".into())
+                } else {
+                    auth.login(None)
+                }
+                .unwrap();
+                *provider.nonce.lock().unwrap() =
+                    authorization_parameter(&login.authorization_url, "nonce");
+                let result = auth
+                    .callback(
+                        "valid-code".into(),
+                        authorization_parameter(&login.authorization_url, "state"),
+                        Some(&login.set_cookie),
+                    )
+                    .await;
+                if enrollment && verified != Some(true) {
+                    assert!(matches!(result, Err(AuthError::Unauthorized)));
+                } else {
+                    assert!(result.is_ok());
+                }
+            }
+        }
+        *provider.email.lock().unwrap() = None;
+        let login = auth
+            .login_enrollment("test-enrollment-capability".into())
+            .unwrap();
+        *provider.nonce.lock().unwrap() =
+            authorization_parameter(&login.authorization_url, "nonce");
+        assert!(matches!(
+            auth.callback(
+                "valid-code".into(),
+                authorization_parameter(&login.authorization_url, "state"),
+                Some(&login.set_cookie),
+            )
+            .await,
+            Err(AuthError::Unauthorized)
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn oidc_discovery_callback_state_nonce_session_and_logout_contract() {
         let (config, provider, server) = test_oidc_provider().await;
         let auth = AuthService::oidc(&config).await.unwrap();
@@ -1389,6 +1446,7 @@ mod tests {
         );
         assert!(complete.clear_transaction_cookie.contains("Max-Age=0"));
 
+        *provider.email_verified.lock().unwrap() = Some(true);
         let enrollment_login = auth
             .login_enrollment("enrollment-token_123456".to_owned())
             .unwrap();

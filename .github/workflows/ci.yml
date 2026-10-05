@@ -124,7 +124,9 @@ jobs:
         run: docker compose config --quiet
 
       - name: Validate Authentik discovery contract
-        run: bash tools/test-oidc-provider-verifier.sh
+        run: |
+          bash tools/test-oidc-provider-verifier.sh
+          python3 tools/test-enrollment-continuation.py
 
       - name: Validate production rollout verifier
         run: bash tools/test-production-rollout-verifier.sh

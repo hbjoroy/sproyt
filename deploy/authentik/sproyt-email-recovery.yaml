@@ -398,6 +398,24 @@ entries:
         email = str((invitation.fixed_data or {}).get("email", "")).strip()
         if not email or invitation.flow.slug != "sproyt-invitation-enrollment":
             return False
+        fixed_data = invitation.fixed_data or {}
+        has_continuation = "sproyt_enrollment_token" in fixed_data
+        token = fixed_data.get("sproyt_enrollment_token")
+        if has_continuation and (not isinstance(token, str) or len(token) != 43 or not all(
+            c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in token
+        )):
+            return False
+        plan = request.context.get("flow_plan")
+        if plan is None or not request.context.get("invitation_in_effect"):
+            return False
+        # Set the post-flow redirect; plan.redirect() would stop enrollment.
+        # The origin is pinned here, never supplied through prompt data or next.
+        # Legacy invitations with no key keep their existing registration flow.
+        # They do not acquire a new local circle-membership capability.
+        if has_continuation:
+            plan.context["redirect"] = "https://sproyt.bjoroy.me/auth/login?enrollment=" + token
+        prompt_data.pop("sproyt_enrollment_token", None)
+        plan.context.get("prompt_data", {}).pop("sproyt_enrollment_token", None)
         prompt_data["email"] = email
         attributes = prompt_data.get("attributes", {})
         if not isinstance(attributes, dict):
@@ -421,10 +439,17 @@ entries:
             return True
         email = str((invitation.fixed_data or {}).get("email", "")).strip()
         prompt_email = str(request.context.get("prompt_data", {}).get("email", "")).strip()
+        fixed_data = invitation.fixed_data or {}
+        token = fixed_data.get("sproyt_enrollment_token")
         return not (
             invitation.flow.slug == "sproyt-invitation-enrollment"
             and bool(email)
             and email.casefold() == prompt_email.casefold()
+            and (
+                "sproyt_enrollment_token" not in fixed_data
+                or (isinstance(token, str) and len(token) == 43
+                    and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in token))
+            )
         )
 
   - identifiers:
@@ -432,7 +457,7 @@ entries:
     id: invitation-context-deny
     model: authentik_stages_deny.denystage
     attrs:
-      deny_message: Invitasjonen manglar ei gyldig e-postadresse.
+      deny_message: Invitasjonen manglar gyldig registreringsinformasjon. Be om ei ny invitasjon.
 
   - identifiers:
       target: !Find [authentik_flows.flow, [slug, sproyt-invitation-enrollment]]
