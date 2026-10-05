@@ -30,7 +30,10 @@ pub(crate) async fn ws_handler(
     };
     let shutdown = state.operations.subscribe_shutdown();
     upgrade
-        .on_upgrade(move |socket| {
+        .on_upgrade(move |socket| async move {
+            let _connection = state
+                .operations
+                .connection_started(crate::operations::Transport::WebSocket);
             ws::handle_socket(
                 state.chat,
                 ws::SocketAuthentication::new(state.auth, principal, requested_name, cookie),
@@ -38,6 +41,7 @@ pub(crate) async fn ws_handler(
                 shutdown,
                 state.websocket_idle_timeout,
             )
+            .await
         })
         .into_response()
 }

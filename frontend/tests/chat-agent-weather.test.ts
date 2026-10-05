@@ -69,3 +69,34 @@ test("ferry configuration preserves omitted updates, carries opt-in and rejects 
   reply = { agents: [], worker_available: true, ferry_available: "true" };
   await assert.rejects(api.list("circle"), /Ugyldig agentliste/);
 });
+
+test("vision opt-in roundtrips for any agent while omitted PATCH fields preserve existing choices", async () => {
+  const wire = { agent_id: "agent", circle_id: "circle", display_name: "Biletven", trigger_words: ["sjå"], response_phrases: ["Svar kort"],
+    enabled: false, revision: 3, worker_available: true, vision_enabled: true, vision_available: true };
+  const bodies: Record<string, unknown>[] = [];
+  let reply: unknown = wire;
+  const api = new CircleChatAgentApi(new HttpClient({ fetch: async (_, init) => {
+    if (init?.body) bodies.push(JSON.parse(String(init.body))); return Response.json(reply);
+  } }));
+  const input = { displayName: "Biletven", triggerWords: ["sjå"], responsePhrases: ["Svar kort"], enabled: false, revision: 3 };
+  const preserved = await api.update("circle", "agent", input);
+  assert.equal(preserved.visionEnabled, true); assert.equal(preserved.visionAvailable, true);
+  assert.ok(!("vision_enabled" in bodies[0]!));
+  assert.ok(!("weather" in bodies[0]!)); assert.ok(!("ferry_port" in bodies[0]!));
+  reply = { ...wire, vision_enabled: false };
+  assert.equal((await api.update("circle", "agent", { ...input, visionEnabled: false })).visionEnabled, false);
+  assert.equal(bodies[1]!.vision_enabled, false);
+  reply = wire; await api.create("circle", { ...input, visionEnabled: true }); assert.equal(bodies[2]!.vision_enabled, true);
+  for (const invalid of [{ vision_enabled: "true" }, { vision_available: 1 }, { vision_enabled: null }]) {
+    reply = { ...wire, ...invalid }; await assert.rejects(api.update("circle", "agent", input), /Ugyldig agentsvar/);
+  }
+});
+
+test("old vision replies default safely off and unavailable; list availability is explicit", async () => {
+  let reply: unknown = { agents: [{ agent_id: "agent", circle_id: "circle", display_name: "Vanleg agent", trigger_words: [], response_phrases: [], enabled: false, revision: 1, worker_available: true }], worker_available: true };
+  const api = new CircleChatAgentApi(new HttpClient({ fetch: async () => Response.json(reply) }));
+  const old = await api.list("circle");
+  assert.equal(old.agents[0]!.visionEnabled, false); assert.equal(old.agents[0]!.visionAvailable, false); assert.equal(old.visionAvailable, false);
+  reply = { agents: [], worker_available: true, vision_available: true }; assert.equal((await api.list("circle")).visionAvailable, true);
+  reply = { agents: [], worker_available: true, vision_available: "true" }; await assert.rejects(api.list("circle"), /Ugyldig agentliste/);
+});

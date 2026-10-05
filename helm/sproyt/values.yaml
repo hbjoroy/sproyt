@@ -60,6 +60,11 @@ config:
   ferryUrl: ""
   # Activate after all shared-database workers support schema 54 and ferry jobs.
   ferryAgentsEnabled: false
+  # Own ship-tracker frontend; fixed /api/stations and /api/events routes.
+  aisUrl: ""
+  aisAgentsEnabled: false
+  # Enable only after schema 56 and compatible workers in both environments.
+  chatAgentVisionEnabled: false
   workItemSupplementsEnabled: false
   chatAgentFollowupsEnabled: false
   imagegenWebResearch: false

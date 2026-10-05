@@ -162,7 +162,8 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
     : task.delivery_status === "failed" ? "Avgjerda kunne ikkje leverast"
     : task.blocked ? "Blokkert: rett eller kanaltilgang manglar"
     : task.delivery_status === "pending" ? "Innsending lagra · ventar på Heart" : taskLabel;
-  return <section className="sp-work-item-task" aria-label={`${taskLabel}: ${task.title}`}>
+  return <section className="sp-work-item-task" data-task-status={task.status}
+    data-app-update-recoverable={Boolean(decisionRetry || githubRetry || statusRetry)} aria-label={`${taskLabel}: ${task.title}`}>
     <Button className="sp-work-item-task-summary" variant="quiet" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
       <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
       <span><strong>{task.title}</strong><small>{task.application_name} · {state} · {task.assignee_name}</small></span>

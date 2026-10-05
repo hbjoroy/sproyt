@@ -93,6 +93,7 @@ async fn enqueue(store: &Store, message: &ChatMessage) {
 async fn contract(store: Store) {
     let service = CircleChatAgents {
         ferry: None,
+        observations: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -158,6 +159,7 @@ async fn contract(store: Store) {
         response_phrases: vec!["Eg kan hjelpe".into()],
         enabled: false,
         revision: None,
+        vision_enabled: None,
     };
     let agent = service.create(&owner, &circle, input()).await.unwrap();
     let foreign = service

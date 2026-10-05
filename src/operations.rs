@@ -1,10 +1,9 @@
 use std::{
     fmt::Write,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Instant,
 };
 
 use axum::{
@@ -13,6 +12,8 @@ use axum::{
     response::Response,
 };
 use tokio::sync::watch;
+mod measurements;
+pub(crate) use measurements::Transport;
 
 #[derive(Clone, Debug)]
 pub struct OperationalState {
@@ -21,6 +22,10 @@ pub struct OperationalState {
 
 #[derive(Debug)]
 struct OperationalStateInner {
+    measurements: Mutex<measurements::Measurements>,
+    active_connections: [AtomicU64; 2],
+    opened_connections: [AtomicU64; 2],
+    closed_connections: [AtomicU64; 2],
     ready: AtomicBool,
     requests: AtomicU64,
     in_flight: AtomicU64,
@@ -49,6 +54,10 @@ impl Default for OperationalState {
     fn default() -> Self {
         Self {
             inner: Arc::new(OperationalStateInner {
+                measurements: Mutex::default(),
+                active_connections: Default::default(),
+                opened_connections: Default::default(),
+                closed_connections: Default::default(),
                 ready: AtomicBool::new(false),
                 requests: AtomicU64::new(0),
                 in_flight: AtomicU64::new(0),
@@ -253,6 +262,35 @@ impl OperationalState {
                 .load(Ordering::Relaxed)
         )
         .expect("writing to a String cannot fail");
+        self.inner
+            .measurements
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .render(&mut output);
+        writeln!(output, "# HELP sproyt_connections_active Authenticated transport connections; not unique users. SSE channel streams count individually.").unwrap();
+        writeln!(output, "# TYPE sproyt_connections_active gauge").unwrap();
+        writeln!(output, "# TYPE sproyt_connections_opened_total counter").unwrap();
+        writeln!(output, "# TYPE sproyt_connections_closed_total counter").unwrap();
+        for (index, transport) in ["websocket", "sse"].iter().enumerate() {
+            writeln!(
+                output,
+                "sproyt_connections_active{{transport=\"{transport}\"}} {}",
+                self.inner.active_connections[index].load(Ordering::Relaxed)
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "sproyt_connections_opened_total{{transport=\"{transport}\"}} {}",
+                self.inner.opened_connections[index].load(Ordering::Relaxed)
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "sproyt_connections_closed_total{{transport=\"{transport}\"}} {}",
+                self.inner.closed_connections[index].load(Ordering::Relaxed)
+            )
+            .unwrap();
+        }
         output
     }
 }
@@ -285,25 +323,14 @@ pub async fn record_metrics(
     request: Request,
     next: Next,
 ) -> Response {
-    operations.inner.requests.fetch_add(1, Ordering::Relaxed);
-    operations.inner.in_flight.fetch_add(1, Ordering::Relaxed);
-    let started = Instant::now();
-
+    // MatchedPath comes from the router, never from a client's path/query/IDs.
+    let route = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map_or("unmatched", |route| route.as_str());
+    let mut guard = measurements::RequestGuard::new(operations, route, request.method().as_str());
     let response = next.run(request).await;
-
-    operations.inner.in_flight.fetch_sub(1, Ordering::Relaxed);
-    if response.status().is_server_error() {
-        operations
-            .inner
-            .server_errors
-            .fetch_add(1, Ordering::Relaxed);
-    }
-    let elapsed = started.elapsed().as_micros();
-    let elapsed = u64::try_from(elapsed).unwrap_or(u64::MAX);
-    operations
-        .inner
-        .duration_micros
-        .fetch_add(elapsed, Ordering::Relaxed);
+    guard.finish(response.status().as_u16());
     response
 }
 
@@ -352,5 +379,38 @@ mod tests {
         assert!(*existing.borrow());
         assert!(*operations.subscribe_shutdown().borrow());
         assert!(!operations.is_ready());
+    }
+
+    #[tokio::test]
+    async fn middleware_uses_route_templates_and_separates_probe_traffic() {
+        use axum::{Router, middleware, routing::get};
+        let operations = OperationalState::default();
+        let router = Router::new()
+            .route("/items/{id}", get(|| async { "ok" }))
+            .route("/healthz", get(healthz))
+            .layer(middleware::from_fn_with_state(
+                operations.clone(),
+                record_metrics,
+            ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::new();
+        for path in ["/items/private-person?token=private-token", "/healthz"] {
+            let response = client
+                .get(format!("http://{address}{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert!(response.status().is_success());
+        }
+        let metrics = operations.metrics();
+        assert!(metrics.contains("sproyt_http_requests_total 1\n"));
+        assert!(metrics.contains("sproyt_http_requests_in_flight 0\n"));
+        assert!(metrics.contains("traffic=\"application\",route=\"/items/{id}\""));
+        assert!(metrics.contains("traffic=\"probe\",route=\"/healthz\""));
+        assert!(!metrics.contains("private-person"));
+        assert!(!metrics.contains("private-token"));
+        server.abort();
     }
 }

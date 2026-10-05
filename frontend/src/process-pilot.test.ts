@@ -75,8 +75,24 @@ test("a lost start response reuses admission id and a confirmed new start gets a
     return Response.json({ id: "instance-1", status: "running" });
   } }), () => "user-1");
   await assert.rejects(() => api.start("channel-1"));
+  assert.equal(api.canReload(), false, "an admission held only in memory must defer reload");
   await api.start("channel-1");
+  assert.equal(api.canReload(), true, "the accepted admission no longer blocks reload");
   await api.start("channel-1");
   assert.equal(ids[0], ids[1]);
   assert.notEqual(ids[1], ids[2]);
+});
+
+test("lost task completion keeps its admission and a confirmed terminal task no longer blocks reload", async () => {
+  const ids: string[] = [];
+  let fail = true;
+  const api = new ProcessPilotApi(new HttpClient({ fetch: async (_url, init) => {
+    ids.push(JSON.parse(String(init?.body)).request_id);
+    if (fail) { fail = false; throw new Error("response lost"); }
+    return Response.json({ ...task, status: "completed", can_complete: false });
+  } }), () => "completion-user");
+  await assert.rejects(api.complete(id, task.message_id));
+  assert.equal(api.canReload(), false);
+  await api.complete(id, task.message_id);
+  assert.equal(ids[0], ids[1]); assert.equal(api.canReload(), true);
 });

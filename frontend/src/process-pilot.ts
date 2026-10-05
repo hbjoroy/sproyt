@@ -50,6 +50,10 @@ export class ProcessPilotApi {
   // Retain the admission key across a lost response, component unmount or retry.
   private readonly admissions = new Map<string, string>();
   constructor(private readonly http: HttpClient, private readonly identity: () => string) {}
+  canReload(): boolean {
+    try { return [...this.admissions].every(([key, value]) => sessionStorage.getItem(key) === value); }
+    catch { return this.admissions.size === 0; }
+  }
   private admissionKey(operation: string): string { return `sproyt-process-pilot:${this.identity()}:${operation}`; }
   private requestId(operation: string): string {
     const key = this.admissionKey(operation);
@@ -91,6 +95,11 @@ export class ProcessPilotApi {
     const task = await this.http.json(`/api/v1/process-pilot/tasks/${encodeURIComponent(id)}/complete`, decodePilotTask,
       post({ request_id: this.requestId(`complete:${id}`), message_id: messageId }));
     if (task.id !== id || task.message_id !== messageId) throw new Error("Svaret gjeld ei anna oppgåve.");
+    if (task.status !== "pending" || ["completed", "cancelled", "failed"].includes(task.process_status)) {
+      const key = this.admissionKey(`complete:${id}`);
+      this.admissions.delete(key);
+      try { sessionStorage.removeItem(key); } catch { /* the terminal receipt is confirmed */ }
+    }
     return task;
   }
 }

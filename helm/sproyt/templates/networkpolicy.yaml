@@ -28,6 +28,19 @@ spec:
         - protocol: TCP
           port: 9010
   egress:
+    {{- if .Values.config.aisUrl }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ship-tracker
+          podSelector:
+            matchLabels:
+              app: ship-tracker
+              component: frontend
+      ports:
+        - protocol: TCP
+          port: 3000
+    {{- end }}
     {{- if .Values.config.ferryUrl }}
     - to:
         - namespaceSelector:

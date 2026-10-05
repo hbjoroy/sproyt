@@ -14,6 +14,8 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [weatherAvailable, setWeatherAvailable] = useState(false);
   const [ferryAvailable, setFerryAvailable] = useState(false);
   const [ferryEnabled, setFerryEnabled] = useState(false);
+  const [visionAvailable, setVisionAvailable] = useState(false);
+  const [visionEnabled, setVisionEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -29,7 +31,8 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [longitude, setLongitude] = useState("25.148");
   const weather = weatherEnabled ? { location: location.trim(), latitude: Number(latitude), longitude: Number(longitude) } : null;
   const weatherValid = !weather || (!!latitude.trim() && !!longitude.trim() && validAgentWeather(weather));
-  const workerAvailable = available && (!weatherEnabled || weatherAvailable) && (!ferryEnabled || ferryAvailable);
+  const canUseVision = selected ? selected.visionAvailable : visionAvailable;
+  const workerAvailable = available && (!weatherEnabled || weatherAvailable) && (!ferryEnabled || ferryAvailable) && (!visionEnabled || canUseVision);
 
   useEffect(() => {
     let live = true;
@@ -37,6 +40,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       if (!live) return;
       setAgents(result.agents); setAvailable(result.workerAvailable); setWeatherAvailable(result.weatherAvailable); setLoading(false);
       setFerryAvailable(result.ferryAvailable);
+      setVisionAvailable(result.visionAvailable);
     }).catch(cause => { if (live) { setError(errorText(cause)); setLoading(false); } });
     return () => { live = false; };
   }, [api, circleId]);
@@ -47,6 +51,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     setPhrases(agent?.responsePhrases.join("\n") ?? "");
     setWeatherEnabled(!!agent?.weather); setLocation(agent?.weather?.location ?? "Parikia");
     setFerryEnabled(agent?.ferryPort === "paros");
+    setVisionEnabled(agent?.visionEnabled ?? false);
     setLatitude(String(agent?.weather?.latitude ?? 37.085)); setLongitude(String(agent?.weather?.longitude ?? 25.148));
     setEnabled(agent?.enabled ?? false); setError(""); setFormOpen(true);
   };
@@ -55,7 +60,8 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     setError(""); setSaving(true);
     const input: CircleChatAgentInput = { displayName: name.trim(), triggerWords: lines(triggers),
       responsePhrases: lines(phrases), enabled, revision: selected?.revision, weather,
-      ferryPort: ferryEnabled ? "paros" : null };
+      ferryPort: ferryEnabled ? "paros" : null,
+      visionEnabled: selected && visionEnabled === selected.visionEnabled ? undefined : visionEnabled };
     try {
       const saved = selected ? await api.update(circleId, selected.agentId, input) : await api.create(circleId, input);
       setAgents(previous => [...previous.filter(item => item.agentId !== saved.agentId), saved]
@@ -83,6 +89,10 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       <label htmlFor="circle-agent-phrases">Stikkord og svarføringar, eitt per linje</label>
       <textarea id="circle-agent-phrases" rows={4} value={phrases} onChange={event => setPhrases(event.target.value)} />
       <p>Agenten brukar dette som innhald og tone, ikkje som eit ferdig svar. Skriv gjerne kva han bør vite eller spørje om.</p>
+      <label className="sp-circle-agent-enabled"><input type="checkbox" checked={visionEnabled}
+        disabled={saving || (!canUseVision && !visionEnabled)} onChange={event => setVisionEnabled(event.target.checked)} />Tolk bilete i meldingar</label>
+      {visionEnabled && <p>Agenten kan tolke opptil to bilete i meldinga som utløyser svaret. Bileta blir tilpassa før tolking.</p>}
+      {!canUseVision && <Status>Bilettolking er ikkje tilgjengeleg enno. Vanlege tekstsvar kan framleis brukast.</Status>}
       <label className="sp-circle-agent-enabled"><input type="checkbox" checked={weatherEnabled}
         disabled={saving} onChange={event => setWeatherEnabled(event.target.checked)} />Vêrdata</label>
       {weatherEnabled && <>

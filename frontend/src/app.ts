@@ -1,6 +1,7 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
       import { ProcessPilotApi } from "./process-pilot";
       import { WorkItemApi } from "./work-items";
+      import { appVersion, createAppUpdate, latestAppVersion, updateAppWorker } from "./app-update";
       import { SavedEmojiApi } from "./saved-emojis";
       import { CircleChatAgentApi } from "./chat-agents";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
@@ -99,6 +100,7 @@
       const serviceWorkerReady = "serviceWorker" in navigator
         ? navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(() => navigator.serviceWorker.ready)
         : Promise.resolve(null);
+      void serviceWorkerReady.catch(() => {});
       const connectForm = requireElement("#connect-form", HTMLFormElement);
       const sendForm = requireElement("#send-form", HTMLFormElement);
       const composerTools = requireElement("#composer-tools", HTMLElement);
@@ -444,6 +446,7 @@
         }
       });
       const channelComposer = composerController.channel;
+      let preparingSends = 0;
       const durableOutbox = createDurableOutbox();
       let durableJournalReady: Promise<readonly DurableSend[]> = Promise.resolve([]);
       let requestedChannelSlug = "general";
@@ -589,6 +592,58 @@
       const circleChatAgentsApi = new CircleChatAgentApi(http);
       const integrationsApi = new IntegrationApi(http);
       const enrollmentApi = new EnrollmentApi(http);
+      const processPilotApi = new ProcessPilotApi(http, () => currentParticipantId ?? "");
+      const workItemsApi = new WorkItemApi(http, () => currentParticipantId ?? "");
+      const editedTasks = new Set<HTMLElement>();
+      let updateComposition = false;
+      document.addEventListener("compositionstart", () => { updateComposition = true; });
+      document.addEventListener("compositionend", () => { updateComposition = false; });
+      document.addEventListener("input", event => {
+        const field = event.target;
+        if (field instanceof HTMLElement) {
+          const task = field.closest<HTMLElement>(".sp-work-item-task, .sp-process-task");
+          if (task) editedTasks.add(task);
+        }
+      });
+      const appUpdate = createAppUpdate({
+        currentVersion: appVersion(document, location.href), storage: sessionStorage,
+        latestVersion: latestAppVersion,
+        updateWorker: () => updateAppWorker(serviceWorkerReady),
+        reload: () => location.reload(),
+        prepare: async () => {
+          await durableJournalReady;
+          if (preparingSends || http.pendingWrites || imageGeneration.getSnapshot().busy
+            || [...channelUploads.values()].some(upload => upload.count > 0)
+            || [...threadComposerStates.values()].some(state => state.uploadCount > 0))
+            throw new Error("Vent til opplastinga eller innsendinga er ferdig før du oppdaterer appen.");
+          if (pendingMedia.length || [...threadComposerStates.values()].some(state => state.media.length > 0))
+            throw new Error("Send eller fjern dei valde vedlegga før du oppdaterer appen. Tekstutkast blir tekne vare på.");
+          if (updateComposition || composerComposing || [...threadComposerStates.values()].some(state => state.composing))
+            throw new Error("Fullfør teksten du skriv før du oppdaterer appen.");
+          const otherDialog = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")]
+            .some(dialog => dialog.getAttribute("aria-label") !== "Meny og innstillingar" && !dialog.querySelector('button[data-app-update]'));
+          if (otherDialog || [...editedTasks].some(task => task.isConnected && !["completed", "cancelled", "failed"].includes(task.dataset.taskStatus ?? "") && task.dataset.appUpdateRecoverable !== "true"))
+            throw new Error("Fullfør redigeringa først, så kan du oppdatere appen utan å miste arbeidet.");
+          const durableIds = new Set(durableOutbox.pending().map(entry => entry.requestId));
+          if ([...pendingMessages.keys(), ...uncertainMessages.keys(), ...pendingThreadReplies.keys(), ...uncertainThreadReplies.keys()].some(id => !durableIds.has(id))
+            || !workItemsApi.canReload() || !processPilotApi.canReload())
+            throw new Error("Ei innsending er ikkje trygt lagra enno. Avklar ho før du oppdaterer appen.");
+          if ([...pendingCommands.values()].some(command => !/^(list_|load_|get_|subscribe_|mark_|send_message$|send_thread_reply$|hello$|ping$)/.test(command)))
+            throw new Error("Vent til endringa er stadfesta før du oppdaterer appen.");
+          persistActiveDraft(); persistThreadDraft();
+          if (activeChannelId && (navigation.restoreChannelDraft(activeChannelId) !== channelComposer.draft
+            || localStorage.getItem("sproyt.active-channel.v1") !== activeChannelId))
+            throw new Error("Utkastet eller kanalvalet kunne ikkje lagrast. Oppdateringa er utsett.");
+          for (const [rootId, state] of threadComposerStates) {
+            if (!state.draft) continue;
+            const root = threadRoots.get(rootId) ?? timeline.find(item => item.type === "message" && item.message.id === rootId);
+            const channelId = root && "message" in root ? root.message.channel_id : root && "channel_id" in root ? root.channel_id : null;
+            if (!channelId || navigation.restoreThreadDraft(channelId, rootId) !== state.draft)
+              throw new Error("Trådutkastet kunne ikkje lagrast. Oppdateringa er utsett.");
+          }
+          return { owner: currentParticipantId ?? "", positions: [] };
+        }
+      });
 
       const serverEventMailbox = applicationRuntime;
 
@@ -708,6 +763,8 @@
       }
 
       async function persistThenSend(input: Readonly<{ channelId: string; parentMessageId: string | null; body: string; draft: string; media: readonly MediaObject[] }>): Promise<Readonly<{ requestId: string; dispatched: boolean; durable: boolean }> | null> {
+        preparingSends++;
+        try {
         const requestId = nextRequestId();
         let durable = true;
         try {
@@ -737,6 +794,7 @@
           handoffActive: transport.handoffActive
         }) === "dispatch_now" && resendCommandIfSubscribed(requestId, input.channelId, "send_message", payload) !== null;
         return { requestId, dispatched, durable };
+        } finally { preparingSends--; }
       }
 
       function resizeComposer() {
@@ -5884,8 +5942,9 @@
             }),
             imageGeneration,
             chatAgents: circleChatAgentsApi,
-            processPilot: new ProcessPilotApi(http, () => currentParticipantId ?? ""),
-            workItems: new WorkItemApi(http, () => currentParticipantId ?? ""),
+            processPilot: processPilotApi,
+            workItems: workItemsApi,
+            appUpdate,
             processPilotIdentity: () => currentParticipantId ?? "",
             openImageGeneration: () => imageGeneration.open(),
             legacyContainer: sproytApp,

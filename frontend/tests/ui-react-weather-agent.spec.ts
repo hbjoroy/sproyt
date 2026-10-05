@@ -5,11 +5,11 @@ const channel = "00000000-0000-7000-8000-000000002122";
 const agentId = "00000000-0000-7000-8000-000000002123";
 async function fixture(page: Page) {
   let agent = { agent_id: agentId, circle_id: circle, display_name: "Vêrven", trigger_words: ["vêr"], response_phrases: ["Svar kort"],
-    enabled: false, revision: 3, worker_available: false, weather: { location: "Bjorøy", latitude: 60.322, longitude: 5.199 } };
+    enabled: false, revision: 3, worker_available: false, vision_enabled: false, vision_available: true, weather: { location: "Bjorøy", latitude: 60.322, longitude: 5.199 } };
   let fail = true;
   const updates: any[] = [];
   await page.route(/\/api\/v1\/circles\/[^/]+\/chat-agents(?:\/[^?]+)?(?:\?|$)/, async route => {
-    if (route.request().method() === "GET") { await route.fulfill({ json: { agents: [agent], worker_available: true } }); return; }
+    if (route.request().method() === "GET") { await route.fulfill({ json: { agents: [agent], worker_available: true, vision_available: agent.vision_available } }); return; }
     const input = route.request().postDataJSON(); updates.push(input);
     if (fail) { fail = false; await route.fulfill({ status: 503, body: "Kunne ikkje lagre. Prøv igjen." }); return; }
     agent = { ...agent, ...input, revision: agent.revision + 1 };
@@ -33,12 +33,12 @@ async function fixture(page: Page) {
       case "load_recent_messages": reply("messages_loaded", { channel_id: channel, messages: [] }); break;
     }
   }));
-  return updates;
+  return { updates, disableVision: () => { agent = { ...agent, vision_available: false }; } };
 }
 
 test("fixed weather settings preserve edits through failure, reject invalid coordinates and default new locations without GPS", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  const updates = await fixture(page);
+  const { updates, disableVision } = await fixture(page);
   await page.goto(`/?participant=weather-owner&channel=${channel}`);
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
@@ -51,6 +51,8 @@ test("fixed weather settings preserve edits through failure, reject invalid coor
   const latitude = dialog.getByRole("spinbutton", { name: "Breiddegrad", exact: true });
   const longitude = dialog.getByRole("spinbutton", { name: "Lengdegrad", exact: true });
   const save = dialog.getByRole("button", { name: "Lagre agent", exact: true });
+  const vision = dialog.getByRole("checkbox", { name: "Tolk bilete i meldingar", exact: true });
+  await vision.check();
   await expect(dialog.getByRole("checkbox", { name: "Vêrdata", exact: true })).toBeChecked();
   await expect(location).toHaveValue("Bjorøy"); await expect(latitude).toHaveValue("60.322"); await expect(longitude).toHaveValue("5.199");
   await expect(dialog.getByRole("checkbox", { name: "Aktiv", exact: true })).toBeDisabled();
@@ -62,16 +64,30 @@ test("fixed weather settings preserve edits through failure, reject invalid coor
   await location.fill("  Parikia  "); await save.click();
   await expect(dialog).toContainText("Kunne ikkje lagre");
   await expect(location).toHaveValue("  Parikia  "); await expect(latitude).toHaveValue("37.085");
+  await expect(vision).toBeChecked();
   await save.click(); await expect(dialog.getByRole("heading", { name: "Rediger Vêrven", exact: true })).toHaveCount(0);
   expect(updates).toHaveLength(2);
   expect(updates[0]).toEqual(updates[1]);
-  expect(updates[1]).toMatchObject({ weather: { location: "Parikia", latitude: 37.085, longitude: 25.148 }, revision: 3, enabled: false });
+  expect(updates[1]).toMatchObject({ weather: { location: "Parikia", latitude: 37.085, longitude: 25.148 }, revision: 3, enabled: false, vision_enabled: true });
   await dialog.getByRole("button", { name: "Rediger", exact: true }).click();
   await expect(location).toHaveValue("Parikia"); await expect(latitude).toHaveValue("37.085");
+  await expect(vision).toBeChecked();
   await dialog.getByRole("button", { name: "Avbryt", exact: true }).click();
   await dialog.getByRole("button", { name: "Ny agent", exact: true }).click();
+  await expect(vision).not.toBeChecked(); await expect(vision).toBeEnabled();
   await dialog.getByRole("checkbox", { name: "Vêrdata", exact: true }).check();
   await expect(location).toHaveValue("Parikia"); await expect(latitude).toHaveValue("37.085"); await expect(longitude).toHaveValue("25.148");
   await expect(dialog.getByRole("checkbox", { name: "Aktiv", exact: true })).toBeDisabled();
   await expect(dialog).toContainText("Vêrtenesta er ikkje klar.");
+  await dialog.getByRole("button", { name: "Avbryt", exact: true }).click();
+  await dialog.getByRole("button", { name: "Lukk agentar", exact: true }).click();
+  disableVision();
+  await preview.getByRole("button", { name: "Val for Vêrkrets", exact: true }).click();
+  await preview.getByRole("button", { name: "Agentar i Vêrkrets", exact: true }).click();
+  await dialog.getByRole("button", { name: "Rediger", exact: true }).click();
+  await expect(vision).toBeChecked(); await expect(vision).toBeEnabled();
+  await expect(dialog).toContainText("Bilettolking er ikkje tilgjengeleg enno");
+  await vision.uncheck(); await expect(vision).toBeDisabled();
+  await save.click();
+  expect(updates[2]).toMatchObject({ vision_enabled: false, revision: 4 });
 });

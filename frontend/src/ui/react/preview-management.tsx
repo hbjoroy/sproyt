@@ -7,6 +7,8 @@ import { PreviewAdvanced } from "./preview-advanced";
 import type { AdvancedHost } from "../../application/advanced-host";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import { CircleChatAgentsDialog } from "./circle-chat-agents";
+import type { AppUpdate, UpdatePosition } from "../../app-update";
+import { AppUpdateAction } from "./app-update-action";
 
 export type ManagementDestination =
   | { kind: "create-circle" | "circles" | "people" | "channel" | "global-channels" | "global-invite" | "profile" | "notifications" | "agent" | "heart" }
@@ -14,13 +16,15 @@ export type ManagementDestination =
 
 /** Focused management tasks share the host's commands and state. Opening the
  * directory never creates invitations, credentials or processes. */
-export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents }: {
+export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition }: {
   snapshot: ConversationSnapshot;
   capabilities: { agent: boolean; heart: boolean };
   settings: PreviewSettingsHost;
   community: CommunityHost;
   advanced: AdvancedHost;
   chatAgents: CircleChatAgentApi;
+  appUpdate: AppUpdate;
+  captureUpdatePosition: () => readonly UpdatePosition[];
 }) {
   const [open, setOpen] = useState(false);
   const [setting, setSetting] = useState<"profile" | "notifications">();
@@ -64,6 +68,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
         <Button onClick={event => { settingsTrigger.current = event.currentTarget; setSetting("notifications"); }}>Varslingsinnstillingar</Button>
         {capabilities.agent && action("Agenttilgang", { kind: "agent" })}
         {capabilities.heart && action("Heart og planlegging", { kind: "heart" })}
+        <AppUpdateAction update={appUpdate} capture={captureUpdatePosition} />
       </div>
       {snapshot.circles.length > 0 && <section aria-label="Vennekretsar">
         <TextField label="Finn vennekrets" type="search" value={query} onChange={event => setQuery(event.target.value)} />

@@ -63,6 +63,7 @@ export function ProcessTaskMessage({ api, taskId, messageId }: { api: ProcessPil
   const [task, setTask] = useState<PilotTask>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [completionAttempted, setCompletionAttempted] = useState(false);
   const [reload, setReload] = useState(0);
   const mounted = useRef(true);
   const mutation = useRef(false);
@@ -100,7 +101,7 @@ export function ProcessTaskMessage({ api, taskId, messageId }: { api: ProcessPil
   const complete = async () => {
     if (mutation.current || !task?.can_complete || task.status !== "pending" || task.delivery_status === "pending"
       || ["completed", "cancelled", "failed"].includes(task.process_status)) return;
-    mutation.current = true; revision.current++; setBusy(true); setError("");
+    mutation.current = true; revision.current++; setBusy(true); setCompletionAttempted(true); setError("");
     try {
       const updated = await api.complete(taskId, messageId);
       if (mounted.current) setTask(updated);
@@ -113,7 +114,10 @@ export function ProcessTaskMessage({ api, taskId, messageId }: { api: ProcessPil
   const statusLabel = task?.status === "completed" || task?.process_status === "completed" ? "Fullført"
     : task?.process_status === "failed" ? "Feila"
       : task?.status === "cancelled" || task?.process_status === "cancelled" ? "Avbroten" : task ? "Ventar" : error ? "Kunne ikkje hente status" : "Hentar status …";
-  return <details className="sp-process-task" ref={root}>
+  const reloadStatus = task?.status !== "pending" ? task?.status
+    : ["completed", "cancelled", "failed"].includes(task.process_status) ? task.process_status : "pending";
+  return <details className="sp-process-task" ref={root} data-task-status={reloadStatus}
+    data-app-update-recoverable={completionAttempted && !busy && api.canReload()}>
     <summary>{task?.title ?? "Prosessoppgåve"}<span className="sp-process-task-status">{statusLabel}</span></summary>
     {task && <ProcessTaskDetails task={task} busy={busy} onComplete={() => void complete()} />}
     {error && <Status tone="error">{error}</Status>}
