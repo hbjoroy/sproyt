@@ -7,6 +7,7 @@ registration. The running Authentik version must still dry-run the blueprint.
 from pathlib import Path
 from types import SimpleNamespace
 import copy
+import subprocess
 import textwrap
 import unittest
 
@@ -42,6 +43,18 @@ def context(token=TOKEN, flow="sproyt-invitation-enrollment"):
 
 
 class ContinuationContract(unittest.TestCase):
+    def test_gitops_renders_only_existing_configmap_with_exact_blueprint_payload(self):
+        rendered = subprocess.run(
+            ["kubectl", "kustomize", str(BLUEPRINT.parent)],
+            check=True, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        ).stdout
+        expected = (
+            "apiVersion: v1\ndata:\n  sproyt-email-recovery.yaml: |\n"
+            + textwrap.indent(BLUEPRINT.read_text(encoding="utf-8"), "    ")
+            + "kind: ConfigMap\nmetadata:\n  name: sproyt-email-recovery\n  namespace: authentik\n"
+        )
+        self.assertEqual(rendered, expected)
+
     def setUp(self):
         self.deny = expression("invalid-invitation-context")
         self.mark = expression("mark-invitation-email")

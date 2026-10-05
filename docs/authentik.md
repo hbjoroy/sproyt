@@ -163,7 +163,8 @@ proxy or identity-provider logs are redacted; verify those separately without
 copying real invitation URLs into diagnostic reports.
 
 Authentik 2026.8.2's invitation `send_email` API creates its own link containing
-only `itoken`; it does not send Sprøyt's separately returned `next` parameter.
+only `itoken`. Sprøyt now returns the same itoken-only route for copied links;
+the local enrollment capability is never embedded in their `next` parameter.
 Its executor also rejects an absolute `next` URL unless a trusted policy sets
 the post-flow redirect. Sprøyt therefore stores its 43-character opaque token
 under `fixed_data.sproyt_enrollment_token` on the single-use invitation.
@@ -191,6 +192,37 @@ blocks with controlled context, but is not an Authentik importer test or proof
 of registration acceptance. Finish with a genuinely new user's delivered email
 link through registration, OIDC callback and exactly one intended membership,
 recording deployed revisions and redacted paths only.
+
+### Deliver the continuation blueprint through GitOps
+
+`deploy/authentik/kustomization.yaml` generates only the existing
+`authentik/sproyt-email-recovery` ConfigMap, with the blueprint as the exact
+`sproyt-email-recovery.yaml` data value. Name hashing is disabled to preserve the
+mount used by Authentik Helm revision 39. The explicit generator does not apply
+the raw Authentik blueprint as a Kubernetes resource. The Python contract above
+also runs local `kubectl kustomize` and checks the complete rendered object and
+payload; it does not contact the cluster.
+
+The existing ConfigMap was manually applied and has no Helm or Argo ownership.
+Adopt only this ConfigMap with a dedicated Argo application pinned to the reviewed
+Sprøyt source commit and `deploy/authentik` path. Authentik's Helm release retains
+its workload and mount ownership; this route changes no Deployment, Secret,
+Service or Helm release. First upgrade the Sprøyt application, dry-run this exact
+blueprint with the running Authentik importer, then perform the first reviewed
+ConfigMap sync without force or replace. For a continuation-only rollback, revert
+the Argo source pin to the previous reviewed blueprint; do not run the full
+email-recovery rollback described below.
+
+Before activation, verify that both Authentik server and worker use INFO or WARN,
+not DEBUG or TRACE. Authentik 2026.8.2's flow executor logs redirect URLs at DEBUG,
+including the enrollment capability. Its event logging redacts sensitive keys,
+but cannot be assumed to remove a token embedded in a `next` or `redirect` URL.
+Removing `next` from copied invitations avoids that unnecessary exposure at INFO;
+it does not establish blanket supplier or proxy redaction. Never copy real
+capabilities, flow context or challenge responses into release evidence.
+See the pinned [flow executor](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/flows/views/executor.py),
+[event logging](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/events/models.py)
+and [key-based cleansing](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/events/utils.py).
 
 Upstream contract: [invitation email API](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/stages/invitation/api.py),
 [invitation stage](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/stages/invitation/stage.py),
