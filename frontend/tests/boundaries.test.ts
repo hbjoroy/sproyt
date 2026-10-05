@@ -1056,7 +1056,7 @@ test("shared Rust client-command fixture covers exactly the TypeScript discrimin
 });
 
 
-import { imagePrompt } from "../src/imagegen";
+import { imagePrompt, imageRequest } from "../src/imagegen";
 test("imagegen command distinguishes chat, strips quotes, and bounds prompt text", () => {
   assert.equal(imagePrompt("hello"), null);
   assert.equal(imagePrompt("/imagegeneration hello"), null);
@@ -1070,4 +1070,12 @@ test("circle invalidation carries no private circle metadata and rename frames r
   assert.equal(asWireEvent({ protocol: protocolId, type: "circles_changed" })?.type, "circles_changed");
   assert.equal(asWireEvent({ protocol: protocolId, type: "circles_changed", payload: { circle_id: "private" } }), null);
   assert.equal(asWireEvent({ protocol: protocolId, type: "circle_renamed", payload: { circle: { id: "x", name: "invalid" } } }), null);
+});
+
+test("literal image commands preserve text and quoted literal remains expanded", () => {
+  assert.deepEqual(imageRequest('/imagegen literal "Keep background. Add Maria."'), { prompt: "Keep background. Add Maria.", mode: "literal" });
+  assert.deepEqual(imageRequest('/imagegen "literal scenery"'), { prompt: "literal scenery", mode: "expanded" });
+  assert.deepEqual(imageRequest('/imagegen literally blue'), { prompt: "literally blue", mode: "expanded" });
+  assert.equal(imageRequest('ordinary literal message'), null);
+  assert.throws(() => imageRequest('/imagegen literal ""'));
 });

@@ -1,17 +1,21 @@
 import { HttpClient } from "./api";
 import { isRecord, mediaFromUpload, type MediaObject } from "./types";
 
-export function imagePrompt(draft: string): string | null {
+export type ImagePromptMode = "expanded" | "literal";
+export function imageRequest(draft: string): { prompt: string; mode: ImagePromptMode } | null {
   if (!/^\/imagegen(?:\s|$)/i.test(draft)) return null;
   let prompt = draft.replace(/^\/imagegen\s*/i, "").trim();
+  const mode: ImagePromptMode = /^literal(?:\s|$)/i.test(prompt) ? "literal" : "expanded";
+  if (mode === "literal") prompt = prompt.replace(/^literal\s*/i, "").trim();
   if (prompt.startsWith('"') && prompt.endsWith('"') && prompt.length >= 2) prompt = prompt.slice(1, -1).trim();
-  if (!prompt || [...prompt].length > 2000) throw new Error('Bruk /imagegen "skildring av biletet" (1–2000 teikn).');
-  return prompt;
+  if (!prompt || [...prompt].length > 2000) throw new Error('Bruk /imagegen [literal] "skildring av biletet" (1–2000 teikn).');
+  return { prompt, mode };
 }
+export function imagePrompt(draft: string): string | null { return imageRequest(draft)?.prompt ?? null; }
 
 type Expansion = { prompt: string; model: string | null; style: string | null; sources: string[]; warning: string | null };
 type VisualReference = { title: string; url: string; credit: string };
-export type ImageGenerationJob = { expansion: Expansion | null; visualReferences: VisualReference[]; id: string; channel_id: string; state: string; prompt: string; error: string | null };
+export type ImageGenerationJob = { mode: ImagePromptMode; expansion: Expansion | null; visualReferences: VisualReference[]; id: string; channel_id: string; state: string; prompt: string; error: string | null };
 type Job = ImageGenerationJob;
 export interface ImageGenerationSnapshot {
   readonly jobs: readonly Job[];
@@ -32,7 +36,7 @@ function decodeJobs(value: unknown): Job[] {
       warning: typeof e.warning === "string" ? e.warning : null
     } : null;
     const visualReferences: VisualReference[] = Array.isArray(job.visual_references) ? job.visual_references.filter((r): r is VisualReference => isRecord(r) && typeof r.title === "string" && typeof r.credit === "string" && typeof r.url === "string" && r.url.startsWith("https://commons.wikimedia.org/wiki/File:")) : [];
-    return { expansion, visualReferences, id: job.id, channel_id: job.channel_id, state: job.state, prompt: job.prompt, error: typeof job.error === "string" ? job.error : null };
+    return { mode: job.mode === "literal" ? "literal" : "expanded", expansion, visualReferences, id: job.id, channel_id: job.channel_id, state: job.state, prompt: job.prompt, error: typeof job.error === "string" ? job.error : null };
   });
 }
 
@@ -89,14 +93,14 @@ export function createImageGeneration(options: {
     } catch { return jobScopes.get(key); }
   }
   // Reuse the admission id on a network retry, including after a page reload.
-  function requestId(channel: string, prompt: string, referenceIds: string[], rootId?: string): string {
+  function requestId(channel: string, prompt: string, referenceIds: string[], mode: ImagePromptMode, rootId?: string): string {
     const key = `sproyt-imagegen-admission:${options.identity()}`;
     try {
       const previous: unknown = JSON.parse(sessionStorage.getItem(key) || "null");
-      if (isRecord(previous) && previous.channel === channel && previous.rootId === rootId && previous.prompt === prompt && JSON.stringify(previous.referenceIds || []) === JSON.stringify(referenceIds) && typeof previous.id === "string") return previous.id;
+      if (isRecord(previous) && (previous.mode ?? "expanded") === mode && previous.channel === channel && previous.rootId === rootId && previous.prompt === prompt && JSON.stringify(previous.referenceIds || []) === JSON.stringify(referenceIds) && typeof previous.id === "string") return previous.id;
     } catch { /* Storage is optional; server-side admission still bounds jobs. */ }
     const id = crypto.randomUUID();
-    try { sessionStorage.setItem(key, JSON.stringify({ channel, prompt, referenceIds, rootId, id })); } catch { /* optional */ }
+    try { sessionStorage.setItem(key, JSON.stringify({ channel, prompt, referenceIds, mode, rootId, id })); } catch { /* optional */ }
     return id;
   }
   async function jsonPost(path: string, body: unknown): Promise<unknown> {
@@ -124,7 +128,7 @@ export function createImageGeneration(options: {
       card.append(caption);
       if (job.expansion) {
         const details = document.createElement("details");
-        const summary = document.createElement("summary"); summary.textContent = "Sjå utvida biletprompt";
+        const summary = document.createElement("summary"); summary.textContent = `Sjå innsend biletprompt (${job.mode})`;
         const text = document.createElement("p"); text.textContent = job.expansion.prompt;
         const attribution = document.createElement("p"); attribution.textContent = [job.expansion.model, job.expansion.style, job.expansion.warning].filter(Boolean).join(" · ");
         details.append(summary, text, attribution);
@@ -211,8 +215,9 @@ export function createImageGeneration(options: {
     channelName: options.channelName,
     threadRoot: (id: string) => jobScope(id),
     async submit(draft: string, channel: string, media: MediaObject[] = [], rootId?: string): Promise<boolean> {
-      const prompt = imagePrompt(draft);
-      if (prompt === null) return false;
+      const request = imageRequest(draft);
+      if (request === null) return false;
+      const { prompt, mode } = request;
       if (submitting) throw new Error("Biletførespurnaden blir allereie send.");
       const referenceIds = media.filter(item => item.channel_id === channel && item.content_type.startsWith("image/")).map(item => item.id);
       if (referenceIds.length > 3) throw new Error("Bruk høgst tre referansebilete i utkastet når du lagar eit bilete.");
@@ -220,7 +225,7 @@ export function createImageGeneration(options: {
       setStatus("Legg biletet i kø …");
       const identity = options.identity();
       try {
-        const result = await jsonPost("/api/v1/imagegen", { channel_id: channel, request_id: requestId(channel, prompt, referenceIds, rootId), prompt, reference_ids: referenceIds });
+        const result = await jsonPost("/api/v1/imagegen", { channel_id: channel, request_id: requestId(channel, prompt, referenceIds, mode, rootId), prompt, mode, reference_ids: referenceIds });
         if (identity !== options.identity()) return false;
         if (rootId && isRecord(result) && isRecord(result.job) && typeof result.job.id === "string") jobScope(result.job.id, rootId);
         try { sessionStorage.removeItem(`sproyt-imagegen-admission:${options.identity()}`); } catch { /* optional */ }

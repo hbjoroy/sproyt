@@ -141,3 +141,15 @@ Helm equivalents are `config.vllmUrl`, `config.imagegenWebResearch`,
 Image and video workflows share Santorini's memory with vLLM. Avoid running
 large manual video jobs simultaneously. The integration does not restart
 ComfyUI, evict other users' jobs, or stop vLLM.
+
+## Literal requests
+
+Use `/imagegen literal "Keep the background. Add Maria."` to submit the text directly to Qwen without vLLM expansion, research or automatic Paroikia, Artemis or waterfront references. Ordinary `/imagegen "description"` keeps its existing expanded behavior. A quoted prompt beginning with `literal`, such as `/imagegen "literal blue square"`, remains an ordinary expanded request.
+
+The first attached draft image is the edit target. Subsequent draft images are supporting references only. Literal mode appends only deterministic instructions defining these roles and preserving target details except explicitly requested changes. If Maria is mentioned, her canonical image is appended after the draft images and used only for identity, not its background, clothes, lighting or pose. Maria requires one of the three reference slots, leaving at most two draft images. Without draft images, literal mode generates a new scene; Maria's reference alone does not become an edit target.
+
+The API accepts `mode: "expanded" | "literal"`, defaulting to `expanded` for older clients and queued jobs. Mode is persisted and part of admission retry matching. Private prompt details display the mode and submitted prompt, including deterministic role instructions.
+
+Literal mode preserves prompt intent, not source pixel geometry: draft references are still reduced to fit 1024×1024 and encoded as JPEG, and the workflow generates at the existing 1024×768 output size. It does not guarantee exact pixel preservation or the source aspect ratio.
+
+Mixed-version canary rollout is safe with the shared queue: literal admission persists its deterministic prompt before a worker can claim it. Previous workers already preserve populated expansions and `scene=other`, so they submit the literal text without invoking vLLM. A free-text provenance marker in the existing expansion warning survives previous workers saving JSON; newer readers use it to restore the mode if an older worker dropped that new job field.
