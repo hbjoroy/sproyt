@@ -1914,14 +1914,14 @@ impl ChatRepository for PostgresChatRepository {
                 if payload_matches {
                     tracing::debug!(
                         principal_id = %command.actor,
-                        request_id,
+                        request_id = if request_id.starts_with("circle-agent-image:") { "circle-agent-image:[redacted]" } else { &request_id },
                         message_id = %message.id.as_uuid(),
                         "replayed idempotent chat command"
                     );
                 } else {
                     tracing::warn!(
                         principal_id = %command.actor,
-                        request_id,
+                        request_id = if request_id.starts_with("circle-agent-image:") { "circle-agent-image:[redacted]" } else { &request_id },
                         message_id = %message.id.as_uuid(),
                         requested_channel_id = %command.channel_id,
                         persisted_channel_id = %message.channel_id,
@@ -1932,7 +1932,14 @@ impl ChatRepository for PostgresChatRepository {
                 }
                 return Ok(message);
             }
-            if request_id.starts_with("circle-chat-agent:") {
+            if request_id.starts_with("circle-agent-image:") {
+                crate::chatbot::agent_images::authorize_postgres(
+                    &mut transaction,
+                    &command,
+                    &request_id,
+                )
+                .await?;
+            } else if request_id.starts_with("circle-chat-agent:") {
                 crate::chatbot::authorize_reply_postgres(&mut transaction, &command, &request_id)
                     .await?;
             } else {
@@ -2004,6 +2011,14 @@ impl ChatRepository for PostgresChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
+            if request_id.starts_with("circle-agent-image:") {
+                crate::chatbot::agent_images::finalize_postgres(
+                    &mut transaction,
+                    &message,
+                    &request_id,
+                )
+                .await?;
+            }
             transaction.commit().await.map_err(sql_error)?;
             if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())

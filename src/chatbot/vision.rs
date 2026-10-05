@@ -478,6 +478,7 @@ mod tests {
             weather: None,
             ferry_port: None,
             vision_enabled: vision,
+            image_generation: None,
         }
     }
 
@@ -489,6 +490,7 @@ mod tests {
             weather: None,
             ferry: None,
             observations: None,
+            imagegen: None,
         };
         let owner = UserId::new(Uuid::now_v7().to_string()).unwrap();
         let member = UserId::new(Uuid::now_v7().to_string()).unwrap();

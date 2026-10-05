@@ -34,3 +34,31 @@ defaults, failed-save recovery, unchanged PATCH omission and disabling an
 existing setting during an outage, in Chromium and iPhone WebKit. These UI
 checks do not establish Comfy execution, published media or visual identity;
 those require the separate backend and actual image acceptance evidence.
+
+Each publication has a durable row unique to the agent and original human
+message. Admission first waits for the committed text reply and receipt. A
+bounded model classifier can then select an explicit request, or a conservative
+occasional contribution when opted in. Only the current target message is used
+to classify intent; a photo question alone is not a request for a new portrait.
+The text model receives server-owned capability guidance and must not claim an
+image is finished or guarantee that quota or rendering will succeed.
+
+The agent is the image-job owner. Reservation serializes quota and the shared
+GPU slot in one transaction; a missing slot rolls back both. Actual or ambiguous
+Comfy submission keeps the reservation and is never blindly retried. The
+canonical identity asset and its hash are bound to the job independently of the
+agent's display name. Existing human generation behavior remains separate.
+
+Publication locks channel, agent, publication and image job in that order. It
+revalidates source content, configuration/access revisions, active profiles,
+identity, ready revision and deadlines after media work and channel-sequence
+waiting. Media, attachment, message, receipt, publication state and serialized
+image-job finalization commit together. A replay or stale worker cannot publish
+a second picture or restore a finalized image job. Deleted, edited, revoked or
+expired sources terminate their ready jobs without publishing.
+
+Focused SQLite and PostgreSQL contracts exercise these boundaries, quotas and
+slot rollback. A separate ignored integration test uses the actual Comfy gateway
+and saves a private PNG without posting to a channel. Visual inspection can
+assess a plausible adult identity, but does not guarantee an exact apparent age
+or consistency in every later generation.
