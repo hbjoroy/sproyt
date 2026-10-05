@@ -8,7 +8,7 @@ export function imageRequest(draft: string): { prompt: string; mode: ImagePrompt
   const mode: ImagePromptMode = /^literal(?:\s|$)/i.test(prompt) ? "literal" : "expanded";
   if (mode === "literal") prompt = prompt.replace(/^literal\s*/i, "").trim();
   if (prompt.startsWith('"') && prompt.endsWith('"') && prompt.length >= 2) prompt = prompt.slice(1, -1).trim();
-  if (!prompt || [...prompt].length > 2000) throw new Error('Bruk /imagegen [literal] "skildring av biletet" (1-2000 teikn).');
+  if (!prompt || [...prompt].length > 2000) throw new Error('Bruk /imagegen [literal] "skildring av biletet" (1–2000 teikn).');
   return { prompt, mode };
 }
 export function imagePrompt(draft: string): string | null { return imageRequest(draft)?.prompt ?? null; }
