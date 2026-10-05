@@ -47,6 +47,14 @@ pub(crate) struct AgentIdentityBinding {
     pub identity_sha256: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PromptMode {
+    #[default]
+    Expanded,
+    Literal,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Job {
     pub id: String,
@@ -54,6 +62,8 @@ pub(crate) struct Job {
     pub channel_id: crate::domain::ChannelId,
     pub state: String,
     pub prompt: String,
+    #[serde(default)]
+    pub mode: PromptMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_identity: Option<AgentIdentityBinding>,
     #[serde(default)]
@@ -74,14 +84,14 @@ pub(crate) struct Job {
 impl Job {
     pub fn view(&self) -> Value {
         json!({"id":self.id,"channel_id":self.channel_id,"state":self.state,
-            "prompt":self.prompt,"created_at":self.created_at,"error":self.error,
+            "prompt":self.prompt,"mode":self.mode,"created_at":self.created_at,"error":self.error,
             "media":self.media,"expansion":self.expansion,
             "reference_count":self.reference_ids.len(),
             "character_id":self.agent_identity.as_ref().map(|id|id.identity_id.as_str()).or_else(||maria_requested(&self.prompt).then_some("maria")),
             "visual_references":self.geographic_references()})
     }
     fn geographic_references(&self) -> Vec<Value> {
-        if self.agent_identity.is_some() {
+        if self.agent_identity.is_some() || self.mode == PromptMode::Literal {
             return Vec::new();
         }
         visual_references(self.expansion.as_ref().map(|e| e.scene).unwrap_or_default())
@@ -95,6 +105,18 @@ impl Job {
         self.state = state.into();
         self.updated_at = now();
     }
+}
+
+// The previous worker drops unknown Job fields when saving JSON, but retains
+// Expansion.warning. Keep literal provenance across a mixed-version rollout.
+fn decode_job(data: &str) -> Result<Job, Error> {
+    let mut job: Job = serde_json::from_str(data)?;
+    if job.expansion.as_ref().is_some_and(|expansion| {
+        expansion.warning.as_deref() == Some(crate::imagegen_prompt::LITERAL_PROVENANCE)
+    }) {
+        job.mode = PromptMode::Literal;
+    }
+    Ok(job)
 }
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -121,6 +143,7 @@ impl ImageGeneration {
             channel_id: channel,
             state: "queued".into(),
             prompt,
+            mode: PromptMode::Expanded,
             agent_identity: Some(AgentIdentityBinding {
                 publication_id: publication.into(),
                 identity_id,
@@ -197,8 +220,7 @@ impl ImageGeneration {
                 .await?
                 .map(|r| r.get("data")),
         };
-        data.map(|d| serde_json::from_str(&d).map_err(Into::into))
-            .transpose()
+        data.map(|d| decode_job(&d)).transpose()
     }
 
     pub async fn list(&self, owner: UserId) -> Result<Vec<Job>, Error> {
@@ -255,9 +277,7 @@ impl ImageGeneration {
                 .map(|r| r.get("data"))
                 .collect(),
         };
-        data.into_iter()
-            .map(|s| serde_json::from_str(&s).map_err(Into::into))
-            .collect()
+        data.into_iter().map(|s| decode_job(&s)).collect()
     }
 
     #[cfg(test)]
@@ -272,6 +292,7 @@ impl ImageGeneration {
             .await
     }
 
+    #[cfg(test)]
     pub async fn enqueue_with_references(
         &self,
         owner: UserId,
@@ -279,6 +300,26 @@ impl ImageGeneration {
         request: Uuid,
         prompt: String,
         references: Vec<(String, String)>,
+    ) -> Result<Job, Error> {
+        self.enqueue_with_mode(
+            owner,
+            channel,
+            request,
+            prompt,
+            references,
+            PromptMode::Expanded,
+        )
+        .await
+    }
+
+    pub async fn enqueue_with_mode(
+        &self,
+        owner: UserId,
+        channel: crate::domain::ChannelId,
+        request: Uuid,
+        prompt: String,
+        references: Vec<(String, String)>,
+        mode: PromptMode,
     ) -> Result<Job, Error> {
         if references.len() > 3 {
             return Err("too many reference images".into());
@@ -294,6 +335,7 @@ impl ImageGeneration {
         .to_string();
         if let Some(job) = self.get(&id).await? {
             if job.channel_id != channel
+                || job.mode != mode
                 || job.prompt != prompt
                 || job.reference_ids != reference_ids
             {
@@ -301,14 +343,17 @@ impl ImageGeneration {
             }
             return Ok(job);
         }
+        let expansion = (mode == PromptMode::Literal)
+            .then(|| crate::imagegen_prompt::literal_expansion(&prompt, reference_ids.len()));
         let job = Job {
             id,
             owner_id: owner.clone(),
             channel_id: channel.clone(),
             state: "queued".into(),
             prompt,
+            mode,
             agent_identity: None,
-            expansion: None,
+            expansion,
             reference_ids,
             reference_images,
             created_at: now(),
@@ -351,6 +396,13 @@ impl ImageGeneration {
             }
         }
         if let Some(existing) = self.get(&job.id).await? {
+            if existing.channel_id != job.channel_id
+                || existing.mode != job.mode
+                || existing.prompt != job.prompt
+                || existing.reference_ids != job.reference_ids
+            {
+                return Err("request id already used for a different image".into());
+            }
             return Ok(existing);
         }
         Err("Review your current image first, or try again when the queue has room.".into())
@@ -468,7 +520,12 @@ impl ImageGeneration {
                 job.error = Some("The server restarted during submission. The image may still be in ComfyUI; it was not queued again automatically.".into());
             } else if job.state == "queued" {
                 if job.expansion.is_none() {
-                    if let Some(binding) = &job.agent_identity {
+                    if job.mode == PromptMode::Literal {
+                        job.expansion = Some(crate::imagegen_prompt::literal_expansion(
+                            &job.prompt,
+                            job.reference_ids.len(),
+                        ));
+                    } else if let Some(binding) = &job.agent_identity {
                         let identity = identity::get(&binding.identity_id)
                             .filter(|identity| identity.sha256() == binding.identity_sha256)
                             .ok_or("agent identity changed")?;
@@ -999,6 +1056,194 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn literal_mode_is_durable_and_distinguishes_admission() {
+        let service = ImageGeneration::test("http://unused").await;
+        let owner = UserId::named("literal-owner");
+        let channel = ChannelId::generate();
+        let request = Uuid::now_v7();
+        let job = service
+            .enqueue_with_mode(
+                owner.clone(),
+                channel.clone(),
+                request,
+                "Keep background. Add Maria.".into(),
+                vec![
+                    ("first".into(), STANDARD.encode(b"target")),
+                    ("second".into(), STANDARD.encode(b"support")),
+                ],
+                PromptMode::Literal,
+            )
+            .await
+            .unwrap();
+        let restored = service.get(&job.id).await.unwrap().unwrap();
+        assert_eq!(restored.mode, PromptMode::Literal);
+        assert_eq!(restored.reference_ids, ["first", "second"]);
+        assert!(restored.geographic_references().is_empty());
+        let mut legacy = serde_json::to_value(&restored).unwrap();
+        legacy.as_object_mut().unwrap().remove("mode");
+        assert_eq!(
+            serde_json::from_value::<Job>(legacy).unwrap().mode,
+            PromptMode::Expanded
+        );
+        assert!(
+            service
+                .enqueue_with_mode(
+                    owner.clone(),
+                    channel.clone(),
+                    request,
+                    job.prompt.clone(),
+                    vec![
+                        ("first".into(), STANDARD.encode(b"target")),
+                        ("second".into(), STANDARD.encode(b"support"))
+                    ],
+                    PromptMode::Expanded
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .enqueue_with_mode(
+                    owner,
+                    channel,
+                    Uuid::now_v7(),
+                    "Maria".into(),
+                    vec![
+                        ("1".into(), "x".into()),
+                        ("2".into(), "x".into()),
+                        ("3".into(), "x".into())
+                    ],
+                    PromptMode::Literal
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn literal_admission_survives_previous_worker_json_roundtrip() {
+        // Flatten captures all fields already known to the previous Job.
+        // Its Expansion has exactly the previous enum-typed style and scene.
+        #[derive(Serialize, Deserialize)]
+        struct PreviousJob {
+            expansion: Option<crate::imagegen_prompt::Expansion>,
+            #[serde(flatten)]
+            fields: serde_json::Map<String, Value>,
+        }
+        let service = ImageGeneration::test("http://unused").await;
+        let job = service
+            .enqueue_with_mode(
+                UserId::named("mixed-worker"),
+                ChannelId::generate(),
+                Uuid::now_v7(),
+                "Keep background. Add Maria.".into(),
+                vec![("target".into(), STANDARD.encode(b"target"))],
+                PromptMode::Literal,
+            )
+            .await
+            .unwrap();
+        let mut previous: PreviousJob =
+            serde_json::from_value(serde_json::to_value(&job).unwrap()).unwrap();
+        previous.fields.remove("mode");
+        let expansion = previous.expansion.as_ref().unwrap();
+        assert_eq!(expansion.scene, Scene::Other);
+        assert!(expansion.style.is_none());
+        assert!(expansion.prompt.starts_with(&job.prompt));
+        // Previous work_one checks expansion.is_none() before any vLLM call.
+        assert!(previous.expansion.is_some());
+        let restored = decode_job(&serde_json::to_string(&previous).unwrap()).unwrap();
+        assert_eq!(restored.mode, PromptMode::Literal);
+        assert_eq!(restored.view()["mode"], "literal");
+        assert!(restored.geographic_references().is_empty());
+    }
+
+    #[tokio::test]
+    async fn literal_worker_submits_exact_text_without_automatic_references() {
+        use axum::{Json, Router, routing::post};
+        let captured = Arc::new(tokio::sync::Mutex::new(Value::Null));
+        let sink = captured.clone();
+        let app = Router::new().route(
+            "/prompt",
+            post(move |Json(value): Json<Value>| {
+                let sink = sink.clone();
+                async move {
+                    *sink.lock().await = value;
+                    Json(json!({"prompt_id":"c63ac052-a05a-4b5d-bfff-04429338df90"}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let service = ImageGeneration::test(&format!("http://{address}")).await;
+        let job = service
+            .enqueue_with_mode(
+                UserId::named("literal-worker"),
+                ChannelId::generate(),
+                Uuid::now_v7(),
+                "A plain blue square".into(),
+                vec![],
+                PromptMode::Literal,
+            )
+            .await
+            .unwrap();
+        service.tick().await.unwrap();
+        let saved = service.get(&job.id).await.unwrap().unwrap();
+        assert_eq!(saved.state, "running");
+        assert_eq!(saved.expansion.unwrap().prompt, "A plain blue square");
+        let submitted = captured.lock().await;
+        assert_eq!(submitted["prompt"]["4"]["inputs"]["prompt"], job.prompt);
+        assert!(submitted["prompt"]["20"].is_null());
+        assert_eq!(
+            submitted["extra_data"]["extra_pnginfo"]["reference_photos"],
+            json!([])
+        );
+        task.abort();
+    }
+
+    #[test]
+    fn literal_prompt_keeps_target_and_identity_roles_without_geography() {
+        use crate::imagegen_prompt::literal_expansion;
+        assert_eq!(
+            literal_expansion("A plain red square", 0).prompt,
+            "A plain red square"
+        );
+        let generation = literal_expansion("Draw Maria", 0);
+        assert!(
+            generation
+                .prompt
+                .contains("Image 1 is Maria's identity reference only")
+        );
+        assert!(!generation.prompt.contains("edit target"));
+        let edit = literal_expansion("Keep background. Add Maria.", 2);
+        assert!(edit.prompt.starts_with("Keep background. Add Maria.\n"));
+        assert!(edit.prompt.contains("image 1 is the edit target"));
+        assert!(
+            edit.prompt
+                .contains("Images 2 through 2 are supporting references only")
+        );
+        assert!(
+            edit.prompt
+                .contains("Image 3 is Maria's identity reference only")
+        );
+        assert_eq!(edit.scene, Scene::Other);
+        assert!(edit.sources.is_empty());
+        assert!(edit.model.is_none());
+        let graph = workflow(
+            &edit.prompt,
+            1,
+            edit.scene,
+            &[
+                "target.jpg".into(),
+                "support.jpg".into(),
+                "maria.jpg".into(),
+            ],
+        );
+        assert_eq!(graph["20"]["inputs"]["image"], "target.jpg");
+        assert!(!graph.to_string().contains("artemis"));
     }
 
     #[tokio::test]

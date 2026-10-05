@@ -29,6 +29,34 @@ pub(crate) fn original_expansion(prompt: &str, count: usize, warning: Option<Str
     }
 }
 
+pub(crate) const LITERAL_PROVENANCE: &str =
+    "Literal mode: submitted without creative prompt expansion.";
+
+/// Literal requests receive only deterministic reference-role instructions.
+pub(crate) fn literal_expansion(prompt: &str, count: usize) -> Expansion {
+    let mut submitted = prompt.to_owned();
+    if count > 0 {
+        submitted.push_str("\nReference roles: image 1 is the edit target. Preserve all details of image 1 except the changes explicitly requested above.");
+        if count > 1 {
+            submitted.push_str(&format!(
+                " Images 2 through {count} are supporting references only, not replacement scenes."
+            ));
+        }
+    }
+    if maria_requested(prompt) {
+        submitted.push_str(&format!("\nImage {} is Maria's identity reference only. Use it for her face and identity, not its scene, clothing, pose or lighting.", count + 1));
+    }
+    Expansion {
+        prompt: submitted,
+        filename: Some(image_filename(None, prompt)),
+        model: None,
+        style: None,
+        sources: vec![],
+        scene: Scene::Other,
+        warning: Some(LITERAL_PROVENANCE.into()),
+    }
+}
+
 const ART_DIRECTION: &str = r#"You are an art director preparing a prompt for Qwen Image Edit image generation with visual references.
 Understand and preserve the user's intended subject, action, relationships and mood.
 Preserve the number of people exactly. Norwegian/Nynorsk 'eit par' means a couple, TWO people;

@@ -8,7 +8,7 @@ async function fixture(page: Page) {
   let failReview = false;
   let holdReview: Promise<void> = Promise.resolve();
   const sent: { type: string; payload: { body?: string } }[] = [];
-  const submissions: { channel_id: string; prompt: string; request_id: string; reference_ids: string[] }[] = [];
+  const submissions: { channel_id: string; prompt: string; mode: string; request_id: string; reference_ids: string[] }[] = [];
   let sockets = 0;
   page.on("websocket", socket => {
     sockets++;
@@ -17,7 +17,7 @@ async function fixture(page: Page) {
   await page.route(/\/api\/v1\/imagegen(?:\?.*)?$/, async route => {
     if (route.request().method() === "POST") {
       const request = route.request().postDataJSON(); submissions.push(request);
-      job = { id: "react-job", channel_id: request.channel_id, prompt: request.prompt, state: "ready",
+      job = { id: "react-job", channel_id: request.channel_id, prompt: request.prompt, mode: request.mode, state: "ready",
         expansion: { prompt: "A careful composition", model: "test-model", style: "painting", warning: "Check details", sources: ["https://en.wikipedia.org/wiki/Paros", "javascript:alert(1)"] },
         visual_references: [{ title: "Paros photo", url: "https://commons.wikimedia.org/wiki/File:Paros.jpg", credit: "Photographer · CC BY" }, { title: "unsafe", url: "javascript:alert(1)", credit: "none" }] };
       return route.fulfill({ json: { job } });
@@ -48,7 +48,7 @@ test("private image review survives reload and attaches without publishing; deta
   await input.press("Enter");
   await expect(inbox.getByRole("button", { name: "Godta", exact: true })).toBeEnabled();
   await expect(input).toHaveValue("");
-  await inbox.getByText("Sjå utvida biletprompt").click();
+  await inbox.getByText("Sjå innsend biletprompt (expanded)").click();
   await expect(inbox).toContainText("A careful composition");
   await expect(inbox.getByRole("link", { name: "Kjelde: Paros" })).toHaveAttribute("href", "https://en.wikipedia.org/wiki/Paros");
   await inbox.getByText("Sjå referansefoto").click();
@@ -141,4 +141,18 @@ test("thread image command uses its references and review restores only that thr
   await expect(reply).toHaveValue("Private thread caption");
   await expect(preview.locator(".sp-channel-pane").getByRole("button", { name: "Fjern generated.png" })).toHaveCount(0);
   expect(state.sent.filter(command => command.type === "send_message").map(command => command.payload.body)).toEqual(["Image thread root"]);
+});
+
+test("literal command carries mode and displays submitted prompt details", async ({ page }) => {
+  const state = await fixture(page);
+  await page.goto("/?participant=react-image-literal&ui=react");
+  const preview = page.locator("#sproyt-react-preview");
+  const input = preview.getByRole("textbox", { name: "Skriv melding" });
+  await expect(input).toBeEnabled({ timeout: 15000 });
+  await input.fill('/imagegen literal "Keep background. Add Maria."');
+  await input.press("Enter");
+  const inbox = preview.getByRole("region", { name: "Private biletmeldingar" });
+  await expect(inbox.getByText("Sjå innsend biletprompt (literal)")).toBeVisible();
+  expect(state.submissions[0]?.mode).toBe("literal");
+  expect(state.submissions[0]?.prompt).toBe("Keep background. Add Maria.");
 });

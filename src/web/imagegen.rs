@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::{ChannelId, MediaId, MediaUpload, UserId},
-    imagegen::{ImageGeneration, Job},
+    imagegen::{ImageGeneration, Job, PromptMode},
     server::AppState,
     web::{
         http::{WsQuery, auth_error_response, authenticate_http, chat_error_response},
@@ -42,6 +42,8 @@ pub(crate) struct Request {
     channel_id: String,
     request_id: Uuid,
     prompt: String,
+    #[serde(default)]
+    mode: PromptMode,
     #[serde(default)]
     reference_ids: Vec<String>,
 }
@@ -154,12 +156,13 @@ pub(crate) async fn enqueue(
         }
     }
     match service
-        .enqueue_with_references(
+        .enqueue_with_mode(
             principal.user.id,
             channel,
             body.request_id,
             prompt.into(),
             references,
+            body.mode,
         )
         .await
     {
@@ -358,6 +361,29 @@ pub(crate) async fn review(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn request_mode_is_explicit_and_defaults_for_legacy_clients() {
+        let base =
+            serde_json::json!({"channel_id":"c", "request_id":uuid::Uuid::now_v7(), "prompt":"p"});
+        assert_eq!(
+            serde_json::from_value::<super::Request>(base.clone())
+                .unwrap()
+                .mode,
+            crate::imagegen::PromptMode::Expanded
+        );
+        let mut literal = base.clone();
+        literal["mode"] = serde_json::json!("literal");
+        assert_eq!(
+            serde_json::from_value::<super::Request>(literal)
+                .unwrap()
+                .mode,
+            crate::imagegen::PromptMode::Literal
+        );
+        let mut unknown = base;
+        unknown["mode"] = serde_json::json!("invented");
+        assert!(serde_json::from_value::<super::Request>(unknown).is_err());
+    }
+
     use super::*;
     #[tokio::test]
     async fn imagegen_private_job_cannot_be_read_or_reviewed_by_another_owner() {

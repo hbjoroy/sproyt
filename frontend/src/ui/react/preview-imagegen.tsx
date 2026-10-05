@@ -25,7 +25,7 @@ export function PreviewImageGeneration({ owner, channelId }: { owner: ImageGener
     {state.jobs.map(job => <article key={job.id} style={{ paddingBlock: 12, borderBlockEnd: "1px solid var(--sp-line)" }}>
       <p>{owner.channelName(job.channel_id)}{owner.threadRoot(job.id) ? " · Trådutkast" : ""} · {job.prompt}</p>
       {job.expansion && <details>
-        <summary>Sjå utvida biletprompt</summary>
+        <summary>Sjå innsend biletprompt ({job.mode})</summary>
         <p>{job.expansion.prompt}</p>
         <p>{[job.expansion.model, job.expansion.style, job.expansion.warning].filter(Boolean).join(" · ")}</p>
         {job.expansion.sources.map(source => <p key={source}><a href={source} target="_blank" rel="noopener noreferrer">Kjelde: {new URL(source).pathname.slice(6).replaceAll("_", " ")}</a></p>)}
