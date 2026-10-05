@@ -13,6 +13,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 COPY frontend/vendor/sproyt-ui-0.1.0.tgz ./vendor/sproyt-ui-0.1.0.tgz
 RUN npm ci
 COPY frontend ./
+COPY assets/share-inbox.js /src/assets/share-inbox.js
 RUN npm run build
 
 FROM build-base AS zig-builder
