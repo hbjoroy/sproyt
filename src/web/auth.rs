@@ -228,6 +228,32 @@ pub(crate) async fn auth_session(
     }
 }
 
+/// Authoritative identity for local share receipts. A network/server failure
+/// must never be interpreted by the worker as an anonymous session.
+pub(crate) async fn share_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
+    share_identity_response(state.auth.authenticate_request(None, cookie).await)
+}
+
+fn share_identity_response(
+    principal: Result<crate::auth::AuthenticatedPrincipal, crate::auth::AuthError>,
+) -> axum::response::Response {
+    let mut response = match principal {
+        Ok(principal) => {
+            Json(serde_json::json!({ "user_id": principal.user.id.to_string() })).into_response()
+        }
+        Err(error) => auth_error_response(error),
+    };
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
 pub(crate) fn redirect_with_cookies(
     location: &str,
     cookies: &[String],
@@ -263,6 +289,38 @@ fn response_with_cookies(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn share_identity_exposes_only_authenticated_id_and_never_caches_failures() {
+        let principal = AuthService::development()
+            .authenticate_request(None, None)
+            .await
+            .unwrap();
+        let expected = principal.user.id.to_string();
+        let response = share_identity_response(Ok(principal));
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            serde_json::json!({"user_id": expected})
+        );
+        for (error, status) in [
+            (
+                crate::auth::AuthError::Unauthorized,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                crate::auth::AuthError::External("offline".to_owned()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ] {
+            let response = share_identity_response(Err(error));
+            assert_eq!(response.status(), status);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
 
     #[test]
     fn message_return_path_survives_login_without_accepting_external_redirects() {

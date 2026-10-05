@@ -19,6 +19,8 @@ export type DurableSend = Readonly<{
   media: readonly DurableMedia[];
   createdAt: number;
   attempts: number;
+  /** A separate share draft must never clear the normal channel composer. */
+  source?: "share-target";
 }>;
 
 export type DurableOutboxProblem = "unavailable" | "quota" | "capacity" | "corrupt" | "identity";
@@ -53,7 +55,8 @@ function isEntry(value: unknown): value is DurableSend {
   return isRecord(value) && value.version === 1 && typeof value.userId === "string" && typeof value.requestId === "string"
     && typeof value.channelId === "string" && (value.parentMessageId === null || typeof value.parentMessageId === "string")
     && typeof value.body === "string" && typeof value.draft === "string" && Array.isArray(value.media) && value.media.every(isMedia)
-    && typeof value.createdAt === "number" && Number.isFinite(value.createdAt) && typeof value.attempts === "number" && Number.isSafeInteger(value.attempts);
+    && typeof value.createdAt === "number" && Number.isFinite(value.createdAt) && typeof value.attempts === "number" && Number.isSafeInteger(value.attempts)
+    && (value.source === undefined || value.source === "share-target");
 }
 function entryBytes(entry: DurableSend): number { return new TextEncoder().encode(JSON.stringify(entry)).byteLength; }
 class IndexedDbStorage implements DurableOutboxStorage {

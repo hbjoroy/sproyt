@@ -2,6 +2,7 @@
       import { ProcessPilotApi } from "./process-pilot";
       import { WorkItemApi } from "./work-items";
       import { appVersion, createAppUpdate, latestAppVersion, updateAppWorker } from "./app-update";
+      import { createShareTarget, shareInbox } from "./share-target";
       import { SavedEmojiApi } from "./saved-emojis";
       import { CircleChatAgentApi } from "./chat-agents";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
@@ -449,6 +450,39 @@
       let preparingSends = 0;
       const durableOutbox = createDurableOutbox();
       let durableJournalReady: Promise<readonly DurableSend[]> = Promise.resolve([]);
+      const shares = createShareTarget({
+        user: () => currentParticipantId,
+        upload: async (channelId, file) => {
+          if (!knownChannels.some(channel => channel.id === channelId && channel.role !== "observer")) throw new Error("Du har ikkje skriverett i denne kanalen.");
+          const form = new FormData(); form.append("file", file, file.name || "shared-image.png");
+          const response = await fetch(`/api/v1/channels/${channelId}/media`, { method: "POST", credentials: "same-origin", body: form, signal: AbortSignal.timeout(60000) });
+          if (!response.ok) throw new Error(`Biletet kunne ikkje lastast opp (HTTP ${response.status}). Delinga er teken vare på.`);
+          const media = mediaFromUpload(await response.json());
+          if (!media || media.channel_id !== channelId) throw new Error("Opplastinga gav ugyldige mediedata. Delinga er teken vare på.");
+          return { id: media.id, contentType: media.content_type, originalFilename: media.original_filename };
+        },
+        enqueue: async (admission, owner) => {
+          await durableJournalReady;
+          if (owner !== currentParticipantId) throw new Error("Innlogginga vart endra. Delinga er ikkje send.");
+          if (!knownChannels.some(channel => channel.id === admission.channelId && channel.role !== "observer")) throw new Error("Du har ikkje skriverett i denne kanalen.");
+          await durableOutbox.enqueue(admission);
+        },
+        dispatch: admission => {
+          if (connectionSupervisor.snapshot().subscribedChannelId === admission.channelId) replayDurableSends(admission.channelId);
+          else {
+            const channel = knownChannels.find(channel => channel.id === admission.channelId);
+            if (channel) selectChannel(channel);
+          }
+        }
+      });
+      document.addEventListener("click", event => {
+        const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href="/auth/logout"]') : null;
+        if (!link) return;
+        event.preventDefault();
+        void shareInbox.logout().then(() => { shares.clear(); location.assign(link.href); }).catch(() => {
+          setConnectionStatus("Utlogginga kunne ikkje rydde delingar lokalt. Prøv igjen.");
+        });
+      }, true);
       let requestedChannelSlug = "general";
       const timeline: TimelineItem[] = [];
       const threadReplies = new Map<string, ChatMessage[]>();
@@ -748,6 +782,10 @@
         let replayedActiveMessage = false;
         for (const entry of durableOutbox.pending()) {
           if (entry.channelId !== channelId) continue;
+          if (entry.source === "share-target" || shares.isShare(entry.requestId)) {
+            resendCommandIfSubscribed(entry.requestId, entry.channelId, "send_message", { channel_id: entry.channelId, body: entry.body });
+            continue;
+          }
           rememberRecoveredSend(entry);
           const payload = entry.parentMessageId
             ? { channel_id: entry.channelId, parent_message_id: entry.parentMessageId, body: entry.body }
@@ -2422,6 +2460,12 @@
 
       function finishPendingMessage(requestId: string | undefined, message: ChatMessage): void {
         if (!requestId) return;
+        if (shares.isShare(requestId) || durableOutbox.pending().some(entry => entry.requestId === requestId && entry.source === "share-target")) {
+          const entry = durableOutbox.pending().find(entry => entry.requestId === requestId);
+          if (!entry || entry.channelId !== message.channel_id || entry.body !== message.body || message.sender_id !== currentParticipantId) return;
+          void shares.accepted(requestId).then(() => durableOutbox.acknowledge(requestId)).catch(() => shares.failed("Kvitteringa kunne ikkje lagrast lokalt"));
+          return;
+        }
         const pending = pendingMessages.get(requestId) ?? uncertainMessages.get(requestId);
         if (!pending) return;
         if (message?.channel_id !== pending.channelId || message?.body !== pending.body) {
@@ -2459,6 +2503,11 @@
 
       function failPendingMessage(requestId: string | undefined, message: string, permanent = false): void {
         if (!requestId) return;
+        if (shares.isShare(requestId) || durableOutbox.pending().some(entry => entry.requestId === requestId && entry.source === "share-target")) {
+          shares.failed(message);
+          if (permanent) void durableOutbox.permanentFailure(requestId).catch(() => {});
+          return;
+        }
         const pending = pendingMessages.get(requestId) ?? uncertainMessages.get(requestId);
         if (!pending) return;
         pendingMessages.delete(requestId); uncertainMessages.delete(requestId); retriedUncertainRequests.delete(requestId);
@@ -3108,9 +3157,12 @@
           const changedUser = currentParticipantId !== null && currentParticipantId !== event.payload.participant_id;
           currentParticipantId = event.payload.participant_id;
           if (changedUser) {
+            shares.clear();
             pendingMessages.clear(); uncertainMessages.clear(); pendingThreadReplies.clear(); uncertainThreadReplies.clear(); retriedUncertainRequests.clear();
           }
-          durableJournalReady = durableOutbox.setUser(currentParticipantId).catch(() => {
+          durableJournalReady = durableOutbox.setUser(currentParticipantId).then(async entries => {
+            await shares.refresh(); return entries;
+          }).catch(() => {
             setConnectionStatus("Mellombels meldingslagring er ikkje tilgjengeleg. Nye meldingar kan bli sende, men kan ikkje gjenopprettast etter app-avslutting.");
             return [];
           });
@@ -5945,6 +5997,7 @@
             processPilot: processPilotApi,
             workItems: workItemsApi,
             appUpdate,
+            shares,
             processPilotIdentity: () => currentParticipantId ?? "",
             openImageGeneration: () => imageGeneration.open(),
             legacyContainer: sproytApp,
