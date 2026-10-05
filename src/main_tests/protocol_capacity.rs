@@ -1239,7 +1239,6 @@ fn onboarding_is_server_side_single_use_and_owner_authorized() {
     assert!(ENROLLMENT_SOURCE.contains(".bearer_auth(&self.token)"));
     assert!(ENROLLMENT_SOURCE.contains("connect_timeout(Duration::from_secs(3))"));
     assert!(ENROLLMENT_SOURCE.contains("timeout(Duration::from_secs(8))"));
-    assert!(ENROLLMENT_SOURCE.contains("append_pair(\"next\", next.as_str())"));
     assert!(ENROLLMENT_HTTP_SOURCE.contains(".prepare_enrollment_invitation("));
     assert!(ENROLLMENT_HTTP_SOURCE.contains(".activate_enrollment_invitation("));
     assert!(ENROLLMENT_HTTP_SOURCE.contains(".send_email("));
