@@ -30,7 +30,7 @@ function ShareDraft({ item, target, snapshot, busy }: { item: ShareReceipt; targ
     {!destinations.length && <Status>Du har ingen kanal du kan skrive i. Delinga er teken vare på lokalt.</Status>}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <Button disabled={busy || !channel || (!text.trim() && !item.file && !item.admission)} onClick={() => void target.send(item.id, channel, text)}>{item.admission ? "Prøv den opphavlege sendinga igjen" : "Send delinga"}</Button>
-      {!item.admission && <Button variant="quiet" disabled={busy} onClick={() => void target.discard(item.id)}>Forkast delinga</Button>}
+      {(!item.admission || item.rejected) && <Button variant="quiet" disabled={busy} onClick={() => void target.discard(item.id)}>Forkast delinga</Button>}
     </div>
   </section>;
 }

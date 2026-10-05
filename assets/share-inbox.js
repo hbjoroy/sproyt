@@ -4,8 +4,11 @@
   const name = "sproyt-share-inbox", storeName = "receipts", deadline = 5000;
   const maxImage = 35 * 1024 * 1024, maxText = 16000, age = 48 * 60 * 60 * 1000;
   const retained = row => Date.now() - row.createdAt < (row.admission ? 7 * 24 * 60 * 60 * 1000 : age);
+  let localGeneration = 0;
+  const activeTransactions = new Set();
   const imageTypes = new Set(["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/avif"]);
   async function transaction(mode, action) {
+    const startedGeneration = localGeneration;
     const db = await new Promise((resolve, reject) => {
       const open = indexedDB.open(name, 1);
       let settled = false;
@@ -15,15 +18,17 @@
       open.onerror = open.onblocked = () => { clearTimeout(timer); reject(new Error("Lokal lagring er ikkje tilgjengeleg.")); };
     });
     try {
+      if (startedGeneration !== localGeneration) throw new Error("Innlogginga vart endra. Delinga er ikkje teken i bruk.");
       return await new Promise((resolve, reject) => {
         let tx;
         try { tx = db.transaction(storeName, mode, { durability: "strict" }); }
         catch { tx = db.transaction(storeName, mode); }
+        activeTransactions.add(tx);
         let result;
         const timer = setTimeout(() => { try { tx.abort(); } catch {} }, deadline);
         // A successful put is not a durable acknowledgement: wait for commit.
-        tx.oncomplete = () => { clearTimeout(timer); resolve(result); };
-        tx.onerror = tx.onabort = () => { clearTimeout(timer); reject(new Error("Delinga kunne ikkje lagrast lokalt. Prøv igjen.")); };
+        tx.oncomplete = () => { activeTransactions.delete(tx); clearTimeout(timer); resolve(result); };
+        tx.onerror = tx.onabort = () => { activeTransactions.delete(tx); clearTimeout(timer); reject(new Error("Delinga kunne ikkje lagrast lokalt. Prøv igjen.")); };
         const store = tx.objectStore(storeName), request = store.getAll();
         request.onsuccess = () => {
           try { result = action(store, request.result); }
@@ -33,7 +38,9 @@
     } finally { db.close(); }
   }
   const meta = rows => rows.find(row => row.id === "auth") ?? { id: "auth", generation: 0 };
-  const ensure = (rows, generation) => { if (meta(rows).generation !== generation) throw new Error("Innlogginga vart endra. Delinga er ikkje teken i bruk."); };
+  const ensure = (rows, generation) => {
+    if (`${meta(rows).generation}:${localGeneration}` !== generation) throw new Error("Innlogginga vart endra. Delinga er ikkje teken i bruk.");
+  };
   async function identity() {
     const response = await fetch("/auth/share-identity", { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(deadline) });
     if (response.status === 401) return null;
@@ -42,7 +49,7 @@
     if (!value || typeof value.user_id !== "string" || !value.user_id) throw new Error("Innloggingstenesta svarte ugyldig.");
     return value.user_id;
   }
-  const generation = () => transaction("readonly", (_, rows) => meta(rows).generation);
+  const generation = () => transaction("readonly", (_, rows) => `${meta(rows).generation}:${localGeneration}`);
   const receipt = (rows, id, owner, revision) => {
     ensure(rows, revision);
     const item = rows.find(row => row.id === id && row.owner === owner && !row.done);
@@ -108,7 +115,11 @@
     }); },
     owned(id, owner, revision) { return transaction("readwrite", (store, rows) => {
       const item = rows.find(row => row.id === id && row.owner === owner && !row.done);
-      ensure(rows, revision); if (item) store.put({ ...item, file: null });
+      ensure(rows, revision); if (item) store.put({ ...item, file: null, rejected: false });
+    }); },
+    reject(id, owner, revision) { return transaction("readwrite", (store, rows) => {
+      const item = receipt(rows, id, owner, revision);
+      store.put({ ...item, rejected: true });
     }); },
     finish(id, owner, revision) { return transaction("readwrite", (store, rows) => {
       ensure(rows, revision);
@@ -119,10 +130,14 @@
     }); },
     discard(id, owner, revision) { return transaction("readwrite", (store, rows) => {
       const item = receipt(rows, id, owner, revision);
-      if (item.admission) throw new Error("Sendinga må avklarast før delinga kan fjernast.");
+      if (item.admission && !item.rejected) throw new Error("Sendinga må avklarast før delinga kan fjernast.");
       store.delete(id);
     }); },
-    logout() { return transaction("readwrite", (store, rows) => {
+    logout() {
+      // Fence immediately, even if optional IndexedDB cleanup later fails.
+      localGeneration++;
+      activeTransactions.forEach(tx => { try { tx.abort(); } catch {} });
+      return transaction("readwrite", (store, rows) => {
       const next = { id: "auth", generation: meta(rows).generation + 1 };
       store.clear(); store.put(next);
     }); }

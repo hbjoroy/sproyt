@@ -9,13 +9,19 @@ const channel = "00000000-0000-7000-8000-000000001861";
 const observer = "00000000-0000-7000-8000-000000001862";
 const media = "00000000-0000-7000-8000-000000001863";
 
-test("worker never acknowledges failed file storage and rejects unsupported share payloads", async ({ page }) => {
+test("worker never acknowledges failed file storage and rejects unsupported share payloads", async ({ page, browserName }) => {
   const worker = (await readFile(new URL("../../assets/share-inbox.js", import.meta.url), "utf8")) + "\n" + (await readFile(new URL("../../assets/service-worker.js", import.meta.url), "utf8"));
   const helper = await readFile(new URL("../../assets/share-inbox.js", import.meta.url), "utf8");
+  let holdIdentity = false, loggedOut = false;
+  const held: ServerResponse[] = [];
   const server = createServer((request, response) => {
     const path = new URL(request.url!, "http://fixture").pathname;
     if (path === "/service-worker.js" || path === "/helper.js") { response.writeHead(200, { "content-type": "text/javascript", "service-worker-allowed": "/" }); response.end(path === "/helper.js" ? helper : worker); }
-    else if (path === "/auth/share-identity") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"user_id":"actor"}'); }
+    else if (path === "/auth/share-identity") {
+      if (holdIdentity) { held.push(response); return; }
+      response.writeHead(200, { "content-type": "application/json" }); response.end('{"user_id":"actor"}');
+    }
+    else if (path === "/auth/logout") { loggedOut = true; response.writeHead(200, { "content-type": "text/html; charset=utf-8" }); response.end('<title>Signed out</title><script src="/helper.js"></script>'); }
     else { response.writeHead(200, { "content-type": "text/html; charset=utf-8" }); response.end('<!doctype html><title>Share storage</title><script src="/helper.js"></script>'); }
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -37,6 +43,31 @@ test("worker never acknowledges failed file storage and rejects unsupported shar
       const response = await fetch("/share-target", { method: "POST", body: form }); return { status: response.status, text: await response.text() };
     });
     expect(rejected.status).toBe(503); expect(rejected.text).toContain("støtta bilete");
+    // Playwright exposes worker execution contexts only for Chromium. WebKit's
+    // meaningful contract above is that failed File storage is never acknowledged.
+    if (browserName === "webkit") return;
+    // A broken optional store must not trap authentication. Its synchronous
+    // in-memory generation still fences a capture whose identity fetch is pending.
+    const activeWorker = page.context().serviceWorkers()[0]!;
+    expect(activeWorker).toBeTruthy();
+    holdIdentity = true;
+    const staleCapture = activeWorker.evaluate(async () => {
+      const form = new FormData(); form.set("text", "Before failed logout cleanup");
+      try { await globalThis.SproytShareInbox.capture(form); return "accepted"; }
+      catch (error) { return error instanceof Error ? error.message : "failed"; }
+    });
+    await expect.poll(() => held.length).toBe(1);
+    await activeWorker.evaluate(() => {
+      (globalThis as any).savedInboxOpen = indexedDB.open;
+      Object.defineProperty(indexedDB, "open", { configurable: true, value: () => { throw new Error("Fixture storage unavailable"); } });
+    });
+    await page.goto(`http://127.0.0.1:${address.port}/auth/logout`);
+    await expect(page).toHaveTitle("Signed out"); expect(loggedOut).toBe(true);
+    await activeWorker.evaluate(() => Object.defineProperty(indexedDB, "open", { configurable: true, value: (globalThis as any).savedInboxOpen }));
+    holdIdentity = false; held.splice(0).forEach(response => { response.writeHead(200, { "content-type": "application/json" }); response.end('{"user_id":"actor"}'); });
+    expect(await staleCapture).toContain("Innlogginga vart endra");
+    expect(await page.evaluate(async () => (await globalThis.SproytShareInbox.list("actor")).some(item => item.text === "Before failed logout cleanup"))).toBe(false);
+    expect(await page.evaluate(() => globalThis.SproytShareInbox.list("another-account"))).toEqual([]);
   } finally { await page.goto("about:blank"); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 

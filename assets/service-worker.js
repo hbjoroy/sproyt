@@ -41,7 +41,15 @@ self.addEventListener("fetch", (event) => {
   }
   if (request.method !== "GET") return;
   if (url.pathname === "/auth/logout") {
-    event.respondWith(self.SproytShareInbox.logout().then(() => fetch(request)).catch(() => new Response("Utlogginga kunne ikkje rydde delingar lokalt. Prøv igjen.", { status: 503 })));
+    event.respondWith((async () => {
+      try { await self.SproytShareInbox.logout(); }
+      catch {
+        const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        windows.forEach(client => client.postMessage({ type: "share-cleanup-warning" }));
+      }
+      // Signing out must not depend on an optional local share store.
+      return fetch(request);
+    })());
     return;
   }
   if (url.pathname === "/share-target") {

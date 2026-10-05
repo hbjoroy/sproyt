@@ -2,19 +2,20 @@ import "../../assets/share-inbox.js";
 import type { DurableSend, DurableMedia } from "./durable-outbox";
 
 export type ShareAdmission = Omit<DurableSend, "version" | "userId" | "createdAt" | "attempts">;
-export type ShareReceipt = Readonly<{ id: string; owner: string | null; generation: number; createdAt: number;
-  text: string; file: File | null; channelId?: string; admission: ShareAdmission | null; done: number | null }>;
+export type ShareReceipt = Readonly<{ id: string; owner: string | null; generation: string; createdAt: number;
+  text: string; file: File | null; channelId?: string; admission: ShareAdmission | null; done: number | null; rejected?: boolean }>;
 export interface ShareInbox {
   identity(): Promise<string | null>;
-  generation(): Promise<number>;
-  capture(form: FormData, generation?: number): Promise<string>;
+  generation(): Promise<string>;
+  capture(form: FormData, generation?: string): Promise<string>;
   list(owner: string): Promise<readonly ShareReceipt[]>;
-  claim(id: string, owner: string, generation: number): Promise<ShareReceipt>;
-  edit(id: string, owner: string, generation: number, text: string, channelId: string): Promise<ShareReceipt>;
-  admit(id: string, owner: string, generation: number, admission: ShareAdmission): Promise<ShareReceipt>;
-  owned(id: string, owner: string, generation: number): Promise<void>;
-  finish(id: string, owner: string, generation: number): Promise<void>;
-  discard(id: string, owner: string, generation: number): Promise<void>;
+  claim(id: string, owner: string, generation: string): Promise<ShareReceipt>;
+  edit(id: string, owner: string, generation: string, text: string, channelId: string): Promise<ShareReceipt>;
+  admit(id: string, owner: string, generation: string, admission: ShareAdmission): Promise<ShareReceipt>;
+  owned(id: string, owner: string, generation: string): Promise<void>;
+  reject(id: string, owner: string, generation: string): Promise<void>;
+  finish(id: string, owner: string, generation: string): Promise<void>;
+  discard(id: string, owner: string, generation: string): Promise<void>;
   logout(): Promise<void>;
 }
 declare global { var SproytShareInbox: ShareInbox; }
@@ -27,10 +28,13 @@ export function createShareTarget(options: {
   user: () => string | null;
   upload: (channelId: string, file: File) => Promise<DurableMedia>;
   enqueue: (admission: ShareAdmission, owner: string) => Promise<void>;
+  drop: (requestId: string) => Promise<void>;
   dispatch: (admission: ShareAdmission) => void;
 }, inbox: ShareInbox = shareInbox) {
   let state: ShareState = { receipts: [], busy: false, error: "", notice: "" };
   let epoch = 0;
+  let draftWrites = 0;
+  const localDrafts = new Map<string, { text: string; channelId: string }>();
   let shareIds = new Set<string>();
   const listeners = new Set<() => void>();
   const publish = (next: Partial<ShareState>) => { state = { ...state, ...next }; listeners.forEach(listener => listener()); };
@@ -40,10 +44,10 @@ export function createShareTarget(options: {
     const receipts = await inbox.list(user);
     if (epoch === currentEpoch && user === options.user()) {
       shareIds = new Set(receipts.filter(item => item.admission).map(item => item.id));
-      publish({ receipts: receipts.filter(item => !item.done) });
+      publish({ receipts: receipts.filter(item => !item.done).map(item => ({ ...item, ...localDrafts.get(item.id) })) });
     }
   };
-  async function authorized(): Promise<{ user: string; generation: number }> {
+  async function authorized(): Promise<{ user: string; generation: string }> {
     const generation = await inbox.generation(), user = await inbox.identity();
     if (!user || user !== options.user()) throw new Error("Kontroller innlogginga før du tek delinga i bruk.");
     return { user, generation };
@@ -58,21 +62,33 @@ export function createShareTarget(options: {
   }
   return {
     getSnapshot: () => state,
+    canReload: () => !state.busy && draftWrites === 0 && localDrafts.size === 0,
+    canReplay(requestId: string) { return !state.receipts.some(item => item.id === requestId && item.rejected); },
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     refresh,
-    clear() { epoch++; shareIds.clear(); publish({ receipts: [], busy: false, error: "", notice: "" }); },
+    clear() { epoch++; shareIds.clear(); localDrafts.clear(); publish({ receipts: [], busy: false, error: "", notice: "" }); },
     async edit(id: string, channelId: string, text: string) {
       const user = options.user(); if (!user) return;
+      const draft = { text, channelId }; localDrafts.set(id, draft);
+      publish({ receipts: state.receipts.map(item => item.id === id ? { ...item, ...draft } : item) });
+      draftWrites++;
       try {
         const generation = await inbox.generation();
         if (user !== options.user()) return;
         await inbox.edit(id, user, generation, text, channelId);
+        if (localDrafts.get(id) === draft) localDrafts.delete(id);
       } catch (error) {
         if (user === options.user()) publish({ error: error instanceof Error ? error.message : "Utkastet kunne ikkje lagrast lokalt." });
-      }
+      } finally { draftWrites--; }
     },
     claim(id: string) { return run(async () => { const { user, generation } = await authorized(); await inbox.claim(id, user, generation); }); },
-    discard(id: string) { return run(async () => { const { user, generation } = await authorized(); await inbox.discard(id, user, generation); }); },
+    discard(id: string) { return run(async () => {
+      const { user, generation } = await authorized();
+      const item = state.receipts.find(item => item.id === id);
+      if (item?.rejected && item.admission) await options.drop(item.admission.requestId);
+      await inbox.discard(id, user, generation);
+      localDrafts.delete(id);
+    }); },
     send(id: string, channelId: string, text: string) { return run(async () => {
       const { user, generation } = await authorized();
       let item = state.receipts.find(receipt => receipt.id === id && receipt.owner === user);
@@ -80,6 +96,7 @@ export function createShareTarget(options: {
       let admission = item.admission;
       if (!admission) {
         item = await inbox.edit(id, user, generation, text, channelId);
+        localDrafts.delete(id);
         if (user !== options.user()) throw new Error("Innlogginga vart endra. Delinga er ikkje send.");
         const media = item.file ? [await options.upload(channelId, item.file)] : [];
         if (user !== options.user()) throw new Error("Innlogginga vart endra. Delinga er ikkje send.");
@@ -94,6 +111,8 @@ export function createShareTarget(options: {
       // failed enqueue, and recovery reuses this exact immutable admission.
       if (user !== options.user()) throw new Error("Innlogginga vart endra. Delinga er ikkje send.");
       await options.enqueue(admission, user);
+      // A deliberate retry may leave the former definitive rejection behind.
+      publish({ receipts: state.receipts.map(item => item.id === id ? { ...item, rejected: false } : item) });
       await inbox.owned(id, user, generation);
       if (user !== options.user()) throw new Error("Innlogginga vart endra. Meldinga er ikkje send frå denne økta.");
       options.dispatch(admission);
@@ -106,7 +125,14 @@ export function createShareTarget(options: {
       await refresh(); publish({ notice: "Delinga er send." }); return true;
     },
     isShare(requestId: string) { return shareIds.has(requestId); },
-    failed(message: string) { publish({ error: `Delinga er ikkje stadfesta: ${message}. Prøv den opphavlege sendinga igjen.` }); }
+    failed(message: string) { publish({ error: `Delinga er ikkje stadfesta: ${message}. Prøv den opphavlege sendinga igjen.` }); },
+    async rejected(requestId: string, message: string) {
+      const item = state.receipts.find(item => item.admission?.requestId === requestId);
+      if (!item?.owner) return;
+      await inbox.reject(item.id, item.owner, await inbox.generation());
+      await refresh();
+      publish({ error: `Tenesta avviste delinga: ${message}. Du kan forkaste henne eller prøve den opphavlege sendinga igjen.` });
+    }
   };
 }
 export type ShareTarget = ReturnType<typeof createShareTarget>;

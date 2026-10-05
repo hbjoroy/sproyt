@@ -14,6 +14,9 @@ den aktuelle kontoen. Eigarbundne delingar blir ikkje viste til andre kontoar.
 Utlogging ryddar delingsinnboksen og aukar ein lokal auth-generation i same
 transaksjon, slik at eit eldre pågåande mottak ikkje kan gjenopprette innhaldet.
 Ein feil i identitetskontrollen blir aldri tolka som anonym innlogging.
+Utlogging skjer òg dersom den valfrie lokale lagringa feilar; ein lokal
+generation-fence stoppar pågåande arbeid, og appen varslar om manglande rydding.
+Eventuelle attverande eigarbundne delingar er framleis knytte til opphavleg konto.
 
 «Motteke deling» opnar ei kompakt kontrollflate. Brukaren vel ein krets/kanal
 med skriverett, kan redigere teksten, og trykkjer «Send delinga». Vanlege
@@ -22,6 +25,10 @@ faktiske fila ved opplasting/sending. Feil bevarer delinga og viser ein lokal
 retry. Etter at sendinga er journalført er request-ID og innhald låste;
 retry og gjenoppretting nyttar same ID og payload. Ingen posting skjer før
 brukaren har valt Send. Kvitteringslaus sending kan gjenopptakast etterpå.
+Ei definitiv serveravvising blir lagra og stoppar automatisk replay; brukaren
+kan forkaste delinga. Ei sending med ukjend utfall er framleis låst til den
+opphavlege admissionen. Appoppdatering ventar på upload/send og pågåande
+delingsutkastlagring, utan å låse tekstfeltet for kvar lagring.
 
 Innboksen har høgst fem usende delingar og 70 MiB bilete totalt. Ubrukte
 delingar går ut etter 48 timar; uttrykkeleg journalførte sendingar blir

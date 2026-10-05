@@ -467,6 +467,7 @@
           if (!knownChannels.some(channel => channel.id === admission.channelId && channel.role !== "observer")) throw new Error("Du har ikkje skriverett i denne kanalen.");
           await durableOutbox.enqueue(admission);
         },
+        drop: async requestId => { await durableOutbox.permanentFailure(requestId); },
         dispatch: admission => {
           if (connectionSupervisor.snapshot().subscribedChannelId === admission.channelId) replayDurableSends(admission.channelId);
           else {
@@ -479,10 +480,22 @@
         const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href="/auth/logout"]') : null;
         if (!link) return;
         event.preventDefault();
-        void shareInbox.logout().then(() => { shares.clear(); location.assign(link.href); }).catch(() => {
-          setConnectionStatus("Utlogginga kunne ikkje rydde delingar lokalt. Prøv igjen.");
-        });
+        shares.clear();
+        void shareInbox.logout().catch(() => {
+          try { sessionStorage.setItem("sproyt-share-logout-warning", "1"); } catch { /* sign-out still proceeds */ }
+        }).finally(() => location.assign(link.href));
       }, true);
+      navigator.serviceWorker?.addEventListener("message", event => {
+        if (event.data?.type === "share-cleanup-warning") {
+          try { sessionStorage.setItem("sproyt-share-logout-warning", "1"); } catch { /* optional warning persistence */ }
+        }
+      });
+      try {
+        if (sessionStorage.getItem("sproyt-share-logout-warning")) {
+          shares.failed("Du er logga ut, men delingar kunne ikkje ryddast lokalt. Eigarbundne delingar blir berre viste til den opphavlege kontoen");
+          sessionStorage.removeItem("sproyt-share-logout-warning");
+        }
+      } catch { /* optional warning persistence */ }
       let requestedChannelSlug = "general";
       const timeline: TimelineItem[] = [];
       const threadReplies = new Map<string, ChatMessage[]>();
@@ -645,8 +658,9 @@
         updateWorker: () => updateAppWorker(serviceWorkerReady),
         reload: () => location.reload(),
         prepare: async () => {
+          if (!shares.canReload()) throw new Error("Vent til delinga er lagra eller sendinga er avklart før du oppdaterer appen.");
           await durableJournalReady;
-          if (preparingSends || http.pendingWrites || imageGeneration.getSnapshot().busy
+          if (!shares.canReload() || preparingSends || http.pendingWrites || imageGeneration.getSnapshot().busy
             || [...channelUploads.values()].some(upload => upload.count > 0)
             || [...threadComposerStates.values()].some(state => state.uploadCount > 0))
             throw new Error("Vent til opplastinga eller innsendinga er ferdig før du oppdaterer appen.");
@@ -783,6 +797,7 @@
         for (const entry of durableOutbox.pending()) {
           if (entry.channelId !== channelId) continue;
           if (entry.source === "share-target" || shares.isShare(entry.requestId)) {
+            if (!shares.canReplay(entry.requestId)) continue;
             resendCommandIfSubscribed(entry.requestId, entry.channelId, "send_message", { channel_id: entry.channelId, body: entry.body });
             continue;
           }
@@ -2505,7 +2520,7 @@
         if (!requestId) return;
         if (shares.isShare(requestId) || durableOutbox.pending().some(entry => entry.requestId === requestId && entry.source === "share-target")) {
           shares.failed(message);
-          if (permanent) void durableOutbox.permanentFailure(requestId).catch(() => {});
+          if (permanent) void shares.rejected(requestId, message).then(() => durableOutbox.permanentFailure(requestId)).catch(() => shares.failed("Avvisinga kunne ikkje lagrast lokalt"));
           return;
         }
         const pending = pendingMessages.get(requestId) ?? uncertainMessages.get(requestId);
