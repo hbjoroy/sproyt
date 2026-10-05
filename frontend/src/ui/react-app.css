@@ -358,11 +358,11 @@
   margin-block-start: 1rem;
 }
 
-.sp-circle-agent-form textarea {
+.sp-circle-agent-form textarea,
+.sp-circle-agent-form select {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  resize: vertical;
   border: 1px solid var(--sp-line);
   border-radius: 0;
   background: var(--sp-surface);
@@ -370,6 +370,10 @@
   padding: 0.7rem;
   font: inherit;
 }
+.sp-circle-agent-form textarea { resize: vertical; }
+.sp-circle-agent-form select { min-height: 44px; }
+.sp-agent-image-settings { display: grid; gap: 8px; }
+.sp-agent-image-settings p { margin: 0; }
 
 .sp-circle-agent-enabled {
   display: flex;

@@ -144,6 +144,7 @@ fn input(weather: Option<WeatherConfig>, revision: Option<i64>) -> AgentInput {
         enabled: false,
         revision,
         vision_enabled: None,
+        image_generation: None,
     }
 }
 
@@ -152,6 +153,7 @@ async fn contract(store: Store) {
     let service = CircleChatAgents {
         ferry: None,
         observations: None,
+        imagegen: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -448,6 +450,7 @@ async fn ferry_contract(store: Store) {
         weather: None,
         ferry: None,
         observations: None,
+        imagegen: None,
     };
     let owner = UserId::new(Uuid::now_v7().to_string()).unwrap();
     let other = UserId::new(Uuid::now_v7().to_string()).unwrap();
@@ -792,6 +795,7 @@ async fn conversation_contract(store: Store) {
     let service = CircleChatAgents {
         ferry: None,
         observations: None,
+        imagegen: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -830,6 +834,7 @@ async fn conversation_contract(store: Store) {
                 enabled: false,
                 revision: None,
                 vision_enabled: None,
+                image_generation: None,
             },
         )
         .await
@@ -932,6 +937,7 @@ async fn conversation_contract(store: Store) {
                 enabled: false,
                 revision: None,
                 vision_enabled: None,
+                image_generation: None,
             },
         )
         .await

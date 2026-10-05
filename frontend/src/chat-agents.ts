@@ -2,6 +2,8 @@ import { HttpClient } from "./api";
 import { isRecord } from "./types";
 
 export type AgentWeather = Readonly<{ location: string; latitude: number; longitude: number }>;
+export type AgentImageGeneration = Readonly<{ identityId: string; enabled: boolean; occasional: boolean }>;
+export type AgentImageIdentity = Readonly<{ id: string; label: string }>;
 
 export function validAgentWeather(value: AgentWeather): boolean {
   const length = [...value.location.trim()].length;
@@ -22,6 +24,8 @@ export type CircleChatAgent = Readonly<{
   ferryPort?: "paros" | null;
   visionEnabled: boolean;
   visionAvailable: boolean;
+  imageGeneration: AgentImageGeneration | null;
+  imageGenerationAvailable: boolean;
 }>;
 
 export type CircleChatAgentInput = Readonly<{
@@ -33,6 +37,7 @@ export type CircleChatAgentInput = Readonly<{
   weather?: AgentWeather | null;
   ferryPort?: "paros" | null;
   visionEnabled?: boolean;
+  imageGeneration?: AgentImageGeneration | null;
 }>;
 
 export type ChannelChatAgents = Readonly<{
@@ -60,7 +65,15 @@ function decodeAgent(value: unknown): CircleChatAgent {
     || typeof value.enabled !== "boolean" || typeof value.revision !== "number"
     || typeof value.worker_available !== "boolean"
     || (value.vision_enabled !== undefined && typeof value.vision_enabled !== "boolean")
-    || (value.vision_available !== undefined && typeof value.vision_available !== "boolean")) throw new Error("Ugyldig agentsvar frå tenaren.");
+    || (value.vision_available !== undefined && typeof value.vision_available !== "boolean")
+    || (value.image_generation_available !== undefined && typeof value.image_generation_available !== "boolean")) throw new Error("Ugyldig agentsvar frå tenaren.");
+  let imageGeneration: AgentImageGeneration | null = null;
+  if (value.image_generation !== undefined && value.image_generation !== null) {
+    const images = value.image_generation;
+    if (!isRecord(images) || typeof images.identity_id !== "string" || !images.identity_id.length || images.identity_id.length > 80
+      || typeof images.enabled !== "boolean" || typeof images.occasional !== "boolean") throw new Error("Ugyldig biletoppsett frå tenaren.");
+    imageGeneration = { identityId: images.identity_id, enabled: images.enabled, occasional: images.occasional };
+  }
   let weather: AgentWeather | null = null;
   if (value.weather !== undefined && value.weather !== null) {
     if (!isRecord(value.weather) || typeof value.weather.location !== "string"
@@ -74,7 +87,8 @@ function decodeAgent(value: unknown): CircleChatAgent {
     triggerWords: value.trigger_words, responsePhrases: value.response_phrases,
     enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available, weather,
     ferryPort: value.ferry_port === "paros" ? "paros" : null,
-    visionEnabled: value.vision_enabled === true, visionAvailable: value.vision_available === true };
+    visionEnabled: value.vision_enabled === true, visionAvailable: value.vision_available === true,
+    imageGeneration, imageGenerationAvailable: value.image_generation_available === true };
 }
 
 export class CircleChatAgentApi {
@@ -89,16 +103,23 @@ export class CircleChatAgentApi {
       { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled, access_revision: accessRevision }) });
   }
 
-  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean; ferryAvailable: boolean; visionAvailable: boolean }> {
+  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean; ferryAvailable: boolean; visionAvailable: boolean; imageGenerationAvailable: boolean; imageIdentities: AgentImageIdentity[] }> {
     const response = await this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, value => value);
     if (!isRecord(response) || !Array.isArray(response.agents) || typeof response.worker_available !== "boolean"
       || (response.weather_available !== undefined && typeof response.weather_available !== "boolean")
       || (response.ferry_available !== undefined && typeof response.ferry_available !== "boolean")
-      || (response.vision_available !== undefined && typeof response.vision_available !== "boolean"))
+      || (response.vision_available !== undefined && typeof response.vision_available !== "boolean")
+      || (response.image_generation_available !== undefined && typeof response.image_generation_available !== "boolean"))
       throw new Error("Ugyldig agentliste frå tenaren.");
+    const identities = response.image_identities ?? [];
+    if (!Array.isArray(identities) || identities.length > 50 || !identities.every(identity => isRecord(identity)
+      && typeof identity.id === "string" && identity.id.length > 0 && identity.id.length <= 80
+      && typeof identity.label === "string" && identity.label.length > 0 && identity.label.length <= 120)
+      || new Set(identities.map(identity => identity.id)).size !== identities.length) throw new Error("Ugyldig biletidentitet frå tenaren.");
     return { agents: response.agents.map(decodeAgent), workerAvailable: response.worker_available,
       weatherAvailable: response.weather_available === true, ferryAvailable: response.ferry_available === true,
-      visionAvailable: response.vision_available === true };
+      visionAvailable: response.vision_available === true, imageGenerationAvailable: response.image_generation_available === true,
+      imageIdentities: identities.map(identity => ({ id: String(identity.id), label: String(identity.label) })) };
   }
 
   async create(circleId: string, input: CircleChatAgentInput): Promise<CircleChatAgent> {
@@ -114,6 +135,8 @@ export class CircleChatAgentApi {
   private body(input: CircleChatAgentInput) {
     return { display_name: input.displayName, trigger_words: input.triggerWords,
       response_phrases: input.responsePhrases, enabled: input.enabled, revision: input.revision, weather: input.weather,
-      ferry_port: input.ferryPort, vision_enabled: input.visionEnabled };
+      ferry_port: input.ferryPort, vision_enabled: input.visionEnabled,
+      image_generation: input.imageGeneration === undefined ? undefined : input.imageGeneration === null ? null
+        : { identity_id: input.imageGeneration.identityId, enabled: input.imageGeneration.enabled, occasional: input.imageGeneration.occasional } };
   }
 }

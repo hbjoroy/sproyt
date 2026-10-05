@@ -53,6 +53,7 @@ fn unavailable_snapshot(source: &str, location: &str, timezone: Option<&str>) ->
     json!({"status":"unavailable","source":source,"configured_location":location,"timezone":timezone,"valid_until_epoch":Utc::now().timestamp()+60,"note":"Current source facts are unavailable. Do not invent them; ordinary conversation and the human's own observations are still valid topics."})
 }
 
+pub(crate) mod agent_images;
 mod channel_access;
 mod ferry;
 mod followup;
@@ -82,6 +83,7 @@ pub(crate) struct CircleChatAgents {
     weather: Option<Arc<weather::WeatherService>>,
     ferry: Option<Arc<ferry::FerryService>>,
     observations: Option<Arc<observations::ObservationService>>,
+    imagegen: Option<crate::imagegen::ImageGeneration>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -98,6 +100,16 @@ pub(crate) struct AgentInput {
     pub ferry_port: Option<Option<String>>,
     #[serde(default)]
     pub vision_enabled: Option<bool>,
+    #[serde(default, deserialize_with = "image_generation_update")]
+    pub image_generation: Option<Option<agent_images::ImageGenerationConfig>>,
+}
+
+fn image_generation_update<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<agent_images::ImageGenerationConfig>>, D::Error> {
+    Ok(Some(
+        Option::<agent_images::ImageGenerationConfig>::deserialize(deserializer)?,
+    ))
 }
 
 fn ferry_port_update<'de, D: serde::Deserializer<'de>>(
@@ -126,6 +138,8 @@ pub(crate) struct AgentView {
     pub ferry_port: Option<String>,
     pub vision_enabled: bool,
     pub vision_available: bool,
+    pub image_generation: Option<agent_images::ImageGenerationConfig>,
+    pub image_generation_available: bool,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +154,7 @@ struct StoredAgent {
     weather: Option<String>,
     ferry_port: Option<String>,
     vision_enabled: bool,
+    image_generation: Option<String>,
 }
 
 fn storage(error: impl std::fmt::Display) -> RepositoryError {
@@ -224,6 +239,9 @@ fn normalized(input: AgentInput) -> Result<AgentInput> {
     {
         return Err(RepositoryError::Conflict);
     }
+    if let Some(Some(config)) = &input.image_generation {
+        config.validate()?;
+    }
     if let Some(Some(weather)) = &input.weather {
         weather.validate()?;
     }
@@ -262,6 +280,7 @@ fn normalized(input: AgentInput) -> Result<AgentInput> {
         weather: input.weather,
         ferry_port: input.ferry_port,
         vision_enabled: input.vision_enabled,
+        image_generation: input.image_generation,
     })
 }
 
@@ -316,6 +335,7 @@ impl CircleChatAgents {
         let weather = weather::WeatherService::from_env()?.map(Arc::new);
         let ferry = ferry::FerryService::from_env()?.map(Arc::new);
         let observations = observations::ObservationService::from_env()?.map(Arc::new);
+        let imagegen = crate::imagegen::ImageGeneration::from_env(config, postgres).await?;
         Ok(Self {
             store,
             model,
@@ -323,6 +343,7 @@ impl CircleChatAgents {
             weather,
             ferry,
             observations,
+            imagegen,
         })
     }
 
@@ -344,13 +365,20 @@ impl CircleChatAgents {
         self.available() && vision::enabled()
     }
 
+    pub(crate) fn image_generation_available(&self) -> bool {
+        self.available() && self.imagegen.is_some() && agent_images::enabled()
+    }
+    pub(crate) fn image_identities(&self) -> Value {
+        crate::imagegen::identity::catalogue()
+    }
+
     pub(crate) async fn list(&self, actor: &UserId, circle: &str) -> Result<Vec<AgentView>> {
         self.require_manager(actor, circle).await?;
         let pg = matches!(self.store, Store::Pg(_));
         let object = if pg {
-            "cast(json_build_object('agent_id',cast(a.agent_id as text),'circle_id',cast(a.circle_id as text),'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',a.enabled,'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',a.vision_enabled) as text)"
+            "cast(json_build_object('agent_id',cast(a.agent_id as text),'circle_id',cast(a.circle_id as text),'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',a.enabled,'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',a.vision_enabled,'image_generation',a.image_generation) as text)"
         } else {
-            "json_object('agent_id',a.agent_id,'circle_id',a.circle_id,'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',json(case when a.enabled=1 then 'true' else 'false' end),'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',json(case when a.vision_enabled then 'true' else 'false' end))"
+            "json_object('agent_id',a.agent_id,'circle_id',a.circle_id,'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',json(case when a.enabled=1 then 'true' else 'false' end),'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',json(case when a.vision_enabled then 'true' else 'false' end),'image_generation',a.image_generation)"
         };
         let query = format!(
             "select {object} from circle_chat_agents a join users u on u.id=a.agent_id where a.circle_id=?uuid and exists(select 1 from circle_memberships m where m.circle_id=a.circle_id and m.user_id=?uuid and m.role in ('owner','moderator')) order by lower(u.display_name),a.agent_id"
@@ -383,6 +411,13 @@ impl CircleChatAgents {
             ferry_port: item.ferry_port,
             vision_enabled: item.vision_enabled,
             vision_available: self.vision_available(),
+            image_generation_available: self.image_generation_available(),
+            image_generation: item
+                .image_generation
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(storage)?,
             weather: item
                 .weather
                 .as_deref()
@@ -414,6 +449,12 @@ impl CircleChatAgents {
                     && !self.weather_available())
                 || (input.ferry_port.as_ref().is_some_and(Option::is_some)
                     && !self.ferry_available())
+                || (input
+                    .image_generation
+                    .as_ref()
+                    .and_then(Option::as_ref)
+                    .is_some_and(|config| config.enabled)
+                    && !self.image_generation_available())
                 || (input.vision_enabled == Some(true) && !self.vision_available()))
         {
             return Err(RepositoryError::Conflict);
@@ -422,6 +463,7 @@ impl CircleChatAgents {
         let now = Utc::now().timestamp();
         let triggers = serde_json::to_string(&input.trigger_words).map_err(storage)?;
         let phrases = serde_json::to_string(&input.response_phrases).map_err(storage)?;
+        let image_generation = serde_json::to_string(&input.image_generation).map_err(storage)?;
         let weather = serde_json::to_string(&input.weather).map_err(storage)?;
         macro_rules! create {
             ($pool:expr,$pg:expr) => {{
@@ -436,8 +478,8 @@ impl CircleChatAgents {
                     .bind(&id).bind(&input.display_name).bind(PROVIDER).bind(&id).execute(&mut *tx).await.map_err(storage)?;
                 sqlx::query(&sql("insert into agent_profiles(agent_id,owner_id,invited_by,provider,service_identity,purpose,rate_limit_per_minute,created_at) values(?uuid,?uuid,?uuid,?,?,?,30,current_timestamp)",$pg))
                     .bind(&id).bind(actor.to_string()).bind(actor.to_string()).bind(PROVIDER).bind(&id).bind("Circle chat agent").execute(&mut *tx).await.map_err(storage)?;
-                sqlx::query(&sql("insert into circle_chat_agents(agent_id,circle_id,trigger_words,response_phrases,enabled,created_by,updated_by,created_at,updated_at,weather,ferry_port,vision_enabled) values(?uuid,?uuid,?,?,case when ?='true' then true else false end,?uuid,?uuid,?int,?int,nullif(?,'null'),?,case when ?='true' then true else false end)",$pg))
-                    .bind(&id).bind(circle).bind(&triggers).bind(&phrases).bind(input.enabled.to_string()).bind(actor.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(now.to_string()).bind(&weather).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.unwrap_or(false).to_string()).execute(&mut *tx).await.map_err(storage)?;
+                sqlx::query(&sql("insert into circle_chat_agents(agent_id,circle_id,trigger_words,response_phrases,enabled,created_by,updated_by,created_at,updated_at,weather,ferry_port,vision_enabled,image_generation) values(?uuid,?uuid,?,?,case when ?='true' then true else false end,?uuid,?uuid,?int,?int,nullif(?,'null'),?,case when ?='true' then true else false end,nullif(?,'null'))",$pg))
+                    .bind(&id).bind(circle).bind(&triggers).bind(&phrases).bind(input.enabled.to_string()).bind(actor.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(now.to_string()).bind(&weather).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.unwrap_or(false).to_string()).bind(&image_generation).execute(&mut *tx).await.map_err(storage)?;
                 tx.commit().await.map_err(storage)?;
             }};
         }
@@ -461,6 +503,8 @@ impl CircleChatAgents {
             ferry_port: input.ferry_port.flatten(),
             vision_enabled: input.vision_enabled.unwrap_or(false),
             vision_available: self.vision_available(),
+            image_generation_available: self.image_generation_available(),
+            image_generation: input.image_generation.flatten(),
         })
     }
 
@@ -480,6 +524,12 @@ impl CircleChatAgents {
                         && !self.weather_available())
                     || (input.ferry_port.as_ref().is_some_and(Option::is_some)
                         && !self.ferry_available())
+                    || (input
+                        .image_generation
+                        .as_ref()
+                        .and_then(Option::as_ref)
+                        .is_some_and(|config| config.enabled)
+                        && !self.image_generation_available())
                     || (input.vision_enabled == Some(true) && !self.vision_available())))
         {
             return Err(RepositoryError::Conflict);
@@ -489,6 +539,7 @@ impl CircleChatAgents {
         let now = Utc::now().timestamp();
         let triggers = serde_json::to_string(&input.trigger_words).map_err(storage)?;
         let phrases = serde_json::to_string(&input.response_phrases).map_err(storage)?;
+        let image_generation = serde_json::to_string(&input.image_generation).map_err(storage)?;
         let weather = serde_json::to_string(&input.weather).map_err(storage)?;
         macro_rules! update {
             ($pool:expr,$pg:expr) => {{
@@ -497,8 +548,8 @@ impl CircleChatAgents {
                 let owner: Option<String> = sqlx::query_scalar(&authority_query)
                     .bind(circle).bind(actor.to_string()).fetch_optional(&mut *tx).await.map_err(storage)?;
                 if owner.is_none() { tx.rollback().await.map_err(storage)?; return Err(RepositoryError::PermissionDenied); }
-                let changed = sqlx::query(&sql("update circle_chat_agents set trigger_words=?,response_phrases=?,weather=case when ?='true' then nullif(?,'null') else weather end,ferry_port=case when ?='true' then ? else ferry_port end,vision_enabled=case when ?='true' then case when ?='true' then true else false end else vision_enabled end,enabled=case when ?='true' then true else false end,revision=revision+1,updated_by=?uuid,updated_at=?int where agent_id=?uuid and circle_id=?uuid and revision=?int and (?='true' or weather is null or ?='false' or ?='true') and (?='true' or ferry_port is null or ?='false' or ?='true') and (?='true' or vision_enabled=false or ?='false' or ?='true')",$pg))
-                    .bind(&triggers).bind(&phrases).bind(weather_provided.to_string()).bind(&weather).bind(ferry_provided.to_string()).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.is_some().to_string()).bind(input.vision_enabled.unwrap_or(false).to_string()).bind(input.enabled.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(id).bind(circle).bind(expected.to_string()).bind(self.weather_available().to_string()).bind(input.enabled.to_string()).bind(weather_provided.to_string()).bind(self.ferry_available().to_string()).bind(input.enabled.to_string()).bind(ferry_provided.to_string()).bind(self.vision_available().to_string()).bind(input.enabled.to_string()).bind(input.vision_enabled.is_some().to_string())
+                let changed = sqlx::query(&sql("update circle_chat_agents set trigger_words=?,response_phrases=?,image_generation=case when ?='true' then nullif(?,'null') else image_generation end,weather=case when ?='true' then nullif(?,'null') else weather end,ferry_port=case when ?='true' then ? else ferry_port end,vision_enabled=case when ?='true' then case when ?='true' then true else false end else vision_enabled end,enabled=case when ?='true' then true else false end,revision=revision+1,updated_by=?uuid,updated_at=?int where agent_id=?uuid and circle_id=?uuid and revision=?int and (?='true' or weather is null or ?='false' or ?='true') and (?='true' or ferry_port is null or ?='false' or ?='true') and (?='true' or vision_enabled=false or ?='false' or ?='true') and (?='true' or image_generation is null or ?='false' or ?='true')",$pg))
+                    .bind(&triggers).bind(&phrases).bind(input.image_generation.is_some().to_string()).bind(&image_generation).bind(weather_provided.to_string()).bind(&weather).bind(ferry_provided.to_string()).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.is_some().to_string()).bind(input.vision_enabled.unwrap_or(false).to_string()).bind(input.enabled.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(id).bind(circle).bind(expected.to_string()).bind(self.weather_available().to_string()).bind(input.enabled.to_string()).bind(weather_provided.to_string()).bind(self.ferry_available().to_string()).bind(input.enabled.to_string()).bind(ferry_provided.to_string()).bind(self.vision_available().to_string()).bind(input.enabled.to_string()).bind(input.vision_enabled.is_some().to_string()).bind(self.image_generation_available().to_string()).bind(input.enabled.to_string()).bind(input.image_generation.is_some().to_string())
                     .execute(&mut *tx).await.map_err(storage)?.rows_affected();
                 if changed != 1 { return Err(RepositoryError::Conflict); }
                 sqlx::query(&sql("update users set display_name=? where id=?uuid",$pg)).bind(&input.display_name).bind(id).execute(&mut *tx).await.map_err(storage)?;
@@ -620,6 +671,7 @@ impl VllmChat {
         .await
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     async fn reply_with_vision(
         &self,
@@ -633,6 +685,36 @@ impl VllmChat {
         ferry: Option<&Value>,
         vision: Option<&vision::Input>,
         observations: Option<&Value>,
+    ) -> std::result::Result<String, &'static str> {
+        self.reply_with_capabilities(
+            agent,
+            triggers,
+            phrases,
+            target,
+            messages,
+            weather,
+            followup,
+            ferry,
+            vision,
+            observations,
+            false,
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn reply_with_capabilities(
+        &self,
+        agent: &str,
+        triggers: &[String],
+        phrases: &[String],
+        target: &str,
+        messages: &[ContextMessage],
+        weather: Option<&Value>,
+        followup: Option<&FollowupContext>,
+        ferry: Option<&Value>,
+        vision: Option<&vision::Input>,
+        observations: Option<&Value>,
+        picture_planned: bool,
     ) -> std::result::Result<String, &'static str> {
         let models = self
             .auth(self.http.get(format!("{}/models", self.base)))
@@ -674,6 +756,15 @@ impl VllmChat {
         } else {
             system
         };
+        let system = if picture_planned {
+            format!(
+                "{system} A separate server-owned image service may prepare a clearly generated picture of your configured fictional adult identity when the human explicitly asks for one, or rarely for an opted-in social moment. Acknowledge a portrait request briefly and naturally without a blanket claim that you cannot create pictures. This service is asynchronous, limited and may fail: never promise a result, say it is ready/attached/already posted, invent visual details, or claim a generated scene is a real observation. You cannot choose tools, workflows, URLs, real-person identities or media to publish. The app handles the picture separately from this text reply."
+            )
+        } else {
+            format!(
+                "{system} No new generated picture has been admitted for this reply. Do not promise or pretend to generate, attach or post a picture."
+            )
+        };
         let direct_address = messages
             .iter()
             .find(|message| message.id == target)
@@ -694,7 +785,7 @@ impl VllmChat {
             system
         };
         let clock = model_clock(Utc::now(), weather, ferry);
-        let input = json!({"agent_name":agent,"trigger_expressions":triggers,"response_phrases":phrases,"target_message_id":target,"recent_messages":messages,"weather_data":weather,"ferry_data":ferry,"followup":followup,"direct_address":direct_address,"current_clock":clock,"observations_data":observations});
+        let input = json!({"agent_name":agent,"trigger_expressions":triggers,"response_phrases":phrases,"target_message_id":target,"recent_messages":messages,"weather_data":weather,"ferry_data":ferry,"followup":followup,"direct_address":direct_address,"current_clock":clock,"observations_data":observations,"image_request_planned":picture_planned});
         let content =
             ferry.map_or_else(|| input.to_string(), |data| ferry_model_input(&input, data));
         let content = vision.map_or_else(
@@ -913,6 +1004,7 @@ struct JobSource {
     followup: Option<FollowupContext>,
     vision_snapshot: Option<String>,
     observation_requested: bool,
+    image_requested: bool,
 }
 
 #[derive(Deserialize)]
@@ -954,6 +1046,9 @@ impl CircleChatAgents {
                     Err(error) => {
                         tracing::warn!(error_kind = error.kind(), "chat agent job claim failed")
                     }
+                }
+                if let Err(error) = service.image_tick(&chat).await {
+                    tracing::warn!(error_kind = error.kind(), "agent picture worker failed");
                 }
                 tokio::select! {
                     _ = shutdown.changed() => {},
@@ -1004,9 +1099,9 @@ impl CircleChatAgents {
     async fn source(&self, job: &Job) -> Result<Option<JobSource>> {
         let pg = matches!(self.store, Store::Pg(_));
         let object = if pg {
-            "cast(json_build_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',cast(m.parent_message_id as text),'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',(j.observation_valid_until is not null),'followup',case when anchor.id is null then null else json_build_object('mode',j.followup_mode,'anchor',json_build_object('id',cast(anchor.id as text),'author',anchor.sender_display_name,'body',anchor.body)) end) as text)"
+            "cast(json_build_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',cast(m.parent_message_id as text),'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',(j.observation_valid_until is not null),'image_requested',exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')),'followup',case when anchor.id is null then null else json_build_object('mode',j.followup_mode,'anchor',json_build_object('id',cast(anchor.id as text),'author',anchor.sender_display_name,'body',anchor.body)) end) as text)"
         } else {
-            "json_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',m.parent_message_id,'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',json(case when j.observation_valid_until is not null then 'true' else 'false' end),'followup',case when anchor.id is null then null else json_object('mode',j.followup_mode,'anchor',json_object('id',anchor.id,'author',anchor.sender_display_name,'body',anchor.body)) end)"
+            "json_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',m.parent_message_id,'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',json(case when j.observation_valid_until is not null then 'true' else 'false' end),'image_requested',json(case when exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')) then 'true' else 'false' end),'followup',case when anchor.id is null then null else json_object('mode',j.followup_mode,'anchor',json_object('id',anchor.id,'author',anchor.sender_display_name,'body',anchor.body)) end)"
         };
         let query = format!(
             "select {object} from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users u on u.id=j.agent_id join messages m on m.id=j.source_message_id left join messages anchor on anchor.id=j.followup_anchor_message_id join users source_user on source_user.id=m.sender_id join message_provenance provenance on provenance.message_id=m.id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=c.id and m.edited_at is null and m.deleted_at is null and source_user.kind='human' and provenance.provenance='human' and m.created_at>=?"
@@ -1251,7 +1346,7 @@ impl CircleChatAgents {
                 None
             };
             let answer = model
-                .reply_with_vision(
+                .reply_with_capabilities(
                     &source.agent_name,
                     &triggers,
                     &phrases,
@@ -1262,6 +1357,7 @@ impl CircleChatAgents {
                     ferry_snapshot.as_ref(),
                     vision.as_ref(),
                     observations.as_ref(),
+                    source.image_requested && self.imagegen.is_some(),
                 )
                 .await?;
             let valid_until = snapshot
@@ -1392,7 +1488,26 @@ async fn enqueue_postgres_with_capabilities(
     vision_enabled: bool,
     observations_enabled: bool,
 ) -> Result<()> {
-    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.ferry_port,a.vision_enabled,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
+    enqueue_postgres_with_images(
+        tx,
+        message,
+        followups_enabled,
+        vision_enabled,
+        observations_enabled,
+        agent_images::enabled(),
+    )
+    .await
+}
+
+async fn enqueue_postgres_with_images(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    message: &crate::domain::ChatMessage,
+    followups_enabled: bool,
+    vision_enabled: bool,
+    observations_enabled: bool,
+    images_enabled: bool,
+) -> Result<()> {
+    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
         .bind(*message.channel_id.as_uuid()).bind(*message.sender_id.as_uuid())
         .fetch_all(&mut **tx).await.map_err(storage)?;
     let addresses = if followups_enabled {
@@ -1504,6 +1619,18 @@ async fn enqueue_postgres_with_capabilities(
             .bind(Uuid::now_v7()).bind(&agent_id).bind(*message.id.as_uuid())
             .bind(*message.channel_id.as_uuid()).bind(revision).bind(access_revision).bind(now).bind(anchor).bind(mode).bind(vision_snapshot).bind(observation_requested)
             .execute(&mut **tx).await.map_err(storage)?;
+        if images_enabled {
+            let image_config: Option<String> = row.try_get("image_generation").map_err(storage)?;
+            agent_images::plan_postgres(
+                tx,
+                message,
+                &agent_id,
+                revision,
+                access_revision,
+                image_config.as_deref(),
+            )
+            .await?;
+        }
     }
     Ok(())
 }
@@ -1538,7 +1665,26 @@ async fn enqueue_sqlite_with_capabilities(
     vision_enabled: bool,
     observations_enabled: bool,
 ) -> Result<()> {
-    let rows = sqlx::query("select a.agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.ferry_port,a.vision_enabled,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1 and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
+    enqueue_sqlite_with_images(
+        tx,
+        message,
+        followups_enabled,
+        vision_enabled,
+        observations_enabled,
+        agent_images::enabled(),
+    )
+    .await
+}
+
+async fn enqueue_sqlite_with_images(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    message: &crate::domain::ChatMessage,
+    followups_enabled: bool,
+    vision_enabled: bool,
+    observations_enabled: bool,
+    images_enabled: bool,
+) -> Result<()> {
+    let rows = sqlx::query("select a.agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1 and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
         .bind(message.sender_id.to_string()).bind(message.channel_id.to_string())
         .fetch_all(&mut **tx).await.map_err(storage)?;
     let addresses = if followups_enabled {
@@ -1650,6 +1796,18 @@ async fn enqueue_sqlite_with_capabilities(
             .bind(Uuid::now_v7().to_string()).bind(&agent_id).bind(message.id.as_uuid().to_string())
             .bind(message.channel_id.to_string()).bind(revision).bind(access_revision).bind(now).bind(now).bind(anchor).bind(mode).bind(vision_snapshot).bind(observation_requested)
             .execute(&mut **tx).await.map_err(storage)?;
+        if images_enabled {
+            let image_config: Option<String> = row.try_get("image_generation").map_err(storage)?;
+            agent_images::plan_sqlite(
+                tx,
+                message,
+                &agent_id,
+                revision,
+                access_revision,
+                image_config.as_deref(),
+            )
+            .await?;
+        }
     }
     Ok(())
 }
@@ -1856,6 +2014,7 @@ mod tests {
             enabled: false,
             revision: None,
             vision_enabled: None,
+            image_generation: None,
         })
         .unwrap();
         assert_eq!(input.display_name, "Hjelpar");
@@ -2319,6 +2478,7 @@ mod tests {
         let service = CircleChatAgents {
             ferry: None,
             observations: None,
+            imagegen: None,
             weather: None,
             store: Store::Sqlite(pool.clone()),
             model: None,
@@ -2334,6 +2494,7 @@ mod tests {
             enabled: false,
             revision: None,
             vision_enabled: None,
+            image_generation: None,
         };
         let created = service
             .create(&actor, &circle.to_string(), config)
@@ -2363,6 +2524,7 @@ mod tests {
                     enabled: false,
                     revision: Some(1),
                     vision_enabled: None,
+                    image_generation: None,
                 },
             )
             .await
@@ -2383,6 +2545,7 @@ mod tests {
                         enabled: false,
                         revision: Some(1),
                         vision_enabled: None,
+                        image_generation: None,
                     }
                 )
                 .await
@@ -2471,6 +2634,7 @@ mod tests {
         let service = CircleChatAgents {
             ferry: None,
             observations: None,
+            imagegen: None,
             weather: None,
             store: Store::Sqlite(pool.clone()),
             model: None,
@@ -2490,6 +2654,7 @@ mod tests {
                     enabled: false,
                     revision: None,
                     vision_enabled: None,
+                    image_generation: None,
                 },
             )
             .await
@@ -2599,6 +2764,7 @@ mod tests {
         let service = CircleChatAgents {
             ferry: None,
             observations: None,
+            imagegen: None,
             weather: None,
             store: Store::Pg(pool.clone()),
             model: None,
@@ -2618,6 +2784,7 @@ mod tests {
                     enabled: false,
                     revision: None,
                     vision_enabled: None,
+                    image_generation: None,
                 },
             )
             .await
@@ -2715,6 +2882,7 @@ mod tests {
             enabled: false,
             revision: None,
             vision_enabled: None,
+            image_generation: None,
         };
         assert!(matches!(
             service
@@ -2963,6 +3131,7 @@ mod tests {
         let service = CircleChatAgents {
             ferry: None,
             observations: None,
+            imagegen: None,
             weather: None,
             store: Store::Sqlite(SqlitePool::connect(&url).await.unwrap()),
             model: None,
@@ -2989,6 +3158,7 @@ mod tests {
         let service = CircleChatAgents {
             ferry: None,
             observations: None,
+            imagegen: None,
             weather: None,
             store: Store::Pg(PgPool::connect(&url).await.unwrap()),
             model: None,

@@ -1742,14 +1742,14 @@ impl ChatRepository for SqliteChatRepository {
                 if payload_matches {
                     tracing::debug!(
                         principal_id = %command.actor,
-                        request_id,
+                        request_id = if request_id.starts_with("circle-agent-image:") { "circle-agent-image:[redacted]" } else { &request_id },
                         message_id = %message.id.as_uuid(),
                         "replayed idempotent chat command"
                     );
                 } else {
                     tracing::warn!(
                         principal_id = %command.actor,
-                        request_id,
+                        request_id = if request_id.starts_with("circle-agent-image:") { "circle-agent-image:[redacted]" } else { &request_id },
                         message_id = %message.id.as_uuid(),
                         requested_channel_id = %command.channel_id,
                         persisted_channel_id = %message.channel_id,
@@ -1760,7 +1760,14 @@ impl ChatRepository for SqliteChatRepository {
                 }
                 return Ok(message);
             }
-            if request_id.starts_with("circle-chat-agent:") {
+            if request_id.starts_with("circle-agent-image:") {
+                crate::chatbot::agent_images::authorize_sqlite(
+                    &mut transaction,
+                    &command,
+                    &request_id,
+                )
+                .await?;
+            } else if request_id.starts_with("circle-chat-agent:") {
                 crate::chatbot::authorize_reply_sqlite(&mut transaction, &command, &request_id)
                     .await?;
             } else {
@@ -1832,6 +1839,14 @@ impl ChatRepository for SqliteChatRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(sql_error)?;
+            if request_id.starts_with("circle-agent-image:") {
+                crate::chatbot::agent_images::finalize_sqlite(
+                    &mut transaction,
+                    &message,
+                    &request_id,
+                )
+                .await?;
+            }
             transaction.commit().await.map_err(sql_error)?;
             Ok(message)
         })

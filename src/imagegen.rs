@@ -15,6 +15,8 @@ use crate::{
     domain::{MediaObject, UserId},
 };
 
+pub(crate) mod identity;
+
 const MAX_IMAGE: usize = 8 * 1024 * 1024;
 const RETENTION: i64 = 7 * 24 * 3600;
 const MARIA_IMAGE: &[u8] =
@@ -39,12 +41,21 @@ struct Gateway {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct AgentIdentityBinding {
+    pub publication_id: String,
+    pub identity_id: String,
+    pub identity_sha256: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Job {
     pub id: String,
     pub owner_id: UserId,
     pub channel_id: crate::domain::ChannelId,
     pub state: String,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_identity: Option<AgentIdentityBinding>,
     #[serde(default)]
     pub expansion: Option<crate::imagegen_prompt::Expansion>,
     #[serde(default)]
@@ -66,10 +77,13 @@ impl Job {
             "prompt":self.prompt,"created_at":self.created_at,"error":self.error,
             "media":self.media,"expansion":self.expansion,
             "reference_count":self.reference_ids.len(),
-            "character_id":maria_requested(&self.prompt).then_some("maria"),
+            "character_id":self.agent_identity.as_ref().map(|id|id.identity_id.as_str()).or_else(||maria_requested(&self.prompt).then_some("maria")),
             "visual_references":self.geographic_references()})
     }
     fn geographic_references(&self) -> Vec<Value> {
+        if self.agent_identity.is_some() {
+            return Vec::new();
+        }
         visual_references(self.expansion.as_ref().map(|e| e.scene).unwrap_or_default())
             .into_iter()
             .take(3usize.saturating_sub(
@@ -89,6 +103,41 @@ fn now() -> i64 {
 }
 
 impl ImageGeneration {
+    pub(crate) fn agent_job(
+        publication: &str,
+        owner: UserId,
+        channel: crate::domain::ChannelId,
+        prompt: String,
+        identity_id: String,
+        identity_sha256: String,
+    ) -> Job {
+        Job {
+            id: Uuid::new_v5(
+                &Uuid::NAMESPACE_URL,
+                format!("sproyt:agent-picture-job:{publication}").as_bytes(),
+            )
+            .to_string(),
+            owner_id: owner,
+            channel_id: channel,
+            state: "queued".into(),
+            prompt,
+            agent_identity: Some(AgentIdentityBinding {
+                publication_id: publication.into(),
+                identity_id,
+                identity_sha256,
+            }),
+            expansion: None,
+            reference_ids: Vec::new(),
+            reference_images: Vec::new(),
+            created_at: now(),
+            updated_at: now(),
+            revision: 0,
+            prompt_id: None,
+            image: None,
+            media: None,
+            error: None,
+        }
+    }
     pub async fn from_env(
         config: &DatabaseConfig,
         postgres_pool: Option<&PgPool>,
@@ -258,6 +307,7 @@ impl ImageGeneration {
             channel_id: channel.clone(),
             state: "queued".into(),
             prompt,
+            agent_identity: None,
             expansion: None,
             reference_ids,
             reference_images,
@@ -418,7 +468,20 @@ impl ImageGeneration {
                 job.error = Some("The server restarted during submission. The image may still be in ComfyUI; it was not queued again automatically.".into());
             } else if job.state == "queued" {
                 if job.expansion.is_none() {
-                    if let Some(expander) = &self.gateway.expander {
+                    if let Some(binding) = &job.agent_identity {
+                        let identity = identity::get(&binding.identity_id)
+                            .filter(|identity| identity.sha256() == binding.identity_sha256)
+                            .ok_or("agent identity changed")?;
+                        job.expansion = Some(match &self.gateway.expander {
+                            Some(expander) => {
+                                expander.expand_agent_request(&job.prompt, identity).await
+                            }
+                            None => crate::imagegen_prompt::agent_original_expansion(
+                                &job.prompt,
+                                identity,
+                            ),
+                        });
+                    } else if let Some(expander) = &self.gateway.expander {
                         job.expansion = Some(
                             expander
                                 .expand_with_references(&job.prompt, job.reference_ids.len())
@@ -436,7 +499,43 @@ impl ImageGeneration {
                     }
                 }
                 job.transition("submitting");
-                if !self.save(&mut job).await? {
+                if job.agent_identity.is_some() {
+                    let authorized = match &self.store {
+                        Store::Postgres(p) => {
+                            let mut tx = p.begin().await?;
+                            let allowed =
+                                crate::chatbot::agent_images::submit_postgres(&mut tx, &mut job)
+                                    .await?;
+                            if allowed {
+                                tx.commit().await?;
+                            } else {
+                                tx.rollback().await?;
+                            }
+                            allowed
+                        }
+                        Store::Sqlite(p) => {
+                            let mut tx = p.begin_with("BEGIN IMMEDIATE").await?;
+                            let allowed =
+                                crate::chatbot::agent_images::submit_sqlite(&mut tx, &mut job)
+                                    .await?;
+                            if allowed {
+                                tx.commit().await?;
+                            } else {
+                                tx.rollback().await?;
+                            }
+                            allowed
+                        }
+                    };
+                    if !authorized {
+                        job.transition("dismissed");
+                        job.image = None;
+                        job.reference_images.clear();
+                        job.prompt.clear();
+                        job.expansion = None;
+                        self.save(&mut job).await?;
+                        continue;
+                    }
+                } else if !self.save(&mut job).await? {
                     continue;
                 }
                 match tokio::time::timeout(Duration::from_secs(30), self.gateway.submit(&job)).await
@@ -488,7 +587,15 @@ impl Gateway {
             .iter()
             .map(|image| STANDARD.decode(image))
             .collect::<Result<Vec<_>, _>>()?;
-        if maria_requested(&job.prompt) {
+        if let Some(binding) = &job.agent_identity {
+            let identity = identity::get(&binding.identity_id)
+                .filter(|identity| identity.sha256() == binding.identity_sha256)
+                .ok_or("agent identity changed")?;
+            if !images.is_empty() {
+                return Err("agent pictures accept only the configured canonical identity".into());
+            }
+            images.push(identity.reference.to_vec());
+        } else if maria_requested(&job.prompt) {
             if images.len() > 2 {
                 return Err("Maria needs one reference slot".into());
             }
@@ -520,7 +627,7 @@ impl Gateway {
         }
         let response: Value = self.http.post(format!("{}/prompt", self.base))
             .json(&json!({"prompt": workflow(job.expansion.as_ref().map(|e| e.prompt.as_str()).unwrap_or(&job.prompt), job.created_at as u64, job.expansion.as_ref().map(|e| e.scene).unwrap_or_default(), &uploaded), "client_id":job.id,
-                "extra_data":{"extra_pnginfo":{"reference_photos":job.geographic_references(),"character_id":maria_requested(&job.prompt).then_some("maria")}}}))
+                "extra_data":{"extra_pnginfo":{"reference_photos":job.geographic_references(),"character_id":job.agent_identity.as_ref().map(|id|id.identity_id.as_str()).or_else(||maria_requested(&job.prompt).then_some("maria"))}}}))
             .send().await?.error_for_status()?.json().await?;
         let id = response["prompt_id"].as_str().ok_or("missing prompt id")?;
         Uuid::parse_str(id)?;
@@ -627,6 +734,26 @@ pub(crate) fn workflow(prompt: &str, seed: u64, scene: Scene, uploaded: &[String
 
 #[cfg(test)]
 impl ImageGeneration {
+    pub(crate) fn test_sqlite_pool(pool: SqlitePool) -> Self {
+        Self {
+            store: Store::Sqlite(pool),
+            gateway: Arc::new(Gateway {
+                expander: None,
+                base: "http://unused".into(),
+                http: reqwest::Client::new(),
+            }),
+        }
+    }
+    pub(crate) fn test_postgres_pool(pool: PgPool) -> Self {
+        Self {
+            store: Store::Postgres(pool),
+            gateway: Arc::new(Gateway {
+                expander: None,
+                base: "http://unused".into(),
+                http: reqwest::Client::new(),
+            }),
+        }
+    }
     pub(crate) async fn test(base: &str) -> Self {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -1008,6 +1135,68 @@ mod tests {
             "qwen_image_edit_2511_fp8mixed.safetensors"
         );
         task.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "one explicitly requested private ComfyUI proof; never posts a channel message"]
+    async fn agent_identity_real_comfy_private_probe() {
+        let base = std::env::var("SPROYT_AGENT_IMAGE_PROBE_BASE").expect("explicit probe endpoint");
+        let output = std::path::PathBuf::from(
+            std::env::var("SPROYT_AGENT_IMAGE_PROBE_OUTPUT").expect("private output directory"),
+        );
+        assert!(output.is_absolute());
+        std::fs::create_dir_all(&output).unwrap();
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let queue: Value = http
+            .get(format!("{base}/queue"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            queue["queue_running"].as_array().unwrap().is_empty()
+                && queue["queue_pending"].as_array().unwrap().is_empty(),
+            "do not disturb an occupied GPU queue"
+        );
+        let identity = identity::get("maria-v1").unwrap();
+        let mut job=ImageGeneration::agent_job(&Uuid::now_v7().to_string(),UserId::named("private-agent-picture-proof"),crate::domain::ChannelId::generate(),"Candid realistic portrait of the configured adult agent, around 35 years old, standing outside a whitewashed Greek cafe in a casual linen shirt. Natural skin texture and adult facial detail. Friendly subtle expression, hands relaxed, not resting chin in a hand. Clearly generated fictional image, no text or source facts.".into(),identity.id.into(),identity.sha256());
+        job.expansion = Some(crate::imagegen_prompt::agent_original_expansion(
+            &job.prompt,
+            identity,
+        ));
+        let gateway = Gateway {
+            expander: None,
+            base,
+            http,
+        };
+        job.prompt_id = Some(
+            tokio::time::timeout(Duration::from_secs(35), gateway.submit(&job))
+                .await
+                .expect("no blind resubmission")
+                .unwrap(),
+        );
+        let bytes = tokio::time::timeout(Duration::from_secs(240), async {
+            loop {
+                if let Some(bytes) = gateway.result(&job).await.unwrap() {
+                    break bytes;
+                }
+                tokio::time::sleep(Duration::from_secs(3)).await;
+            }
+        })
+        .await
+        .expect("bounded private generation");
+        let path = output.join(format!("agent-maria-{}.png", job.id));
+        std::fs::write(&path, &bytes).unwrap();
+        use sha2::Digest;
+        std::fs::write(output.join("comfy-proof.json"),serde_json::to_vec_pretty(&json!({"job_id":job.id,"prompt_id":job.prompt_id,"identity_id":identity.id,"identity_sha256":identity.sha256(),"image_sha256":format!("{:x}",sha2::Sha256::digest(&bytes)),"image_bytes":bytes.len(),"file":path,"channel_posted":false,"expansion":"explicit canonical identity, server fallback","visual_age_check":"pending"})).unwrap()).unwrap();
     }
 
     #[tokio::test]

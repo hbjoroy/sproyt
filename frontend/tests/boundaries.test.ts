@@ -3,6 +3,7 @@ import "./conversation-snapshot.test";
 import "./visible-read.test";
 import "./saved-emojis.test";
 import "./chat-agent-weather.test";
+import "./chat-agent-images.test";
 import "./app-update.test";
 import "./share-target.test";
 import "../src/process-pilot.test";

@@ -94,6 +94,7 @@ async fn contract(store: Store) {
     let service = CircleChatAgents {
         ferry: None,
         observations: None,
+        imagegen: None,
         weather: None,
         store: store.clone(),
         model: None,
@@ -160,6 +161,7 @@ async fn contract(store: Store) {
         enabled: false,
         revision: None,
         vision_enabled: None,
+        image_generation: None,
     };
     let agent = service.create(&owner, &circle, input()).await.unwrap();
     let foreign = service

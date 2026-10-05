@@ -3,13 +3,16 @@ import { expect, test, type Page } from "@playwright/test";
 const circle = "00000000-0000-7000-8000-000000002121";
 const channel = "00000000-0000-7000-8000-000000002122";
 const agentId = "00000000-0000-7000-8000-000000002123";
-async function fixture(page: Page) {
+async function fixture(page: Page, imageMode = false) {
   let agent = { agent_id: agentId, circle_id: circle, display_name: "Vêrven", trigger_words: ["vêr"], response_phrases: ["Svar kort"],
-    enabled: false, revision: 3, worker_available: false, vision_enabled: false, vision_available: true, weather: { location: "Bjorøy", latitude: 60.322, longitude: 5.199 } };
+    enabled: false, revision: 3, worker_available: false, vision_enabled: false, vision_available: true,
+    image_generation: null, image_generation_available: true,
+    weather: imageMode ? null : { location: "Bjorøy", latitude: 60.322, longitude: 5.199 } };
   let fail = true;
   const updates: any[] = [];
   await page.route(/\/api\/v1\/circles\/[^/]+\/chat-agents(?:\/[^?]+)?(?:\?|$)/, async route => {
-    if (route.request().method() === "GET") { await route.fulfill({ json: { agents: [agent], worker_available: true, vision_available: agent.vision_available } }); return; }
+    if (route.request().method() === "GET") { await route.fulfill({ json: { agents: [agent], worker_available: true, vision_available: agent.vision_available,
+      image_generation_available: agent.image_generation_available, image_identities: [{ id: "maria-v1", label: "Maria" }] } }); return; }
     const input = route.request().postDataJSON(); updates.push(input);
     if (fail) { fail = false; await route.fulfill({ status: 503, body: "Kunne ikkje lagre. Prøv igjen." }); return; }
     agent = { ...agent, ...input, revision: agent.revision + 1 };
@@ -33,8 +36,48 @@ async function fixture(page: Page) {
       case "load_recent_messages": reply("messages_loaded", { channel_id: channel, messages: [] }); break;
     }
   }));
-  return { updates, disableVision: () => { agent = { ...agent, vision_available: false }; } };
+  return { updates, disableVision: () => { agent = { ...agent, vision_available: false }; },
+    disableImages: () => { agent = { ...agent, image_generation_available: false }; } };
 }
+
+test("agent image opt-in requires identity, preserves a failed save and can be disabled during an outage", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const { updates, disableImages } = await fixture(page, true);
+  await page.goto(`/?participant=weather-owner&channel=${channel}`);
+  const preview = page.locator("#sproyt-react-preview");
+  await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
+  await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  const open = async () => {
+    await preview.getByRole("button", { name: "Val for Vêrkrets", exact: true }).click();
+    await preview.getByRole("button", { name: "Agentar i Vêrkrets", exact: true }).click();
+  };
+  await open();
+  const dialog = preview.getByRole("dialog", { name: "Agentar i Vêrkrets", exact: true });
+  await dialog.getByRole("button", { name: "Rediger", exact: true }).click();
+  const enabled = dialog.getByRole("checkbox", { name: "Lag bilete av agenten", exact: true });
+  const occasional = dialog.getByRole("checkbox", { name: "Del eit bilete av og til i samtalen", exact: true });
+  const identity = dialog.getByRole("combobox", { name: "Visuell identitet", exact: true });
+  const save = dialog.getByRole("button", { name: "Lagre agent", exact: true });
+  await expect(enabled).not.toBeChecked(); await enabled.check();
+  await expect(save).toBeDisabled(); await identity.selectOption("maria-v1");
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await expect(occasional).not.toBeChecked(); await occasional.check();
+  await save.click(); await expect(dialog).toContainText("Kunne ikkje lagre");
+  await expect(identity).toHaveValue("maria-v1"); await expect(occasional).toBeChecked();
+  await save.click(); expect(updates[0]).toEqual(updates[1]);
+  expect(updates[1]).toMatchObject({ image_generation: { identity_id: "maria-v1", enabled: true, occasional: true }, revision: 3 });
+  await dialog.getByRole("button", { name: "Rediger", exact: true }).click();
+  await expect(enabled).toBeChecked(); await expect(occasional).toBeChecked();
+  await save.click(); expect(updates[2]).not.toHaveProperty("image_generation");
+  await dialog.getByRole("button", { name: "Lukk agentar", exact: true }).click();
+  disableImages(); await open(); await dialog.getByRole("button", { name: "Rediger", exact: true }).click();
+  await expect(enabled).toBeEnabled(); await expect(occasional).toBeDisabled();
+  await enabled.uncheck(); await save.click();
+  expect(updates[3]).toMatchObject({ image_generation: { identity_id: "maria-v1", enabled: false, occasional: false }, revision: 5 });
+  await dialog.getByRole("button", { name: "Ny agent", exact: true }).click();
+  await expect(enabled).not.toBeChecked(); await expect(enabled).toBeDisabled();
+});
 
 test("fixed weather settings preserve edits through failure, reject invalid coordinates and default new locations without GPS", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

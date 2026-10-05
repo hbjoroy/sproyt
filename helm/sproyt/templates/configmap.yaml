@@ -38,6 +38,7 @@ data:
   SPROYT_AIS_URL: {{ .Values.config.aisUrl | quote }}
   SPROYT_AIS_AGENTS_ENABLED: {{ .Values.config.aisAgentsEnabled | quote }}
   SPROYT_CHAT_AGENT_VISION_ENABLED: {{ .Values.config.chatAgentVisionEnabled | quote }}
+  SPROYT_CHAT_AGENT_IMAGES_ENABLED: {{ .Values.config.chatAgentImagesEnabled | quote }}
   SPROYT_WORK_ITEM_SUPPLEMENTS_ENABLED: {{ .Values.config.workItemSupplementsEnabled | quote }}
   SPROYT_CHAT_AGENT_FOLLOWUPS_ENABLED: {{ .Values.config.chatAgentFollowupsEnabled | quote }}
   SPROYT_PROCESS_PILOT_RUNTIME: {{ .Values.config.processPilotRuntime | quote }}
