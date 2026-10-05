@@ -8,7 +8,6 @@ use uuid::Uuid;
 const DEFAULT_API_URL: &str = "http://authentik-server.authentik.svc.cluster.local";
 const DEFAULT_PUBLIC_URL: &str = "https://sproyt-security.bjoroy.me";
 const DEFAULT_FLOW_SLUG: &str = "sproyt-invitation-enrollment";
-const DEFAULT_SPROYT_URL: &str = "https://sproyt.bjoroy.me";
 pub const INVITATION_LIFETIME_HOURS: i64 = 48;
 
 #[derive(Clone)]
@@ -16,7 +15,6 @@ pub struct EnrollmentService {
     client: reqwest::Client,
     api_url: Url,
     public_url: Url,
-    sproyt_url: Url,
     flow_id: Uuid,
     flow_slug: String,
     token: String,
@@ -28,7 +26,6 @@ impl fmt::Debug for EnrollmentService {
             .debug_struct("EnrollmentService")
             .field("api_url", &self.api_url)
             .field("public_url", &self.public_url)
-            .field("sproyt_url", &self.sproyt_url)
             .field("flow_id", &self.flow_id)
             .field("flow_slug", &self.flow_slug)
             .field("token", &"<redacted>")
@@ -36,16 +33,36 @@ impl fmt::Debug for EnrollmentService {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Eq, PartialEq, Serialize)]
 pub struct EnrollmentInvitation {
     pub url: String,
     pub expires_at: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct ProvisionedEnrollment {
     pub invitation: EnrollmentInvitation,
     pub authentik_invitation_id: Uuid,
+}
+
+impl fmt::Debug for EnrollmentInvitation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EnrollmentInvitation")
+            .field("url", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
+}
+
+impl fmt::Debug for ProvisionedEnrollment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProvisionedEnrollment")
+            .field("invitation", &self.invitation)
+            .field("authentik_invitation_id", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -95,7 +112,6 @@ impl EnrollmentService {
                 .unwrap_or_else(|_| DEFAULT_PUBLIC_URL.to_owned()),
             env::var("SPROYT_AUTHENTIK_ENROLLMENT_FLOW_SLUG")
                 .unwrap_or_else(|_| DEFAULT_FLOW_SLUG.to_owned()),
-            env::var("SPROYT_PUBLIC_URL").unwrap_or_else(|_| DEFAULT_SPROYT_URL.to_owned()),
             flow_id,
             token,
         )
@@ -106,13 +122,11 @@ impl EnrollmentService {
         api_url: impl AsRef<str>,
         public_url: impl AsRef<str>,
         flow_slug: impl Into<String>,
-        sproyt_url: impl AsRef<str>,
         flow_id: Uuid,
         token: impl Into<String>,
     ) -> Result<Self, EnrollmentError> {
         let api_url = service_url(api_url.as_ref(), false)?;
         let public_url = service_url(public_url.as_ref(), true)?;
-        let sproyt_url = service_url(sproyt_url.as_ref(), true)?;
         let flow_slug = flow_slug.into();
         if flow_slug.is_empty()
             || flow_slug.len() > 80
@@ -137,7 +151,6 @@ impl EnrollmentService {
             client,
             api_url,
             public_url,
-            sproyt_url,
             flow_id,
             flow_slug,
             token,
@@ -152,6 +165,16 @@ impl EnrollmentService {
         expires_at: DateTime<Utc>,
     ) -> Result<ProvisionedEnrollment, EnrollmentError> {
         let (email, display_name) = validate_invitee(email, display_name)?;
+        // This server-issued capability is transported in Authentik's
+        // invitation object. The post-invitation policy reads it from there,
+        // never from editable prompt data or a caller-supplied redirect URL.
+        if enrollment_token.len() != 43
+            || !enrollment_token
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(EnrollmentError::Validation("invalid enrollment token"));
+        }
         let remaining = expires_at.signed_duration_since(Utc::now());
         if remaining <= chrono::Duration::zero()
             || remaining > chrono::Duration::hours(INVITATION_LIFETIME_HOURS)
@@ -161,6 +184,10 @@ impl EnrollmentService {
         let expires = expires_at.to_rfc3339_opts(SecondsFormat::Secs, true);
         let mut fixed_data = serde_json::Map::new();
         fixed_data.insert("email".to_owned(), email.into());
+        fixed_data.insert(
+            "sproyt_enrollment_token".to_owned(),
+            enrollment_token.into(),
+        );
         if let Some(display_name) = display_name {
             fixed_data.insert("name".to_owned(), display_name.into());
         }
@@ -197,19 +224,11 @@ impl EnrollmentService {
             .map_err(|_| EnrollmentError::InvalidResponse)?;
         let authentik_invitation_id =
             Uuid::parse_str(&invitation.pk).map_err(|_| EnrollmentError::InvalidResponse)?;
-        let mut next = self
-            .sproyt_url
-            .join("auth/login")
-            .map_err(|_| EnrollmentError::Configuration("invalid Sprøyt URL"))?;
-        next.query_pairs_mut()
-            .append_pair("enrollment", enrollment_token);
         let mut url = self
             .public_url
             .join(&format!("if/flow/{}/", self.flow_slug))
             .map_err(|_| EnrollmentError::Configuration("invalid public Authentik URL"))?;
-        url.query_pairs_mut()
-            .append_pair("itoken", &invitation.pk)
-            .append_pair("next", next.as_str());
+        url.query_pairs_mut().append_pair("itoken", &invitation.pk);
         Ok(ProvisionedEnrollment {
             invitation: EnrollmentInvitation {
                 url: url.into(),
@@ -414,14 +433,34 @@ mod tests {
             format!("http://{address}"),
             "https://identity.example",
             "sproyt-invitation-enrollment",
-            "https://sproyt.example",
             Uuid::parse_str("dcde5ce9-ca43-4003-8d0c-762e8554650c").unwrap(),
             "secret-service-token",
         )
         .unwrap();
+        for invalid in [
+            "short".to_owned(),
+            "a".repeat(44),
+            format!("{}&", "a".repeat(42)),
+        ] {
+            assert!(matches!(
+                service
+                    .create(
+                        &invalid,
+                        "ny@example.com",
+                        None,
+                        Utc::now() + chrono::Duration::hours(24)
+                    )
+                    .await,
+                Err(EnrollmentError::Validation(_))
+            ));
+        }
+        assert!(
+            capture.0.lock().unwrap().is_none(),
+            "invalid capabilities must not reach Authentik"
+        );
         let result = service
             .create(
-                "enrollment_token-A_B",
+                "abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF",
                 " ny@example.com ",
                 Some(" Ny Brukar "),
                 Utc::now() + chrono::Duration::hours(24),
@@ -432,10 +471,19 @@ mod tests {
         let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(url.path(), "/if/flow/sproyt-invitation-enrollment/");
         assert_eq!(query["itoken"], "dcde5ce9-ca43-4003-8d0c-762e8554650c");
-        assert_eq!(
-            query["next"],
-            "https://sproyt.example/auth/login?enrollment=enrollment_token-A_B"
+        assert_eq!(query.len(), 1);
+        assert!(!query.contains_key("next"));
+        assert!(
+            !result
+                .invitation
+                .url
+                .contains("abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF")
         );
+        for debug in [format!("{:?}", result.invitation), format!("{result:?}")] {
+            assert!(!debug.contains("dcde5ce9-ca43-4003-8d0c-762e8554650c"));
+            assert!(!debug.contains("abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF"));
+        }
+        assert!(!format!("{service:?}").contains("secret-service-token"));
         assert_eq!(
             result.authentik_invitation_id,
             Uuid::parse_str("dcde5ce9-ca43-4003-8d0c-762e8554650c").unwrap()
@@ -447,6 +495,10 @@ mod tests {
         assert_eq!(body["flow"], "dcde5ce9-ca43-4003-8d0c-762e8554650c");
         assert_eq!(body["fixed_data"]["email"], "ny@example.com");
         assert_eq!(body["fixed_data"]["name"], "Ny Brukar");
+        assert_eq!(
+            body["fixed_data"]["sproyt_enrollment_token"],
+            "abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF"
+        );
         server.abort();
     }
 
@@ -463,7 +515,6 @@ mod tests {
             format!("http://{address}"),
             "https://identity.example",
             "sproyt-invitation-enrollment",
-            "https://sproyt.example",
             Uuid::nil(),
             "secret-service-token",
         )
@@ -491,7 +542,6 @@ mod tests {
             format!("http://{address}"),
             "https://identity.example",
             "sproyt-invitation-enrollment",
-            "https://sproyt.example",
             Uuid::nil(),
             "secret-service-token",
         )
@@ -528,7 +578,6 @@ mod tests {
             format!("http://{address}"),
             "https://identity.example",
             "sproyt-invitation-enrollment",
-            "https://sproyt.example",
             Uuid::nil(),
             "secret-service-token",
         )
@@ -549,27 +598,9 @@ mod tests {
     fn rejects_unsafe_configuration_and_invitee_fields() {
         let id = Uuid::nil();
         assert!(
-            EnrollmentService::new(
-                "file:///tmp",
-                "https://id.example",
-                "flow",
-                "https://sproyt.example",
-                id,
-                "x"
-            )
-            .is_err()
+            EnrollmentService::new("file:///tmp", "https://id.example", "flow", id, "x").is_err()
         );
-        assert!(
-            EnrollmentService::new(
-                "http://id",
-                "http://id.example",
-                "flow",
-                "https://sproyt.example",
-                id,
-                "x"
-            )
-            .is_err()
-        );
+        assert!(EnrollmentService::new("http://id", "http://id.example", "flow", id, "x").is_err());
         assert!(validate_email("not-an-email").is_err());
         assert!(validate_email("person@example.com").is_ok());
         assert!(validate_display_name(Some("\u{0000}")).is_err());

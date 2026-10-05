@@ -387,9 +387,94 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             record_metrics,
         ))
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(request_span))
         .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
         .layer(middleware::from_fn(add_security_headers))
+}
+
+fn request_span(request: &axum::http::Request<axum::body::Body>) -> tracing::Span {
+    // Queries can contain enrollment capabilities and OAuth codes. Unmatched
+    // paths may contain arbitrary client data too; only log router templates.
+    let route = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map_or("unmatched", |route| route.as_str());
+    tracing::debug_span!("request", method = %request.method(), route, version = ?request.version())
+}
+
+#[cfg(test)]
+mod request_trace_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self {
+            self.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn request_traces_exclude_capabilities_queries_and_unmatched_paths() {
+        let logs = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .without_time()
+            .with_writer(logs.clone())
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let app = Router::new()
+            .route("/auth/login", get(|| async { "login" }))
+            .route("/auth/callback", get(|| async { "callback" }))
+            .route("/items/{id}", get(|| async { "item" }))
+            .layer(TraceLayer::new_for_http().make_span_with(request_span));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        for path in [
+            "/auth/login?enrollment=private-enrollment-capability",
+            "/auth/callback?code=private-oauth-code&state=private-oauth-state",
+            "/items/private-item-id?token=private-query-token",
+            "/private-unmatched-path",
+        ] {
+            client
+                .get(format!("http://{address}{path}"))
+                .send()
+                .await
+                .unwrap();
+        }
+        let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        for route in ["/auth/login", "/auth/callback", "/items/{id}", "unmatched"] {
+            assert!(text.contains(route), "missing route template {route}");
+        }
+        for secret in [
+            "private-enrollment-capability",
+            "private-oauth-code",
+            "private-oauth-state",
+            "private-item-id",
+            "private-query-token",
+            "private-unmatched-path",
+        ] {
+            assert!(
+                !text.contains(secret),
+                "request tracing disclosed client data"
+            );
+        }
+        server.abort();
+    }
 }
 
 fn process_gateway_from_env() -> Result<Option<SharedProcessGateway>, crate::process::ProcessError>
