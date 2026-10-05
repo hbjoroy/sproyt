@@ -7,11 +7,12 @@ function fixture() {
   let resumeEdit: (() => void) | undefined, resumeUpload: (() => void) | undefined;
   let editGate: Promise<void> | undefined, uploadGate: Promise<void> | undefined;
   let failEdit = false;
+  let generationReads = 0, generationGate: Promise<void> | undefined, resumeGeneration: (() => void) | undefined;
   let item: ShareReceipt = { id: "request", owner: user, generation, createdAt: 1, text: "Delt tekst", file: new File(["image"], "original.png", { type: "image/png" }), admission: null, done: null };
   const enqueued: ShareAdmission[] = [], dispatched: ShareAdmission[] = [];
   let uploads = 0;
   const inbox = {
-    identity: async () => { if (failIdentity) throw new Error("Offline identity"); return user; }, generation: async () => generation,
+    identity: async () => { if (failIdentity) throw new Error("Offline identity"); return user; }, generation: async () => { if (++generationReads === 1) await generationGate; return generation; },
     list: async (owner: string) => item.owner === owner ? [item] : [],
     claim: async () => item,
     edit: async (_: string, owner: string, revision: string, text: string, channelId: string) => { await editGate; if (failEdit) throw new Error("Draft storage failed"); assert.equal(owner, item.owner); assert.equal(revision, generation); return item = { ...item, text, channelId }; },
@@ -35,6 +36,7 @@ function fixture() {
     failEnqueue(value: boolean) { failEnqueue = value; }, failIdentity(value: boolean) { failIdentity = value; },
     switchDuringUpload() { switchDuringUpload = true; },
     failEdit(value: boolean) { failEdit = value; },
+    holdFirstGeneration() { generationGate = new Promise<void>(resolve => { resumeGeneration = resolve; }); }, resumeGeneration() { resumeGeneration?.(); }, get generationReads() { return generationReads; },
     holdEdit() { editGate = new Promise<void>(resolve => { resumeEdit = resolve; }); }, resumeEdit() { resumeEdit?.(); },
     holdUpload() { uploadGate = new Promise<void>(resolve => { resumeUpload = resolve; }); }, resumeUpload() { resumeUpload?.(); },
     switchUser() { user = "other"; target.clear(); }, reload() { target = make(); } };
@@ -91,4 +93,20 @@ test("failed draft persistence keeps the edited text and blocks refresh until an
   assert.equal(f.target.getSnapshot().receipts[0]?.text, "Unsaved edit"); assert.equal(f.target.canReload(), false);
   assert.equal(f.target.getSnapshot().busy, false);
   f.failEdit(false); await f.target.edit("request", "channel", "Unsaved edit"); assert.equal(f.target.canReload(), true);
+});
+
+test("older delayed IDB open cannot overwrite a newer draft, and send waits for preceding edit writes", async () => {
+  const f = fixture(); await f.target.refresh(); f.holdFirstGeneration();
+  const older = f.target.edit("request", "channel", "Older");
+  const newer = f.target.edit("request", "channel", "Newer");
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  assert.equal(f.generationReads, 1); assert.equal(f.target.canReload(), false);
+  f.resumeGeneration(); await Promise.all([older, newer]);
+  assert.equal(f.item.text, "Newer"); assert.equal(f.target.canReload(), true);
+  f.reload(); await f.target.refresh(); assert.equal(f.target.getSnapshot().receipts[0]?.text, "Newer");
+  f.holdEdit(); const pending = f.target.edit("request", "channel", "Before Send");
+  const send = f.target.send("request", "channel", "Before Send");
+  await Promise.resolve(); await Promise.resolve(); assert.equal(f.uploads, 0); assert.equal(f.enqueued.length, 0);
+  f.resumeEdit(); await Promise.all([pending, send]);
+  assert.equal(f.enqueued[0]?.draft, "Before Send"); assert.equal(f.item.text, "Before Send");
 });

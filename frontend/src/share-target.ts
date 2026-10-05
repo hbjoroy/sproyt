@@ -33,8 +33,10 @@ export function createShareTarget(options: {
 }, inbox: ShareInbox = shareInbox) {
   let state: ShareState = { receipts: [], busy: false, error: "", notice: "" };
   let epoch = 0;
+  let identityEpoch = 0;
   let draftWrites = 0;
   const localDrafts = new Map<string, { text: string; channelId: string }>();
+  const editWrites = new Map<string, Promise<void>>();
   let shareIds = new Set<string>();
   const listeners = new Set<() => void>();
   const publish = (next: Partial<ShareState>) => { state = { ...state, ...next }; listeners.forEach(listener => listener()); };
@@ -66,20 +68,30 @@ export function createShareTarget(options: {
     canReplay(requestId: string) { return !state.receipts.some(item => item.id === requestId && item.rejected); },
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     refresh,
-    clear() { epoch++; shareIds.clear(); localDrafts.clear(); publish({ receipts: [], busy: false, error: "", notice: "" }); },
-    async edit(id: string, channelId: string, text: string) {
-      const user = options.user(); if (!user) return;
+    clear() { epoch++; identityEpoch++; shareIds.clear(); localDrafts.clear(); publish({ receipts: [], busy: false, error: "", notice: "" }); },
+    edit(id: string, channelId: string, text: string): Promise<void> {
+      const user = options.user(); if (!user) return Promise.resolve();
+      const writeEpoch = identityEpoch;
       const draft = { text, channelId }; localDrafts.set(id, draft);
       publish({ receipts: state.receipts.map(item => item.id === id ? { ...item, ...draft } : item) });
       draftWrites++;
-      try {
+      // Separate IDB open chains can resolve out of order. Queue the whole
+      // generation/read/write operation so the latest edit is last on disk.
+      const previous = editWrites.get(id) ?? Promise.resolve();
+      const write = previous.catch(() => {}).then(async () => {
+        if (writeEpoch !== identityEpoch || user !== options.user()) return;
         const generation = await inbox.generation();
-        if (user !== options.user()) return;
+        if (writeEpoch !== identityEpoch || user !== options.user()) return;
         await inbox.edit(id, user, generation, text, channelId);
         if (localDrafts.get(id) === draft) localDrafts.delete(id);
-      } catch (error) {
+      }).catch(error => {
         if (user === options.user()) publish({ error: error instanceof Error ? error.message : "Utkastet kunne ikkje lagrast lokalt." });
-      } finally { draftWrites--; }
+      }).finally(() => {
+        draftWrites--;
+        if (editWrites.get(id) === write) editWrites.delete(id);
+      });
+      editWrites.set(id, write);
+      return write;
     },
     claim(id: string) { return run(async () => { const { user, generation } = await authorized(); await inbox.claim(id, user, generation); }); },
     discard(id: string) { return run(async () => {
@@ -90,6 +102,7 @@ export function createShareTarget(options: {
       localDrafts.delete(id);
     }); },
     send(id: string, channelId: string, text: string) { return run(async () => {
+      await editWrites.get(id);
       const { user, generation } = await authorized();
       let item = state.receipts.find(receipt => receipt.id === id && receipt.owner === user);
       if (!item) throw new Error("Ta delinga i bruk med denne kontoen først.");
