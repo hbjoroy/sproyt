@@ -37,7 +37,9 @@ use crate::{
         app_bundle, client_core_wasm, client_store, client_store_legacy, offline_page,
         pwa_manifest, service_worker, wave_logo_192, wave_logo_512,
     },
-    web::auth::{auth_callback, auth_login, auth_logout, auth_refresh, auth_session},
+    web::auth::{
+        auth_callback, auth_login, auth_logout, auth_refresh, auth_session, share_identity,
+    },
     web::browser::index,
     web::enrollment::{create_enrollment_invitation, create_global_enrollment_invitation},
     web::integrations::{
@@ -190,6 +192,8 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route("/auth/login", get(auth_login))
         .route("/auth/callback", get(auth_callback))
         .route("/auth/session", get(auth_session))
+        .route("/auth/share-identity", get(share_identity))
+        .route("/share-target", get(index))
         .route("/auth/refresh", post(auth_refresh))
         .route("/auth/logout", get(auth_logout))
         .route("/api/v1/me/export", get(export_my_data))

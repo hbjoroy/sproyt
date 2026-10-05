@@ -21,9 +21,43 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;
-  if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (request.method === "POST" && url.pathname === "/share-target") {
+    event.respondWith((async () => {
+      try {
+        const generation = await self.SproytShareInbox.generation();
+        await self.SproytShareInbox.capture(await request.formData(), generation);
+        const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        windows.forEach(client => client.postMessage({ type: "share-received" }));
+        return Response.redirect(new URL("/share-target", self.location.origin), 303);
+      } catch (error) {
+        return new Response(`Delinga er ikkje teken imot. ${error instanceof Error ? error.message : "Prøv igjen."}`, {
+          status: 503, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
+        });
+      }
+    })());
+    return;
+  }
+  if (request.method !== "GET") return;
+  if (url.pathname === "/auth/logout") {
+    event.respondWith((async () => {
+      try { await self.SproytShareInbox.logout(); }
+      catch {
+        const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        windows.forEach(client => client.postMessage({ type: "share-cleanup-warning" }));
+      }
+      // Signing out must not depend on an optional local share store.
+      return fetch(request);
+    })());
+    return;
+  }
+  if (url.pathname === "/share-target") {
+    event.respondWith(fetch(request).catch(() => new Response("Delinga er lagra lokalt. Opne Sprøyt når nettet er tilbake for å velje kanal og sende. Ingenting er sendt enno.", {
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
+    })));
+    return;
+  }
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/") || url.pathname === "/ws") return;
 
   if (request.mode === "navigate") {

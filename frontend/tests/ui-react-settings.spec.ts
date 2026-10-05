@@ -112,12 +112,14 @@ test("raw text toggle retains markdown source and returns to safe formatted cont
 });
 
 test("notification load can be retried and push uses the host registration after explicit consent", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
   await page.addInitScript(() => {
     const subscription = { toJSON: () => ({ endpoint: "https://push.example.test/device", keys: { p256dh: "key", auth: "auth" } }) };
     const registration = { pushManager: { getSubscription: async () => subscription } };
-    Object.defineProperty(navigator, "serviceWorker", { value: {
+    Object.defineProperty(navigator, "serviceWorker", { value: Object.assign(new EventTarget(), {
       register: async () => registration, ready: Promise.resolve(registration)
-    } });
+    }) });
     Object.defineProperty(Notification, "permission", { configurable: true, get: () => "default" });
     Notification.requestPermission = async () => {
       document.documentElement.dataset.pushConsent = "requested";
@@ -154,4 +156,5 @@ test("notification load can be retried and push uses the host registration after
   await expect(dialog).toContainText("Nettlesaren har tillate varsel.");
   expect(registrations).toBe(1);
   await expect(page.locator("html")).toHaveAttribute("data-push-consent", "requested");
+  expect(pageErrors).toEqual([]);
 });

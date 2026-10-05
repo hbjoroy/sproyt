@@ -27,6 +27,7 @@ pub(crate) const NAVIGATION_SOURCE: &str = include_str!("../../frontend/src/navi
 // Compatibility endpoint for already-open pages during the app bundle rollout.
 pub(crate) const CLIENT_STORE: &str = include_str!(concat!(env!("OUT_DIR"), "/client-store.js"));
 pub(crate) const SERVICE_WORKER: &str = include_str!("../../assets/service-worker.js");
+pub(crate) const SHARE_INBOX: &str = include_str!("../../assets/share-inbox.js");
 pub(crate) const OFFLINE_HTML: &str = include_str!("../../assets/offline.html");
 pub(crate) const INDEX_HTML: &str = include_str!("../../assets/index.html");
 pub(crate) const WAVE_LOGO_192: &[u8] = include_bytes!("../../assets/sproyt-wave-icon-192.png");
@@ -130,7 +131,7 @@ pub(crate) async fn service_worker() -> axum::response::Response {
                 "default-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
             ),
         ],
-        SERVICE_WORKER,
+        format!("{SHARE_INBOX}\n{SERVICE_WORKER}"),
     )
         .into_response()
 }

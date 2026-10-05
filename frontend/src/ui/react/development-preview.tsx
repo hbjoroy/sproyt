@@ -38,6 +38,8 @@ import { WorkItemStatusMessage } from "./work-item-status";
 import { workItemStatusId, workItemTaskId } from "../../work-items";
 import type { AppUpdate, UpdatePosition } from "../../app-update";
 import { AppUpdateNotice } from "./app-update-action";
+import { ReceivedShares } from "./share-target";
+import type { ShareTarget } from "../../share-target";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly processPilot: ProcessPilotApi;
@@ -81,6 +83,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   /** Persists both host-owned composer scopes before starting login. */
   readonly reauthenticateNow: () => void;
   readonly appUpdate: AppUpdate;
+  readonly shares: ShareTarget;
 }
 
 function ChannelNotificationControl({ channelId, channelName, enabled, pending, error, onChange }: {
@@ -361,7 +364,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const backToConversations = () => { view = "list"; update(); };
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view,
-    header: <><AppUpdateNotice update={host.appUpdate} />{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
+    header: <><AppUpdateNotice update={host.appUpdate} /><ReceivedShares target={host.shares} snapshot={snapshot} />{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
       <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}
