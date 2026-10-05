@@ -150,6 +150,18 @@ Sprøyt then consumes the e-mail-bound invitation once and adds the user to the
 intended circle automatically. Sprøyt does not create passwords or receive
 them.
 
+Enrollment acceptance requires a non-empty email and `email_verified: true`
+in the verified OIDC ID token. The address must also match the local invitation's
+expected email hash. Ordinary login remains available to legacy accounts without
+this claim. Keep the address-bound email mapping below enabled before deploying
+this check; a signed but unverified email is not sufficient for circle enrollment.
+
+Application request traces record router templates, never query strings or raw
+unmatched paths. Authentik invitation UUIDs are `itoken` capabilities and must not
+be logged, including when invitation cleanup fails. This does not establish that
+proxy or identity-provider logs are redacted; verify those separately without
+copying real invitation URLs into diagnostic reports.
+
 The production flow must have slug `sproyt-invitation-enrollment`, designation
 `enrollment`, authentication `require_unauthenticated`, and an Invitation stage
 with **Continue flow without invitation** disabled. The current production

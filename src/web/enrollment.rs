@@ -126,7 +126,6 @@ async fn create_enrollment_invitation_for_scope(
         if let Err(revoke_error) = enrollment.revoke(result.authentik_invitation_id).await {
             tracing::warn!(
                 ?revoke_error,
-                authentik_invitation_id = %result.authentik_invitation_id,
                 "could not revoke Authentik invitation after email delivery failed"
             );
         }
@@ -162,7 +161,6 @@ async fn create_enrollment_invitation_for_scope(
         if let Err(revoke_error) = enrollment.revoke(result.authentik_invitation_id).await {
             tracing::warn!(
                 ?revoke_error,
-                authentik_invitation_id = %result.authentik_invitation_id,
                 "could not revoke Authentik invitation after local activation failed"
             );
         }
