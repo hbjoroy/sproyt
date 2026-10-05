@@ -65,6 +65,10 @@ jobs:
           npm --prefix frontend ci
           npm --prefix frontend test
 
+      - name: Build isolated frontend container stage
+        if: github.event_name == 'pull_request'
+        run: docker build --target frontend-builder --progress=plain .
+
       - name: Install pinned Rust toolchain
         run: |
           rustup show active-toolchain
