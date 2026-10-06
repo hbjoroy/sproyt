@@ -237,6 +237,35 @@ macro_rules! advance_floors {
 }
 
 impl crate::chatbot::CircleChatAgents {
+    /// Member discovery exposes no prompts, settings or other users' memory.
+    pub(crate) async fn memory_agents(
+        &self,
+        actor: &crate::domain::UserId,
+        circle: &str,
+    ) -> crate::chatbot::Result<Vec<serde_json::Value>> {
+        let membership = "select cm.role from circle_memberships cm join users u on u.id=cm.user_id where cm.circle_id=?uuid and cm.user_id=?uuid and u.kind='human'";
+        let args = [circle.to_owned(), actor.to_string()];
+        if self.store.values(membership, &args).await?.is_empty() {
+            return Err(RepositoryError::PermissionDenied);
+        }
+        let pg = matches!(self.store, crate::chatbot::Store::Pg(_));
+        let object = if pg {
+            "cast(json_build_object('agent_id',cast(a.agent_id as text),'display_name',u.display_name) as text)"
+        } else {
+            "json_object('agent_id',a.agent_id,'display_name',u.display_name)"
+        };
+        let query = format!(
+            "select {object} from circle_chat_agents a join users u on u.id=a.agent_id where a.circle_id=?uuid and exists(select 1 from circle_memberships cm join users owner on owner.id=cm.user_id where cm.circle_id=a.circle_id and cm.user_id=?uuid and owner.kind='human') order by lower(u.display_name),a.agent_id limit 10"
+        );
+        let rows = self.store.values(&query, &args).await?;
+        if rows.is_empty() && self.store.values(membership, &args).await?.is_empty() {
+            return Err(RepositoryError::PermissionDenied);
+        }
+        rows.into_iter()
+            .map(|row| serde_json::from_str(&row).map_err(crate::chatbot::storage))
+            .collect()
+    }
+
     pub(crate) async fn read_memory(
         &self,
         actor: &crate::domain::UserId,

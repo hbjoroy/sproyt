@@ -379,7 +379,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions></>,
     navigationActions: null,
     renderGroupActions: group => group.id === "scope:direct" ? null : <NavigationScopeActions
-      group={group} snapshot={snapshot} host={host.community}
+      key={`${host.community.selfId() ?? ""}:${group.id}`} group={group} snapshot={snapshot} host={host.community}
       onSelect={channelId => { reactionPicker.close(); host.select(channelId); view = "detail"; update(); }} />,
     contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ChannelActions snapshot={snapshot} host={host} /></>,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl

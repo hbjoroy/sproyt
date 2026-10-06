@@ -5,6 +5,7 @@
       import { createShareTarget, shareInbox } from "./share-target";
       import { SavedEmojiApi } from "./saved-emojis";
       import { CircleChatAgentApi } from "./chat-agents";
+      import { AgentMemoryApi } from "./agent-memory";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
       import { createCommunityRequests } from "./application/community-requests";
@@ -637,6 +638,7 @@
       const processesApi = new ProcessApi(http);
       const agentsApi = new AgentApi(http);
       const circleChatAgentsApi = new CircleChatAgentApi(http);
+      const agentMemoryApi = new AgentMemoryApi(http);
       const integrationsApi = new IntegrationApi(http);
       const enrollmentApi = new EnrollmentApi(http);
       const processPilotApi = new ProcessPilotApi(http, () => currentParticipantId ?? "");
@@ -6035,7 +6037,7 @@
               requests: communityRequests, send: sendCommand, openDirect: openDirectChannel,
               selfId: () => currentParticipantId, channels: () => knownChannels, circles: () => knownCircles,
               slugify, channelSlug: scopedCircleChannelSlug, invitationToken: invitationValueToToken,
-              enrollment: enrollmentApi, chatAgents: circleChatAgentsApi
+              enrollment: enrollmentApi, chatAgents: circleChatAgentsApi, agentMemory: agentMemoryApi
             }),
             inboxState: () => ({
               channels: knownChannels,

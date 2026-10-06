@@ -7,6 +7,7 @@ import { PreviewAdvanced } from "./preview-advanced";
 import type { AdvancedHost } from "../../application/advanced-host";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import { CircleChatAgentsDialog } from "./circle-chat-agents";
+import { AgentMemoryDialog } from "./agent-memory";
 import type { AppUpdate, UpdatePosition } from "../../app-update";
 import { AppUpdateAction } from "./app-update-action";
 
@@ -34,6 +35,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   const communityTrigger = useRef<HTMLButtonElement | null>(null);
   const [advancedKind, setAdvancedKind] = useState<"agent" | "heart">();
   const [chatAgentsCircle, setChatAgentsCircle] = useState<{ id: string; name: string }>();
+  const [memoryCircle, setMemoryCircle] = useState<{ id: string; name: string; owner: string }>();
   const advancedTrigger = useRef<HTMLButtonElement | null>(null);
   const action = (label: string, destination: ManagementDestination) =>
     <Button key={label} onClick={event => {
@@ -76,6 +78,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
           <section key={circle.id} aria-label={circle.name} style={{ borderTop: "1px solid var(--sp-line)", paddingBlock: 12 }}>
             <h3>{circle.name}</h3>
             {action("Kanalar og medlemskap", { kind: "channels", circleId: circle.id })}
+            {community.agentMemory && community.selfId() && <Button onClick={() => { setOpen(false); setMemoryCircle({ id: circle.id, name: circle.name, owner: community.selfId()! }); }}>Mitt agentminne</Button>}
             {circle.role === "owner" && action("Inviter personar og nye brukarar", { kind: "invite", circleId: circle.id })}
             {["owner","moderator"].includes(circle.role) && <Button onClick={() => { setOpen(false); setChatAgentsCircle({ id: circle.id, name: circle.name }); }}>Agentar</Button>}
           </section>)}
@@ -90,6 +93,10 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     {advancedKind && <PreviewAdvanced kind={advancedKind} host={advanced} snapshot={snapshot} onClose={() => {
       setAdvancedKind(undefined); requestAnimationFrame(() => advancedTrigger.current?.focus({ preventScroll: true }));
     }} />}
+    {memoryCircle && memoryCircle.owner === community.selfId() && snapshot.circles.some(circle => circle.id === memoryCircle.id) && community.agentMemory && <AgentMemoryDialog
+      key={`${memoryCircle.owner}:${memoryCircle.id}`} api={community.agentMemory} circleId={memoryCircle.id} circleName={memoryCircle.name}
+      channels={snapshot.groups.flatMap(group => group.conversations.map(item => item.channel))}
+      onClose={() => { setMemoryCircle(undefined); setOpen(true); }} />}
     {chatAgentsCircle && snapshot.circles.some(circle=>circle.id===chatAgentsCircle.id && ["owner","moderator"].includes(circle.role)) && <CircleChatAgentsDialog key={chatAgentsCircle.id} api={chatAgents} circleId={chatAgentsCircle.id}
       circleName={chatAgentsCircle.name} onClose={() => { setChatAgentsCircle(undefined); setOpen(true); }} />}
   </>;

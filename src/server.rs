@@ -198,6 +198,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route("/auth/logout", get(auth_logout))
         .route("/api/v1/me/export", get(export_my_data))
         .route(
+            "/api/v1/me/circles/{circle_id}/chat-agents",
+            get(crate::web::agent_memory::agents),
+        )
+        .route(
             "/api/v1/me/circles/{circle_id}/chat-agents/{agent_id}/memory",
             get(crate::web::agent_memory::read).patch(crate::web::agent_memory::choice),
         )

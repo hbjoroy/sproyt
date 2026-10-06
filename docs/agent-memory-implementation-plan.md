@@ -21,6 +21,9 @@ lagrar minnet varig, og Rust samlar og handsamar nye meldingar i avgrensa
 arbeidsbolkar. Innsyn, retting og gløyming blir leverte før vi aktiverer
 automatisk læring. Første pilot bruker Maria og uttrykkeleg påmelde brukarar.
 
+M2 gir no [innsyn og styring av eige agentminne](agent-memory-user-controls.md)
+for vanlege kretsmedlemmer. Læring og minnebruk er framleis avslått.
+
 ## Endringar etter Astra sin gjennomgang
 
 | Punkt | Avgjerd i implementasjonsplanen |

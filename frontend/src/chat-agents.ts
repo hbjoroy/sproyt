@@ -20,6 +20,7 @@ export type CircleChatAgent = Readonly<{
   enabled: boolean;
   revision: number;
   workerAvailable: boolean;
+  memoryEnabled?: boolean;
   weather: AgentWeather | null;
   ferryPort?: "paros" | null;
   visionEnabled: boolean;
@@ -34,6 +35,7 @@ export type CircleChatAgentInput = Readonly<{
   responsePhrases: readonly string[];
   enabled: boolean;
   revision?: number;
+  memoryEnabled?: boolean;
   weather?: AgentWeather | null;
   ferryPort?: "paros" | null;
   visionEnabled?: boolean;
@@ -64,6 +66,7 @@ function decodeAgent(value: unknown): CircleChatAgent {
     || !Array.isArray(value.response_phrases) || !value.response_phrases.every(item => typeof item === "string")
     || typeof value.enabled !== "boolean" || typeof value.revision !== "number"
     || typeof value.worker_available !== "boolean"
+    || (value.memory_enabled !== undefined && typeof value.memory_enabled !== "boolean")
     || (value.vision_enabled !== undefined && typeof value.vision_enabled !== "boolean")
     || (value.vision_available !== undefined && typeof value.vision_available !== "boolean")
     || (value.image_generation_available !== undefined && typeof value.image_generation_available !== "boolean")) throw new Error("Ugyldig agentsvar frå tenaren.");
@@ -86,6 +89,7 @@ function decodeAgent(value: unknown): CircleChatAgent {
   return { agentId: value.agent_id, circleId: value.circle_id, displayName: value.display_name,
     triggerWords: value.trigger_words, responsePhrases: value.response_phrases,
     enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available, weather,
+    memoryEnabled: value.memory_enabled === true,
     ferryPort: value.ferry_port === "paros" ? "paros" : null,
     visionEnabled: value.vision_enabled === true, visionAvailable: value.vision_available === true,
     imageGeneration, imageGenerationAvailable: value.image_generation_available === true };
@@ -135,7 +139,7 @@ export class CircleChatAgentApi {
   private body(input: CircleChatAgentInput) {
     return { display_name: input.displayName, trigger_words: input.triggerWords,
       response_phrases: input.responsePhrases, enabled: input.enabled, revision: input.revision, weather: input.weather,
-      ferry_port: input.ferryPort, vision_enabled: input.visionEnabled,
+      ferry_port: input.ferryPort, vision_enabled: input.visionEnabled, memory_enabled: input.memoryEnabled,
       image_generation: input.imageGeneration === undefined ? undefined : input.imageGeneration === null ? null
         : { identity_id: input.imageGeneration.identityId, enabled: input.imageGeneration.enabled, occasional: input.imageGeneration.occasional } };
   }
