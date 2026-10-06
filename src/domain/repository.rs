@@ -920,6 +920,7 @@ impl ChatRepository for InMemoryChatRepository {
                 saved_emojis: state.saved_emojis.get(&actor).cloned().unwrap_or_default(),
                 circles,
                 channels,
+                agent_memories: Vec::new(),
             })
         })
     }

@@ -378,6 +378,10 @@ pub struct PortableUserExport {
     pub saved_emojis: Vec<String>,
     pub circles: Vec<ExportedCircle>,
     pub channels: Vec<ExportedChannel>,
+    /// Own agent memory, filtered by current source-channel access in the same
+    /// snapshot as the rest of the account export.
+    #[serde(default)]
+    pub agent_memories: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

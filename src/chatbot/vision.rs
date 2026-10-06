@@ -473,6 +473,7 @@ mod tests {
             display_name: "Biletevennen".into(),
             trigger_words: vec!["hjelp".into()],
             response_phrases: vec!["Be natural and describe only visible evidence".into()],
+            memory_enabled: None,
             enabled: false,
             revision,
             weather: None,

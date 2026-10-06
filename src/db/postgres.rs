@@ -936,6 +936,8 @@ impl ChatRepository for PostgresChatRepository {
             .fetch_all(&mut *tx)
             .await
             .map_err(sql_error)?;
+            let agent_memories =
+                crate::chatbot::memory::repository::export_memory!(tx, true, actor);
             tx.commit().await.map_err(sql_error)?;
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
@@ -945,6 +947,7 @@ impl ChatRepository for PostgresChatRepository {
                 saved_emojis,
                 circles,
                 channels,
+                agent_memories,
             })
         })
     }
