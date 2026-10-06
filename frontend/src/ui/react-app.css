@@ -241,6 +241,8 @@
 .sp-scope-menu:popover-open { display: grid; grid-auto-rows: max-content; align-content: start; gap: 0; }
 .sp-scope-menu-action.sp-button { padding: .35rem .5rem; justify-content: flex-start; gap: .65rem; min-width: 0; min-height: 44px; height: auto; text-align: left; white-space: normal; }
 .sp-scope-menu-symbol { display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; flex-shrink: 0; font-size: 1.2rem; }
+.sp-scope-menu-agent-actions { display: flex; min-width: 0; }
+.sp-scope-menu-agent-actions > .sp-button { flex: 1; gap: .35rem; }
 
 .sp-community-channel-row { display: flex; gap: .25rem; min-width: 0; }
 .sp-community-channel-row > .sp-button:first-child { flex: 1; min-width: 0; justify-content: space-between; gap: .5rem; }
