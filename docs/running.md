@@ -94,12 +94,19 @@ cargo test --locked --all-targets --all-features
 
 Build only from a reviewed, committed revision, use that revision as the
 immutable tag and OCI label, and record the digest read back from the registry.
-The preferred production path is the manually dispatched GitHub `CI` workflow
-on `main` with `publish_image` enabled, or a reviewed `v*` tag. Manual publish
-dispatches from other refs are rejected. The separate publish job waits for
-quality, PostgreSQL, security, recovery and delivery jobs, then pushes the exact
-ARM64 image that passed kind, SBOM and vulnerability checks. It does not rebuild
-the image after the gates.
+To build a new image, dispatch GitHub `CI` on `main` with `publish_image`
+enabled and `base_revision` set to the last verified application revision, or
+use a reviewed `v*` tag. Manual publication from other refs is rejected.
+The publish job waits for quality, PostgreSQL, security and delivery checks,
+plus recovery when the change scope requires it, then pushes the exact ARM64
+image with verified revision, SBOM and vulnerability evidence. Missing or
+unknown baselines, weekly runs, version tags and `force_full` retain full
+browser/recovery regression checks. See `release-checklist.md` for selection.
+
+Promote an already verified canary to production using the same digest and
+chart revision. Validate the changed GitOps values/Application and the resulting
+rollout; this promotion needs no new application build or repeat browser/restore
+CI. Migration, backup, authentication and network changes require relevant checks.
 
 Configure the GitHub `production-registry` environment with
 `SPROYT_OCI_USERNAME` and `SPROYT_OCI_PASSWORD` secrets for a Zot account scoped

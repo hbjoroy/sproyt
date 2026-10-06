@@ -6,8 +6,8 @@ on:
     branches: [main]
     tags: ["v*"]
     # Pull requests and non-documentation main pushes get the fast
-    # quality/PostgreSQL checks. The complete release gate is scheduled,
-    # manually dispatched, or selected by a version tag below.
+    # quality/PostgreSQL checks. Browser/recovery checks follow changed areas;
+    # full regression is scheduled, forced, or selected by a version tag.
     paths-ignore:
       - "**/*.md"
       - "docs/**"
