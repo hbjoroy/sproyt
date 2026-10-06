@@ -40,8 +40,9 @@ export function decodeAgentMemory(value: unknown): AgentMemory {
   const notes: MemoryNote[] = value.notes.map(note => {
     if (!isRecord(note) || !uuid(note.id) || !uuid(note.channel_id) || !isRecord(note.content)
       || typeof note.content.text !== "string" || !validMemoryText(note.content.text) || !ids(note.content.participant_ids, 30)
-      || !["preference", "temporary_context", "interaction"].includes(String(note.kind))
-      || !["automatic", "user"].includes(String(note.origin)) || !["user_stated", "conversation_event", "user_confirmed"].includes(String(note.evidence))
+      || typeof note.kind !== "string" || !["preference", "temporary_context", "interaction"].includes(note.kind)
+      || typeof note.origin !== "string" || !["automatic", "user"].includes(note.origin)
+      || typeof note.evidence !== "string" || !["user_stated", "conversation_event", "user_confirmed"].includes(note.evidence)
       || !integer(note.revision, 1) || !integer(note.created_at) || !timestamp(note.created_at) || !integer(note.updated_at) || !timestamp(note.updated_at) || !timestamp(note.expires_at)
       || !ids(note.source_message_ids, 30)) throw invalid();
     return { id: note.id, channelId: note.channel_id, kind: note.kind as MemoryNote["kind"], text: note.content.text,

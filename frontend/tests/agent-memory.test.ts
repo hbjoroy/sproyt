@@ -17,6 +17,12 @@ test("memory contract rejects unsafe revisions, malformed notes and duplicate ag
   assert.equal(validMemoryText("🌴".repeat(257)), false);
   assert.equal(validMemoryText("\t\n"), false);
   assert.equal(validMemoryText("abc\u0000"), false);
+  const note = { id: agent, channel_id: circle, kind: "preference", content: { text: "Nynorsk", participant_ids: [] },
+    origin: "automatic", evidence: "user_stated", revision: 1, created_at: 1, updated_at: 1, expires_at: null, source_message_ids: [circle] };
+  assert.equal(decodeAgentMemory({ ...view, notes: [note] }).notes[0]?.kind, "preference");
+  for (const field of ["kind", "origin", "evidence"] as const) {
+    assert.throws(() => decodeAgentMemory({ ...view, notes: [{ ...note, [field]: [note[field]] }] }));
+  }
 });
 test("memory API verifies response scope and sends only revision and own action", async () => {
   const requests: Array<{ path: string; body: unknown }> = [];
