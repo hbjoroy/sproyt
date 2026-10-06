@@ -5,7 +5,7 @@ import { memoryTextBytes, validMemoryText, type AgentMemory, type AgentMemoryApi
 import type { Channel } from "../../types";
 
 const errorText = (error: unknown) => error instanceof HttpError && error.status === 409
-  ? "Minnet vart endra på ei anna eining. Hent det på nytt før du lagrar. Utkastet ditt blir ståande."
+  ? "Minnet er endra eller har nådd ei minnegrense. Hent det på nytt før du lagrar. Utkastet ditt blir ståande."
   : error instanceof HttpError && [401,403].includes(error.status) ? "Du har ikkje tilgang no. Lukk og logg inn på nytt."
   : "Kunne ikkje hente eller lagre minnet. Prøv igjen.";
 

@@ -98,7 +98,7 @@ test("ordinary member controls memory with conflict recovery and compact themed 
   await draft.fill("Eg føretrekk nynorsk og litt gresk.");
   server.conflict();
   await dialog.getByRole("button", { name: "Lagre retting" }).click();
-  await expect(dialog).toContainText("ei anna eining");
+  await expect(dialog).toContainText("Hent det på nytt før du lagrar");
   await expect(draft).toHaveValue("Eg føretrekk nynorsk og litt gresk.");
   await dialog.getByRole("button", { name: "Hent minnet på nytt" }).click();
   await expect(draft).toHaveValue("Eg føretrekk nynorsk og litt gresk.");
