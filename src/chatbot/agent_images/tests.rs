@@ -536,6 +536,7 @@ async fn admitted_picture_guidance_is_truthful_and_unavailable_agent_cannot_prom
     };
     let target = Uuid::now_v7().to_string();
     let messages = vec![ContextMessage {
+        source: None,
         id: target.clone(),
         author: "Human".into(),
         body: "@Maria vis oss eit nytt bilete av deg ved kaféen".into(),

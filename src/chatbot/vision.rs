@@ -856,11 +856,13 @@ mod tests {
         let target = "actual-human-target";
         let messages = [
             ContextMessage {
+                source: None,
                 id: "historical".into(),
                 author: "Other human".into(),
                 body: "https://untrusted.invalid/old-picture.png".into(),
             },
             ContextMessage {
+                source: None,
                 id: target.into(),
                 author: "Kari".into(),
                 body: "I saw Blue Star Delos. What can you see in my photo?".into(),

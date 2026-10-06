@@ -41,6 +41,9 @@ data:
   SPROYT_CHAT_AGENT_IMAGES_ENABLED: {{ .Values.config.chatAgentImagesEnabled | quote }}
   SPROYT_WORK_ITEM_SUPPLEMENTS_ENABLED: {{ .Values.config.workItemSupplementsEnabled | quote }}
   SPROYT_CHAT_AGENT_FOLLOWUPS_ENABLED: {{ .Values.config.chatAgentFollowupsEnabled | quote }}
+  SPROYT_CHAT_AGENT_MEMORY_COLLECT_ENABLED: {{ .Values.config.chatAgentMemoryCollectEnabled | quote }}
+  SPROYT_CHAT_AGENT_MEMORY_BUILD_ENABLED: {{ .Values.config.chatAgentMemoryBuildEnabled | quote }}
+  SPROYT_CHAT_AGENT_MEMORY_USE_ENABLED: {{ .Values.config.chatAgentMemoryUseEnabled | quote }}
   SPROYT_PROCESS_PILOT_RUNTIME: {{ .Values.config.processPilotRuntime | quote }}
   SPROYT_PROCESS_PILOT_ENABLED: {{ .Values.config.processPilotEnabled | quote }}
   SPROYT_PROCESS_OUTBOX_ENABLED: {{ .Values.config.processOutboxEnabled | quote }}

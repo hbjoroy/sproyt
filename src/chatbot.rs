@@ -57,6 +57,7 @@ pub(crate) mod agent_images;
 mod channel_access;
 mod ferry;
 mod followup;
+mod memory;
 mod mention;
 mod observations;
 mod operators;
@@ -1024,6 +1025,53 @@ struct ContextMessage {
     id: String,
     author: String,
     body: String,
+    // Attribution stays server-side until the bounded memory builder uses it;
+    // ordinary replies retain their existing prompt shape and byte budget.
+    #[serde(default, skip_serializing)]
+    source: Option<memory::SourceMetadata>,
+}
+
+impl ContextMessage {
+    fn seal_source(&mut self) -> Result<()> {
+        if let Some(source) = &mut self.source {
+            if source.message_id.to_string() != self.id {
+                return Err(RepositoryError::Conflict);
+            }
+            source.seal(&self.body).map_err(storage)?;
+        }
+        Ok(())
+    }
+}
+
+/// Both ordinary context and followup anchors carry database-authored identity.
+/// Aliases are static SQL owned here; no chat/model value is interpolated.
+fn context_message_json(alias: &str, pg: bool) -> String {
+    assert!(matches!(alias, "m" | "anchor"));
+    let text = |field: &str| {
+        if pg {
+            format!("cast({field} as text)")
+        } else {
+            field.to_owned()
+        }
+    };
+    let object = if pg {
+        "json_build_object"
+    } else {
+        "json_object"
+    };
+    let id = text(&format!("{alias}.id"));
+    let channel = text(&format!("{alias}.channel_id"));
+    let sender = text(&format!("{alias}.sender_id"));
+    let parent = text(&format!("{alias}.parent_message_id"));
+    let circle = text("c.circle_id");
+    format!(
+        "{object}('id',{id},'author',{alias}.sender_display_name,'body',{alias}.body,\
+        'source',{object}('message_id',{id},'circle_id',{circle},'channel_id',{channel},\
+        'sender_id',{sender},'sender_kind',(select kind from users where id={alias}.sender_id),\
+        'provenance',(select provenance from message_provenance where message_id={alias}.id),\
+        'parent_message_id',{parent},'sequence',{alias}.sequence,'created_at',{alias}.created_at,\
+        'edited_at',{alias}.edited_at,'deleted_at',{alias}.deleted_at))"
+    )
 }
 
 impl CircleChatAgents {
@@ -1098,10 +1146,15 @@ impl CircleChatAgents {
 
     async fn source(&self, job: &Job) -> Result<Option<JobSource>> {
         let pg = matches!(self.store, Store::Pg(_));
+        let anchor = context_message_json("anchor", pg);
         let object = if pg {
-            "cast(json_build_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',cast(m.parent_message_id as text),'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',(j.observation_valid_until is not null),'image_requested',exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')),'followup',case when anchor.id is null then null else json_build_object('mode',j.followup_mode,'anchor',json_build_object('id',cast(anchor.id as text),'author',anchor.sender_display_name,'body',anchor.body)) end) as text)"
+            format!(
+                "cast(json_build_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',cast(m.parent_message_id as text),'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',(j.observation_valid_until is not null),'image_requested',exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')),'followup',case when anchor.id is null then null else json_build_object('mode',j.followup_mode,'anchor',{anchor}) end) as text)"
+            )
         } else {
-            "json_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',m.parent_message_id,'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',json(case when j.observation_valid_until is not null then 'true' else 'false' end),'image_requested',json(case when exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')) then 'true' else 'false' end),'followup',case when anchor.id is null then null else json_object('mode',j.followup_mode,'anchor',json_object('id',anchor.id,'author',anchor.sender_display_name,'body',anchor.body)) end)"
+            format!(
+                "json_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',m.parent_message_id,'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',json(case when j.observation_valid_until is not null then 'true' else 'false' end),'image_requested',json(case when exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')) then 'true' else 'false' end),'followup',case when anchor.id is null then null else json_object('mode',j.followup_mode,'anchor',{anchor}) end)"
+            )
         };
         let query = format!(
             "select {object} from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users u on u.id=j.agent_id join messages m on m.id=j.source_message_id left join messages anchor on anchor.id=j.followup_anchor_message_id join users source_user on source_user.id=m.sender_id join message_provenance provenance on provenance.message_id=m.id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=c.id and m.edited_at is null and m.deleted_at is null and source_user.kind='human' and provenance.provenance='human' and m.created_at>=?"
@@ -1142,16 +1195,23 @@ impl CircleChatAgents {
         values
             .into_iter()
             .next()
-            .map(|item| serde_json::from_str(&item).map_err(storage))
+            .map(|item| {
+                let mut source: JobSource = serde_json::from_str(&item).map_err(storage)?;
+                if let Some(followup) = &mut source.followup {
+                    followup.anchor.seal_source()?;
+                }
+                Ok(source)
+            })
             .transpose()
     }
 
     async fn context(&self, job: &Job, source: &JobSource) -> Result<Vec<ContextMessage>> {
         let pg = matches!(self.store, Store::Pg(_));
+        let message = context_message_json("m", pg);
         let object = if pg {
-            "cast(json_build_object('id',cast(m.id as text),'author',m.sender_display_name,'body',m.body) as text)"
+            format!("cast({message} as text)")
         } else {
-            "json_object('id',m.id,'author',m.sender_display_name,'body',m.body)"
+            message
         };
         let query = format!(
             "select {object} from messages m join circle_chat_agent_jobs j on j.channel_id=m.channel_id join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=?uuid and (coalesce(cast(m.parent_message_id as text),'')=? or m.id=j.followup_anchor_message_id) and m.deleted_at is null and m.created_at>=? and m.sequence<=?int order by m.sequence desc limit 100"
@@ -1198,6 +1258,7 @@ impl CircleChatAgents {
             return Err(RepositoryError::Conflict);
         }
         for item in &mut messages {
+            item.seal_source()?;
             item.body = strip_internal_tokens(&item.body);
         }
         let anchor_bytes = source
@@ -2145,6 +2206,7 @@ mod tests {
                 &["Eg kan hjelpe".into()],
                 &target,
                 &[ContextMessage {
+                    source: None,
                     id: target.clone(),
                     author: "Kari".into(),
                     body: "Hjelp meg".into(),
@@ -2181,6 +2243,7 @@ mod tests {
                 &["Warm and gently teasing".into()],
                 &target,
                 &[ContextMessage {
+                    source: None,
                     id: target.clone(),
                     author: "Kari".into(),
                     body: "Kva ferjer kjem?".into(),
@@ -2274,12 +2337,14 @@ mod tests {
         let followup = FollowupContext {
             mode: "implicit".into(),
             anchor: ContextMessage {
+                source: None,
                 id: "actual-bot-answer".into(),
                 author: "Agent".into(),
                 body: "God kveld, Kari!".into(),
             },
         };
         let context = [ContextMessage {
+            source: None,
             id: target.into(),
             author: "Kari".into(),
             body: "Bussen kjem snart".into(),
@@ -2323,6 +2388,7 @@ mod tests {
             Err("model_invalid_reply")
         );
         let addressed = [ContextMessage {
+            source: None,
             id: target.into(),
             author: "Kari".into(),
             body: "@Agent! Kan vi snakke om bussen i staden?".into(),
@@ -2401,6 +2467,7 @@ mod tests {
                     &["Eg kan hjelpe deg".into()],
                     &target,
                     &[ContextMessage {
+                        source: None,
                         id: target.clone(),
                         author: "Kari".into(),
                         body: "Hjelp med kva?".into(),
@@ -2588,6 +2655,10 @@ mod tests {
         let context = service.context(&job, &source).await.unwrap();
         assert_eq!(context.len(), 1);
         assert_eq!(context[0].body, "Hjelp meg?");
+        let attribution = context[0].source.as_ref().unwrap();
+        assert_eq!(attribution.sender_id, owner);
+        assert_eq!(attribution.channel_id, channel);
+        assert!(attribution.is_human_evidence());
     }
 
     #[tokio::test]
