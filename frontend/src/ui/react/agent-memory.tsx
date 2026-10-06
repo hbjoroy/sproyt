@@ -72,6 +72,8 @@ function MemoryPanel({ api, circleId, agent, channels }: { api: AgentMemoryApi; 
         : !view.agentEnabled ? <Status>Minne er sett på pause for denne agenten.</Status>
         : !view.collectionStartedAt ? <Status>Valet er lagra. Innsamling har ikkje starta enno.</Status>
         : <Status>Minne er tillate frå {new Date(view.collectionStartedAt * 1000).toLocaleString("nn-NO")}.</Status>}
+      {view.budgetSaturated && <Status>Minnet er fullt. Gløym notat du ikkje treng for å gi plass til ny læring. Stadfesta notat blir ikkje overskrivne.</Status>}
+      {!!view.pendingScopes && <Status>Nye meldingar ventar på oppsummering. Minnebygginga går i bakgrunnen og prioriterer vanlege svar.</Status>}
       {!view.notes.length && <p>Ingen synlege minnenotat om deg enno.</p>}
       {view.notes.map(note => <article key={note.id} className="sp-memory-note" aria-label="Minnenotat">
         <div className="sp-memory-meta">{channels.find(channel => channel.id === note.channelId)?.name ?? "Kanal"} · {({ preference: "Preferanse", temporary_context: "Mellombels", interaction: "Samspel" })[note.kind]}</div>

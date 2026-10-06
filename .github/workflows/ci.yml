@@ -391,6 +391,12 @@ jobs:
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select max(sequence) from messages where channel_id='01900000-0000-7000-8000-000000000002'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select sender_display_name from messages where id='01900000-0000-7000-8000-000000000003'")" = "Recovery user"
+          # Restore is allowed to reproduce data for integrity verification, but
+          # restored memory must never resume after an older deletion history.
+          psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file tools/reset-agent-memory-after-restore.sql
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_profiles")" = "0"
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_notes")" = "0"
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
       - uses: actions/upload-artifact@v6
         with:
           name: recovery-drill-backup

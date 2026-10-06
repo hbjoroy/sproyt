@@ -556,6 +556,7 @@ async fn admitted_picture_guidance_is_truthful_and_unavailable_agent_cannot_prom
                 None,
                 None,
                 available,
+                None,
             )
             .await
             .unwrap();

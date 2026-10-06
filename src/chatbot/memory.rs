@@ -1,7 +1,9 @@
-//! M0 contracts only. Collection, storage and model workers are introduced in
-//! later stages, after the user's inspection and forgetting controls exist.
+//! Circle/user-owned memory with channel-bound evidence and publication fences.
 #![allow(dead_code)]
 
+pub(crate) mod builder;
+pub(crate) mod collection;
+pub(crate) mod reply;
 pub(crate) mod repository;
 
 use std::collections::HashSet;

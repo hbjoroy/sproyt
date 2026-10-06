@@ -1635,6 +1635,11 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_sqlite(&mut transaction, &message).await?;
+            crate::chatbot::memory::collection::mark_message!(
+                transaction,
+                false,
+                message.id.as_uuid()
+            );
             persist_attachments_sqlite(&mut transaction, &message).await?;
             enqueue_message_sqlite(&mut transaction, &message).await?;
             crate::chatbot::enqueue_sqlite(&mut transaction, &message).await?;
@@ -1832,6 +1837,11 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_sqlite(&mut transaction, &message).await?;
+            crate::chatbot::memory::collection::mark_message!(
+                transaction,
+                false,
+                message.id.as_uuid()
+            );
             persist_attachments_sqlite(&mut transaction, &message).await?;
             enqueue_message_sqlite(&mut transaction, &message).await?;
             crate::chatbot::enqueue_sqlite(&mut transaction, &message).await?;

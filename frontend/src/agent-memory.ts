@@ -11,6 +11,7 @@ export type MemoryNote = {
 export type AgentMemory = {
   circleId: string; agentId: string; enabled: boolean; agentEnabled: boolean;
   collectionAvailable: boolean; collectionStartedAt: number | null;
+  pendingScopes?: number; budgetSaturated?: boolean;
   revision: number; memoryEpoch: number; historyCompactions: number; notes: MemoryNote[]; unavailableNotes: number;
 };
 export type MemoryAction = { action: "correct"; note_id: string; text: string }
@@ -36,6 +37,8 @@ export function decodeAgentMemory(value: unknown): AgentMemory {
   if (!isRecord(value) || !uuid(value.circle_id) || !uuid(value.agent_id)
     || typeof value.enabled !== "boolean" || typeof value.agent_enabled !== "boolean" || typeof value.collection_available !== "boolean"
     || !timestamp(value.collection_started_at) || !integer(value.revision) || !integer(value.memory_epoch, 1)
+    || (value.pending_scopes !== undefined && !integer(value.pending_scopes))
+    || (value.budget_saturated !== undefined && typeof value.budget_saturated !== "boolean")
     || !integer(value.history_compactions) || !integer(value.unavailable_notes) || !Array.isArray(value.notes) || value.notes.length > 24) throw invalid();
   const notes: MemoryNote[] = value.notes.map(note => {
     if (!isRecord(note) || !uuid(note.id) || !uuid(note.channel_id) || !isRecord(note.content)
@@ -52,6 +55,7 @@ export function decodeAgentMemory(value: unknown): AgentMemory {
   if (new Set(notes.map(note => note.id)).size !== notes.length || notes.reduce((sum, note) => sum + memoryTextBytes(note.text), 0) > 16384) throw invalid();
   return { circleId: value.circle_id, agentId: value.agent_id, enabled: value.enabled, agentEnabled: value.agent_enabled,
     collectionAvailable: value.collection_available, collectionStartedAt: value.collection_started_at,
+    pendingScopes: value.pending_scopes as number | undefined, budgetSaturated: value.budget_saturated as boolean | undefined,
     revision: value.revision, memoryEpoch: value.memory_epoch, historyCompactions: value.history_compactions, notes, unavailableNotes: value.unavailable_notes };
 }
 export class AgentMemoryApi {
