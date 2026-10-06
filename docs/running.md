@@ -110,7 +110,7 @@ with the current Zot authentication path. Retain the resulting
 
 The local `wslc`/`regctl` procedure below is a break-glass fallback when GitHub
 Actions publishing is unavailable. It must use the same reviewed commit and
-full release-gate evidence.
+selected release-gate evidence (see `release-checklist.md`).
 
 Zot authentication currently works reliably through `regctl`; `wslc push` may
 return `unauthorized` even after a successful interactive `wslc login`.
