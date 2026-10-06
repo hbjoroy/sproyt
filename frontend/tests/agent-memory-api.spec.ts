@@ -21,6 +21,12 @@ test("own memory API keeps consent inactive, enforces revisions and exports its 
     { data: { ...configuration, memory_enabled: true } });
   expect(agentResponse.status()).toBe(201);
   const agent = (await agentResponse.json()).agent_id;
+  const roster = await request.get(`/api/v1/me/circles/${circle}/chat-agents${query}`);
+  expect(roster.headers()["cache-control"]).toBe("no-store");
+  expect(await roster.json()).toEqual({ agents: [{ agent_id: agent, display_name: "Memory agent" }] });
+  const outsiderRoster = await request.get(`/api/v1/me/circles/${circle}/chat-agents?participant=${outsider}`);
+  expect(outsiderRoster.status()).toBe(403);
+  expect(outsiderRoster.headers()["cache-control"]).toBe("no-store");
   const memory = `/api/v1/me/circles/${circle}/chat-agents/${agent}/memory`;
   const initial = await request.get(`${memory}${query}`);
   expect(initial.headers()["cache-control"]).toBe("no-store");

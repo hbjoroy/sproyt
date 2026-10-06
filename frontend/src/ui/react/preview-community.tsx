@@ -1,6 +1,7 @@
 import { Button, Dialog, PersonList, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CircleChatAgentApi } from "../../chat-agents";
+import type { AgentMemoryApi } from "../../agent-memory";
 import type { Channel, Circle, UserProfile } from "../../types";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import { MarkdownContent } from "./markdown-content";
@@ -8,6 +9,7 @@ import { MarkdownContent } from "./markdown-content";
 export type CommunityDestination = { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" } | { kind: "create-channel"; circleId: string | null } | { kind: "channel"; channelId: string } | { kind: "channels" | "invite" | "rename-circle" | "circle-members"; circleId: string };
 export interface CommunityHost {
   chatAgents?: CircleChatAgentApi;
+  agentMemory?: AgentMemoryApi;
   selfId(): string | null;
   users(): Promise<UserProfile[]>;
   members(channelId: string): Promise<UserProfile[]>;

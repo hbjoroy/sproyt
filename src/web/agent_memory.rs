@@ -19,6 +19,30 @@ fn private(mut response: Response) -> Response {
     response
 }
 
+pub(crate) async fn agents(
+    State(state): State<AppState>,
+    Path(circle): Path<uuid::Uuid>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return private(auth_error_response(error)),
+    };
+    let Some(service) = &state.chat_agents else {
+        return private(axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response());
+    };
+    private(
+        match service
+            .memory_agents(&principal.user.id, &circle.to_string())
+            .await
+        {
+            Ok(agents) => Json(serde_json::json!({"agents": agents})).into_response(),
+            Err(error) => repository_response(error),
+        },
+    )
+}
+
 pub(crate) async fn read(
     State(state): State<AppState>,
     Path((circle, agent)): Path<(uuid::Uuid, uuid::Uuid)>,

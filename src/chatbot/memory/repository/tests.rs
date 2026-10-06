@@ -183,6 +183,42 @@ impl Fixture {
 }
 
 async fn contracts(store: Store) {
+    // Ordinary members discover names and IDs, without configuration or memory.
+    let discovery = Fixture::create(store.clone()).await;
+    discovery
+        .service
+        .store
+        .execute(
+            "update circle_memberships set role='member' where circle_id=?uuid and user_id=?uuid",
+            &[discovery.circle.clone(), discovery.member.to_string()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        discovery
+            .service
+            .memory_agents(&discovery.member, &discovery.circle)
+            .await
+            .unwrap(),
+        vec![json!({"agent_id": discovery.agent, "display_name": "Same name"})]
+    );
+    assert!(matches!(
+        discovery
+            .service
+            .memory_agents(&UserId::from_uuid(Uuid::now_v7()), &discovery.circle)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    ));
+    assert!(matches!(
+        discovery
+            .service
+            .memory_agents(
+                &UserId::new(discovery.agent.clone()).unwrap(),
+                &discovery.circle
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    ));
     let f = Fixture::create(store).await;
     let note = f
         .note(

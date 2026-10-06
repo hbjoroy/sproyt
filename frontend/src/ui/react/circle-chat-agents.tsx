@@ -30,6 +30,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [triggers, setTriggers] = useState("");
   const [phrases, setPhrases] = useState("");
   const [enabled, setEnabled] = useState(false);
+  const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [weatherEnabled, setWeatherEnabled] = useState(false);
   const [location, setLocation] = useState("Parikia");
   const [latitude, setLatitude] = useState("37.085");
@@ -69,13 +70,13 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     setImageIdentity(agent?.imageGeneration?.identityId ?? "");
     setImagesOccasional(agent?.imageGeneration?.occasional ?? false);
     setLatitude(String(agent?.weather?.latitude ?? 37.085)); setLongitude(String(agent?.weather?.longitude ?? 25.148));
-    setEnabled(agent?.enabled ?? false); setError(""); setFormOpen(true);
+    setEnabled(agent?.enabled ?? false); setMemoryEnabled(agent?.memoryEnabled ?? false); setError(""); setFormOpen(true);
   };
   const save = async () => {
     if (saving || !weatherValid || !imagesValid) return;
     setError(""); setSaving(true);
     const input: CircleChatAgentInput = { displayName: name.trim(), triggerWords: lines(triggers),
-      responsePhrases: lines(phrases), enabled, revision: selected?.revision, weather,
+      responsePhrases: lines(phrases), enabled, memoryEnabled, revision: selected?.revision, weather,
       ferryPort: ferryEnabled ? "paros" : null,
       visionEnabled: selected && visionEnabled === selected.visionEnabled ? undefined : visionEnabled,
       imageGeneration: imagesUnchanged ? undefined : imageGeneration };
@@ -147,6 +148,9 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       </>}
       <label className="sp-circle-agent-enabled"><input type="checkbox" checked={enabled}
         disabled={!workerAvailable && !enabled} onChange={event => setEnabled(event.target.checked)} />Aktiv</label>
+      <label className="sp-circle-agent-enabled"><input type="checkbox" checked={memoryEnabled}
+        disabled={saving} onChange={event => setMemoryEnabled(event.target.checked)} />Tillat minne for agenten</label>
+      <p>Kvar brukar må også tillate eige minne. Læring og minnebruk er ikkje aktiverte enno.</p>
       {error && <Status tone="error">{error}</Status>}
       <div className="sp-row"><Button type="button" onClick={() => { setFormOpen(false); setError(""); }}>Avbryt</Button>
         <Button type="submit" busy={saving} disabled={!name.trim() || !lines(triggers).length || !lines(phrases).length || !weatherValid || !imagesValid || (enabled && !workerAvailable)}>Lagre agent</Button></div>

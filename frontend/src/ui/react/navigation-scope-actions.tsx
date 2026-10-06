@@ -2,6 +2,7 @@ import { Button } from "@sproyt/ui/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ConversationSnapshot, ConversationSnapshotGroup } from "../../application/conversation-snapshot";
 import { CircleChatAgentsDialog } from "./circle-chat-agents";
+import { AgentMemoryDialog } from "./agent-memory";
 import { PreviewCommunity, type CommunityDestination, type CommunityHost } from "./preview-community";
 
 /** Navigation opens existing host-owned flows; it never mutates on mount. */
@@ -10,6 +11,7 @@ export function NavigationScopeActions({ group, snapshot, host, onSelect }: {
   onSelect(channelId: string): void;
 }) {
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const [memoryOwner, setMemoryOwner] = useState<string>();
   const [destination, setDestination] = useState<CommunityDestination>();
   const trigger = useRef<HTMLButtonElement | null>(null);
   const panel = useRef<HTMLDivElement | null>(null);
@@ -72,10 +74,16 @@ export function NavigationScopeActions({ group, snapshot, host, onSelect }: {
       {circle?.role === "owner" && action(`Endre namn på ${group.name}`, { kind: "rename-circle", circleId: circle.id }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m4 16 11-11 4 4-11 11-5 1 1-5ZM13 7l4 4" /></svg>, "Endre namn")}
       {(!circle || circle.role === "owner") && action(circle ? `Inviter til ${group.name}` : "Inviter ny brukar til Sprøyt",
         circle ? { kind: "invite", circleId: circle.id } : { kind: "global-invite" }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="8" cy="7" r="3" /><path d="M2 21v-3a6 6 0 0 1 12 0v3M19 6v8M15 10h8" /></svg>, circle ? "Inviter personar" : "Inviter ny brukar")}
+      {circle && host.agentMemory && host.selfId() && <Button className="sp-scope-menu-action" variant="quiet" aria-label={`Mitt agentminne i ${group.name}`}
+        onClick={() => { panel.current?.hidePopover(); trigger.current?.focus({ preventScroll: true }); setMemoryOwner(host.selfId() ?? undefined); }}>
+        <span className="sp-scope-menu-symbol" aria-hidden="true">◇</span><span>Mitt agentminne</span></Button>}
       </div>
     </div>
     {agentsOpen && circle && ["owner","moderator"].includes(circle.role) && host.chatAgents && <CircleChatAgentsDialog key={circle.id} api={host.chatAgents} circleId={circle.id} circleName={circle.name}
       onClose={()=>{setAgentsOpen(false);close();}} />}
+    {memoryOwner && memoryOwner === host.selfId() && circle && host.agentMemory && <AgentMemoryDialog key={`${memoryOwner}:${circle.id}`} api={host.agentMemory}
+      circleId={circle.id} circleName={circle.name} channels={snapshot.groups.flatMap(group => group.conversations.map(item => item.channel))}
+      onClose={() => { setMemoryOwner(undefined); close(); }} />}
     {destination && <PreviewCommunity key={JSON.stringify(destination)} destination={destination} snapshot={snapshot} host={host}
       onNavigate={setDestination} onClose={close} onSelectChannel={channelId => { close(); onSelect(channelId); }} />}
   </>;

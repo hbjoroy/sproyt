@@ -384,6 +384,22 @@
 
 .sp-circle-agent-enabled input { width: 1.1rem; height: 1.1rem; }
 
+.sp-agent-memory { display: grid; gap: 8px; min-width: 0; }
+.sp-agent-memory select, .sp-agent-memory textarea {
+  width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px;
+  border: 1px solid var(--sp-line); background: var(--sp-surface);
+  color: var(--sp-text); padding: 8px; font: inherit;
+}
+.sp-agent-memory textarea { resize: vertical; }
+.sp-memory-note { border-top: 1px solid var(--sp-line); padding-block: 12px; min-width: 0; }
+.sp-memory-note form { display: grid; gap: 8px; }
+.sp-memory-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sp-memory-meta { font-size: 0.8rem; color: var(--sp-muted); overflow-wrap: anywhere; }
+.sp-memory-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.sp-memory-actions button { min-height: 44px; }
+.sp-memory-confirm { border-top: 1px solid var(--sp-line); padding-block: 8px; }
+.sp-agent-memory summary { cursor: pointer; padding-block: 12px; }
+
 /* Personal choices share the compact six-column picker and touch targets. */
 .sp-personal-emoji-picker { box-shadow: none; }
 .sp-saved-emojis { border-bottom: 1px solid var(--sp-line); padding-bottom: 8px; margin-bottom: 8px; }
