@@ -20,6 +20,15 @@ on:
         required: false
         default: false
         type: boolean
+      base_revision:
+        description: Last verified application revision; omit to run the full release checks
+        required: false
+        type: string
+      force_full:
+        description: Run full browser and backup/restore regression checks
+        required: false
+        default: false
+        type: boolean
       publish_heart_image:
         description: Publish a verified private Heart archive to its fixed immutable Heart tag
         required: false
@@ -46,8 +55,33 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  changes:
+    name: Select relevant checks
+    runs-on: ubuntu-latest
+    outputs:
+      browser: ${{ steps.scope.outputs.browser }}
+      recovery: ${{ steps.scope.outputs.recovery }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Reject publication from unreviewed branches
+        if: github.event_name == 'workflow_dispatch' && (inputs.publish_image || inputs.publish_heart_image) && github.ref != 'refs/heads/main'
+        run: |
+          echo '::error::Manual publication must use the reviewed main revision.'
+          exit 1
+      - name: Check scope selection
+        run: python3 tools/test-ci-scope.py
+      - name: Select checks from the complete change range
+        id: scope
+        env:
+          CI_BASE_REVISION: ${{ inputs.base_revision }}
+          CI_FORCE_FULL: ${{ inputs.force_full }}
+        run: python3 tools/ci-scope.py --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+
   quality:
     name: Format, lint, and test
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -66,7 +100,7 @@ jobs:
           npm --prefix frontend test
 
       - name: Build isolated frontend container stage
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && needs.changes.outputs.browser != 'none'
         run: docker build --target frontend-builder --progress=plain .
 
       - name: Install pinned Rust toolchain
@@ -98,18 +132,30 @@ jobs:
         run: cargo test --all-targets --all-features --locked
 
       - name: Cache Playwright browser binaries
+        if: needs.changes.outputs.browser != 'none'
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
 
       - name: Install Chromium and WebKit for browser contracts
+        if: needs.changes.outputs.browser == 'full'
         run: npx --prefix frontend playwright install --with-deps chromium webkit
 
+      - name: Install Chromium for imagegen contracts
+        if: needs.changes.outputs.browser == 'imagegen'
+        run: npx --prefix frontend playwright install --with-deps chromium
+
       - name: Run browser smoke contracts
+        if: needs.changes.outputs.browser == 'full'
         run: npm --prefix frontend run test:e2e
 
+      - name: Run related imagegen, draft and validation browser contracts
+        if: needs.changes.outputs.browser == 'imagegen'
+        run: node frontend/scripts/test-e2e.mjs imagegen ui-react-media.spec.ts ui-react-preview.spec.ts
+
       - name: Run WebKit mobile interaction contracts
+        if: needs.changes.outputs.browser == 'full'
         env:
           SPROYT_E2E_WEBKIT: "1"
         run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-supplements.spec.ts ui-native-download-return.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-weather-agent.spec.ts ui-react-app-update.spec.ts ui-react-share-target.spec.ts
@@ -255,7 +301,8 @@ jobs:
 
   recovery-drill:
     name: PostgreSQL backup and restore drill
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
+    needs: changes
+    if: needs.changes.outputs.recovery == 'true' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -447,9 +494,18 @@ jobs:
   publish-image:
     name: Publish immutable OCI image
     if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish_image)
+      always() && !cancelled() &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_image)) &&
+      needs.changes.result == 'success' &&
+      needs.quality.result == 'success' &&
+      needs.postgres-schema.result == 'success' &&
+      needs.security-audit.result == 'success' &&
+      needs.delivery-arm64.result == 'success' &&
+      (needs.recovery-drill.result == 'success' ||
+      (needs.changes.outputs.recovery == 'false' && needs.recovery-drill.result == 'skipped'))
     needs:
+      - changes
       - quality
       - postgres-schema
       - security-audit

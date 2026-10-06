@@ -3,15 +3,55 @@
 Attach durable links or artifacts for every checked item. A release is not
 production-ready based only on a successful build.
 
-Before release, manually dispatch `CI` from the exact `main` commit with
-`publish_image` enabled, or push its reviewed `v*` release tag. Manual publish
-dispatches from other refs are rejected. The publish job runs only after every
-full release job passes and publishes the already-tested ARM64 image under the
+Before building a new release, manually dispatch `CI` from the exact `main`
+commit with `publish_image` enabled, or push its reviewed `v*` release tag.
+Manual publish dispatches from other refs are rejected. The publish job waits
+for all selected checks and publishes the tested ARM64 image under the
 immutable commit tag. Record the digest from the
 `registry-evidence-<commit>` artifact. Normal pull requests and `main` pushes
 deliberately run only the fast quality and PostgreSQL gates; the full
-ARM64/kind/SBOM/recovery gate also runs weekly as a regression sentinel without
+ARM64/SBOM/recovery gate also runs weekly as a regression sentinel without
 publishing an image.
+
+## Choose checks from the change
+
+Promotion from a healthy canary uses the same immutable image digest and chart
+revision. Validate the changed production values and Application, then verify
+Argo, ready replicas, public readiness and revision after rollout. Do not
+rebuild the image or repeat application UI/restore CI for this promotion.
+Migration, backup, authentication or network changes require their own checks.
+
+For a new release, pass `base_revision` as the last verified application
+revision. CI examines **all** changes between that ancestor and the release:
+
+- Backend feature changes run the Rust and PostgreSQL contracts without a full
+  browser suite unless shared HTTP/UI/protocol contracts changed.
+- Imagegen frontend changes run imagegen, media-draft and composer-validation
+  browser contracts, including the original `/imagegen` validation behavior.
+- Shared frontend, HTTP, protocol and legacy HTML changes run full Chromium and
+  WebKit contracts.
+- Database, migrations, domain persistence, runtime operations, dependencies,
+  build/configuration and unclassified changes retain the backup/restore drill.
+  Ordinary imagegen or frontend changes do not need that drill.
+- Missing/invalid/non-ancestor baselines, version tags, weekly CI and
+  `force_full=true` retain the complete browser and recovery regression gate.
+- Changes confined to the CI selector/workflow run selector regression and
+  workflow validation; they do not require application UI or database restore
+  testing. Mixing policy changes with application code retains the full gate.
+
+Every published image still passes compilation, lint, unit/PostgreSQL tests,
+Helm delivery validation, ARM64 identity checks, SBOM and vulnerability scanning.
+The workflow summary records selected checks. Publication accepts a skipped
+recovery job only when scope selection explicitly says it was unnecessary;
+failed or cancelled checks never permit publication.
+
+```powershell
+gh workflow run ci.yml --ref main -f publish_image=true -f base_revision=<last-verified-40-character-revision>
+```
+
+Observe long CI waits with a bounded watcher and report meaningful stage changes.
+Avoid duplicate watchers, minute-by-minute model polling, redundant local full
+test runs and repeated narrative updates while an external queue is unchanged.
 
 For the read-only cluster and public-boundary portion, run from a current
 checkout and pass the deployed application and GitOps revisions explicitly:
