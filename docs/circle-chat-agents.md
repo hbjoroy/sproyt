@@ -212,3 +212,11 @@ Ei avgrensa serverstyrt vêrfunksjon kan knytast til agentoppsettet. Sjå [vêra
 ## Fergeruter
 
 Agentoppsettet har eit val for dagens planlagde anløp i Paros. Sjå [fergeoppslag](ferry-agent.md) for kjelde, ferskleik, tilgang og utrulling. Dette stadfestar ikkje faktiske anløp eller AIS-posisjonar.
+
+## Personleg minne
+
+[Implementasjonsplanen for agentminne](agent-memory-implementation-plan.md)
+skildrar varige, kanalbundne notat per kretsagent og brukar, innsamling utan
+triggerkrav og brukarstyrt innsyn, retting og gløyming. Dette er planlagt
+vidareutvikling; den eksisterande samtalekonteksten blir ikkje varig minne
+ved å opprette ein agent.
