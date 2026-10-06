@@ -41,6 +41,8 @@ pub(crate) struct MemoryView {
     pub history_compactions: i64,
     pub notes: Vec<NoteView>,
     pub unavailable_notes: usize,
+    pub pending_scopes: usize,
+    pub budget_saturated: bool,
 }
 
 #[derive(Deserialize)]
@@ -119,6 +121,7 @@ macro_rules! read_memory {
             enabled: false, agent_enabled: false, collection_available: false,
             collection_started_at: None, revision: 0, memory_epoch: 1,
             history_compactions: 0, notes: Vec::new(), unavailable_notes: 0,
+            pending_scopes: 0, budget_saturated: false,
         };
         if let Some(profile) = profile {
             let id: String = profile.try_get("id").map_err(storage)?;
@@ -128,6 +131,9 @@ macro_rules! read_memory {
             view.revision = profile.try_get("revision").map_err(storage)?;
             view.memory_epoch = profile.try_get("memory_epoch").map_err(storage)?;
             view.history_compactions = profile.try_get("history_compactions").map_err(storage)?;
+            let pending:i64=sqlx::query_scalar(&sql("select count(*) from agent_memory_scopes where profile_id=?uuid and (dirty_sequence>processed_sequence or repair_sequence is not null)",$pg)).bind(&id).fetch_one(&mut *$tx).await.map_err(storage)?;
+            view.pending_scopes=usize::try_from(pending).map_err(storage)?;
+            view.budget_saturated=sqlx::query_scalar(&sql("select exists(select 1 from agent_memory_scopes where profile_id=?uuid and last_error='budget_saturated')",$pg)).bind(&id).fetch_one(&mut *$tx).await.map_err(storage)?;
             let total: i64 = sqlx::query_scalar(&sql("select count(*) from agent_memory_notes where profile_id=?uuid",$pg))
                 .bind(&id).fetch_one(&mut *$tx).await.map_err(storage)?;
             let rows = sqlx::query(&sql(&memory::visible_notes_query($pg),$pg))
@@ -163,7 +169,7 @@ macro_rules! read_memory {
                                 && metadata.version.map(String::from).as_deref()==Some(expected.as_str());
                             source_ids.push(metadata.message_id);
                             participants.insert(metadata.sender_id);
-                            has_owner |= metadata.sender_id.to_string()==$actor.to_string();
+                            has_owner |= metadata.sender_id==uuid::Uuid::parse_str(&$actor.to_string()).map_err(storage)?;
                         },
                         _ => valid=false,
                     }
@@ -187,6 +193,11 @@ macro_rules! read_memory {
                 });
             }
             view.unavailable_notes = usize::try_from(total).map_err(storage)?.saturating_sub(view.notes.len());
+        }
+        if crate::chatbot::memory::collection::collection_enabled() {
+            let query="select exists(select 1 from circle_chat_agents a join agent_profiles ap on ap.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join channel_memberships cm on cm.channel_id=c.id where a.circle_id=?uuid and a.agent_id=?uuid and cm.user_id=?uuid and a.enabled=true and a.memory_enabled=true and ap.revoked_at is null and (ap.expires_at is null or ap.expires_at>current_timestamp) and c.kind!='direct' and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private'))";
+            let query=if $pg {query.to_owned()} else {query.replace("ap.expires_at>current_timestamp","datetime(ap.expires_at)>current_timestamp")};
+            view.collection_available=sqlx::query_scalar(&sql(&query,$pg)).bind($circle.to_string()).bind($agent.to_string()).bind($actor.to_string()).fetch_one(&mut *$tx).await.map_err(storage)?;
         }
         view
     }};
@@ -231,7 +242,7 @@ macro_rules! advance_floors {
     ($tx:expr,$pg:expr,$profile:expr) => {{
         let maximum=if $pg {"greatest"} else {"max"};
         let floor=format!("{maximum}(start_sequence,dirty_sequence,coalesce((select max(sequence) from messages where channel_id=agent_memory_scopes.channel_id),0))");
-        let query=format!("update agent_memory_scopes set start_sequence={floor},processed_sequence={floor},dirty_sequence={floor},source_generation=source_generation+1,lease_token=null,leased_until=null,attempts=0 where profile_id=?uuid");
+        let query=format!("update agent_memory_scopes set start_sequence={floor},processed_sequence={floor},dirty_sequence={floor},repair_sequence=null,source_generation=source_generation+1,lease_token=null,leased_until=null,attempts=0 where profile_id=?uuid");
         sqlx::query(&crate::chatbot::sql(&query,$pg)).bind($profile).execute(&mut *$tx).await.map_err(memory_error)?;
     }};
 }
@@ -323,8 +334,8 @@ impl crate::chatbot::CircleChatAgents {
                 let next_epoch=super::MemoryEpoch::try_from(epoch).and_then(super::MemoryEpoch::next).map(i64::from).map_err(|_|RepositoryError::Conflict)?;
                 match &mutation {
                     Mutation::Choice(input)=>{
-                        // Consent can be saved, but no collection starts in M1.
-                        // M3 must initialize its start boundary at activation.
+                        // Consent changes fence work and compact existing scope floors.
+                        // New scopes start at the first qualifying durable send.
                         sqlx::query(&sql("update agent_memory_profiles set enabled=case when ?='true' then true else false end,collection_started_at=null where id=?uuid",$pg))
                             .bind(input.enabled.to_string()).bind(&profile).execute(&mut *tx).await.map_err(memory_error)?;
                         sqlx::query(&sql("update agent_memory_scopes set lease_token=null,leased_until=null,source_generation=source_generation+1 where profile_id=?uuid",$pg)).bind(&profile).execute(&mut *tx).await.map_err(memory_error)?;
@@ -371,6 +382,7 @@ impl crate::chatbot::CircleChatAgents {
                 }
                 sqlx::query(&sql("update agent_memory_profiles set revision=?int,memory_epoch=?int,updated_at=?int where id=?uuid",$pg))
                     .bind(next_revision.to_string()).bind(next_epoch.to_string()).bind(now.to_string()).bind(&profile).execute(&mut *tx).await.map_err(memory_error)?;
+                sqlx::query(&sql("update agent_memory_scopes set lease_token=null,leased_until=null,attempts=0,available_at=?int,last_error=null where profile_id=?uuid",$pg)).bind(now.to_string()).bind(&profile).execute(&mut *tx).await.map_err(memory_error)?;
                 let view=read_memory!(tx,$pg,actor,circle,agent);
                 tx.commit().await.map_err(memory_error)?;
                 Ok(view)
@@ -396,4 +408,4 @@ fn memory_error(error: sqlx::Error) -> RepositoryError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

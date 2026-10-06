@@ -3,21 +3,21 @@ use crate::chatbot::{CircleChatAgents, Store, context_message_json};
 use crate::domain::UserId;
 use serde_json::json;
 
-struct Fixture {
-    service: CircleChatAgents,
-    owner: UserId,
-    member: UserId,
-    circle: String,
-    agent: String,
-    channel: String,
-    private: String,
-    profile: String,
-    source_a: String,
-    source_b: String,
+pub(in crate::chatbot) struct Fixture {
+    pub(in crate::chatbot) service: CircleChatAgents,
+    pub(in crate::chatbot) owner: UserId,
+    pub(in crate::chatbot) member: UserId,
+    pub(in crate::chatbot) circle: String,
+    pub(in crate::chatbot) agent: String,
+    pub(in crate::chatbot) channel: String,
+    pub(in crate::chatbot) private: String,
+    pub(in crate::chatbot) profile: String,
+    pub(in crate::chatbot) source_a: String,
+    pub(in crate::chatbot) source_b: String,
 }
 
 impl Fixture {
-    async fn create(store: Store) -> Self {
+    pub(in crate::chatbot) async fn create(store: Store) -> Self {
         let owner = UserId::from_uuid(Uuid::now_v7());
         let member = UserId::from_uuid(Uuid::now_v7());
         let circle = Uuid::now_v7().to_string();
@@ -109,7 +109,7 @@ impl Fixture {
         }
     }
 
-    async fn note(&self, channel: &str, sources: &[String], text: &str) -> Uuid {
+    pub(crate) async fn note(&self, channel: &str, sources: &[String], text: &str) -> Uuid {
         let id = Uuid::now_v7();
         let cast = if matches!(self.service.store, Store::Pg(_)) {
             "jsonb"
@@ -220,7 +220,7 @@ async fn contracts(store: Store) {
         Err(RepositoryError::PermissionDenied)
     ));
     let f = Fixture::create(store).await;
-    let note = f
+    let _expired_note = f
         .note(
             &f.channel,
             &[f.source_a.clone(), f.source_b.clone()],
@@ -251,7 +251,17 @@ async fn contracts(store: Store) {
         .await
         .unwrap();
     let exported: MemoryView = serde_json::from_value(f.export().await.unwrap().remove(0)).unwrap();
-    assert_eq!(exported.notes[0].id, note);
+    assert!(exported.notes.is_empty());
+    // Expiry/revocation permanently withdraws learned notes; restored authority
+    // can create fresh evidence, without resurrecting the previous note.
+    let note = f
+        .note(
+            &f.channel,
+            &[f.source_a.clone(), f.source_b.clone()],
+            "Discussed Greek lessons together",
+        )
+        .await;
+    let view = f.view().await;
     // Circle moderators do not gain read or write access to another's profile.
     let other = f
         .service
@@ -329,7 +339,7 @@ async fn contracts(store: Store) {
         .unwrap();
     let hidden = f.view().await;
     assert!(hidden.notes.is_empty());
-    assert_eq!(hidden.unavailable_notes, 1);
+    assert_eq!(hidden.unavailable_notes, 0);
     assert!(
         f.export().await.unwrap()[0]["notes"]
             .as_array()
@@ -347,22 +357,12 @@ async fn contracts(store: Store) {
         .await,
         Err(RepositoryError::PermissionDenied)
     ));
-    // Forget still works when the source/note is no longer readable.
-    let forgotten = f
-        .action(hidden.revision, MemoryAction::Forget { note_id: note })
-        .await
-        .unwrap();
-    assert_eq!(forgotten.unavailable_notes, 0);
-    let excluded = f
-        .service
-        .store
-        .values(
-            "select cast(count(*) as text) from agent_memory_exclusions where profile_id=?uuid",
-            std::slice::from_ref(&f.profile),
-        )
-        .await
-        .unwrap();
-    assert_eq!(excluded, ["2"]);
+    // The mutation removes derived notes atomically, including confirmed ones.
+    assert!(matches!(
+        f.action(hidden.revision, MemoryAction::Forget { note_id: note })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    ));
     assert_eq!(
         f.service
             .store
@@ -378,12 +378,23 @@ async fn contracts(store: Store) {
     // Private channel requires both human membership and explicit agent access.
     let private_message = Uuid::now_v7().to_string();
     f.service.store.execute("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at) values(?uuid,?uuid,?uuid,'Same name',1,'Private statement',current_timestamp)",&[private_message.clone(),f.private.clone(),f.owner.to_string()]).await.unwrap();
-    let private_note = f
-        .note(&f.private, &[private_message], "Private preference")
+    let _private_note = f
+        .note(
+            &f.private,
+            std::slice::from_ref(&private_message),
+            "Private preference",
+        )
         .await;
     assert!(f.view().await.notes.is_empty());
     f.service.store.execute("insert into channel_chat_agent_settings(channel_id,agent_id,enabled,updated_by,updated_at) values(?uuid,?uuid,true,?uuid,1)",&[f.private.clone(),f.agent.clone(),f.owner.to_string()]).await.unwrap();
-    assert_eq!(f.view().await.notes[0].id, private_note);
+    assert_eq!(f.view().await.unavailable_notes, 0);
+    let _private_note = f
+        .note(
+            &f.private,
+            std::slice::from_ref(&private_message),
+            "Private preference after grant",
+        )
+        .await;
     f.service
         .store
         .execute(
@@ -393,7 +404,7 @@ async fn contracts(store: Store) {
         .await
         .unwrap();
     let hidden = f.view().await;
-    assert_eq!(hidden.unavailable_notes, 1);
+    assert_eq!(hidden.unavailable_notes, 0);
     assert!(hidden.notes.is_empty());
     // Reset is allowed for hidden scopes and advances every source boundary.
     let reset = f
@@ -717,4 +728,666 @@ fn action_and_choice_reject_unknown_owner_and_unbounded_text() {
         )
         .is_err()
     );
+}
+async fn collection_contract(store: Store) -> crate::chatbot::Result<()> {
+    let f = Fixture::create(store).await;
+    let st = &f.service.store;
+    // Start from consent with no scope: historical messages must not backfill.
+    st.execute(
+        "delete from agent_memory_scopes where profile_id=?uuid",
+        std::slice::from_ref(&f.profile),
+    )
+    .await?;
+    st.execute(
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+        std::slice::from_ref(&f.agent),
+    )
+    .await?;
+    let message = Uuid::now_v7().to_string();
+    st.execute("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at) values(?uuid,?uuid,?uuid,'Same name',3,'A plain message without trigger',current_timestamp)", &[message.clone(),f.channel.clone(),f.owner.to_string()]).await?;
+    macro_rules! capture {
+        ($pool:expr,$pg:expr,$message:expr) => {{
+            let mut tx = $pool.begin().await.map_err(crate::chatbot::storage)?;
+            crate::chatbot::memory::collection::capture_message!(tx, $pg, $message);
+            tx.commit().await.map_err(crate::chatbot::storage)?;
+        }};
+    }
+    match st {
+        Store::Pg(pool) => capture!(pool, true, message),
+        Store::Sqlite(pool) => capture!(pool, false, message),
+    }
+    match st {
+        Store::Pg(pool) => capture!(pool, true, message),
+        Store::Sqlite(pool) => capture!(pool, false, message),
+    }
+    assert_eq!(st.values("select cast(start_sequence as text)||':'||cast(processed_sequence as text)||':'||cast(dirty_sequence as text) from agent_memory_scopes where profile_id=?uuid", std::slice::from_ref(&f.profile)).await?, ["2:2:3"]);
+    let note = f
+        .note(&f.channel, std::slice::from_ref(&message), "New preference")
+        .await;
+    st.execute(
+        "update agent_memory_scopes set processed_sequence=3 where profile_id=?uuid",
+        std::slice::from_ref(&f.profile),
+    )
+    .await?;
+    let before = f.view().await.memory_epoch;
+    st.execute(
+        "update messages set body='Corrected' where id=?uuid",
+        std::slice::from_ref(&message),
+    )
+    .await?;
+    assert_eq!(f.view().await.memory_epoch, before + 1);
+    assert_eq!(
+        st.values(
+            "select cast(count(*) as text) from agent_memory_notes where id=?uuid",
+            &[note.to_string()]
+        )
+        .await?,
+        ["0"]
+    );
+    assert_eq!(st.values("select cast(processed_sequence as text)||':'||cast(dirty_sequence as text)||':'||cast(repair_sequence as text) from agent_memory_scopes where profile_id=?uuid", std::slice::from_ref(&f.profile)).await?,["3:3:2"]);
+    st.execute(
+        "update agent_memory_profiles set enabled=false where id=?uuid",
+        std::slice::from_ref(&f.profile),
+    )
+    .await?;
+    st.execute(
+        "update agent_memory_profiles set enabled=true where id=?uuid",
+        std::slice::from_ref(&f.profile),
+    )
+    .await?;
+    assert_eq!(st.values("select cast(start_sequence as text)||':'||cast(dirty_sequence as text) from agent_memory_scopes where profile_id=?uuid", std::slice::from_ref(&f.profile)).await?,["3:3"]);
+    // A stale capture/replay cannot reopen a reset floor or claim a new start.
+    st.execute(
+        "update agent_memory_profiles set collection_started_at=null where id=?uuid",
+        std::slice::from_ref(&f.profile),
+    )
+    .await?;
+    match st {
+        Store::Pg(pool) => capture!(pool, true, message),
+        Store::Sqlite(pool) => capture!(pool, false, message),
+    }
+    assert!(f.view().await.collection_started_at.is_none());
+    // An explicitly opted-in private scope still requires explicit agent access.
+    let private_message = Uuid::now_v7().to_string();
+    st.execute("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at) values(?uuid,?uuid,?uuid,'Same name',1,'Secret',current_timestamp)", &[private_message.clone(),f.private.clone(),f.owner.to_string()]).await?;
+    let message = private_message;
+    match st {
+        Store::Pg(pool) => capture!(pool, true, message),
+        Store::Sqlite(pool) => capture!(pool, false, message),
+    }
+    assert_eq!(st.values("select cast(count(*) as text) from agent_memory_scopes where profile_id=?uuid and channel_id=?uuid", &[f.profile.clone(),f.private.clone()]).await?,["0"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn sqlite_memory_collection_and_invalidation_contract() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    collection_contract(Store::Sqlite(pool)).await.unwrap();
+}
+
+#[tokio::test]
+async fn postgres_memory_collection_and_invalidation_contract() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    collection_contract(Store::Pg(pool)).await.unwrap();
+}
+async fn reply_memory_contract(store: Store) {
+    use crate::chatbot::{Job, memory::reply};
+    for mutation in [
+        "forget",
+        "correct",
+        "source_delete",
+        "revoke",
+        "disabled",
+        "membership",
+    ] {
+        let f = Fixture::create(store.clone()).await;
+        let note = f
+            .note(
+                &f.channel,
+                std::slice::from_ref(&f.source_a),
+                "Prefers Greek lessons",
+            )
+            .await;
+        let st = &f.service.store;
+        let job = Job {
+            id: Uuid::now_v7().to_string(),
+            agent_id: f.agent.clone(),
+            source_message_id: f.source_b.clone(),
+            channel_id: f.channel.clone(),
+            attempts: 1,
+            reply_body: None,
+            lease_token: Uuid::now_v7().to_string(),
+        };
+        // Target is the owner; another human's notes cannot be selected.
+        st.execute("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,lease_token,leased_until,created_at) values(?uuid,?uuid,?uuid,?uuid,1,'leased',0,?uuid,9999999999,0)", &[job.id.clone(),job.agent_id.clone(),job.source_message_id.clone(),job.channel_id.clone(),job.lease_token.clone()]).await.unwrap();
+        assert!(
+            reply::snapshot(st, &job).await.unwrap().is_none(),
+            "another target human must not use owner notes"
+        );
+        st.execute(
+            "update messages set sender_id=?uuid where id=?uuid",
+            &[f.owner.to_string(), f.source_b.clone()],
+        )
+        .await
+        .unwrap();
+        let input = reply::snapshot(st, &job).await.unwrap().unwrap();
+        assert_eq!(input["target_user_id"], f.owner.to_string());
+        assert_eq!(input["notes"].as_array().unwrap().len(), 1);
+        st.execute("update circle_chat_agent_jobs set reply_body='Cached answer from model' where id=?uuid", std::slice::from_ref(&job.id)).await.unwrap();
+        macro_rules! valid {
+            ($pool:expr,$pg:ident) => {{
+                let mut tx = $pool.begin().await.unwrap();
+                let result = reply::$pg(&mut tx, &job.id).await;
+                tx.rollback().await.unwrap();
+                result.is_ok()
+            }};
+        }
+        let before = match st {
+            Store::Pg(p) => valid!(p, authorize_postgres),
+            Store::Sqlite(p) => valid!(p, authorize_sqlite),
+        };
+        assert!(before, "initial {mutation} snapshot");
+        match mutation {
+            "forget" => {
+                f.action(1, MemoryAction::Forget { note_id: note })
+                    .await
+                    .unwrap();
+            }
+            "correct" => {
+                f.action(
+                    1,
+                    MemoryAction::Correct {
+                        note_id: note,
+                        text: "Now prefers Norwegian".to_owned().try_into().unwrap(),
+                    },
+                )
+                .await
+                .unwrap();
+            }
+            "source_delete" => {
+                st.execute(
+                    "delete from messages where id=?uuid",
+                    std::slice::from_ref(&f.source_a),
+                )
+                .await
+                .unwrap();
+            }
+            "revoke" => {
+                st.execute(
+                    "update agent_profiles set revoked_at=current_timestamp where agent_id=?uuid",
+                    std::slice::from_ref(&f.agent),
+                )
+                .await
+                .unwrap();
+            }
+            "disabled" => {
+                st.execute(
+                    "update agent_memory_profiles set enabled=false where id=?uuid",
+                    std::slice::from_ref(&f.profile),
+                )
+                .await
+                .unwrap();
+            }
+            "membership" => {
+                st.execute(
+                    "delete from channel_memberships where channel_id=?uuid and user_id=?uuid",
+                    &[f.channel.clone(), f.owner.to_string()],
+                )
+                .await
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let after = match st {
+            Store::Pg(p) => valid!(p, authorize_postgres),
+            Store::Sqlite(p) => valid!(p, authorize_sqlite),
+        };
+        assert!(!after, "must fence cached reply after {mutation}");
+    }
+}
+#[tokio::test]
+async fn sqlite_memory_reply_publication_contract() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    reply_memory_contract(Store::Sqlite(pool)).await;
+}
+#[tokio::test]
+async fn postgres_memory_reply_publication_contract() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    reply_memory_contract(Store::Pg(pool)).await;
+}
+async fn ordinary_changes_preserve_memory(store: Store) {
+    let f = Fixture::create(store).await;
+    let note = f
+        .note(
+            &f.channel,
+            std::slice::from_ref(&f.source_a),
+            "Owner preference",
+        )
+        .await;
+    let st = &f.service.store;
+    st.execute(
+        "update agent_memory_notes set origin='user',evidence='user_confirmed' where id=?uuid",
+        &[note.to_string()],
+    )
+    .await
+    .unwrap();
+    let before = f.view().await.memory_epoch;
+    st.execute("update circle_chat_agents set revision=revision+1,response_phrases='[\"New greeting\"]' where agent_id=?uuid", std::slice::from_ref(&f.agent)).await.unwrap();
+    assert_eq!(f.view().await.memory_epoch, before);
+    assert_eq!(f.view().await.notes[0].id, note);
+    st.execute(
+        "delete from circle_memberships where circle_id=?uuid and user_id=?uuid",
+        &[f.circle.clone(), f.member.to_string()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(f.view().await.notes[0].id, note);
+    let epoch = f.view().await.memory_epoch;
+    st.execute("update channels set chat_agent_access_revision=chat_agent_access_revision+1 where id=?uuid", std::slice::from_ref(&f.channel)).await.unwrap();
+    assert_eq!(f.view().await.memory_epoch, epoch);
+    assert_eq!(f.view().await.notes[0].id, note);
+}
+#[tokio::test]
+async fn sqlite_memory_ordinary_changes_preserve_confirmed_notes() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    ordinary_changes_preserve_memory(Store::Sqlite(pool)).await;
+}
+#[tokio::test]
+async fn postgres_memory_ordinary_changes_preserve_confirmed_notes() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    ordinary_changes_preserve_memory(Store::Pg(pool)).await;
+}
+// Environment gates live in an isolated copy of the test binary. No parallel
+// test in the parent process observes the collection flag changing.
+fn actual_send_child(test_name: &str) -> bool {
+    const CHILD: &str = "SPROYT_MEMORY_SEND_CONTRACT_CHILD";
+    if std::env::var(CHILD).as_deref() == Ok(test_name) {
+        return true;
+    }
+    let sqlite_path =
+        std::env::temp_dir().join(format!("sproyt-memory-send-{}.sqlite", Uuid::now_v7()));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test_name, "--nocapture"])
+        .env(CHILD, test_name)
+        .env("SPROYT_MEMORY_SEND_SQLITE_PATH", &sqlite_path)
+        .env("SPROYT_CHAT_AGENT_MEMORY_COLLECT_ENABLED", "true")
+        .env("SPROYT_CHAT_AGENT_MEMORY_BUILD_ENABLED", "false")
+        .env("SPROYT_CHAT_AGENT_MEMORY_USE_ENABLED", "false")
+        .output()
+        .unwrap();
+    if sqlite_path.exists() {
+        std::fs::remove_file(&sqlite_path).unwrap();
+    }
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "isolated send contract failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
+}
+
+async fn actual_send_contract(
+    store: Store,
+    repository: std::sync::Arc<dyn crate::domain::ChatRepository>,
+) {
+    use crate::domain::{ChannelId, MessageBody, SendMessage};
+    let f = Fixture::create(store).await;
+    let st = &f.service.store;
+    st.execute(
+        "delete from agent_memory_scopes where profile_id=?uuid",
+        std::slice::from_ref(&f.profile),
+    )
+    .await
+    .unwrap();
+    st.execute(
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+        std::slice::from_ref(&f.agent),
+    )
+    .await
+    .unwrap();
+    st.execute("insert into channel_sequences(channel_id,next_sequence) values(?uuid,3) on conflict(channel_id) do update set next_sequence=3", std::slice::from_ref(&f.channel)).await.unwrap();
+    let command = || SendMessage {
+        actor: f.owner.clone(),
+        channel_id: ChannelId::from_uuid(Uuid::parse_str(&f.channel).unwrap()),
+        parent_message_id: None,
+        body: MessageBody::new("A plain durable sentence").unwrap(),
+    };
+    let direct = repository.append_message(command()).await.unwrap();
+    let request = Uuid::now_v7().to_string();
+    let once = repository
+        .append_message_idempotent(command(), request.clone())
+        .await
+        .unwrap();
+    let replay = repository
+        .append_message_idempotent(command(), request)
+        .await
+        .unwrap();
+    assert_eq!(once, replay);
+    assert_eq!(u64::from(direct.sequence), 3);
+    assert_eq!(u64::from(once.sequence), 4);
+    assert_eq!(st.values("select cast(start_sequence as text)||':'||cast(processed_sequence as text)||':'||cast(dirty_sequence as text) from agent_memory_scopes where profile_id=?uuid", std::slice::from_ref(&f.profile)).await.unwrap(),["2:2:4"]);
+    assert_eq!(
+        st.values(
+            "select provenance from message_provenance where message_id=?uuid",
+            &[once.id.as_uuid().to_string()]
+        )
+        .await
+        .unwrap(),
+        ["human"]
+    );
+    assert_eq!(
+        st.values(
+            "select cast(count(*) as text) from circle_chat_agent_jobs where agent_id=?uuid",
+            std::slice::from_ref(&f.agent)
+        )
+        .await
+        .unwrap(),
+        ["0"]
+    );
+    assert_eq!(
+        st.values(
+            "select cast(count(*) as text) from messages where channel_id=?uuid",
+            std::slice::from_ref(&f.channel)
+        )
+        .await
+        .unwrap(),
+        ["4"]
+    );
+    assert!(f.view().await.collection_started_at.is_some());
+    if let Store::Pg(pool) = st {
+        // A real second connection attempts capture while consent is changing.
+        // It must wait for the profile fence and then see the committed opt-out.
+        let mut fence = pool.begin().await.unwrap();
+        sqlx::query("select id from agent_memory_profiles where id=$1 for update")
+            .bind(Uuid::parse_str(&f.profile).unwrap())
+            .fetch_one(&mut *fence)
+            .await
+            .unwrap();
+        let repo = repository.clone();
+        let send = command();
+        let mut pending = tokio::spawn(async move { repo.append_message(send).await });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut pending)
+                .await
+                .is_err()
+        );
+        sqlx::query("update agent_memory_profiles set enabled=false where id=$1")
+            .bind(Uuid::parse_str(&f.profile).unwrap())
+            .execute(&mut *fence)
+            .await
+            .unwrap();
+        fence.commit().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+            .await
+            .expect("send/consent fence deadlocked")
+            .unwrap()
+            .unwrap();
+        assert_eq!(st.values("select cast(dirty_sequence as text) from agent_memory_scopes where profile_id=?uuid", std::slice::from_ref(&f.profile)).await.unwrap(),["4"]);
+        assert!(!f.view().await.enabled);
+    }
+}
+
+#[tokio::test]
+async fn sqlite_memory_actual_send_capture_contract() {
+    if !actual_send_child(
+        "chatbot::memory::repository::tests::sqlite_memory_actual_send_capture_contract",
+    ) {
+        return;
+    }
+    let path = std::path::PathBuf::from(std::env::var("SPROYT_MEMORY_SEND_SQLITE_PATH").unwrap());
+    let url = format!("sqlite://{}", path.to_string_lossy().replace('\\', "/"));
+    let repository = crate::db::SqliteChatRepository::connect(&url)
+        .await
+        .unwrap();
+    repository.migrate().await.unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    actual_send_contract(Store::Sqlite(pool.clone()), std::sync::Arc::new(repository)).await;
+    pool.close().await;
+    // The parent removes the file after this process closes all connections.
+}
+
+#[tokio::test]
+async fn postgres_memory_actual_send_capture_contract() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    if !actual_send_child(
+        "chatbot::memory::repository::tests::postgres_memory_actual_send_capture_contract",
+    ) {
+        return;
+    }
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&url)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    let repository = crate::db::PostgresChatRepository::connect_with_pool(&url, pool.clone())
+        .await
+        .unwrap();
+    actual_send_contract(Store::Pg(pool), std::sync::Arc::new(repository)).await;
+}
+#[tokio::test]
+async fn postgres_memory_reply_rechecks_lease_after_profile_lock_wait() {
+    use crate::chatbot::{Job, authorize_reply_postgres, memory::reply};
+    use crate::domain::{ChannelId, MessageBody, SendMessage};
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    let f = Fixture::create(Store::Pg(pool.clone())).await;
+    let st = &f.service.store;
+    st.execute(
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+        std::slice::from_ref(&f.agent),
+    )
+    .await
+    .unwrap();
+    f.note(
+        &f.channel,
+        std::slice::from_ref(&f.source_a),
+        "Prefers Greek lessons",
+    )
+    .await;
+    let job = Job {
+        id: Uuid::now_v7().to_string(),
+        agent_id: f.agent.clone(),
+        source_message_id: f.source_a.clone(),
+        channel_id: f.channel.clone(),
+        attempts: 1,
+        reply_body: None,
+        lease_token: Uuid::now_v7().to_string(),
+    };
+    st.execute("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,lease_token,leased_until,created_at) values(?uuid,?uuid,?uuid,?uuid,1,'leased',0,?uuid,9999999999,0)", &[job.id.clone(),job.agent_id.clone(),job.source_message_id.clone(),job.channel_id.clone(),job.lease_token.clone()]).await.unwrap();
+    reply::snapshot(st, &job).await.unwrap().unwrap();
+    st.execute("update circle_chat_agent_jobs set reply_body='Cached answer',leased_until=cast(extract(epoch from clock_timestamp()) as bigint)+2 where id=?uuid", std::slice::from_ref(&job.id)).await.unwrap();
+    let command = SendMessage {
+        actor: UserId::new(&f.agent).unwrap(),
+        channel_id: ChannelId::new(&f.channel).unwrap(),
+        parent_message_id: None,
+        body: MessageBody::new("Cached answer").unwrap(),
+    };
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query("select id from agent_memory_profiles where id=$1::text::uuid for update")
+        .bind(&f.profile)
+        .fetch_one(&mut *holder)
+        .await
+        .unwrap();
+    let request = format!("circle-chat-agent:{}", job.id);
+    let publisher = tokio::spawn(async move {
+        let mut tx = pool.begin().await.unwrap();
+        let result = authorize_reply_postgres(&mut tx, &command, &request).await;
+        tx.rollback().await.unwrap();
+        result
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !publisher.is_finished(),
+        "publication must wait on the held memory profile"
+    );
+    // The authority remains unchanged while only the wall-clock lease expires.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    holder.commit().await.unwrap();
+    assert!(matches!(
+        publisher.await.unwrap(),
+        Err(RepositoryError::PermissionDenied)
+    ));
+}
+async fn pause_preserves_inspectable_memory(store: Store) {
+    let f = Fixture::create(store).await;
+    let note = f
+        .note(
+            &f.channel,
+            std::slice::from_ref(&f.source_a),
+            "Owner preference retained during pause",
+        )
+        .await;
+    let st = &f.service.store;
+    st.execute(
+        "update agent_memory_notes set origin='user',evidence='user_confirmed' where id=?uuid",
+        &[note.to_string()],
+    )
+    .await
+    .unwrap();
+    let before = f.view().await;
+    let paused = f
+        .service
+        .mutate_memory(
+            &f.owner,
+            &f.circle,
+            &f.agent,
+            Mutation::Choice(ChoiceInput {
+                revision: before.revision,
+                enabled: false,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(!paused.enabled);
+    assert_eq!(paused.memory_epoch, before.memory_epoch + 1);
+    assert_eq!(paused.notes.len(), 1);
+    assert_eq!(paused.notes[0].id, note);
+    let resumed = f
+        .service
+        .mutate_memory(
+            &f.owner,
+            &f.circle,
+            &f.agent,
+            Mutation::Choice(ChoiceInput {
+                revision: paused.revision,
+                enabled: true,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(resumed.enabled);
+    assert_eq!(resumed.notes[0].id, note);
+    assert_eq!(st.values("select cast(start_sequence as text)||':'||cast(processed_sequence as text)||':'||cast(dirty_sequence as text) from agent_memory_scopes where profile_id=?uuid and channel_id=?uuid", &[f.profile.clone(),f.channel.clone()]).await.unwrap(),["2:2:2"]);
+    for statement in [
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+        "update circle_chat_agents set memory_enabled=false where agent_id=?uuid",
+        "update circle_chat_agents set memory_enabled=true where agent_id=?uuid",
+        "update circle_chat_agents set enabled=false where agent_id=?uuid",
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+    ] {
+        let epoch = f.view().await.memory_epoch;
+        st.execute(statement, std::slice::from_ref(&f.agent))
+            .await
+            .unwrap();
+        let after = f.view().await;
+        assert_eq!(after.memory_epoch, epoch + 1);
+        assert_eq!(after.notes.len(), 1);
+        assert_eq!(after.notes[0].id, note);
+        assert_eq!(after.notes[0].origin, NoteOrigin::User);
+    }
+    // Preserving a paused note does not relax the original source dependency.
+    st.execute(
+        "update messages set body='Retracted preference' where id=?uuid",
+        std::slice::from_ref(&f.source_a),
+    )
+    .await
+    .unwrap();
+    assert!(f.view().await.notes.is_empty());
+}
+#[tokio::test]
+async fn sqlite_memory_pause_preserves_inspectable_notes() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    pause_preserves_inspectable_memory(Store::Sqlite(pool)).await;
+}
+#[tokio::test]
+async fn postgres_memory_pause_preserves_inspectable_notes() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    pause_preserves_inspectable_memory(Store::Pg(pool)).await;
 }

@@ -1767,6 +1767,11 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_postgres(&mut transaction, &message).await?;
+            crate::chatbot::memory::collection::mark_message!(
+                transaction,
+                true,
+                message.id.as_uuid()
+            );
             persist_attachments_postgres(&mut transaction, &message).await?;
             enqueue_message_postgres(&mut transaction, &message).await?;
             crate::chatbot::enqueue_postgres(&mut transaction, &message).await?;
@@ -2004,6 +2009,11 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?;
             persist_mentions_postgres(&mut transaction, &message).await?;
+            crate::chatbot::memory::collection::mark_message!(
+                transaction,
+                true,
+                message.id.as_uuid()
+            );
             persist_attachments_postgres(&mut transaction, &message).await?;
             enqueue_message_postgres(&mut transaction, &message).await?;
             crate::chatbot::enqueue_postgres(&mut transaction, &message).await?;
