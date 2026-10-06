@@ -19,6 +19,7 @@ fn input(revision: Option<i64>, config: Option<Option<ImageGenerationConfig>>) -
         display_name: "Picture friend".into(),
         trigger_words: vec!["hjelp".into()],
         response_phrases: vec!["Be warm and natural".into()],
+        memory_enabled: None,
         enabled: false,
         revision,
         weather: None,

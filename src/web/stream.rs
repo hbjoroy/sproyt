@@ -32,7 +32,7 @@ pub(crate) struct EventsQuery {
     after: Option<u64>,
 }
 
-fn same_origin(headers: &HeaderMap) -> bool {
+pub(crate) fn same_origin(headers: &HeaderMap) -> bool {
     if headers
         .get("sec-fetch-site")
         .is_some_and(|value| value != "same-origin" && value != "none")

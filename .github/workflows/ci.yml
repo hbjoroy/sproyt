@@ -250,7 +250,7 @@ jobs:
           cargo test postgres_agent_image_publication_contract --locked
           cargo test postgres_two_replica_realtime_and_restart_catch_up_gate --locked
           cargo test chatbot::tests::postgres_ --locked -- --test-threads=1
-          cargo test chatbot::memory::tests --locked -- --test-threads=1 --nocapture
+          cargo test chatbot::memory:: --locked -- --test-threads=1 --nocapture
           cargo test postgres_work_item_registration_and_task_projection --locked
           cargo test work_items::github_export::tests::postgres_ --locked -- --test-threads=1
           cargo test work_items::status_change::tests::postgres_ --locked -- --test-threads=1
@@ -259,6 +259,16 @@ jobs:
           psql --host 127.0.0.1 --username sproyt --dbname sproyt --command 'create database sproyt_pilot_upgrade;'
           SPROYT_TEST_UPGRADE_DATABASE_URL=postgres://sproyt:sproyt-ci@127.0.0.1:5432/sproyt_pilot_upgrade cargo test postgres_upgrade_preserves_v1_receipts --locked -- --ignored --test-threads=1
 
+      - name: Measure synthetic memory backup footprint
+        run: |
+          client_image='postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193'
+          docker run --rm --network host -e PGPASSWORD "$client_image" \
+            pg_dump --format=custom --no-owner --no-acl --data-only \
+              --table=public.agent_memory_profiles --table=public.agent_memory_scopes \
+              --table=public.agent_memory_notes --table=public.agent_memory_note_sources \
+              --table=public.agent_memory_note_participants --table=public.agent_memory_exclusions \
+              "$SPROYT_POSTGRES_TEST_URL" > "$RUNNER_TEMP/agent-memory-fixtures.dump"
+          stat --printf='Synthetic CI memory table backup: %s bytes (all fixture profiles, compressed custom format)\n' "$RUNNER_TEMP/agent-memory-fixtures.dump"
       - name: Verify expected tables
         run: |
           test "$(psql --host 127.0.0.1 --username sproyt --dbname sproyt --tuples-only --no-align --command "select count(*) from information_schema.tables where table_schema = 'public' and table_name in ('users', 'channels', 'channel_memberships', 'channel_sequences', 'messages');")" = "5"
@@ -349,6 +359,16 @@ jobs:
           insert into channel_memberships(channel_id,user_id,role) values('01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001','owner');
           insert into channel_sequences(channel_id,next_sequence) values('01900000-0000-7000-8000-000000000002',2);
           insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values('01900000-0000-7000-8000-000000000003','01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001','Recovery user',1,'restore-evidence');
+          insert into circles(id,slug,name,created_by) values('01900000-0000-7000-8000-000000000004','recovery-memory','Recovery memory','01900000-0000-7000-8000-000000000001');
+          insert into circle_memberships(circle_id,user_id,role) values('01900000-0000-7000-8000-000000000004','01900000-0000-7000-8000-000000000001','owner');
+          update channels set circle_id='01900000-0000-7000-8000-000000000004' where id='01900000-0000-7000-8000-000000000002';
+          insert into users(id,kind,display_name) values('01900000-0000-7000-8000-000000000005','agent','Recovery agent');
+          insert into agent_profiles(agent_id,owner_id,invited_by,provider,service_identity,purpose,rate_limit_per_minute,created_at) values('01900000-0000-7000-8000-000000000005','01900000-0000-7000-8000-000000000001','01900000-0000-7000-8000-000000000001','recovery-memory','recovery-agent','Recovery test',10,now());
+          insert into circle_chat_agents(agent_id,circle_id,trigger_words,response_phrases,created_by,updated_by,created_at,updated_at) values('01900000-0000-7000-8000-000000000005','01900000-0000-7000-8000-000000000004','[]','[]','01900000-0000-7000-8000-000000000001','01900000-0000-7000-8000-000000000001',1,1);
+          insert into agent_memory_profiles(id,circle_id,agent_id,user_id,created_at,updated_at) values('01900000-0000-7000-8000-000000000006','01900000-0000-7000-8000-000000000004','01900000-0000-7000-8000-000000000005','01900000-0000-7000-8000-000000000001',1,1);
+          insert into agent_memory_scopes(profile_id,circle_id,channel_id,start_sequence,processed_sequence,dirty_sequence,available_at) values('01900000-0000-7000-8000-000000000006','01900000-0000-7000-8000-000000000004','01900000-0000-7000-8000-000000000002',0,0,0,1);
+          insert into agent_memory_notes(id,profile_id,channel_id,kind,content,origin,evidence,created_at,updated_at) values('01900000-0000-7000-8000-000000000007','01900000-0000-7000-8000-000000000006','01900000-0000-7000-8000-000000000002','preference','{"text":"restore-memory-evidence","participant_ids":[]}','automatic','user_stated',1,1);
+          insert into agent_memory_note_sources(note_id,message_id,source_version) values('01900000-0000-7000-8000-000000000007','01900000-0000-7000-8000-000000000003',repeat('a',64));
           SQL
       - name: Backup and restore into isolated database
         run: |
@@ -366,6 +386,8 @@ jobs:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: |
           cargo run --locked -- migrate
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_notes where content->>'text'='restore-memory-evidence'")" = "1"
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_profiles where enabled=false and collection_started_at is null")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select max(sequence) from messages where channel_id='01900000-0000-7000-8000-000000000002'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select sender_display_name from messages where id='01900000-0000-7000-8000-000000000003'")" = "Recovery user"

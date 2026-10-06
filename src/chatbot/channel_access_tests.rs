@@ -158,6 +158,7 @@ async fn contract(store: Store) {
         display_name: "Kanalhjelpar".into(),
         trigger_words: vec!["hjelp".into()],
         response_phrases: vec!["Eg kan hjelpe".into()],
+        memory_enabled: None,
         enabled: false,
         revision: None,
         vision_enabled: None,

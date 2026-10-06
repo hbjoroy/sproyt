@@ -2,6 +2,8 @@
 //! later stages, after the user's inspection and forgetting controls exist.
 #![allow(dead_code)]
 
+pub(crate) mod repository;
+
 use std::collections::HashSet;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -13,7 +15,7 @@ use crate::{agent::ActivityProvenance, domain::PrincipalKind};
 
 pub(super) const MAX_BATCH_MESSAGES: usize = 20;
 pub(super) const MAX_NEIGHBOUR_MESSAGES: usize = 10;
-pub(super) const MAX_PROFILE_NOTES: usize = 24;
+pub(crate) const MAX_PROFILE_NOTES: usize = 24;
 pub(super) const MAX_NOTE_BYTES: usize = 1_024;
 pub(super) const MAX_PROFILE_NOTE_BYTES: usize = 16 * 1_024;
 pub(super) const MAX_PROFILE_SOURCE_REFERENCES: usize = 720;
@@ -107,7 +109,7 @@ impl MemoryEpoch {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub(super) struct SourceVersion(String);
+pub(crate) struct SourceVersion(String);
 
 impl TryFrom<String> for SourceVersion {
     type Error = &'static str;
@@ -141,7 +143,7 @@ pub(super) struct SourceReference {
 /// Database-authored attribution. Display names are deliberately excluded.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct SourceMetadata {
+pub(crate) struct SourceMetadata {
     pub message_id: Uuid,
     pub circle_id: Option<Uuid>,
     pub channel_id: Uuid,
@@ -218,7 +220,7 @@ impl SourceMetadata {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum NoteKind {
+pub(crate) enum NoteKind {
     Preference,
     TemporaryContext,
     Interaction,
@@ -237,14 +239,14 @@ impl NoteKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum NoteOrigin {
+pub(crate) enum NoteOrigin {
     Automatic,
     User,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum EvidenceKind {
+pub(crate) enum EvidenceKind {
     UserStated,
     ConversationEvent,
     UserConfirmed,
@@ -253,7 +255,7 @@ pub(super) enum EvidenceKind {
 // Avoid Debug for free text: these values must not enter routine logs.
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub(super) struct NoteText(String);
+pub(crate) struct NoteText(String);
 
 impl TryFrom<String> for NoteText {
     type Error = &'static str;

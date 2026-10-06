@@ -9,7 +9,12 @@ M0-grunnlaget har no eigne Rust-kontraktar og testar i
 proveniens og ein versjon av den rå meldinga. Denne metadataen blir ikkje
 send til dagens vanlege svarprompt, så eksisterande promptbudsjett blir
 bevart. Automatisk innsamling, lagring, modellbygging og minnebruk kjem i
-M1–M6.
+M1-M6.
+
+M1 har no additive migrasjonar og eigaravgrensa lagrings-/API-kontraktar.
+Sjå [M1: lagring og eige minne-API](agent-memory-storage-api.md) for rutene,
+gløyming, revisjonar og kva som framleis ventar på M2–M6. Innføring i kode
+aktiverer ikkje innsamling eller minnebruk.
 
 Kvar kretsagent får eit eige minne om kvar menneskeleg brukar. PostgreSQL
 lagrar minnet varig, og Rust samlar og handsamar nye meldingar i avgrensa

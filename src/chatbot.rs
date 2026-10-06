@@ -57,7 +57,7 @@ pub(crate) mod agent_images;
 mod channel_access;
 mod ferry;
 mod followup;
-mod memory;
+pub(crate) mod memory;
 mod mention;
 mod observations;
 mod operators;
@@ -93,6 +93,8 @@ pub(crate) struct AgentInput {
     pub trigger_words: Vec<String>,
     pub response_phrases: Vec<String>,
     pub enabled: bool,
+    #[serde(default)]
+    pub memory_enabled: Option<bool>,
     #[serde(default)]
     pub revision: Option<i64>,
     #[serde(default, deserialize_with = "weather_update")]
@@ -133,6 +135,7 @@ pub(crate) struct AgentView {
     pub trigger_words: Vec<String>,
     pub response_phrases: Vec<String>,
     pub enabled: bool,
+    pub memory_enabled: bool,
     pub revision: i64,
     pub worker_available: bool,
     pub weather: Option<WeatherConfig>,
@@ -151,6 +154,7 @@ struct StoredAgent {
     trigger_words: String,
     response_phrases: String,
     enabled: bool,
+    memory_enabled: bool,
     revision: i64,
     weather: Option<String>,
     ferry_port: Option<String>,
@@ -158,13 +162,13 @@ struct StoredAgent {
     image_generation: Option<String>,
 }
 
-fn storage(error: impl std::fmt::Display) -> RepositoryError {
+pub(crate) fn storage(error: impl std::fmt::Display) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
 }
 
 // Only static SQL is translated. `?uuid` and `?int` keep UUID/integer
 // comparisons explicit while all user-provided values remain bound.
-fn sql(query: &str, pg: bool) -> String {
+pub(crate) fn sql(query: &str, pg: bool) -> String {
     let mut out = String::new();
     let mut rest = query;
     let mut index = 0;
@@ -277,6 +281,7 @@ fn normalized(input: AgentInput) -> Result<AgentInput> {
         trigger_words: normalize_list(input.trigger_words, 80)?,
         response_phrases: normalize_list(input.response_phrases, 500)?,
         enabled: input.enabled,
+        memory_enabled: input.memory_enabled,
         revision: input.revision,
         weather: input.weather,
         ferry_port: input.ferry_port,
@@ -377,9 +382,9 @@ impl CircleChatAgents {
         self.require_manager(actor, circle).await?;
         let pg = matches!(self.store, Store::Pg(_));
         let object = if pg {
-            "cast(json_build_object('agent_id',cast(a.agent_id as text),'circle_id',cast(a.circle_id as text),'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',a.enabled,'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',a.vision_enabled,'image_generation',a.image_generation) as text)"
+            "cast(json_build_object('agent_id',cast(a.agent_id as text),'circle_id',cast(a.circle_id as text),'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',a.enabled,'memory_enabled',a.memory_enabled,'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',a.vision_enabled,'image_generation',a.image_generation) as text)"
         } else {
-            "json_object('agent_id',a.agent_id,'circle_id',a.circle_id,'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',json(case when a.enabled=1 then 'true' else 'false' end),'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',json(case when a.vision_enabled then 'true' else 'false' end),'image_generation',a.image_generation)"
+            "json_object('agent_id',a.agent_id,'circle_id',a.circle_id,'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',json(case when a.enabled=1 then 'true' else 'false' end),'memory_enabled',json(case when a.memory_enabled then 'true' else 'false' end),'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',json(case when a.vision_enabled then 'true' else 'false' end),'image_generation',a.image_generation)"
         };
         let query = format!(
             "select {object} from circle_chat_agents a join users u on u.id=a.agent_id where a.circle_id=?uuid and exists(select 1 from circle_memberships m where m.circle_id=a.circle_id and m.user_id=?uuid and m.role in ('owner','moderator')) order by lower(u.display_name),a.agent_id"
@@ -405,6 +410,7 @@ impl CircleChatAgents {
             trigger_words: serde_json::from_str(&item.trigger_words).map_err(storage)?,
             response_phrases: serde_json::from_str(&item.response_phrases).map_err(storage)?,
             enabled: item.enabled,
+            memory_enabled: item.memory_enabled,
             revision: item.revision,
             worker_available: self.available()
                 && (item.weather.is_none() || self.weather_available())
@@ -481,6 +487,9 @@ impl CircleChatAgents {
                     .bind(&id).bind(actor.to_string()).bind(actor.to_string()).bind(PROVIDER).bind(&id).bind("Circle chat agent").execute(&mut *tx).await.map_err(storage)?;
                 sqlx::query(&sql("insert into circle_chat_agents(agent_id,circle_id,trigger_words,response_phrases,enabled,created_by,updated_by,created_at,updated_at,weather,ferry_port,vision_enabled,image_generation) values(?uuid,?uuid,?,?,case when ?='true' then true else false end,?uuid,?uuid,?int,?int,nullif(?,'null'),?,case when ?='true' then true else false end,nullif(?,'null'))",$pg))
                     .bind(&id).bind(circle).bind(&triggers).bind(&phrases).bind(input.enabled.to_string()).bind(actor.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(now.to_string()).bind(&weather).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.unwrap_or(false).to_string()).bind(&image_generation).execute(&mut *tx).await.map_err(storage)?;
+                if let Some(enabled) = input.memory_enabled {
+                    sqlx::query(&sql("update circle_chat_agents set memory_enabled=case when ?='true' then true else false end where agent_id=?uuid",$pg)).bind(enabled.to_string()).bind(&id).execute(&mut *tx).await.map_err(storage)?;
+                }
                 tx.commit().await.map_err(storage)?;
             }};
         }
@@ -495,6 +504,7 @@ impl CircleChatAgents {
             trigger_words: input.trigger_words,
             response_phrases: input.response_phrases,
             enabled: input.enabled,
+            memory_enabled: input.memory_enabled.unwrap_or(false),
             revision: 1,
             worker_available: self.available()
                 && (input.weather.as_ref().is_none_or(Option::is_none) || self.weather_available())
@@ -554,6 +564,9 @@ impl CircleChatAgents {
                     .execute(&mut *tx).await.map_err(storage)?.rows_affected();
                 if changed != 1 { return Err(RepositoryError::Conflict); }
                 sqlx::query(&sql("update users set display_name=? where id=?uuid",$pg)).bind(&input.display_name).bind(id).execute(&mut *tx).await.map_err(storage)?;
+                if let Some(enabled) = input.memory_enabled {
+                    sqlx::query(&sql("update circle_chat_agents set memory_enabled=case when ?='true' then true else false end where agent_id=?uuid",$pg)).bind(enabled.to_string()).bind(id).execute(&mut *tx).await.map_err(storage)?;
+                }
                 tx.commit().await.map_err(storage)?;
             }};
         }
@@ -1045,7 +1058,7 @@ impl ContextMessage {
 
 /// Both ordinary context and followup anchors carry database-authored identity.
 /// Aliases are static SQL owned here; no chat/model value is interpolated.
-fn context_message_json(alias: &str, pg: bool) -> String {
+pub(crate) fn context_message_json(alias: &str, pg: bool) -> String {
     assert!(matches!(alias, "m" | "anchor"));
     let text = |field: &str| {
         if pg {
@@ -2072,6 +2085,7 @@ mod tests {
             display_name: " Hjelpar ".into(),
             trigger_words: vec!["  På  møte ".into(), "på møte".into()],
             response_phrases: vec!["Takk!".into()],
+            memory_enabled: None,
             enabled: false,
             revision: None,
             vision_enabled: None,
@@ -2558,6 +2572,7 @@ mod tests {
             display_name: "Hjelpar".into(),
             trigger_words: vec!["hjelp".into()],
             response_phrases: vec!["Eg kan hjelpe".into()],
+            memory_enabled: None,
             enabled: false,
             revision: None,
             vision_enabled: None,
@@ -2588,6 +2603,7 @@ mod tests {
                     display_name: "Hjelpar".into(),
                     trigger_words: vec!["hjelp".into()],
                     response_phrases: vec!["Eg kan hjelpe".into()],
+                    memory_enabled: None,
                     enabled: false,
                     revision: Some(1),
                     vision_enabled: None,
@@ -2609,6 +2625,7 @@ mod tests {
                         display_name: "Hjelpar".into(),
                         trigger_words: vec!["hjelp".into()],
                         response_phrases: vec!["Eg kan hjelpe".into()],
+                        memory_enabled: None,
                         enabled: false,
                         revision: Some(1),
                         vision_enabled: None,
@@ -2722,6 +2739,7 @@ mod tests {
                     display_name: "Hjelpar".into(),
                     trigger_words: vec!["hjelp".into()],
                     response_phrases: vec!["Eg kan hjelpe".into()],
+                    memory_enabled: None,
                     enabled: false,
                     revision: None,
                     vision_enabled: None,
@@ -2852,6 +2870,7 @@ mod tests {
                     display_name: "Hjelpar".into(),
                     trigger_words: vec!["hjelp".into()],
                     response_phrases: vec!["Eg kan hjelpe".into()],
+                    memory_enabled: None,
                     enabled: false,
                     revision: None,
                     vision_enabled: None,
@@ -2950,6 +2969,7 @@ mod tests {
             display_name: "Moderator bot".into(),
             trigger_words: vec!["help".into()],
             response_phrases: vec!["Useful context".into()],
+            memory_enabled: None,
             enabled: false,
             revision: None,
             vision_enabled: None,

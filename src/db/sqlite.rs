@@ -781,6 +781,8 @@ impl ChatRepository for SqliteChatRepository {
             .fetch_all(&mut *transaction)
             .await
             .map_err(sql_error)?;
+            let agent_memories =
+                crate::chatbot::memory::repository::export_memory!(transaction, false, actor);
             transaction.commit().await.map_err(sql_error)?;
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
@@ -790,6 +792,7 @@ impl ChatRepository for SqliteChatRepository {
                 saved_emojis,
                 circles,
                 channels,
+                agent_memories,
             })
         })
     }
