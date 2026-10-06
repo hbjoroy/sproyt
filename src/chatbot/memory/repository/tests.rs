@@ -1290,3 +1290,104 @@ async fn postgres_memory_reply_rechecks_lease_after_profile_lock_wait() {
         Err(RepositoryError::PermissionDenied)
     ));
 }
+async fn pause_preserves_inspectable_memory(store: Store) {
+    let f = Fixture::create(store).await;
+    let note = f
+        .note(
+            &f.channel,
+            std::slice::from_ref(&f.source_a),
+            "Owner preference retained during pause",
+        )
+        .await;
+    let st = &f.service.store;
+    st.execute(
+        "update agent_memory_notes set origin='user',evidence='user_confirmed' where id=?uuid",
+        &[note.to_string()],
+    )
+    .await
+    .unwrap();
+    let before = f.view().await;
+    let paused = f
+        .service
+        .mutate_memory(
+            &f.owner,
+            &f.circle,
+            &f.agent,
+            Mutation::Choice(ChoiceInput {
+                revision: before.revision,
+                enabled: false,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(!paused.enabled);
+    assert_eq!(paused.memory_epoch, before.memory_epoch + 1);
+    assert_eq!(paused.notes.len(), 1);
+    assert_eq!(paused.notes[0].id, note);
+    let resumed = f
+        .service
+        .mutate_memory(
+            &f.owner,
+            &f.circle,
+            &f.agent,
+            Mutation::Choice(ChoiceInput {
+                revision: paused.revision,
+                enabled: true,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(resumed.enabled);
+    assert_eq!(resumed.notes[0].id, note);
+    assert_eq!(st.values("select cast(start_sequence as text)||':'||cast(processed_sequence as text)||':'||cast(dirty_sequence as text) from agent_memory_scopes where profile_id=?uuid and channel_id=?uuid", &[f.profile.clone(),f.channel.clone()]).await.unwrap(),["2:2:2"]);
+    for statement in [
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+        "update circle_chat_agents set memory_enabled=false where agent_id=?uuid",
+        "update circle_chat_agents set memory_enabled=true where agent_id=?uuid",
+        "update circle_chat_agents set enabled=false where agent_id=?uuid",
+        "update circle_chat_agents set enabled=true where agent_id=?uuid",
+    ] {
+        let epoch = f.view().await.memory_epoch;
+        st.execute(statement, std::slice::from_ref(&f.agent))
+            .await
+            .unwrap();
+        let after = f.view().await;
+        assert_eq!(after.memory_epoch, epoch + 1);
+        assert_eq!(after.notes.len(), 1);
+        assert_eq!(after.notes[0].id, note);
+        assert_eq!(after.notes[0].origin, NoteOrigin::User);
+    }
+    // Preserving a paused note does not relax the original source dependency.
+    st.execute(
+        "update messages set body='Retracted preference' where id=?uuid",
+        std::slice::from_ref(&f.source_a),
+    )
+    .await
+    .unwrap();
+    assert!(f.view().await.notes.is_empty());
+}
+#[tokio::test]
+async fn sqlite_memory_pause_preserves_inspectable_notes() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    pause_preserves_inspectable_memory(Store::Sqlite(pool)).await;
+}
+#[tokio::test]
+async fn postgres_memory_pause_preserves_inspectable_notes() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    pause_preserves_inspectable_memory(Store::Pg(pool)).await;
+}

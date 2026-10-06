@@ -49,7 +49,6 @@ create trigger agent_memory_channel_access after update of kind,circle_id on cha
 create function agent_memory_agent_settings() returns trigger language plpgsql as $$
 begin
 update agent_memory_profiles set memory_epoch=memory_epoch+1 where id in(select profile_id from agent_memory_scopes where profile_id in(select id from agent_memory_profiles where agent_id=OLD.agent_id));
-delete from agent_memory_notes where exists(select 1 from agent_memory_scopes s where s.profile_id=agent_memory_notes.profile_id and s.channel_id=agent_memory_notes.channel_id and (profile_id in(select id from agent_memory_profiles where agent_id=OLD.agent_id)));
 update agent_memory_scopes set start_sequence=greatest(start_sequence,dirty_sequence,coalesce((select max(sequence) from messages where channel_id=agent_memory_scopes.channel_id),0)),processed_sequence=greatest(start_sequence,dirty_sequence,coalesce((select max(sequence) from messages where channel_id=agent_memory_scopes.channel_id),0)),dirty_sequence=greatest(start_sequence,dirty_sequence,coalesce((select max(sequence) from messages where channel_id=agent_memory_scopes.channel_id),0)),repair_sequence=null,source_generation=source_generation+1,lease_token=null,leased_until=null,attempts=0 where profile_id in(select id from agent_memory_profiles where agent_id=OLD.agent_id);
 return null;
 end $$;
@@ -67,7 +66,6 @@ create trigger agent_memory_agent_revoke after update of revoked_at,expires_at o
 create function agent_memory_profile_choice() returns trigger language plpgsql as $$
 begin
 update agent_memory_profiles set memory_epoch=memory_epoch+1 where id in(select profile_id from agent_memory_scopes where profile_id=OLD.id);
-delete from agent_memory_notes where exists(select 1 from agent_memory_scopes s where s.profile_id=agent_memory_notes.profile_id and s.channel_id=agent_memory_notes.channel_id and (s.profile_id=OLD.id));
 update agent_memory_scopes set start_sequence=greatest(start_sequence,dirty_sequence,coalesce((select max(sequence) from messages where channel_id=agent_memory_scopes.channel_id),0)),processed_sequence=greatest(start_sequence,dirty_sequence,coalesce((select max(sequence) from messages where channel_id=agent_memory_scopes.channel_id),0)),dirty_sequence=greatest(start_sequence,dirty_sequence,coalesce((select max(sequence) from messages where channel_id=agent_memory_scopes.channel_id),0)),repair_sequence=null,source_generation=source_generation+1,lease_token=null,leased_until=null,attempts=0 where profile_id=OLD.id;
 return null;
 end $$;

@@ -2,6 +2,10 @@ use super::*;
 use crate::chatbot::memory::repository::tests::Fixture;
 
 async fn pending(f: &Fixture, from: i64, to: i64) {
+    // CI runs prior reply contracts in this isolated test database, without a
+    // worker to settle their synthetic pending jobs. Quota tests run serially;
+    // finish those fixtures before asserting memory's global admission.
+    f.service.store.execute("update circle_chat_agent_jobs set status='skipped',lease_token=null,leased_until=null where status in ('pending','leased')",&[]).await.unwrap();
     f.service
         .store
         .execute(

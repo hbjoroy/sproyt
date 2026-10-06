@@ -41,7 +41,7 @@ expired automatic notes; confirmed/corrected notes are never silently evicted
 to make room. Saturation and pending work are visible in the owner's panel.
 
 The database singleton admits one valid model lease across prod/canary and
-replicas. Memory is capped at two starts per quota interval of sixty seconds;
+replicas. Memory is capped at two starts in a rolling sixty-second window;
 normal replies use the same lease without consuming the learning quota. No
 transaction or connection is retained across the model call. Completed HTTP
 responses release the slot even if their JSON/candidates are rejected.

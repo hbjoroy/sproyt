@@ -53,16 +53,17 @@ impl ModelPermit {
 
 macro_rules! admit {
     ($tx:expr,$pg:expr,$memory:expr,$token:expr,$now:expr) => {{
-        let query = "select leased_until,memory_window_started,memory_calls from agent_memory_model_quota where id=1".to_owned()+if $pg {" for update"} else {""};
+        let query = "select leased_until,memory_window_started,memory_last_started,memory_calls from agent_memory_model_quota where id=1".to_owned()+if $pg {" for update"} else {""};
         let row=sqlx::query(&query).fetch_one(&mut *$tx).await.map_err(storage)?;
         let until:i64=row.try_get("leased_until").map_err(storage)?;
         let window:i64=row.try_get("memory_window_started").map_err(storage)?;
+        let latest:i64=row.try_get("memory_last_started").map_err(storage)?;
         let calls:i32=row.try_get("memory_calls").map_err(storage)?;
-        let (window,calls)=if $now-window>=60 {($now,0)} else {(window,calls)};
         let ready:bool=sqlx::query_scalar(&sql("select exists(select 1 from circle_chat_agent_jobs where (status='pending' and available_at<=?int) or (status='leased' and reply_body is null))",$pg)).bind($now.to_string()).fetch_one(&mut *$tx).await.map_err(storage)?;
-        if until>$now || ($memory && (calls>=2 || ready)) {false} else {
-            sqlx::query(&sql("update agent_memory_model_quota set lease_token=?uuid,leased_until=?int,memory_window_started=?int,memory_calls=cast(? as integer) where id=1",$pg))
-                .bind($token).bind(($now+MODEL_LEASE_SECONDS).to_string()).bind(window.to_string()).bind((calls+i32::from($memory)).to_string()).execute(&mut *$tx).await.map_err(storage)?;
+        if until>$now || ($memory && ((calls>=2 && $now-window<60) || ready)) {false} else {
+            let (window,latest,calls)=if !$memory {(window,latest,calls)} else if calls==0 || $now-latest>=60 {($now,$now,1)} else {(latest,$now,2)};
+            sqlx::query(&sql("update agent_memory_model_quota set lease_token=?uuid,leased_until=?int,memory_window_started=?int,memory_last_started=?int,memory_calls=cast(? as integer) where id=1",$pg))
+                .bind($token).bind(($now+MODEL_LEASE_SECONDS).to_string()).bind(window.to_string()).bind(latest.to_string()).bind(calls.to_string()).execute(&mut *$tx).await.map_err(storage)?;
             true
         }
     }};

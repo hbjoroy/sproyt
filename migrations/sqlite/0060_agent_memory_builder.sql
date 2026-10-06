@@ -3,6 +3,7 @@ create table agent_memory_model_quota (
   lease_token text,
   leased_until integer not null default 0,
   memory_window_started integer not null default 0,
+  memory_last_started integer not null default 0,
   memory_calls integer not null default 0 check(memory_calls between 0 and 2)
 );
 insert into agent_memory_model_quota(id) values(1);

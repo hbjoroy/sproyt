@@ -1463,7 +1463,10 @@ impl CircleChatAgents {
                 )
                 .await;
             permit
-                .release(answer.is_ok())
+                .release(!matches!(
+                    answer,
+                    Err("model_transport" | "model_response_too_large")
+                ))
                 .await
                 .map_err(|_| "model_admission")?;
             let answer = answer?;

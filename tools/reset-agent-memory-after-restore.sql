@@ -14,6 +14,6 @@ delete from agent_memory_profiles;
 -- Preserve a fresh quarantine unless the remote model service was drained.
 update agent_memory_model_quota set lease_token=null,
     leased_until=extract(epoch from clock_timestamp())::bigint+180,
-    memory_window_started=0,memory_calls=0 where id=1;
+    memory_window_started=0,memory_last_started=0,memory_calls=0 where id=1;
 commit;
 -- Original messages and already published replies are intentionally untouched.
