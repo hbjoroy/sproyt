@@ -126,6 +126,7 @@ export function AgentMemoryDialog({ api, circleId, circleName, channels, onClose
   return <Dialog open title="Mitt agentminne" closeLabel="Lukk" onClose={onClose}>
     <div className="sp-memory-meta">{circleName}</div>
     <p>Dette er agenten sitt minne om deg i denne kretsen. Andre medlemmer og moderatorar kan ikkje opne det.</p>
+    <p>Minne frå opne kanalar kan brukast i andre kanalar i kretsen, også private. Minne frå ein privat kanal blir berre brukt i den same kanalen.</p>
     {loading && <Status>Hentar agentar …</Status>}
     {error && <><Status tone="error">{error}</Status><Button onClick={() => setAttempt(value => value + 1)}>Prøv igjen</Button></>}
     {!loading && !error && !agents.length && <Status>Ingen agentar i denne kretsen enno.</Status>}
