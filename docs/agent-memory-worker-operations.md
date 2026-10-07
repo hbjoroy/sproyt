@@ -1,8 +1,11 @@
 # Agent memory: M3–M6 operation
 
-Memory belongs to one human and one circle agent. Notes stay in their evidence
-channel, including notes corrected or confirmed by their owner. No shared
-vector database or external memory service is used.
+Memory belongs to one human and one circle agent. Notes keep their evidence
+channel, including notes corrected or confirmed by their owner. Notes from open
+(`public`/`local`) channels may be used across that circle, including in private
+channels. Private-channel notes may only be used in their own source channel;
+they cannot move into open channels or another private channel. Direct chats
+remain excluded. No shared vector database or external memory service is used.
 
 ## Capture and processing
 
@@ -57,14 +60,22 @@ no user/channel/agent identity or private content is a metric label.
 ## Publication and database locks
 
 A reply uses at most six relevant, current notes about its target human, from
-the exact reply channel, in a separate 4 KiB untrusted-data budget. Stored reply
+eligible channels in its circle, in a separate 4 KiB untrusted-data budget. Stored reply
 jobs record the epoch, exact note revisions/content and source versions before
 caching model text. Publication validates these in the message transaction,
 even when a worker has memory USE disabled or resumes a cached reply.
 
+The current source-channel visibility, owner membership and agent access are
+checked both before generation and before publication. A source made private,
+removed membership, disabled source agent, or forgotten note fences even a
+cached reply. The model is told to describe available notes when asked what it
+remembers; an empty selection means no available notes here, not no memory ability.
+
 PostgreSQL takes source message locks before memory profile locks, matching
 source-edit triggers. Membership/agent authority locks also precede the memory
-profile. Publication rechecks its full source/configuration/lease/deadline
+profile. Source/destination channel rows are locked together in ID order between
+circle membership and channel membership, matching channel access updates.
+Publication rechecks its full source/configuration/lease/deadline
 predicate after waiting for memory/media locks. Stale cached text is discarded;
 only an otherwise still-valid original job can retry.
 

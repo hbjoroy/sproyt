@@ -21,6 +21,7 @@ fn select(
     view: super::repository::MemoryView,
     user: String,
     channel: String,
+    eligible_channels: &std::collections::HashSet<String>,
     target: &str,
 ) -> Option<Dependencies> {
     if !view.enabled || !view.agent_enabled {
@@ -35,7 +36,7 @@ fn select(
     let mut candidates: Vec<_> = view
         .notes
         .into_iter()
-        .filter(|n| n.channel_id.to_string() == channel)
+        .filter(|n| eligible_channels.contains(&n.channel_id.to_string()))
         .collect();
     candidates.sort_by_key(|n| {
         let text = serde_json::to_value(&n.content)
@@ -75,6 +76,19 @@ fn select(
     })
 }
 
+// Query current channel state, including at publication: private evidence may
+// stay in its own channel only. Open evidence may follow its owner within the
+// same circle, including into private channels. read_memory! still checks every
+// source, owner membership, agent access and forgotten/expired evidence.
+macro_rules! eligible_channels {
+    ($tx:expr,$pg:expr,$job:expr,$user:expr,$circle:expr,$agent:expr,$channel:expr) => {{
+        let ids: Vec<String> = sqlx::query_scalar(&sql("select cast(c.id as text) from channels c join channels destination on destination.circle_id=c.circle_id join circle_chat_agent_jobs j on j.channel_id=destination.id join messages target on target.id=j.source_message_id where j.id=?uuid and target.sender_id=?uuid and destination.circle_id=?uuid and j.agent_id=?uuid and destination.id=?uuid and destination.kind!='direct' and exists(select 1 from channel_memberships cm where cm.channel_id=destination.id and cm.user_id=target.sender_id) and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=destination.id and s.agent_id=j.agent_id),destination.kind!='private') and (c.id=destination.id or c.kind in ('public','local'))",$pg))
+            .bind(&$job).bind(&$user).bind(&$circle).bind(&$agent).bind(&$channel)
+            .fetch_all(&mut *$tx).await.map_err(storage)?;
+        ids.into_iter().collect::<std::collections::HashSet<_>>()
+    }};
+}
+
 macro_rules! sources {
     ($tx:expr,$pg:expr,$deps:expr) => {{
         use sqlx::Row;
@@ -96,7 +110,8 @@ macro_rules! snapshot_tx {
             let circle:String=row.try_get("circle").map_err(storage)?;
             let view=super::repository::read_memory!($tx,$pg,owner,circle,$job.agent_id);
             let target:String=row.try_get("target").map_err(storage)?;
-            let mut selected=select(view,owner,$job.channel_id.clone(),&target);
+            let eligible=eligible_channels!($tx,$pg,$job.id,owner,circle,$job.agent_id,$job.channel_id);
+            let mut selected=select(view,owner,$job.channel_id.clone(),&eligible,&target);
             if let Some(deps)=&mut selected { deps.sources=sources!($tx,$pg,deps); }
             selected
         } else { None }
@@ -149,9 +164,18 @@ macro_rules! authorize {
             if sources!(*$tx, $pg, deps) != deps.sources {
                 return Err(RepositoryError::PermissionDenied);
             }
+            let eligible = eligible_channels!(
+                *$tx,
+                $pg,
+                $id,
+                deps.user,
+                deps.circle,
+                deps.agent,
+                deps.channel
+            );
             for expected in &deps.notes {
                 if !view.notes.iter().any(|n| {
-                    n.channel_id.to_string() == deps.channel
+                    eligible.contains(&n.channel_id.to_string())
                         && serde_json::to_value(n).ok().as_ref() == Some(expected)
                 }) {
                     return Err(RepositoryError::PermissionDenied);
@@ -203,9 +227,24 @@ pub(crate) async fn prepare_postgres(
     if current != raw {
         return Err(RepositoryError::PermissionDenied);
     }
-    if deps.is_some() {
+    if let Some(deps) = deps.as_ref() {
+        let channels: Vec<uuid::Uuid> = deps
+            .notes
+            .iter()
+            .map(|note| {
+                note["channel_id"]
+                    .as_str()
+                    .ok_or(RepositoryError::PermissionDenied)
+                    .and_then(|id| {
+                        uuid::Uuid::parse_str(id).map_err(|_| RepositoryError::PermissionDenied)
+                    })
+            })
+            .collect::<Result<_>>()?;
         sqlx::query("select cm.user_id from circle_memberships cm where cm.circle_id in (select c.circle_id from circle_chat_agent_jobs j join channels c on c.id=j.channel_id where j.id=$1::text::uuid) order by cm.user_id for share of cm").bind(id).fetch_all(&mut **tx).await.map_err(storage)?;
-        sqlx::query("select cm.user_id from channel_memberships cm where cm.channel_id in (select j.channel_id from circle_chat_agent_jobs j where j.id=$1::text::uuid) order by cm.user_id for share of cm").bind(id).fetch_all(&mut **tx).await.map_err(storage)?;
+        // Lock source and destination together, before channel memberships and
+        // the memory profile, matching channel access changes' lock order.
+        sqlx::query("select c.id from channels c where c.id=any($2) or c.id in(select j.channel_id from circle_chat_agent_jobs j where j.id=$1::text::uuid) order by c.id for share of c").bind(id).bind(&channels).fetch_all(&mut **tx).await.map_err(storage)?;
+        sqlx::query("select cm.user_id from channel_memberships cm where cm.channel_id=any($2) or cm.channel_id in (select j.channel_id from circle_chat_agent_jobs j where j.id=$1::text::uuid) order by cm.channel_id,cm.user_id for share of cm").bind(id).bind(&channels).fetch_all(&mut **tx).await.map_err(storage)?;
         sqlx::query("select p.agent_id from agent_profiles p join circle_chat_agent_jobs j on j.agent_id=p.agent_id where j.id=$1::text::uuid for share of p").bind(id).fetch_all(&mut **tx).await.map_err(storage)?;
     }
     Ok(())

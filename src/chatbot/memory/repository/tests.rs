@@ -985,6 +985,235 @@ async fn postgres_memory_reply_publication_contract() {
         .unwrap();
     reply_memory_contract(Store::Pg(pool)).await;
 }
+
+async fn memory_reply_job(f: &Fixture, channel: &str, sequence: i64) -> crate::chatbot::Job {
+    let st = &f.service.store;
+    let source = Uuid::now_v7().to_string();
+    st.execute("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at) values(?uuid,?uuid,?uuid,'Owner',?int,'What do you remember about me?',current_timestamp)", &[source.clone(),channel.into(),f.owner.to_string(),sequence.to_string()]).await.unwrap();
+    let job = crate::chatbot::Job {
+        id: Uuid::now_v7().to_string(),
+        agent_id: f.agent.clone(),
+        source_message_id: source,
+        channel_id: channel.into(),
+        attempts: 1,
+        reply_body: None,
+        lease_token: Uuid::now_v7().to_string(),
+    };
+    st.execute("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,lease_token,leased_until,created_at) values(?uuid,?uuid,?uuid,?uuid,1,'leased',0,?uuid,9999999999,0)", &[job.id.clone(),job.agent_id.clone(),job.source_message_id.clone(),job.channel_id.clone(),job.lease_token.clone()]).await.unwrap();
+    job
+}
+
+async fn memory_reply_authorized(store: &Store, job: &crate::chatbot::Job) -> bool {
+    match store {
+        Store::Pg(pool) => {
+            let mut tx = pool.begin().await.unwrap();
+            let valid = crate::chatbot::memory::reply::authorize_postgres(&mut tx, &job.id)
+                .await
+                .is_ok();
+            tx.rollback().await.unwrap();
+            valid
+        }
+        Store::Sqlite(pool) => {
+            let mut tx = pool.begin().await.unwrap();
+            let valid = crate::chatbot::memory::reply::authorize_sqlite(&mut tx, &job.id)
+                .await
+                .is_ok();
+            tx.rollback().await.unwrap();
+            valid
+        }
+    }
+}
+
+async fn cross_channel_memory_contract(store: Store) {
+    use crate::chatbot::memory::reply;
+    let f = Fixture::create(store.clone()).await;
+    let local = Uuid::now_v7().to_string();
+    let second_private = Uuid::now_v7().to_string();
+    for (channel, kind) in [(&local, "local"), (&second_private, "private")] {
+        store.execute("insert into channels(id,slug,name,kind,circle_id,created_by) values(?uuid,?,'Other memory',?,?uuid,?uuid)",&[channel.clone(),channel.clone(),kind.into(),f.circle.clone(),f.owner.to_string()]).await.unwrap();
+        store.execute("insert into channel_memberships(channel_id,user_id,role) values(?uuid,?uuid,'member')",&[channel.clone(),f.owner.to_string()]).await.unwrap();
+        store.execute("insert into agent_memory_scopes(profile_id,circle_id,channel_id,start_sequence,processed_sequence,dirty_sequence,available_at) values(?uuid,?uuid,?uuid,0,0,0,0)",&[f.profile.clone(),f.circle.clone(),channel.clone()]).await.unwrap();
+    }
+    for channel in [&f.channel, &f.private, &second_private] {
+        store.execute("insert into channel_chat_agent_settings(channel_id,agent_id,enabled,updated_by,updated_at) values(?uuid,?uuid,true,?uuid,0)",&[channel.clone(),f.agent.clone(),f.owner.to_string()]).await.unwrap();
+    }
+    let open_note = f
+        .note(
+            &f.channel,
+            std::slice::from_ref(&f.source_a),
+            "Likes Greek lessons",
+        )
+        .await;
+    let local_source = memory_reply_job(&f, &local, 1).await;
+    let local_note = f
+        .note(
+            &local,
+            std::slice::from_ref(&local_source.source_message_id),
+            "Enjoys public conversation",
+        )
+        .await;
+    let private_source = memory_reply_job(&f, &f.private, 1).await;
+    let private_note = f
+        .note(
+            &f.private,
+            std::slice::from_ref(&private_source.source_message_id),
+            "Private preference",
+        )
+        .await;
+    let second_private_source = memory_reply_job(&f, &second_private, 1).await;
+    let second_private_note = f
+        .note(
+            &second_private,
+            std::slice::from_ref(&second_private_source.source_message_id),
+            "Another private preference",
+        )
+        .await;
+    for (channel, expected) in [
+        (&f.channel, vec![open_note, local_note]),
+        (&local, vec![open_note, local_note]),
+        (&f.private, vec![open_note, local_note, private_note]),
+        (
+            &second_private,
+            vec![open_note, local_note, second_private_note],
+        ),
+    ] {
+        let job = memory_reply_job(&f, channel, 3).await;
+        let input = reply::snapshot(&store, &job).await.unwrap().unwrap();
+        let actual: std::collections::HashSet<_> = input["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| Uuid::parse_str(n["id"].as_str().unwrap()).unwrap())
+            .collect();
+        assert_eq!(
+            actual,
+            expected.into_iter().collect(),
+            "eligible memory in {channel}"
+        );
+        assert!(
+            memory_reply_authorized(&store, &job).await,
+            "cross-channel publication"
+        );
+    }
+
+    // An already generated answer must not disclose a source made private
+    // before publication, even when the cached notes themselves are unchanged.
+    let cached = memory_reply_job(&f, &local, 4).await;
+    reply::snapshot(&store, &cached).await.unwrap().unwrap();
+    store
+        .execute(
+            "update circle_chat_agent_jobs set reply_body='Cached memory answer' where id=?uuid",
+            std::slice::from_ref(&cached.id),
+        )
+        .await
+        .unwrap();
+    store
+        .execute(
+            "update channels set kind='private' where id=?uuid",
+            std::slice::from_ref(&f.channel),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !memory_reply_authorized(&store, &cached).await,
+        "source became private"
+    );
+    let fresh = memory_reply_job(&f, &local, 5).await;
+    let input = reply::snapshot(&store, &fresh).await.unwrap().unwrap();
+    assert_eq!(input["notes"].as_array().unwrap().len(), 1);
+    assert_eq!(input["notes"][0]["id"], local_note.to_string());
+    // Access loss is checked in the source channel, not just the destination.
+    let inbound = memory_reply_job(&f, &f.private, 4).await;
+    reply::snapshot(&store, &inbound).await.unwrap().unwrap();
+    store
+        .execute(
+            "delete from channel_memberships where channel_id=?uuid and user_id=?uuid",
+            &[local.clone(), f.owner.to_string()],
+        )
+        .await
+        .unwrap();
+    assert!(
+        !memory_reply_authorized(&store, &inbound).await,
+        "source membership lost"
+    );
+}
+
+#[tokio::test]
+async fn sqlite_cross_channel_memory_reply_contract() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    cross_channel_memory_contract(Store::Sqlite(pool)).await;
+}
+
+#[tokio::test]
+async fn postgres_cross_channel_memory_reply_contract() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    cross_channel_memory_contract(Store::Pg(pool)).await;
+}
+
+#[tokio::test]
+async fn postgres_cross_channel_memory_publication_waits_for_source_visibility() {
+    use crate::chatbot::memory::reply;
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations/postgres")
+        .run(&pool)
+        .await
+        .unwrap();
+    let f = Fixture::create(Store::Pg(pool.clone())).await;
+    f.service.store.execute("insert into channel_chat_agent_settings(channel_id,agent_id,enabled,updated_by,updated_at) values(?uuid,?uuid,true,?uuid,0)",&[f.private.clone(),f.agent.clone(),f.owner.to_string()]).await.unwrap();
+    f.service.store.execute("insert into channel_chat_agent_settings(channel_id,agent_id,enabled,updated_by,updated_at) values(?uuid,?uuid,true,?uuid,0)",&[f.channel.clone(),f.agent.clone(),f.owner.to_string()]).await.unwrap();
+    f.note(
+        &f.channel,
+        std::slice::from_ref(&f.source_a),
+        "Public preference",
+    )
+    .await;
+    let job = memory_reply_job(&f, &f.private, 1).await;
+    reply::snapshot(&f.service.store, &job)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut visibility = pool.begin().await.unwrap();
+    sqlx::query("update channels set kind='private' where id=$1::text::uuid")
+        .bind(&f.channel)
+        .execute(&mut *visibility)
+        .await
+        .unwrap();
+    let publisher_store = f.service.store.clone();
+    let mut publisher =
+        tokio::spawn(async move { memory_reply_authorized(&publisher_store, &job).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut publisher)
+            .await
+            .is_err(),
+        "publication must wait for source visibility lock"
+    );
+    visibility.commit().await.unwrap();
+    assert!(
+        !tokio::time::timeout(std::time::Duration::from_secs(5), publisher)
+            .await
+            .unwrap()
+            .unwrap(),
+        "fresh private boundary must fence the answer"
+    );
+}
 async fn ordinary_changes_preserve_memory(store: Store) {
     let f = Fixture::create(store).await;
     let note = f

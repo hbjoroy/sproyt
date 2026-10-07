@@ -31,7 +31,7 @@ for vanlege kretsmedlemmer. Læring og minnebruk er framleis avslått.
 | Visingsnamn er ikkje stabil identitet | Minneinnputt får avsendar-ID, proveniens, kanal, tråd og kjeldeversjon. Serveren vel minneeigar. |
 | Meldingssekvens er per kanal | Cursor og arbeidstilstand blir per agent, brukar og kanal. Redigering og sletting får eigne ugyldiggjeringshookar. |
 | Eit ferdig modellresultat kan vente på publisering | Gløyming, retting og avslag på minnebruk aukar ein tryggleiksepoke. Endeleg publisering kontrollerer denne, også ved retry av lagra svartekst. |
-| Stadfesting gir ikkje større leserett | Lærte og stadfesta notat held seg i kjeldekanalen. Bruk på tvers av kanalar blir ei seinare funksjon for uttrykkelege sjølvopplysningar. |
+| Stadfesting gir ikkje større leserett | Notata bevarer kjeldekanalen og tilgangssjekkane. Etter pilotutvidinga kan minne frå opne kanalar brukast innan same krets, også inn i private kanalar. Private kjelder blir berre brukte i kjeldekanalen. |
 | Oppsummeringar kan skjule gamle kjelder | MVP lagrar små notat. Nye notat blir utleidde frå avgrensa meldingstekst; gamle notat blir ikkje sende tilbake som nytt kjeldegrunnlag. |
 | Ein arbeidar per pod er ikkje ei felles kvote | Minnekall får eit databaseautoritativt budsjett på tvers av replikaene. Svar har prioritet ved opptak av nye jobbar. |
 | Tekststorleik er ikkje heile lagringskostnaden | Budsjettet omfattar notat, kjelder, sperrer, arbeidstilstand og indeksar. |
@@ -39,7 +39,7 @@ for vanlege kretsmedlemmer. Læring og minnebruk er framleis avslått.
 ## Omfang og tilgang
 
 Det logiske minnet høyrer til `(circle_id, agent_id, user_id)`. Notata har
-eit `channel_id` som bruksomfang. Namnebyte påverkar ikkje identiteten.
+eit `channel_id` som kjeldeomfang. Namnebyte påverkar ikkje identiteten.
 Agenten må tilhøyre den aktuelle kretsen, og både brukar, kanal og agent må
 framleis ha gyldig tilgang når minne blir henta eller brukt.
 
@@ -49,8 +49,11 @@ eksisterande val, og av-val skal kunne lagrast også når modellbygging er
 utilgjengeleg. API-et viser tilgjengelegheit; brukarens første påval opnar
 ikkje historisk innsamling før den varige sendestien er klar i begge miljø.
 
-I første versjon kan eit agentsvar berre bruke målbrukaren sitt minne frå
-same kanal. Det finst ingen generell innhenting av minnet til alle som er
+Etter pilotutvidinga kan eit agentsvar bruke målbrukaren sitt minne frå
+opne (`public`/`local`) kanalar i same krets, også inne i private kanalar.
+Minne frå ein privat kanal blir berre brukt i den same private kanalen.
+Kanaltype og tilgang blir sjekka på nytt før publisering av lagra svar.
+Det finst ingen generell innhenting av minnet til alle som er
 til stades. Private kanalar krev eksisterande uttrykkeleg agenttilgang;
 direktemeldingar, Felles og andre kretsar er utanfor.
 
@@ -302,7 +305,7 @@ modelljobbar stoppast medan innsyn og gløyming framleis er tilgjengelege.
 Etter aktivering skal eventuell rollback bruke kompatibel kode som handhever
 lagra epokar, kjeldesjekkar og brukarval.
 
-Automatisk bruk på tvers av kanalar, vektorsøk, bilete som varige
+Bruk av private notat på tvers av kanalar, vektorsøk, bilete som varige
 personopplysningar, generell kunnskapsgraf og autonome minnebaserte handlingar
 er seinare etappar. Ei framtidig kretsomfattande sjølvopplysning blir oppretta
 uttrykkeleg med synleg bruksomfang, og kan ikkje løfte privat samtaleinnhald
