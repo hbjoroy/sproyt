@@ -1,0 +1,3 @@
+import {defineConfig} from 'vite';
+import {fileURLToPath} from 'node:url';
+export default defineConfig({root:'examples',define:{__VUE_OPTIONS_API__:true,__VUE_PROD_DEVTOOLS__:false,__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:false},resolve:{alias:{'@sproyt/ui/react':fileURLToPath(new URL('./src/react/index.tsx',import.meta.url)),'@sproyt/ui/vue':fileURLToPath(new URL('./src/vue/index.ts',import.meta.url)),'@sproyt/ui/styles.css':fileURLToPath(new URL('./src/styles.css',import.meta.url))}},build:{outDir:'../demo-dist',emptyOutDir:true,rollupOptions:{input:{react:fileURLToPath(new URL('./examples/index.html',import.meta.url)),vue:fileURLToPath(new URL('./examples/vue.html',import.meta.url))}}}});

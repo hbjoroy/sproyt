@@ -69,11 +69,17 @@ impl WeatherService {
         path: &str,
         config: &WeatherConfig,
     ) -> std::result::Result<Value, &'static str> {
+        self.get_location(path, &format!("{},{}", config.latitude, config.longitude))
+            .await
+    }
+
+    async fn get_location(
+        &self,
+        path: &str,
+        location: &str,
+    ) -> std::result::Result<Value, &'static str> {
         let mut url = self.base.join(path).map_err(|_| "weather_configuration")?;
-        url.query_pairs_mut().append_pair(
-            "location",
-            &format!("{},{}", config.latitude, config.longitude),
-        );
+        url.query_pairs_mut().append_pair("location", location);
         if path == "forecast" {
             url.query_pairs_mut()
                 .append_pair("days", "3")
@@ -107,6 +113,66 @@ impl WeatherService {
             tokio::try_join!(self.get("current", config), self.get("forecast", config))?;
         normalize(config, &current, &forecast, Utc::now().timestamp())
     }
+
+    /// Resolve an explicitly named place through the configured provider only.
+    pub(super) async fn snapshot_location(
+        &self,
+        location: &str,
+    ) -> std::result::Result<Value, &'static str> {
+        validate_location(location)?;
+        let requested = location.trim();
+        let current = self.get_location("current", requested).await?;
+        let resolved = &current["location"];
+        let field = |key: &str, required: bool| {
+            resolved[key]
+                .as_str()
+                .filter(|s| {
+                    (!required || !s.trim().is_empty())
+                        && s.chars().count() <= 80
+                        && !s.chars().any(char::is_control)
+                })
+                .ok_or("weather_location")
+        };
+        let name = field("name", true)?;
+        let region = field("region", false)?;
+        let country = field("country", true)?;
+        let config = WeatherConfig {
+            location: name.to_owned(),
+            latitude: resolved["lat"].as_f64().ok_or("weather_location")?,
+            longitude: resolved["lon"].as_f64().ok_or("weather_location")?,
+        };
+        config.validate().map_err(|_| "weather_location")?;
+        let forecast = self.get("forecast", &config).await?;
+        let mut snapshot = normalize(&config, &current, &forecast, Utc::now().timestamp())?;
+        snapshot
+            .as_object_mut()
+            .unwrap()
+            .remove("configured_location");
+        snapshot["requested_location"] = json!(requested);
+        snapshot["resolved_location"] = json!({
+            "name": name, "region": region, "country": country,
+            "latitude": config.latitude, "longitude": config.longitude,
+        });
+        Ok(snapshot)
+    }
+}
+
+pub(super) fn validate_location(location: &str) -> std::result::Result<(), &'static str> {
+    // WeatherAPI also accepts URLs, IP addresses, coordinates and auto:ip.
+    // This entry point intentionally accepts only explicit names.
+    let trimmed = location.trim();
+    if trimmed.is_empty()
+        || location.chars().count() > 80
+        || location.chars().any(char::is_control)
+        || location
+            .chars()
+            .any(|c| matches!(c, ':' | '/' | '\\' | '@' | '?' | '#'))
+        || trimmed.parse::<std::net::IpAddr>().is_ok()
+        || !trimmed.chars().any(char::is_alphabetic)
+    {
+        return Err("weather_location");
+    }
+    Ok(())
 }
 
 fn number(value: &Value, key: &str, min: f64, max: f64) -> Value {
@@ -137,6 +203,9 @@ fn normalize(
         .as_str()
         .filter(|s| !s.is_empty() && s.len() <= 80)
         .ok_or("weather_timezone")?;
+    timezone
+        .parse::<chrono_tz::Tz>()
+        .map_err(|_| "weather_timezone")?;
     let forecast_location = &forecast["location"];
     let forecast_lat = forecast_location["lat"]
         .as_f64()
@@ -224,6 +293,124 @@ pub(super) fn followup_candidate(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn named_places_reject_non_names_before_network_access() {
+        let service = WeatherService::new("http://127.0.0.1:1/").unwrap();
+        for location in [
+            "",
+            "   ",
+            "Bergen\nNorway",
+            "Bergen\tNorway",
+            "https://example.org/",
+            "//example.org",
+            "auto:ip",
+            "127.0.0.1",
+            "::1",
+            "37.09,25.15",
+        ] {
+            assert_eq!(
+                service.snapshot_location(location).await,
+                Err("weather_location")
+            );
+        }
+        assert_eq!(validate_location(&"a".repeat(81)), Err("weather_location"));
+        assert_eq!(validate_location(" Bjorøy, Norway "), Ok(()));
+    }
+
+    async fn named_place_fixture(
+        current: Value,
+        forecast: Value,
+    ) -> std::result::Result<Value, &'static str> {
+        use axum::{Json, Router, extract::Query, routing::get};
+        use std::collections::HashMap;
+        let app = Router::new()
+            .route(
+                "/current",
+                get(
+                    move |Query(query): Query<HashMap<String, String>>| async move {
+                        assert_eq!(query.len(), 1);
+                        assert_eq!(query["location"], "St. John's & Harbour, Canada");
+                        Json(current)
+                    },
+                ),
+            )
+            .route(
+                "/forecast",
+                get(
+                    move |Query(query): Query<HashMap<String, String>>| async move {
+                        assert_eq!(query["location"], "47.56,-52.71");
+                        assert_eq!(query["days"], "3");
+                        assert_eq!(query["include_hourly"], "true");
+                        Json(forecast)
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let service =
+            WeatherService::new(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = service
+            .snapshot_location("St. John's & Harbour, Canada")
+            .await;
+        server.abort();
+        result
+    }
+
+    #[tokio::test]
+    async fn named_places_report_provider_resolution_and_reject_invalid_or_mismatched_responses() {
+        let now = Utc::now().timestamp();
+        let location = json!({"name":"St. John's", "region":"Newfoundland and Labrador", "country":"Canada",
+            "lat":47.56, "lon":-52.71, "tz_id":"America/St_Johns"});
+        let current = json!({"location":location,"current":{"last_updated_epoch":now,"uv":2.0,"pressure_mb":1012.0}});
+        let forecast = json!({"location":location,"forecast":{"forecastday":[{"hour":[{"time_epoch":now+3600,"uv":4.0,"pressure_mb":1008.5}]}]}});
+        let snapshot = named_place_fixture(current.clone(), forecast.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            snapshot["requested_location"],
+            "St. John's & Harbour, Canada"
+        );
+        assert_eq!(snapshot["resolved_location"]["name"], "St. John's");
+        assert_eq!(
+            snapshot["resolved_location"]["region"],
+            "Newfoundland and Labrador"
+        );
+        assert_eq!(snapshot["resolved_location"]["country"], "Canada");
+        assert_eq!(snapshot["resolved_location"]["latitude"], 47.56);
+        assert!(snapshot.get("configured_location").is_none());
+        for (key, value) in [
+            ("lat", json!(91.0)),
+            ("lon", json!(-181.0)),
+            ("name", json!("")),
+            ("country", json!("Canada\n")),
+        ] {
+            let mut invalid = current.clone();
+            invalid["location"][key] = value;
+            assert_eq!(
+                named_place_fixture(invalid, forecast.clone()).await,
+                Err("weather_location")
+            );
+        }
+        let mut mismatch = forecast.clone();
+        mismatch["location"]["lat"] = json!(48.0);
+        assert_eq!(
+            named_place_fixture(current.clone(), mismatch).await,
+            Err("weather_location")
+        );
+        let mut mismatch = forecast.clone();
+        mismatch["location"]["tz_id"] = json!("America/Toronto");
+        assert_eq!(
+            named_place_fixture(current.clone(), mismatch).await,
+            Err("weather_location")
+        );
+        let mut stale = current.clone();
+        stale["current"]["last_updated_epoch"] = json!(now - 7201);
+        assert_eq!(
+            named_place_fixture(stale, forecast).await,
+            Err("weather_stale")
+        );
+    }
+
     #[test]
     fn grounded_weather_rejects_stale_wrong_location_and_missing_contract() {
         let config = WeatherConfig {
@@ -241,6 +428,12 @@ mod tests {
         let mut wrong = current.clone();
         wrong["location"]["lat"] = json!(60.0);
         assert!(normalize(&config, &wrong, &forecast, 10300).is_err());
+        let mut invalid_timezone = current.clone();
+        invalid_timezone["location"]["tz_id"] = json!("Unknown/Timezone");
+        assert_eq!(
+            normalize(&config, &invalid_timezone, &forecast, 10300),
+            Err("weather_timezone")
+        );
         let mut old_contract = forecast.clone();
         old_contract["forecast"]["forecastday"][0]["hour"][0]
             .as_object_mut()

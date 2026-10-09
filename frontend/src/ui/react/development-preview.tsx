@@ -16,7 +16,7 @@ import { PreviewManagement } from "./preview-management";
 import { InvitationCard } from "./invitation-card";
 import { invitationTokensFromMessage, type InvitationCards } from "../../application/invitation-cards";
 import type { ChatMessage } from "../../types";
-import type { PreviewSettingsHost } from "./preview-settings";
+import { MessageProfileStatus, type PreviewSettingsHost } from "./preview-settings";
 import { PreviewCommunity, type CommunityHost } from "./preview-community";
 import type { AdvancedHost } from "../../application/advanced-host";
 import { PreviewGrafana } from "./preview-advanced";
@@ -413,12 +413,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     },
     message: {
       formatTime: sentAt => new Date(sentAt).toLocaleTimeString(["nn-NO", "nb-NO"], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
-      formatAuthor: message => {
-        const profile = host.settings.profileFor?.(message.sender_id);
-        return [host.isOwnMessage(message) ? "Du" : message.sender_display_name, profile?.early_adopter ? "✨" : "",
-          profile?.status_emoji.trim(), profile?.status_text.trim()].filter(Boolean).join(" · ");
-      },
+      formatAuthor: message => host.isOwnMessage(message) ? "Du" : message.sender_display_name,
       earlyAdopter: message => Boolean(host.settings.profileFor?.(message.sender_id)?.early_adopter),
+      renderAuthorStatus: message => <MessageProfileStatus host={host.settings} userId={message.sender_id} own={host.isOwnMessage(message)} />,
       messageStatus: host.messageStatus,
       onReactionRequest: reactionPicker.open,
       renderActions: (message, context) => {

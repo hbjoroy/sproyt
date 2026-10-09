@@ -29,7 +29,8 @@ Tenaren vel dei tre næraste kommande og tre nyaste tidlegare planlagde anløpa.
 Modellen får desse som kompakte tekstlinjer med kjeldemetadata, saman med
 målmeldinga og samtalekonteksten. Heile tabellen blir bevart i snapshotet.
 Eit tomt utval seier ikkje noko om faktiske anløp; ukjende fartøynamn blir ikkje
-oppdikta. Spørsmål utanfor utvalet kan krevje eit seinare, utvida oppslag.
+oppdikta. Modellen kan no velje `ferry_calls` for heile dagens tabell eller eit fartøysfilter.
+Sjå [agent-read-tools.md](agent-read-tools.md) for protokoll og grenser.
 Snapshot og svar blir lagra atomisk på den leasa jobben. Snapshot er gyldig i
 høgst fem minutt og aldri over dato- eller kjeldealdergrensa. Retry og publisering
 kontrollerer fristen igjen. Feil i kjelda gir ikkje oppdikta fergefakta.

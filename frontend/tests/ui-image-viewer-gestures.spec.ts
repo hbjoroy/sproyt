@@ -106,6 +106,21 @@ test("losing pointer capture clears the gesture before the next pan", async ({ p
   await expect(page.getByRole("img")).toHaveCSS("transform", "matrix(1.4, 0, 0, 1.4, 0, 0)");
 });
 
+test("native image menus are suppressed only on the pan surface and controls remain usable", async ({ page }) => {
+  await openViewer(page);
+  await page.getByRole("button", { name: "Zoom inn" }).click();
+  const surface = page.locator(".sp-image-viewer-surface");
+  const imageMenuAllowed = await surface.locator("img").evaluate(element => element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+  expect(imageMenuAllowed).toBe(false);
+  const download = page.getByRole("link", { name: "Last ned test-photo.svg", exact: true });
+  const controlMenuAllowed = await download.evaluate(element => element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+  expect(controlMenuAllowed).toBe(true);
+  await page.mouse.move(640, 300); await page.mouse.down(); await page.mouse.move(700, 360); await page.mouse.up();
+  await expect(page.getByRole("img")).toHaveCSS("transform", "matrix(1.4, 0, 0, 1.4, 60, 60)");
+  await page.getByRole("button", { name: "Lukk bilete" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
 test("mouse pan, double click, keyboard zoom and dismissal remain available", async ({ page }) => {
   await openViewer(page);
   const zoom = page.getByRole("button", { name: "Tilpass biletet til skjermen" });

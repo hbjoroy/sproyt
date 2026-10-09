@@ -38,6 +38,12 @@ class ScopeTests(unittest.TestCase):
     def test_frontend_changes_do_not_need_database_restore(self):
         self.assertEqual(ci_scope.scope(['frontend/src/app.ts'])['recovery'], 'false')
 
+    def test_canonical_design_system_requires_browser_without_database_restore(self):
+        for path in ('packages/sproyt-ui/src/react/index.tsx', 'packages/sproyt-ui/src/vue/index.ts',
+                     'packages/sproyt-ui/package.json', 'packages/sproyt-ui/package-lock.json'):
+            result = ci_scope.scope([path, '.github/workflows/ci.yml'])
+            self.assertEqual((result['browser'], result['recovery']), ('full', 'false'))
+
     def test_unknown_files_and_full_regression_fail_closed(self):
         self.assertEqual(ci_scope.scope(['new-runtime.cfg'])['browser'], 'full')
         self.assertEqual(ci_scope.scope([], True)['recovery'], 'true')

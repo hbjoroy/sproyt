@@ -56,10 +56,12 @@ test("ordered timeline keeps notices between messages and formats the author", (
 test("first-50 members get a compact chat mark with an accessible explanation", () => {
   const html = renderToStaticMarkup(createElement(ConversationTimeline, {
     channelId: "channel", messages: [message("founder", 1)],
-    formatTime: () => "22:00", formatAuthor: item => `${item.sender_display_name} · ✨`, earlyAdopter: () => true,
+    formatTime: () => "22:00", earlyAdopter: () => true,
     renderContent: item => item.body
   }));
-  assert.ok(html.includes("Historisk namn · ✨"));
+  assert.ok(html.includes("<strong>Historisk namn</strong>"));
+  assert.ok(html.includes('class="sp-message-early-adopter"'));
+  assert.ok(html.includes('aria-label="Blant dei første 50 på Sprøyt"'));
   assert.ok(html.includes('class="sp-early-adopter-tooltip"'));
   assert.ok(html.includes("Blant dei første 50 på Sprøyt"));
 });

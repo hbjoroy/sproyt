@@ -129,6 +129,11 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
       for (const socket of sockets.values()) emit(socket, "chat", { event: { type: "message_accepted", message } });
       return message;
     },
+    reaction: (channel: string, sequence: number) => {
+      for (const socket of sockets.values()) emit(socket, "chat", { event: { type: "message_reaction_changed", change: {
+        channel_id: channel, message_id: `${channel}-${sequence}`, user_id: "peer", emoji: "👍", added: true, count: 1
+      } } });
+    },
     appendReply: () => {
       const message = { ...root("a", replies.at(-1)!.sequence + 1), id: `reply-${replies.length}`, parent_message_id: "a-41" };
       replies.push(message);
@@ -189,6 +194,51 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
     }
   };
 }
+
+test("unrelated messages and reactions preserve focused draft, reading anchor and open task details", async ({ page }) => {
+  const taskId = "c63ac052-a05a-4b5d-bfff-04429338df90";
+  const messages = Array.from({ length: 160 }, (_, index) => root("a", index + 1));
+  messages[40] = { ...messages[40]!, body: `[[process-task:${taskId}]]` };
+  await page.route(/\/api\/v1\/process-pilot\/tasks\//, route => route.fulfill({ json: {
+    id: taskId, message_id: "a-41", instance_id: "instance-1", node_id: "review",
+    status: "pending", process_status: "waiting", title: "Oversikt over saka", assignee_id: "reader",
+    assignee_name: "Lesar", can_complete: true, delivery_status: "ready"
+  } }));
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const server = readingServer(40, messages);
+  await server.install(page);
+  const preview = page.locator("#sproyt-react-preview");
+  const task = viewport(page).locator('[data-message-id="a-41"] .sp-process-task');
+  await expect(task.locator("summary")).toContainText("Oversikt over saka");
+  await task.locator("summary").click();
+  await expect(task.getByRole("button", { name: "Fullfør oppgåva", exact: true })).toBeVisible();
+  const composer = preview.getByRole("textbox", { name: "Skriv melding", exact: true });
+  const draft = "Eit uferdig utkast medan andre skriv og reagerer";
+  await composer.fill(draft);
+  await composer.evaluate(element => (element as HTMLTextAreaElement).setSelectionRange(5, 12));
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const saved = await anchor(page);
+  const assertContext = async () => {
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue(draft);
+    expect(await composer.evaluate(element => ({ start: (element as HTMLTextAreaElement).selectionStart, end: (element as HTMLTextAreaElement).selectionEnd }))).toEqual({ start: 5, end: 12 });
+    await expect(task).toHaveAttribute("open", "");
+    await expectAnchor(page, saved);
+  };
+  await assertContext();
+  server.append("b");
+  await expect(preview.getByRole("button", { name: /^# b 1 uleste$/, includeHidden: true })).toHaveCount(1);
+  await assertContext();
+  server.append("a");
+  await expect(viewport(page).locator('[data-message-id="a-161"]')).toHaveCount(1);
+  await assertContext();
+  server.reaction("b", 159);
+  server.reaction("a", 43);
+  await expect(viewport(page).locator('[data-message-id="a-43"]').getByRole("button", { name: "👍: 1 reaksjonar", exact: true })).toHaveCount(1);
+  await assertContext();
+  expect(errors).toEqual([]);
+});
 
 test("opening pages to the unread boundary, acknowledges only visible messages and reload uses the saved watermark", async ({ page }) => {
   const server = readingServer(); server.hold(true);
