@@ -1,5 +1,5 @@
 {
-  "name": "@sproyt/ui", "version": "0.1.1", "type": "module",
+  "name": "@sproyt/ui", "version": "0.1.2", "type": "module",
   "description": "Editorial application components for React and Vue",
   "files": ["dist", "README.md", "docs"], "sideEffects": ["**/*.css"],
   "exports": {

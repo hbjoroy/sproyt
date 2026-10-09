@@ -76,7 +76,10 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }
     await composer.fill("Kanalutkast som skal bli verande");
     const compactHeader = app.locator(".sp-mobile-conversation-context");
     await expect(compactHeader).toBeVisible();
-    await compactHeader.getByRole("button", { name: "Samtalar", exact: true }).click();
+    const logo = app.getByRole("button", { name: "Samtalar", exact: true });
+    await expect(logo.locator("img")).toHaveCount(1);
+    expect((await logo.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+    await logo.click();
     const navigation = app.getByRole("navigation", { name: "Samtalar", exact: true });
     await expect(navigation).toBeVisible();
     await navigation.locator("button[aria-current=page]").click();
@@ -108,7 +111,7 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   const channel = app.locator(".sp-channel-pane");
   const composer = channel.getByRole("textbox", { name: "Skriv melding" });
   await expect(composer).toBeEnabled({ timeout: 15_000 });
-  await expect(app.locator(".sp-sproyt-brand img")).toBeVisible();
+  await expect(app.locator(".sp-sproyt-brand img:visible")).toHaveCount(1);
   await expect(app.locator(".sp-sproyt-brand-label")).toBeHidden();
   await expect(channel.locator(":scope > .sp-context")).toBeHidden();
   const compactTitle = app.locator(".sp-mobile-conversation-title");

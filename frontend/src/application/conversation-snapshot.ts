@@ -84,7 +84,11 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
           error: source.channelNotificationErrors?.get(channel.id)
         })
       });
-    }).filter(item => matches(`${item.name} ${name}`));
+    }).filter(item => matches(`${item.name} ${name}`))
+      // Stable partition within the existing scope. Notification preference is
+      // independent of unread counts, selection, pending commands and direct chat.
+      .sort((left, right) => Number(right.notifications?.enabled ?? false)
+        - Number(left.notifications?.enabled ?? false));
     // Empty member circles still have create/discover actions in the host.
     if (conversations.length || (circle && matches(name))) {
       groups.push(Object.freeze({ id, name, circle, conversations: Object.freeze(conversations) }));

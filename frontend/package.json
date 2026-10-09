@@ -24,7 +24,7 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
-    "@sproyt/ui": "file:vendor/sproyt-ui-0.1.1.tgz",
+    "@sproyt/ui": "file:vendor/sproyt-ui-0.1.2.tgz",
     "mermaid": "11.17.2",
     "react": "19.2.4",
     "react-dom": "19.2.4",

@@ -20,6 +20,25 @@ const source = (overrides: Partial<ConversationSnapshotSource> = {}): Conversati
   pendingChannelNotificationIds: new Set(), directChannelLabel: item => item.name, ...overrides
 });
 
+test("notification priority is stable within each scope, independent of unread and pending state", () => {
+  const channels = [channel("shared-muted", { latest_sequence: 99 }), channel("shared-on"),
+    channel("one-muted", { circle_id: "one" }), channel("one-on-a", { circle_id: "one" }),
+    channel("one-on-b", { circle_id: "one", name: "one-on-b" }), channel("two-muted", { circle_id: "two" }),
+    channel("orphan-muted", { circle_id: "orphan" }), channel("orphan-on", { circle_id: "orphan" }),
+    channel("dm-a", { is_direct: true }), channel("dm-b", { is_direct: true })];
+  const state = source({ channels, circles: new Map([["one", circle("one")], ["two", circle("two")]]),
+    channelNotificationIds: new Set(["shared-on", "one-on-a", "one-on-b", "orphan-on", "dm-b"]),
+    pendingChannelNotificationIds: new Set(["one-muted"]), activeChannelId: "one-muted" });
+  const before = channels.map(item => item.id);
+  const snapshot = projectConversationSnapshot(state);
+  assert.deepEqual(snapshot.groups.map(group => group.id), ["scope:shared", "circle:one", "circle:two", "circle:orphan", "scope:direct"]);
+  assert.deepEqual(snapshot.groups.map(group => group.conversations.map(item => item.id)),
+    [["shared-on", "shared-muted"], ["one-on-a", "one-on-b", "one-muted"], ["two-muted"], ["orphan-on", "orphan-muted"], ["dm-a", "dm-b"]]);
+  assert.equal(snapshot.selection.channelId, "one-muted");
+  assert.deepEqual(channels.map(item => item.id), before);
+  assert.deepEqual(projectConversationSnapshot({ ...state, query: "one-on-b" }).groups.flatMap(group => group.conversations.map(item => item.id)), ["one-on-b"]);
+});
+
 test("deleted roots keep tombstones internally and retain navigation until loaded replies prove it empty", () => {
   const root = message("deleted-root", 5, { deleted_at: "2026-09-17T00:00:00Z" });
   const deletedReply = message("reply", 8, { parent_message_id: root.id, deleted_at: root.deleted_at });

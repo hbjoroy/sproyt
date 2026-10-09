@@ -72,3 +72,6 @@
 .sp-reaction-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}.sp-reaction-head .sp-button{width:44px;height:44px;padding:0;border:0;font-size:22px}
 .sp-emoji-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0}.sp-emoji{min-width:0;width:100%;height:44px;border:1px solid transparent;border-radius:2px;background:transparent;font-size:24px!important;cursor:pointer}.sp-emoji:hover{background:var(--sp-wash)}.sp-emoji[aria-pressed=true]{border-color:var(--sp-text);background:var(--sp-wash)}
 .sp-reaction-more{display:block;width:100%;min-height:44px;margin-top:8px;border:0;border-top:1px solid var(--sp-line);background:transparent;text-align:left;font-size:.8125rem;cursor:pointer}.sp-reaction-picker .sp-input{margin-bottom:8px}.sp-reaction-picker [hidden]{display:none}
+
+.sp-button[data-variant=symbol]{min-width:var(--sp-target);border-color:transparent;background:transparent;box-shadow:none;color:var(--sp-muted);padding:.25rem}
+.sp-button[data-variant=symbol]:hover:not(:disabled),.sp-button[data-variant=symbol]:focus-visible{background:var(--sp-wash);color:var(--sp-text)}

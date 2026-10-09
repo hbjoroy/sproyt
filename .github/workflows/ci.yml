@@ -162,7 +162,7 @@ jobs:
         if: needs.changes.outputs.browser == 'full'
         env:
           SPROYT_E2E_WEBKIT: "1"
-        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-supplements.spec.ts ui-native-download-return.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-agent-memory.spec.ts ui-react-weather-agent.spec.ts ui-react-app-update.spec.ts ui-react-share-target.spec.ts
+        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-react-notifications.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-supplements.spec.ts ui-native-download-return.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-agent-memory.spec.ts ui-react-weather-agent.spec.ts ui-react-app-update.spec.ts ui-react-share-target.spec.ts
 
       - name: Upload browser test evidence
         if: failure()

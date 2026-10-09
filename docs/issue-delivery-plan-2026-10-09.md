@@ -34,6 +34,24 @@ kan samanlikne dei; kortaste kjeldefrist gjeld ved publisering.
 4. **Produktakseptanse (#231) og drift (#170):** dokumenter attståande
    samtale-/bileteprøver, OIDC-øvingar og avgrensa belastnings-/driftsakseptanse.
 
+## Navigasjonspakken (#238/#239/#244)
+
+Kompakt samtalevising brukar logoen som den eine returknappen, med 44 px
+trefflate og tilgjengeleg namn «Samtalar». Retur endrar berre liste/detail-vising;
+kanal-/trådutkast og lesetilstand høyrer framleis til verten.
+
+Varsla kanalar kjem først innan kvar eksisterande krets eller Felles-gruppe.
+Sorteringa er stabil mellom like preferansar og endrar ikkje kjeldelista,
+kretsrekkjefølgja, direkte samtalar, utval eller ulesttilstand. Flytting skjer
+etter vellukka lagring; feil gir lokal retry. Fokus blir gjenoppretta på
+varselknappen etter lagring dersom det gjekk tapt, men blir ikkje teke frå
+eit anna kontrollfelt brukaren har gått til.
+
+Den delte `symbol`-varianten i designsystem 0.1.2 brukar same diskrete kvilestil
+for begge bjellene. Forma og `aria-pressed` skil tilstanden; fokus, hover og
+pending/disabled blir bevarte. Andre toggleknappar beheld eksisterande stil.
+React og Vue har same variant; pakkesmoken finn arkivet ut frå kjeldeversjonen.
+
 ## Seinare
 
 #242 krev dokumentert trafikkjelde før sanntidskøar kan lovast. #211 er eit

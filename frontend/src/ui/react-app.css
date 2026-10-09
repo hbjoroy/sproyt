@@ -9,10 +9,7 @@
 .sp-conversation-row > .sp-conversation { min-width: 0; }
 .sp-conversation-actions { display: contents; }
 .sp-channel-notification-toggle { min-width: var(--sp-target); padding-inline: .55rem; }
-.sp-channel-notification-toggle.sp-button { border-color: transparent; background: transparent; color: var(--sp-muted); }
-.sp-channel-notification-toggle.sp-button:hover,
-.sp-channel-notification-toggle.sp-button:focus-visible,
-.sp-channel-notification-toggle.sp-button[aria-pressed="true"] { background: var(--sp-wash); color: var(--sp-text); }
+.sp-sproyt-brand-action.sp-button { display: none; }
 .sp-bell-icon { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .sp-conversation-row > .sp-conversation-actions > .sp-status {
   grid-column: 1 / -1;
@@ -298,7 +295,9 @@
   .sp-sproyt-brand img { display: block; width: 34px; height: 34px; border-radius: 8px; }
   .sp-sproyt-brand-label, .sp-header-toggle-label { display: none; }
   .sp-mobile-conversation-context { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; position: static; }
-  .sp-mobile-conversation-back.sp-button, .sp-header-toggle.sp-button { min-width: 44px; width: 44px; min-height: 44px; padding: 0; font-size: 1.2rem; }
+  .sp-sproyt-brand-static { display: none; }
+  .sp-sproyt-brand-action.sp-button { display: inline-flex; min-width: 44px; width: 44px; min-height: 44px; padding: 0; }
+  .sp-header-toggle.sp-button { min-width: 44px; width: 44px; min-height: 44px; padding: 0; font-size: 1.2rem; }
   .sp-mobile-conversation-title {
     flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: .35rem;
     padding: 0 .25rem; overflow: hidden; border: 0; background: transparent; color: var(--sp-text);

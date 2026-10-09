@@ -7,7 +7,7 @@ Package exports: `@sproyt/ui/react`, `@sproyt/ui/vue`, `@sproyt/ui/styles.css`, 
 | Component | Props and composition |
 |---|---|
 | Theme | `mode: light/dark/system`, `accent: citron/periwinkle`, `density: comfortable/compact`; children/default slot |
-| Button | `variant: primary/secondary/quiet/danger`, `busy`, `disabled`; native button attributes/events. Default type is button; submit explicitly. |
+| Button | `variant: primary/secondary/quiet/symbol/danger`, `busy`, `disabled`; native button attributes/events. Default type is button; submit explicitly. `symbol` keeps pressed controls visually quiet: provide an accessible name and distinguish state with icon shape plus `aria-pressed`. |
 | TextField | `label`, `hint`, `error`, `id`, native input attributes. React forwards a ref; Vue forwards attributes to the input. |
 | AppShell | `view: list/detail`, `navigationLabel`; React `header`, `navigation`, children; Vue named header/navigation and default slots |
 | ConversationList | `items: {id,name,group,unread?,muted?}[]`, `selectedId`, `emptyLabel`; selection callback/event |

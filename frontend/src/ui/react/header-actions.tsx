@@ -49,13 +49,16 @@ export function HeaderActions({ children, primary, compactConversation }: {
     };
   }, [conversationOpen, open]);
   return <div className="sp-header-actions" ref={container}>
-    <span className="sp-brand sp-sproyt-brand">
+    <span className={`sp-brand sp-sproyt-brand${compactConversation ? " sp-sproyt-brand-static" : ""}`}>
       <img src="/assets/sproyt-wave-icon-512.png" alt="" aria-hidden="true" />
       <span className="sp-sproyt-brand-label">Sprøyt</span>
     </span>
+    {compactConversation && <Button className="sp-sproyt-brand sp-sproyt-brand-action" variant="symbol"
+      aria-label="Samtalar" title="Samtalar"
+      onClick={() => { setOpen(false); setConversationOpen(false); compactConversation.onBack(); }}>
+      <img src="/assets/sproyt-wave-icon-512.png" alt="" aria-hidden="true" />
+    </Button>}
     {compactConversation && <div className="sp-mobile-conversation-context">
-      <Button className="sp-mobile-conversation-back" variant="quiet" aria-label="Samtalar" title="Samtalar"
-        onClick={() => { setOpen(false); setConversationOpen(false); compactConversation.onBack(); }}><span aria-hidden="true">←</span></Button>
       <button ref={conversationTrigger} type="button" className="sp-mobile-conversation-title"
         aria-expanded={conversationOpen} aria-controls={`${id}-conversation-name`}
         aria-label={`${compactConversation.context ? `${compactConversation.context}, ` : ""}${compactConversation.title}. Vis fullt namn.`}
