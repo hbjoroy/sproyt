@@ -27,7 +27,7 @@ use crate::domain::{
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
     PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PrepareEnrollmentInvitation,
-    PresenceLease, RenameCircle, RepositoryError, RepositoryFuture, SendMessage,
+    PresenceLease, RenameCircle, RepositoryError, RepositoryFuture, SavedStatus, SendMessage,
     SetCircleMemberRole, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
     enrollment_email_hash, enrollment_token_hash, generate_enrollment_token,
 };
@@ -509,11 +509,56 @@ impl ChatRepository for PostgresChatRepository {
         expires_at: Option<chrono::DateTime<Utc>>,
     ) -> RepositoryFuture<'a, UserProfile> {
         Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            // The first write locks the user before history updates and eviction.
             let row = sqlx::query("update users set status_text=$1, status_emoji=$2, status_expires_at=$3 where id=$4 and kind='human' returning id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at, exists(select 1 from signup_ordinals where user_id=users.id and ordinal<=50) early_adopter")
-                .bind(text).bind(emoji).bind(expires_at).bind(*actor.as_uuid())
-                .fetch_optional(&self.pool).await.map_err(sql_error)?
+                .bind(&text).bind(&emoji).bind(expires_at).bind(*actor.as_uuid())
+                .fetch_optional(&mut *tx).await.map_err(sql_error)?
                 .ok_or(RepositoryError::PermissionDenied)?;
-            user_profile_from_row(row)
+            if !text.is_empty() || !emoji.is_empty() {
+                sqlx::query(r#"insert into personal_statuses(user_id,text,emoji,save_count,last_used_at) values($1,$2,$3,1,$4) on conflict(user_id,text,emoji) do update set save_count=case when personal_statuses.save_count<9223372036854775807 then personal_statuses.save_count+1 else personal_statuses.save_count end,last_used_at=excluded.last_used_at"#)
+                    .bind(*actor.as_uuid()).bind(&text).bind(&emoji).bind(Utc::now())
+                    .execute(&mut *tx).await.map_err(sql_error)?;
+                sqlx::query(r#"delete from personal_statuses where user_id=$1 and (text,emoji) in (select text,emoji from personal_statuses where user_id=$1 order by save_count desc,last_used_at desc,text collate "C",emoji collate "C" offset 20)"#)
+                    .bind(*actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            }
+            let profile = user_profile_from_row(row)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(profile)
+        })
+    }
+
+    fn saved_statuses<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<SavedStatus>> {
+        Box::pin(async move {
+            let rows = sqlx::query(r#"select text,emoji,save_count,last_used_at from personal_statuses where user_id=$1 order by save_count desc,last_used_at desc,text collate "C",emoji collate "C""#)
+                .bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(saved_status_from_row).collect()
+        })
+    }
+
+    fn remove_saved_status<'a>(
+        &'a self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            sqlx::query("select id from users where id=$1 and kind='human' for update")
+                .bind(*actor.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::PermissionDenied)?;
+            sqlx::query("delete from personal_statuses where user_id=$1 and text=$2 and emoji=$3")
+                .bind(*actor.as_uuid())
+                .bind(text)
+                .bind(emoji)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
         })
     }
 
@@ -936,6 +981,9 @@ impl ChatRepository for PostgresChatRepository {
             .fetch_all(&mut *tx)
             .await
             .map_err(sql_error)?;
+            let saved_statuses = sqlx::query(r#"select text,emoji,save_count,last_used_at from personal_statuses where user_id=$1 order by save_count desc,last_used_at desc,text collate "C",emoji collate "C""#)
+                .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?
+                .into_iter().map(saved_status_from_row).collect::<Result<Vec<_>, _>>()?;
             let agent_memories =
                 crate::chatbot::memory::repository::export_memory!(tx, true, actor);
             tx.commit().await.map_err(sql_error)?;
@@ -945,6 +993,7 @@ impl ChatRepository for PostgresChatRepository {
                 user,
                 signup_ordinal,
                 saved_emojis,
+                saved_statuses,
                 circles,
                 channels,
                 agent_memories,
@@ -3397,6 +3446,15 @@ fn user_from_row(row: PgRow) -> Result<User, RepositoryError> {
         external_provider: row.try_get("external_provider").map_err(storage)?,
         external_subject: row.try_get("external_subject").map_err(storage)?,
         created_at: row.try_get("created_at").map_err(storage)?,
+    })
+}
+
+fn saved_status_from_row(row: sqlx::postgres::PgRow) -> Result<SavedStatus, RepositoryError> {
+    Ok(SavedStatus {
+        text: row.try_get("text").map_err(storage)?,
+        emoji: row.try_get("emoji").map_err(storage)?,
+        save_count: row.try_get("save_count").map_err(storage)?,
+        last_used_at: row.try_get("last_used_at").map_err(storage)?,
     })
 }
 

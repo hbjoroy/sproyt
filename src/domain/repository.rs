@@ -13,8 +13,8 @@ use super::{
     EditMessage, EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation,
     JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
     MediaVariant, Membership, MessageId, PortableUserExport, PrepareEnrollmentInvitation,
-    RenameCircle, SendMessage, SetCircleMemberRole, ThreadSummary, UpdateChannelDescription, User,
-    UserId, UserProfile, UserTask,
+    RenameCircle, SavedStatus, SendMessage, SetCircleMemberRole, ThreadSummary,
+    UpdateChannelDescription, User, UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -64,6 +64,13 @@ pub trait ChatRepository: Send + Sync + 'static {
         emoji: String,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> RepositoryFuture<'a, UserProfile>;
+    fn saved_statuses<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<SavedStatus>>;
+    fn remove_saved_status<'a>(
+        &'a self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+    ) -> RepositoryFuture<'a, ()>;
     fn update_profile<'a>(
         &'a self,
         actor: UserId,
@@ -519,6 +526,28 @@ impl ChatRepository for InMemoryChatRepository {
                 .get(&actor)
                 .cloned()
                 .ok_or(RepositoryError::PermissionDenied)?;
+            if user.kind != super::PrincipalKind::Human {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if !text.is_empty() || !emoji.is_empty() {
+                let statuses = state.saved_statuses.entry(actor.clone()).or_default();
+                if let Some(status) = statuses
+                    .iter_mut()
+                    .find(|status| status.text == text && status.emoji == emoji)
+                {
+                    status.save_count = status.save_count.saturating_add(1);
+                    status.last_used_at = Utc::now();
+                } else {
+                    statuses.push(SavedStatus {
+                        text: text.clone(),
+                        emoji: emoji.clone(),
+                        save_count: 1,
+                        last_used_at: Utc::now(),
+                    });
+                }
+                sort_saved_statuses(statuses);
+                statuses.truncate(20);
+            }
             state
                 .user_statuses
                 .insert(actor, (text.clone(), emoji.clone(), expires_at));
@@ -532,6 +561,39 @@ impl ChatRepository for InMemoryChatRepository {
                 status_emoji: emoji,
                 status_expires_at: expires_at,
             })
+        })
+    }
+
+    fn saved_statuses<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<SavedStatus>> {
+        Box::pin(async move {
+            Ok(self
+                .lock_state()?
+                .saved_statuses
+                .get(&actor)
+                .cloned()
+                .unwrap_or_default())
+        })
+    }
+
+    fn remove_saved_status<'a>(
+        &'a self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            if !state
+                .users
+                .get(&actor)
+                .is_some_and(|user| user.kind == super::PrincipalKind::Human)
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if let Some(statuses) = state.saved_statuses.get_mut(&actor) {
+                statuses.retain(|status| status.text != text || status.emoji != emoji);
+            }
+            Ok(())
         })
     }
 
@@ -918,6 +980,11 @@ impl ChatRepository for InMemoryChatRepository {
                 user,
                 signup_ordinal: state.signup_ordinals.get(&actor).copied(),
                 saved_emojis: state.saved_emojis.get(&actor).cloned().unwrap_or_default(),
+                saved_statuses: state
+                    .saved_statuses
+                    .get(&actor)
+                    .cloned()
+                    .unwrap_or_default(),
                 circles,
                 channels,
                 agent_memories: Vec::new(),
@@ -2171,12 +2238,25 @@ struct RepositoryState {
     signup_ordinals: HashMap<UserId, u64>,
     next_signup_ordinal: u64,
     saved_emojis: HashMap<UserId, Vec<String>>,
+    saved_statuses: HashMap<UserId, Vec<SavedStatus>>,
     user_statuses: HashMap<UserId, (String, String, Option<chrono::DateTime<chrono::Utc>>)>,
     media: HashMap<MediaId, (MediaObject, Vec<u8>)>,
     media_previews: HashMap<MediaId, MediaVariant>,
     command_receipts: HashMap<(UserId, String), MessageId>,
     message_reactions: HashSet<(MessageId, UserId, String)>,
     thread_read_markers: HashMap<(MessageId, UserId), ChannelSequence>,
+}
+
+#[cfg(test)]
+fn sort_saved_statuses(statuses: &mut [SavedStatus]) {
+    statuses.sort_by(|left, right| {
+        right
+            .save_count
+            .cmp(&left.save_count)
+            .then_with(|| right.last_used_at.cmp(&left.last_used_at))
+            .then_with(|| left.text.cmp(&right.text))
+            .then_with(|| left.emoji.cmp(&right.emoji))
+    });
 }
 
 #[cfg(test)]

@@ -286,6 +286,45 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn saved_statuses(
+        &self,
+        actor: UserId,
+    ) -> Result<Vec<crate::domain::SavedStatus>, ChatError> {
+        self.repository
+            .saved_statuses(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn remove_saved_status(
+        &self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+    ) -> Result<(), ChatError> {
+        let text = text.trim().to_owned();
+        let emoji = emoji.trim().to_owned();
+        if text.chars().count() > 100
+            || emoji.chars().count() > 16
+            || text.chars().any(char::is_control)
+            || emoji.chars().any(char::is_control)
+        {
+            return Err(ChatError::Validation(TextValidationError::TooLarge {
+                field: "status",
+                max: 100,
+            }));
+        }
+        if text.is_empty() && emoji.is_empty() {
+            return Err(ChatError::Validation(TextValidationError::Empty {
+                field: "status",
+            }));
+        }
+        self.repository
+            .remove_saved_status(actor, text, emoji)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn update_profile(
         &self,
         actor: UserId,

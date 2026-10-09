@@ -22,6 +22,58 @@ pub(crate) struct SavedEmojiInput {
     emoji: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SavedStatusInput {
+    text: String,
+    emoji: String,
+}
+
+pub(crate) async fn saved_statuses(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    if let Err(error) = state.chat.ensure_user(principal.user.clone()).await {
+        return chat_error_response(error);
+    }
+    match state.chat.saved_statuses(principal.user.id).await {
+        Ok(statuses) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Json(statuses),
+        )
+            .into_response(),
+        Err(error) => chat_error_response(error),
+    }
+}
+
+pub(crate) async fn remove_saved_status(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(input): Json<SavedStatusInput>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    if let Err(error) = state.chat.ensure_user(principal.user.clone()).await {
+        return chat_error_response(error);
+    }
+    match state
+        .chat
+        .remove_saved_status(principal.user.id, input.text, input.emoji)
+        .await
+    {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => chat_error_response(error),
+    }
+}
+
 pub(crate) async fn saved_emojis(
     State(state): State<AppState>,
     Query(query): Query<WsQuery>,

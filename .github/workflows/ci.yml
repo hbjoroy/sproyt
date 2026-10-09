@@ -162,7 +162,7 @@ jobs:
         if: needs.changes.outputs.browser == 'full'
         env:
           SPROYT_E2E_WEBKIT: "1"
-        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-react-notifications.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-supplements.spec.ts ui-native-download-return.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-agent-memory.spec.ts ui-react-weather-agent.spec.ts ui-react-app-update.spec.ts ui-react-share-target.spec.ts
+        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-react-notifications.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-supplements.spec.ts ui-native-download-return.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-saved-statuses.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-agent-memory.spec.ts ui-react-weather-agent.spec.ts ui-react-app-update.spec.ts ui-react-share-target.spec.ts
 
       - name: Upload browser test evidence
         if: failure()
@@ -244,6 +244,7 @@ jobs:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: |
           cargo test db::postgres::tests --locked
+          cargo test postgres_saved_status_history_contract --locked
           cargo test postgres_notifications_share_the_repository_connection_budget --locked
           cargo test postgres_imagegen_uses_the_shared_connection_budget --locked
           cargo test postgres_channel_agent_access_contract --locked
@@ -317,7 +318,7 @@ jobs:
   recovery-drill:
     name: PostgreSQL backup and restore drill
     needs: changes
-    if: needs.changes.outputs.recovery == 'true' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v'))
+    if: needs.changes.outputs.recovery == 'true' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -359,6 +360,7 @@ jobs:
         run: |
           psql "$DATABASE_URL" --set ON_ERROR_STOP=1 <<'SQL'
           insert into users(id,kind,display_name,created_at) values('01900000-0000-7000-8000-000000000001','human','Recovery user',now());
+          insert into personal_statuses(user_id,text,emoji,save_count,last_used_at) values('01900000-0000-7000-8000-000000000001','restore-status-evidence','',3,now());
           insert into channels(id,slug,name,kind,created_by) values('01900000-0000-7000-8000-000000000002','recovery','Recovery','private','01900000-0000-7000-8000-000000000001');
           insert into channel_memberships(channel_id,user_id,role) values('01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000001','owner');
           insert into channel_sequences(channel_id,next_sequence) values('01900000-0000-7000-8000-000000000002',2);
@@ -390,6 +392,7 @@ jobs:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: |
           cargo run --locked -- migrate
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select save_count from personal_statuses where text='restore-status-evidence'")" = "3"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_notes where content->>'text'='restore-memory-evidence'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_profiles where enabled=false and collection_started_at is null")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"

@@ -4,6 +4,7 @@
       import { appVersion, createAppUpdate, latestAppVersion, updateAppWorker } from "./app-update";
       import { createShareTarget, shareInbox } from "./share-target";
       import { SavedEmojiApi } from "./saved-emojis";
+      import { SavedStatusApi } from "./saved-statuses";
       import { CircleChatAgentApi } from "./chat-agents";
       import { AgentMemoryApi } from "./agent-memory";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
@@ -633,6 +634,7 @@
         }
       });
       const savedEmojisApi = new SavedEmojiApi(http);
+      const savedStatusesApi = new SavedStatusApi(http);
       const notificationsApi = new NotificationApi(http);
       imageGeneration.subscribe(() => refreshDevelopmentPreview());
       const processesApi = new ProcessApi(http);
@@ -6029,6 +6031,8 @@
               profileFor: userId => activeProfile(userId),
               saveName: name => savePreviewProfile("profile_updated", () => sendCommand("update_profile", { display_name: name })),
               saveStatus: (text, emoji) => savePreviewProfile("status_updated", () => sendCommand("set_status", { text, emoji, expires_at: null })),
+              loadStatuses: () => savedStatusesApi.list(),
+              removeStatus: status => savedStatusesApi.remove(status),
               loadNotifications: () => notificationsApi.get(),
               saveNotifications: async preferences => { await notificationsApi.save(preferences); await loadNotificationSettings(); },
               enablePush: async publicKey => { await registerBrowserPush(publicKey); await loadNotificationSettings(); }

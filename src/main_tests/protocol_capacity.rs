@@ -3708,6 +3708,139 @@ async fn circle_rename_is_owner_only_and_invalidates_unsubscribed_clients() {
 }
 
 #[tokio::test]
+async fn personal_status_http_contract_is_private_and_delete_preserves_current_profile() {
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server, state) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    let principal = state
+        .auth
+        .authenticate_request(Some("status-http-owner".to_owned()), None)
+        .await
+        .unwrap();
+    state
+        .chat
+        .ensure_user(principal.user.clone())
+        .await
+        .unwrap();
+    state
+        .chat
+        .set_status(
+            principal.user.id.clone(),
+            " På tur ".into(),
+            " 🥾 ".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    let client = reqwest::Client::new();
+    let owner = format!("http://{address}/api/v1/me/statuses?participant=status-http-owner");
+    let other = format!("http://{address}/api/v1/me/statuses?participant=status-http-other");
+    let response = client.get(&owner).send().await.unwrap();
+    assert_eq!(
+        response.headers()[reqwest::header::CACHE_CONTROL],
+        "no-store"
+    );
+    let choices = response.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(choices[0]["text"], "På tur");
+    assert_eq!(choices[0]["emoji"], "🥾");
+    assert_eq!(choices[0]["save_count"], 1);
+    assert_eq!(
+        client
+            .get(&other)
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        serde_json::json!([])
+    );
+    let choice = serde_json::json!({"text":"På tur","emoji":"🥾"});
+    assert_eq!(
+        client
+            .delete(&other)
+            .json(&choice)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        client
+            .delete(&owner)
+            .json(&serde_json::json!({"text":"På tur","emoji":"🥾","user_id":"other"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        client
+            .delete(&owner)
+            .json(&serde_json::json!({"text":"","emoji":""}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    let export = client
+        .get(format!(
+            "http://{address}/api/v1/me/export?participant=status-http-owner"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(export["saved_statuses"], choices);
+    for _ in 0..2 {
+        assert_eq!(
+            client
+                .delete(&owner)
+                .json(&choice)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::NO_CONTENT
+        );
+    }
+    assert_eq!(
+        state
+            .chat
+            .list_users(principal.user.id.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|profile| profile.user.id == principal.user.id)
+            .unwrap()
+            .status_text,
+        "På tur"
+    );
+    assert_eq!(
+        client
+            .get(&owner)
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        serde_json::json!([])
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn personal_emoji_http_contract_scopes_validates_and_exports_choices() {
     let repository = std::sync::Arc::new(
         SqliteChatRepository::connect("sqlite::memory:")

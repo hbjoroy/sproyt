@@ -2,18 +2,62 @@ import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useRef, useState } from "react";
 import type { NotificationPreferences, NotificationSettings } from "../../api";
 import type { UserProfile } from "../../types";
+import type { SavedStatus } from "../../saved-statuses";
 
 export interface PreviewSettingsHost {
   profile(): UserProfile | undefined;
   profileFor?(userId: string): UserProfile | undefined;
   saveName(name: string): Promise<void>;
   saveStatus(text: string, emoji: string): Promise<void>;
+  loadStatuses(): Promise<readonly SavedStatus[]>;
+  removeStatus(status: Pick<SavedStatus, "text" | "emoji">): Promise<void>;
   loadNotifications(): Promise<NotificationSettings>;
   saveNotifications(preferences: NotificationPreferences): Promise<void>;
   enablePush(publicKey: string): Promise<void>;
 }
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+function SavedStatusChoices({ host, ownerId, busy, revision, onChoose }: {
+  host: PreviewSettingsHost; ownerId: string; busy: boolean; revision: number;
+  onChoose(status: SavedStatus): void;
+}) {
+  const latestHost = useRef(host); latestHost.current = host;
+  const [items, setItems] = useState<readonly SavedStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setError("");
+    void latestHost.current.loadStatuses().then(items => { if (!cancelled) setItems(items); },
+      error => { if (!cancelled) setError(errorText(error)); }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [ownerId, revision, attempt]);
+  async function remove(status: SavedStatus) {
+    setRemoving(true); setError("");
+    try { await latestHost.current.removeStatus(status); setAttempt(value => value + 1); }
+    catch (error) { setError(errorText(error)); }
+    finally { setRemoving(false); }
+  }
+  return <details className="sp-saved-statuses">
+    <summary>Tidlegare statusar</summary>
+    <p className="sp-help">Mest brukte først. Vel eit forslag, og trykk «Lagre status».</p>
+    {loading && <Status>Lastar statusval …</Status>}
+    {!loading && !error && !items.length && <p className="sp-help">Statusar du lagrar, dukkar opp her.</p>}
+    <ul>{items.map(status => {
+      const label = [status.emoji, status.text].filter(Boolean).join(" ");
+      return <li key={JSON.stringify([status.emoji, status.text])}>
+        <Button variant="quiet" disabled={busy || removing || loading} onClick={() => onChoose(status)}
+          aria-label={`Bruk status: ${label}`} title={label}>{status.emoji && <span>{status.emoji}</span>}<span>{status.text}</span></Button>
+        <Button variant="symbol" disabled={busy || removing || loading} onClick={() => void remove(status)}
+          aria-label={`Gløym status: ${label}`} title="Fjern frå lista"><span aria-hidden="true">×</span></Button>
+      </li>;
+    })}</ul>
+    {error && <Status tone="error">{error} <Button disabled={busy || removing} onClick={() => setAttempt(value => value + 1)}>Prøv igjen</Button></Status>}
+  </details>;
+}
 
 export function PreviewProfile({ host, focusStatus = false }: { host: PreviewSettingsHost; focusStatus?: boolean }) {
   const profile = host.profile();
@@ -23,6 +67,7 @@ export function PreviewProfile({ host, focusStatus = false }: { host: PreviewSet
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [statusRevision, setStatusRevision] = useState(0);
   const initialized = useRef(Boolean(profile));
   const statusField = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -54,7 +99,11 @@ export function PreviewProfile({ host, focusStatus = false }: { host: PreviewSet
       <TextField label="Visningsnamn" value={name} onChange={event => setName(event.target.value)} required disabled={busy} autoFocus={!focusStatus} />
       <Button type="submit" busy={busy} disabled={!name.trim()}>Lagre namn</Button>
     </form>
-    <form onSubmit={event => { event.preventDefault(); void save(() => host.saveStatus(text, emoji), "Statusen er lagra."); }}>
+    <form onSubmit={event => { event.preventDefault(); void save(async () => {
+      await host.saveStatus(text, emoji); setStatusRevision(value => value + 1);
+    }, "Statusen er lagra."); }}>
+      <SavedStatusChoices key={profile.id} host={host} ownerId={profile.id} busy={busy} revision={statusRevision}
+        onChoose={status => { setText(status.text); setEmoji(status.emoji); setNotice(""); setError(""); statusField.current?.focus({ preventScroll: true }); }} />
       <TextField label="Statusemoji" value={emoji} onChange={event => setEmoji(event.target.value)} disabled={busy} />
       <TextField ref={statusField} label="Statusmelding" value={text} onChange={event => setText(event.target.value)} disabled={busy} />
       <Button type="submit" busy={busy}>Lagre status</Button>
