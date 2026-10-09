@@ -40,6 +40,7 @@ import type { AppUpdate, UpdatePosition } from "../../app-update";
 import { AppUpdateNotice } from "./app-update-action";
 import { ReceivedShares } from "./share-target";
 import type { ShareTarget } from "../../share-target";
+import { AgentLocationSharingDialog } from "./agent-location-sharing";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly processPilot: ProcessPilotApi;
@@ -136,6 +137,7 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
   const [focusMemberAction, setFocusMemberAction] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const [locationOpen, setLocationOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveError, setLeaveError] = useState("");
@@ -168,6 +170,7 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
         </Button>}
         {notifications?.error && <Status tone="error">{notifications.error}</Status>}
         {open && <ProcessPilotChannelAction key={`${host.processPilotIdentity()}:${channel.id}`} api={host.processPilot} channelId={channel.id} />}
+        <Button variant="quiet" onClick={() => { setOpen(false); setLocationOpen(true); }}><span aria-hidden="true">⌖</span><span>Del posisjon med agent</span></Button>
         {!confirmLeave ? <Button variant="danger" onClick={() => setConfirmLeave(true)}>Forlat kanalen</Button>
           : <div className="sp-leave-confirm" role="group" aria-label="Stadfest at du vil forlate kanalen">
             <p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p>
@@ -187,6 +190,8 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
       onNavigate={() => {}} onClose={() => setDetailsOpen(false)} />}
     {agentsOpen && <ChannelChatAgentsDialog key={channel.id} api={host.chatAgents} channelId={channel.id} channelName={channel.name}
       privateChannel={channel.kind === "private"} onClose={() => setAgentsOpen(false)} />}
+    {locationOpen && <AgentLocationSharingDialog api={host.agentLocations} channelId={channel.id} channelName={channel.name}
+      onClose={() => setLocationOpen(false)} />}
     {inviteOpen && channel.circle_id && <PreviewCommunity destination={{ kind: "invite", circleId: channel.circle_id }} snapshot={snapshot} host={host.community}
       onNavigate={() => {}} onClose={() => setInviteOpen(false)} />}
   </>;

@@ -162,7 +162,7 @@ jobs:
         if: needs.changes.outputs.browser == 'full'
         env:
           SPROYT_E2E_WEBKIT: "1"
-        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-react-notifications.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-supplements.spec.ts ui-native-download-return.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-saved-statuses.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-agent-memory.spec.ts ui-react-weather-agent.spec.ts ui-react-app-update.spec.ts ui-react-share-target.spec.ts
+        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-mobile.spec.ts ui-react-notifications.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-supplements.spec.ts ui-native-download-return.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-saved-statuses.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-agent-memory.spec.ts ui-react-weather-agent.spec.ts ui-react-app-update.spec.ts ui-react-share-target.spec.ts ui-react-agent-location.spec.ts
 
       - name: Upload browser test evidence
         if: failure()
@@ -256,6 +256,7 @@ jobs:
           cargo test postgres_two_replica_realtime_and_restart_catch_up_gate --locked
           cargo test chatbot::tests::postgres_ --locked -- --test-threads=1
           cargo test chatbot::memory:: --locked -- --test-threads=1 --nocapture
+          cargo test chatbot::location:: --locked -- --test-threads=1 --nocapture
           cargo test postgres_work_item_registration_and_task_projection --locked
           cargo test work_items::github_export::tests::postgres_ --locked -- --test-threads=1
           cargo test work_items::status_change::tests::postgres_ --locked -- --test-threads=1
@@ -375,6 +376,8 @@ jobs:
           insert into agent_memory_scopes(profile_id,circle_id,channel_id,start_sequence,processed_sequence,dirty_sequence,available_at) values('01900000-0000-7000-8000-000000000006','01900000-0000-7000-8000-000000000004','01900000-0000-7000-8000-000000000002',0,0,0,1);
           insert into agent_memory_notes(id,profile_id,channel_id,kind,content,origin,evidence,created_at,updated_at) values('01900000-0000-7000-8000-000000000007','01900000-0000-7000-8000-000000000006','01900000-0000-7000-8000-000000000002','preference','{"text":"restore-memory-evidence","participant_ids":[]}','automatic','user_stated',1,1);
           insert into agent_memory_note_sources(note_id,message_id,source_version) values('01900000-0000-7000-8000-000000000007','01900000-0000-7000-8000-000000000003',repeat('a',64));
+          insert into agent_location_shares(user_id,agent_id,channel_id,share_id,latitude,longitude,accuracy_m,observed_at,expires_at) values('01900000-0000-7000-8000-000000000001','01900000-0000-7000-8000-000000000005','01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000008',37.1,25.1,20,now(),now()+interval '30 minutes');
+          insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,created_at,location_share_id,reply_body) values('01900000-0000-7000-8000-000000000009','01900000-0000-7000-8000-000000000005','01900000-0000-7000-8000-000000000003','01900000-0000-7000-8000-000000000002',1,'pending',1,1,'01900000-0000-7000-8000-000000000008','restore-location-evidence');
           SQL
       - name: Backup and restore into isolated database
         run: |
@@ -403,6 +406,8 @@ jobs:
           psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file tools/reset-agent-memory-after-restore.sql
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_profiles")" = "0"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_notes")" = "0"
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_location_shares")" = "0"
+          test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from circle_chat_agent_jobs where id='01900000-0000-7000-8000-000000000009' and status='skipped' and reply_body is null and error_code='location_restore_reset'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
       - uses: actions/upload-artifact@v6
         with:

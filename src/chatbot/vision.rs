@@ -304,7 +304,7 @@ macro_rules! authorize_images {
         let raw:Option<String>=row.try_get("vision_snapshot").map_err(storage)?;
         if let Some(raw)=raw {
             let snapshot=parse(&raw)?;
-            let job=Job {id:$id.to_string(),agent_id:String::new(),source_message_id:String::new(),channel_id:String::new(),attempts:0,reply_body:None,lease_token:row.try_get("lease_token").map_err(storage)?};
+            let job=Job {id:$id.to_string(),agent_id:String::new(),source_message_id:String::new(),channel_id:String::new(),attempts:0,reply_body:None,location_share_id:None,lease_token:row.try_get("lease_token").map_err(storage)?};
             for image in snapshot.images {
                 let bytes=fetch_blob!(&mut **$tx,&job,&image,$pg,true);
                 if digest(&bytes)!=image.sha256{return Err(RepositoryError::PermissionDenied)}

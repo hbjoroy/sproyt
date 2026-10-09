@@ -6,6 +6,8 @@ import { openEmojiPicker } from "./emoji-picker";
 import { pastedEmoji, type SavedEmojiApi } from "../../saved-emojis";
 import { DraftComposer } from "./draft-composer";
 import { PreviewAttachments } from "./preview-media";
+import type { AgentLocationApi } from "../../agent-locations";
+import { AgentLocationSharingDialog } from "./agent-location-sharing";
 
 export interface PreviewMention {
   readonly id: string;
@@ -26,6 +28,7 @@ export interface PreviewComposerHost {
   readonly mentionCandidates: (target: ComposerTarget) => readonly PreviewMention[];
   readonly expandDirect: (target: ComposerTarget, userId: string) => void;
   readonly openImageGeneration: () => void;
+  readonly agentLocations: AgentLocationApi;
 }
 
 /** Host state owns drafts and delivery; selection and transient suggestions
@@ -45,6 +48,7 @@ export function PreviewComposer({ host, target }: {
   const [dismissed, setDismissed] = useState(false);
   const [selected, setSelected] = useState(0);
   const [expansion, setExpansion] = useState<PreviewMention | null>(null);
+  const [locationOpen, setLocationOpen] = useState(false);
   const listId = useId();
   const state = host.composer(target);
   const input = () => container.current?.querySelector("textarea");
@@ -207,7 +211,11 @@ export function PreviewComposer({ host, target }: {
             if (!state.disabled && !state.busy) host.upload(target, files);
           }} />
         <Button className="sp-composer-symbol" variant="quiet" aria-label="Biletegenerering" title="Biletegenerering" onClick={host.openImageGeneration}><span aria-hidden="true">✦</span></Button>
+        <Button className="sp-composer-symbol" variant="quiet" aria-label="Del posisjon med agent" title="Del posisjon med agent"
+          disabled={state.disabled || state.busy} onClick={() => setLocationOpen(true)}><span aria-hidden="true">⌖</span></Button>
       </div>} />
+    {locationOpen && <AgentLocationSharingDialog api={host.agentLocations} channelId={target.channelId} channelName="denne kanalen"
+      onClose={() => { setLocationOpen(false); queueMicrotask(restoreCaret); }} />}
     {expansion && <Dialog open title="Ny gruppesamtale" closeLabel="Avbryt" onClose={() => { setExpansion(null); queueMicrotask(restoreCaret); }}>
       <p>Start ei ny gruppesamtale med {expansion.name}? Den gamle direkte samtalen held fram privat.</p>
       <Button onClick={() => { host.expandDirect(target, expansion.id); setExpansion(null); }}>Start gruppesamtale</Button>
