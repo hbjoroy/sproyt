@@ -1,10 +1,10 @@
-# Sprøyt UI — 0.1.1
+# Sprøyt UI — 0.1.2
 
 Reusable editorial web components for React 18/19 and Vue 3.5+, with matching light/dark themes and compact container layouts. The demo is a local simulation, not a messaging service.
 
 ## Use in another project
 
-Copy `../../frontend/vendor/sproyt-ui-0.1.1.tgz` into that project's `vendor/` folder and run `npm install ./vendor/sproyt-ui-0.1.1.tgz` (or your package manager's equivalent). Install only your chosen framework. Import `@sproyt/ui/styles.css` once and components from `@sproyt/ui/react` or `@sproyt/ui/vue`.
+Copy `../../frontend/vendor/sproyt-ui-0.1.2.tgz` into that project's `vendor/` folder and run `npm install ./vendor/sproyt-ui-0.1.2.tgz` (or your package manager's equivalent). Install only your chosen framework. Import `@sproyt/ui/styles.css` once and components from `@sproyt/ui/react` or `@sproyt/ui/vue`.
 
 See [component contracts](docs/components.md) and [design rules](docs/design.md).
 
