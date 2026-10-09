@@ -121,7 +121,12 @@ impl WeatherService {
     ) -> std::result::Result<Value, &'static str> {
         validate_location(location)?;
         let requested = location.trim();
-        let current = self.get_location("current", requested).await?;
+        let paros = has_paros_qualifier(requested);
+        let aliki = paros && is_paros_aliki(requested);
+        // This provider-verified locality point is server-owned, never model
+        // coordinates or user GPS. Name searches otherwise select mainland Aliki.
+        let lookup = if aliki { "36.997,25.137" } else { requested };
+        let current = self.get_location("current", lookup).await?;
         let resolved = &current["location"];
         let field = |key: &str, required: bool| {
             resolved[key]
@@ -142,6 +147,16 @@ impl WeatherService {
             longitude: resolved["lon"].as_f64().ok_or("weather_location")?,
         };
         config.validate().map_err(|_| "weather_location")?;
+        if paros
+            && (!country.eq_ignore_ascii_case("Greece")
+                || !(36.95..=37.30).contains(&config.latitude)
+                || !(25.04..=25.35).contains(&config.longitude)
+                || (aliki
+                    && ((config.latitude - 36.997).abs() > 0.01
+                        || (config.longitude - 25.137).abs() > 0.01)))
+        {
+            return Err("weather_location");
+        }
         let forecast = self.get("forecast", &config).await?;
         let mut snapshot = normalize(&config, &current, &forecast, Utc::now().timestamp())?;
         snapshot
@@ -149,12 +164,39 @@ impl WeatherService {
             .unwrap()
             .remove("configured_location");
         snapshot["requested_location"] = json!(requested);
+        snapshot["lookup_basis"] = json!(if aliki {
+            "verified_paros_aliki_coordinates"
+        } else {
+            "provider_named_place"
+        });
         snapshot["resolved_location"] = json!({
             "name": name, "region": region, "country": country,
             "latitude": config.latitude, "longitude": config.longitude,
         });
         Ok(snapshot)
     }
+}
+
+fn has_paros_qualifier(location: &str) -> bool {
+    location
+        .to_lowercase()
+        .split(|character: char| !character.is_alphabetic())
+        .any(|word| matches!(word, "paros" | "πάρος"))
+}
+
+fn is_paros_aliki(location: &str) -> bool {
+    let first = location
+        .split(',')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let locality = first
+        .strip_suffix(" paros")
+        .or_else(|| first.strip_suffix(" πάρος"))
+        .unwrap_or(&first)
+        .trim();
+    matches!(locality, "aliki" | "alyki" | "αλυκή")
 }
 
 pub(super) fn validate_location(location: &str) -> std::result::Result<(), &'static str> {
@@ -292,6 +334,23 @@ pub(super) fn followup_candidate(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    #[ignore = "requires explicitly configured Weather-Service tunnel"]
+    async fn live_paros_localities_resolve_on_the_island() {
+        let service = WeatherService::from_env()
+            .unwrap()
+            .expect("SPROYT_WEATHER_URL required");
+        for (requested, basis) in [
+            ("Naoussa, Paros, Greece", "provider_named_place"),
+            ("Aliki, Paros, Greece", "verified_paros_aliki_coordinates"),
+        ] {
+            let snapshot = service.snapshot_location(requested).await.unwrap();
+            assert_eq!(snapshot["requested_location"], requested);
+            assert_eq!(snapshot["lookup_basis"], basis);
+            assert_eq!(snapshot["resolved_location"]["country"], "Greece");
+            println!("{requested}: {}", snapshot["resolved_location"]);
+        }
+    }
     use super::*;
     #[tokio::test]
     async fn named_places_reject_non_names_before_network_access() {
@@ -321,15 +380,36 @@ mod tests {
         current: Value,
         forecast: Value,
     ) -> std::result::Result<Value, &'static str> {
+        location_fixture(
+            "St. John's & Harbour, Canada",
+            "St. John's & Harbour, Canada",
+            current,
+            forecast,
+        )
+        .await
+    }
+
+    async fn location_fixture(
+        requested: &str,
+        expected_lookup: &str,
+        current: Value,
+        forecast: Value,
+    ) -> std::result::Result<Value, &'static str> {
         use axum::{Json, Router, extract::Query, routing::get};
         use std::collections::HashMap;
+        let expected_lookup = expected_lookup.to_owned();
+        let forecast_lookup = format!(
+            "{},{}",
+            current["location"]["lat"].as_f64().unwrap(),
+            current["location"]["lon"].as_f64().unwrap()
+        );
         let app = Router::new()
             .route(
                 "/current",
                 get(
                     move |Query(query): Query<HashMap<String, String>>| async move {
                         assert_eq!(query.len(), 1);
-                        assert_eq!(query["location"], "St. John's & Harbour, Canada");
+                        assert_eq!(query["location"], expected_lookup);
                         Json(current)
                     },
                 ),
@@ -338,7 +418,7 @@ mod tests {
                 "/forecast",
                 get(
                     move |Query(query): Query<HashMap<String, String>>| async move {
-                        assert_eq!(query["location"], "47.56,-52.71");
+                        assert_eq!(query["location"], forecast_lookup);
                         assert_eq!(query["days"], "3");
                         assert_eq!(query["include_hourly"], "true");
                         Json(forecast)
@@ -349,11 +429,64 @@ mod tests {
         let service =
             WeatherService::new(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let result = service
-            .snapshot_location("St. John's & Harbour, Canada")
-            .await;
+        let result = service.snapshot_location(requested).await;
         server.abort();
         result
+    }
+
+    #[tokio::test]
+    async fn explicit_paros_places_reject_off_island_resolution_and_aliki_aliases_use_verified_point()
+     {
+        let now = Utc::now().timestamp();
+        let location = json!({"name":"Alyki","region":"South Aegean","country":"Greece",
+            "lat":36.997,"lon":25.137,"tz_id":"Europe/Athens"});
+        let current = json!({"location":location,"current":{"last_updated_epoch":now,"uv":2.0,"pressure_mb":1012.0}});
+        let forecast = json!({"location":location,"forecast":{"forecastday":[{"hour":[{"time_epoch":now+3600,"uv":4.0,"pressure_mb":1008.5}]}]}});
+        for requested in [
+            "Aliki,Paros,Greece",
+            "Alyki, Paros",
+            "Αλυκή, Πάρος",
+            "ALIKI PAROS",
+        ] {
+            let snapshot = location_fixture(
+                requested,
+                "36.997,25.137",
+                current.clone(),
+                forecast.clone(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(snapshot["requested_location"], requested);
+            assert_eq!(snapshot["resolved_location"]["name"], "Alyki");
+            assert_eq!(snapshot["resolved_location"]["region"], "South Aegean");
+            assert_eq!(snapshot["lookup_basis"], "verified_paros_aliki_coordinates");
+        }
+        for (requested, key, wrong_value) in [
+            ("Naoussa, Paros, Greece", "lat", json!(38.2)),
+            ("Naoussa, Πάρος", "lon", json!(23.05)),
+            ("Naoussa, Paros", "country", json!("Armenia")),
+        ] {
+            let mut wrong = current.clone();
+            wrong["location"][key] = wrong_value;
+            assert_eq!(
+                location_fixture(requested, requested, wrong, forecast.clone()).await,
+                Err("weather_location")
+            );
+        }
+        for requested in [
+            "Naoussa, Paros, Greece",
+            "Aliki Beach, Paros",
+            "Aliki near Paros",
+            "Aliki and Naoussa, Paros",
+        ] {
+            let snapshot =
+                location_fixture(requested, requested, current.clone(), forecast.clone())
+                    .await
+                    .unwrap();
+            assert_eq!(snapshot["lookup_basis"], "provider_named_place");
+        }
+        assert!(!has_paros_qualifier("Parosville"));
+        assert!(!is_paros_aliki("Naoussa, Aliki, Paros"));
     }
 
     #[tokio::test]

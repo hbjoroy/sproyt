@@ -8,6 +8,10 @@ installerte Qwen-modellen på Santorini er kontrollert for native tool calls.
   Weather-Service resolver namnet; Sprøyt bind forecast til dei returnerte
   koordinatane. Resultatet namngir stad/region/land og skil requested/resolved
   frå konfigurert standardstad. URL, IP-lokasjon og modellgjetta GPS er avviste.
+  Uttrykkelege Paros-oppslag må resolve til Hellas innanfor øyområdet.
+  Aliki/Alyki på Paros brukar eit tenarstyrt, provider-verifisert lokalitetspunkt
+  fordi namnesøket elles kan velje fastlandet. `lookup_basis` dokumenterer dette;
+  svaret skal framleis namngje den faktisk resolverte staden.
 - `ferry_calls({vessel?})`: alle normaliserte planlagde anløp i dagens tabell
   for Parikia, eventuelt filtrerte på eit fartøysnamn. Frå-/tilhamn, operatør,
   rute, planlagd ankomst/avgang og kjeldedato blir bevarte. Filteret er
