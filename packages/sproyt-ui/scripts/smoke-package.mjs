@@ -8,11 +8,11 @@ import {createSSRApp,h} from 'vue';
 import {renderToString as renderVue} from 'vue/server-renderer';
 const dir=mkdtempSync(resolve('.package-smoke-'));
 try {
- const result=spawnSync('tar',['-xzf',resolve('../../frontend/vendor/sproyt-ui-0.1.1.tgz'),'-C',dir]);
+ const sourceManifest=JSON.parse(readFileSync('package.json','utf8'));
+ const result=spawnSync('tar',['-xzf',resolve(`../../frontend/vendor/sproyt-ui-${sourceManifest.version}.tgz`),'-C',dir]);
  if(result.status!==0)throw Error('Package extraction failed');
  const base=resolve(dir,'package');
  const manifest=JSON.parse(readFileSync(resolve(base,'package.json'),'utf8'));
- const sourceManifest=JSON.parse(readFileSync('package.json','utf8'));
  if(manifest.version!==sourceManifest.version)throw Error('Archive version differs from source');
  for(const entry of Object.values(manifest.exports)){
   for(const path of typeof entry==='string'?[entry]:[entry.import,entry.types]){

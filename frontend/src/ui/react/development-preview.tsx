@@ -90,11 +90,26 @@ function ChannelNotificationControl({ channelId, channelName, enabled, pending, 
   readonly channelId: string; readonly channelName: string; readonly enabled: boolean; readonly pending: boolean;
   readonly error?: string; readonly onChange: (channelId: string, enabled: boolean) => void;
 }) {
+  const button = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  useEffect(() => {
+    if (pending || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    // Disabling or moving a keyed DOM button can drop focus to the body.
+    // Never take focus back from another control the user moved to meanwhile.
+    if (document.activeElement === document.body || document.activeElement === button.current) {
+      button.current?.focus({ preventScroll: true });
+    }
+  }, [pending, enabled]);
   const label = `${enabled ? "Slå av" : "Slå på"} varsel for ${channelName}`;
   return <>
-    <Button className="sp-channel-notification-toggle" variant="quiet" busy={pending}
+    <Button ref={button} className="sp-channel-notification-toggle" variant="symbol" busy={pending}
       aria-label={label} title={label} aria-pressed={enabled}
-      onClick={() => onChange(channelId, !enabled)}>
+      onClick={event => {
+        event.currentTarget.focus({ preventScroll: true });
+        restoreFocus.current = true;
+        onChange(channelId, !enabled);
+      }}>
       <BellIcon muted={!enabled} />
     </Button>
     {error && <Status tone="error"><span>{error}</span> <Button onClick={() => onChange(channelId, !enabled)}>Prøv igjen</Button></Status>}

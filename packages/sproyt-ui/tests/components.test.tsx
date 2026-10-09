@@ -6,6 +6,14 @@ import {h} from 'vue';
 import * as Vue from '../src/vue/index';
 afterEach(()=>{cleanupReact();cleanupVue();});
 describe('React controls',()=>{
+ it('symbol controls retain accessible toggle state and pending semantics',()=>{
+  const action=vi.fn();const r=render(<Button variant="symbol" aria-label="Notifications" aria-pressed onClick={action}>♧</Button>);
+  const button=r.getByRole('button',{name:'Notifications'});
+  expect(button.getAttribute('data-variant')).toBe('symbol');expect(button.getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(button);expect(action).toHaveBeenCalledTimes(1);
+  r.rerender(<Button variant="symbol" busy aria-label="Notifications" aria-pressed>♧</Button>);
+  expect(button.getAttribute('aria-busy')).toBe('true');expect((button as HTMLButtonElement).disabled).toBe(true);
+ });
  it('keeps string authors compatible and rich author actions independent',()=>{
   const badge=vi.fn(),status=vi.fn();
   const r=render(<Message author="Anne" time="12:00">Hello</Message>);
@@ -22,6 +30,12 @@ describe('React controls',()=>{
  it('preserves content and defaults buttons to non-submit',()=>{const r=render(<Theme mode="dark"><Button>Save</Button></Theme>);expect(r.getByRole('button').getAttribute('type')).toBe('button');expect(r.container.querySelector('[data-theme=dark]')).toBeTruthy();});
 });
 describe('Vue controls',()=>{
+ it('symbol controls preserve native accessible toggle and busy attributes',()=>{
+  const r=renderVue(Vue.Button,{props:{variant:'symbol',busy:true},attrs:{'aria-label':'Notifications','aria-pressed':'true'}});
+  const button=r.getByRole('button',{name:'Notifications'});
+  expect(button.getAttribute('data-variant')).toBe('symbol');expect(button.getAttribute('aria-pressed')).toBe('true');
+  expect(button.getAttribute('aria-busy')).toBe('true');expect((button as HTMLButtonElement).disabled).toBe(true);
+ });
  it('supports the same author slot while retaining plain author rendering',async()=>{
   const plain=renderVue(Vue.Message,{props:{author:'Anne',time:'12:00'},slots:{default:'Hello'}});
   expect(plain.container.querySelector('.sp-message-meta strong')?.textContent).toBe('Anne');plain.unmount();
