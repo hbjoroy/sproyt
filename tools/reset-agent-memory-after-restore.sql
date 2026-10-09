@@ -3,6 +3,13 @@
 -- by an independent journal in this MVP; restored memory must not be revived.
 -- Run with psql --set ON_ERROR_STOP=1 --file ... against the restored database.
 begin;
+-- Temporary position consent must never be resurrected from a backup.
+update circle_chat_agent_jobs
+set status=case when status in ('pending','leased') then 'skipped' else status end,
+    error_code=case when status in ('pending','leased') then 'location_restore_reset' else error_code end,
+    lease_token=null,leased_until=null,reply_body=null,weather_snapshot=null
+where location_share_id is not null and reply_message_id is null;
+delete from agent_location_shares;
 update circle_chat_agent_jobs
 set status=case when status in ('pending','leased') then 'skipped' else status end,
     error_code=case when status in ('pending','leased') then 'memory_restore_reset' else error_code end,

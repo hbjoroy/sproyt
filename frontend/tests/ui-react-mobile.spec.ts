@@ -144,7 +144,8 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await expect(tools).toBeHidden();
   await channel.getByRole("button", { name: "Skriveverktøy", exact: true }).click();
   await expect(tools).toBeVisible();
-  await expect(tools.getByRole("button")).toHaveCount(4);
+  await expect(tools.getByRole("button")).toHaveCount(5);
+  await expect(tools.getByRole("button", { name: "Del posisjon med agent", exact: true })).toBeInViewport({ ratio: 1 });
   expect(await tools.evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(await tools.evaluate(element => element.clientWidth));
   await expect(channel.getByRole("button", { name: "Biletegenerering", exact: true })).toBeInViewport({ ratio: 1 });
   await channel.getByRole("button", { name: "Biletegenerering", exact: true }).click();

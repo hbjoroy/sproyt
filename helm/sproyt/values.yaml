@@ -73,6 +73,7 @@ config:
   chatAgentMemoryCollectEnabled: false
   chatAgentMemoryBuildEnabled: false
   chatAgentMemoryUseEnabled: false
+  agentLocationSharingEnabled: false
   imagegenWebResearch: false
   mcpAllowedOrigins: https://sproyt.bjoroy.me
   websocketIdleTimeoutSeconds: 60

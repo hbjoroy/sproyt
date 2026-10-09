@@ -871,6 +871,7 @@ async fn reply_memory_contract(store: Store) {
             channel_id: f.channel.clone(),
             attempts: 1,
             reply_body: None,
+            location_share_id: None,
             lease_token: Uuid::now_v7().to_string(),
         };
         // Target is the owner; another human's notes cannot be selected.
@@ -997,6 +998,7 @@ async fn memory_reply_job(f: &Fixture, channel: &str, sequence: i64) -> crate::c
         channel_id: channel.into(),
         attempts: 1,
         reply_body: None,
+        location_share_id: None,
         lease_token: Uuid::now_v7().to_string(),
     };
     st.execute("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,lease_token,leased_until,created_at) values(?uuid,?uuid,?uuid,?uuid,1,'leased',0,?uuid,9999999999,0)", &[job.id.clone(),job.agent_id.clone(),job.source_message_id.clone(),job.channel_id.clone(),job.lease_token.clone()]).await.unwrap();
@@ -1482,6 +1484,7 @@ async fn postgres_memory_reply_rechecks_lease_after_profile_lock_wait() {
         channel_id: f.channel.clone(),
         attempts: 1,
         reply_body: None,
+        location_share_id: None,
         lease_token: Uuid::now_v7().to_string(),
     };
     st.execute("insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,lease_token,leased_until,created_at) values(?uuid,?uuid,?uuid,?uuid,1,'leased',0,?uuid,9999999999,0)", &[job.id.clone(),job.agent_id.clone(),job.source_message_id.clone(),job.channel_id.clone(),job.lease_token.clone()]).await.unwrap();

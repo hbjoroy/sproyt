@@ -7,6 +7,7 @@
       import { SavedStatusApi } from "./saved-statuses";
       import { CircleChatAgentApi } from "./chat-agents";
       import { AgentMemoryApi } from "./agent-memory";
+      import { AgentLocationApi } from "./agent-locations";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
       import { createCommunityRequests } from "./application/community-requests";
@@ -641,6 +642,7 @@
       const agentsApi = new AgentApi(http);
       const circleChatAgentsApi = new CircleChatAgentApi(http);
       const agentMemoryApi = new AgentMemoryApi(http);
+      const agentLocationApi = new AgentLocationApi(http);
       const integrationsApi = new IntegrationApi(http);
       const enrollmentApi = new EnrollmentApi(http);
       const processPilotApi = new ProcessPilotApi(http, () => currentParticipantId ?? "");
@@ -6013,6 +6015,7 @@
             }),
             imageGeneration,
             chatAgents: circleChatAgentsApi,
+            agentLocations: agentLocationApi,
             processPilot: processPilotApi,
             workItems: workItemsApi,
             appUpdate,
