@@ -140,6 +140,7 @@ where
 
     repository.health_check().await.unwrap();
     verify_saved_emoji_contract(repository, suffix).await;
+    verify_saved_status_history_contract(repository, suffix).await;
     verify_circle_moderator_contract(repository, suffix).await;
     verify_enrollment_invitation_contract(repository, &format!("{suffix}-enrollment")).await;
     let actor = UserId::named(format!("chat-contract-actor-{suffix}"));
@@ -998,6 +999,214 @@ where
             .await,
         Err(RepositoryError::NotFound)
     );
+}
+
+#[cfg(test)]
+async fn verify_saved_status_history_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+    use crate::domain::{DisplayName, PrincipalKind, RepositoryError, User, UserId};
+    use chrono::{Duration, Utc};
+    let owner = UserId::named(format!("status-owner-{suffix}"));
+    let other = UserId::named(format!("status-other-{suffix}"));
+    for id in [&owner, &other] {
+        repository
+            .upsert_user(User {
+                id: id.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Status owner").unwrap(),
+                handle: None,
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+    let empty = repository
+        .set_user_status(owner.clone(), "".into(), "".into(), None)
+        .await
+        .unwrap();
+    assert!(empty.status_text.is_empty());
+    assert!(
+        repository
+            .saved_statuses(owner.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for _ in 0..3 {
+        repository
+            .set_user_status(owner.clone(), "Working".into(), "💻".into(), None)
+            .await
+            .unwrap();
+    }
+    repository
+        .set_user_status(owner.clone(), "Working".into(), "🏡".into(), None)
+        .await
+        .unwrap();
+    repository
+        .set_user_status(owner.clone(), "".into(), "☀️".into(), None)
+        .await
+        .unwrap();
+    repository
+        .set_user_status(
+            owner.clone(),
+            "Expired".into(),
+            "".into(),
+            Some(Utc::now() - Duration::hours(1)),
+        )
+        .await
+        .unwrap();
+    let saved = repository.saved_statuses(owner.clone()).await.unwrap();
+    assert_eq!(saved.len(), 4);
+    assert_eq!(
+        (&saved[0].text, &saved[0].emoji, saved[0].save_count),
+        (&"Working".to_owned(), &"💻".to_owned(), 3)
+    );
+    assert_eq!(saved[1].text, "Expired");
+    assert!(
+        repository
+            .saved_statuses(other.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let exported = repository.export_user_data(owner.clone()).await.unwrap();
+    assert_eq!(exported.saved_statuses, saved);
+    assert!(
+        repository
+            .export_user_data(other.clone())
+            .await
+            .unwrap()
+            .saved_statuses
+            .is_empty()
+    );
+    let current = repository
+        .set_user_status(owner.clone(), "Active".into(), "💻".into(), None)
+        .await
+        .unwrap();
+    repository
+        .remove_saved_status(other.clone(), "Active".into(), "💻".into())
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .saved_statuses(owner.clone())
+            .await
+            .unwrap()
+            .iter()
+            .any(|status| status.text == "Active")
+    );
+    for _ in 0..2 {
+        repository
+            .remove_saved_status(owner.clone(), "Active".into(), "💻".into())
+            .await
+            .unwrap();
+    }
+    let after = repository
+        .list_user_profiles(owner.clone())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|profile| profile.user.id == owner)
+        .unwrap();
+    assert_eq!(after, current);
+    assert!(
+        !repository
+            .saved_statuses(owner.clone())
+            .await
+            .unwrap()
+            .iter()
+            .any(|status| status.text == "Active")
+    );
+    assert_eq!(
+        repository
+            .remove_saved_status(
+                UserId::named(format!("missing-status-{suffix}")),
+                "Active".into(),
+                "💻".into()
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    for index in 0..26 {
+        repository
+            .set_user_status(owner.clone(), format!("Choice {index:02}"), "".into(), None)
+            .await
+            .unwrap();
+    }
+    let saved = repository.saved_statuses(owner.clone()).await.unwrap();
+    assert_eq!(saved.len(), 20);
+    assert_eq!(saved[0].save_count, 3);
+    assert_eq!(saved[1].text, "Choice 25");
+    assert!(!saved.iter().any(|status| status.text == "Choice 00"));
+    let (one, two) = tokio::join!(
+        repository.set_user_status(owner.clone(), "Device one".into(), "".into(), None),
+        repository.set_user_status(owner.clone(), "Device two".into(), "".into(), None),
+    );
+    one.unwrap();
+    two.unwrap();
+    let saved = repository.saved_statuses(owner.clone()).await.unwrap();
+    assert_eq!(saved.len(), 20);
+    assert!(saved.iter().any(|status| status.text == "Device one"));
+    assert!(saved.iter().any(|status| status.text == "Device two"));
+    let (remove, save) = tokio::join!(
+        repository.remove_saved_status(owner.clone(), "Concurrent".into(), "".into()),
+        repository.set_user_status(owner.clone(), "Concurrent".into(), "".into(), None),
+    );
+    remove.unwrap();
+    save.unwrap();
+    let profile = repository
+        .list_user_profiles(owner.clone())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|profile| profile.user.id == owner)
+        .unwrap();
+    assert_eq!(profile.status_text, "Concurrent");
+    assert!(
+        repository
+            .saved_statuses(owner.clone())
+            .await
+            .unwrap()
+            .len()
+            <= 20
+    );
+    let serialized =
+        serde_json::to_value(repository.export_user_data(owner).await.unwrap()).unwrap();
+    assert!(serialized["saved_statuses"][0]["last_used_at"].is_string());
+    assert!(serialized["saved_statuses"][0]["save_count"].is_i64());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn memory_saved_status_history_contract() {
+    verify_saved_status_history_contract(
+        &crate::domain::InMemoryChatRepository::default(),
+        "memory-status",
+    )
+    .await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn sqlite_saved_status_history_contract() {
+    let repository = SqliteChatRepository::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    repository.migrate().await.unwrap();
+    verify_saved_status_history_contract(&repository, "sqlite-status").await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn postgres_saved_status_history_contract() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let repository = PostgresChatRepository::connect(&url).await.unwrap();
+    repository.migrate().await.unwrap();
+    verify_saved_status_history_contract(&repository, &uuid::Uuid::now_v7().simple().to_string())
+        .await;
 }
 
 #[cfg(test)]

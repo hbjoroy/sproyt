@@ -22,7 +22,7 @@ use crate::domain::{
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
     PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PrepareEnrollmentInvitation,
-    RenameCircle, RepositoryError, RepositoryFuture, SendMessage, SetCircleMemberRole,
+    RenameCircle, RepositoryError, RepositoryFuture, SavedStatus, SendMessage, SetCircleMemberRole,
     UpdateChannelDescription, User, UserId, UserProfile, UserTask, enrollment_email_hash,
     enrollment_token_hash, generate_enrollment_token,
 };
@@ -337,18 +337,66 @@ impl ChatRepository for SqliteChatRepository {
         actor: UserId,
         text: String,
         emoji: String,
-        expires_at: Option<DateTime<Utc>>,
+        expires_at: Option<chrono::DateTime<Utc>>,
     ) -> RepositoryFuture<'a, UserProfile> {
         Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            // The first write locks the user before history updates and eviction.
             let result = sqlx::query("update users set status_text = ?, status_emoji = ?, status_expires_at = ? where id = ? and kind = 'human'")
-                .bind(text).bind(emoji).bind(expires_at).bind(actor.to_string())
-                .execute(&self.pool).await.map_err(sql_error)?;
+                .bind(&text).bind(&emoji).bind(expires_at).bind(actor.to_string())
+                .execute(&mut *tx).await.map_err(sql_error)?;
             if result.rows_affected() == 0 {
                 return Err(RepositoryError::PermissionDenied);
             }
             let row = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at, status_text, status_emoji, status_expires_at, exists(select 1 from signup_ordinals where user_id=users.id and ordinal<=50) early_adopter from users where id = ?")
-                .bind(actor.to_string()).fetch_one(&self.pool).await.map_err(sql_error)?;
-            user_profile_from_row(row)
+                .bind(actor.to_string()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+            if !text.is_empty() || !emoji.is_empty() {
+                sqlx::query(r#"insert into personal_statuses(user_id,text,emoji,save_count,last_used_at) values(?,?,?,1,?) on conflict(user_id,text,emoji) do update set save_count=case when personal_statuses.save_count<9223372036854775807 then personal_statuses.save_count+1 else personal_statuses.save_count end,last_used_at=excluded.last_used_at"#)
+                    .bind(actor.to_string()).bind(&text).bind(&emoji).bind(Utc::now())
+                    .execute(&mut *tx).await.map_err(sql_error)?;
+                sqlx::query(r#"delete from personal_statuses where user_id=?1 and (text,emoji) in (select text,emoji from personal_statuses where user_id=?1 order by save_count desc,last_used_at desc,text,emoji limit -1 offset 20)"#)
+                    .bind(actor.to_string()).execute(&mut *tx).await.map_err(sql_error)?;
+            }
+            let profile = user_profile_from_row(row)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(profile)
+        })
+    }
+
+    fn saved_statuses<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<SavedStatus>> {
+        Box::pin(async move {
+            let rows = sqlx::query(r#"select text,emoji,save_count,last_used_at from personal_statuses where user_id=? order by save_count desc,last_used_at desc,text,emoji"#)
+                .bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter().map(saved_status_from_row).collect()
+        })
+    }
+
+    fn remove_saved_status<'a>(
+        &'a self,
+        actor: UserId,
+        text: String,
+        emoji: String,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            // Acquire SQLite's write lock before any read, avoiding lock upgrades.
+            let result = sqlx::query("update users set id=id where id=? and kind='human'")
+                .bind(actor.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            if result.rows_affected() == 0 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("delete from personal_statuses where user_id=? and text=? and emoji=?")
+                .bind(actor.to_string())
+                .bind(text)
+                .bind(emoji)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
         })
     }
 
@@ -781,6 +829,9 @@ impl ChatRepository for SqliteChatRepository {
             .fetch_all(&mut *transaction)
             .await
             .map_err(sql_error)?;
+            let saved_statuses = sqlx::query(r#"select text,emoji,save_count,last_used_at from personal_statuses where user_id=? order by save_count desc,last_used_at desc,text,emoji"#)
+                .bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?
+                .into_iter().map(saved_status_from_row).collect::<Result<Vec<_>, _>>()?;
             let agent_memories =
                 crate::chatbot::memory::repository::export_memory!(transaction, false, actor);
             transaction.commit().await.map_err(sql_error)?;
@@ -790,6 +841,7 @@ impl ChatRepository for SqliteChatRepository {
                 user,
                 signup_ordinal,
                 saved_emojis,
+                saved_statuses,
                 circles,
                 channels,
                 agent_memories,
@@ -3184,6 +3236,15 @@ fn user_from_row(row: sqlx::sqlite::SqliteRow) -> Result<User, RepositoryError> 
     })
 }
 
+fn saved_status_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SavedStatus, RepositoryError> {
+    Ok(SavedStatus {
+        text: row.try_get("text").map_err(storage)?,
+        emoji: row.try_get("emoji").map_err(storage)?,
+        save_count: row.try_get("save_count").map_err(storage)?,
+        last_used_at: row.try_get("last_used_at").map_err(storage)?,
+    })
+}
+
 fn user_profile_from_row(row: sqlx::sqlite::SqliteRow) -> Result<UserProfile, RepositoryError> {
     let expires_at: Option<DateTime<Utc>> = row.try_get("status_expires_at").map_err(sql_error)?;
     let expired = expires_at.is_some_and(|expiry| expiry <= Utc::now());
@@ -4131,6 +4192,73 @@ mod tests {
                 .any(|event| event.0 == "process.correlated")
         );
         assert!(process_events.iter().all(|event| event.1.is_some()));
+    }
+
+    #[tokio::test]
+    async fn sqlite_saved_status_history_contract_is_atomic_and_survives_reconnect() {
+        let path =
+            std::env::temp_dir().join(format!("sproyt-statuses-{}.sqlite", uuid::Uuid::now_v7()));
+        let url = format!("sqlite://{}", path.to_string_lossy().replace('\\', "/"));
+        let repository = SqliteChatRepository::connect(&url).await.unwrap();
+        repository.migrate().await.unwrap();
+        let owner = UserId::named("persisted-status-owner");
+        sqlx::query("insert into users(id,kind,display_name) values(?,'human','Status owner')")
+            .bind(owner.to_string())
+            .execute(&repository.pool)
+            .await
+            .unwrap();
+        let profile = repository
+            .set_user_status(owner.clone(), "Active".into(), "☀️".into(), None)
+            .await
+            .unwrap();
+        let history = repository.saved_statuses(owner.clone()).await.unwrap();
+        sqlx::query("create trigger reject_test_status before insert on personal_statuses when new.text='Rejected' begin select raise(abort,'test history failure'); end")
+            .execute(&repository.pool).await.unwrap();
+        assert!(
+            repository
+                .set_user_status(owner.clone(), "Rejected".into(), "".into(), None)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            repository.list_user_profiles(owner.clone()).await.unwrap()[0],
+            profile
+        );
+        assert_eq!(
+            repository.saved_statuses(owner.clone()).await.unwrap(),
+            history
+        );
+        sqlx::query("drop trigger reject_test_status")
+            .execute(&repository.pool)
+            .await
+            .unwrap();
+        repository.pool.close().await;
+        let reopened = SqliteChatRepository::connect(&url).await.unwrap();
+        assert_eq!(
+            reopened.saved_statuses(owner.clone()).await.unwrap(),
+            history
+        );
+        sqlx::query("update personal_statuses set save_count=9223372036854775807 where user_id=?")
+            .bind(owner.to_string())
+            .execute(&reopened.pool)
+            .await
+            .unwrap();
+        reopened
+            .set_user_status(owner.clone(), "Active".into(), "☀️".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.saved_statuses(owner.clone()).await.unwrap()[0].save_count,
+            i64::MAX
+        );
+        sqlx::query("delete from users where id=?")
+            .bind(owner.to_string())
+            .execute(&reopened.pool)
+            .await
+            .unwrap();
+        assert!(reopened.saved_statuses(owner).await.unwrap().is_empty());
+        reopened.pool.close().await;
+        std::fs::remove_file(path).unwrap();
     }
 
     #[tokio::test]

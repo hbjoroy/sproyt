@@ -367,6 +367,14 @@ pub struct UserTask {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SavedStatus {
+    pub text: String,
+    pub emoji: String,
+    pub save_count: i64,
+    pub last_used_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PortableUserExport {
     pub format: String,
     pub exported_at: DateTime<Utc>,
@@ -376,6 +384,8 @@ pub struct PortableUserExport {
     pub signup_ordinal: Option<u64>,
     #[serde(default)]
     pub saved_emojis: Vec<String>,
+    #[serde(default)]
+    pub saved_statuses: Vec<SavedStatus>,
     pub circles: Vec<ExportedCircle>,
     pub channels: Vec<ExportedChannel>,
     /// Own agent memory, filtered by current source-channel access in the same

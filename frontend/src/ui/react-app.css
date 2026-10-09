@@ -1,4 +1,10 @@
 /* Sprøyt React application styles built on the design-system tokens. */
+.sp-saved-statuses summary { min-height: 44px; cursor: pointer; display: list-item; padding-block: .6rem; }
+.sp-saved-statuses ul { list-style: none; padding: 0; margin: .4rem 0; max-height: 12rem; overflow-y: auto; }
+.sp-saved-statuses li { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: .25rem; }
+.sp-saved-statuses li > .sp-button { min-height: 44px; }
+.sp-saved-statuses li > .sp-button:first-child { justify-content: flex-start; text-align: start; overflow-wrap: anywhere; }
+.sp-saved-statuses li > .sp-button:last-child { min-width: 44px; }
 /* The bundled conversation row has one primary action. Sprøyt also needs the
    host-owned per-channel notification command beside that primary action. */
 .sp-conversation-row {

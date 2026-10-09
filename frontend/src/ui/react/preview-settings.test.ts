@@ -16,6 +16,7 @@ function host(user: UserProfile): PreviewSettingsHost {
     profile: () => user,
     profileFor: () => user,
     async saveName() {}, async saveStatus() {}, async saveNotifications() {}, async enablePush() {},
+    async loadStatuses() { return []; }, async removeStatus() {},
     async loadNotifications() { throw new Error("unused"); }
   };
 }
