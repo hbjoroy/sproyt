@@ -96,6 +96,10 @@ jobs:
 
       - name: Check, build, and test frontend boundaries
         run: |
+          npm --prefix packages/sproyt-ui ci
+          npm --prefix packages/sproyt-ui test
+          npm --prefix packages/sproyt-ui run build
+          (cd packages/sproyt-ui && node scripts/smoke-package.mjs)
           npm --prefix frontend ci
           npm --prefix frontend test
 

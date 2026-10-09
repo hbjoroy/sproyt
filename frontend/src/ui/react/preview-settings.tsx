@@ -15,7 +15,7 @@ export interface PreviewSettingsHost {
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export function PreviewProfile({ host }: { host: PreviewSettingsHost }) {
+export function PreviewProfile({ host, focusStatus = false }: { host: PreviewSettingsHost; focusStatus?: boolean }) {
   const profile = host.profile();
   const [name, setName] = useState(profile?.display_name ?? "");
   const [text, setText] = useState(profile?.status_text ?? "");
@@ -24,6 +24,13 @@ export function PreviewProfile({ host }: { host: PreviewSettingsHost }) {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const initialized = useRef(Boolean(profile));
+  const statusField = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!focusStatus || !profile) return;
+    // React autofocus runs before the native dialog becomes modal.
+    const frame = requestAnimationFrame(() => statusField.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [focusStatus, Boolean(profile)]);
   useEffect(() => {
     if (!initialized.current && profile) {
       initialized.current = true;
@@ -44,12 +51,12 @@ export function PreviewProfile({ host }: { host: PreviewSettingsHost }) {
     </p>}
     {profile.handle && <p>Offentleg brukarnamn: @{profile.handle}</p>}
     <form onSubmit={event => { event.preventDefault(); void save(() => host.saveName(name.trim()), "Namnet er lagra."); }}>
-      <TextField label="Visningsnamn" value={name} onChange={event => setName(event.target.value)} required disabled={busy} autoFocus />
+      <TextField label="Visningsnamn" value={name} onChange={event => setName(event.target.value)} required disabled={busy} autoFocus={!focusStatus} />
       <Button type="submit" busy={busy} disabled={!name.trim()}>Lagre namn</Button>
     </form>
     <form onSubmit={event => { event.preventDefault(); void save(() => host.saveStatus(text, emoji), "Statusen er lagra."); }}>
       <TextField label="Statusemoji" value={emoji} onChange={event => setEmoji(event.target.value)} disabled={busy} />
-      <TextField label="Statusmelding" value={text} onChange={event => setText(event.target.value)} disabled={busy} />
+      <TextField ref={statusField} label="Statusmelding" value={text} onChange={event => setText(event.target.value)} disabled={busy} />
       <Button type="submit" busy={busy}>Lagre status</Button>
       <Button disabled={busy} onClick={() => void save(async () => {
         await host.saveStatus("", ""); setText(""); setEmoji("");
@@ -120,10 +127,31 @@ export function PreviewNotifications({ host }: { host: PreviewSettingsHost }) {
   </div>;
 }
 
-export function PreviewSettingsDialog({ kind, host, onClose }: {
-  kind: "profile" | "notifications"; host: PreviewSettingsHost; onClose(): void;
+export function PreviewSettingsDialog({ kind, host, onClose, focusStatus = false }: {
+  kind: "profile" | "notifications"; host: PreviewSettingsHost; onClose(): void; focusStatus?: boolean;
 }) {
-  return <Dialog open title={kind === "profile" ? "Profil og status" : "Varslingsinnstillingar"} closeLabel="Tilbake til menyen" onClose={onClose}>
-    {kind === "profile" ? <PreviewProfile host={host} /> : <PreviewNotifications host={host} />}
+  return <Dialog open title={kind === "profile" ? "Profil og status" : "Varslingsinnstillingar"} closeLabel={focusStatus ? "Lukk status" : "Tilbake til menyen"} onClose={onClose}>
+    {kind === "profile" ? <PreviewProfile host={host} focusStatus={focusStatus} /> : <PreviewNotifications host={host} />}
   </Dialog>;
+}
+
+/** Other members' statuses are informational; only your own opens the editor. */
+export function MessageProfileStatus({ host, userId, own }: { host: PreviewSettingsHost; userId: string; own: boolean }) {
+  const profile = host.profileFor?.(userId);
+  const status = [profile?.status_emoji.trim(), profile?.status_text.trim()].filter(Boolean).join(" ");
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  if (!status && !open) return null;
+  if (!own) return <span className="sp-message-profile-status" title={status}>{status}</span>;
+  return <>
+    {status && <button ref={trigger} type="button" className="sp-message-profile-status sp-message-status-edit"
+      aria-label={`Endre status: ${status}`} title="Endre status"
+      onPointerDown={event => event.stopPropagation()}
+      onClick={event => {
+        event.stopPropagation(); event.currentTarget.focus({ preventScroll: true }); setOpen(true);
+      }}>{status}</button>}
+    {open && <PreviewSettingsDialog kind="profile" host={host} focusStatus onClose={() => {
+      setOpen(false); requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
+    }} />}
+  </>;
 }

@@ -4,6 +4,13 @@ Status: arkitektur for første implementasjon, 2026-09-30. Astra har vurdert
 eksisterande agent-, meldings- og vLLM-kode. Dette er ein avgrensa chatbot,
 utan verktøy, nettsøk eller høve til å starte andre handlingar.
 
+## Oppdatering 9. oktober 2026
+
+Den opphavlege avgrensinga utan verktøy nedanfor er historisk. Konfigurerte
+agentar har no avgrensa, modellvalde leseverktøy for vêrstad, Parikia-anløp
+og autoriserte AIS-observasjonar. Sjå [agent-read-tools.md](agent-read-tools.md).
+Ingen fri nettverkstilgang eller modellstyrte skrivehandlingar er lagde til.
+
 ## Åtferd og omfang
 
 Ein kretseigar opprettar ein agent med namn, triggerord/-frasar og

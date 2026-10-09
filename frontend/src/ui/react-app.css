@@ -58,10 +58,15 @@
   background: var(--sp-surface); color: var(--sp-text); box-shadow: 0 6px 18px #0002;
   font-size: .75rem; line-height: 1.35; white-space: normal; pointer-events: none;
 }
-#sproyt-react-preview [data-message-id]:has(.sp-message-meta strong:hover) > .sp-early-adopter-tooltip,
-#sproyt-react-preview [data-message-id]:has(.sp-message-meta strong:focus-visible) > .sp-early-adopter-tooltip,
+#sproyt-react-preview [data-message-id]:has(.sp-message-early-adopter:hover) > .sp-early-adopter-tooltip,
+#sproyt-react-preview [data-message-id]:has(.sp-message-early-adopter:focus-visible) > .sp-early-adopter-tooltip,
 #sproyt-react-preview [data-message-id][data-early-adopter-open="true"] > .sp-early-adopter-tooltip { display: block; }
-#sproyt-react-preview [data-message-id]:has(.sp-early-adopter-tooltip) .sp-message-meta strong { cursor: help; }
+.sp-message-early-adopter, .sp-message-status-edit {
+  border: 0; padding: 0 .2rem; background: transparent; color: inherit; font: inherit;
+  cursor: pointer; line-height: 1.25; outline-offset: 3px;
+}
+.sp-message-early-adopter { cursor: help; }
+.sp-message-profile-status { min-width: 0; max-width: min(24rem, 50%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; }
 .sp-profile-early-adopter {
   width: fit-content; margin: 0; padding: .3rem .55rem;
   border: 1px solid var(--sp-rule); background: var(--sp-wash);
@@ -153,6 +158,7 @@
 .sp-image-viewer-surface {
   width: 100%; height: 100%; display: grid; place-items: center; overflow: hidden;
   touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .sp-image-viewer-surface:active { cursor: grabbing; }
 .sp-image-viewer-surface img {
@@ -341,6 +347,7 @@
   }
 }
 @media (pointer: coarse) {
+  .sp-message-early-adopter, .sp-message-status-edit { min-width: 44px; min-height: 44px; }
   .sp-composer-symbol.sp-button, .sp-message-symbol.sp-button { min-width: 44px; min-height: 44px; }
   .sp-reaction-badge-wrap > .sp-button { min-width: 44px; min-height: 44px; }
   #sproyt-react-preview .sp-time { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; }

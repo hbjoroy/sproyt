@@ -141,7 +141,7 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
         <button type="button" className="sp-image-viewer-control" aria-label="Lukk bilete" title="Lukk bilete" onClick={onClose}>×</button>
       </div>
     </header>
-    <div ref={surface} className="sp-image-viewer-surface" onPointerDown={pointerDown} onPointerMove={pointerMove}
+    <div ref={surface} className="sp-image-viewer-surface" onContextMenu={event => event.preventDefault()} onPointerDown={pointerDown} onPointerMove={pointerMove}
       onPointerUp={pointerEnd} onPointerCancel={pointerCancel} onLostPointerCapture={pointerCancel}
       // Touch double taps are already handled on pointerup; browsers may also emit dblclick.
       onDoubleClick={() => { if (lastPointerType.current !== "touch") toggleZoom(); }} onWheel={wheel}>

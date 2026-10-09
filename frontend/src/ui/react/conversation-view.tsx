@@ -71,6 +71,7 @@ export interface TimelineProps {
   readonly formatAuthor?: (message: ChatMessage) => string;
   /** Marks public first-50 members without exposing their private signup number. */
   readonly earlyAdopter?: (message: ChatMessage) => boolean;
+  readonly renderAuthorStatus?: (message: ChatMessage) => ReactNode;
   /** Render safe React-owned message content. */
   readonly renderContent: (message: ChatMessage) => ReactNode;
   /** Permission checks, replies, reaction counts, edit and delete stay with the host. */
@@ -116,7 +117,7 @@ export function ConversationTimeline(props: TimelineProps) {
   </div>;
 }
 
-export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderContent" | "renderActions" | "messageStatus" | "onReactionRequest">;
+export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderAuthorStatus" | "renderContent" | "renderActions" | "messageStatus" | "onReactionRequest">;
 
 export function formatMessageDateTime(sentAt: string): string {
   return new Date(sentAt).toLocaleString(["nn-NO", "nb-NO"], { dateStyle: "full", timeStyle: "medium" });
@@ -215,12 +216,9 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     }
   }, [fullTimestamp, timestampTooltipId]);
   useEffect(() => {
-    const author = wrapper.current?.querySelector(".sp-message-meta strong");
+    const author = wrapper.current?.querySelector(".sp-message-early-adopter");
     if (!(author instanceof HTMLElement)) return;
-    author.title = earlyAdopter ? "Blant dei første 50 på Sprøyt" : author.textContent ?? "";
     if (!earlyAdopter) return;
-    author.tabIndex = 0;
-    author.setAttribute("role", "button");
     author.setAttribute("aria-describedby", earlyAdopterTooltipId);
     author.setAttribute("aria-expanded", "false");
     const stopGesture = (event: Event) => event.stopPropagation();
@@ -261,7 +259,12 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   return <>{props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
     {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
     <div ref={wrapper} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
-    <Message author={author} dateTime={message.sent_at}
+    <Message author={author} authorContent={<>
+        <strong>{author}</strong>
+        {earlyAdopter && <button type="button" className="sp-message-early-adopter"
+          aria-label="Blant dei første 50 på Sprøyt" title="Blant dei første 50 på Sprøyt">✨</button>}
+        {props.renderAuthorStatus?.(message)}
+      </>} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
         actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}

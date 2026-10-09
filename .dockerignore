@@ -4,6 +4,8 @@
 target
 frontend/node_modules
 frontend/dist
+packages/sproyt-ui/node_modules
+packages/sproyt-ui/dist
 docs
 *.sqlite
 *.log

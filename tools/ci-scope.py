@@ -19,13 +19,13 @@ def scope(paths, force_full=False):
         return {'browser': 'none', 'recovery': 'false', 'reason': 'CI policy only; selector regression checks apply'}
 
     # Unclassified build/configuration changes retain the complete gate.
-    known = ('src/', 'frontend/', 'assets/', 'crates/', 'migrations/')
-    if any(not p.startswith(known) or p.endswith(('Cargo.toml', 'Cargo.lock')) for p in paths):
+    known = ('src/', 'frontend/', 'assets/', 'crates/', 'migrations/', 'packages/sproyt-ui/')
+    if any((not p.startswith(known) and p not in policy) or p.endswith(('Cargo.toml', 'Cargo.lock')) for p in paths):
         return {'browser': 'full', 'recovery': 'true', 'reason': 'build, dependencies, configuration or unclassified changes'}
 
     recovery = any(p.startswith(('migrations/', 'src/db', 'src/domain/', 'src/operations/'))
                    or p == 'src/main.rs' for p in paths)
-    frontend = [p for p in paths if p.startswith('frontend/')]
+    frontend = [p for p in paths if p.startswith(('frontend/', 'packages/sproyt-ui/'))]
     image_frontend = {
         'frontend/src/imagegen.ts', 'frontend/src/ui/react/preview-imagegen.tsx',
         'frontend/tests/boundaries.test.ts', 'frontend/tests/ui-react-media.spec.ts',
@@ -38,7 +38,7 @@ def scope(paths, force_full=False):
         or (p.startswith('src/web/') and p != 'src/web/imagegen.rs')
         or (p.startswith('assets/') and p.endswith(('.html', '.js', '.css')))
         for p in paths)
-    browser = 'full' if shared_contract or (frontend and not image_only) else 'imagegen' if frontend else 'none'
+    browser = 'full' if shared_contract or (frontend and not image_only) or set(paths) & policy else 'imagegen' if frontend else 'none'
     return {'browser': browser, 'recovery': str(recovery).lower(),
             'reason': 'checks selected from changed application areas'}
 
