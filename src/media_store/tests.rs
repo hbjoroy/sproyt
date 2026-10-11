@@ -377,6 +377,8 @@ async fn sqlite_upload_lifecycle_preserves_originals_and_enforces_quota() {
     repository.migrate().await.unwrap();
     let store = repository.media_store_for_test(limits());
     contract(&repository, &store).await;
+    policy_contract(&repository, &store).await;
+    global_policy_contract(&repository, &store).await;
 }
 
 #[tokio::test]
@@ -390,4 +392,156 @@ async fn postgres_upload_lifecycle_preserves_originals_and_enforces_quota() {
     repository.migrate().await.unwrap();
     let store = repository.media_store_for_test(limits());
     contract(&repository, &store).await;
+    policy_contract(&repository, &store).await;
+    global_policy_contract(&repository, &store).await;
+}
+
+async fn policy_contract<R: ChatRepository>(repository: &R, store: &MediaStore) {
+    use crate::domain::MediaUpload;
+    let (actor, channel) = owner(repository).await;
+    let mut limited = store.clone();
+    limited.limits.owner_bytes = 4 * CHUNK_BYTES as u64;
+    limited.check_policy(true).await.unwrap();
+    limited.check_policy(false).await.unwrap();
+    assert!(
+        matches!(store.check_policy(true).await, Err(UploadError::Conflict)),
+        "pods must not overwrite shared policy"
+    );
+    let legacy = |size: usize| MediaUpload {
+        actor: actor.clone(),
+        channel_id: crate::domain::ChannelId::from_uuid(channel),
+        filename: "generated.png".into(),
+        content_type: "image/png".into(),
+        content: vec![7; size],
+        dimensions: None,
+        preview: None,
+    };
+    let upload_input = input(3 * CHUNK_BYTES as u64);
+    let (upload, old) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            limited.create(&actor, channel, &upload_input),
+            repository.store_media(legacy(2 * CHUNK_BYTES), "legacy".into())
+        )
+    })
+    .await
+    .unwrap();
+    let upload = match (upload, old) {
+        (Ok(upload), Err(RepositoryError::Quota)) => {
+            repository
+                .store_media(legacy(1), "small".into())
+                .await
+                .unwrap();
+            upload
+        }
+        (Err(UploadError::Quota), Ok(_)) => limited
+            .create(&actor, channel, &input(2 * CHUNK_BYTES as u64))
+            .await
+            .unwrap(),
+        other => panic!("race bypassed shared owner quota: {other:?}"),
+    };
+    let mut bytes = vec![4; upload.size_bytes as usize];
+    bytes[..3].copy_from_slice(&[0xff, 0xd8, 0xff]);
+    for (index, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
+        limited
+            .put_chunk(&actor, upload.id, index as u32, chunk, &hash(chunk))
+            .await
+            .unwrap();
+    }
+    let media = limited.complete(&actor, upload.id).await.unwrap();
+    assert_eq!(
+        repository
+            .media_metadata(actor.clone(), media)
+            .await
+            .unwrap()
+            .size_bytes,
+        upload.size_bytes
+    );
+    assert_eq!(
+        repository.store_media(legacy(1), "overflow".into()).await,
+        Err(RepositoryError::Quota)
+    );
+    with_store!(store, |pool, pg| {
+        let result = sqlx::query(&sql(
+            "update media_objects set size_bytes=size_bytes+1 where id=?uuid",
+            pg,
+        ))
+        .bind(media.to_string())
+        .execute(pool)
+        .await;
+        assert!(result.is_err(), "immutable size must not bypass quota");
+        // This is isolated CI fixture cleanup, never application rollback logic.
+        sqlx::query("update media_upload_budget set max_file_bytes=null,owner_bytes=null,total_bytes=null where id=1").execute(pool).await.unwrap();
+    });
+}
+
+async fn global_policy_contract<R: ChatRepository>(repository: &R, store: &MediaStore) {
+    let (a, channel_a) = owner(repository).await;
+    let (b, channel_b) = owner(repository).await;
+    let mut limited = store.clone();
+    limited.limits.owner_bytes = 4 * CHUNK_BYTES as u64;
+    limited.check_policy(true).await.unwrap();
+    let used: i64 = with_store!(store, |pool, pg| {
+        let used:i64=sqlx::query_scalar("select cast(coalesce((select sum(case when size_bytes<1048576 then 1048576 else size_bytes end) from media_objects),0)+coalesce((select sum(case when expected_bytes<1048576 then 1048576 else expected_bytes end) from media_uploads where state!='complete'),0) as bigint)").fetch_one(pool).await.unwrap();
+        sqlx::query(&sql(
+            "update media_upload_budget set total_bytes=? where id=1",
+            pg,
+        ))
+        .bind(used + 3 * CHUNK_BYTES as i64)
+        .execute(pool)
+        .await
+        .unwrap();
+        used
+    });
+    limited.limits.total_bytes = (used + 3 * CHUNK_BYTES as i64) as u64;
+    let input_a = input(3 * CHUNK_BYTES as u64);
+    let input_b = input(3 * CHUNK_BYTES as u64);
+    let (left, right) = tokio::join!(
+        limited.create(&a, channel_a, &input_a),
+        limited.create(&b, channel_b, &input_b)
+    );
+    let (actor, channel, accepted) = match (left, right) {
+        (Ok(u), Err(UploadError::Quota)) => (a, channel_a, u),
+        (Err(UploadError::Quota), Ok(u)) => (b, channel_b, u),
+        other => panic!("global quota race: {other:?}"),
+    };
+    with_store!(store, |pool, pg| {
+        // The reservation is still OPEN, so an insertion cannot borrow it.
+        let result=sqlx::query(&sql("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,created_at) values(?uuid,?uuid,?uuid,?,'forged.jpg','image/jpeg',?,'forged',current_timestamp)",pg))
+            .bind(Uuid::now_v7().to_string()).bind(actor.to_string()).bind(channel.to_string()).bind(format!("chunks:v1:{}",accepted.id)).bind(accepted.size_bytes as i64).execute(pool).await;
+        assert!(
+            result.is_err(),
+            "open upload must not confer reservation credit"
+        );
+    });
+    limited.abort(&actor, accepted.id).await.unwrap();
+    with_store!(store, |pool, pg| {
+        if pg {
+            let mut tx = pool.begin().await.unwrap();
+            sqlx::query("update media_upload_budget set revision=revision where id=1")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            let actor_clone = actor.clone();
+            let pool_clone = pool.clone();
+            let waiting = tokio::spawn(async move {
+                sqlx::query(&sql("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,created_at) values(?uuid,?uuid,?uuid,?,'wait.jpg','image/jpeg',1,'wait',current_timestamp)",pg))
+                    .bind(Uuid::now_v7().to_string()).bind(actor_clone.to_string()).bind(channel.to_string()).bind("wait:legacy").execute(&pool_clone).await
+            });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(!waiting.is_finished());
+            sqlx::query(&sql("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,created_at) values(?uuid,?uuid,?uuid,?,'fill.jpg','image/jpeg',?,'fill',current_timestamp)",pg))
+                .bind(Uuid::now_v7().to_string()).bind(actor.to_string()).bind(channel.to_string()).bind("fill:legacy").bind(3*CHUNK_BYTES as i64).execute(&mut *tx).await.unwrap();
+            tx.commit().await.unwrap();
+            let error = tokio::time::timeout(Duration::from_secs(5), waiting)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err();
+            assert!(
+                matches!(error,sqlx::Error::Database(ref db) if db.message()=="SPROYT_MEDIA_QUOTA"),
+                "waiter used stale totals"
+            );
+        }
+        sqlx::query("update media_upload_budget set max_file_bytes=null,owner_bytes=null,total_bytes=null where id=1").execute(pool).await.unwrap();
+    });
 }

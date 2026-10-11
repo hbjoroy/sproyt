@@ -96,7 +96,7 @@ RUN case "$TARGETARCH" in \
     && apk --root /worker-root --arch "$apk_arch" --initdb --no-scripts --no-cache \
        --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/main \
        --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/community \
-       add vips-tools=8.17.3-r1
+       add vips-tools=8.17.3-r1 vips-heif=8.17.3-r1
 
 FROM scratch AS media-worker
 ARG VCS_REF=unknown

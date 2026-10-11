@@ -220,3 +220,13 @@ mediaWorker:
       cpu: 500m
       memory: 512Mi
       ephemeral-storage: 2Gi
+
+# Explicit capacity decision, never automatically enabled by a new image.
+# initializePolicy uses the migration hook to initialize a NULL database policy;
+# it never replaces a different existing policy. Disabling uploads preserves it.
+mediaUploads:
+  enabled: false
+  initializePolicy: false
+  maxFileBytes: 0
+  ownerBudgetBytes: 0
+  totalBudgetBytes: 0

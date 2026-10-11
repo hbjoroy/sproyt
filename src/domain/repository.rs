@@ -336,6 +336,7 @@ pub trait ChatRepository: Send + Sync + 'static {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RepositoryError {
+    Quota,
     Conflict,
     NotFound,
     PermissionDenied,
@@ -345,6 +346,7 @@ pub enum RepositoryError {
 impl fmt::Display for RepositoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Quota => formatter.write_str("media storage budget is full"),
             Self::Conflict => formatter.write_str("repository conflict"),
             Self::NotFound => formatter.write_str("repository resource not found"),
             Self::PermissionDenied => formatter.write_str("repository permission denied"),
@@ -356,6 +358,7 @@ impl fmt::Display for RepositoryError {
 impl RepositoryError {
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::Quota => "quota",
             Self::Conflict => "conflict",
             Self::NotFound => "not_found",
             Self::PermissionDenied => "permission_denied",
@@ -365,6 +368,7 @@ impl RepositoryError {
 
     pub const fn public_message(&self) -> &'static str {
         match self {
+            Self::Quota => "media storage budget is full",
             Self::Conflict => "resource conflict",
             Self::NotFound => "resource not found",
             Self::PermissionDenied => "permission denied",

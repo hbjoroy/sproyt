@@ -112,8 +112,14 @@ pub(crate) fn storage(error: impl std::fmt::Display) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
 }
 
-fn sql_error(error: sqlx::Error) -> RepositoryError {
+pub(crate) fn sql_error(error: sqlx::Error) -> RepositoryError {
     match &error {
+        sqlx::Error::Database(database) if database.message() == "SPROYT_MEDIA_QUOTA" => {
+            RepositoryError::Quota
+        }
+        sqlx::Error::Database(database) if database.message() == "SPROYT_MEDIA_IMMUTABLE" => {
+            RepositoryError::Conflict
+        }
         sqlx::Error::Database(database) if database.is_unique_violation() => {
             RepositoryError::Conflict
         }

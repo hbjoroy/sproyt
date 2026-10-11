@@ -30,6 +30,51 @@ lagar førehandsvising av eit 100-megapikselbilete innanfor 512 MiB.
 PR #258 si avviste opplastingsgrense må erstattast før
 kodeutrulling. Det gjeld også ein release som inneheld berre den nye lesaren.
 
+`codex/media-database-budget` legg til migrasjon 65 og ein autoritativ
+kvotepolicy i databasen. Astra har kontrollert både arkitekturen og dei
+kritiske låse-, lease- og retry-kontraktane. PostgreSQL-testane og
+kodeksmoke-testane er framleis obligatoriske merge-gatar.
+
+## Felles lagringsbudsjett og aktivering
+
+Canary og prod brukar same database. Policyen i `media_upload_budget`
+gjeld derfor alle skrivarar, inkludert eldre multipart-opplastingar og
+agentgenererte bilete. Databasetriggarar serialiserer opptak mot same
+budsjettlås som nye reservasjonar. Kvar original eller ufullført opplasting
+kostar minst 1 MiB. Ved publisering får berre den samsvarande, fullstendige
+og forsegla reservasjonen frådrag; ein open sesjon gir aldri kvotekreditt.
+Eigarskap, storleik og lagringsnøkkel på publiserte originalar er immutable.
+Kvotefeil blir presenterte som HTTP 507, også for genererte bilete.
+
+Migrasjonen opprettar ingen aktiv policy. Operatøren må først velje
+filgrense, per-brukar-budsjett og totalbudsjett ut frå faktisk ledig disk,
+eksisterande mediebruk, WAL og backup. `sproyt media-policy` initialiserer
+ein tom policy eksplisitt. Vanleg serverstart kan berre kontrollere at
+konfigurasjonen samsvarer med policyen; han kan ikkje endre henne.
+`sproyt migrate-media` kombinerer migrasjon og eksplisitt initialisering.
+Helm brukar denne kommandoen berre når `mediaUploads.initializePolicy`
+er slått på, med tre eksplisitte bytebudsjett. Å slå av opplastingsrutene
+fjernar ikkje den lagra policyen eller kvotehandhevinga.
+
+Aktiveringsrekkjefølgja er:
+
+1. Fullfør PostgreSQL-, backup/restore- og kodektestane; bygg og publiser
+   begge immutable ARM64-image gjennom etablert CI/CD.
+2. Kontroller delt databasekapasitet og ta normal migrasjonsbackup.
+3. Initialiser policyen eksplisitt gjennom migrasjonshooken, aktiver
+   canary sin blokkskrivar og éin isolert worker gjennom GitOps.
+4. Prøv originalar over 30 MiB og video, kontroller identisk nedlasta hash,
+   range-avspeling, preview, retry, avbroten worker og eigarskapsgrenser.
+5. Aktiver prod etter canary-akseptanse. Rollback må behalde dual reader
+   og databasens policy; allereie publiserte originalar skal vere lesbare.
+
+Når blokkskrivaren er aktiv, får ein utdatert multipart-klient HTTP 409
+med beskjed om å oppdatere. Han går dermed ikkje gjennom den gamle
+dekodaren. Oppdatert klient brukar små blokker, medan utkast blir bevarte.
+Førehandsvisingar som feilar viser ein tydeleg status; originalen er
+framleis tilgjengeleg. Kodeksmoke omfattar JPEG, PNG, WebP, HEIC og
+EXIF-rotasjon, utan å omskrive originalen.
+
 ## Lesing og kompatibilitet
 
 Metadata blir henta utan blob. Kvar SQL-lesing returnerer høgst 1 MiB og
