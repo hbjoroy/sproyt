@@ -115,9 +115,9 @@ pub(crate) async fn enqueue(
             Ok(id) => id,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         };
-        let (media, content) = match state
+        let media = match state
             .chat
-            .load_media(principal.user.id.clone(), media_id)
+            .media_metadata(principal.user.id.clone(), media_id)
             .await
         {
             Ok(value) => value,
@@ -129,6 +129,60 @@ pub(crate) async fn enqueue(
         {
             return StatusCode::NOT_FOUND.into_response();
         }
+        let content = match state
+            .chat
+            .load_media_preview(principal.user.id.clone(), media_id)
+            .await
+        {
+            Ok(Some(preview))
+                if preview.content.len() <= crate::media_store::preview::PREVIEW_MAX_BYTES =>
+            {
+                preview.content
+            }
+            Ok(None) => {
+                let preview_state = match state
+                    .chat
+                    .media_preview_state(principal.user.id.clone(), media_id)
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(_) => return StatusCode::NOT_FOUND.into_response(),
+                };
+                if preview_state != "legacy" {
+                    return (
+                        StatusCode::CONFLICT,
+                        "Førehandsvisinga er ikkje klar. Prøv igjen når biletet er behandla.",
+                    )
+                        .into_response();
+                }
+                if media.size_bytes > 2 * 1024 * 1024 {
+                    return (
+                        StatusCode::CONFLICT,
+                        "Dette biletet manglar ei avgrensa førehandsvising.",
+                    )
+                        .into_response();
+                }
+                let mut content = Vec::new();
+                while content.len() < media.size_bytes as usize {
+                    let block = match state
+                        .chat
+                        .read_media_slice(
+                            principal.user.id.clone(),
+                            media_id,
+                            content.len() as u64,
+                            crate::media_store::CHUNK_BYTES,
+                        )
+                        .await
+                    {
+                        Ok(bytes) if !bytes.is_empty() => bytes,
+                        _ => return internal(),
+                    };
+                    content.extend(block);
+                }
+                content
+            }
+            _ => return internal(),
+        };
         match service.media_published(id).await {
             Ok(false) => (),
             Ok(true) => {

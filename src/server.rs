@@ -254,6 +254,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         )
         .route("/api/v1/channels/{id}/media", post(upload_media))
         .route(
+            "/api/v1/media-uploads/config",
+            get(crate::web::media_uploads::configuration),
+        )
+        .route(
             "/api/v1/channels/{id}/media-uploads",
             post(crate::web::media_uploads::create).layer(DefaultBodyLimit::max(8192)),
         )
@@ -287,6 +291,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             get(download_media_attachment),
         )
         .route("/api/v1/media/{id}/preview", get(download_media_preview))
+        .route(
+            "/api/v1/media/{id}/status",
+            get(crate::web::media::media_preview_status),
+        )
         .route("/ws", get(ws_handler))
         .route(
             "/api/v1/commands",

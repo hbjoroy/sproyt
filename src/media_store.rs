@@ -187,6 +187,9 @@ macro_rules! read_upload {
 }
 
 impl MediaStore {
+    pub(crate) fn max_file_bytes(&self) -> u64 {
+        self.limits.max_file_bytes
+    }
     #[cfg(test)]
     pub(crate) fn test_sqlite(pool: SqlitePool, limits: UploadLimits) -> Self {
         Self {

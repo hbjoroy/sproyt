@@ -1,5 +1,5 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MediaObject } from "../../types";
 import { ImageDownloadLink } from "./image-download-link";
 import { ImageViewer } from "./image-viewer";
@@ -8,6 +8,38 @@ import { ImageViewer } from "./image-viewer";
 function mediaUrl(id: string, suffix: "" | "/preview" | "/download" = "") {
   const participant = new URL(window.location.href).searchParams.get("participant");
   return `/api/v1/media/${id}${suffix}${participant ? `?participant=${encodeURIComponent(participant)}` : ""}`;
+}
+
+function PreviewImage({ id, name }: { id: string; name: string }) {
+  const image = useRef<HTMLImageElement>(null);
+  const [state, setState] = useState("pending");
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let active = true;
+    let started = false;
+    const controller = new AbortController();
+    async function poll() {
+      try {
+        const response = await fetch(mediaUrl(id, "/preview").replace("/preview", "/status"), { credentials: "same-origin", cache: "no-store", signal: AbortSignal.any([controller.signal,AbortSignal.timeout(10000)]) });
+        if ([401,403,404].includes(response.status)) return;
+        if (response.ok) {
+          const status: { state: string } = await response.json();
+          if (!active) return;
+          setState(status.state);
+          if (["ready", "legacy", "failed"].includes(status.state)) return;
+        }
+      } catch { /* Keep the bounded placeholder and retry; never use the original. */ }
+      if (active) timer = setTimeout(() => void poll(), 5000);
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (!started && entries.some(entry => entry.isIntersecting)) { started = true; void poll(); }
+    }, { rootMargin: "100px" });
+    if (image.current) observer.observe(image.current);
+    return () => { active = false; observer.disconnect(); controller.abort(); if (timer) clearTimeout(timer); };
+  }, [id]);
+  const url = mediaUrl(id, "/preview");
+  return <><img ref={image} src={state === "ready" ? `${url}${url.includes("?") ? "&" : "?"}ready=1` : url} alt={name} loading="lazy" />
+    {state === "failed" && <span role="status">Førehandsvisinga kunne ikkje lagast. Originalen er tilgjengeleg.</span>}</>;
 }
 
 function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: {
@@ -20,9 +52,9 @@ function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: 
       : onOpen
         ? <button type="button" aria-label={`Vis ${name} i full storleik`} onClick={onOpen}
             className="sp-media-open">
-            <img src={mediaUrl(id, "/preview")} alt={name} loading="lazy" />
+            <PreviewImage id={id} name={name} />
           </button>
-        : <img src={mediaUrl(id, fullResolution ? "" : "/preview")} alt={name} loading="lazy" />}
+        : fullResolution ? <img src={mediaUrl(id)} alt={name} /> : <PreviewImage id={id} name={name} />}
     <figcaption><span title={name}>{name}</span>{onOpen
       ? <><button type="button" className="sp-media-original" onClick={onOpen}
           aria-label="Vis originalbiletet">Original</button>
@@ -40,7 +72,7 @@ export function PreviewAttachments({ media, status, busy, onRemove }: {
     {media.map(item => <div className="sp-draft-attachment" key={item.id}>
       <button className="sp-draft-thumbnail" type="button" title={`Vis ${item.original_filename}`}
         aria-label={`Vis ${item.original_filename}`} onClick={() => setExpanded(item.id)}>
-        {item.content_type.startsWith("image/") ? <img src={mediaUrl(item.id, "/preview")} alt="" /> : <span aria-hidden="true">▶</span>}
+        {item.content_type.startsWith("image/") ? <PreviewImage id={item.id} name="" /> : <span aria-hidden="true">▶</span>}
       </button>
       <span className="sp-draft-filename" title={item.original_filename}>{item.original_filename}</span>
       <Button variant="quiet" disabled={busy} aria-label={`Fjern ${item.original_filename}`} title={`Fjern ${item.original_filename}`}

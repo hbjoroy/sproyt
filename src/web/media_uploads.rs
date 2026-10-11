@@ -14,6 +14,19 @@ use uuid::Uuid;
 static CHUNK_TRANSFERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 static FINALIZATIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
+pub(crate) async fn configuration(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(error) = authenticate_http(&state, query, &headers).await {
+        return auth_error_response(error);
+    }
+    private_json(
+        serde_json::json!({"enabled":state.media_store.is_some(),"max_file_bytes":state.media_store.as_ref().map(|s|s.max_file_bytes()).unwrap_or(35*1024*1024),"chunk_bytes":CHUNK_BYTES}),
+    )
+}
+
 fn private_json(value: impl serde::Serialize) -> Response {
     ([(header::CACHE_CONTROL, "private, no-store")], Json(value)).into_response()
 }

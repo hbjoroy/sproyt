@@ -1,3 +1,4 @@
+import { uploadMediaChunks } from "../src/media-upload";
 import assert from "node:assert/strict";
 import "./conversation-snapshot.test";
 import "./visible-read.test";
@@ -1081,4 +1082,38 @@ test("literal image commands preserve text and quoted literal remains expanded",
   assert.deepEqual(imageRequest('/imagegen literally blue'), { prompt: "literally blue", mode: "expanded" });
   assert.equal(imageRequest('ordinary literal message'), null);
   assert.throws(() => imageRequest('/imagegen literal ""'));
+});
+
+// Upload retries must include incomplete 2xx response bodies, not only headers.
+test("chunk upload retries committed requests with truncated bodies and never reads a whole file", async () => {
+  const previousFetch = globalThis.fetch;
+  const slices: number[] = [];
+  const bytes = new Uint8Array(1024 * 1024 + 13).fill(7);
+  const file = new File([bytes], "large.jpg", { type: "image/jpeg" });
+  const originalSlice = file.slice.bind(file);
+  file.slice = (start, end, type) => { slices.push((end || file.size) - (start || 0)); return originalSlice(start,end,type); };
+  file.arrayBuffer = async () => { throw new Error("whole-file reads are forbidden"); };
+  let creationId = ""; let createCount = 0; let completeCount = 0; let chunkCount = 0;
+  const id = "018abcdef-0000-7000-8000-000000000000".slice(1);
+  const broken = () => new Response(new ReadableStream({ start(controller) { controller.error(new Error("response interrupted")); } }), { status: 200 });
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/config")) return Response.json({enabled:true,max_file_bytes:1024**3,chunk_bytes:1024*1024});
+    if (url.endsWith("/media-uploads")) {
+      const request = JSON.parse(String(init?.body));
+      if (!creationId) creationId = request.request_id;
+      assert.equal(request.request_id,creationId);
+      createCount++;
+      return createCount===1 ? broken() : Response.json({id,chunk_bytes:1024*1024,next_chunk:0});
+    }
+    if (url.includes("/chunks/")) { chunkCount++; assert.ok(init?.body instanceof Blob); assert.ok(init.body.size<=1024*1024); return Response.json({}); }
+    if (url.endsWith("/complete")) { completeCount++; return completeCount===1 ? broken() : Response.json({media:{id}}); }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  try {
+    const response = await uploadMediaChunks(file,"channel",{refresh:async()=>false,progress:()=>{}});
+    assert.ok(response?.ok); assert.deepEqual(await response.json(),{media:{id}});
+    assert.equal(createCount,2); assert.equal(completeCount,2); assert.equal(chunkCount,2);
+    assert.deepEqual(slices,[1024*1024,13]);
+  } finally { globalThis.fetch = previousFetch; }
 });

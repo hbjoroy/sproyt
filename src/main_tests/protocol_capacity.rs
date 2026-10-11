@@ -165,6 +165,65 @@ async fn chunk_upload_http_preserves_large_video_and_enforces_admission() {
         .await
         .unwrap();
     assert_eq!(rejected.status(), 403);
+    let jpeg = vec![0xff, 0xd8, 0xff, 0];
+    let store = state.media_store.as_ref().unwrap();
+    let staged = store
+        .create(
+            &owner.user.id,
+            *channel.id.as_uuid(),
+            &crate::media_store::NewUpload {
+                request_id: uuid::Uuid::now_v7(),
+                filename: "pending.jpg".into(),
+                content_type: "image/jpeg".into(),
+                size_bytes: jpeg.len() as u64,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .put_chunk(
+            &owner.user.id,
+            staged.id,
+            0,
+            &jpeg,
+            &format!("{:x}", Sha256::digest(&jpeg)),
+        )
+        .await
+        .unwrap();
+    let image = store.complete(&owner.user.id, staged.id).await.unwrap();
+    let preview = client
+        .get(format!(
+            "{base}/api/v1/media/{image}/preview?participant=chunk-owner"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), 202);
+    assert_eq!(preview.headers()["cache-control"], "private, no-store");
+    assert_eq!(preview.headers()["content-type"], "image/svg+xml");
+    assert_ne!(preview.bytes().await.unwrap().as_ref(), jpeg);
+    let status: serde_json::Value = client
+        .get(format!(
+            "{base}/api/v1/media/{image}/status?participant=chunk-owner"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(status["state"], "pending");
+    assert_eq!(
+        client
+            .get(format!(
+                "{base}/api/v1/media/{image}/status?participant=chunk-outsider"
+            ))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
     server.abort();
 }
 

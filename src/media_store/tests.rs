@@ -203,6 +203,13 @@ async fn contract<R: ChatRepository>(repository: &R, store: &MediaStore) {
     let active = store.create(&actor, channel, &input(1)).await.unwrap();
     // A process killed by OOM is reclaimed, but cannot publish with its old token.
     let first = store.claim_preview().await.unwrap().unwrap();
+    assert_eq!(
+        repository
+            .media_preview_state(actor.clone(), media)
+            .await
+            .unwrap(),
+        "running"
+    );
     assert_eq!(first.media_id, *media.as_uuid());
     assert!(store.claim_preview().await.unwrap().is_none());
     assert_eq!(
@@ -275,6 +282,13 @@ async fn contract<R: ChatRepository>(repository: &R, store: &MediaStore) {
         .unwrap()
         .unwrap();
     assert_eq!(preview.content, vec![1, 2, 3]);
+    assert_eq!(
+        repository
+            .media_preview_state(actor.clone(), media)
+            .await
+            .unwrap(),
+        "ready"
+    );
     repository
         .leave_channel(LeaveChannel {
             actor: actor.clone(),
