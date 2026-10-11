@@ -46,11 +46,10 @@ pub(crate) async fn run() -> Result<(), Error> {
     tokio::spawn(async move {
         #[cfg(unix)]
         {
-            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(mut terminate) => {
-                    tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=terminate.recv()=>{} }
-                }
-                Err(_) => {}
+            if let Ok(mut terminate) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            {
+                tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=terminate.recv()=>{} }
             }
         }
         #[cfg(not(unix))]
