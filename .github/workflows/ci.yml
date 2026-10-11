@@ -545,12 +545,31 @@ jobs:
           format: spdx-json
           output-file: sproyt-media-worker.spdx.json
 
+      - name: Verify media worker SBOM identifies Alpine runtime packages
+        run: |
+          jq -e '
+            [.packages[].externalRefs[]? | select(.referenceType == "purl")
+              | .referenceLocator | select(startswith("pkg:apk/alpine/"))] as $apk
+            | ($apk | length > 0)
+              and ($apk | all(test("[?&]distro=alpine-3\\.24(?:\\.[0-9]+)?(?:&|$)")))
+              and ($apk | any(startswith("pkg:apk/alpine/vips@")))
+              and ($apk | any(startswith("pkg:apk/alpine/libheif@")))
+          ' sproyt-media-worker.spdx.json
+
       - name: Scan media worker for vulnerabilities
+        id: worker-scan
         uses: anchore/scan-action@v7
         with:
           image: local/sproyt-media-worker-arm64:${{ github.sha }}
           fail-build: true
           severity-cutoff: high
+
+      - name: Retain media worker vulnerability report even when the gate fails
+        if: always() && steps.worker-scan.outputs.sarif != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: media-worker-vulnerabilities
+          path: ${{ steps.worker-scan.outputs.sarif }}
 
       - name: Upload delivery evidence
         uses: actions/upload-artifact@v6

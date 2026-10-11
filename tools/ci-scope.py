@@ -17,6 +17,9 @@ def scope(paths, force_full=False):
     policy = {'.github/workflows/ci.yml', 'tools/ci-scope.py', 'tools/test-ci-scope.py'}
     if set(paths) <= policy:
         return {'browser': 'none', 'recovery': 'false', 'reason': 'CI policy only; selector regression checks apply'}
+    if set(paths) <= policy | {'tools/verify-media-runtime.sh'}:
+        return {'browser': 'none', 'recovery': 'false',
+                'reason': 'isolated codec test only; mandatory codec gate still runs'}
 
     # Unclassified build/configuration changes retain the complete gate.
     known = ('src/', 'frontend/', 'assets/', 'crates/', 'migrations/', 'packages/sproyt-ui/')

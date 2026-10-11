@@ -84,19 +84,22 @@ FROM ${BUILD_VARIANT}-builder AS compiled
 
 # Populate target-architecture runtime libraries using native apk. No target
 # binary or package script is executed, and Rust remains native Zig cross-built.
-FROM build-base AS media-runtime-builder
+FROM --platform=$BUILDPLATFORM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS media-runtime-builder
 ARG TARGETARCH
 RUN case "$TARGETARCH" in \
       amd64) apk_arch=x86_64 ;; \
       arm64) apk_arch=aarch64 ;; \
       *) exit 1 ;; \
     esac \
+    && apk add --no-cache alpine-keys=2.6-r0 \
     && mkdir -p /worker-root/etc/apk/keys \
-    && cp /etc/apk/keys/* /worker-root/etc/apk/keys/ \
+    && cp /usr/share/apk/keys/"$apk_arch"/*.pub /worker-root/etc/apk/keys/ \
+    && cp -L /etc/os-release /worker-root/etc/os-release \
+    && cp -L /etc/alpine-release /worker-root/etc/alpine-release \
     && apk --root /worker-root --arch "$apk_arch" --initdb --no-scripts --no-cache \
-       --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/main \
-       --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/community \
-       add vips-tools=8.17.3-r1 vips-heif=8.17.3-r1
+       --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
+       --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
+       add vips-tools=8.18.2-r0 vips-heif=8.18.2-r0 'glib>=2.88.1' 'libarchive>=3.8.7'
 
 FROM scratch AS media-worker
 ARG VCS_REF=unknown
