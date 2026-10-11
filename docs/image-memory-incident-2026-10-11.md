@@ -15,7 +15,19 @@ biletebehandling, men loggane identifiserer ikkje den konkrete operasjonen
 som utløyste minnetoppen. Eit normalt komprimert mobilbilete kan krevje
 mange gonger filstorleiken under dekoding, orientering og skalering.
 
-## Tiltak
+## Korrigert retning og utrullingsstatus
+
+Brukaren avviste kravet om å redusere store bilete manuelt. Tiltaka nedanfor
+beskriv PR #258, som vart merga, men ikkje publisert eller utrulla.
+Berre minnegrensa på 512 MiB er i prod og canary; apprevisjonen er framleis
+`a35a5a7`. Grensene i PR #258 er ikkje den godkjende endelege løysinga.
+
+Ny retning er uendra originalar, blokkvis opplasting/nedlasting og ei varig
+kø med separat worker for tung behandling. Sjå
+[implementasjonsplanen](media-upload-queue-plan.md), laga etter Astra-review.
+Den avviste opplastingsgrensa må erstattast før neste kodeutrulling.
+
+## Første tiltak, avvist som endeleg løysing
 
 - Éin stor opplasting, referansekonvertering eller godkjenning av eit
   generert bilete per prosess. HTTP-admission skjer før store kroppar eller
