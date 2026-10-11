@@ -150,7 +150,8 @@ resources:
     memory: 64Mi
   limits:
     cpu: 500m
-    memory: 256Mi
+    # Original image decoding needs headroom above normal idle memory usage.
+    memory: 512Mi
 
 podDisruptionBudget:
   minAvailable: 1

@@ -15,6 +15,69 @@ use crate::{
 
 const MAX_MEDIA_BYTES: usize = 35 * 1024 * 1024;
 const MEDIA_PREVIEW_LONG_EDGE: u32 = 720;
+const MAX_IMAGE_PIXELS: u64 = 24_000_000;
+const MAX_IMAGE_ALLOC: u64 = 96 * 1024 * 1024;
+
+// Admission precedes reading large bodies. Do not queue compressed originals.
+static MEDIA_ADMISSION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+static IMAGE_PROCESSING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+pub(crate) fn admit_media()
+-> Result<tokio::sync::SemaphorePermit<'static>, Box<axum::response::Response>> {
+    MEDIA_ADMISSION.try_acquire().map_err(|_| {
+        Box::new(
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                [(axum::http::header::RETRY_AFTER, "2")],
+                "Biletebehandling er opptatt. Prøv igjen om litt.",
+            )
+                .into_response(),
+        )
+    })
+}
+
+pub(crate) async fn process_image<F, T>(work: F) -> Result<T, tokio::task::JoinError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let permit = IMAGE_PROCESSING
+        .acquire()
+        .await
+        .expect("image processing semaphore stays open");
+    tokio::task::spawn_blocking(move || {
+        // A disconnected request must not release the budget while its worker runs.
+        let _permit = permit;
+        work()
+    })
+    .await
+}
+
+pub(crate) fn decode_image(content: &[u8]) -> Result<image::DynamicImage, MediaPreparationError> {
+    let limits = || {
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(8192);
+        limits.max_image_height = Some(8192);
+        limits.max_alloc = Some(MAX_IMAGE_ALLOC);
+        limits
+    };
+    let reader = || {
+        let mut reader = image::ImageReader::new(Cursor::new(content))
+            .with_guessed_format()
+            .map_err(|_| MediaPreparationError::InvalidImage)?;
+        reader.limits(limits());
+        Ok::<_, MediaPreparationError>(reader)
+    };
+    let map_error = |error| match error {
+        image::ImageError::Limits(_) => MediaPreparationError::TooLarge,
+        _ => MediaPreparationError::InvalidImage,
+    };
+    let (width, height) = reader()?.into_dimensions().map_err(map_error)?;
+    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
+        return Err(MediaPreparationError::TooLarge);
+    }
+    reader()?.decode().map_err(map_error)
+}
 
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
@@ -32,6 +95,10 @@ pub(crate) async fn upload_media(
         Err(error) => {
             return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
         }
+    };
+    let _admission = match admit_media() {
+        Ok(permit) => permit,
+        Err(response) => return *response,
     };
     let field = match multipart.next_field().await {
         Ok(Some(field)) => field,
@@ -90,6 +157,12 @@ pub(crate) async fn upload_media(
             )
                 .into_response();
         }
+        Err(MediaPreparationError::TooLarge) => {
+            return (
+                axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                "Biletet er for stort å behandle. Bruk eit bilete på høgst 24 megapikslar og 8192 pikslar per side.",
+            ).into_response();
+        }
         Err(MediaPreparationError::Worker) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -127,6 +200,7 @@ pub(crate) async fn upload_media(
 #[derive(Debug)]
 pub(crate) enum MediaPreparationError {
     InvalidImage,
+    TooLarge,
     Worker,
 }
 
@@ -144,10 +218,9 @@ pub(crate) async fn prepare_uploaded_media(
         return Err(MediaPreparationError::InvalidImage);
     }
     let is_jpeg = content_type == "image/jpeg";
-    tokio::task::spawn_blocking(move || {
+    process_image(move || {
         use image::GenericImageView;
-        let image =
-            image::load_from_memory(&content).map_err(|_| MediaPreparationError::InvalidImage)?;
+        let image = decode_image(&content)?;
         let orientation = exif_orientation(&content, is_jpeg);
         let image = apply_exif_orientation(image, orientation);
         let normalized_content = if is_jpeg && orientation != 1 {
@@ -450,6 +523,80 @@ pub(crate) fn detected_media_type(content: &[u8], declared: &str) -> Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_large_jpeg_header_before_decoding_pixels() {
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode_image(&image::DynamicImage::new_rgb8(1, 1))
+            .unwrap();
+        let sof = jpeg
+            .windows(2)
+            .position(|bytes| bytes == [0xff, 0xc0])
+            .unwrap();
+        // The file still contains just one pixel: success would attempt to allocate
+        // from an untrusted header before discovering its invalid pixel payload.
+        jpeg[sof + 5..sof + 7].copy_from_slice(&6000u16.to_be_bytes());
+        jpeg[sof + 7..sof + 9].copy_from_slice(&8000u16.to_be_bytes());
+        assert!(matches!(
+            decode_image(&jpeg),
+            Err(MediaPreparationError::TooLarge)
+        ));
+    }
+
+    #[test]
+    fn small_valid_image_keeps_its_pixels() {
+        let source = image::RgbImage::from_pixel(4, 3, image::Rgb([11, 22, 33]));
+        let mut png = Cursor::new(Vec::new());
+        source.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        assert_eq!(decode_image(png.get_ref()).unwrap().to_rgb8(), source);
+    }
+
+    #[tokio::test]
+    async fn large_rotated_phone_image_preserves_original_and_preview() {
+        let source = image::DynamicImage::new_rgb8(6000, 4000);
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode_image(&source)
+            .unwrap();
+        drop(source);
+        let orientation_6 = [
+            0xff, 0xe1, 0x00, 0x22, b'E', b'x', b'i', b'f', 0, 0, b'I', b'I', 0x2a, 0, 8, 0, 0, 0,
+            1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        jpeg.splice(2..2, orientation_6);
+        let (original, dimensions, preview) =
+            prepare_uploaded_media(jpeg, "image/jpeg").await.unwrap();
+        assert_eq!(dimensions, Some((4000, 6000)));
+        let original_dimensions = image::ImageReader::new(Cursor::new(original))
+            .with_guessed_format()
+            .unwrap()
+            .into_dimensions()
+            .unwrap();
+        assert_eq!(original_dimensions, (4000, 6000));
+        let preview = preview.unwrap();
+        assert_eq!((preview.width, preview.height), (480, 720));
+    }
+
+    #[tokio::test]
+    async fn processing_budget_survives_request_cancellation() {
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let first = tokio::spawn(process_image(move || {
+            let _ = entered_tx.send(());
+            let _ = release_rx.recv();
+        }));
+        entered_rx.await.unwrap();
+        first.abort();
+        let _ = first.await;
+        let still_reserved = IMAGE_PROCESSING.available_permits() == 0;
+        release_tx.send(()).unwrap();
+        process_image(|| ()).await.unwrap();
+        assert!(
+            still_reserved,
+            "blocking worker must retain its memory permit"
+        );
+    }
 
     #[test]
     fn download_name_cannot_escape_the_attachment_header() {
