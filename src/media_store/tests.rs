@@ -379,6 +379,7 @@ async fn sqlite_upload_lifecycle_preserves_originals_and_enforces_quota() {
     contract(&repository, &store).await;
     policy_contract(&repository, &store).await;
     global_policy_contract(&repository, &store).await;
+    channel_pilot_contract(&repository, &store).await;
 }
 
 #[tokio::test]
@@ -394,6 +395,52 @@ async fn postgres_upload_lifecycle_preserves_originals_and_enforces_quota() {
     contract(&repository, &store).await;
     policy_contract(&repository, &store).await;
     global_policy_contract(&repository, &store).await;
+    channel_pilot_contract(&repository, &store).await;
+}
+
+async fn channel_pilot_contract<R: ChatRepository>(repository: &R, store: &MediaStore) {
+    let (actor, channel) = owner(repository).await;
+    let mut pilot = store.clone();
+    pilot.allowed_channels = Some(vec![Uuid::now_v7()]);
+    assert!(matches!(
+        pilot.create(&actor, channel, &input(3)).await,
+        Err(UploadError::NotFound)
+    ));
+    pilot.allowed_channels = Some(vec![channel]);
+    let upload = pilot.create(&actor, channel, &input(3)).await.unwrap();
+    let bytes = [0xff, 0xd8, 0xff];
+    pilot
+        .put_chunk(&actor, upload.id, 0, &bytes, &hash(&bytes))
+        .await
+        .unwrap();
+    pilot.allowed_channels = Some(vec![]);
+    assert!(matches!(
+        pilot.status(&actor, upload.id).await,
+        Err(UploadError::NotFound)
+    ));
+    assert!(matches!(
+        pilot
+            .put_chunk(&actor, upload.id, 0, &bytes, &hash(&bytes))
+            .await,
+        Err(UploadError::NotFound)
+    ));
+    assert!(matches!(
+        pilot.complete(&actor, upload.id).await,
+        Err(UploadError::NotFound)
+    ));
+    // A restriction is an admission control, never a change to original readers.
+    pilot.allowed_channels = Some(vec![channel]);
+    let media = pilot.complete(&actor, upload.id).await.unwrap();
+    let mut restored_reader = store.clone();
+    restored_reader.allowed_channels = Some(vec![]);
+    assert_eq!(
+        repository
+            .read_media_slice(actor.clone(), media, 0, 3)
+            .await
+            .unwrap(),
+        bytes
+    );
+    restored_reader.cleanup_expired().await.unwrap();
 }
 
 async fn policy_contract<R: ChatRepository>(repository: &R, store: &MediaStore) {

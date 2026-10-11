@@ -92,15 +92,19 @@ pub(crate) async fn upload_media(
         Ok(principal) => principal,
         Err(error) => return auth_error_response(error),
     };
-    if state.media_store.is_some() {
-        return (axum::http::StatusCode::CONFLICT,"Oppdater Sprøyt og prøv opplastinga igjen. Denne serveren brukar den nye opplastingsflyten.").into_response();
-    }
     let channel_id = match ChannelId::new(channel) {
         Ok(id) => id,
         Err(error) => {
             return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
         }
     };
+    if state
+        .media_store
+        .as_ref()
+        .is_some_and(|store| store.channel_enabled(*channel_id.as_uuid()))
+    {
+        return (axum::http::StatusCode::CONFLICT,"Oppdater Sprøyt og prøv opplastinga igjen. Denne serveren brukar den nye opplastingsflyten.").into_response();
+    }
     let _admission = match admit_media() {
         Ok(permit) => permit,
         Err(response) => return *response,

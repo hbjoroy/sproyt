@@ -32,9 +32,14 @@ export async function uploadMediaChunks(file: File, channelId: string, options: 
   }
   const configResponse = await request("/api/v1/media-uploads/config");
   if (!configResponse.ok) return configResponse;
-  const config: { enabled: boolean; max_file_bytes: number; chunk_bytes: number } = await configResponse.json();
+  const config: { enabled: boolean; max_file_bytes: number; chunk_bytes: number; allowed_channel_ids?: string[] | null } = await configResponse.json();
   if (typeof config.enabled !== "boolean") throw new Error("Ugyldig opplastingskonfigurasjon");
   if (!config.enabled) return null;
+  if (config.allowed_channel_ids != null) {
+    if (!Array.isArray(config.allowed_channel_ids) || !config.allowed_channel_ids.every(id => typeof id === "string"))
+      throw new Error("Ugyldig opplastingskonfigurasjon");
+    if (!config.allowed_channel_ids.includes(channelId)) return null;
+  }
   if (config.chunk_bytes !== 1024 * 1024 || !Number.isSafeInteger(config.max_file_bytes) || config.max_file_bytes > 1024 ** 3)
     throw new Error("Ugyldig opplastingskonfigurasjon");
   if (!file.size || file.size > config.max_file_bytes)
