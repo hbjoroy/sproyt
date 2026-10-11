@@ -53,7 +53,7 @@ macro_rules! plan {
 
                 sqlx::query(&sql("insert into agent_image_publications(id,agent_id,channel_id,source_message_id,text_job_id,source_sha256,config_revision,access_revision,identity_id,identity_sha256,created_at,updated_at,expires_at) select ?uuid,?uuid,?uuid,?uuid,j.id,?,?int,?int,?,?,?int,?int,?int from circle_chat_agent_jobs j where j.agent_id=?uuid and j.source_message_id=?uuid and j.config_revision=?int and j.access_revision=?int on conflict(agent_id,source_message_id) do nothing",$pg))
 
-                    .bind(id).bind($agent).bind($message.channel_id.to_string()).bind($message.id.as_uuid().to_string()).bind(digest($message.body.as_str().as_bytes())).bind($revision.to_string()).bind($access.to_string()).bind(&config.identity_id).bind(identity.sha256()).bind(Utc::now().timestamp().to_string()).bind(Utc::now().timestamp().to_string()).bind(($message.sent_at.timestamp()+WINDOW_SECONDS).to_string()).bind($agent).bind($message.id.as_uuid().to_string()).bind($revision.to_string()).bind($access.to_string()).execute(&mut **$tx).await.map_err(storage)?;
+                    .bind(id).bind($agent).bind($message.channel_id.to_string()).bind($message.id.as_uuid().to_string()).bind(digest($message.body.as_str().as_bytes())).bind($revision.to_string()).bind($access.to_string()).bind(&config.identity_id).bind(identity.sha256()).bind(Utc::now().timestamp().to_string()).bind(Utc::now().timestamp().to_string()).bind(($message.sent_at.timestamp()+WINDOW_SECONDS).to_string()).bind($agent).bind($message.id.as_uuid().to_string()).bind($revision.to_string()).bind($access.to_string()).execute(&mut **$tx).await.map_err(crate::db::sql_error)?;
 
             }
 
@@ -667,13 +667,13 @@ macro_rules! authorize_picture {
 
         let query=format!("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,width,height,analysis_status,analysis_metadata,created_at) values(?uuid,?uuid,?uuid,?,'generated-agent-picture.png','image/png',?int,?,?,?,'disabled',{metadata_type},current_timestamp)");
 
-        sqlx::query(&sql(&query,$pg)).bind(&media).bind(&request.agent_id).bind(&request.channel_id).bind(format!("db:{media}")).bind(prepared.0.len().to_string()).bind(digest(&prepared.0)).bind(prepared.1.map(|v|v.0 as i32)).bind(prepared.1.map(|v|v.1 as i32)).bind(metadata).execute(&mut **$tx).await.map_err(storage)?;
+        sqlx::query(&sql(&query,$pg)).bind(&media).bind(&request.agent_id).bind(&request.channel_id).bind(format!("db:{media}")).bind(prepared.0.len().to_string()).bind(digest(&prepared.0)).bind(prepared.1.map(|v|v.0 as i32)).bind(prepared.1.map(|v|v.1 as i32)).bind(metadata).execute(&mut **$tx).await.map_err(crate::db::sql_error)?;
 
-        sqlx::query(&sql("insert into media_blobs(media_id,content) values(?uuid,?)",$pg)).bind(&media).bind(prepared.0).execute(&mut **$tx).await.map_err(storage)?;
+        sqlx::query(&sql("insert into media_blobs(media_id,content) values(?uuid,?)",$pg)).bind(&media).bind(prepared.0).execute(&mut **$tx).await.map_err(crate::db::sql_error)?;
 
         if let Some(preview)=prepared.2 {
 
-            sqlx::query(&sql("insert into media_variants(media_id,variant,content_type,size_bytes,width,height,content,created_at) values(?uuid,'preview',?,?int,?,?,?,current_timestamp)",$pg)).bind(&media).bind(preview.content_type).bind(preview.content.len().to_string()).bind(preview.width as i32).bind(preview.height as i32).bind(preview.content).execute(&mut **$tx).await.map_err(storage)?;
+            sqlx::query(&sql("insert into media_variants(media_id,variant,content_type,size_bytes,width,height,content,created_at) values(?uuid,'preview',?,?int,?,?,?,current_timestamp)",$pg)).bind(&media).bind(preview.content_type).bind(preview.content.len().to_string()).bind(preview.width as i32).bind(preview.height as i32).bind(preview.content).execute(&mut **$tx).await.map_err(crate::db::sql_error)?;
 
         }
 
@@ -725,11 +725,11 @@ macro_rules! finalize_picture {
 
         let data=serde_json::to_string(&job).map_err(storage)?;
 
-        let n=sqlx::query(&sql("update image_generation_jobs set state='dismissed',revision=?int,updated_at=?int,data=? where id=? and revision=?int and state='ready'",$pg)).bind(job.revision.to_string()).bind(job.updated_at.to_string()).bind(data).bind(&job.id).bind(revision.to_string()).execute(&mut **$tx).await.map_err(storage)?.rows_affected();
+        let n=sqlx::query(&sql("update image_generation_jobs set state='dismissed',revision=?int,updated_at=?int,data=? where id=? and revision=?int and state='ready'",$pg)).bind(job.revision.to_string()).bind(job.updated_at.to_string()).bind(data).bind(&job.id).bind(revision.to_string()).execute(&mut **$tx).await.map_err(crate::db::sql_error)?.rows_affected();
 
         if n!=1 {return Err(RepositoryError::PermissionDenied);}
 
-        let n=sqlx::query(&sql("update agent_image_publications set state='published',reply_message_id=?uuid,media_id=?uuid,updated_at=?int,lease_token=null,leased_until=null where id=?uuid and lease_token=?uuid and state='publishing'",$pg)).bind($message.id.as_uuid().to_string()).bind(media_id(&request).to_string()).bind(Utc::now().timestamp().to_string()).bind(&id).bind(&token).execute(&mut **$tx).await.map_err(storage)?.rows_affected();
+        let n=sqlx::query(&sql("update agent_image_publications set state='published',reply_message_id=?uuid,media_id=?uuid,updated_at=?int,lease_token=null,leased_until=null where id=?uuid and lease_token=?uuid and state='publishing'",$pg)).bind($message.id.as_uuid().to_string()).bind(media_id(&request).to_string()).bind(Utc::now().timestamp().to_string()).bind(&id).bind(&token).execute(&mut **$tx).await.map_err(crate::db::sql_error)?.rows_affected();
 
         if n!=1 {return Err(RepositoryError::PermissionDenied);}
 
@@ -789,7 +789,7 @@ macro_rules! submit_picture {
         let mut updated=$job.clone();
         updated.revision+=1;
         let data=serde_json::to_string(&updated).map_err(storage)?;
-        let n=sqlx::query(&sql("update image_generation_jobs set state='submitting',revision=?int,updated_at=?int,data=? where id=? and revision=?int and state='queued'",$pg)).bind(updated.revision.to_string()).bind($job.updated_at.to_string()).bind(data).bind(&$job.id).bind(previous.to_string()).execute(&mut **$tx).await.map_err(storage)?.rows_affected();
+        let n=sqlx::query(&sql("update image_generation_jobs set state='submitting',revision=?int,updated_at=?int,data=? where id=? and revision=?int and state='queued'",$pg)).bind(updated.revision.to_string()).bind($job.updated_at.to_string()).bind(data).bind(&$job.id).bind(previous.to_string()).execute(&mut **$tx).await.map_err(crate::db::sql_error)?.rows_affected();
         if n==1 {*$job=updated;}
         Ok(n==1)
     }};

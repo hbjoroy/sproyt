@@ -73,6 +73,16 @@ pub(crate) enum UploadError {
     Storage(#[source] sqlx::Error),
 }
 
+impl UploadError {
+    fn from_storage(error: sqlx::Error) -> Self {
+        match &error {
+            sqlx::Error::Database(db) if db.message() == "SPROYT_MEDIA_QUOTA" => Self::Quota,
+            sqlx::Error::Database(db) if db.message() == "SPROYT_MEDIA_IMMUTABLE" => Self::Conflict,
+            _ => Self::Storage(error),
+        }
+    }
+}
+
 fn sql(query: &str, pg: bool) -> String {
     let mut output = String::new();
     let mut rest = query;
@@ -123,12 +133,12 @@ macro_rules! with_store {
 }
 macro_rules! write_transaction {
     ($pool:expr, $pg:expr) => {{
-        let mut tx = $pool.begin().await.map_err(UploadError::Storage)?;
+        let mut tx = $pool.begin().await.map_err(UploadError::from_storage)?;
         if !$pg {
             sqlx::query("update media_upload_budget set revision=revision where id=1")
                 .execute(&mut *tx)
                 .await
-                .map_err(UploadError::Storage)?;
+                .map_err(UploadError::from_storage)?;
         }
         tx
     }};
@@ -147,34 +157,39 @@ macro_rules! read_upload {
             .bind($actor.to_string())
             .fetch_optional($connection)
             .await
-            .map_err(UploadError::Storage)?
+            .map_err(UploadError::from_storage)?
             .ok_or(UploadError::NotFound)?;
-        let number = |key| row.try_get::<i64, _>(key).map_err(UploadError::Storage);
+        let number = |key| {
+            row.try_get::<i64, _>(key)
+                .map_err(UploadError::from_storage)
+        };
         let status = UploadStatus {
             id: Uuid::parse_str(
                 &row.try_get::<String, _>("id")
-                    .map_err(UploadError::Storage)?,
+                    .map_err(UploadError::from_storage)?,
             )
             .map_err(|_| UploadError::Invalid)?,
             channel_id: Uuid::parse_str(
                 &row.try_get::<String, _>("channel_id")
-                    .map_err(UploadError::Storage)?,
+                    .map_err(UploadError::from_storage)?,
             )
             .map_err(|_| UploadError::Invalid)?,
             original_filename: row
                 .try_get("original_filename")
-                .map_err(UploadError::Storage)?,
-            declared_type: row.try_get("declared_type").map_err(UploadError::Storage)?,
+                .map_err(UploadError::from_storage)?,
+            declared_type: row
+                .try_get("declared_type")
+                .map_err(UploadError::from_storage)?,
             size_bytes: u64::try_from(number("expected_bytes")?)
                 .map_err(|_| UploadError::Invalid)?,
             received_bytes: u64::try_from(number("received_bytes")?)
                 .map_err(|_| UploadError::Invalid)?,
             next_chunk: u32::try_from(number("next_chunk")?).map_err(|_| UploadError::Invalid)?,
-            state: row.try_get("state").map_err(UploadError::Storage)?,
+            state: row.try_get("state").map_err(UploadError::from_storage)?,
             expires_at: number("expires_at")?,
             media_id: row
                 .try_get::<Option<String>, _>("media_id")
-                .map_err(UploadError::Storage)?
+                .map_err(UploadError::from_storage)?
                 .map(|id| Uuid::parse_str(&id).map_err(|_| UploadError::Invalid))
                 .transpose()?,
             chunk_bytes: CHUNK_BYTES,
@@ -187,6 +202,58 @@ macro_rules! read_upload {
 }
 
 impl MediaStore {
+    pub(crate) async fn initialize_policy_from_env(
+        config: &DatabaseConfig,
+        postgres: Option<&PgPool>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let limits = UploadLimits {
+            max_file_bytes: std::env::var("SPROYT_MEDIA_MAX_FILE_BYTES")?.parse()?,
+            owner_bytes: std::env::var("SPROYT_MEDIA_OWNER_BUDGET_BYTES")?.parse()?,
+            total_bytes: std::env::var("SPROYT_MEDIA_TOTAL_BUDGET_BYTES")?.parse()?,
+        };
+        Self::connect(config, postgres, limits)
+            .await?
+            .check_policy(true)
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn check_policy(&self, initialize: bool) -> Result<(), UploadError> {
+        with_store!(self, |pool, pg| {
+            let mut tx = write_transaction!(pool, pg);
+            sqlx::query("update media_upload_budget set revision=revision where id=1")
+                .execute(&mut *tx)
+                .await
+                .map_err(UploadError::from_storage)?;
+            let row = sqlx::query(
+                "select max_file_bytes,owner_bytes,total_bytes from media_upload_budget where id=1",
+            )
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(UploadError::from_storage)?;
+            let total: Option<i64> = row
+                .try_get("total_bytes")
+                .map_err(UploadError::from_storage)?;
+            if total.is_none() && initialize {
+                sqlx::query(&sql("update media_upload_budget set max_file_bytes=?,owner_bytes=?,total_bytes=? where id=1",pg))
+                    .bind(self.limits.max_file_bytes as i64).bind(self.limits.owner_bytes as i64).bind(self.limits.total_bytes as i64)
+                    .execute(&mut *tx).await.map_err(UploadError::from_storage)?;
+            } else if total != Some(self.limits.total_bytes as i64)
+                || row
+                    .try_get::<Option<i64>, _>("max_file_bytes")
+                    .map_err(UploadError::from_storage)?
+                    != Some(self.limits.max_file_bytes as i64)
+                || row
+                    .try_get::<Option<i64>, _>("owner_bytes")
+                    .map_err(UploadError::from_storage)?
+                    != Some(self.limits.owner_bytes as i64)
+            {
+                return Err(UploadError::Conflict);
+            }
+            tx.commit().await.map_err(UploadError::from_storage)?;
+            Ok(())
+        })
+    }
     pub(crate) fn max_file_bytes(&self) -> u64 {
         self.limits.max_file_bytes
     }
@@ -216,7 +283,9 @@ impl MediaStore {
             owner_bytes: std::env::var("SPROYT_MEDIA_OWNER_BUDGET_BYTES")?.parse()?,
             total_bytes: std::env::var("SPROYT_MEDIA_TOTAL_BUDGET_BYTES")?.parse()?,
         };
-        Ok(Some(Self::connect(config, postgres, limits).await?))
+        let store = Self::connect(config, postgres, limits).await?;
+        store.check_policy(false).await?;
+        Ok(Some(store))
     }
 
     pub(crate) fn start_cleanup(&self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
@@ -296,7 +365,7 @@ impl MediaStore {
             sqlx::query("update media_upload_budget set revision=revision where id=1")
                 .execute(&mut *tx)
                 .await
-                .map_err(UploadError::Storage)?;
+                .map_err(UploadError::from_storage)?;
             let mut access_query = sql(
                 "select cast(1 as integer) from channel_memberships where channel_id=?uuid and user_id=?uuid",
                 pg,
@@ -309,12 +378,12 @@ impl MediaStore {
                 .bind(actor.to_string())
                 .fetch_optional(&mut *tx)
                 .await
-                .map_err(UploadError::Storage)?;
+                .map_err(UploadError::from_storage)?;
             if allowed.is_none() {
                 return Err(UploadError::NotFound);
             }
             let previous: Option<String> = sqlx::query_scalar(&sql("select cast(id as text) from media_uploads where owner_id=?uuid and request_id=?uuid",pg))
-                .bind(actor.to_string()).bind(input.request_id.to_string()).fetch_optional(&mut *tx).await.map_err(UploadError::Storage)?;
+                .bind(actor.to_string()).bind(input.request_id.to_string()).fetch_optional(&mut *tx).await.map_err(UploadError::from_storage)?;
             let id = if let Some(id) = previous {
                 let id = Uuid::parse_str(&id).map_err(|_| UploadError::Invalid)?;
                 let previous = read_upload!(&mut *tx, pg, actor, id, true);
@@ -332,7 +401,7 @@ impl MediaStore {
                 )
                 .fetch_one(&mut *tx)
                 .await
-                .map_err(UploadError::Storage)?;
+                .map_err(UploadError::from_storage)?;
                 let owner_active: i64 = sqlx::query_scalar(&sql(
                     "select count(*) from media_uploads where owner_id=?uuid and state!='complete'",
                     pg,
@@ -340,15 +409,15 @@ impl MediaStore {
                 .bind(actor.to_string())
                 .fetch_one(&mut *tx)
                 .await
-                .map_err(UploadError::Storage)?;
+                .map_err(UploadError::from_storage)?;
                 if active >= 64 || owner_active >= 8 {
                     return Err(UploadError::Quota);
                 }
                 // Minimum charge covers row/index/preview overhead for tiny files.
                 let total: i64 = sqlx::query_scalar("select cast(coalesce((select sum(case when size_bytes<1048576 then 1048576 else size_bytes end) from media_objects),0)+coalesce((select sum(case when expected_bytes<1048576 then 1048576 else expected_bytes end) from media_uploads where state!='complete'),0) as bigint)")
-                    .fetch_one(&mut *tx).await.map_err(UploadError::Storage)?;
+                    .fetch_one(&mut *tx).await.map_err(UploadError::from_storage)?;
                 let owner: i64 = sqlx::query_scalar(&sql("select cast(coalesce((select sum(case when size_bytes<1048576 then 1048576 else size_bytes end) from media_objects where owner_id=?uuid),0)+coalesce((select sum(case when expected_bytes<1048576 then 1048576 else expected_bytes end) from media_uploads where owner_id=?uuid and state!='complete'),0) as bigint)",pg))
-                    .bind(actor.to_string()).bind(actor.to_string()).fetch_one(&mut *tx).await.map_err(UploadError::Storage)?;
+                    .bind(actor.to_string()).bind(actor.to_string()).fetch_one(&mut *tx).await.map_err(UploadError::from_storage)?;
                 let reservation = input.size_bytes.max(CHUNK_BYTES as u64);
                 if (total as u64).saturating_add(reservation) > self.limits.total_bytes
                     || (owner as u64).saturating_add(reservation) > self.limits.owner_bytes
@@ -360,11 +429,11 @@ impl MediaStore {
                 sqlx::query(&sql("insert into media_uploads(id,owner_id,channel_id,request_id,original_filename,declared_type,expected_bytes,created_at,expires_at) values(?uuid,?uuid,?uuid,?uuid,?,?,?,?,?)",pg))
                     .bind(id.to_string()).bind(actor.to_string()).bind(channel.to_string()).bind(input.request_id.to_string())
                     .bind(&input.filename).bind(&input.content_type).bind(input.size_bytes as i64).bind(now).bind(now+UPLOAD_TTL)
-                    .execute(&mut *tx).await.map_err(UploadError::Storage)?;
+                    .execute(&mut *tx).await.map_err(UploadError::from_storage)?;
                 id
             };
             let status = read_upload!(&mut *tx, pg, actor, id, false);
-            tx.commit().await.map_err(UploadError::Storage)?;
+            tx.commit().await.map_err(UploadError::from_storage)?;
             Ok(status)
         })
     }
@@ -408,18 +477,18 @@ impl MediaStore {
             }
             if index < status.next_chunk {
                 let previous: Option<Vec<u8>> = sqlx::query_scalar(&sql("select content from media_upload_chunks where upload_id=?uuid and chunk_index=?",pg))
-                    .bind(id.to_string()).bind(index as i32).fetch_optional(&mut *tx).await.map_err(UploadError::Storage)?;
+                    .bind(id.to_string()).bind(index as i32).fetch_optional(&mut *tx).await.map_err(UploadError::from_storage)?;
                 if previous.as_deref() != Some(bytes) {
                     return Err(UploadError::Conflict);
                 }
             } else {
                 sqlx::query(&sql("insert into media_upload_chunks(upload_id,chunk_index,content,sha256) values(?uuid,?,?,?)",pg))
-                    .bind(id.to_string()).bind(index as i32).bind(bytes).bind(&hash).execute(&mut *tx).await.map_err(UploadError::Storage)?;
+                    .bind(id.to_string()).bind(index as i32).bind(bytes).bind(&hash).execute(&mut *tx).await.map_err(UploadError::from_storage)?;
                 sqlx::query(&sql("update media_uploads set next_chunk=next_chunk+1,received_bytes=received_bytes+? where id=?uuid",pg))
-                    .bind(bytes.len() as i64).bind(id.to_string()).execute(&mut *tx).await.map_err(UploadError::Storage)?;
+                    .bind(bytes.len() as i64).bind(id.to_string()).execute(&mut *tx).await.map_err(UploadError::from_storage)?;
             }
             let status = read_upload!(&mut *tx, pg, actor, id, false);
-            tx.commit().await.map_err(UploadError::Storage)?;
+            tx.commit().await.map_err(UploadError::from_storage)?;
             Ok(status)
         })
     }
@@ -439,10 +508,10 @@ impl MediaStore {
                 .bind(id.to_string())
                 .execute(&mut *tx)
                 .await
-                .map_err(UploadError::Storage)?;
+                .map_err(UploadError::from_storage)?;
             }
             let status = read_upload!(&mut *tx, pg, actor, id, false);
-            tx.commit().await.map_err(UploadError::Storage)?;
+            tx.commit().await.map_err(UploadError::from_storage)?;
             Ok(status)
         })
     }
@@ -456,7 +525,7 @@ impl MediaStore {
         with_store!(self, |pool, pg| {
             sqlx::query_scalar(&sql("select b.content from media_upload_chunks b join media_uploads u on u.id=b.upload_id join channel_memberships cm on cm.channel_id=u.channel_id and cm.user_id=u.owner_id where u.id=?uuid and u.owner_id=?uuid and u.state in ('sealed','complete') and (u.state='complete' or u.expires_at>?) and b.chunk_index=?",pg))
                 .bind(id.to_string()).bind(actor.to_string()).bind(chrono::Utc::now().timestamp()).bind(index as i32)
-                .fetch_optional(pool).await.map_err(UploadError::Storage)?.ok_or(UploadError::NotFound)
+                .fetch_optional(pool).await.map_err(UploadError::from_storage)?.ok_or(UploadError::NotFound)
         })
     }
 
@@ -484,9 +553,15 @@ impl MediaStore {
         let sha256 = format!("{:x}", hash.finalize());
         with_store!(self, |pool, pg| {
             let mut tx = write_transaction!(pool, pg);
+            // The all-writer trigger uses this same lock. Always budget ->
+            // upload -> membership, including quota-neutral publication.
+            sqlx::query("update media_upload_budget set revision=revision where id=1")
+                .execute(&mut *tx)
+                .await
+                .map_err(UploadError::from_storage)?;
             let status = read_upload!(&mut *tx, pg, actor, id, true);
             if let Some(id) = status.media_id {
-                tx.commit().await.map_err(UploadError::Storage)?;
+                tx.commit().await.map_err(UploadError::from_storage)?;
                 return Ok(MediaId::from_uuid(id));
             }
             if status.state != "sealed" {
@@ -496,7 +571,7 @@ impl MediaStore {
             sqlx::query(&sql("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,analysis_metadata,created_at) values(?uuid,?uuid,?uuid,?,?,?,?,?,?json,?)",pg))
                 .bind(media_id.to_string()).bind(actor.to_string()).bind(status.channel_id.to_string()).bind(format!("chunks:v1:{id}"))
                 .bind(&status.original_filename).bind(&content_type).bind(status.size_bytes as i64).bind(&sha256).bind("{}")
-                .bind(chrono::Utc::now()).execute(&mut *tx).await.map_err(UploadError::Storage)?;
+                .bind(chrono::Utc::now()).execute(&mut *tx).await.map_err(UploadError::from_storage)?;
             sqlx::query(&sql(
                 "update media_uploads set state='complete',media_id=?uuid where id=?uuid",
                 pg,
@@ -505,7 +580,7 @@ impl MediaStore {
             .bind(id.to_string())
             .execute(&mut *tx)
             .await
-            .map_err(UploadError::Storage)?;
+            .map_err(UploadError::from_storage)?;
             if content_type.starts_with("image/") {
                 sqlx::query(&sql(
                     "insert into media_preview_jobs(media_id,available_at) values(?uuid,?)",
@@ -515,9 +590,9 @@ impl MediaStore {
                 .bind(chrono::Utc::now().timestamp())
                 .execute(&mut *tx)
                 .await
-                .map_err(UploadError::Storage)?;
+                .map_err(UploadError::from_storage)?;
             }
-            tx.commit().await.map_err(UploadError::Storage)?;
+            tx.commit().await.map_err(UploadError::from_storage)?;
             Ok(MediaId::from_uuid(media_id))
         })
     }
@@ -533,8 +608,8 @@ impl MediaStore {
                 .bind(id.to_string())
                 .execute(&mut *tx)
                 .await
-                .map_err(UploadError::Storage)?;
-            tx.commit().await.map_err(UploadError::Storage)?;
+                .map_err(UploadError::from_storage)?;
+            tx.commit().await.map_err(UploadError::from_storage)?;
             Ok(())
         })
     }
@@ -548,7 +623,7 @@ impl MediaStore {
             .bind(chrono::Utc::now().timestamp())
             .execute(pool)
             .await
-            .map_err(UploadError::Storage)?
+            .map_err(UploadError::from_storage)?
             .rows_affected())
         })
     }

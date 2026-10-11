@@ -383,6 +383,7 @@ jobs:
           insert into agent_location_shares(user_id,agent_id,channel_id,share_id,latitude,longitude,accuracy_m,observed_at,expires_at) values('01900000-0000-7000-8000-000000000001','01900000-0000-7000-8000-000000000005','01900000-0000-7000-8000-000000000002','01900000-0000-7000-8000-000000000008',37.1,25.1,20,now(),now()+interval '30 minutes');
           insert into circle_chat_agent_jobs(id,agent_id,source_message_id,channel_id,config_revision,status,available_at,created_at,location_share_id,reply_body) values('01900000-0000-7000-8000-000000000009','01900000-0000-7000-8000-000000000005','01900000-0000-7000-8000-000000000003','01900000-0000-7000-8000-000000000002',1,'pending',1,1,'01900000-0000-7000-8000-000000000008','restore-location-evidence');
           SQL
+          psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file tools/seed-media-recovery.sql
       - name: Backup and restore into isolated database
         run: |
           client_image='postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193'
@@ -399,6 +400,7 @@ jobs:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: |
           cargo run --locked -- migrate
+          psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file tools/verify-media-recovery.sql
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select save_count from personal_statuses where text='restore-status-evidence'")" = "3"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_notes where content->>'text'='restore-memory-evidence'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_memory_profiles where enabled=false and collection_started_at is null")" = "1"

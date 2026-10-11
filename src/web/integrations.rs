@@ -349,7 +349,7 @@ async fn authenticate_integration(
             );
             Err(response)
         }
-        Err(RepositoryError::Storage(_)) => {
+        Err(RepositoryError::Storage(_) | RepositoryError::Quota) => {
             Err((StatusCode::SERVICE_UNAVAILABLE, "mellombels utilgjengeleg").into_response())
         }
         Err(RepositoryError::NotFound) => {
@@ -360,6 +360,9 @@ async fn authenticate_integration(
 
 fn integration_repository_response(error: RepositoryError) -> axum::response::Response {
     match error {
+        RepositoryError::Quota => {
+            (StatusCode::INSUFFICIENT_STORAGE, error.public_message()).into_response()
+        }
         RepositoryError::PermissionDenied => {
             (StatusCode::FORBIDDEN, "integrasjonen har ikkje tilgang").into_response()
         }

@@ -724,6 +724,7 @@ fn spawn_subscription(
 
 pub(crate) fn error_event(error: ChatError) -> ServerEvent {
     let code = match &error {
+        ChatError::Repository(RepositoryError::Quota) => "quota",
         ChatError::EngineStopped => "engine_stopped",
         ChatError::Repository(RepositoryError::Conflict) => "conflict",
         ChatError::Repository(RepositoryError::NotFound) => "not_found",

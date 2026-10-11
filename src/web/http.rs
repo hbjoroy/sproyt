@@ -27,6 +27,7 @@ pub(crate) fn repository_response(
     error: crate::domain::RepositoryError,
 ) -> axum::response::Response {
     let status = match error {
+        crate::domain::RepositoryError::Quota => axum::http::StatusCode::INSUFFICIENT_STORAGE,
         crate::domain::RepositoryError::PermissionDenied => axum::http::StatusCode::FORBIDDEN,
         crate::domain::RepositoryError::NotFound => axum::http::StatusCode::NOT_FOUND,
         crate::domain::RepositoryError::Conflict => axum::http::StatusCode::CONFLICT,
@@ -49,6 +50,9 @@ pub(crate) fn auth_error_response(error: AuthError) -> axum::response::Response 
 
 pub(crate) fn chat_error_response(error: ChatError) -> axum::response::Response {
     let status = match &error {
+        ChatError::Repository(crate::domain::RepositoryError::Quota) => {
+            axum::http::StatusCode::INSUFFICIENT_STORAGE
+        }
         ChatError::Repository(crate::domain::RepositoryError::PermissionDenied) => {
             axum::http::StatusCode::FORBIDDEN
         }

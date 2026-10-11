@@ -92,6 +92,9 @@ pub(crate) async fn upload_media(
         Ok(principal) => principal,
         Err(error) => return auth_error_response(error),
     };
+    if state.media_store.is_some() {
+        return (axum::http::StatusCode::CONFLICT,"Oppdater Sprøyt og prøv opplastinga igjen. Denne serveren brukar den nye opplastingsflyten.").into_response();
+    }
     let channel_id = match ChannelId::new(channel) {
         Ok(id) => id,
         Err(error) => {
@@ -645,7 +648,7 @@ pub(crate) async fn download_media_preview(
             if status != "legacy" {
                 return (axum::http::StatusCode::ACCEPTED,
                     [(axum::http::header::CONTENT_TYPE,"image/svg+xml"),(axum::http::header::CACHE_CONTROL,"private, no-store"),(axum::http::HeaderName::from_static("x-content-type-options"),"nosniff")],
-                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"#e8e8e1\"/><text x=\"160\" y=\"90\" text-anchor=\"middle\" fill=\"#50554a\" font-family=\"sans-serif\" font-size=\"14\">Førehandsvising blir laga …</text></svg>").into_response();
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"#e8e8e1\"/><text x=\"160\" y=\"90\" text-anchor=\"middle\" fill=\"#50554a\" font-family=\"sans-serif\" font-size=\"14\">Førehandsvising blir laga …</text></svg>".replace("Førehandsvising blir laga …",if status=="failed" {"Førehandsvisinga kunne ikkje lagast"} else {"Førehandsvising blir laga …"})).into_response();
             }
             serve_authorized_media(
                 state.chat,

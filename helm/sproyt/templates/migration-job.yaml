@@ -34,8 +34,20 @@ spec:
         - name: migrate
           image: {{ include "sproyt.migrationImage" . | quote }}
           imagePullPolicy: {{ default .Values.image.pullPolicy .Values.migration.image.pullPolicy }}
+          {{- if .Values.mediaUploads.initializePolicy }}
+          args: ["migrate-media"]
+          {{- else }}
           args: ["migrate"]
+          {{- end }}
           env:
+            {{- if .Values.mediaUploads.initializePolicy }}
+            - name: SPROYT_MEDIA_MAX_FILE_BYTES
+              value: {{ required "mediaUploads.maxFileBytes is required" .Values.mediaUploads.maxFileBytes | quote }}
+            - name: SPROYT_MEDIA_OWNER_BUDGET_BYTES
+              value: {{ required "mediaUploads.ownerBudgetBytes is required" .Values.mediaUploads.ownerBudgetBytes | quote }}
+            - name: SPROYT_MEDIA_TOTAL_BUDGET_BYTES
+              value: {{ required "mediaUploads.totalBudgetBytes is required" .Values.mediaUploads.totalBudgetBytes | quote }}
+            {{- end }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
