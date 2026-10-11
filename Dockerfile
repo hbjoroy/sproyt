@@ -91,8 +91,9 @@ RUN case "$TARGETARCH" in \
       arm64) apk_arch=aarch64 ;; \
       *) exit 1 ;; \
     esac \
+    && apk add --no-cache alpine-keys=2.6-r0 \
     && mkdir -p /worker-root/etc/apk/keys \
-    && cp /etc/apk/keys/* /worker-root/etc/apk/keys/ \
+    && cp /usr/share/apk/keys/"$apk_arch"/*.pub /worker-root/etc/apk/keys/ \
     && apk --root /worker-root --arch "$apk_arch" --initdb --no-scripts --no-cache \
        --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/main \
        --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/community \

@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # This runs native CI container tools. No emulated Rust or target binary.
+# Check ARM64 package signature verification and libraries without executing
+# target binaries. /etc/apk/keys only contains the native architecture's keys.
+docker build --target media-runtime-builder --build-arg TARGETARCH=arm64 -t local/sproyt-media-runtime-arm64 .
+docker run --rm --entrypoint /bin/sh local/sproyt-media-runtime-arm64 -ec '
+  test -x /worker-root/usr/bin/vipsthumbnail
+  test -f /worker-root/usr/lib/libvips.so.42
+  test -n "$(find /worker-root/usr/lib -name "*heif*.so*" -print -quit)"
+'
 docker build --target media-runtime-builder --build-arg TARGETARCH=amd64 -t local/sproyt-media-runtime .
 docker run --rm --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-runtime -ec '
   mkdir -p /worker-root/tmp
