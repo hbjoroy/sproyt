@@ -48,6 +48,8 @@ meldingane sine attachment-ID-ar. Unngå Redis eller ei ny køteneste no.
 - Strøm ferdige filer blokkvis med backpressure. Støtt HEAD, Content-Length
   og eitt byte-range med korrekte 206/416-svar for videospoling.
 - Kontroller tilgang før lesing, og avbryt lesing når klienten forsvinn.
+- Avgrens samtidige overføringar og blokkbuffer per prosess; strømming
+  åleine er ikkje ei grense for samla minnebruk.
 - Test ekte gamle og nye vedlegg, range-grenser og stabilt minne ved ei
   nedlasting som er større enn minnegrensa til appen.
 
@@ -55,6 +57,10 @@ meldingane sine attachment-ID-ar. Unngå Redis eller ei ny køteneste no.
 
 - Opprett eigar- og kanalavgrensa upload-sesjon før innhaldet blir sendt.
   Kontroller kanaltilgang, kvote, venta storleik og utløp.
+- Reserver kvote atomisk ved oppretting og tel òg uferdige opplastingar.
+  Frigjer reservasjonen ved ferdigstilling eller trygg opprydding.
+- Kontroller eigarskap og gjeldande kanaltilgang på kvar blokkoperasjon
+  og ved endeleg publisering, ikkje berre ved sesjonsoppretting.
 - Klienten sender `File.slice` i små, sekvensielle blokker med framdrift,
   avbrot og retry. Blokkindeks og hash gjer retry idempotent; avvis
   motstridande innhald for ein allereie lagra blokk.
@@ -107,7 +113,9 @@ Bruk Astra til review av tilgang/finalisering og worker-isolasjon før
 aktivering. Følg CI/CD og GitOps for app, worker og migrasjonar.
 
 Aktiver ny skrivar i canary først. Verifiser minnebruk og akseptanse før
-prod. Tilbakerulling må bevare lesetilgangen til filer som alt er lagra med
+prod. Pending/feila-preview og fjerning av automatisk original-fallback frå
+Q4 er absolutte krav før store filer blir aktiverte, også i canary.
+Tilbakerulling må bevare lesetilgangen til filer som alt er lagra med
 ny protokoll; ikkje rull tilbake til ein app utan den nye lesaren.
 Konvertering av gamle blobs er ei seinare, avgrensa bakgrunnsoppgåve.
 
