@@ -1085,6 +1085,20 @@ test("literal image commands preserve text and quoted literal remains expanded",
 });
 
 // Upload retries must include incomplete 2xx response bodies, not only headers.
+test("channel-restricted chunk pilot keeps ordinary channels on the legacy writer", async () => {
+  const previousFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests++;
+    return Response.json({enabled:true,max_file_bytes:1024**3,chunk_bytes:1024*1024,allowed_channel_ids:["pilot"]});
+  };
+  try {
+    const result = await uploadMediaChunks(new File(["original"],"photo.jpg"),"ordinary",{refresh:async()=>false,progress:()=>{}});
+    assert.equal(result,null);
+    assert.equal(requests,1);
+  } finally { globalThis.fetch = previousFetch; }
+});
+
 test("chunk upload retries committed requests with truncated bodies and never reads a whole file", async () => {
   const previousFetch = globalThis.fetch;
   const slices: number[] = [];

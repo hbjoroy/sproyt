@@ -23,7 +23,7 @@ pub(crate) async fn configuration(
         return auth_error_response(error);
     }
     private_json(
-        serde_json::json!({"enabled":state.media_store.is_some(),"max_file_bytes":state.media_store.as_ref().map(|s|s.max_file_bytes()).unwrap_or(35*1024*1024),"chunk_bytes":CHUNK_BYTES}),
+        serde_json::json!({"enabled":state.media_store.is_some(),"allowed_channel_ids":state.media_store.as_ref().and_then(|s|s.allowed_channels()),"max_file_bytes":state.media_store.as_ref().map(|s|s.max_file_bytes()).unwrap_or(35*1024*1024),"chunk_bytes":CHUNK_BYTES}),
     )
 }
 

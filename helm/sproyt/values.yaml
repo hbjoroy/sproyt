@@ -226,6 +226,9 @@ mediaWorker:
 # it never replaces a different existing policy. Disabling uploads preserves it.
 mediaUploads:
   enabled: false
+  # Limit initial canary writes while older production readers share the DB.
+  # Empty means unrestricted; set explicit channel UUIDs for the pilot.
+  allowedChannelIds: []
   initializePolicy: false
   maxFileBytes: 0
   ownerBudgetBytes: 0

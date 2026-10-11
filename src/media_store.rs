@@ -24,6 +24,7 @@ enum Store {
 pub(crate) struct MediaStore {
     store: Store,
     limits: UploadLimits,
+    allowed_channels: Option<Vec<Uuid>>,
 }
 
 #[derive(Clone, Copy)]
@@ -147,7 +148,7 @@ macro_rules! write_transaction {
 const UPLOAD_QUERY: &str = "select cast(u.id as text) as id,cast(u.channel_id as text) as channel_id,u.original_filename,u.declared_type,u.expected_bytes,u.received_bytes,cast(u.next_chunk as bigint) as next_chunk,u.state,u.expires_at,cast(u.media_id as text) as media_id from media_uploads u join channel_memberships cm on cm.channel_id=u.channel_id and cm.user_id=u.owner_id where u.id=?uuid and u.owner_id=?uuid";
 
 macro_rules! read_upload {
-    ($connection:expr, $pg:expr, $actor:expr, $id:expr, $lock:expr) => {{
+    ($store:expr, $connection:expr, $pg:expr, $actor:expr, $id:expr, $lock:expr) => {{
         let mut query = sql(UPLOAD_QUERY, $pg);
         if $pg && $lock {
             query.push_str(" for update of u for key share of cm");
@@ -195,6 +196,9 @@ macro_rules! read_upload {
             chunk_bytes: CHUNK_BYTES,
         };
         if status.state != "complete" && status.expires_at <= chrono::Utc::now().timestamp() {
+            return Err(UploadError::NotFound);
+        }
+        if !$store.channel_enabled(status.channel_id) {
             return Err(UploadError::NotFound);
         }
         status
@@ -262,6 +266,7 @@ impl MediaStore {
         Self {
             store: Store::Sqlite(pool),
             limits,
+            allowed_channels: None,
         }
     }
     #[cfg(test)]
@@ -269,6 +274,7 @@ impl MediaStore {
         Self {
             store: Store::Postgres(pool),
             limits,
+            allowed_channels: None,
         }
     }
     pub(crate) async fn from_env(
@@ -283,7 +289,15 @@ impl MediaStore {
             owner_bytes: std::env::var("SPROYT_MEDIA_OWNER_BUDGET_BYTES")?.parse()?,
             total_bytes: std::env::var("SPROYT_MEDIA_TOTAL_BUDGET_BYTES")?.parse()?,
         };
-        let store = Self::connect(config, postgres, limits).await?;
+        let mut store = Self::connect(config, postgres, limits).await?;
+        if let Ok(channels) = std::env::var("SPROYT_MEDIA_UPLOAD_CHANNEL_IDS") {
+            store.allowed_channels = Some(
+                channels
+                    .split(',')
+                    .map(|id| Uuid::parse_str(id.trim()))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+        }
         store.check_policy(false).await?;
         Ok(Some(store))
     }
@@ -339,7 +353,21 @@ impl MediaStore {
                 )
             }
         };
-        Ok(Self { store, limits })
+        Ok(Self {
+            store,
+            limits,
+            allowed_channels: None,
+        })
+    }
+
+    pub(crate) fn channel_enabled(&self, channel: Uuid) -> bool {
+        self.allowed_channels
+            .as_ref()
+            .is_none_or(|ids| ids.contains(&channel))
+    }
+
+    pub(crate) fn allowed_channels(&self) -> Option<&[Uuid]> {
+        self.allowed_channels.as_deref()
     }
 
     pub(crate) async fn create(
@@ -348,6 +376,9 @@ impl MediaStore {
         channel: Uuid,
         input: &NewUpload,
     ) -> Result<UploadStatus, UploadError> {
+        if !self.channel_enabled(channel) {
+            return Err(UploadError::NotFound);
+        }
         if input.size_bytes == 0
             || input.size_bytes > self.limits.max_file_bytes
             || input.filename.is_empty()
@@ -386,7 +417,7 @@ impl MediaStore {
                 .bind(actor.to_string()).bind(input.request_id.to_string()).fetch_optional(&mut *tx).await.map_err(UploadError::from_storage)?;
             let id = if let Some(id) = previous {
                 let id = Uuid::parse_str(&id).map_err(|_| UploadError::Invalid)?;
-                let previous = read_upload!(&mut *tx, pg, actor, id, true);
+                let previous = read_upload!(self, &mut *tx, pg, actor, id, true);
                 if previous.channel_id != channel
                     || previous.size_bytes != input.size_bytes
                     || previous.original_filename != input.filename
@@ -432,7 +463,7 @@ impl MediaStore {
                     .execute(&mut *tx).await.map_err(UploadError::from_storage)?;
                 id
             };
-            let status = read_upload!(&mut *tx, pg, actor, id, false);
+            let status = read_upload!(self, &mut *tx, pg, actor, id, false);
             tx.commit().await.map_err(UploadError::from_storage)?;
             Ok(status)
         })
@@ -444,7 +475,7 @@ impl MediaStore {
         id: Uuid,
     ) -> Result<UploadStatus, UploadError> {
         with_store!(self, |pool, pg| {
-            Ok(read_upload!(pool, pg, actor, id, false))
+            Ok(read_upload!(self, pool, pg, actor, id, false))
         })
     }
 
@@ -465,7 +496,7 @@ impl MediaStore {
         }
         with_store!(self, |pool, pg| {
             let mut tx = write_transaction!(pool, pg);
-            let status = read_upload!(&mut *tx, pg, actor, id, true);
+            let status = read_upload!(self, &mut *tx, pg, actor, id, true);
             if status.state != "open" || index > status.next_chunk {
                 return Err(UploadError::Conflict);
             }
@@ -487,7 +518,7 @@ impl MediaStore {
                 sqlx::query(&sql("update media_uploads set next_chunk=next_chunk+1,received_bytes=received_bytes+? where id=?uuid",pg))
                     .bind(bytes.len() as i64).bind(id.to_string()).execute(&mut *tx).await.map_err(UploadError::from_storage)?;
             }
-            let status = read_upload!(&mut *tx, pg, actor, id, false);
+            let status = read_upload!(self, &mut *tx, pg, actor, id, false);
             tx.commit().await.map_err(UploadError::from_storage)?;
             Ok(status)
         })
@@ -496,7 +527,7 @@ impl MediaStore {
     pub(crate) async fn seal(&self, actor: &UserId, id: Uuid) -> Result<UploadStatus, UploadError> {
         with_store!(self, |pool, pg| {
             let mut tx = write_transaction!(pool, pg);
-            let status = read_upload!(&mut *tx, pg, actor, id, true);
+            let status = read_upload!(self, &mut *tx, pg, actor, id, true);
             if status.received_bytes != status.size_bytes {
                 return Err(UploadError::Conflict);
             }
@@ -510,7 +541,7 @@ impl MediaStore {
                 .await
                 .map_err(UploadError::from_storage)?;
             }
-            let status = read_upload!(&mut *tx, pg, actor, id, false);
+            let status = read_upload!(self, &mut *tx, pg, actor, id, false);
             tx.commit().await.map_err(UploadError::from_storage)?;
             Ok(status)
         })
@@ -559,7 +590,7 @@ impl MediaStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(UploadError::from_storage)?;
-            let status = read_upload!(&mut *tx, pg, actor, id, true);
+            let status = read_upload!(self, &mut *tx, pg, actor, id, true);
             if let Some(id) = status.media_id {
                 tx.commit().await.map_err(UploadError::from_storage)?;
                 return Ok(MediaId::from_uuid(id));
@@ -600,7 +631,7 @@ impl MediaStore {
     pub(crate) async fn abort(&self, actor: &UserId, id: Uuid) -> Result<(), UploadError> {
         with_store!(self, |pool, pg| {
             let mut tx = write_transaction!(pool, pg);
-            let status = read_upload!(&mut *tx, pg, actor, id, true);
+            let status = read_upload!(self, &mut *tx, pg, actor, id, true);
             if status.state == "complete" {
                 return Err(UploadError::Conflict);
             }

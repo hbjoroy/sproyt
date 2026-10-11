@@ -63,6 +63,18 @@ Aktiveringsrekkjefølgja er:
 2. Kontroller delt databasekapasitet og ta normal migrasjonsbackup.
 3. Initialiser policyen eksplisitt gjennom migrasjonshooken, aktiver
    canary sin blokkskrivar og éin isolert worker gjennom GitOps.
+   Dersom prod framleis er på schema-63-lesaren, må
+   `mediaUploads.allowedChannelIds` vere ei uttrykkeleg liste med isolerte
+   testkanalar. Prod kan ikkje lese blokkoriginalane enno. Klient og server
+   held andre kanalar på legacy-skrivaren; kanalgrensa blir kontrollert ved
+   create, status, chunk og complete. Fjern aldri pilotgrensa før alle
+   lesande instansar støttar blokkformatet. Gamle prod-lesarar vil gi 404
+   for testoriginalane dersom dei blir opna der; testen skal skje i canary.
+   Pilotgrensa skjuler ikkje testkanalen frå prod. Ho avgrensar skrivaren;
+   deltakarane må vite at nye vedlegg der berre blir prøvde i canary.
+   Utanfor pilotlista går canary gjennom den mellombelse, avgrensa
+   legacy-dekodaren frå #258. Store opplastingar er ikkje løyste der enno;
+   canary skal i denne etappen brukast til den avgrensa medieprøva.
 4. Prøv originalar over 30 MiB og video, kontroller identisk nedlasta hash,
    range-avspeling, preview, retry, avbroten worker og eigarskapsgrenser.
 5. Aktiver prod etter canary-akseptanse. Rollback må behalde dual reader

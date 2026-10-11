@@ -22,6 +22,9 @@ data:
   SPROYT_MEDIA_MAX_FILE_BYTES: {{ required "mediaUploads.maxFileBytes is required" .Values.mediaUploads.maxFileBytes | quote }}
   SPROYT_MEDIA_OWNER_BUDGET_BYTES: {{ required "mediaUploads.ownerBudgetBytes is required" .Values.mediaUploads.ownerBudgetBytes | quote }}
   SPROYT_MEDIA_TOTAL_BUDGET_BYTES: {{ required "mediaUploads.totalBudgetBytes is required" .Values.mediaUploads.totalBudgetBytes | quote }}
+  {{- with .Values.mediaUploads.allowedChannelIds }}
+  SPROYT_MEDIA_UPLOAD_CHANNEL_IDS: {{ join "," . | quote }}
+  {{- end }}
   {{- end }}
   {{- with .Values.config.vllmUrl }}
   SPROYT_VLLM_URL: {{ . | quote }}
