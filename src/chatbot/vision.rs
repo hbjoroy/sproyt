@@ -284,9 +284,11 @@ impl CircleChatAgents {
             if digest(&bytes) != image.sha256 {
                 return Err(RepositoryError::PermissionDenied);
             }
-            match tokio::task::spawn_blocking(move || normalized_image(bytes, image.content_type))
-                .await
-                .map_err(storage)?
+            match crate::web::media::process_image(move || {
+                normalized_image(bytes, image.content_type)
+            })
+            .await
+            .map_err(storage)?
             {
                 Ok(encoded) => input.images.push(encoded),
                 Err(()) => input.omitted += 1,

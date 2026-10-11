@@ -102,6 +102,14 @@ pub(crate) async fn enqueue(
         )
             .into_response();
     }
+    let _admission = if body.reference_ids.is_empty() {
+        None
+    } else {
+        match crate::web::media::admit_media() {
+            Ok(permit) => Some(permit),
+            Err(response) => return *response,
+        }
+    };
     for id in &body.reference_ids {
         let media_id = match MediaId::new(id.clone()) {
             Ok(id) => id,
@@ -132,9 +140,9 @@ pub(crate) async fn enqueue(
             }
             Err(_) => return internal(),
         }
-        let encoded = tokio::task::spawn_blocking(move || -> Result<String, String> {
-            let image = image::load_from_memory(&content)
-                .map_err(|e| e.to_string())?
+        let encoded = crate::web::media::process_image(move || -> Result<String, String> {
+            let image = crate::web::media::decode_image(&content)
+                .map_err(|_| "Reference image exceeds limits or is invalid".to_owned())?
                 .thumbnail(1024, 1024)
                 .to_rgb8();
             let mut bytes = Vec::new();
@@ -274,6 +282,14 @@ pub(crate) async fn review(
     let Some(service) = &state.imagegen else {
         return unavailable();
     };
+    let _admission = if matches!(body.decision, Decision::Accept) {
+        match crate::web::media::admit_media() {
+            Ok(permit) => Some(permit),
+            Err(response) => return *response,
+        }
+    } else {
+        None
+    };
     let mut job = match owned(service, &id, principal.user.id.clone()).await {
         Ok(j) => j,
         Err(r) => return r,
@@ -303,7 +319,25 @@ pub(crate) async fn review(
             };
             let prepared = match prepare_uploaded_media(bytes, "image/png").await {
                 Ok(p) => p,
-                Err(_) => return internal(),
+                Err(error) => {
+                    // A rejected image must remain dismissible/retryable, rather
+                    // than leaving its durable job stuck in "accepting".
+                    job.transition("ready");
+                    if !service.save(&mut job).await.unwrap_or(false) {
+                        return internal();
+                    }
+                    return match error {
+                        crate::web::media::MediaPreparationError::TooLarge => (
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            "Det genererte biletet er for stort å behandle. Avvis det og prøv eit mindre bilete.",
+                        ).into_response(),
+                        crate::web::media::MediaPreparationError::InvalidImage => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "Det genererte biletet er ugyldig. Avvis det og prøv igjen.",
+                        ).into_response(),
+                        crate::web::media::MediaPreparationError::Worker => internal(),
+                    };
+                }
             };
             match state
                 .chat

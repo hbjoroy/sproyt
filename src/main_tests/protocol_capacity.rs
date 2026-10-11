@@ -391,6 +391,24 @@ async fn imagegen_http_preview_review_and_unpublished_attachment_contract() {
         response.text().await.unwrap()
     );
     let mut job = service.list(owner.user.id.clone()).await.unwrap().remove(0);
+    job.image = Some(base64::engine::general_purpose::STANDARD.encode(b"broken image"));
+    job.transition("ready");
+    service.save(&mut job).await.unwrap();
+    let rejected = client
+        .post(format!(
+            "http://{address}/api/v1/imagegen/{}/review?participant=image-owner",
+            job.id
+        ))
+        .json(&serde_json::json!({"decision":"accept"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), 422);
+    job = service.get(&job.id).await.unwrap().unwrap();
+    assert_eq!(
+        job.state, "ready",
+        "rejected images must not get stuck accepting"
+    );
     let mut bytes = std::io::Cursor::new(Vec::new());
     image::DynamicImage::new_rgb8(2, 2)
         .write_to(&mut bytes, image::ImageFormat::Png)
