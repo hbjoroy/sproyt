@@ -42,6 +42,9 @@ pub struct PresenceLease {
 pub type RepositoryFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, RepositoryError>> + Send + 'a>>;
 
+/// Maximum bytes returned by one media read, regardless of original size.
+pub const MEDIA_READ_BLOCK_BYTES: usize = 1024 * 1024;
+
 pub trait ChatRepository: Send + Sync + 'static {
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
@@ -86,6 +89,19 @@ pub trait ChatRepository: Send + Sync + 'static {
         actor: UserId,
         media_id: MediaId,
     ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)>;
+    fn media_metadata<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, MediaObject>;
+    /// Rechecks current channel access on every bounded read.
+    fn read_media_slice<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+        offset: u64,
+        length: usize,
+    ) -> RepositoryFuture<'a, Vec<u8>>;
     fn load_media_preview<'a>(
         &'a self,
         actor: UserId,
@@ -686,6 +702,55 @@ impl ChatRepository for InMemoryChatRepository {
                 return Err(RepositoryError::NotFound);
             }
             Ok(item)
+        })
+    }
+
+    fn media_metadata<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, MediaObject> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let (media, _) = state
+                .media
+                .get(&media_id)
+                .ok_or(RepositoryError::NotFound)?;
+            if !state
+                .memberships
+                .contains_key(&(media.channel_id.clone(), actor))
+            {
+                return Err(RepositoryError::NotFound);
+            }
+            Ok(media.clone())
+        })
+    }
+
+    fn read_media_slice<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+        offset: u64,
+        length: usize,
+    ) -> RepositoryFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            if length == 0 || length > MEDIA_READ_BLOCK_BYTES {
+                return Err(RepositoryError::Conflict);
+            }
+            let state = self.lock_state()?;
+            let (media, bytes) = state
+                .media
+                .get(&media_id)
+                .ok_or(RepositoryError::NotFound)?;
+            if !state
+                .memberships
+                .contains_key(&(media.channel_id.clone(), actor))
+            {
+                return Err(RepositoryError::NotFound);
+            }
+            let offset = usize::try_from(offset).map_err(|_| RepositoryError::Conflict)?;
+            let end = offset.saturating_add(length).min(bytes.len());
+            Ok(bytes.get(offset..end).unwrap_or_default().to_vec())
         })
     }
 

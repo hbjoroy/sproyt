@@ -11,5 +11,6 @@ pub(crate) use onboarding::{
 pub use policy::Policy;
 #[cfg(test)]
 pub use repository::InMemoryChatRepository;
+pub use repository::MEDIA_READ_BLOCK_BYTES;
 pub use repository::{ChatRepository, PresenceLease, RepositoryError, RepositoryFuture};
 pub use sproyt_protocol::*;

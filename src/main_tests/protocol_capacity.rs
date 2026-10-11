@@ -20,6 +20,138 @@ use tokio_tungstenite::{
 type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[tokio::test]
+async fn media_download_streams_exact_bytes_and_supports_video_ranges() {
+    use crate::domain::{ChannelKind, ChannelSlug, DisplayName, MediaUpload};
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server, state) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    let owner = state
+        .auth
+        .authenticate_request(Some("range-owner".into()), None)
+        .await
+        .unwrap();
+    state.chat.ensure_user(owner.user.clone()).await.unwrap();
+    let channel = state
+        .chat
+        .create_channel(
+            owner.user.id.clone(),
+            ChannelSlug::new("range-test").unwrap(),
+            DisplayName::new("Range test").unwrap(),
+            ChannelKind::Private,
+            None,
+        )
+        .await
+        .unwrap();
+    let bytes: Vec<u8> = (0..crate::domain::MEDIA_READ_BLOCK_BYTES * 2 + 13)
+        .map(|n| (n % 251) as u8)
+        .collect();
+    let media = state
+        .chat
+        .store_media(MediaUpload {
+            actor: owner.user.id,
+            channel_id: channel.id,
+            filename: "original.mp4".into(),
+            content_type: "video/mp4".into(),
+            content: bytes.clone(),
+            dimensions: None,
+            preview: None,
+        })
+        .await
+        .unwrap();
+    let client = reqwest::Client::new();
+    let url = format!(
+        "http://{address}/api/v1/media/{}/download?participant=range-owner",
+        media.id
+    );
+    let full = client.get(&url).send().await.unwrap();
+    assert_eq!(full.status(), 200);
+    assert_eq!(full.headers()["accept-ranges"], "bytes");
+    let etag = full.headers()["etag"].clone();
+    assert_eq!(full.headers()["content-length"], bytes.len().to_string());
+    assert_eq!(full.bytes().await.unwrap().as_ref(), bytes);
+    let preview = client
+        .get(format!(
+            "http://{address}/api/v1/media/{}/preview?participant=range-owner",
+            media.id
+        ))
+        .header("range", "bytes=0-8")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), 206);
+    assert_eq!(preview.bytes().await.unwrap().as_ref(), &bytes[..9]);
+    for (range, start, end) in [
+        ("bytes=1048570-1048580", 1_048_570, 1_048_581),
+        ("bytes=2097152-", 2_097_152, bytes.len()),
+        ("bytes=-7", bytes.len() - 7, bytes.len()),
+    ] {
+        let response = client
+            .get(&url)
+            .header("range", range)
+            .header("if-range", &etag)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 206);
+        assert_eq!(
+            response.headers()["content-range"],
+            format!("bytes {start}-{}/{}", end - 1, bytes.len())
+        );
+        assert_eq!(response.bytes().await.unwrap().as_ref(), &bytes[start..end]);
+    }
+    let rejected = client
+        .get(&url)
+        .header("range", "bytes=9999999-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), 416);
+    assert_eq!(
+        rejected.headers()["content-range"],
+        format!("bytes */{}", bytes.len())
+    );
+    let head = client
+        .head(&url)
+        .header("range", "bytes=9999999-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 200);
+    assert_eq!(head.headers()["content-length"], bytes.len().to_string());
+    assert!(head.bytes().await.unwrap().is_empty());
+    let stale = client
+        .get(&url)
+        .header("range", "bytes=0-4")
+        .header("if-range", "\"stale\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), 200);
+    assert_eq!(stale.bytes().await.unwrap().as_ref(), bytes);
+    let outsider = format!(
+        "http://{address}/api/v1/media/{}?participant=range-outsider",
+        media.id
+    );
+    assert_eq!(client.head(&outsider).send().await.unwrap().status(), 404);
+    assert_eq!(
+        client
+            .get(&outsider)
+            .header("range", "bytes=0-4")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn http_command_fallback_rejects_cross_origin_requests() {
     let repository = Arc::new(
         SqliteChatRepository::connect("sqlite::memory:")

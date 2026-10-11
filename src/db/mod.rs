@@ -108,7 +108,7 @@ pub async fn connect_postgres_pool(
     Ok(Some(pool))
 }
 
-fn storage(error: impl std::fmt::Display) -> RepositoryError {
+pub(crate) fn storage(error: impl std::fmt::Display) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
 }
 
@@ -122,6 +122,133 @@ fn sql_error(error: sqlx::Error) -> RepositoryError {
         }
         _ => storage(error),
     }
+}
+
+#[cfg(test)]
+async fn verify_media_reads_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+    use crate::domain::{
+        ChannelKind, ChannelSlug, CreateChannel, DisplayName, LeaveChannel, MEDIA_READ_BLOCK_BYTES,
+        MediaUpload, PrincipalKind, User, UserId,
+    };
+    let actor = UserId::named(format!("media-reader-{suffix}"));
+    repository
+        .upsert_user(User {
+            id: actor.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Media reader").unwrap(),
+            handle: None,
+            external_provider: None,
+            external_subject: None,
+            created_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    let channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("media-reads-{suffix}")).unwrap(),
+            name: DisplayName::new("Media reads").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: None,
+        })
+        .await
+        .unwrap();
+    let bytes: Vec<u8> = (0..MEDIA_READ_BLOCK_BYTES + 17)
+        .map(|n| (n % 251) as u8)
+        .collect();
+    let media = repository
+        .store_media(
+            MediaUpload {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                filename: "video.mp4".into(),
+                content_type: "video/mp4".into(),
+                content: bytes.clone(),
+                dimensions: None,
+                preview: None,
+            },
+            "checksum".into(),
+        )
+        .await
+        .unwrap();
+    let mut loaded = repository
+        .media_metadata(actor.clone(), media.id)
+        .await
+        .unwrap();
+    let mut expected = media.clone();
+    // PostgreSQL persists microseconds while in-memory/SQLite retain nanos.
+    loaded.created_at =
+        chrono::DateTime::from_timestamp_micros(loaded.created_at.timestamp_micros()).unwrap();
+    expected.created_at =
+        chrono::DateTime::from_timestamp_micros(expected.created_at.timestamp_micros()).unwrap();
+    assert_eq!(loaded, expected);
+    let outsider = UserId::named(format!("media-outsider-{suffix}"));
+    assert_eq!(
+        repository.media_metadata(outsider.clone(), media.id).await,
+        Err(RepositoryError::NotFound)
+    );
+    assert_eq!(
+        repository.read_media_slice(outsider, media.id, 0, 1).await,
+        Err(RepositoryError::NotFound)
+    );
+    assert_eq!(
+        repository
+            .read_media_slice(actor.clone(), media.id, 0, MEDIA_READ_BLOCK_BYTES + 1)
+            .await,
+        Err(RepositoryError::Conflict)
+    );
+    assert_eq!(
+        repository
+            .read_media_slice(actor.clone(), media.id, 0, 0)
+            .await,
+        Err(RepositoryError::Conflict)
+    );
+    let mut actual = repository
+        .read_media_slice(actor.clone(), media.id, 0, MEDIA_READ_BLOCK_BYTES)
+        .await
+        .unwrap();
+    actual.extend(
+        repository
+            .read_media_slice(
+                actor.clone(),
+                media.id,
+                MEDIA_READ_BLOCK_BYTES as u64,
+                MEDIA_READ_BLOCK_BYTES,
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(actual, bytes);
+    assert_eq!(
+        repository
+            .read_media_slice(
+                actor.clone(),
+                media.id,
+                MEDIA_READ_BLOCK_BYTES as u64 - 5,
+                16
+            )
+            .await
+            .unwrap(),
+        bytes[MEDIA_READ_BLOCK_BYTES - 5..MEDIA_READ_BLOCK_BYTES + 11]
+    );
+    assert!(
+        repository
+            .read_media_slice(actor.clone(), media.id, bytes.len() as u64, 1)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    repository
+        .leave_channel(LeaveChannel {
+            actor: actor.clone(),
+            channel_id: channel.id,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository.read_media_slice(actor, media.id, 0, 1).await,
+        Err(RepositoryError::NotFound)
+    );
 }
 
 #[cfg(test)]
@@ -139,6 +266,7 @@ where
     use chrono::Utc;
 
     repository.health_check().await.unwrap();
+    verify_media_reads_contract(repository, suffix).await;
     verify_saved_emoji_contract(repository, suffix).await;
     verify_saved_status_history_contract(repository, suffix).await;
     verify_circle_moderator_contract(repository, suffix).await;

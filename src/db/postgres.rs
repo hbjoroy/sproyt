@@ -623,6 +623,39 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn media_metadata<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, MediaObject> {
+        Box::pin(async move {
+            let row = sqlx::query("select m.id,m.owner_id,m.channel_id,m.original_filename,m.content_type,m.size_bytes,m.sha256,m.width,m.height,m.duration_ms,m.alt_text,m.analysis_status,m.analysis_metadata,m.created_at from media_objects m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2")
+                .bind(*actor.as_uuid()).bind(*media_id.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
+            media_from_postgres(&row)
+        })
+    }
+
+    fn read_media_slice<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+        offset: u64,
+        length: usize,
+    ) -> RepositoryFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            if length == 0 || length > crate::domain::MEDIA_READ_BLOCK_BYTES {
+                return Err(RepositoryError::Conflict);
+            }
+            let start = offset
+                .checked_add(1)
+                .and_then(|n| i32::try_from(n).ok())
+                .ok_or(RepositoryError::Conflict)?;
+            sqlx::query_scalar("select substring(b.content from $3 for $4) from media_objects m join media_blobs b on b.media_id=m.id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2")
+                .bind(*actor.as_uuid()).bind(*media_id.as_uuid()).bind(start).bind(length as i32)
+                .fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)
+        })
+    }
+
     fn load_media_preview<'a>(
         &'a self,
         actor: UserId,
@@ -3498,7 +3531,14 @@ fn user_profile_from_row(row: PgRow) -> Result<UserProfile, RepositoryError> {
 }
 
 fn media_blob_from_postgres(row: PgRow) -> Result<(MediaObject, Vec<u8>), RepositoryError> {
-    let media = MediaObject {
+    Ok((
+        media_from_postgres(&row)?,
+        row.try_get("content").map_err(sql_error)?,
+    ))
+}
+
+fn media_from_postgres(row: &PgRow) -> Result<MediaObject, RepositoryError> {
+    Ok(MediaObject {
         id: MediaId::from_uuid(row.try_get("id").map_err(sql_error)?),
         owner_id: UserId::from_uuid(row.try_get("owner_id").map_err(sql_error)?),
         channel_id: ChannelId::from_uuid(row.try_get("channel_id").map_err(sql_error)?),
@@ -3529,8 +3569,7 @@ fn media_blob_from_postgres(row: PgRow) -> Result<(MediaObject, Vec<u8>), Reposi
         analysis_status: row.try_get("analysis_status").map_err(sql_error)?,
         analysis_metadata: row.try_get("analysis_metadata").map_err(sql_error)?,
         created_at: row.try_get("created_at").map_err(sql_error)?,
-    };
-    Ok((media, row.try_get("content").map_err(sql_error)?))
+    })
 }
 
 fn channel_from_row(row: PgRow) -> Result<Channel, RepositoryError> {
