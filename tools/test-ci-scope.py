@@ -65,6 +65,14 @@ class ScopeTests(unittest.TestCase):
                                  ('push', 'refs/tags/v1', 'a' * 40)):
             self.assertEqual(ci_scope.change_range(event, {}, ref, base, False), ([], True))
 
+    def test_codec_test_only_keeps_runtime_gate_without_unrelated_browser_restore(self):
+        paths = ['tools/verify-media-runtime.sh', 'tools/ci-scope.py', 'tools/test-ci-scope.py']
+        self.assertEqual(ci_scope.scope(paths)['browser'], 'none')
+        self.assertEqual(ci_scope.scope(paths)['recovery'], 'false')
+        for added in ('Dockerfile', 'src/web/media.rs', 'frontend/src/app.ts', 'migrations/0065_media.sql'):
+            self.assertEqual(ci_scope.scope(paths + [added])['browser'], 'full', added)
+        self.assertEqual(ci_scope.scope(paths, True)['recovery'], 'true')
+
     def test_non_ancestor_release_baseline_selects_full(self):
         with patch.object(ci_scope.subprocess, 'run') as run:
             run.return_value.returncode = 1

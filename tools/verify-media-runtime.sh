@@ -26,7 +26,18 @@ docker run --rm --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-r
   test "$(wc -c < /worker-root/tmp/preview.jpg)" -lt 4194304
   chroot /worker-root /usr/bin/vips black /tmp/portrait.v 1200 800 --bands 3
   for format in png webp heic; do
+    if test "$format" = heic; then
+      # Alpine splits HEIC encoding from decoding. Install the encoder only to
+      # create the fixture, then remove it before testing the shipped decoder.
+      apk --root /worker-root --arch x86_64 --no-scripts --no-cache \
+        --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
+        --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
+        add libheif-x265=1.23.4-r0
+    fi
     chroot /worker-root /usr/bin/vips copy /tmp/portrait.v /tmp/sample.$format
+    if test "$format" = heic; then
+      apk --root /worker-root --no-scripts --no-network del libheif-x265
+    fi
     original_hash=$(sha256sum /worker-root/tmp/sample.$format)
     chroot /worker-root /usr/bin/vipsthumbnail /tmp/sample.$format --size 720x720 --output-profile srgb --output "/tmp/$format.jpg[Q=85,keep=none]"
     test "$(chroot /worker-root /usr/bin/vipsheader -f width /tmp/$format.jpg)" = 720
