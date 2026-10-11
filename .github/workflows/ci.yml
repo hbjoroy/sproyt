@@ -545,6 +545,17 @@ jobs:
           format: spdx-json
           output-file: sproyt-media-worker.spdx.json
 
+      - name: Verify media worker SBOM identifies Alpine runtime packages
+        run: |
+          jq -e '
+            [.packages[].externalRefs[]? | select(.referenceType == "purl")
+              | .referenceLocator | select(startswith("pkg:apk/alpine/"))] as $apk
+            | ($apk | length > 0)
+              and ($apk | all(contains("distro=alpine-3.23")))
+              and ($apk | any(startswith("pkg:apk/alpine/vips@")))
+              and ($apk | any(startswith("pkg:apk/alpine/libheif@")))
+          ' sproyt-media-worker.spdx.json
+
       - name: Scan media worker for vulnerabilities
         uses: anchore/scan-action@v7
         with:

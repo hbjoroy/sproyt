@@ -7,6 +7,10 @@ docker build --target media-runtime-builder --build-arg TARGETARCH=arm64 -t loca
 docker run --rm --entrypoint /bin/sh local/sproyt-media-runtime-arm64 -ec '
   test -x /worker-root/usr/bin/vipsthumbnail
   test -f /worker-root/usr/lib/libvips.so.42
+  test -f /worker-root/etc/os-release
+  test -f /worker-root/etc/alpine-release
+  grep -q "^ID=alpine$" /worker-root/etc/os-release
+  grep -q "^3\.23\." /worker-root/etc/alpine-release
   test -n "$(find /worker-root/usr/lib -name "*heif*.so*" -print -quit)"
 '
 docker build --target media-runtime-builder --build-arg TARGETARCH=amd64 -t local/sproyt-media-runtime .

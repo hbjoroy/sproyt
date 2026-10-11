@@ -94,6 +94,8 @@ RUN case "$TARGETARCH" in \
     && apk add --no-cache alpine-keys=2.6-r0 \
     && mkdir -p /worker-root/etc/apk/keys \
     && cp /usr/share/apk/keys/"$apk_arch"/*.pub /worker-root/etc/apk/keys/ \
+    && cp -L /etc/os-release /worker-root/etc/os-release \
+    && cp -L /etc/alpine-release /worker-root/etc/alpine-release \
     && apk --root /worker-root --arch "$apk_arch" --initdb --no-scripts --no-cache \
        --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/main \
        --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/community \
