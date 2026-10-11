@@ -86,6 +86,10 @@ impl axum::extract::FromRef<AppState> for OperationalState {
 }
 
 pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if std::env::args().nth(1).as_deref() == Some("media-worker") {
+        init_tracing(AppConfig::log_format_from_env()?)?;
+        return crate::media_worker::run().await;
+    }
     if std::env::args().nth(1).as_deref() == Some("migrate") {
         let database = AppConfig::database_from_env()?;
         init_tracing(AppConfig::log_format_from_env()?)?;

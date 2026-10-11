@@ -135,6 +135,9 @@ jobs:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: cargo test --all-targets --all-features --locked
 
+      - name: Verify isolated codec runtime and large-image preview
+        run: bash tools/verify-media-runtime.sh
+
       - name: Cache Playwright browser binaries
         if: needs.changes.outputs.browser != 'none'
         uses: actions/cache@v5
@@ -453,6 +456,28 @@ jobs:
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,mode=max,scope=arm64
 
+      - name: Cross-build isolated ARM64 media worker
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: media-worker
+          platforms: linux/arm64
+          build-args: VCS_REF=${{ github.sha }}
+          load: true
+          push: false
+          tags: local/sproyt-media-worker-arm64:${{ github.sha }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+      - name: Verify media worker image identity
+        env:
+          WORKER_IMAGE: local/sproyt-media-worker-arm64:${{ github.sha }}
+        run: |
+          test "$(docker image inspect "$WORKER_IMAGE" --format '{{.Architecture}}')" = arm64
+          test "$(docker image inspect "$WORKER_IMAGE" --format '{{.Os}}')" = linux
+          test "$(docker image inspect "$WORKER_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
+          docker image inspect "$WORKER_IMAGE" > worker-image-evidence.json
+
       - name: Record image-to-commit evidence
         id: image-evidence
         env:
@@ -507,6 +532,20 @@ jobs:
           fail-build: true
           severity-cutoff: high
 
+      - name: Generate media worker SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/sproyt-media-worker-arm64:${{ github.sha }}
+          format: spdx-json
+          output-file: sproyt-media-worker.spdx.json
+
+      - name: Scan media worker for vulnerabilities
+        uses: anchore/scan-action@v7
+        with:
+          image: local/sproyt-media-worker-arm64:${{ github.sha }}
+          fail-build: true
+          severity-cutoff: high
+
       - name: Upload delivery evidence
         uses: actions/upload-artifact@v6
         with:
@@ -515,15 +554,21 @@ jobs:
             rendered-manifests.yaml
             sproyt.spdx.json
             image-evidence.json
+            worker-image-evidence.json
+            sproyt-media-worker.spdx.json
 
       - name: Export tested ARM64 release image
-        run: docker save --output sproyt-arm64.tar local/sproyt-arm64:${{ github.sha }}
+        run: |
+          docker save --output sproyt-arm64.tar local/sproyt-arm64:${{ github.sha }}
+          docker save --output sproyt-media-worker-arm64.tar local/sproyt-media-worker-arm64:${{ github.sha }}
 
       - name: Upload tested ARM64 release image
         uses: actions/upload-artifact@v6
         with:
           name: release-image-${{ github.sha }}
-          path: sproyt-arm64.tar
+          path: |
+            sproyt-arm64.tar
+            sproyt-media-worker-arm64.tar
           retention-days: 1
           compression-level: 0
 
@@ -570,6 +615,11 @@ jobs:
           LOCAL_IMAGE: local/sproyt-arm64:${{ github.sha }}
         run: |
           docker load --input sproyt-arm64.tar
+          docker load --input sproyt-media-worker-arm64.tar
+          WORKER_IMAGE="local/sproyt-media-worker-arm64:$GITHUB_SHA"
+          test "$(docker image inspect "$WORKER_IMAGE" --format '{{.Architecture}}')" = arm64
+          test "$(docker image inspect "$WORKER_IMAGE" --format '{{.Os}}')" = linux
+          test "$(docker image inspect "$WORKER_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
           test "$(docker image inspect "$LOCAL_IMAGE" --format '{{.Architecture}}')" = arm64
           test "$(docker image inspect "$LOCAL_IMAGE" --format '{{.Os}}')" = linux
           test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
@@ -614,11 +664,32 @@ jobs:
             '{image: $image, digest: $digest, revision: $revision, workflow_run: $workflow_run}' \
             > registry-evidence.json
 
+      - name: Publish immutable media worker commit tag
+        env:
+          REGISTRY_IMAGE: oci.bjoroy.me/sproyt/media-worker:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker run --rm --user 0:0 \
+            -e HOME=/config \
+            -v "$RUNNER_TEMP/regctl-config:/config" \
+            -v "$PWD:/work:ro" \
+            "$REGCTL_IMAGE" \
+            image import "$REGISTRY_IMAGE" /work/sproyt-media-worker-arm64.tar
+          registry_digest=$(docker run --rm --user 0:0 \
+            -e HOME=/config \
+            -v "$RUNNER_TEMP/regctl-config:/config" \
+            "$REGCTL_IMAGE" image digest "$REGISTRY_IMAGE")
+          [[ "$registry_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          jq --null-input --arg image "$REGISTRY_IMAGE" --arg digest "$registry_digest" --arg revision "$GITHUB_SHA" \
+            '{image: $image, digest: $digest, revision: $revision}' > worker-registry-evidence.json
+
       - name: Upload registry evidence
         uses: actions/upload-artifact@v6
         with:
           name: registry-evidence-${{ github.sha }}
-          path: registry-evidence.json
+          path: |
+            registry-evidence.json
+            worker-registry-evidence.json
           retention-days: 30
 
 

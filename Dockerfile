@@ -82,6 +82,34 @@ RUN cargo clean --package sproyt --package sproyt-client-core --package sproyt-p
 
 FROM ${BUILD_VARIANT}-builder AS compiled
 
+# Populate target-architecture runtime libraries using native apk. No target
+# binary or package script is executed, and Rust remains native Zig cross-built.
+FROM build-base AS media-runtime-builder
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) apk_arch=x86_64 ;; \
+      arm64) apk_arch=aarch64 ;; \
+      *) exit 1 ;; \
+    esac \
+    && mkdir -p /worker-root/etc/apk/keys \
+    && cp /etc/apk/keys/* /worker-root/etc/apk/keys/ \
+    && apk --root /worker-root --arch "$apk_arch" --initdb --no-scripts --no-cache \
+       --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/main \
+       --repository https://dl-cdn.alpinelinux.org/alpine/v3.23/community \
+       add vips-tools=8.17.3-r1
+
+FROM scratch AS media-worker
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.source="https://github.com/hbjoroy/sproyt" \
+      org.opencontainers.image.revision="$VCS_REF"
+COPY --from=media-runtime-builder /worker-root/ /
+COPY --from=compiled /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=compiled /out/sproyt /app/sproyt
+USER 65532:65532
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt SPROYT_LOG_FORMAT=json
+ENTRYPOINT ["/app/sproyt", "media-worker"]
+
+# Keep the default target and existing web image unchanged.
 FROM scratch AS runtime
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/hbjoroy/sproyt" \

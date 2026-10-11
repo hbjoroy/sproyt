@@ -18,7 +18,12 @@ Dette dokumentet utdjupar `media-upload-queue-plan.md` (PR #259).
 
 Etappe 1 er implementert i `codex/media-streaming-reads`, men ikkje utrulla.
 Lager og HTTP-protokoll er implementerte i `codex/media-chunk-storage`,
-med nye skrivarar avslått. Klient, worker og aktivering står att.
+med nye skrivarar avslått. Den separate workeren, image og Helm-oppsett er
+implementerte i `codex/media-preview-worker`, men er framleis deaktiverte.
+Klient og aktiveringsgatane står att. CI kontrollerer stale leases,
+publisering som ventar på lås til etter utløp, og at timeout/shutdown
+drep og reap-ar kodekprosessen før opprydding. Eit separat kodeksmoke-test
+lagar førehandsvising av eit 100-megapikselbilete innanfor 512 MiB.
 PR #258 si avviste opplastingsgrense må erstattast før
 kodeutrulling. Det gjeld også ein release som inneheld berre den nye lesaren.
 
