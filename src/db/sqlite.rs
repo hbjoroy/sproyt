@@ -463,6 +463,39 @@ impl ChatRepository for SqliteChatRepository {
         })
     }
 
+    fn media_metadata<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, MediaObject> {
+        Box::pin(async move {
+            let row = sqlx::query("select m.id,m.owner_id,m.channel_id,m.original_filename,m.content_type,m.size_bytes,m.sha256,m.width,m.height,m.duration_ms,m.alt_text,m.analysis_status,m.analysis_metadata,m.created_at from media_objects m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=? where m.id=?")
+                .bind(actor.to_string()).bind(media_id.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
+            media_from_sqlite(&row)
+        })
+    }
+
+    fn read_media_slice<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+        offset: u64,
+        length: usize,
+    ) -> RepositoryFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            if length == 0 || length > crate::domain::MEDIA_READ_BLOCK_BYTES {
+                return Err(RepositoryError::Conflict);
+            }
+            let start = offset
+                .checked_add(1)
+                .and_then(|n| i64::try_from(n).ok())
+                .ok_or(RepositoryError::Conflict)?;
+            sqlx::query_scalar("select substr(b.content,?,?) from media_objects m join media_blobs b on b.media_id=m.id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=? where m.id=?")
+                .bind(start).bind(length as i64).bind(actor.to_string()).bind(media_id.to_string())
+                .fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)
+        })
+    }
+
     fn load_media_preview<'a>(
         &'a self,
         actor: UserId,
@@ -3286,7 +3319,14 @@ fn user_profile_from_row(row: sqlx::sqlite::SqliteRow) -> Result<UserProfile, Re
 fn media_blob_from_sqlite(
     row: sqlx::sqlite::SqliteRow,
 ) -> Result<(MediaObject, Vec<u8>), RepositoryError> {
-    let media = MediaObject {
+    Ok((
+        media_from_sqlite(&row)?,
+        row.try_get("content").map_err(sql_error)?,
+    ))
+}
+
+fn media_from_sqlite(row: &sqlx::sqlite::SqliteRow) -> Result<MediaObject, RepositoryError> {
+    Ok(MediaObject {
         id: MediaId::new(row.try_get::<String, _>("id").map_err(storage)?).map_err(storage)?,
         owner_id: UserId::new(row.try_get::<String, _>("owner_id").map_err(storage)?)
             .map_err(storage)?,
@@ -3323,8 +3363,7 @@ fn media_blob_from_sqlite(
         )
         .map_err(storage)?,
         created_at: row.try_get("created_at").map_err(sql_error)?,
-    };
-    Ok((media, row.try_get("content").map_err(sql_error)?))
+    })
 }
 
 fn channel_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Channel, RepositoryError> {

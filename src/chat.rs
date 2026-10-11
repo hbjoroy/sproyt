@@ -356,6 +356,30 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn media_metadata(
+        &self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> Result<MediaObject, ChatError> {
+        self.repository
+            .media_metadata(actor, media_id)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn read_media_slice(
+        &self,
+        actor: UserId,
+        media_id: MediaId,
+        offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, ChatError> {
+        self.repository
+            .read_media_slice(actor, media_id, offset, length)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn load_media_preview(
         &self,
         actor: UserId,

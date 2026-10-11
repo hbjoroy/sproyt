@@ -3,7 +3,7 @@ use std::io::Cursor;
 use axum::{
     Json,
     extract::{Multipart, Path, Query, State},
-    http::{HeaderMap, HeaderValue},
+    http::{HeaderMap, HeaderValue, Method},
     response::IntoResponse,
 };
 
@@ -21,6 +21,8 @@ const MAX_IMAGE_ALLOC: u64 = 96 * 1024 * 1024;
 // Admission precedes reading large bodies. Do not queue compressed originals.
 static MEDIA_ADMISSION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 static IMAGE_PROCESSING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+// Slow clients retain one permit, never a database connection or whole original.
+static MEDIA_DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
 
 pub(crate) fn admit_media()
 -> Result<tokio::sync::SemaphorePermit<'static>, Box<axum::response::Response>> {
@@ -325,8 +327,9 @@ pub(crate) async fn download_media(
     Path(id): Path<String>,
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
+    method: Method,
 ) -> axum::response::Response {
-    serve_media(state, id, query, headers, false).await
+    serve_media(state, id, query, headers, method, false).await
 }
 
 pub(crate) async fn download_media_attachment(
@@ -334,8 +337,9 @@ pub(crate) async fn download_media_attachment(
     Path(id): Path<String>,
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
+    method: Method,
 ) -> axum::response::Response {
-    serve_media(state, id, query, headers, true).await
+    serve_media(state, id, query, headers, method, true).await
 }
 
 async fn serve_media(
@@ -343,6 +347,7 @@ async fn serve_media(
     id: String,
     query: WsQuery,
     headers: HeaderMap,
+    method: Method,
     attachment: bool,
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
@@ -355,11 +360,98 @@ async fn serve_media(
             return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
         }
     };
-    let (media, content) = match state.chat.load_media(principal.user.id, media_id).await {
+    serve_authorized_media(
+        state.chat,
+        principal.user.id,
+        media_id,
+        headers,
+        method,
+        attachment,
+    )
+    .await
+}
+
+async fn serve_authorized_media(
+    chat: crate::chat::ChatEngine,
+    actor: crate::domain::UserId,
+    media_id: MediaId,
+    headers: HeaderMap,
+    method: Method,
+    attachment: bool,
+) -> axum::response::Response {
+    let media = match chat.media_metadata(actor.clone(), media_id).await {
         Ok(value) => value,
         Err(error) => return chat_error_response(error),
     };
-    let mut response = content.into_response();
+    let etag = format!("\"{}\"", media.sha256);
+    // Range applies to GET only. Dates and mismatching If-Range validators fall
+    // back to a complete response; we support one strong entity tag.
+    let requested_range = (method == Method::GET
+        && headers
+            .get(axum::http::header::IF_RANGE)
+            .is_none_or(|value| value.as_bytes() == etag.as_bytes()))
+    .then(|| {
+        headers
+            .get(axum::http::header::RANGE)
+            .and_then(|value| value.to_str().ok())
+    })
+    .flatten();
+    let range = match byte_range(requested_range, media.size_bytes) {
+        Ok(value) => value,
+        Err(()) => {
+            return (
+                axum::http::StatusCode::RANGE_NOT_SATISFIABLE,
+                [(
+                    axum::http::header::CONTENT_RANGE,
+                    format!("bytes */{}", media.size_bytes),
+                )],
+            )
+                .into_response();
+        }
+    };
+    let (start, length) = range.unwrap_or((0, media.size_bytes));
+    let body = if method == Method::HEAD || length == 0 {
+        axum::body::Body::empty()
+    } else {
+        let permit = match MEDIA_DOWNLOADS.try_acquire() {
+            Ok(permit) => permit,
+            Err(_) => {
+                return (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    [(axum::http::header::RETRY_AFTER, "2")],
+                    "Nedlasting er opptatt. Prøv igjen om litt.",
+                )
+                    .into_response();
+            }
+        };
+        media_stream(chat, actor, media_id, start, length, permit)
+    };
+    let mut response = body.into_response();
+    if range.is_some() {
+        *response.status_mut() = axum::http::StatusCode::PARTIAL_CONTENT;
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_RANGE,
+            HeaderValue::from_str(&format!(
+                "bytes {start}-{}/{}",
+                start + length - 1,
+                media.size_bytes
+            ))
+            .unwrap(),
+        );
+    }
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_LENGTH,
+        HeaderValue::from(length),
+    );
+    response.headers_mut().insert(
+        axum::http::header::ACCEPT_RANGES,
+        HeaderValue::from_static("bytes"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&etag) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::ETAG, value);
+    }
     if let Ok(value) = HeaderValue::from_str(&media.content_type) {
         response
             .headers_mut()
@@ -380,6 +472,78 @@ async fn serve_media(
         );
     }
     response
+}
+
+fn media_stream(
+    chat: crate::chat::ChatEngine,
+    actor: crate::domain::UserId,
+    id: MediaId,
+    start: u64,
+    length: u64,
+    permit: tokio::sync::SemaphorePermit<'static>,
+) -> axum::body::Body {
+    axum::body::Body::from_stream(async_stream::stream! {
+        let _permit = permit;
+        let mut offset = start;
+        let end = start + length;
+        while offset < end {
+            let size = (end - offset).min(crate::domain::MEDIA_READ_BLOCK_BYTES as u64) as usize;
+            // This future releases the SQL connection before yielding to HTTP.
+            let bytes = match chat.read_media_slice(actor.clone(), id, offset, size).await {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    yield Err(std::io::Error::other(error.to_string()));
+                    break;
+                }
+            };
+            if bytes.len() != size {
+                yield Err(std::io::Error::other("incomplete stored media"));
+                break;
+            }
+            offset += bytes.len() as u64;
+            yield Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes));
+        }
+    })
+}
+
+/// Returns (offset, length); unsupported units/multiple ranges use a full GET.
+fn byte_range(header: Option<&str>, size: u64) -> Result<Option<(u64, u64)>, ()> {
+    let Some(value) = header.and_then(|value| value.strip_prefix("bytes=")) else {
+        return Ok(None);
+    };
+    if value.contains(',') {
+        return Ok(None);
+    }
+    let (left, right) = value.split_once('-').ok_or(())?;
+    let parse = |value: &str| -> Result<u64, ()> {
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(());
+        }
+        value.parse().map_err(|_| ())
+    };
+    if size == 0 {
+        return Err(());
+    }
+    if left.is_empty() {
+        let length = parse(right)?.min(size);
+        if length == 0 {
+            return Err(());
+        }
+        return Ok(Some((size - length, length)));
+    }
+    let start = parse(left)?;
+    if start >= size {
+        return Err(());
+    }
+    let end = if right.is_empty() {
+        size - 1
+    } else {
+        parse(right)?.min(size - 1)
+    };
+    if end < start {
+        return Err(());
+    }
+    Ok(Some((start, end - start + 1)))
 }
 
 fn attachment_disposition(filename: &str, id: &MediaId, content_type: &str) -> HeaderValue {
@@ -449,6 +613,7 @@ pub(crate) async fn download_media_preview(
     Path(id): Path<String>,
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
+    method: Method,
 ) -> axum::response::Response {
     let principal = match authenticate_http(&state, query, &headers).await {
         Ok(value) => value,
@@ -466,10 +631,19 @@ pub(crate) async fn download_media_preview(
         .await
     {
         Ok(Some(preview)) => media_content_response(preview.content_type, preview.content),
-        Ok(None) => match state.chat.load_media(principal.user.id, media_id).await {
-            Ok((media, content)) => media_content_response(media.content_type, content),
-            Err(error) => chat_error_response(error),
-        },
+        // Legacy files may use the original as their preview. Keep that path
+        // bounded too; chunked uploads will instead expose pending status.
+        Ok(None) => {
+            serve_authorized_media(
+                state.chat,
+                principal.user.id,
+                media_id,
+                headers,
+                method,
+                false,
+            )
+            .await
+        }
         Err(error) => chat_error_response(error),
     }
 }
@@ -523,6 +697,103 @@ pub(crate) fn detected_media_type(content: &[u8], declared: &str) -> Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_ranges_cover_video_seeking_and_bad_bounds() {
+        assert_eq!(byte_range(Some("bytes=2-5"), 10), Ok(Some((2, 4))));
+        assert_eq!(byte_range(Some("bytes=2-"), 10), Ok(Some((2, 8))));
+        assert_eq!(byte_range(Some("bytes=-3"), 10), Ok(Some((7, 3))));
+        assert_eq!(byte_range(Some("bytes=-20"), 10), Ok(Some((0, 10))));
+        assert_eq!(byte_range(Some("bytes=2-20"), 10), Ok(Some((2, 8))));
+        for range in [
+            "bytes=10-",
+            "bytes=-0",
+            "bytes=4-2",
+            "bytes=x-",
+            "bytes=+2-",
+            "bytes=18446744073709551616-",
+        ] {
+            assert_eq!(byte_range(Some(range), 10), Err(()), "{range}");
+        }
+        assert_eq!(byte_range(Some("bytes=0-"), 0), Err(()));
+        assert_eq!(byte_range(Some("items=0-1"), 10), Ok(None));
+        assert_eq!(byte_range(Some("bytes=0-1,4-5"), 10), Ok(None));
+    }
+
+    #[tokio::test]
+    async fn dropping_or_failing_download_releases_its_permit() {
+        static TEST_DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        let chat = crate::chat::ChatEngine::start(std::sync::Arc::new(
+            crate::domain::InMemoryChatRepository::default(),
+        ));
+        let body = media_stream(
+            chat.clone(),
+            crate::domain::UserId::named("reader"),
+            MediaId::generate(),
+            0,
+            10,
+            TEST_DOWNLOADS.try_acquire().unwrap(),
+        );
+        assert_eq!(TEST_DOWNLOADS.available_permits(), 0);
+        drop(body);
+        assert_eq!(TEST_DOWNLOADS.available_permits(), 1);
+        let body = media_stream(
+            chat.clone(),
+            crate::domain::UserId::named("reader"),
+            MediaId::generate(),
+            0,
+            10,
+            TEST_DOWNLOADS.try_acquire().unwrap(),
+        );
+        assert!(axum::body::to_bytes(body, 10).await.is_err());
+        assert_eq!(TEST_DOWNLOADS.available_permits(), 1);
+
+        let owner = crate::auth::AuthService::development()
+            .authenticate_request(Some("stream-reader".into()), None)
+            .await
+            .unwrap();
+        chat.ensure_user(owner.user.clone()).await.unwrap();
+        let channel = chat
+            .create_channel(
+                owner.user.id.clone(),
+                crate::domain::ChannelSlug::new("stream-cancel").unwrap(),
+                crate::domain::DisplayName::new("Stream cancel").unwrap(),
+                crate::domain::ChannelKind::Private,
+                None,
+            )
+            .await
+            .unwrap();
+        let size = crate::domain::MEDIA_READ_BLOCK_BYTES + 1;
+        let media = chat
+            .store_media(MediaUpload {
+                actor: owner.user.id.clone(),
+                channel_id: channel.id,
+                filename: "video.mp4".into(),
+                content_type: "video/mp4".into(),
+                content: vec![7; size],
+                dimensions: None,
+                preview: None,
+            })
+            .await
+            .unwrap();
+        let mut stream = media_stream(
+            chat,
+            owner.user.id,
+            media.id,
+            0,
+            size as u64,
+            TEST_DOWNLOADS.try_acquire().unwrap(),
+        )
+        .into_data_stream();
+        use futures_util::StreamExt;
+        assert_eq!(
+            stream.next().await.unwrap().unwrap().len(),
+            crate::domain::MEDIA_READ_BLOCK_BYTES
+        );
+        assert_eq!(TEST_DOWNLOADS.available_permits(), 0);
+        drop(stream);
+        assert_eq!(TEST_DOWNLOADS.available_permits(), 1);
+    }
 
     #[test]
     fn rejects_large_jpeg_header_before_decoding_pixels() {
