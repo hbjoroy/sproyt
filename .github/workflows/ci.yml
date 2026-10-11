@@ -470,6 +470,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=arm64
 
       - name: Verify media worker image identity
+        id: worker-evidence
         env:
           WORKER_IMAGE: local/sproyt-media-worker-arm64:${{ github.sha }}
         run: |
@@ -477,6 +478,7 @@ jobs:
           test "$(docker image inspect "$WORKER_IMAGE" --format '{{.Os}}')" = linux
           test "$(docker image inspect "$WORKER_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
           docker image inspect "$WORKER_IMAGE" > worker-image-evidence.json
+          echo "digest=$(docker image inspect "$WORKER_IMAGE" --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
 
       - name: Record image-to-commit evidence
         id: image-evidence
@@ -510,6 +512,8 @@ jobs:
           --set config.oidcClientId=ci-client
           --set secret.existingSecret=sproyt-ci
           --set image.digest=${{ steps.image-evidence.outputs.digest }}
+          --set mediaWorker.enabled=true
+          --set mediaWorker.image.digest=${{ steps.worker-evidence.outputs.digest }}
           --set monitoring.serviceMonitor.enabled=true
           --set monitoring.prometheusRule.enabled=true
           --set monitoring.grafanaDashboard.enabled=true
