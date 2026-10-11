@@ -20,6 +20,155 @@ use tokio_tungstenite::{
 type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[tokio::test]
+async fn chunk_upload_http_preserves_large_video_and_enforces_admission() {
+    use crate::domain::{ChannelKind, ChannelSlug, DisplayName};
+    use sha2::{Digest, Sha256};
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let store = repository.media_store_for_test(crate::media_store::UploadLimits {
+        max_file_bytes: 64 * 1024 * 1024,
+        owner_bytes: 128 * 1024 * 1024,
+        total_bytes: 1024 * 1024 * 1024,
+    });
+    let (_, old, mut state) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    old.abort();
+    state.media_store = Some(store);
+    let owner = state
+        .auth
+        .authenticate_request(Some("chunk-owner".into()), None)
+        .await
+        .unwrap();
+    state.chat.ensure_user(owner.user.clone()).await.unwrap();
+    let channel = state
+        .chat
+        .create_channel(
+            owner.user.id.clone(),
+            ChannelSlug::new("chunk-http").unwrap(),
+            DisplayName::new("Chunk HTTP").unwrap(),
+            ChannelKind::Private,
+            None,
+        )
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = build_router(state.clone(), state.operations.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::new();
+    let base = format!("http://{address}");
+    let mut bytes: Vec<u8> = (0..36 * 1024 * 1024 + 13)
+        .map(|i| (i % 251) as u8)
+        .collect();
+    bytes[4..12].copy_from_slice(b"ftypisom");
+    let request = serde_json::json!({"request_id":uuid::Uuid::now_v7(),"filename":"original.mp4","content_type":"video/mp4","size_bytes":bytes.len()});
+    let response = client
+        .post(format!(
+            "{base}/api/v1/channels/{}/media-uploads?participant=chunk-owner",
+            channel.id
+        ))
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let upload: serde_json::Value = response.json().await.unwrap();
+    let id = upload["id"].as_str().unwrap();
+    let upload_url = format!("{base}/api/v1/media-uploads/{id}");
+    // Send headers only: an unauthorized upload must respond without waiting
+    // for its announced oversized body (or eagerly buffering it).
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    socket.write_all(format!("PUT /api/v1/media-uploads/{id}/chunks/0?participant=chunk-outsider HTTP/1.1\r\nHost: {address}\r\nContent-Length: {}\r\nx-chunk-sha256: {}\r\n\r\n",crate::media_store::CHUNK_BYTES+1,"0".repeat(64)).as_bytes()).await.unwrap();
+    let mut response_headers = [0; 4096];
+    let count = tokio::time::timeout(Duration::from_secs(3), socket.read(&mut response_headers))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&response_headers[..count]).starts_with("HTTP/1.1 404"));
+    let oversized = client
+        .put(format!("{upload_url}/chunks/0?participant=chunk-owner"))
+        .header("x-chunk-sha256", "0".repeat(64))
+        .body(vec![0; crate::media_store::CHUNK_BYTES + 1])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(oversized.status(), 413);
+    for (index, chunk) in bytes.chunks(crate::media_store::CHUNK_BYTES).enumerate() {
+        let response = client
+            .put(format!(
+                "{upload_url}/chunks/{index}?participant=chunk-owner"
+            ))
+            .header("x-chunk-sha256", format!("{:x}", Sha256::digest(chunk)))
+            .body(chunk.to_vec())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    }
+    let response = client
+        .post(format!("{upload_url}/complete?participant=chunk-owner"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    let completed: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(completed["media"]["size_bytes"], bytes.len());
+    assert_eq!(
+        completed["media"]["sha256"],
+        format!("{:x}", Sha256::digest(&bytes))
+    );
+    let media_id = completed["media"]["id"].as_str().unwrap();
+    let repeated: serde_json::Value = client
+        .post(format!("{upload_url}/complete?participant=chunk-owner"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(repeated["media"]["id"], media_id);
+    let media_url = format!("{base}/api/v1/media/{media_id}?participant=chunk-owner");
+    let mut response = client.get(&media_url).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let mut hash = Sha256::new();
+    while let Some(chunk) = response.chunk().await.unwrap() {
+        hash.update(&chunk);
+    }
+    assert_eq!(
+        format!("{:x}", hash.finalize()),
+        format!("{:x}", Sha256::digest(&bytes))
+    );
+    let response = client
+        .get(&media_url)
+        .header("range", "bytes=1048569-1048580")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 206);
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        &bytes[1_048_569..1_048_581]
+    );
+    let rejected = client
+        .post(format!(
+            "{base}/api/v1/channels/{}/media-uploads?participant=chunk-owner",
+            channel.id
+        ))
+        .header("origin", "https://evil.example")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), 403);
+    server.abort();
+}
+
+#[tokio::test]
 async fn media_download_streams_exact_bytes_and_supports_video_ranges() {
     use crate::domain::{ChannelKind, ChannelSlug, DisplayName, MediaUpload};
     let repository = Arc::new(
@@ -1463,6 +1612,7 @@ async fn start_test_server_with_state(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        media_store: None,
         imagegen: None,
         process_pilot: None,
         work_items: None,
@@ -1499,6 +1649,7 @@ async fn start_postgres_test_server(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        media_store: None,
         imagegen: None,
         process_pilot: None,
         work_items: None,
@@ -1535,6 +1686,7 @@ async fn start_test_server_with_gateway(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        media_store: None,
         imagegen: None,
         process_pilot: None,
         work_items: None,

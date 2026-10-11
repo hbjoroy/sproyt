@@ -244,6 +244,7 @@ jobs:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: |
           cargo test db::postgres::tests --locked
+          cargo test media_store::tests::postgres_ --locked -- --test-threads=1
           cargo test postgres_saved_status_history_contract --locked
           cargo test postgres_notifications_share_the_repository_connection_budget --locked
           cargo test postgres_imagegen_uses_the_shared_connection_budget --locked

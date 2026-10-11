@@ -138,6 +138,13 @@ pub struct PostgresChatRepository {
 
 impl PostgresChatRepository {
     #[cfg(test)]
+    pub(crate) fn media_store_for_test(
+        &self,
+        limits: crate::media_store::UploadLimits,
+    ) -> crate::media_store::MediaStore {
+        crate::media_store::MediaStore::test_postgres(self.pool.clone(), limits)
+    }
+    #[cfg(test)]
     pub async fn connect(url: &str) -> Result<Self, RepositoryError> {
         let pool = PgPool::connect(url).await.map_err(sql_error)?;
         Self::connect_with_pool(url, pool).await
@@ -650,9 +657,31 @@ impl ChatRepository for PostgresChatRepository {
                 .checked_add(1)
                 .and_then(|n| i32::try_from(n).ok())
                 .ok_or(RepositoryError::Conflict)?;
-            sqlx::query_scalar("select substring(b.content from $3 for $4) from media_objects m join media_blobs b on b.media_id=m.id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2")
+            let legacy: Option<Vec<u8>> = sqlx::query_scalar("select substring(b.content from $3 for $4) from media_objects m join media_blobs b on b.media_id=m.id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2")
                 .bind(*actor.as_uuid()).bind(*media_id.as_uuid()).bind(start).bind(length as i32)
-                .fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)
+                .fetch_optional(&self.pool).await.map_err(sql_error)?;
+            if let Some(bytes) = legacy {
+                return Ok(bytes);
+            }
+            let metadata = self.media_metadata(actor.clone(), media_id).await?;
+            let length = (metadata.size_bytes.saturating_sub(offset)).min(length as u64) as usize;
+            let mut result = Vec::with_capacity(length);
+            let mut position = offset;
+            while result.len() < length {
+                let index = position / crate::media_store::CHUNK_BYTES as u64;
+                let local_offset = position % crate::media_store::CHUNK_BYTES as u64;
+                let count = (length - result.len())
+                    .min(crate::media_store::CHUNK_BYTES - local_offset as usize);
+                let bytes: Vec<u8> = sqlx::query_scalar("select substring(b.content from $3 for $4) from media_upload_chunks b join media_uploads u on u.id=b.upload_id join channel_memberships cm on cm.channel_id=u.channel_id and cm.user_id=$1 where u.media_id=$2 and u.state='complete' and b.chunk_index=$5")
+                    .bind(*actor.as_uuid()).bind(*media_id.as_uuid()).bind(local_offset as i32 + 1).bind(count as i32).bind(index as i32)
+                    .fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
+                if bytes.len() != count {
+                    return Err(storage("incomplete stored media chunk"));
+                }
+                position += bytes.len() as u64;
+                result.extend(bytes);
+            }
+            Ok(result)
         })
     }
 
