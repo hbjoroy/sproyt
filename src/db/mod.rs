@@ -108,7 +108,7 @@ pub async fn connect_postgres_pool(
     Ok(Some(pool))
 }
 
-fn storage(error: impl std::fmt::Display) -> RepositoryError {
+pub(crate) fn storage(error: impl std::fmt::Display) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
 }
 
@@ -171,13 +171,17 @@ async fn verify_media_reads_contract<R: ChatRepository>(repository: &R, suffix: 
         )
         .await
         .unwrap();
-    assert_eq!(
-        repository
-            .media_metadata(actor.clone(), media.id)
-            .await
-            .unwrap(),
-        media
-    );
+    let mut loaded = repository
+        .media_metadata(actor.clone(), media.id)
+        .await
+        .unwrap();
+    let mut expected = media.clone();
+    // PostgreSQL persists microseconds while in-memory/SQLite retain nanos.
+    loaded.created_at =
+        chrono::DateTime::from_timestamp_micros(loaded.created_at.timestamp_micros()).unwrap();
+    expected.created_at =
+        chrono::DateTime::from_timestamp_micros(expected.created_at.timestamp_micros()).unwrap();
+    assert_eq!(loaded, expected);
     let outsider = UserId::named(format!("media-outsider-{suffix}"));
     assert_eq!(
         repository.media_metadata(outsider.clone(), media.id).await,
