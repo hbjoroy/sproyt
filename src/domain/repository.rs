@@ -84,11 +84,6 @@ pub trait ChatRepository: Send + Sync + 'static {
         upload: MediaUpload,
         sha256: String,
     ) -> RepositoryFuture<'a, MediaObject>;
-    fn load_media<'a>(
-        &'a self,
-        actor: UserId,
-        media_id: MediaId,
-    ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)>;
     fn media_metadata<'a>(
         &'a self,
         actor: UserId,
@@ -102,6 +97,16 @@ pub trait ChatRepository: Send + Sync + 'static {
         offset: u64,
         length: usize,
     ) -> RepositoryFuture<'a, Vec<u8>>;
+    fn media_preview_state<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, String> {
+        Box::pin(async move {
+            self.media_metadata(actor, media_id).await?;
+            Ok("legacy".into())
+        })
+    }
     fn load_media_preview<'a>(
         &'a self,
         actor: UserId,
@@ -680,28 +685,6 @@ impl ChatRepository for InMemoryChatRepository {
                 .media
                 .insert(media.id, (media.clone(), upload.content));
             Ok(media)
-        })
-    }
-
-    fn load_media<'a>(
-        &'a self,
-        actor: UserId,
-        media_id: MediaId,
-    ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)> {
-        Box::pin(async move {
-            let state = self.lock_state()?;
-            let item = state
-                .media
-                .get(&media_id)
-                .cloned()
-                .ok_or(RepositoryError::NotFound)?;
-            if !state
-                .memberships
-                .contains_key(&(item.0.channel_id.clone(), actor))
-            {
-                return Err(RepositoryError::NotFound);
-            }
-            Ok(item)
         })
     }
 

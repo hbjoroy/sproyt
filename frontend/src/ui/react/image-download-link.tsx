@@ -1,7 +1,7 @@
 import { Button } from "@sproyt/ui/react";
 import { useEffect, useRef, useState } from "react";
 
-const maxImageBytes = 35 * 1024 * 1024; // Same bound as the media upload endpoint.
+const maxImageBytes = 35 * 1024 * 1024; // In-memory OS sharing bound; native downloads can be larger.
 const imageTypes = new Set(["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/avif"]);
 function iosStandalone(): boolean {
   if (typeof navigator === "undefined") return false;
@@ -88,7 +88,8 @@ export function ImageDownloadLink({ href, name, className }: { href: string; nam
   if (standalone) return <>
     <Button variant="quiet" className={className} disabled={busy} onClick={() => void prepare()} aria-label={`Last ned ${name}`} title={`Last ned ${name}`}>↓</Button>
     {notice && <div className="sp-media-download-notice" style={{ pointerEvents: "auto" }}><output role="status" aria-live="polite">{notice}</output>
-      {prepared && <Button variant="quiet" disabled={busy} onClick={() => void share()}>Lagre eller del</Button>}</div>}
+      {prepared && <Button variant="quiet" disabled={busy} onClick={() => void share()}>Lagre eller del</Button>}
+      {!prepared && !busy && <a href={href} download={name} target="_blank" rel="noopener noreferrer">Opne nedlasting</a>}</div>}
   </>;
   return <>
     <a className={className} href={href} download={name} target="_blank" rel="noopener noreferrer" onClick={() => setAttempt(value => value + 1)}

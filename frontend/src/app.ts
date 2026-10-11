@@ -1,4 +1,5 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
+      import { uploadMediaChunks } from "./media-upload";
       import { ProcessPilotApi } from "./process-pilot";
       import { WorkItemApi } from "./work-items";
       import { appVersion, createAppUpdate, latestAppVersion, updateAppWorker } from "./app-update";
@@ -457,8 +458,7 @@
         user: () => currentParticipantId,
         upload: async (channelId, file) => {
           if (!knownChannels.some(channel => channel.id === channelId && channel.role !== "observer")) throw new Error("Du har ikkje skriverett i denne kanalen.");
-          const form = new FormData(); form.append("file", file, file.name || "shared-image.png");
-          const response = await fetch(`/api/v1/channels/${channelId}/media`, { method: "POST", credentials: "same-origin", body: form, signal: AbortSignal.timeout(60000) });
+          const response = await postMediaFile(channelId,file,file.name || "shared-image.png",()=>{});
           if (!response.ok) throw new Error(`Biletet kunne ikkje lastast opp (HTTP ${response.status}). Delinga er teken vare på.`);
           const media = mediaFromUpload(await response.json());
           if (!media || media.channel_id !== channelId) throw new Error("Opplastinga gav ugyldige mediedata. Delinga er teken vare på.");
@@ -1083,6 +1083,20 @@
         });
       }
 
+      async function postMediaFile(channelId: string, file: File, filename: string, setStatus: (message: string, kind?: string) => void): Promise<UploadResponse> {
+        const participant = new URL(window.location.href).searchParams.get("participant");
+        const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
+        const chunked = await uploadMediaChunks(file,channelId,{authQuery,refresh:()=>sessionController.refresh(true),progress:setStatus});
+        if (chunked) return chunked;
+        if (!file.size || file.size > 35*1024*1024) throw new Error("Store vedlegg er ikkje aktiverte på denne serveren enno.");
+        const form = new FormData();
+        form.append("file",file,filename);
+        const url = `/api/v1/channels/${channelId}/media${authQuery}`;
+        let response = await postMedia(url,form,filename,setStatus);
+        if (response.status===401 && await sessionController.refresh(true)) response=await postMedia(url,form,filename,setStatus);
+        return response;
+      }
+
       async function uploadMediaFiles(files: Iterable<File>): Promise<void> {
         const channelId = activeChannelId;
         if (!channelId) return;
@@ -1097,23 +1111,14 @@
         setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
         try {
         for (const file of files) {
-          if (!file.size || file.size > 35 * 1024 * 1024) {
-            updateStatus(`${file.name || "Fila"} må vere mellom 1 byte og 35 MiB.`, "error");
-            continue;
-          }
+
           const form = new FormData();
           form.append("file", file, file.name || "clipboard-image.png");
           const filename = file.name || "bilete";
           updateStatus(`Gjer klar ${filename} (${(file.size / 1024 / 1024).toFixed(1)} MiB) …`);
-          const participant = new URL(window.location.href).searchParams.get("participant");
-          const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
-          const url = `/api/v1/channels/${channelId}/media${authQuery}`;
           let response;
           try {
-            response = await postMedia(url, form, filename, updateStatus);
-            if (response.status === 401 && await sessionController.refresh(true)) {
-              response = await postMedia(url, form, filename, updateStatus);
-            }
+            response = await postMediaFile(channelId, file, filename, updateStatus);
           } catch (error) {
             reportClientEvent("upload_failed");
             const online = navigator.onLine ? "Nettlesaren fekk ikkje noko HTTP-svar frå tenesta" : "Eininga er fråkopla nettet";
@@ -1229,22 +1234,15 @@
         const state = threadComposerState(rootId);
         if (!channelId || !rootId || !state) return;
         for (const file of files) {
-          if (!file.size || file.size > 35 * 1024 * 1024) {
-            setThreadUploadStatus(`${file.name || "Fila"} må vere mellom 1 byte og 35 MiB.`, "error", rootId);
-            continue;
-          }
+
           state.uploadCount += 1;
           syncThreadComposer();
           const form = new FormData();
           form.append("file", file, file.name || "clipboard-image.png");
           const filename = file.name || "bilete";
-          const participant = new URL(window.location.href).searchParams.get("participant");
-          const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
-          const url = `/api/v1/channels/${channelId}/media${authQuery}`;
           setThreadUploadStatus(`Gjer klar ${filename} …`, "progress", rootId);
           try {
-            let response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
-            if (response.status === 401 && await sessionController.refresh(true)) response = await postMedia(url, form, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
+            let response = await postMediaFile(channelId, file, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
             if (response.status === 401) throw new Error("Økta kunne ikkje fornyast. Logg inn på nytt.");
             if (!response.ok) throw new Error(await uploadFailureMessage(response, filename));
             const media = mediaFromUpload(await response.json());

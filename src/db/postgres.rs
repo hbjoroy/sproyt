@@ -619,17 +619,6 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
-    fn load_media<'a>(
-        &'a self,
-        actor: UserId,
-        media_id: MediaId,
-    ) -> RepositoryFuture<'a, (MediaObject, Vec<u8>)> {
-        Box::pin(async move {
-            let row = sqlx::query("select m.id,m.owner_id,m.channel_id,m.original_filename,m.content_type,m.size_bytes,m.sha256,m.width,m.height,m.duration_ms,m.alt_text,m.analysis_status,m.analysis_metadata,m.created_at,b.content from media_objects m join media_blobs b on b.media_id=m.id join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.id=$2").bind(*actor.as_uuid()).bind(*media_id.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)?;
-            media_blob_from_postgres(row)
-        })
-    }
-
     fn media_metadata<'a>(
         &'a self,
         actor: UserId,
@@ -685,6 +674,16 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn media_preview_state<'a>(
+        &'a self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> RepositoryFuture<'a, String> {
+        Box::pin(async move {
+            sqlx::query_scalar("select coalesce(j.state,'legacy') from media_objects m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 left join media_preview_jobs j on j.media_id=m.id where m.id=$2")
+                .bind(*actor.as_uuid()).bind(*media_id.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?.ok_or(RepositoryError::NotFound)
+        })
+    }
     fn load_media_preview<'a>(
         &'a self,
         actor: UserId,
@@ -3557,13 +3556,6 @@ fn user_profile_from_row(row: PgRow) -> Result<UserProfile, RepositoryError> {
         },
         status_expires_at: if expired { None } else { expires_at },
     })
-}
-
-fn media_blob_from_postgres(row: PgRow) -> Result<(MediaObject, Vec<u8>), RepositoryError> {
-    Ok((
-        media_from_postgres(&row)?,
-        row.try_get("content").map_err(sql_error)?,
-    ))
 }
 
 fn media_from_postgres(row: &PgRow) -> Result<MediaObject, RepositoryError> {

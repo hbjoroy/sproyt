@@ -345,17 +345,6 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
-    pub async fn load_media(
-        &self,
-        actor: UserId,
-        media_id: MediaId,
-    ) -> Result<(MediaObject, Vec<u8>), ChatError> {
-        self.repository
-            .load_media(actor, media_id)
-            .await
-            .map_err(ChatError::from)
-    }
-
     pub async fn media_metadata(
         &self,
         actor: UserId,
@@ -380,6 +369,16 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn media_preview_state(
+        &self,
+        actor: UserId,
+        media_id: MediaId,
+    ) -> Result<String, ChatError> {
+        self.repository
+            .media_preview_state(actor, media_id)
+            .await
+            .map_err(ChatError::from)
+    }
     pub async fn load_media_preview(
         &self,
         actor: UserId,

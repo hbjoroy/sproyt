@@ -634,6 +634,19 @@ pub(crate) async fn download_media_preview(
         // Legacy files may use the original as their preview. Keep that path
         // bounded too; chunked uploads will instead expose pending status.
         Ok(None) => {
+            let status = match state
+                .chat
+                .media_preview_state(principal.user.id.clone(), media_id)
+                .await
+            {
+                Ok(value) => value,
+                Err(error) => return chat_error_response(error),
+            };
+            if status != "legacy" {
+                return (axum::http::StatusCode::ACCEPTED,
+                    [(axum::http::header::CONTENT_TYPE,"image/svg+xml"),(axum::http::header::CACHE_CONTROL,"private, no-store"),(axum::http::HeaderName::from_static("x-content-type-options"),"nosniff")],
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"#e8e8e1\"/><text x=\"160\" y=\"90\" text-anchor=\"middle\" fill=\"#50554a\" font-family=\"sans-serif\" font-size=\"14\">Førehandsvising blir laga …</text></svg>").into_response();
+            }
             serve_authorized_media(
                 state.chat,
                 principal.user.id,
@@ -646,6 +659,31 @@ pub(crate) async fn download_media_preview(
         }
         Err(error) => chat_error_response(error),
     }
+}
+
+pub(crate) async fn media_preview_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(p) => p,
+        Err(e) => return auth_error_response(e),
+    };
+    let id = match MediaId::new(id) {
+        Ok(id) => id,
+        Err(_) => return axum::http::StatusCode::BAD_REQUEST.into_response(),
+    };
+    let status = match state.chat.media_preview_state(principal.user.id, id).await {
+        Ok(value) => value,
+        Err(error) => return chat_error_response(error),
+    };
+    (
+        [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+        axum::Json(serde_json::json!({"state":status})),
+    )
+        .into_response()
 }
 
 fn media_content_response(content_type: String, content: Vec<u8>) -> axum::response::Response {
