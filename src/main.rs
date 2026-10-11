@@ -10,6 +10,7 @@ mod github;
 mod imagegen;
 mod imagegen_prompt;
 mod integration;
+mod media_store;
 mod notification;
 mod operations;
 mod process;

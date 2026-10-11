@@ -61,6 +61,7 @@ use crate::{
 
 #[derive(Clone)]
 pub(super) struct AppState {
+    pub(super) media_store: Option<crate::media_store::MediaStore>,
     pub(super) auth: AuthService,
     pub(super) chat: ChatEngine,
     pub(super) operations: OperationalState,
@@ -133,7 +134,13 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     let work_items =
         crate::work_items::WorkItems::from_env(config.database(), postgres_pool.as_ref()).await?;
     work_items.start_worker(chat.clone(), operations.subscribe_shutdown());
+    let media_store =
+        crate::media_store::MediaStore::from_env(config.database(), postgres_pool.as_ref()).await?;
+    if let Some(store) = &media_store {
+        store.start_cleanup(operations.subscribe_shutdown());
+    }
     let state = AppState {
+        media_store,
         process_pilot,
         work_items: Some(work_items),
         imagegen,
@@ -242,6 +249,22 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             post(create_global_enrollment_invitation),
         )
         .route("/api/v1/channels/{id}/media", post(upload_media))
+        .route(
+            "/api/v1/channels/{id}/media-uploads",
+            post(crate::web::media_uploads::create).layer(DefaultBodyLimit::max(8192)),
+        )
+        .route(
+            "/api/v1/media-uploads/{id}",
+            get(crate::web::media_uploads::status).delete(crate::web::media_uploads::abort),
+        )
+        .route(
+            "/api/v1/media-uploads/{id}/chunks/{index}",
+            axum::routing::put(crate::web::media_uploads::put_chunk),
+        )
+        .route(
+            "/api/v1/media-uploads/{id}/complete",
+            post(crate::web::media_uploads::complete),
+        )
         .route(
             "/api/v1/imagegen",
             get(crate::web::imagegen::list).post(crate::web::imagegen::enqueue),

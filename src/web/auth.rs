@@ -415,6 +415,7 @@ mod tests {
             .await
             .unwrap();
         let state = AppState {
+            media_store: None,
             imagegen: None,
             process_pilot: None,
             work_items: None,

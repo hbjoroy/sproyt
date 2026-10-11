@@ -17,7 +17,9 @@ Dette dokumentet utdjupar `media-upload-queue-plan.md` (PR #259).
    skrivarar; canary-akseptanse før prod.
 
 Etappe 1 er implementert i `codex/media-streaming-reads`, men ikkje utrulla.
-Resten er design. PR #258 si avviste opplastingsgrense må erstattast før
+Lager og HTTP-protokoll er implementerte i `codex/media-chunk-storage`,
+med nye skrivarar avslått. Klient, worker og aktivering står att.
+PR #258 si avviste opplastingsgrense må erstattast før
 kodeutrulling. Det gjeld også ein release som inneheld berre den nye lesaren.
 
 ## Lesing og kompatibilitet
@@ -56,7 +58,10 @@ med delete-cascade. `storage_key=chunks:v1:<upload-id>` skil nye filer frå
 gamle `db:<media-id>`. Publiser aldri eit uferdig mediaobjekt.
 
 Kvote blir rekna under budget-lock: ferdige originalstorleikar pluss venta
-storleik for alle uferdige sesjonar, globalt og per eigar. Utgåtte sesjonar
+storleik for alle uferdige sesjonar, globalt og per eigar. Kvar fil/sesjon
+blir belasta minst 1 MiB for å dekkje rad-/indeks-/preview-overhead.
+Høgst åtte aktive sesjonar per eigar og 64 totalt blir godtekne atomisk.
+Utgåtte sesjonar
 tel til blokkene faktisk er sletta. Dette unngår skjøre kvoteteljarar i
 første versjon. Genererte bilete og andre legacy-skrivarar må delta i same
 budsjett før store filer blir aktivert.
@@ -101,6 +106,12 @@ Multipart-kompatibilitet kan bruke `field.chunk()` til same blokk-sink,
 med gammal liten request-grense. Oppdatert klient bruker blokkprotokollen
 for store filer. Etter reload må eventuell revald lokal fil verifiserast
 mot lagra blokker før resume.
+
+Nye skrivarar krev `SPROYT_MEDIA_CHUNK_UPLOADS_ENABLED=true` og eksplisitte
+bytegrenser i `SPROYT_MEDIA_MAX_FILE_BYTES`, `SPROYT_MEDIA_OWNER_BUDGET_BYTES`
+og `SPROYT_MEDIA_TOTAL_BUDGET_BYTES`. Ingen av desse er aktiverte i prod
+eller canary. Dette er operatørkonfigurasjon for seinare aktivering, ikkje
+ei tilråding om å slå på funksjonen før dei andre gatane er ferdige.
 
 ## Separat worker og feilisolering
 
