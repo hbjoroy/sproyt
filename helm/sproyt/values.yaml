@@ -202,3 +202,21 @@ networkPolicy:
   comfyuiPort: 8188
   vllmCidrs: []
   vllmPort: 8000
+
+# Isolated decoder, disabled until upload/client/preview acceptance gates pass.
+mediaWorker:
+  enabled: false
+  image:
+    repository: oci.bjoroy.me/sproyt/media-worker
+    tag: development
+    digest: ""
+  scratchSize: 2Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+      ephemeral-storage: 1Gi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+      ephemeral-storage: 2Gi

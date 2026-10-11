@@ -201,6 +201,80 @@ async fn contract<R: ChatRepository>(repository: &R, store: &MediaStore) {
         "repeated completion creates one durable preview job"
     );
     let active = store.create(&actor, channel, &input(1)).await.unwrap();
+    // A process killed by OOM is reclaimed, but cannot publish with its old token.
+    let first = store.claim_preview().await.unwrap().unwrap();
+    assert_eq!(first.media_id, *media.as_uuid());
+    assert!(store.claim_preview().await.unwrap().is_none());
+    assert_eq!(
+        store.preview_chunk(&first, 0).await.unwrap(),
+        bytes[..CHUNK_BYTES]
+    );
+    with_store!(store, |pool, pg| {
+        sqlx::query(&sql(
+            "update media_preview_jobs set lease_until=0 where media_id=?uuid",
+            pg,
+        ))
+        .bind(media.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    });
+    assert!(matches!(
+        store.publish_preview(&first, vec![1], 1, 1).await,
+        Err(UploadError::Conflict)
+    ));
+    let mut replacement = store.claim_preview().await.unwrap().unwrap();
+    assert_ne!(replacement.token, first.token);
+    assert!(matches!(
+        store.preview_chunk(&first, 0).await,
+        Err(UploadError::Conflict)
+    ));
+    store.fail_preview(&first).await.unwrap();
+    assert_eq!(
+        store.preview_chunk(&replacement, 1).await.unwrap(),
+        bytes[CHUNK_BYTES..]
+    );
+    with_store!(store, |pool, pg| {
+        if pg {
+            let mut tx = pool.begin().await.unwrap();
+            sqlx::query(&sql(
+                "update media_preview_jobs set lease_until=? where media_id=?uuid",
+                pg,
+            ))
+            .bind(chrono::Utc::now().timestamp() + 2)
+            .bind(media.to_string())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+            let blocked_store = store.clone();
+            let blocked_job = replacement.clone();
+            let blocked = tokio::spawn(async move {
+                blocked_store
+                    .publish_preview(&blocked_job, vec![9], 1, 1)
+                    .await
+            });
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            assert!(!blocked.is_finished());
+            tx.commit().await.unwrap();
+            assert!(matches!(blocked.await.unwrap(), Err(UploadError::Conflict)));
+            replacement = store.claim_preview().await.unwrap().unwrap();
+        }
+    });
+    store
+        .publish_preview(&replacement, vec![1, 2, 3], 10, 20)
+        .await
+        .unwrap();
+    assert!(store.claim_preview().await.unwrap().is_none());
+    assert!(matches!(
+        store.publish_preview(&first, vec![4], 1, 1).await,
+        Err(UploadError::Conflict)
+    ));
+    let preview = repository
+        .load_media_preview(actor.clone(), media)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(preview.content, vec![1, 2, 3]);
     repository
         .leave_channel(LeaveChannel {
             actor: actor.clone(),

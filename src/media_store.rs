@@ -553,3 +553,5 @@ impl MediaStore {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod preview;
