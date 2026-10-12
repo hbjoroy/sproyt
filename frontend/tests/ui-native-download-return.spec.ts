@@ -12,6 +12,47 @@ async function serve(handler: RequestListener): Promise<{ server: Server; url: s
   return { server, url: `http://127.0.0.1:${address.port}` };
 }
 
+for (const standalone of [false, true]) {
+  test(`video originals download unchanged through native browser handling (standalone=${standalone})`, async ({ page }) => {
+    let html = "";
+    const original = Buffer.from("original-video-bytes");
+    const id = "00000000-0000-0000-0000-00000000abcd";
+    const fixture = await serve((request, response) => {
+      if (request.url?.startsWith(`/api/v1/media/${id}`)) {
+        response.writeHead(200, { "content-type": "video/mp4", ...(request.url.endsWith("/download")
+          ? { "content-disposition": 'attachment; filename="ferje.mp4"' } : {}) });
+        response.end(original);
+      } else { response.writeHead(200, { "content-type": "text/html; charset=utf-8" }); response.end(html); }
+    });
+    try {
+      if (standalone) await page.addInitScript(() => {
+        Object.defineProperty(navigator, "userAgent", { value: "iPhone" });
+        Object.defineProperty(navigator, "standalone", { value: true });
+        Object.defineProperty(navigator, "share", { value: () => { throw new Error("Video must not be buffered for sharing"); } });
+      });
+      const bundle = await build({ stdin: { contents: `
+        import { createRoot } from "react-dom/client";
+        import { PreviewMediaContent } from "./src/ui/react/preview-media";
+        createRoot(document.getElementById("app")).render(<PreviewMediaContent body="[[media:${id}|video/mp4|ferje.mp4]]" />);`,
+        resolveDir: fileURLToPath(new URL("..", import.meta.url)), loader: "tsx" },
+        bundle: true, write: false, jsx: "automatic", format: "iife" });
+      html = `<div id="app"></div><script>${bundle.outputFiles[0]!.text}</script>`;
+      await page.goto(fixture.url);
+      const download = page.getByRole("link", { name: "Last ned ferje.mp4", exact: true });
+      await expect(download).toHaveAttribute("href", `/api/v1/media/${id}/download`);
+      await expect(download).toHaveAttribute("download", "ferje.mp4");
+      const completed = page.waitForEvent("download");
+      await download.click();
+      const file = await completed;
+      expect(file.suggestedFilename()).toBe("ferje.mp4");
+      expect(await file.failure()).toBeNull();
+      expect(await readFile((await file.path())!)).toEqual(original);
+      await expect(page.getByRole("status")).toHaveText("Nedlasting starta");
+      await expect(page).toHaveURL(fixture.url + "/");
+    } finally { fixture.server.closeAllConnections(); fixture.server.close(); }
+  });
+}
+
 test("native downloads and preview fallback keep the original app context and draft usable", async ({ page, context }) => {
   let html = "";
   const app = await serve((request, response) => {

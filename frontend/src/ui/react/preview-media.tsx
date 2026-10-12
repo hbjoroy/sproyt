@@ -56,10 +56,10 @@ function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: 
           </button>
         : fullResolution ? <img src={mediaUrl(id)} alt={name} /> : <PreviewImage id={id} name={name} />}
     <figcaption><span title={name}>{name}</span>{onOpen
-      ? <><button type="button" className="sp-media-original" onClick={onOpen}
+      ? <button type="button" className="sp-media-original" onClick={onOpen}
           aria-label="Vis originalbiletet">Original</button>
-        <ImageDownloadLink className="sp-media-download" href={mediaUrl(id, "/download")} name={name} /></>
-      : isVideo && <a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer">Original ↗</a>}</figcaption>
+      : isVideo && <a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer">Original ↗</a>}
+    {(onOpen || isVideo) && <ImageDownloadLink className="sp-media-download" href={mediaUrl(id, "/download")} name={name} nativeOnly={isVideo} />}</figcaption>
   </figure>;
 }
 

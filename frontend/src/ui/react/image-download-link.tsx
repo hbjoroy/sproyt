@@ -34,9 +34,9 @@ async function prepareImage(href: string, name: string, signal: AbortSignal): Pr
 }
 
 /** Installed iOS apps prepare a file for an explicit share gesture; other browsers retain native downloads. */
-export function ImageDownloadLink({ href, name, className }: { href: string; name: string; className: string }) {
+export function ImageDownloadLink({ href, name, className, nativeOnly = false }: { href: string; name: string; className: string; nativeOnly?: boolean }) {
   const [attempt, setAttempt] = useState(0);
-  const [standalone] = useState(iosStandalone);
+  const [standalone] = useState(() => !nativeOnly && iosStandalone());
   const [prepared, setPrepared] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
