@@ -339,7 +339,9 @@ pub async fn healthz() -> &'static str {
 }
 
 pub async fn metrics(State(operations): State<OperationalState>) -> String {
-    operations.metrics() + &crate::chatbot::memory::builder::metrics()
+    operations.metrics()
+        + &crate::chatbot::memory::builder::metrics()
+        + &crate::media_store::monitoring::metrics()
 }
 
 #[cfg(test)]
