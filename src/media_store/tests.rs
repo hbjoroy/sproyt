@@ -1,4 +1,9 @@
 use super::*;
+
+#[tokio::test]
+async fn postgres_monitoring_aggregates_eligibility_and_charged_quota() {
+    super::monitoring::tests::postgres_contract().await;
+}
 use crate::domain::{
     ChannelKind, ChannelSlug, ChatRepository, CreateChannel, DisplayName, LeaveChannel,
     PrincipalKind, User,

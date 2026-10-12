@@ -132,6 +132,8 @@ macro_rules! with_store {
         }
     };
 }
+
+pub(crate) mod monitoring;
 macro_rules! write_transaction {
     ($pool:expr, $pg:expr) => {{
         let mut tx = $pool.begin().await.map_err(UploadError::from_storage)?;
@@ -303,6 +305,7 @@ impl MediaStore {
     }
 
     pub(crate) fn start_cleanup(&self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+        self.start_monitoring(shutdown.clone());
         let store = self.clone();
         tokio::spawn(async move {
             let mut timer = tokio::time::interval(Duration::from_secs(60));
