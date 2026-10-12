@@ -2,6 +2,14 @@ import { HttpClient } from "./api";
 import { isRecord } from "./types";
 
 export type AgentWeather = Readonly<{ location: string; latitude: number; longitude: number }>;
+export type AgentSeaTemperature = Readonly<{ defaultLocation: string; locations: readonly string[] }>;
+export type AgentSeaTemperatureLocation = Readonly<{ id: string; name: string }>;
+
+export function validAgentSeaTemperature(value: AgentSeaTemperature): boolean {
+  return value.locations.length >= 1 && value.locations.length <= 8
+    && value.locations.every(id => id.length >= 1 && id.length <= 80 && id.trim() === id)
+    && new Set(value.locations).size === value.locations.length && value.locations.includes(value.defaultLocation);
+}
 export type AgentImageGeneration = Readonly<{ identityId: string; enabled: boolean; occasional: boolean }>;
 export type AgentImageIdentity = Readonly<{ id: string; label: string }>;
 
@@ -22,6 +30,7 @@ export type CircleChatAgent = Readonly<{
   workerAvailable: boolean;
   memoryEnabled?: boolean;
   weather: AgentWeather | null;
+  seaTemperature?: AgentSeaTemperature | null;
   ferryPort?: "paros" | null;
   visionEnabled: boolean;
   visionAvailable: boolean;
@@ -37,6 +46,7 @@ export type CircleChatAgentInput = Readonly<{
   revision?: number;
   memoryEnabled?: boolean;
   weather?: AgentWeather | null;
+  seaTemperature?: AgentSeaTemperature | null;
   ferryPort?: "paros" | null;
   visionEnabled?: boolean;
   imageGeneration?: AgentImageGeneration | null;
@@ -84,11 +94,20 @@ function decodeAgent(value: unknown): CircleChatAgent {
       || !validAgentWeather(value.weather as AgentWeather)) throw new Error("Ugyldig vêroppsett frå tenaren.");
     weather = { location: value.weather.location, latitude: value.weather.latitude, longitude: value.weather.longitude };
   }
+  let seaTemperature: AgentSeaTemperature | null = null;
+  if (value.sea_temperature !== undefined && value.sea_temperature !== null) {
+    const sea = value.sea_temperature;
+    if (!isRecord(sea) || typeof sea.default_location !== "string" || !Array.isArray(sea.locations)
+      || !sea.locations.every(id => typeof id === "string")
+      || !validAgentSeaTemperature({ defaultLocation: sea.default_location, locations: sea.locations }))
+      throw new Error("Ugyldig sjøtemperaturoppsett frå tenaren.");
+    seaTemperature = { defaultLocation: sea.default_location, locations: sea.locations };
+  }
   if (value.ferry_port !== undefined && value.ferry_port !== null && value.ferry_port !== "paros")
     throw new Error("Ugyldig fergehamn frå tenaren.");
   return { agentId: value.agent_id, circleId: value.circle_id, displayName: value.display_name,
     triggerWords: value.trigger_words, responsePhrases: value.response_phrases,
-    enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available, weather,
+    enabled: value.enabled, revision: value.revision, workerAvailable: value.worker_available, weather, seaTemperature,
     memoryEnabled: value.memory_enabled === true,
     ferryPort: value.ferry_port === "paros" ? "paros" : null,
     visionEnabled: value.vision_enabled === true, visionAvailable: value.vision_available === true,
@@ -107,14 +126,21 @@ export class CircleChatAgentApi {
       { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled, access_revision: accessRevision }) });
   }
 
-  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean; ferryAvailable: boolean; visionAvailable: boolean; imageGenerationAvailable: boolean; imageIdentities: AgentImageIdentity[] }> {
+  async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean; seaTemperatureAvailable: boolean; seaTemperatureLocations: AgentSeaTemperatureLocation[]; ferryAvailable: boolean; visionAvailable: boolean; imageGenerationAvailable: boolean; imageIdentities: AgentImageIdentity[] }> {
     const response = await this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, value => value);
     if (!isRecord(response) || !Array.isArray(response.agents) || typeof response.worker_available !== "boolean"
       || (response.weather_available !== undefined && typeof response.weather_available !== "boolean")
+      || (response.sea_temperature_available !== undefined && typeof response.sea_temperature_available !== "boolean")
       || (response.ferry_available !== undefined && typeof response.ferry_available !== "boolean")
       || (response.vision_available !== undefined && typeof response.vision_available !== "boolean")
       || (response.image_generation_available !== undefined && typeof response.image_generation_available !== "boolean"))
       throw new Error("Ugyldig agentliste frå tenaren.");
+    const seaLocations = response.sea_temperature_locations === undefined ? [] : response.sea_temperature_locations;
+    if (!Array.isArray(seaLocations) || seaLocations.length > 50 || !seaLocations.every(location => isRecord(location)
+      && typeof location.id === "string" && location.id.length > 0 && location.id.length <= 80 && location.id.trim() === location.id
+      && typeof location.name === "string" && location.name.trim().length > 0 && location.name.length <= 120)
+      || new Set(seaLocations.map(location => location.id)).size !== seaLocations.length)
+      throw new Error("Ugyldig sjøtemperaturstad frå tenaren.");
     const identities = response.image_identities ?? [];
     if (!Array.isArray(identities) || identities.length > 50 || !identities.every(identity => isRecord(identity)
       && typeof identity.id === "string" && identity.id.length > 0 && identity.id.length <= 80
@@ -122,6 +148,8 @@ export class CircleChatAgentApi {
       || new Set(identities.map(identity => identity.id)).size !== identities.length) throw new Error("Ugyldig biletidentitet frå tenaren.");
     return { agents: response.agents.map(decodeAgent), workerAvailable: response.worker_available,
       weatherAvailable: response.weather_available === true, ferryAvailable: response.ferry_available === true,
+      seaTemperatureAvailable: response.sea_temperature_available === true,
+      seaTemperatureLocations: seaLocations.map(location => ({ id: String(location.id), name: String(location.name) })),
       visionAvailable: response.vision_available === true, imageGenerationAvailable: response.image_generation_available === true,
       imageIdentities: identities.map(identity => ({ id: String(identity.id), label: String(identity.label) })) };
   }
@@ -140,6 +168,8 @@ export class CircleChatAgentApi {
     return { display_name: input.displayName, trigger_words: input.triggerWords,
       response_phrases: input.responsePhrases, enabled: input.enabled, revision: input.revision, weather: input.weather,
       ferry_port: input.ferryPort, vision_enabled: input.visionEnabled, memory_enabled: input.memoryEnabled,
+      sea_temperature: input.seaTemperature === undefined ? undefined : input.seaTemperature === null ? null
+        : { default_location: input.seaTemperature.defaultLocation, locations: input.seaTemperature.locations },
       image_generation: input.imageGeneration === undefined ? undefined : input.imageGeneration === null ? null
         : { identity_id: input.imageGeneration.identityId, enabled: input.imageGeneration.enabled, occasional: input.imageGeneration.occasional } };
   }

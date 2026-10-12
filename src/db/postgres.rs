@@ -2086,6 +2086,12 @@ impl ChatRepository for PostgresChatRepository {
                 .await
                 .map_err(sql_error)?
                 .ok_or(RepositoryError::NotFound)?;
+            // Sequence allocation may wait after the first authorization.
+            // Recheck deadlines with the database clock while holding locks.
+            if request_id.starts_with("circle-chat-agent:") {
+                crate::chatbot::authorize_reply_postgres(&mut transaction, &command, &request_id)
+                    .await?;
+            }
             let sender_display_name = DisplayName::new(
                 sqlx::query_scalar::<_, String>("select display_name from users where id = $1")
                     .bind(*command.actor.as_uuid())

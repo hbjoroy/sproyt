@@ -23,6 +23,10 @@ pub(super) fn query(pg: bool) -> String {
 }
 
 pub(super) fn publication_clause(pg: bool) -> String {
+    publication_clause_with_sea_temperature(pg, super::sea_temperature_enabled())
+}
+
+fn publication_clause_with_sea_temperature(pg: bool, sea_enabled: bool) -> String {
     let fresh = if pg {
         "anchor.created_at >= clock_timestamp() - interval '20 minutes'"
     } else {
@@ -38,9 +42,16 @@ pub(super) fn publication_clause(pg: bool) -> String {
     } else {
         "j.ferry_valid_until > cast(strftime('%s','now') as integer)"
     };
+    let sea_temperature = sea_temperature_publication_clause(pg, sea_enabled);
+    let weather_followup_capability = if sea_enabled {
+        "(a.weather is not null or a.sea_temperature is not null)"
+    } else {
+        "a.weather is not null"
+    };
     format!(
         " and (a.weather is null or {weather_fresh}) \
         and (a.ferry_port is null or {ferry_fresh}) \
+        {sea_temperature} \
         and (j.followup_anchor_message_id is null or exists( \
         select 1 from circle_chat_agent_jobs previous \
         join command_receipts receipt on receipt.principal_id=previous.agent_id and receipt.request_id='circle-chat-agent:' || cast(previous.id as text) \
@@ -55,7 +66,7 @@ pub(super) fn publication_clause(pg: bool) -> String {
         and anchor.deleted_at is null and anchor.edited_at is null \
         and coalesce(cast(original.parent_message_id as text),'')=coalesce(cast(anchor.parent_message_id as text),'') \
         and anchor.sequence<target.sequence and {fresh} \
-        and ((j.followup_mode='weather' and a.weather is not null and original.sender_id=target.sender_id \
+        and ((j.followup_mode='weather' and {weather_followup_capability} and original.sender_id=target.sender_id \
           and coalesce(cast(anchor.parent_message_id as text),'')=coalesce(cast(target.parent_message_id as text),'')) \
         or (j.followup_mode='explicit' and anchor.parent_message_id is null and target.parent_message_id=anchor.id) \
         or (j.followup_mode='implicit' and original.sender_id=target.sender_id and {implicit_fresh} \
@@ -68,6 +79,22 @@ pub(super) fn publication_clause(pg: bool) -> String {
         } else {
             "julianday(anchor.created_at) >= julianday('now','-3 minutes')"
         }
+    )
+}
+
+/// Only replies backed by a marine lookup acquire a marine publication deadline.
+/// This predicate is re-evaluated by reply authorization after publication locks.
+pub(super) fn sea_temperature_publication_clause(pg: bool, enabled: bool) -> String {
+    if !enabled {
+        return "and j.sea_temperature_snapshot is null".to_owned();
+    }
+    let fresh = if pg {
+        "j.sea_temperature_valid_until > extract(epoch from clock_timestamp())"
+    } else {
+        "j.sea_temperature_valid_until > cast(strftime('%s','now') as integer)"
+    };
+    format!(
+        "and (j.sea_temperature_snapshot is null or (a.sea_temperature is not null and {fresh}))"
     )
 }
 
@@ -113,4 +140,106 @@ pub(super) fn anchor_clause(pg: bool) -> String {
         .find(" and (j.followup_anchor")
         .expect("anchor clause")..]
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{publication_clause_with_sea_temperature, sea_temperature_publication_clause};
+
+    #[tokio::test]
+    async fn marine_only_followup_requires_gate_without_acquiring_weather_deadline() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        // Exercise the entire publication clause, including its anchored followup
+        // branch reused by source lookup. The marine tool has not been called yet.
+        let fixture = "with a as (select ? weather, ? sea_temperature, null ferry_port), \
+            j as (select 'agent' agent_id,'channel' channel_id,1 config_revision,1 access_revision, \
+                'target' source_message_id,'anchor' followup_anchor_message_id,'weather' followup_mode, \
+                null sea_temperature_snapshot,null sea_temperature_valid_until, \
+                cast(strftime('%s','now') as integer)+? weather_valid_until,null ferry_valid_until), \
+            circle_chat_agent_jobs as (select 'previous' id,'agent' agent_id,'channel' channel_id, \
+                1 config_revision,1 access_revision,'original' source_message_id), \
+            command_receipts as (select 'agent' principal_id,'circle-chat-agent:previous' request_id,'anchor' message_id), \
+            messages(id,channel_id,sender_id,parent_message_id,sequence,created_at,edited_at,deleted_at) as ( \
+                select 'original','channel','human',null,1,current_timestamp,null,null union all \
+                select 'anchor','channel','agent',null,2,current_timestamp,null,null union all \
+                select 'target','channel','human',null,3,current_timestamp,null,null) \
+            select exists(select 1 from a cross join j where 1=1";
+        for enabled in [false, true] {
+            for weather in [false, true] {
+                for marine in [false, true] {
+                    for weather_offset in [-60_i64, 60] {
+                        let query = format!(
+                            "{fixture}{})",
+                            publication_clause_with_sea_temperature(false, enabled)
+                        );
+                        let allowed: i64 = sqlx::query_scalar(&query)
+                            .bind(weather.then_some("{}"))
+                            .bind(marine.then_some("{}"))
+                            .bind(weather_offset)
+                            .fetch_one(&pool)
+                            .await
+                            .unwrap();
+                        let expected =
+                            (weather || (enabled && marine)) && (!weather || weather_offset > 0);
+                        assert_eq!(
+                            allowed != 0,
+                            expected,
+                            "gate={enabled}, weather={weather}, marine={marine}, weather_offset={weather_offset}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn marine_postgres_deadline_uses_clock_time_after_lock_waits() {
+        let clause = sea_temperature_publication_clause(true, true);
+        assert!(clause.contains("a.sea_temperature is not null"));
+        assert!(
+            clause
+                .contains("j.sea_temperature_valid_until > extract(epoch from clock_timestamp())")
+        );
+        assert!(!clause.contains("current_timestamp"));
+        assert!(!clause.contains("transaction_timestamp"));
+        assert_eq!(
+            sea_temperature_publication_clause(true, false),
+            "and j.sea_temperature_snapshot is null"
+        );
+    }
+
+    #[tokio::test]
+    async fn marine_sqlite_publication_requires_enabled_config_and_fresh_snapshot() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for enabled in [false, true] {
+            for configured in [false, true] {
+                for snapshot in [false, true] {
+                    // Exact expiry, past expiry and a missing deadline all deny marine replies.
+                    for offset in [None, Some(-60_i64), Some(0), Some(60)] {
+                        let query = format!(
+                            "with a as (select ? sea_temperature), \
+                            j as (select ? sea_temperature_snapshot, \
+                            cast(strftime('%s','now') as integer) + ? sea_temperature_valid_until) \
+                            select exists(select 1 from a cross join j where 1=1 {})",
+                            sea_temperature_publication_clause(false, enabled)
+                        );
+                        let allowed: i64 = sqlx::query_scalar(&query)
+                            .bind(configured.then_some("{}"))
+                            .bind(snapshot.then_some("{}"))
+                            .bind(offset)
+                            .fetch_one(&pool)
+                            .await
+                            .unwrap();
+                        let expected = !snapshot
+                            || (enabled && configured && offset.is_some_and(|value| value > 0));
+                        assert_eq!(
+                            allowed != 0,
+                            expected,
+                            "enabled={enabled}, configured={configured}, snapshot={snapshot}, offset={offset:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

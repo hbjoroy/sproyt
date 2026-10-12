@@ -259,6 +259,7 @@ jobs:
           cargo test postgres_agent_image_publication_contract --locked
           cargo test postgres_two_replica_realtime_and_restart_catch_up_gate --locked
           cargo test chatbot::tests::postgres_ --locked -- --test-threads=1
+          SPROYT_SEA_TEMPERATURE_AGENTS_ENABLED=true cargo test chatbot::sea_temperature_publication_tests --locked -- --test-threads=1
           cargo test chatbot::memory:: --locked -- --test-threads=1 --nocapture
           cargo test chatbot::location:: --locked -- --test-threads=1 --nocapture
           cargo test postgres_work_item_registration_and_task_projection --locked

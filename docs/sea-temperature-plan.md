@@ -220,7 +220,10 @@ sjølvstendig henting, transaksjonelle publiseringsfristar og fire utrullingspor
 Etter ny kontroll fann Astra ingen attståande blokkerande arkitekturval.
 M1-kjeldekontroll, avklaring av produksjonsvilkår og kompatibilitetsbarrieren
 er framleis nødvendige ferdigkriterium før aktivering. Faktagarantien gjeld
-marineoppslaga, ikkje all fri modelltekst. Planarbeidet stoppar før kodeendring.
+marineoppslaga, ikkje all fri modelltekst. Brukaren godkjende implementasjon og utrulling til både prod og canary.
+M1-kjeldeprøvene er dokumenterte i `sea-temperature-sources.md`; kode,
+agentinnstillingar og migrasjon 66 er implementerte. Aktivering skjer først
+etter CI og kontroll av alle arbeidarane mot den nye kontrakten.
 
 ## Seinare utvidingar
 
