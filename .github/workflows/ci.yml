@@ -62,7 +62,7 @@ jobs:
       browser: ${{ steps.scope.outputs.browser }}
       recovery: ${{ steps.scope.outputs.recovery }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Reject publication from unreviewed branches
@@ -85,10 +85,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install pinned Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -113,7 +113,7 @@ jobs:
           rustup target add wasm32-unknown-unknown
 
       - name: Cache Cargo data
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -140,7 +140,7 @@ jobs:
 
       - name: Cache Playwright browser binaries
         if: needs.changes.outputs.browser != 'none'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
@@ -169,7 +169,7 @@ jobs:
 
       - name: Upload browser test evidence
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
@@ -213,10 +213,10 @@ jobs:
       SPROYT_POSTGRES_TEST_URL: postgres://sproyt:sproyt-ci@127.0.0.1:5432/sproyt
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install pinned Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -233,7 +233,7 @@ jobs:
           rustup target add wasm32-unknown-unknown
 
       - name: Cache Cargo data
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -296,10 +296,10 @@ jobs:
       RUSTSEC_ADVISORY_DB_REVISION: 309ad29d8fe448bf986019e05d47b9e0e29a2218
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache Cargo tools and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/cargo-audit
@@ -345,9 +345,9 @@ jobs:
       SPROYT_ENV: test
       SPROYT_AUTH_MODE: development
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install pinned Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -416,7 +416,7 @@ jobs:
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_location_shares")" = "0"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from circle_chat_agent_jobs where id='01900000-0000-7000-8000-000000000009' and status='skipped' and reply_body is null and error_code='location_restore_reset'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: recovery-drill-backup
           path: sproyt.dump
@@ -430,7 +430,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Helm
         uses: azure/setup-helm@v5
@@ -567,13 +567,13 @@ jobs:
 
       - name: Retain media worker vulnerability report even when the gate fails
         if: always() && steps.worker-scan.outputs.sarif != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: media-worker-vulnerabilities
           path: ${{ steps.worker-scan.outputs.sarif }}
 
       - name: Upload delivery evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: delivery-evidence
           path: |
@@ -589,7 +589,7 @@ jobs:
           docker save --output sproyt-media-worker-arm64.tar local/sproyt-media-worker-arm64:${{ github.sha }}
 
       - name: Upload tested ARM64 release image
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-image-${{ github.sha }}
           path: |
@@ -632,7 +632,7 @@ jobs:
       REGCTL_IMAGE: regclient/regctl:v0.11.5@sha256:dbe356c6cf9f8f85e302b9e47fed481ef3f1b04807350e99b02ab2cadee0a993
     steps:
       - name: Download tested ARM64 release image
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-image-${{ github.sha }}
 
@@ -710,7 +710,7 @@ jobs:
             '{image: $image, digest: $digest, revision: $revision}' > worker-registry-evidence.json
 
       - name: Upload registry evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: registry-evidence-${{ github.sha }}
           path: |
@@ -791,7 +791,7 @@ jobs:
             > heart-registry-evidence.json
 
       - name: Upload only non-secret registry evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: heart-registry-evidence-${{ inputs.heart_revision }}
           path: heart-registry-evidence.json
