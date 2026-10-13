@@ -138,6 +138,7 @@ fn input(weather: Option<WeatherConfig>, revision: Option<i64>) -> AgentInput {
     AgentInput {
         ferry_port: None,
         weather: Some(weather),
+        sea_temperature: None,
         display_name: "Vêrvennen".into(),
         trigger_words: vec!["vêret".into()],
         response_phrases: vec!["Bruk det oppgitte vêret".into()],
@@ -156,6 +157,7 @@ async fn contract(store: Store) {
         observations: None,
         imagegen: None,
         weather: None,
+        sea_temperature: None,
         store: store.clone(),
         model: None,
         worker_enabled: false,
@@ -242,6 +244,44 @@ async fn contract(store: Store) {
             .weather
             .is_none()
     );
+    // Independent marine configuration: retain omitted PATCH, explicitly clear null.
+    let marine_config = sea_temperature::SeaTemperatureConfig {
+        default_location: "parikia".into(),
+        locations: vec!["parikia".into(), "bjoroy".into()],
+    };
+    let mut marine_input = input(None, None);
+    marine_input.display_name = "Z sjøvennen".into();
+    marine_input.sea_temperature = Some(Some(marine_config.clone()));
+    let marine = service.create(&owner, &circle, marine_input).await.unwrap();
+    assert!(marine.weather.is_none());
+    assert_eq!(
+        marine.sea_temperature.as_ref().unwrap().locations,
+        marine_config.locations
+    );
+    assert!(!marine.worker_available);
+    let preserved = service
+        .update(
+            &owner,
+            &circle,
+            &marine.agent_id,
+            input(None, Some(marine.revision)),
+        )
+        .await
+        .unwrap();
+    assert!(preserved.sea_temperature.is_some());
+    let mut denied_update = input(None, Some(preserved.revision));
+    denied_update.sea_temperature = Some(None);
+    assert!(matches!(
+        service
+            .update(&other, &circle, &marine.agent_id, denied_update.clone())
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    ));
+    let removed = service
+        .update(&owner, &circle, &marine.agent_id, denied_update)
+        .await
+        .unwrap();
+    assert!(removed.sea_temperature.is_none());
     let agent = service
         .update(
             &owner,
@@ -449,6 +489,7 @@ async fn ferry_contract(store: Store) {
         model: None,
         worker_enabled: false,
         weather: None,
+        sea_temperature: None,
         ferry: None,
         observations: None,
         imagegen: None,
@@ -798,6 +839,7 @@ async fn conversation_contract(store: Store) {
         observations: None,
         imagegen: None,
         weather: None,
+        sea_temperature: None,
         store: store.clone(),
         model: None,
         worker_enabled: false,
@@ -829,6 +871,7 @@ async fn conversation_contract(store: Store) {
             AgentInput {
                 ferry_port: None,
                 weather: Some(None),
+                sea_temperature: None,
                 display_name: "Samtalevennen".into(),
                 trigger_words: vec!["hjelp".into()],
                 response_phrases: vec!["Svar på konkrete spørsmål".into()],
@@ -933,6 +976,7 @@ async fn conversation_contract(store: Store) {
             AgentInput {
                 ferry_port: None,
                 weather: Some(None),
+                sea_temperature: None,
                 display_name: "Annan".into(),
                 trigger_words: vec!["eigen-trigger".into()],
                 response_phrases: vec!["Svar naturleg".into()],

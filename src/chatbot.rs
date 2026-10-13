@@ -33,6 +33,10 @@ fn observations_enabled() -> bool {
     std::env::var("SPROYT_AIS_AGENTS_ENABLED").as_deref() == Ok("true")
 }
 
+fn sea_temperature_enabled() -> bool {
+    std::env::var("SPROYT_SEA_TEMPERATURE_AGENTS_ENABLED").as_deref() == Ok("true")
+}
+
 fn observation_clause(pg: bool, publication: bool) -> String {
     let now = if pg {
         "extract(epoch from clock_timestamp())"
@@ -62,6 +66,7 @@ pub(crate) mod memory;
 mod mention;
 mod observations;
 mod operators;
+mod sea_temperature;
 mod tools;
 mod vision;
 mod weather;
@@ -69,6 +74,8 @@ pub(crate) use channel_access::ChannelAgentInput;
 pub(crate) use weather::WeatherConfig;
 #[cfg(test)]
 mod channel_access_tests;
+#[cfg(test)]
+mod sea_temperature_publication_tests;
 #[cfg(test)]
 mod weather_followup_tests;
 
@@ -84,6 +91,7 @@ pub(crate) struct CircleChatAgents {
     model: Option<Arc<VllmChat>>,
     worker_enabled: bool,
     weather: Option<Arc<weather::WeatherService>>,
+    sea_temperature: Option<Arc<sea_temperature::SeaTemperatureService>>,
     ferry: Option<Arc<ferry::FerryService>>,
     observations: Option<Arc<observations::ObservationService>>,
     imagegen: Option<crate::imagegen::ImageGeneration>,
@@ -101,6 +109,8 @@ pub(crate) struct AgentInput {
     pub revision: Option<i64>,
     #[serde(default, deserialize_with = "weather_update")]
     pub weather: Option<Option<WeatherConfig>>,
+    #[serde(default, deserialize_with = "sea_temperature_update")]
+    pub sea_temperature: Option<Option<sea_temperature::SeaTemperatureConfig>>,
     #[serde(default, deserialize_with = "ferry_port_update")]
     pub ferry_port: Option<Option<String>>,
     #[serde(default)]
@@ -129,6 +139,14 @@ fn weather_update<'de, D: serde::Deserializer<'de>>(
     Ok(Some(Option::<WeatherConfig>::deserialize(deserializer)?))
 }
 
+fn sea_temperature_update<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<sea_temperature::SeaTemperatureConfig>>, D::Error> {
+    Ok(Some(
+        Option::<sea_temperature::SeaTemperatureConfig>::deserialize(deserializer)?,
+    ))
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct AgentView {
     pub agent_id: String,
@@ -141,6 +159,7 @@ pub(crate) struct AgentView {
     pub revision: i64,
     pub worker_available: bool,
     pub weather: Option<WeatherConfig>,
+    pub sea_temperature: Option<sea_temperature::SeaTemperatureConfig>,
     pub ferry_port: Option<String>,
     pub vision_enabled: bool,
     pub vision_available: bool,
@@ -159,6 +178,7 @@ struct StoredAgent {
     memory_enabled: bool,
     revision: i64,
     weather: Option<String>,
+    sea_temperature: Option<String>,
     ferry_port: Option<String>,
     vision_enabled: bool,
     image_generation: Option<String>,
@@ -252,6 +272,9 @@ fn normalized(input: AgentInput) -> Result<AgentInput> {
     if let Some(Some(weather)) = &input.weather {
         weather.validate()?;
     }
+    if let Some(Some(config)) = &input.sea_temperature {
+        config.validate()?;
+    }
     let name = input.display_name.trim();
     if name.chars().count() < 2 || name.chars().count() > 80 || name.chars().any(char::is_control) {
         return Err(RepositoryError::Conflict);
@@ -286,6 +309,7 @@ fn normalized(input: AgentInput) -> Result<AgentInput> {
         memory_enabled: input.memory_enabled,
         revision: input.revision,
         weather: input.weather,
+        sea_temperature: input.sea_temperature,
         ferry_port: input.ferry_port,
         vision_enabled: input.vision_enabled,
         image_generation: input.image_generation,
@@ -341,6 +365,7 @@ impl CircleChatAgents {
         let model = VllmChat::from_env()?.map(Arc::new);
         let worker_enabled = std::env::var("SPROYT_CHAT_AGENTS_ENABLED").as_deref() == Ok("true");
         let weather = weather::WeatherService::from_env()?.map(Arc::new);
+        let sea_temperature = sea_temperature::SeaTemperatureService::from_env()?.map(Arc::new);
         let ferry = ferry::FerryService::from_env()?.map(Arc::new);
         let observations = observations::ObservationService::from_env()?.map(Arc::new);
         let imagegen = crate::imagegen::ImageGeneration::from_env(config, postgres).await?;
@@ -349,6 +374,7 @@ impl CircleChatAgents {
             model,
             worker_enabled,
             weather,
+            sea_temperature,
             ferry,
             observations,
             imagegen,
@@ -369,6 +395,14 @@ impl CircleChatAgents {
             && std::env::var("SPROYT_FERRY_AGENTS_ENABLED").as_deref() == Ok("true")
     }
 
+    pub(crate) fn sea_temperature_available(&self) -> bool {
+        self.sea_temperature.is_some() && sea_temperature_enabled()
+    }
+
+    pub(crate) fn sea_temperature_locations(&self) -> Vec<Value> {
+        sea_temperature::locations()
+    }
+
     pub(crate) fn vision_available(&self) -> bool {
         self.available() && vision::enabled()
     }
@@ -384,9 +418,9 @@ impl CircleChatAgents {
         self.require_manager(actor, circle).await?;
         let pg = matches!(self.store, Store::Pg(_));
         let object = if pg {
-            "cast(json_build_object('agent_id',cast(a.agent_id as text),'circle_id',cast(a.circle_id as text),'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',a.enabled,'memory_enabled',a.memory_enabled,'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',a.vision_enabled,'image_generation',a.image_generation) as text)"
+            "cast(json_build_object('agent_id',cast(a.agent_id as text),'circle_id',cast(a.circle_id as text),'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',a.enabled,'memory_enabled',a.memory_enabled,'revision',a.revision,'weather',a.weather,'sea_temperature',a.sea_temperature,'ferry_port',a.ferry_port,'vision_enabled',a.vision_enabled,'image_generation',a.image_generation) as text)"
         } else {
-            "json_object('agent_id',a.agent_id,'circle_id',a.circle_id,'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',json(case when a.enabled=1 then 'true' else 'false' end),'memory_enabled',json(case when a.memory_enabled then 'true' else 'false' end),'revision',a.revision,'weather',a.weather,'ferry_port',a.ferry_port,'vision_enabled',json(case when a.vision_enabled then 'true' else 'false' end),'image_generation',a.image_generation)"
+            "json_object('agent_id',a.agent_id,'circle_id',a.circle_id,'display_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'enabled',json(case when a.enabled=1 then 'true' else 'false' end),'memory_enabled',json(case when a.memory_enabled then 'true' else 'false' end),'revision',a.revision,'weather',a.weather,'sea_temperature',a.sea_temperature,'ferry_port',a.ferry_port,'vision_enabled',json(case when a.vision_enabled then 'true' else 'false' end),'image_generation',a.image_generation)"
         };
         let query = format!(
             "select {object} from circle_chat_agents a join users u on u.id=a.agent_id where a.circle_id=?uuid and exists(select 1 from circle_memberships m where m.circle_id=a.circle_id and m.user_id=?uuid and m.role in ('owner','moderator')) order by lower(u.display_name),a.agent_id"
@@ -416,6 +450,7 @@ impl CircleChatAgents {
             revision: item.revision,
             worker_available: self.available()
                 && (item.weather.is_none() || self.weather_available())
+                && (item.sea_temperature.is_none() || self.sea_temperature_available())
                 && (item.ferry_port.is_none() || self.ferry_available()),
             ferry_port: item.ferry_port,
             vision_enabled: item.vision_enabled,
@@ -423,6 +458,12 @@ impl CircleChatAgents {
             image_generation_available: self.image_generation_available(),
             image_generation: item
                 .image_generation
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(storage)?,
+            sea_temperature: item
+                .sea_temperature
                 .as_deref()
                 .map(serde_json::from_str)
                 .transpose()
@@ -454,6 +495,8 @@ impl CircleChatAgents {
         let input = normalized(input)?;
         if input.enabled
             && (!self.available()
+                || (input.sea_temperature.as_ref().is_some_and(Option::is_some)
+                    && !self.sea_temperature_available())
                 || (input.weather.as_ref().is_some_and(Option::is_some)
                     && !self.weather_available())
                 || (input.ferry_port.as_ref().is_some_and(Option::is_some)
@@ -474,6 +517,7 @@ impl CircleChatAgents {
         let phrases = serde_json::to_string(&input.response_phrases).map_err(storage)?;
         let image_generation = serde_json::to_string(&input.image_generation).map_err(storage)?;
         let weather = serde_json::to_string(&input.weather).map_err(storage)?;
+        let sea_temperature = serde_json::to_string(&input.sea_temperature).map_err(storage)?;
         macro_rules! create {
             ($pool:expr,$pg:expr) => {{
                 let mut tx = $pool.begin().await.map_err(storage)?;
@@ -487,8 +531,8 @@ impl CircleChatAgents {
                     .bind(&id).bind(&input.display_name).bind(PROVIDER).bind(&id).execute(&mut *tx).await.map_err(storage)?;
                 sqlx::query(&sql("insert into agent_profiles(agent_id,owner_id,invited_by,provider,service_identity,purpose,rate_limit_per_minute,created_at) values(?uuid,?uuid,?uuid,?,?,?,30,current_timestamp)",$pg))
                     .bind(&id).bind(actor.to_string()).bind(actor.to_string()).bind(PROVIDER).bind(&id).bind("Circle chat agent").execute(&mut *tx).await.map_err(storage)?;
-                sqlx::query(&sql("insert into circle_chat_agents(agent_id,circle_id,trigger_words,response_phrases,enabled,created_by,updated_by,created_at,updated_at,weather,ferry_port,vision_enabled,image_generation) values(?uuid,?uuid,?,?,case when ?='true' then true else false end,?uuid,?uuid,?int,?int,nullif(?,'null'),?,case when ?='true' then true else false end,nullif(?,'null'))",$pg))
-                    .bind(&id).bind(circle).bind(&triggers).bind(&phrases).bind(input.enabled.to_string()).bind(actor.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(now.to_string()).bind(&weather).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.unwrap_or(false).to_string()).bind(&image_generation).execute(&mut *tx).await.map_err(storage)?;
+                sqlx::query(&sql("insert into circle_chat_agents(agent_id,circle_id,trigger_words,response_phrases,enabled,created_by,updated_by,created_at,updated_at,weather,ferry_port,vision_enabled,image_generation,sea_temperature) values(?uuid,?uuid,?,?,case when ?='true' then true else false end,?uuid,?uuid,?int,?int,nullif(?,'null'),?,case when ?='true' then true else false end,nullif(?,'null'),nullif(?,'null'))",$pg))
+                    .bind(&id).bind(circle).bind(&triggers).bind(&phrases).bind(input.enabled.to_string()).bind(actor.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(now.to_string()).bind(&weather).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.unwrap_or(false).to_string()).bind(&image_generation).bind(&sea_temperature).execute(&mut *tx).await.map_err(storage)?;
                 if let Some(enabled) = input.memory_enabled {
                     sqlx::query(&sql("update circle_chat_agents set memory_enabled=case when ?='true' then true else false end where agent_id=?uuid",$pg)).bind(enabled.to_string()).bind(&id).execute(&mut *tx).await.map_err(storage)?;
                 }
@@ -510,9 +554,12 @@ impl CircleChatAgents {
             revision: 1,
             worker_available: self.available()
                 && (input.weather.as_ref().is_none_or(Option::is_none) || self.weather_available())
+                && (input.sea_temperature.as_ref().is_none_or(Option::is_none)
+                    || self.sea_temperature_available())
                 && (input.ferry_port.as_ref().is_none_or(Option::is_none)
                     || self.ferry_available()),
             weather: input.weather.flatten(),
+            sea_temperature: input.sea_temperature.flatten(),
             ferry_port: input.ferry_port.flatten(),
             vision_enabled: input.vision_enabled.unwrap_or(false),
             vision_available: self.vision_available(),
@@ -533,6 +580,8 @@ impl CircleChatAgents {
         if expected < 1
             || (input.enabled
                 && (!self.available()
+                    || (input.sea_temperature.as_ref().is_some_and(Option::is_some)
+                        && !self.sea_temperature_available())
                     || (input.weather.as_ref().is_some_and(Option::is_some)
                         && !self.weather_available())
                     || (input.ferry_port.as_ref().is_some_and(Option::is_some)
@@ -548,12 +597,14 @@ impl CircleChatAgents {
             return Err(RepositoryError::Conflict);
         }
         let weather_provided = input.weather.is_some();
+        let sea_provided = input.sea_temperature.is_some();
         let ferry_provided = input.ferry_port.is_some();
         let now = Utc::now().timestamp();
         let triggers = serde_json::to_string(&input.trigger_words).map_err(storage)?;
         let phrases = serde_json::to_string(&input.response_phrases).map_err(storage)?;
         let image_generation = serde_json::to_string(&input.image_generation).map_err(storage)?;
         let weather = serde_json::to_string(&input.weather).map_err(storage)?;
+        let sea_temperature = serde_json::to_string(&input.sea_temperature).map_err(storage)?;
         macro_rules! update {
             ($pool:expr,$pg:expr) => {{
                 let mut tx = $pool.begin().await.map_err(storage)?;
@@ -561,8 +612,8 @@ impl CircleChatAgents {
                 let owner: Option<String> = sqlx::query_scalar(&authority_query)
                     .bind(circle).bind(actor.to_string()).fetch_optional(&mut *tx).await.map_err(storage)?;
                 if owner.is_none() { tx.rollback().await.map_err(storage)?; return Err(RepositoryError::PermissionDenied); }
-                let changed = sqlx::query(&sql("update circle_chat_agents set trigger_words=?,response_phrases=?,image_generation=case when ?='true' then nullif(?,'null') else image_generation end,weather=case when ?='true' then nullif(?,'null') else weather end,ferry_port=case when ?='true' then ? else ferry_port end,vision_enabled=case when ?='true' then case when ?='true' then true else false end else vision_enabled end,enabled=case when ?='true' then true else false end,revision=revision+1,updated_by=?uuid,updated_at=?int where agent_id=?uuid and circle_id=?uuid and revision=?int and (?='true' or weather is null or ?='false' or ?='true') and (?='true' or ferry_port is null or ?='false' or ?='true') and (?='true' or vision_enabled=false or ?='false' or ?='true') and (?='true' or image_generation is null or ?='false' or ?='true')",$pg))
-                    .bind(&triggers).bind(&phrases).bind(input.image_generation.is_some().to_string()).bind(&image_generation).bind(weather_provided.to_string()).bind(&weather).bind(ferry_provided.to_string()).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.is_some().to_string()).bind(input.vision_enabled.unwrap_or(false).to_string()).bind(input.enabled.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(id).bind(circle).bind(expected.to_string()).bind(self.weather_available().to_string()).bind(input.enabled.to_string()).bind(weather_provided.to_string()).bind(self.ferry_available().to_string()).bind(input.enabled.to_string()).bind(ferry_provided.to_string()).bind(self.vision_available().to_string()).bind(input.enabled.to_string()).bind(input.vision_enabled.is_some().to_string()).bind(self.image_generation_available().to_string()).bind(input.enabled.to_string()).bind(input.image_generation.is_some().to_string())
+                let changed = sqlx::query(&sql("update circle_chat_agents set trigger_words=?,response_phrases=?,image_generation=case when ?='true' then nullif(?,'null') else image_generation end,sea_temperature=case when ?='true' then nullif(?,'null') else sea_temperature end,weather=case when ?='true' then nullif(?,'null') else weather end,ferry_port=case when ?='true' then ? else ferry_port end,vision_enabled=case when ?='true' then case when ?='true' then true else false end else vision_enabled end,enabled=case when ?='true' then true else false end,revision=revision+1,updated_by=?uuid,updated_at=?int where agent_id=?uuid and circle_id=?uuid and revision=?int and (?='true' or weather is null or ?='false' or ?='true') and (?='true' or ferry_port is null or ?='false' or ?='true') and (?='true' or vision_enabled=false or ?='false' or ?='true') and (?='true' or image_generation is null or ?='false' or ?='true') and (?='true' or sea_temperature is null or ?='false' or ?='true')",$pg))
+                    .bind(&triggers).bind(&phrases).bind(input.image_generation.is_some().to_string()).bind(&image_generation).bind(sea_provided.to_string()).bind(&sea_temperature).bind(weather_provided.to_string()).bind(&weather).bind(ferry_provided.to_string()).bind(input.ferry_port.as_ref().and_then(Option::as_deref)).bind(input.vision_enabled.is_some().to_string()).bind(input.vision_enabled.unwrap_or(false).to_string()).bind(input.enabled.to_string()).bind(actor.to_string()).bind(now.to_string()).bind(id).bind(circle).bind(expected.to_string()).bind(self.weather_available().to_string()).bind(input.enabled.to_string()).bind(weather_provided.to_string()).bind(self.ferry_available().to_string()).bind(input.enabled.to_string()).bind(ferry_provided.to_string()).bind(self.vision_available().to_string()).bind(input.enabled.to_string()).bind(input.vision_enabled.is_some().to_string()).bind(self.image_generation_available().to_string()).bind(input.enabled.to_string()).bind(input.image_generation.is_some().to_string()).bind(self.sea_temperature_available().to_string()).bind(input.enabled.to_string()).bind(sea_provided.to_string())
                     .execute(&mut *tx).await.map_err(storage)?.rows_affected();
                 if changed != 1 { return Err(RepositoryError::Conflict); }
                 sqlx::query(&sql("update users set display_name=? where id=?uuid",$pg)).bind(&input.display_name).bind(id).execute(&mut *tx).await.map_err(storage)?;
@@ -889,6 +940,16 @@ impl VllmChat {
         let definitions = read_tools
             .as_ref()
             .map_or_else(Vec::new, |tools| tools.definitions());
+        let system = if definitions
+            .iter()
+            .any(|tool| tool["function"]["name"] == "lookup_sea_temperature")
+        {
+            format!(
+                "{system} Current sea or bathing temperature needs lookup_sea_temperature; never infer it from air weather, chat history or memory. It supplies regional model estimates, not beach measurements. Use only its authorized place catalogue and explain unsupported places without substitution. Marine lookup replies are server-rendered; your draft prose will not replace their facts. The marine capability does not use shared_location GPS. At most three tools total may be called in one batch."
+            )
+        } else {
+            system
+        };
         let system = if definitions.is_empty() {
             system
         } else {
@@ -947,6 +1008,15 @@ impl VllmChat {
                             .as_str()
                             .ok_or("model_invalid_tool")?,
                     )?;
+                    read_tools
+                        .as_ref()
+                        .ok_or("model_invalid_tool")?
+                        .validate_call(
+                            name,
+                            call["function"]["arguments"]
+                                .as_str()
+                                .ok_or("model_invalid_tool")?,
+                        )?;
                 }
                 messages.push(
                     json!({"role":"assistant","content":draft["content"],"tool_calls":calls}),
@@ -964,6 +1034,9 @@ impl VllmChat {
                         )
                         .await?;
                     messages.push(json!({"role":"tool","tool_call_id":call["id"],"content":result.to_string()}));
+                }
+                if let Some(snapshot) = &runtime.sea_temperature {
+                    return sea_temperature::render(snapshot).map_err(|_| "sea_temperature_render");
                 }
             } else {
                 // An ordinary conversation needs no tools and no second model request.
@@ -1235,6 +1308,7 @@ struct JobSource {
     parent_message_id: Option<String>,
     sequence: i64,
     weather: Option<String>,
+    sea_temperature: Option<String>,
     ferry_port: Option<String>,
     followup: Option<FollowupContext>,
     vision_snapshot: Option<String>,
@@ -1390,11 +1464,11 @@ impl CircleChatAgents {
         let anchor = context_message_json("anchor", pg);
         let object = if pg {
             format!(
-                "cast(json_build_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',cast(m.parent_message_id as text),'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',(j.observation_valid_until is not null),'image_requested',exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')),'followup',case when anchor.id is null then null else json_build_object('mode',j.followup_mode,'anchor',{anchor}) end) as text)"
+                "cast(json_build_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',cast(m.parent_message_id as text),'sequence',m.sequence,'weather',a.weather,'sea_temperature',a.sea_temperature,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',(j.observation_valid_until is not null),'image_requested',exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')),'followup',case when anchor.id is null then null else json_build_object('mode',j.followup_mode,'anchor',{anchor}) end) as text)"
             )
         } else {
             format!(
-                "json_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',m.parent_message_id,'sequence',m.sequence,'weather',a.weather,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',json(case when j.observation_valid_until is not null then 'true' else 'false' end),'image_requested',json(case when exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')) then 'true' else 'false' end),'followup',case when anchor.id is null then null else json_object('mode',j.followup_mode,'anchor',{anchor}) end)"
+                "json_object('agent_name',u.display_name,'trigger_words',a.trigger_words,'response_phrases',a.response_phrases,'parent_message_id',m.parent_message_id,'sequence',m.sequence,'weather',a.weather,'sea_temperature',a.sea_temperature,'ferry_port',a.ferry_port,'vision_snapshot',j.vision_snapshot,'observation_requested',json(case when j.observation_valid_until is not null then 'true' else 'false' end),'image_requested',json(case when exists(select 1 from agent_image_publications picture where picture.text_job_id=j.id and picture.state in ('pending','admitting','queued','publishing','published')) then 'true' else 'false' end),'followup',case when anchor.id is null then null else json_object('mode',j.followup_mode,'anchor',{anchor}) end)"
             )
         };
         let query = format!(
@@ -1403,6 +1477,8 @@ impl CircleChatAgents {
         let anchor_clause = followup::anchor_clause(pg);
         let vision_clause = vision::source_clause(pg);
         let observation_clause = observation_clause(pg, false);
+        let sea_clause =
+            followup::sea_temperature_publication_clause(pg, sea_temperature_enabled());
         let cached_fresh = if pg {
             "j.weather_valid_until > extract(epoch from clock_timestamp())"
         } else {
@@ -1414,7 +1490,7 @@ impl CircleChatAgents {
             "j.ferry_valid_until > cast(strftime('%s','now') as integer)"
         };
         let query = format!(
-            "{query}{anchor_clause}{vision_clause}{observation_clause} and (a.weather is null or j.weather_snapshot is null or {cached_fresh}) and (a.ferry_port is null or j.ferry_snapshot is null or {ferry_cached_fresh})"
+            "{query}{anchor_clause}{vision_clause}{observation_clause} {sea_clause} and (a.weather is null or j.weather_snapshot is null or {cached_fresh}) and (a.ferry_port is null or j.ferry_snapshot is null or {ferry_cached_fresh})"
         );
         let cutoff: DateTime<Utc> = Utc::now() - chrono::Duration::seconds(WINDOW_SECONDS);
         let values = match &self.store {
@@ -1586,6 +1662,12 @@ impl CircleChatAgents {
         let phrases: Vec<String> =
             serde_json::from_str(&source.response_phrases).map_err(|_| "configuration_invalid")?;
         let answer = if let Some(body) = &job.reply_body {
+            if !sea_temperature_enabled() {
+                let snapshots = self.store.values("select cast(id as text) from circle_chat_agent_jobs where id=?uuid and sea_temperature_snapshot is not null", std::slice::from_ref(&job.id)).await.map_err(|_| "sea_temperature_snapshot")?;
+                if !snapshots.is_empty() {
+                    return Err("sea_temperature_disabled");
+                }
+            }
             if source.weather.is_some() {
                 let valid = self.store.values("select cast(id as text) from circle_chat_agent_jobs where id=?uuid and weather_valid_until>?int", &[job.id.clone(),Utc::now().timestamp().to_string()]).await.map_err(|_| "weather_snapshot")?;
                 if valid.is_empty() {
@@ -1677,6 +1759,18 @@ impl CircleChatAgents {
             }
             let mut read_tools = tools::ReadTools {
                 weather_service: self.weather.as_deref(),
+                sea_temperature_service: self.sea_temperature.as_deref(),
+                sea_temperature_config: if sea_temperature_enabled() {
+                    source
+                        .sea_temperature
+                        .as_deref()
+                        .map(serde_json::from_str)
+                        .transpose()
+                        .map_err(|_| "configuration_invalid")?
+                } else {
+                    None
+                },
+                sea_temperature: None,
                 weather: snapshot.clone(),
                 ferry: ferry_snapshot.clone(),
                 observations: observations.clone(),
@@ -1715,6 +1809,18 @@ impl CircleChatAgents {
             self.location_for_job(job)
                 .await
                 .map_err(|_| "location_changed")?;
+            let sea_snapshot = read_tools.sea_temperature;
+            let sea_valid_until = sea_snapshot
+                .as_ref()
+                .and_then(|v| v["valid_until_epoch"].as_i64())
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            let sea_snapshot = sea_snapshot
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|_| "sea_temperature_snapshot")?
+                .unwrap_or_default();
             snapshot = read_tools.weather;
             ferry_snapshot = read_tools.ferry;
             let valid_until = snapshot
@@ -1748,7 +1854,7 @@ impl CircleChatAgents {
                 .transpose()
                 .map_err(|_| "observations_invalid")?
                 .unwrap_or_default();
-            let changed = self.store.execute("update circle_chat_agent_jobs set reply_body=?,weather_snapshot=nullif(?,'null'),weather_valid_until=?int,ferry_snapshot=nullif(?,'null'),ferry_valid_until=?int,observation_snapshot=nullif(?,''),observation_valid_until=cast(nullif(?,'') as bigint) where id=?uuid and lease_token=?uuid and status='leased' and reply_body is null", &[answer.clone(),snapshot,valid_until.to_string(),ferry_snapshot,ferry_valid_until.to_string(),observation_snapshot,observation_valid_until,job.id.clone(),job.lease_token.clone()]).await.map_err(|_| "reply_store")?;
+            let changed = self.store.execute("update circle_chat_agent_jobs set reply_body=?,weather_snapshot=nullif(?,'null'),weather_valid_until=?int,ferry_snapshot=nullif(?,'null'),ferry_valid_until=?int,observation_snapshot=nullif(?,''),observation_valid_until=cast(nullif(?,'') as bigint),sea_temperature_snapshot=nullif(?,''),sea_temperature_valid_until=cast(nullif(?,'') as bigint) where id=?uuid and lease_token=?uuid and status='leased' and reply_body is null", &[answer.clone(),snapshot,valid_until.to_string(),ferry_snapshot,ferry_valid_until.to_string(),observation_snapshot,observation_valid_until,sea_snapshot,sea_valid_until,job.id.clone(),job.lease_token.clone()]).await.map_err(|_| "reply_store")?;
             if changed != 1 {
                 return Err("lease_lost");
             }
@@ -1906,7 +2012,7 @@ async fn enqueue_postgres_with_images(
     observations_enabled: bool,
     images_enabled: bool,
 ) -> Result<()> {
-    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
+    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.sea_temperature,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
         .bind(*message.channel_id.as_uuid()).bind(*message.sender_id.as_uuid())
         .fetch_all(&mut **tx).await.map_err(storage)?;
     let addresses = if followups_enabled {
@@ -1931,6 +2037,7 @@ async fn enqueue_postgres_with_images(
         let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
         let words: Vec<String> = serde_json::from_str(&words).map_err(storage)?;
         let weather: Option<String> = row.try_get("weather").map_err(storage)?;
+        let marine: Option<String> = row.try_get("sea_temperature").map_err(storage)?;
         let mentioned = addresses.ids.contains(&agent_id);
         let triggered = mentioned || matches_trigger(message.body.as_str(), &words);
         if addresses.found && !mentioned && !triggered {
@@ -1966,7 +2073,9 @@ async fn enqueue_postgres_with_images(
             }
         }
         if !triggered && selected.as_ref().is_none_or(|s| s.mode == "implicit") {
-            if weather.is_some() && weather::followup_candidate(message.body.as_str()) {
+            if (weather.is_some() || (sea_temperature_enabled() && marine.is_some()))
+                && weather::followup_candidate(message.body.as_str())
+            {
                 let anchor = sqlx::query_scalar::<_, String>(&sql(&followup::query(true), true))
                     .bind(&agent_id)
                     .bind(message.channel_id.to_string())
@@ -2084,7 +2193,7 @@ async fn enqueue_sqlite_with_images(
     observations_enabled: bool,
     images_enabled: bool,
 ) -> Result<()> {
-    let rows = sqlx::query("select a.agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1 and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
+    let rows = sqlx::query("select a.agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.sea_temperature,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1 and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
         .bind(message.sender_id.to_string()).bind(message.channel_id.to_string())
         .fetch_all(&mut **tx).await.map_err(storage)?;
     let addresses = if followups_enabled {
@@ -2109,6 +2218,7 @@ async fn enqueue_sqlite_with_images(
         let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
         let words: Vec<String> = serde_json::from_str(&words).map_err(storage)?;
         let weather: Option<String> = row.try_get("weather").map_err(storage)?;
+        let marine: Option<String> = row.try_get("sea_temperature").map_err(storage)?;
         let mentioned = addresses.ids.contains(&agent_id);
         let triggered = mentioned || matches_trigger(message.body.as_str(), &words);
         if addresses.found && !mentioned && !triggered {
@@ -2144,7 +2254,9 @@ async fn enqueue_sqlite_with_images(
             }
         }
         if !triggered && selected.as_ref().is_none_or(|s| s.mode == "implicit") {
-            if weather.is_some() && weather::followup_candidate(message.body.as_str()) {
+            if (weather.is_some() || (sea_temperature_enabled() && marine.is_some()))
+                && weather::followup_candidate(message.body.as_str())
+            {
                 let anchor = sqlx::query_scalar::<_, String>(&sql(&followup::query(false), false))
                     .bind(&agent_id)
                     .bind(message.channel_id.to_string())
@@ -2418,6 +2530,7 @@ mod tests {
         let input = normalized(AgentInput {
             ferry_port: None,
             weather: None,
+            sea_temperature: None,
             display_name: " Hjelpar ".into(),
             trigger_words: vec!["  På  møte ".into(), "på møte".into()],
             response_phrases: vec!["Takk!".into()],
@@ -2434,6 +2547,7 @@ mod tests {
             normalized(AgentInput {
                 ferry_port: None,
                 weather: None,
+                sea_temperature: None,
                 trigger_words: vec![],
                 ..input
             })
@@ -2933,6 +3047,7 @@ mod tests {
             observations: None,
             imagegen: None,
             weather: None,
+            sea_temperature: None,
             store: Store::Sqlite(pool.clone()),
             model: None,
             worker_enabled: false,
@@ -2941,6 +3056,7 @@ mod tests {
         let config = AgentInput {
             ferry_port: None,
             weather: None,
+            sea_temperature: None,
             display_name: "Hjelpar".into(),
             trigger_words: vec!["hjelp".into()],
             response_phrases: vec!["Eg kan hjelpe".into()],
@@ -2972,6 +3088,7 @@ mod tests {
                 AgentInput {
                     ferry_port: None,
                     weather: None,
+                    sea_temperature: None,
                     display_name: "Hjelpar".into(),
                     trigger_words: vec!["hjelp".into()],
                     response_phrases: vec!["Eg kan hjelpe".into()],
@@ -2994,6 +3111,7 @@ mod tests {
                     AgentInput {
                         ferry_port: None,
                         weather: None,
+                        sea_temperature: None,
                         display_name: "Hjelpar".into(),
                         trigger_words: vec!["hjelp".into()],
                         response_phrases: vec!["Eg kan hjelpe".into()],
@@ -3096,6 +3214,7 @@ mod tests {
             observations: None,
             imagegen: None,
             weather: None,
+            sea_temperature: None,
             store: Store::Sqlite(pool.clone()),
             model: None,
             worker_enabled: false,
@@ -3108,6 +3227,7 @@ mod tests {
                 AgentInput {
                     ferry_port: None,
                     weather: None,
+                    sea_temperature: None,
                     display_name: "Hjelpar".into(),
                     trigger_words: vec!["hjelp".into()],
                     response_phrases: vec!["Eg kan hjelpe".into()],
@@ -3262,6 +3382,7 @@ mod tests {
             observations: None,
             imagegen: None,
             weather: None,
+            sea_temperature: None,
             store: Store::Pg(pool.clone()),
             model: None,
             worker_enabled: false,
@@ -3274,6 +3395,7 @@ mod tests {
                 AgentInput {
                     ferry_port: None,
                     weather: None,
+                    sea_temperature: None,
                     display_name: "Hjelpar".into(),
                     trigger_words: vec!["hjelp".into()],
                     response_phrases: vec!["Eg kan hjelpe".into()],
@@ -3373,6 +3495,7 @@ mod tests {
         let input = AgentInput {
             ferry_port: None,
             weather: None,
+            sea_temperature: None,
             display_name: "Moderator bot".into(),
             trigger_words: vec!["help".into()],
             response_phrases: vec!["Useful context".into()],
@@ -3418,6 +3541,7 @@ mod tests {
                 AgentInput {
                     ferry_port: None,
                     weather: None,
+                    sea_temperature: None,
                     revision: Some(1),
                     ..input.clone()
                 },
@@ -3469,6 +3593,7 @@ mod tests {
                     AgentInput {
                         ferry_port: None,
                         weather: None,
+                        sea_temperature: None,
                         revision: Some(2),
                         ..input.clone()
                     }
@@ -3566,6 +3691,7 @@ mod tests {
                 AgentInput {
                     ferry_port: None,
                     weather: None,
+                    sea_temperature: None,
                     revision: Some(2),
                     ..input
                 },
@@ -3631,6 +3757,7 @@ mod tests {
             observations: None,
             imagegen: None,
             weather: None,
+            sea_temperature: None,
             store: Store::Sqlite(SqlitePool::connect(&url).await.unwrap()),
             model: None,
             worker_enabled: false,
@@ -3658,6 +3785,7 @@ mod tests {
             observations: None,
             imagegen: None,
             weather: None,
+            sea_temperature: None,
             store: Store::Pg(PgPool::connect(&url).await.unwrap()),
             model: None,
             worker_enabled: false,

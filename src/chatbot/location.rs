@@ -599,6 +599,7 @@ mod tests {
             model: None,
             worker_enabled: false,
             weather: None,
+            sea_temperature: None,
             ferry: None,
             observations: None,
             imagegen: None,
@@ -869,7 +870,7 @@ mod tests {
                 .bind(agent).bind(circle).bind(owner).bind(epoch).execute(&pool).await.unwrap();
             let service = CircleChatAgents {
                 store: Store::Pg(pool.clone()), model: None, worker_enabled: false,
-                weather: None, ferry: None, observations: None, imagegen: None,
+                weather: None, sea_temperature: None, ferry: None, observations: None, imagegen: None,
             };
             let actor = UserId::new(owner.to_string()).unwrap();
             service.put_location(&actor, &channel.to_string(), &agent.to_string(), LocationInput {

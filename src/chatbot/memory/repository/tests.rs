@@ -67,6 +67,7 @@ impl Fixture {
             model: None,
             worker_enabled: false,
             weather: None,
+            sea_temperature: None,
             ferry: None,
             observations: None,
             imagegen: None,

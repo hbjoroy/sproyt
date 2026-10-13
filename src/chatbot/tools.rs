@@ -4,6 +4,9 @@ use super::*;
 
 pub(super) struct ReadTools<'a> {
     pub weather_service: Option<&'a weather::WeatherService>,
+    pub sea_temperature_service: Option<&'a sea_temperature::SeaTemperatureService>,
+    pub sea_temperature_config: Option<sea_temperature::SeaTemperatureConfig>,
+    pub sea_temperature: Option<Value>,
     pub weather: Option<Value>,
     pub ferry: Option<Value>,
     pub observations: Option<Value>,
@@ -26,6 +29,31 @@ struct FerryArgs {
 #[serde(deny_unknown_fields)]
 struct EmptyArgs {}
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SeaTemperatureArgs {
+    #[serde(default)]
+    locations: Option<Vec<String>>,
+}
+
+fn sea_arguments(arguments: &str) -> std::result::Result<SeaTemperatureArgs, &'static str> {
+    let args: SeaTemperatureArgs =
+        serde_json::from_str(arguments).map_err(|_| "model_invalid_tool")?;
+    if let Some(ids) = &args.locations
+        && (ids.is_empty()
+            || ids.len() > 2
+            || ids.iter().any(|id| {
+                id.is_empty()
+                    || id.len() > 40
+                    || !id.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+            })
+            || ids.iter().collect::<std::collections::HashSet<_>>().len() != ids.len())
+    {
+        return Err("model_invalid_tool");
+    }
+    Ok(args)
+}
+
 pub(super) fn validate_arguments(
     name: &str,
     arguments: &str,
@@ -34,6 +62,7 @@ pub(super) fn validate_arguments(
         return Err("model_invalid_tool");
     }
     match name {
+        "lookup_sea_temperature" => sea_arguments(arguments).map(|_| ()),
         "lookup_weather" => {
             let args: WeatherArgs =
                 serde_json::from_str(arguments).map_err(|_| "model_invalid_tool")?;
@@ -60,8 +89,43 @@ pub(super) fn validate_arguments(
 }
 
 impl ReadTools<'_> {
+    pub fn validate_call(
+        &self,
+        name: &str,
+        arguments: &str,
+    ) -> std::result::Result<(), &'static str> {
+        validate_arguments(name, arguments)?;
+        if name == "lookup_sea_temperature" {
+            let config = self
+                .sea_temperature_config
+                .as_ref()
+                .ok_or("model_invalid_tool")?;
+            let args = sea_arguments(arguments)?;
+            if args
+                .locations
+                .as_ref()
+                .is_some_and(|ids| ids.iter().any(|id| !config.locations.contains(id)))
+            {
+                return Err("model_invalid_tool");
+            }
+        }
+        Ok(())
+    }
     pub fn definitions(&self) -> Vec<Value> {
         let mut tools = Vec::new();
+        if let Some(config) = &self.sea_temperature_config {
+            let catalogue = sea_temperature::locations()
+                .into_iter()
+                .filter(|item| {
+                    item["id"]
+                        .as_str()
+                        .is_some_and(|id| config.locations.iter().any(|allowed| allowed == id))
+                })
+                .collect::<Vec<_>>();
+            tools.push(json!({"type":"function","function":{
+                "name":"lookup_sea_temperature","description":format!("Regional modelled sea temperature, never a beach measurement. Use for current sea/bathing temperature questions. Default place: {}. Allowed places: {}. Lookup at most two places in one call. The server renders the factual sea result; no free rewrite is needed. No GPS or arbitrary coordinates. If another place is requested, explain that it is unavailable instead of substituting a default.",config.default_location,json!(catalogue)),
+                "parameters":{"type":"object","properties":{"locations":{"type":"array","minItems":1,"maxItems":2,"uniqueItems":true,"items":{"type":"string","enum":config.locations}}},"additionalProperties":false}}}));
+        }
         if self.weather.is_some() {
             tools.push(json!({"type":"function","function":{
                 "name":"lookup_weather","description":"Current weather and next 3 days for an explicitly named place. Use the configured weather context for the default place. Name ambiguous places with island/country; results identify the place actually resolved. No GPS or automatic IP location.",
@@ -89,6 +153,26 @@ impl ReadTools<'_> {
             return Err("model_invalid_tool");
         }
         let mut result = match name {
+            "lookup_sea_temperature" if self.sea_temperature_config.is_some() => {
+                let args = sea_arguments(arguments)?;
+                let config = self
+                    .sea_temperature_config
+                    .as_ref()
+                    .ok_or("model_invalid_tool")?;
+                if args
+                    .locations
+                    .as_ref()
+                    .is_some_and(|ids| ids.iter().any(|id| !config.locations.contains(id)))
+                {
+                    return Err("model_invalid_tool");
+                }
+                let data = match self.sea_temperature_service {
+                    Some(service) => service.lookup(config, args.locations.as_deref()).await,
+                    None => return Err("sea_temperature_disabled"),
+                };
+                self.sea_temperature = Some(data.clone());
+                data
+            }
             "lookup_weather" if self.weather.is_some() => {
                 let args: WeatherArgs =
                     serde_json::from_str(arguments).map_err(|_| "model_invalid_tool")?;
@@ -180,9 +264,70 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn marine_capability_is_independent_and_authorized_before_io() {
+        let mut tools = ReadTools {
+            weather_service: None,
+            sea_temperature_service: None,
+            sea_temperature_config: Some(sea_temperature::SeaTemperatureConfig {
+                default_location: "parikia".into(),
+                locations: vec!["parikia".into(), "bjoroy".into()],
+            }),
+            sea_temperature: None,
+            weather: None,
+            ferry: None,
+            observations: None,
+        };
+        let definitions = tools.definitions();
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0]["function"]["name"], "lookup_sea_temperature");
+        assert!(tools.validate_call("lookup_sea_temperature", "{}").is_ok());
+        assert!(
+            tools
+                .validate_call(
+                    "lookup_sea_temperature",
+                    r#"{"locations":["parikia","bjoroy"]}"#
+                )
+                .is_ok()
+        );
+        for invalid in [
+            r#"{"locations":["aliki"]}"#,
+            r#"{"locations":[]}"#,
+            r#"{"locations":["parikia","parikia"]}"#,
+            r#"{"locations":["parikia","bjoroy","nordnes"]}"#,
+            r#"{"latitude":37.0}"#,
+        ] {
+            assert!(
+                tools
+                    .validate_call("lookup_sea_temperature", invalid)
+                    .is_err()
+            );
+            assert!(
+                tools
+                    .execute("lookup_sea_temperature", invalid)
+                    .await
+                    .is_err()
+            );
+            assert!(tools.sea_temperature.is_none());
+        }
+        assert_eq!(
+            tools
+                .execute("lookup_sea_temperature", "{}")
+                .await
+                .unwrap_err(),
+            "sea_temperature_disabled"
+        );
+        tools.sea_temperature_config = None;
+        assert!(tools.definitions().is_empty());
+        assert!(tools.validate_call("lookup_sea_temperature", "{}").is_err());
+    }
+
+    #[tokio::test]
     async fn capabilities_and_strict_arguments_bound_tool_execution() {
         let mut tools = ReadTools {
             weather_service: None,
+            sea_temperature_service: None,
+            sea_temperature_config: None,
+            sea_temperature: None,
             weather: None,
             ferry: None,
             observations: None,
@@ -229,6 +374,9 @@ mod tests {
         let default = json!({"configured_location":"Parikia","current":{"temperature_c":22},"valid_until_epoch":expiry});
         let mut tools = ReadTools {
             weather_service: None,
+            sea_temperature_service: None,
+            sea_temperature_config: None,
+            sea_temperature: None,
             weather: Some(default.clone()),
             ferry: None,
             observations: None,
@@ -286,6 +434,9 @@ mod tests {
             json!({"configured_location":"Parikia","valid_until_epoch":Utc::now().timestamp()+300});
         let mut tools = ReadTools {
             weather_service: None,
+            sea_temperature_service: None,
+            sea_temperature_config: None,
+            sea_temperature: None,
             weather: Some(weather.clone()),
             ferry: Some(ferry.clone()),
             observations: None,
@@ -399,6 +550,9 @@ mod tests {
             }];
             let mut tools = ReadTools {
                 weather_service: Some(&weather_service),
+                sea_temperature_service: None,
+                sea_temperature_config: None,
+                sea_temperature: None,
                 weather: Some(weather.clone()),
                 ferry: Some(ferry.clone()),
                 observations: None,

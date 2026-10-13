@@ -328,6 +328,11 @@ pub(super) fn followup_candidate(text: &str) -> bool {
                 "weather".into(),
                 "pressure".into(),
                 "rain".into(),
+                "sjøtemperatur".into(),
+                "havtemperatur".into(),
+                "badetemperatur".into(),
+                "sea temperature".into(),
+                "water temperature".into(),
             ],
         )
 }

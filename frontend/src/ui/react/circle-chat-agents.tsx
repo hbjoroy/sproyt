@@ -1,7 +1,7 @@
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useState } from "react";
-import type { AgentImageGeneration, AgentImageIdentity, CircleChatAgent, CircleChatAgentApi, CircleChatAgentInput } from "../../chat-agents";
-import { validAgentWeather } from "../../chat-agents";
+import type { AgentImageGeneration, AgentImageIdentity, AgentSeaTemperatureLocation, CircleChatAgent, CircleChatAgentApi, CircleChatAgentInput } from "../../chat-agents";
+import { validAgentSeaTemperature, validAgentWeather } from "../../chat-agents";
 
 const lines = (value: string) => value.split(/\r?\n/u).map(item => item.trim()).filter(Boolean);
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Prøv igjen.";
@@ -12,6 +12,11 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [agents, setAgents] = useState<CircleChatAgent[]>([]);
   const [available, setAvailable] = useState(false);
   const [weatherAvailable, setWeatherAvailable] = useState(false);
+  const [seaAvailable, setSeaAvailable] = useState(false);
+  const [seaCatalogue, setSeaCatalogue] = useState<AgentSeaTemperatureLocation[]>([]);
+  const [seaEnabled, setSeaEnabled] = useState(false);
+  const [seaLocations, setSeaLocations] = useState<string[]>([]);
+  const [seaDefault, setSeaDefault] = useState("");
   const [ferryAvailable, setFerryAvailable] = useState(false);
   const [ferryEnabled, setFerryEnabled] = useState(false);
   const [visionAvailable, setVisionAvailable] = useState(false);
@@ -37,6 +42,14 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [longitude, setLongitude] = useState("25.148");
   const weather = weatherEnabled ? { location: location.trim(), latitude: Number(latitude), longitude: Number(longitude) } : null;
   const weatherValid = !weather || (!!latitude.trim() && !!longitude.trim() && validAgentWeather(weather));
+  const seaTemperature = seaEnabled ? { defaultLocation: seaDefault, locations: seaLocations } : null;
+  const previousSea = selected?.seaTemperature ?? null;
+  const seaUnchanged = seaTemperature === null ? previousSea === null : !!previousSea
+    && seaTemperature.defaultLocation === previousSea.defaultLocation
+    && seaTemperature.locations.length === previousSea.locations.length
+    && seaTemperature.locations.every((id, index) => id === previousSea.locations[index]);
+  const seaValid = !seaTemperature || (validAgentSeaTemperature(seaTemperature)
+    && (seaUnchanged || seaLocations.every(id => seaCatalogue.some(location => location.id === id))));
   const canUseVision = selected ? selected.visionAvailable : visionAvailable;
   const canUseImages = selected ? selected.imageGenerationAvailable : imagesAvailable;
   const imageGeneration: AgentImageGeneration | null = imageIdentity
@@ -45,13 +58,15 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const imagesUnchanged = imageGeneration?.identityId === previousImages?.identityId
     && imageGeneration?.enabled === previousImages?.enabled && imageGeneration?.occasional === previousImages?.occasional;
   const imagesValid = !imagesEnabled || (imageIdentities.some(identity => identity.id === imageIdentity) && (canUseImages || imagesUnchanged));
-  const workerAvailable = available && (!weatherEnabled || weatherAvailable) && (!ferryEnabled || ferryAvailable) && (!visionEnabled || canUseVision);
+  const workerAvailable = available && (!weatherEnabled || weatherAvailable) && (!seaEnabled || seaAvailable)
+    && (!ferryEnabled || ferryAvailable) && (!visionEnabled || canUseVision);
 
   useEffect(() => {
     let live = true;
     void api.list(circleId).then(result => {
       if (!live) return;
       setAgents(result.agents); setAvailable(result.workerAvailable); setWeatherAvailable(result.weatherAvailable); setLoading(false);
+      setSeaAvailable(result.seaTemperatureAvailable); setSeaCatalogue(result.seaTemperatureLocations);
       setFerryAvailable(result.ferryAvailable);
       setVisionAvailable(result.visionAvailable);
       setImagesAvailable(result.imageGenerationAvailable); setImageIdentities(result.imageIdentities);
@@ -64,6 +79,9 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     setTriggers(agent?.triggerWords.join("\n") ?? "");
     setPhrases(agent?.responsePhrases.join("\n") ?? "");
     setWeatherEnabled(!!agent?.weather); setLocation(agent?.weather?.location ?? "Parikia");
+    setSeaEnabled(!!agent?.seaTemperature);
+    setSeaLocations([...(agent?.seaTemperature?.locations ?? [])]);
+    setSeaDefault(agent?.seaTemperature?.defaultLocation ?? "");
     setFerryEnabled(agent?.ferryPort === "paros");
     setVisionEnabled(agent?.visionEnabled ?? false);
     setImagesEnabled(agent?.imageGeneration?.enabled ?? false);
@@ -73,10 +91,11 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     setEnabled(agent?.enabled ?? false); setMemoryEnabled(agent?.memoryEnabled ?? false); setError(""); setFormOpen(true);
   };
   const save = async () => {
-    if (saving || !weatherValid || !imagesValid) return;
+    if (saving || !weatherValid || !seaValid || !imagesValid) return;
     setError(""); setSaving(true);
     const input: CircleChatAgentInput = { displayName: name.trim(), triggerWords: lines(triggers),
       responsePhrases: lines(phrases), enabled, memoryEnabled, revision: selected?.revision, weather,
+      seaTemperature: seaUnchanged ? undefined : seaTemperature,
       ferryPort: ferryEnabled ? "paros" : null,
       visionEnabled: selected && visionEnabled === selected.visionEnabled ? undefined : visionEnabled,
       imageGeneration: imagesUnchanged ? undefined : imageGeneration };
@@ -140,6 +159,32 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
         {!weatherValid && <Status tone="error">Skriv ein stad med 1–80 teikn, breiddegrad frå −90 til 90 og lengdegrad frå −180 til 180.</Status>}
         {!weatherAvailable && <Status tone="error">Vêrtenesta er ikkje klar. Du kan lagre oppsettet, men ikkje aktivere vêragenten enno.</Status>}
       </>}
+      <label className="sp-circle-agent-enabled"><input type="checkbox" checked={seaEnabled}
+        disabled={saving || (!seaCatalogue.length && !seaEnabled)} onChange={event => setSeaEnabled(event.target.checked)} />Sjøtemperatur</label>
+      {seaEnabled && <div role="group" aria-label="Sjøtemperaturstader">
+        <p>Vel opptil åtte stader agenten kan slå opp, og ein standardstad for spørsmål utan stadnamn.</p>
+        {seaCatalogue.map(location => <label key={location.id} className="sp-circle-agent-enabled">
+          <input type="checkbox" checked={seaLocations.includes(location.id)}
+            disabled={saving || (!seaLocations.includes(location.id) && seaLocations.length >= 8)} onChange={event => {
+              const next = event.target.checked ? [...seaLocations, location.id] : seaLocations.filter(id => id !== location.id);
+              setSeaLocations(next); if (!next.includes(seaDefault)) setSeaDefault(next[0] ?? "");
+            }} />{location.name}
+        </label>)}
+        {seaLocations.filter(id => !seaCatalogue.some(location => location.id === id)).map(id => <label key={id} className="sp-circle-agent-enabled">
+          <input type="checkbox" checked disabled={saving} onChange={() => {
+            const next = seaLocations.filter(location => location !== id);
+            setSeaLocations(next); if (!next.includes(seaDefault)) setSeaDefault(next[0] ?? "");
+          }} />Tidlegare stad (ikkje tilgjengeleg)
+        </label>)}
+        <label htmlFor="circle-agent-sea-default">Standardstad</label>
+        <select id="circle-agent-sea-default" value={seaDefault} disabled={saving || !seaLocations.length}
+          onChange={event => setSeaDefault(event.target.value)}>
+          {!seaLocations.length && <option value="">Vel ein stad</option>}
+          {seaLocations.map(id => <option key={id} value={id}>{seaCatalogue.find(location => location.id === id)?.name ?? "Tidlegare stad (ikkje tilgjengeleg)"}</option>)}
+        </select>
+        {!seaValid && <Status tone="error">Vel ein til åtte tilgjengelege stader og ein standardstad frå utvalet.</Status>}
+        {!seaAvailable && <Status tone="error">Sjøtemperaturtenesta er ikkje klar. Du kan lagre oppsettet, men ikkje aktivere agenten enno.</Status>}
+      </div>}
       <label className="sp-circle-agent-enabled"><input type="checkbox" checked={ferryEnabled}
         disabled={saving} onChange={event => setFerryEnabled(event.target.checked)} />Fergeruter for Paros</label>
       {ferryEnabled && <>
@@ -153,7 +198,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       <p>Kvar brukar må også tillate eige minne. Læring og minnebruk er ikkje aktiverte enno.</p>
       {error && <Status tone="error">{error}</Status>}
       <div className="sp-row"><Button type="button" onClick={() => { setFormOpen(false); setError(""); }}>Avbryt</Button>
-        <Button type="submit" busy={saving} disabled={!name.trim() || !lines(triggers).length || !lines(phrases).length || !weatherValid || !imagesValid || (enabled && !workerAvailable)}>Lagre agent</Button></div>
+        <Button type="submit" busy={saving} disabled={!name.trim() || !lines(triggers).length || !lines(phrases).length || !weatherValid || !seaValid || !imagesValid || (enabled && !workerAvailable)}>Lagre agent</Button></div>
     </form>}
     {!formOpen && error && <Status tone="error">{error}</Status>}
   </Dialog>;

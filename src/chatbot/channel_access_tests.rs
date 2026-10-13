@@ -96,6 +96,7 @@ async fn contract(store: Store) {
         observations: None,
         imagegen: None,
         weather: None,
+        sea_temperature: None,
         store: store.clone(),
         model: None,
         worker_enabled: false,
@@ -155,6 +156,7 @@ async fn contract(store: Store) {
     let input = || AgentInput {
         ferry_port: None,
         weather: None,
+        sea_temperature: None,
         display_name: "Kanalhjelpar".into(),
         trigger_words: vec!["hjelp".into()],
         response_phrases: vec!["Eg kan hjelpe".into()],
