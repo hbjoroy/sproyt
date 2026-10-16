@@ -9,6 +9,7 @@ use tracing::{instrument, warn};
 use uuid::Uuid;
 
 use crate::domain::{ChannelId, CircleId, RepositoryError, UserId};
+use crate::operations::dependencies::{HeartAttempt, HeartMethod, HeartResult};
 
 const HEART_CLIENT_ID: &str = "sproyt";
 
@@ -686,29 +687,49 @@ impl HeartGateway {
 
     async fn execute<T>(
         &self,
+        method: HeartMethod,
         make_request: impl Fn() -> reqwest::RequestBuilder,
     ) -> Result<T, ProcessError>
     where
         T: for<'de> Deserialize<'de>,
     {
         for attempt in 0..=self.retries {
+            // One observation per HTTP attempt; backoff is not dependency latency.
+            // A cancelled future keeps the guard's default cancelled outcome.
+            let mut observation = HeartAttempt::new(method);
             let result = timeout(self.timeout, make_request().send()).await;
             let response = match result {
-                Err(_) if attempt < self.retries => {
-                    sleep(backoff(attempt)).await;
-                    continue;
+                Err(_) => {
+                    observation.finish(HeartResult::Timeout);
+                    drop(observation);
+                    if attempt < self.retries {
+                        sleep(backoff(attempt)).await;
+                        continue;
+                    }
+                    return Err(ProcessError::timeout());
                 }
-                Err(_) => return Err(ProcessError::timeout()),
-                Ok(Err(_)) if attempt < self.retries => {
-                    warn!(attempt, error_kind = "transport", "retrying Heart request");
-                    sleep(backoff(attempt)).await;
-                    continue;
+                Ok(Err(_)) => {
+                    observation.finish(HeartResult::Transport);
+                    drop(observation);
+                    if attempt < self.retries {
+                        warn!(attempt, error_kind = "transport", "retrying Heart request");
+                        sleep(backoff(attempt)).await;
+                        continue;
+                    }
+                    return Err(ProcessError::unavailable("Heart transport failure"));
                 }
-                Ok(Err(_)) => return Err(ProcessError::unavailable("Heart transport failure")),
                 Ok(Ok(response)) => response,
             };
             let status = response.status();
             if !status.is_success() {
+                observation.finish(if status.is_client_error() {
+                    HeartResult::Http4xx
+                } else if status.is_server_error() {
+                    HeartResult::Http5xx
+                } else {
+                    HeartResult::HttpOther
+                });
+                drop(observation);
                 let error = ProcessError::status(status);
                 if error.retryable && attempt < self.retries {
                     warn!(
@@ -721,11 +742,17 @@ impl HeartGateway {
                 }
                 return Err(error);
             }
-            return response.json().await.map_err(|_| ProcessError {
+            let decoded = response.json().await.map_err(|_| ProcessError {
                 kind: ProcessErrorKind::InvalidResponse,
                 message: "Heart returned invalid JSON".to_owned(),
                 retryable: false,
             });
+            observation.finish(if decoded.is_ok() {
+                HeartResult::Success
+            } else {
+                HeartResult::InvalidResponse
+            });
+            return decoded;
         }
         unreachable!("retry loop always returns")
     }
@@ -749,7 +776,7 @@ impl HeartGateway {
         segments.pop_if_empty().push(&idempotency_key.to_string());
         drop(segments);
         url.query_pairs_mut().append_pair("namespace", namespace);
-        self.execute(|| {
+        self.execute(HeartMethod::Get, || {
             self.client
                 .get(url.clone())
                 .header("x-correlation-id", idempotency_key.to_string())
@@ -768,7 +795,7 @@ impl ProcessGateway for HeartGateway {
     ) -> GatewayFuture<'a, StartedProcess> {
         Box::pin(async move {
             let outcome = self
-                .execute(|| {
+                .execute(HeartMethod::Post, || {
                     self.client
                         .post(format!("{}/api/v1/instances", self.base_url))
                         .header("x-correlation-id", correlation_id.to_string())
@@ -797,7 +824,7 @@ impl ProcessGateway for HeartGateway {
         correlation_id: Uuid,
     ) -> GatewayFuture<'a, ProcessInstance> {
         Box::pin(async move {
-            self.execute(|| {
+            self.execute(HeartMethod::Get, || {
                 self.client
                     .get(format!("{}/api/v1/instances/{instance_id}", self.base_url))
                     .header("x-correlation-id", correlation_id.to_string())
@@ -813,7 +840,7 @@ impl ProcessGateway for HeartGateway {
         correlation_id: Uuid,
     ) -> GatewayFuture<'a, CorrelatedMessage> {
         Box::pin(async move {
-            self.execute(|| {
+            self.execute(HeartMethod::Post, || {
                 self.client
                     .post(format!("{}/api/v1/messages", self.base_url))
                     .header("x-correlation-id", correlation_id.to_string())

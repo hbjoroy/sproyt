@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import "./conversation-snapshot.test";
 import "./visible-read.test";
 import "./saved-emojis.test";
+import "./imagegen-draft.test";
 import "./saved-statuses.test";
 import "./chat-agent-weather.test";
 import "./chat-agent-sea-temperature.test";

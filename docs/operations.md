@@ -232,5 +232,59 @@ restarts. SSE control and channel streams count individually. These are
 connections, not unique users or sessions; the browser telemetry counters
 remain separate and are never used to calculate these gauges.
 
-Dependency-specific latency/failure metrics, send/drop classification and the
-environment exercises in issue #170 remain separate acceptance work.
+### Transport and Heart detail (16 October 2026)
+
+`sproyt_transport_events_total` has exactly two transport values and nine
+fixed event values. WS `envelope_sent` means its application envelope send
+future completed successfully; `send_failed` and `receive_failed` count actual
+socket errors. Protocol ping/pong/close control frames are excluded from those
+send counters. These observations are not durable-message acknowledgements.
+
+WS `queue_backpressure` counts a full 256-entry outbound queue encountered by a
+subscription producer. It waits for capacity as before; it does not silently
+drop the pending envelope. `queue_closed` counts an attempted enqueue into a
+closed queue. `broadcast_lagged` counts receiver overruns and
+`broadcast_skipped` counts the broadcast events skipped, independently for WS
+and SSE. The existing Lagged protocol event/cursor catch-up remains responsible
+for recovery; skipped events are not necessarily lost durable chat messages.
+
+SSE `body_frame_yielded` counts frames pulled from the application stream,
+including its comment and application heartbeats. Axum's automatic keep-alive
+comments are excluded. HTTP body backpressure controls pulling; a yielded frame
+is not evidence that the browser received it. SSE's infallible application body
+cannot observe downstream socket send errors, so it does not fabricate a
+`send_failed` count. Slow-consumer overruns use its actual broadcast-lag metrics.
+The existing connection guards count closure and cancellation for both transports.
+
+`resume_requested` counts a valid WS LoadRecentMessages command with an `after`
+cursor, or an admitted SSE channel stream carrying `after`/Last-Event-ID. It is
+not an inferred reconnect or a distinct-user count. Requests can be ordinary
+catch-up/history navigation. Existing client reconnect telemetry remains separate.
+All of these counters are process-local, reset on process restart and must be
+aggregated with `rate`/`increase`, not by subtracting browser lifecycle events.
+
+`sproyt_heart_attempt_duration_seconds` is a seconds histogram with closed
+method labels GET/POST/OTHER and result labels success/timeout/transport/http_4xx/
+http_5xx/http_other/invalid_response/cancelled. Its `_count` series provides the
+attempt/error counters. V1 gateway retries produce separate observations,
+excluding retry backoff; v2 pilot, work-item review, GitHub export and status
+adapters use the same instrumentation. JSON-read latency includes bounded body
+decoding; completion commands that intentionally ignore the response body measure
+to response headers, then retain their authoritative reconciliation behavior.
+Cancellation never becomes success. No request URL, account/channel/task ID,
+correlation ID, credential or message text becomes a label. Storage is bounded
+at 18 transport counters and 24 Heart histogram series per process.
+
+Heart p95 and failed HTTP/transport attempts across replicas:
+
+    histogram_quantile(0.95,
+      sum by (le) (rate(sproyt_heart_attempt_duration_seconds_bucket[5m])))
+    sum by (result) (rate(sproyt_heart_attempt_duration_seconds_count{result!="success"}[5m]))
+
+Deterministic tests cover cumulative buckets, fixed cardinality, skipped-event
+versus lag-incident counts, process reset, cancelled attempts, bounded v2
+response decoding and queue backpressure without dropped pending envelopes.
+Existing tests in `operations::measurements` cover connection cancellation and
+probe separation. This code completes the concrete schema-free measurement slice
+of #170; real-provider/device/load/privacy/operational sign-off remains open.
+No shared database or Heart service was stopped for this instrumentation.

@@ -81,3 +81,38 @@ samla #169-tilstandstest i Chromium og WebKit iPhone. Sistnemnde bevarer fokus,
 utkast, markering, leseposisjon og open oppgåvedetalj ved meldingar og reaksjonar
 i aktiv/inaktiv kanal. Native live-verktøyprøve med begge tenester og Qwen har
 passert. Ekte PostgreSQL-kontroll og full nettlesarregresjon går i CI før merge.
+
+
+## Oppdatert leveranseplan – 16. oktober
+
+Mandat: alle opne saker med normal eller høgare prioritet, til canary via
+CI/CD. Produksjonsimage og delte brukar-/agentkonfigurasjonar blir bevarte.
+Astra reviderte denne avgrensinga før implementasjon og tek ny kontroll før release.
+
+Autoritativ prioritet frå Sprøyt-registeret: #270, #271, #272 og #274 normal;
+#273 låg og utanfor leveransen. GitHub-eksportmarkøren er request_id i
+work_item_github_exports, ikkje work_item.id. Andre opne saker med priority/later
+(#186/#211/#242) er utanfor.
+
+1. UI: #270 bevar native tekstmarkering/kopiering og eksplisitt reaksjonsknapp;
+   #272 vis meny berre ved faktiske handlingar, inkludert eksisterande arbeidssaker
+   når prosessen er deaktivert; #274 gjenopprett avvist prompt i opphavleg identitet,
+   kanal/tråd utan å overskrive nyare utkast, også etter reload/literal-modus.
+2. #170: avgrensa WS/SSE send-/kø-/lag-målingar og Heart utfall/latens med faste
+   etikettar. Ingen migrasjon eller driftsinfrastrukturendring; avbrotsøvingar
+   skal ikkje gjerast mot den delte Heart-/chat-databasen.
+3. #271: avklar første mottakar og handoff/consult-semantikk. Ikkje aktiver ny
+   delegering i ei delt kø når eldre prod-arbeidarar ikkje kan kontrollere
+   mottakarens tilgangar etter retry/cached reply. Alle publiserande arbeidarar
+   må kontrollere persisterte avhengigheiter, eller køa må vere reelt isolert.
+   Ingen agentmelding-autotrigger eller lån av minne/GPS-grant frå andre agentar.
+4. #169/#198/#201/#231 har leverte kodeendringar og manglar konkret ekstern
+   akseptanse (ny verifisert brukar, opphavleg fysisk popup/iPhone-share-retur,
+   naturleg agentsamtale og separat godkjend bileteidentitet). Dei skal ikkje
+   lukkast eller implementerast om utan ny feil/evidens.
+
+Kontroll: relevante frontend-grensetestar og Chromium/WebKit, Rust/Clippy,
+PostgreSQL og eksisterande arbeidsflytkontraktar, så Astra-review av endeleg diff.
+Publiser eitt uforanderleg ARM64-image frå kontrollert main; oppdater berre canary
+web-image/chart via GitOps. Bevar migrasjons-/worker-/Heart-image og prod-digest.
+Verifiser /versionz, readiness, faktisk canary-metrikk og uendra produksjon.

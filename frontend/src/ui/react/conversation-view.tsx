@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { ReactNode, Ref } from "react";
 import { AppShell, Button, ConversationList, Message, Status, TextField, Theme } from "@sproyt/ui/react";
 import type { Conversation, ThemeMode } from "@sproyt/ui/react";
@@ -127,18 +127,12 @@ export function formatMessageDateTime(sentAt: string): string {
 export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean; readonly dateLabel?: string; readonly unreadBoundary?: boolean }) {
   const message = props.message;
   const wrapper = useRef<HTMLDivElement>(null);
-  const latestMessage = useRef(message);
-  latestMessage.current = message;
   const fullTimestamp = formatMessageDateTime(message.sent_at);
   const timestampTooltipId = `message-time-${message.id}`;
   const earlyAdopter = props.earlyAdopter?.(message) ?? false;
   const earlyAdopterTooltipId = `early-adopter-${message.id}`;
-  const requestReaction = props.onReactionRequest;
   const deliveryStatus = props.messageStatus?.(message);
   const visibleStatus = deliveryStatus === "Sendt" ? undefined : deliveryStatus?.replace(/^Sendt · /, "");
-  const onReactionRequest = useCallback((anchor: HTMLElement) => {
-    if (!latestMessage.current.deleted_at) requestReaction?.(latestMessage.current, anchor);
-  }, [requestReaction]);
   useEffect(() => {
     const time = wrapper.current?.querySelector("time");
     if (time) {
@@ -148,8 +142,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
       time.setAttribute("aria-label", `Sendt ${fullTimestamp}. Trykk for å vise eller skjule tidspunktet.`);
       time.setAttribute("aria-describedby", timestampTooltipId);
       time.setAttribute("aria-expanded", "false");
-      // The message surface owns a long-press reaction gesture. Keep a tap on
-      // its timestamp from starting that timer; the timestamp has its own action.
+      // The timestamp owns its action; the message body keeps native selection.
       const keepTimestampGesture = (event: Event) => event.stopPropagation();
       let ignoreClickAfterTouch = false;
       let openedFromTouch = false;
@@ -267,9 +260,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
       </>} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
-        actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}
-        onReactionRequest={!message.deleted_at && props.onReactionRequest
-          ? onReactionRequest : undefined}>
+        actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}>
         {message.deleted_at ? <p>Meldinga er sletta.</p> : props.renderContent(message)}
     </Message>
     <span id={timestampTooltipId} className="sp-message-time-tooltip" role="tooltip">{fullTimestamp}</span>

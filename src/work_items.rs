@@ -729,14 +729,14 @@ impl WorkItems {
             }
             // Heart v2 deduplicates by Idempotency-Key. On ambiguous failure we
             // still inspect the authoritative task state before retrying.
-            let _ = self
-                .http
-                .post(format!("{base}/api/v2/user-tasks/{}/complete", command.id))
-                .header("X-Heart-Client", "sproyt-work-items")
-                .header("Idempotency-Key", command.request)
-                .json(&json!({"actor_id":command.actor,"result_metadata":command.result}))
-                .send()
-                .await;
+            let _ = crate::operations::dependencies::heart_completion(
+                self.http
+                    .post(format!("{base}/api/v2/user-tasks/{}/complete", command.id))
+                    .header("X-Heart-Client", "sproyt-work-items")
+                    .header("Idempotency-Key", command.request)
+                    .json(&json!({"actor_id":command.actor,"result_metadata":command.result})),
+            )
+            .await;
         }
         let view = self
             .heart_response(self.http.get(format!("{base}/api/v2/instances/{instance}")))
@@ -932,20 +932,9 @@ impl WorkItems {
     }
 
     async fn heart_response(&self, request: reqwest::RequestBuilder) -> Result<Value> {
-        let mut response = request
-            .send()
+        crate::operations::dependencies::heart_json(request)
             .await
-            .map_err(storage)?
-            .error_for_status()
-            .map_err(storage)?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(storage)? {
-            if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
-                return Err(storage("Heart response too large"));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(storage)
+            .map_err(storage)
     }
 }
 

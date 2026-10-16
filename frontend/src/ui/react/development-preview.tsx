@@ -246,8 +246,8 @@ function PreviewMessageMutations({ host, message }: { readonly host: Development
   </>;
 }
 
-function WorkItemMenuAction({ host, message, hasApplications, onOpen }: {
-  host: DevelopmentPreviewHost; message: ChatMessage; hasApplications: boolean; onOpen: () => void;
+function WorkItemMenuAction({ host, message, hasApplications, hasExistingItems, onOpen }: {
+  host: DevelopmentPreviewHost; message: ChatMessage; hasApplications: boolean; hasExistingItems: boolean; onOpen: () => void;
 }) {
   const [hasItems, setHasItems] = useState(false);
   const anchor = useRef<HTMLSpanElement>(null);
@@ -266,7 +266,7 @@ function WorkItemMenuAction({ host, message, hasApplications, onOpen }: {
     load();
     return () => { active = false; observer.disconnect(); };
   }, [host.workItems, message.channel_id, message.id, hasApplications]);
-  return <span ref={anchor}>{(hasApplications || hasItems) && <Button onClick={onOpen}>Arbeidssaker</Button>}</span>;
+  return <span ref={anchor}>{(hasApplications || hasExistingItems || hasItems) && <Button onClick={onOpen}>Arbeidssaker</Button>}</span>;
 }
 
 function MessageActions({ host, message, threadAction, openReaction }: {
@@ -276,26 +276,48 @@ function MessageActions({ host, message, threadAction, openReaction }: {
 }) {
   const [apps, setApps] = useState<readonly WorkApplication[]>([]);
   const [issueOpen, setIssueOpen] = useState(false);
+  const [hasExistingItems, setHasExistingItems] = useState(false);
+  const availabilityAnchor = useRef<HTMLDivElement>(null);
+  const hasMutations = host.canEditMessage(message) || host.canDeleteMessage(message);
   const isAgent = host.settings.profileFor?.(message.sender_id)?.kind === "agent";
+  const canHaveWorkItems = !isAgent && !workItemTaskId(message.body) && !workItemStatusId(message.body) && !processTaskId(message.body);
   useEffect(() => {
-    if (isAgent || workItemTaskId(message.body) || workItemStatusId(message.body) || processTaskId(message.body)) {
-      setApps([]); return;
-    }
+    setApps([]); setHasExistingItems(false);
+    if (!canHaveWorkItems) return;
     let active = true;
+    let observer: IntersectionObserver | undefined;
     void host.workItems.applications(message.channel_id)
-      .then(value => { if (active) setApps(value); })
-      .catch(() => { if (active) setApps([]); });
-    return () => { active = false; };
-  }, [host.workItems, isAgent, message.body, message.channel_id]);
-  return <>
+      .catch(() => [])
+      .then(value => {
+        if (!active) return;
+        setApps(value);
+        // Disabled processes may still have registered cases. Only check visible
+        // read-only messages; writable messages retain the lazy menu lookup.
+        if (value.length || hasMutations) return;
+        const load = () => {
+          observer?.disconnect();
+          void host.workItems.sourceItems(message.channel_id, message.id)
+            .then(items => { if (active) setHasExistingItems(items.length > 0); })
+            .catch(() => {});
+        };
+        const element = availabilityAnchor.current?.closest("[data-message-id]");
+        if (element && typeof IntersectionObserver !== "undefined") {
+          observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) load(); });
+          observer.observe(element);
+        } else load();
+      });
+    return () => { active = false; observer?.disconnect(); };
+  }, [host.workItems, canHaveWorkItems, hasMutations, message.channel_id, message.id]);
+  const hasWorkItemAction = canHaveWorkItems && (apps.length > 0 || hasExistingItems);
+  return <div ref={availabilityAnchor} style={{ display: "contents" }}>
     <PreviewReactionActions message={message} host={host} open={openReaction} primaryAction={threadAction}
-      overflowActions={close => <>
+      overflowActions={hasMutations || hasWorkItemAction ? close => <>
         <PreviewMessageMutations message={message} host={host} />
-        {!isAgent && !workItemTaskId(message.body) && !workItemStatusId(message.body) && !processTaskId(message.body)
-          && <WorkItemMenuAction host={host} message={message} hasApplications={apps.length > 0} onOpen={() => { close(); setIssueOpen(true); }} />}
-      </>} />
+        {canHaveWorkItems
+          && <WorkItemMenuAction host={host} message={message} hasApplications={apps.length > 0} hasExistingItems={hasExistingItems} onOpen={() => { close(); setIssueOpen(true); }} />}
+      </> : undefined} />
     {issueOpen && <WorkItemRegistration api={host.workItems} message={message} open onClose={() => setIssueOpen(false)} />}
-  </>;
+  </div>;
 }
 
 

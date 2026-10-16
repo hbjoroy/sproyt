@@ -251,14 +251,14 @@ impl WorkItems {
         };
         if let Some((task, request, note)) = completion {
             let result: Value = serde_json::from_str(&note).map_err(storage)?;
-            let _ = self
-                .http
-                .post(format!("{base}/api/v2/user-tasks/{task}/complete"))
-                .header("X-Heart-Client", "sproyt-work-items")
-                .header("Idempotency-Key", request)
-                .json(&json!({"actor_id":assignee,"result_metadata":result}))
-                .send()
-                .await;
+            let _ = crate::operations::dependencies::heart_completion(
+                self.http
+                    .post(format!("{base}/api/v2/user-tasks/{task}/complete"))
+                    .header("X-Heart-Client", "sproyt-work-items")
+                    .header("Idempotency-Key", request)
+                    .json(&json!({"actor_id":assignee,"result_metadata":result})),
+            )
+            .await;
         }
         let view = self
             .heart_response(self.http.get(format!("{base}/api/v2/instances/{instance}")))

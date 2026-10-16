@@ -3,7 +3,7 @@ import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
 const circleId = "00000000-0000-7000-8000-000000000001";
 const channelId = "00000000-0000-7000-8000-000000000002";
 type Role = "owner" | "moderator" | "member";
-async function fixture(page: Page, initialRole: Role) {
+async function fixture(page: Page, initialRole: Role, messageId = "peer-message") {
   let role = initialRole;
   let peerRole: Role = "member";
   let socket: WebSocketRoute;
@@ -29,7 +29,7 @@ async function fixture(page: Page, initialRole: Role) {
         case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
         case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
         case "list_my_channels": reply("channels_listed",channels()); break;
-        case "subscribe_channel": reply("subscription_started",{channel_id:channelId,history:[{id:"peer-message",channel_id:channelId,sequence:1,sender_id:"peer",sender_display_name:"Kari",body:"Melding frå Kari",sent_at:"2026-01-01T00:00:00Z"}]}); break;
+        case "subscribe_channel": reply("subscription_started",{channel_id:channelId,history:[{id:messageId,channel_id:channelId,sequence:1,sender_id:"peer",sender_display_name:"Kari",body:"Melding frå Kari",sent_at:"2026-01-01T00:00:00Z"}]}); break;
         case "list_thread_summaries": reply("thread_summaries_listed",{channel_id:channelId,summaries:[]});break;
         case "list_channel_reactions": reply("channel_reactions_listed",{channel_id:channelId,reactions:[]});break;
         case "load_recent_messages": reply("messages_loaded",{channel_id:channelId,messages:[]});break;
@@ -96,3 +96,35 @@ for (const width of [1280,390]) {
     await expect(server.preview.getByRole("button",{name:"Agentar i Testkrets",exact:true})).toHaveCount(0);
   });
 }
+
+
+test("ordinary members have no empty overflow menu, including thread roots", async ({ page }) => {
+  await page.route(/\/work-items\/applications(?:\?|$)/, route => route.fulfill({ json: [] }));
+  await page.route(/\/work-items\/source\//, route => route.fulfill({ json: [] }));
+  const server = await fixture(page, "member");
+  const message = server.preview.locator('[data-message-id="peer-message"]');
+  await expect(message.getByRole("button", { name: "Legg til reaksjon", exact: true })).toBeVisible();
+  await expect(message.getByRole("button", { name: "Fleire meldingsval", exact: true })).toHaveCount(0);
+  await message.getByRole("button", { name: "Svar i tråd", exact: true }).click();
+  const parent = server.preview.locator(".sp-thread-parent");
+  await expect(parent).toBeVisible();
+  await expect(parent.getByRole("button", { name: "Fleire meldingsval", exact: true })).toHaveCount(0);
+});
+
+test("a read-only message with a registered case keeps its meaningful menu after process is disabled", async ({ page }) => {
+  const source = "00000000-0000-7000-8000-000000000272";
+  await page.route(/\/work-items\/applications(?:\?|$)/, route => route.fulfill({ json: [] }));
+  await page.route(/\/work-items\/source\//, route => route.fulfill({ json: [{
+    id: "00000000-0000-7000-8000-000000000273", source_message_id: source,
+    revision: 1, title: "Eksisterande sak", description: "Informasjon frå Kari",
+    application_name: "Sprøyt", status: "reviewing", can_supplement: false, supplements: []
+  }] }));
+  const server = await fixture(page, "member", source);
+  const message = server.preview.locator(`[data-message-id="${source}"]`);
+  await message.getByRole("button", { name: "Fleire meldingsval", exact: true }).click();
+  const menu = message.getByRole("dialog", { name: "Meldingsval", exact: true });
+  await expect(menu.getByRole("button", { name: "Rediger", exact: true })).toHaveCount(0);
+  await expect(menu.getByRole("button", { name: "Slett", exact: true })).toHaveCount(0);
+  await menu.getByRole("button", { name: "Arbeidssaker", exact: true }).click();
+  await expect(server.preview.getByRole("dialog", { name: "Arbeidssaker", exact: true })).toContainText("Eksisterande sak");
+});

@@ -17,11 +17,16 @@ type Expansion = { prompt: string; model: string | null; style: string | null; s
 type VisualReference = { title: string; url: string; credit: string };
 export type ImageGenerationJob = { mode: ImagePromptMode; expansion: Expansion | null; visualReferences: VisualReference[]; id: string; channel_id: string; state: string; prompt: string; error: string | null };
 type Job = ImageGenerationJob;
+/** Older jobs may predate local draft metadata; retain their original prompt mode. */
+export function fallbackImageDraft(job: Pick<Job, "prompt" | "mode">): string {
+  return `/imagegen ${job.mode === "literal" ? "literal " : ""}"${job.prompt}"`;
+}
 export interface ImageGenerationSnapshot {
   readonly jobs: readonly Job[];
   readonly visible: boolean;
   readonly status: string;
   readonly busy: boolean;
+  readonly rejectedDraft: string | null;
 }
 export type ImageGenerationOwner = ReturnType<typeof createImageGeneration>;
 function decodeJobs(value: unknown): Job[] {
@@ -43,6 +48,7 @@ function decodeJobs(value: unknown): Job[] {
 export function createImageGeneration(options: {
   http: HttpClient; before: HTMLElement; toolbar: HTMLElement; connected: () => boolean; channel: () => string;
   identity: () => string; channelName: (id: string) => string; attach: (media: MediaObject, rootId?: string) => void;
+  restorePrompt: (draft: string, channel: string, rootId?: string) => boolean;
 }) {
   const panel = document.createElement("section");
   panel.className = "imagegen-inbox";
@@ -68,11 +74,23 @@ export function createImageGeneration(options: {
   let jobs: Job[] = [];
   let dismissed = false;
   let statusMessage = "";
-  let snapshot: ImageGenerationSnapshot = { jobs: [], visible: false, status: "", busy: false };
+  let rejectedDraft: string | null = null;
+  let rejectedDraftIdentity = "";
+  let snapshot: ImageGenerationSnapshot = { jobs: [], visible: false, status: "", busy: false, rejectedDraft: null };
   const listeners = new Set<() => void>();
   const jobScopes = new Map<string, string>();
+  const jobDrafts = new Map<string, string>();
+  function originalDraft(job: Pick<Job, "id" | "prompt" | "mode">, draft?: string): string {
+    const key = `sproyt-imagegen-draft:${options.identity()}:${job.id}`;
+    if (draft !== undefined) jobDrafts.set(key, draft);
+    try {
+      if (draft !== undefined) sessionStorage.setItem(key, draft);
+      return sessionStorage.getItem(key) ?? jobDrafts.get(key) ?? fallbackImageDraft(job);
+    } catch { return jobDrafts.get(key) ?? fallbackImageDraft(job); }
+  }
   function publish() {
-    snapshot = { jobs: [...jobs], visible: !dismissed && (jobs.length > 0 || Boolean(statusMessage)), status: statusMessage, busy: busy || submitting };
+    snapshot = { jobs: [...jobs], visible: !dismissed && (jobs.length > 0 || Boolean(statusMessage)), status: statusMessage, busy: busy || submitting,
+      rejectedDraft: rejectedDraftIdentity === options.identity() ? rejectedDraft : null };
     panel.hidden = !snapshot.visible;
     for (const listener of listeners) listener();
   }
@@ -114,12 +132,20 @@ export function createImageGeneration(options: {
   }
   function render() {
     publish();
-    const next = JSON.stringify([jobs, options.channel(), options.identity()]);
+    const next = JSON.stringify([jobs, options.channel(), options.identity(), rejectedDraft]);
     if (next === signature || busy) return;
     signature = next;
     if (jobs.some(job => job.state === "ready") && !statusMessage) setStatus("Biletet er klart til privat gjennomgang.");
     panel.hidden = dismissed || (jobs.length === 0 && !status.textContent);
     cards.replaceChildren();
+    if (rejectedDraft !== null && rejectedDraftIdentity === options.identity()) {
+      const label = document.createElement("label");
+      label.textContent = "Prompt til nytt forsøk";
+      const input = document.createElement("textarea");
+      input.value = rejectedDraft;
+      input.addEventListener("input", () => { rejectedDraft = input.value; publish(); });
+      label.append(input); cards.append(label);
+    }
     for (const job of jobs) {
       const card = document.createElement("article");
       card.className = "imagegen-card";
@@ -192,7 +218,14 @@ export function createImageGeneration(options: {
           options.attach(media, jobScope(job.id));
           setStatus("Biletet er lagt i utkastet. Skriv ei melding og trykk Send når du vil dele det.");
         } else setStatus("Biletet er godteke. Opne den opphavlege kanalen for å leggje det i utkastet.");
-      } else setStatus(decision === "decline" ? "Biletet er avslått og blir ikkje delt." : "Biletmeldinga er lukka.");
+      } else if (decision === "decline") {
+        const draft = originalDraft(job);
+        const restored = options.restorePrompt(draft, job.channel_id, jobScope(job.id));
+        rejectedDraft = restored ? null : draft;
+        rejectedDraftIdentity = identity;
+        setStatus(restored ? "Biletet er avslått. Prompten er lagd tilbake i det opphavlege utkastet, klar til å endrast."
+          : "Biletet er avslått. Det nye utkastet ditt er bevart. Endre eller kopier den opphavlege prompten nedanfor.");
+      } else setStatus("Biletmeldinga er lukka.");
     } catch (error) { setStatus(error instanceof Error ? error.message : "Kunne ikkje oppdatere biletet."); }
     finally { busy = false; signature = ""; publish(); await refresh(); }
   }
@@ -212,6 +245,7 @@ export function createImageGeneration(options: {
     getSnapshot: () => snapshot,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     open, hide: hidePanel, review, refresh, previewUrl,
+    editRejectedDraft(draft: string) { if (rejectedDraftIdentity === options.identity()) { rejectedDraft = draft; publish(); } },
     channelName: options.channelName,
     threadRoot: (id: string) => jobScope(id),
     async submit(draft: string, channel: string, media: MediaObject[] = [], rootId?: string): Promise<boolean> {
@@ -228,6 +262,9 @@ export function createImageGeneration(options: {
         const result = await jsonPost("/api/v1/imagegen", { channel_id: channel, request_id: requestId(channel, prompt, referenceIds, mode, rootId), prompt, mode, reference_ids: referenceIds });
         if (identity !== options.identity()) return false;
         if (rootId && isRecord(result) && isRecord(result.job) && typeof result.job.id === "string") jobScope(result.job.id, rootId);
+        if (isRecord(result) && isRecord(result.job) && typeof result.job.id === "string") {
+          originalDraft({ id: result.job.id, prompt, mode }, draft);
+        }
         try { sessionStorage.removeItem(`sproyt-imagegen-admission:${options.identity()}`); } catch { /* optional */ }
         setStatus("Biletet er i kø. Førehandsvisinga kjem hit privat; ingenting er posta i kanalen.");
         await refresh();

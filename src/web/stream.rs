@@ -1,5 +1,9 @@
 use std::{convert::Infallible, time::Duration};
 
+use crate::operations::{
+    Transport,
+    dependencies::{TransportEvent, transport_event},
+};
 use axum::{
     Json,
     extract::{Query, State},
@@ -9,6 +13,7 @@ use axum::{
         sse::{Event, KeepAlive},
     },
 };
+use futures_util::StreamExt;
 use serde::Deserialize;
 use tokio::sync::broadcast;
 
@@ -230,6 +235,9 @@ pub(crate) async fn events_handler(
     } else {
         None
     };
+    if subscription.is_some() && after.is_some() {
+        transport_event(Transport::Sse, TransportEvent::ResumeRequested, 1);
+    }
     let presence =
         subscription
             .as_ref()
@@ -281,6 +289,8 @@ pub(crate) async fn events_handler(
                             yield frame(ServerEnvelope::event(ServerEvent::Chat { event }));
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            transport_event(Transport::Sse, TransportEvent::BroadcastLagged, 1);
+                            transport_event(Transport::Sse, TransportEvent::BroadcastSkipped, skipped);
                             match chat.latest_sequence(channel_id.clone()).await {
                                 Ok(latest_known_sequence) => yield frame(ServerEnvelope::event(ServerEvent::Lagged {
                                     channel_id: channel_id.clone(), last_seen_sequence: last_seen,
@@ -320,6 +330,12 @@ pub(crate) async fn events_handler(
             }
         }
     };
+    // Axum pulls this stream under HTTP body backpressure. A yielded frame is
+    // not proof that the browser received it; network errors occur downstream.
+    let stream = stream.map(|event| {
+        transport_event(Transport::Sse, TransportEvent::BodyFrameYielded, 1);
+        event
+    });
     let mut response = Sse::new(stream)
         .keep_alive(
             KeepAlive::new()

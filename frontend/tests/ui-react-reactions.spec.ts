@@ -73,27 +73,34 @@ test("React reactions support keyboard popup, several badges, Unicode and live s
   await other.close();
 });
 
-test("React reaction gestures preserve touch scrolling and work in thread replies", async ({ page }) => {
+test("Native message text selection survives long press; explicit reactions work in threads", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   const { preview, message } = await prepareMessage(page, "playwright-react-gestures");
-  const article = message.locator("article");
-  await article.click({ button: "right" });
+  const body = message.locator(".sp-message-body");
   const picker = preview.getByRole("dialog", { name: "Reager på meldinga" });
-  await expect(picker).toBeVisible();
-  await page.keyboard.press("Escape");
-  await article.dispatchEvent("pointerdown", { pointerType: "touch", clientX: 20, clientY: 20 });
-  await article.dispatchEvent("pointermove", { pointerType: "touch", clientX: 20, clientY: 60 });
-  await page.waitForTimeout(550);
+  // Neither native right-click nor the long press used by iOS text selection
+  // may be consumed by a reaction dialog on the message body.
+  expect(await body.evaluate(element => element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })))).toBe(true);
+  const selected = await body.evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    return selection.toString();
+  });
+  expect(selected.length).toBeGreaterThan(0);
+  await body.dispatchEvent("pointerdown", { pointerType: "touch", clientX: 20, clientY: 20 });
+  await page.waitForTimeout(650);
+  await body.dispatchEvent("pointerup", { pointerType: "touch" });
   await expect(picker).toHaveCount(0);
-  await article.dispatchEvent("pointerup", { pointerType: "touch" });
-  await article.dispatchEvent("pointerdown", { pointerType: "touch", clientX: 20, clientY: 20 });
-  await expect(picker).toBeVisible();
-  await article.dispatchEvent("pointerup", { pointerType: "touch" });
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(selected);
+  await body.dispatchEvent("pointerdown", { pointerType: "touch", clientX: 20, clientY: 20 });
+  await body.dispatchEvent("pointermove", { pointerType: "touch", clientX: 20, clientY: 60 });
+  await page.waitForTimeout(550);
+  await body.dispatchEvent("pointercancel", { pointerType: "touch" });
+  await expect(picker).toHaveCount(0);
+  await message.getByRole("button", { name: "Legg til reaksjon" }).click();
   await picker.getByRole("button", { name: "Tommel opp, ja, bra" }).click();
   await expect(message.getByRole("button", { name: "👍: 1 reaksjonar" })).toBeVisible();
-  // Release the synthesized long-press click suppression before the next action.
-  await article.dispatchEvent("click");
   await message.getByRole("button", { name: "Svar i tråd" }).click();
   const thread = preview.locator(".sp-thread-pane");
   const reply = thread.getByRole("textbox", { name: "Svar i tråden" });
