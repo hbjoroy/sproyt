@@ -49,7 +49,8 @@ test("Native message text selection survives long press; explicit reactions work
   if (isMobile) await thread.getByRole("button", { name: "Send ↑", exact: true }).click();
   else await reply.press("Enter");
   await expect(reply).toHaveValue("");
-  await expect(reply).toBeFocused();
+  // Keyboard submit preserves focus; a native touch on Send may blur the textarea.
+  if (!isMobile) await expect(reply).toBeFocused();
   const replyMessage = thread.locator("[data-message-id]").filter({ hasText: replyBody });
   await replyMessage.getByRole("button", { name: "Legg til reaksjon" }).click();
   expect(errors).toEqual([]);
