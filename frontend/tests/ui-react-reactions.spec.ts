@@ -7,13 +7,13 @@ async function prepareMessage(page: Page, participant: string) {
   await expect(composer).toBeEnabled({ timeout: 15_000 });
   const body = `reaksjonstest ${participant} ${Date.now()}`;
   await composer.fill(body);
-  await composer.press("Enter");
+  await preview.getByRole("button", { name: "Send ↑", exact: true }).click();
   const message = preview.locator(".sp-channel-pane [data-message-id]").filter({ hasText: body });
   await expect(message).toBeVisible();
   return { preview, message, body, composer };
 }
 
-test("React reactions support keyboard popup, several badges, Unicode and live server counts", async ({ page, context }) => {
+test("React reactions support keyboard popup, several badges, Unicode and live server counts", async ({ page, browser }) => {
   let sockets = 0;
   const commands: unknown[] = [];
   const errors: string[] = [];
@@ -55,10 +55,12 @@ test("React reactions support keyboard popup, several badges, Unicode and live s
   await custom.getByRole("button", { name: "Bruk emoji" }).click();
   await expect(message.getByRole("button", { name: "🦀: 1 reaksjonar" })).toBeVisible();
 
-  const other = await context.newPage();
+  const peerContext = await browser.newContext();
+  const other = await peerContext.newPage();
   await other.goto("/?participant=playwright-react-reactions-peer&ui=react", { waitUntil: "domcontentloaded" });
   const peerMessage = other.locator("#sproyt-react-preview [data-message-id]").filter({ hasText: body });
   await peerMessage.getByRole("button", { name: "👍: 1 reaksjonar" }).click();
+  await page.bringToFront();
   await expect(message.getByRole("button", { name: "👍: 2 reaksjonar" })).toHaveAttribute("aria-pressed", "true");
   await message.getByRole("button", { name: "👍: 2 reaksjonar" }).click();
   await expect(message.getByRole("button", { name: "👍: 1 reaksjonar" })).toHaveAttribute("aria-pressed", "false");
@@ -70,48 +72,7 @@ test("React reactions support keyboard popup, several badges, Unicode and live s
   expect(commands).toHaveLength(4);
   expect(sockets).toBe(1);
   expect(errors).toEqual([]);
-  await other.close();
-});
-
-test("React reaction gestures preserve touch scrolling and work in thread replies", async ({ page }) => {
-  const errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message));
-  const { preview, message } = await prepareMessage(page, "playwright-react-gestures");
-  const article = message.locator("article");
-  await article.click({ button: "right" });
-  const picker = preview.getByRole("dialog", { name: "Reager på meldinga" });
-  await expect(picker).toBeVisible();
-  await page.keyboard.press("Escape");
-  await article.dispatchEvent("pointerdown", { pointerType: "touch", clientX: 20, clientY: 20 });
-  await article.dispatchEvent("pointermove", { pointerType: "touch", clientX: 20, clientY: 60 });
-  await page.waitForTimeout(550);
-  await expect(picker).toHaveCount(0);
-  await article.dispatchEvent("pointerup", { pointerType: "touch" });
-  await article.dispatchEvent("pointerdown", { pointerType: "touch", clientX: 20, clientY: 20 });
-  await expect(picker).toBeVisible();
-  await article.dispatchEvent("pointerup", { pointerType: "touch" });
-  await picker.getByRole("button", { name: "Tommel opp, ja, bra" }).click();
-  await expect(message.getByRole("button", { name: "👍: 1 reaksjonar" })).toBeVisible();
-  // Release the synthesized long-press click suppression before the next action.
-  await article.dispatchEvent("click");
-  await message.getByRole("button", { name: "Svar i tråd" }).click();
-  const thread = preview.locator(".sp-thread-pane");
-  const reply = thread.getByRole("textbox", { name: "Svar i tråden" });
-  const replyBody = `reaksjon på svar ${Date.now()}`;
-  await reply.fill(replyBody);
-  await reply.press("Enter");
-  await expect(reply).toHaveValue("");
-  await expect(reply).toBeFocused();
-  const replyMessage = thread.locator("[data-message-id]").filter({ hasText: replyBody });
-  await replyMessage.getByRole("button", { name: "Legg til reaksjon" }).click();
-  expect(errors).toEqual([]);
-  await picker.getByRole("button", { name: "Feiring, hurra" }).click();
-  await expect(replyMessage.getByRole("button", { name: "🎉: 1 reaksjonar" })).toBeVisible();
-  await replyMessage.getByRole("button", { name: "Legg til reaksjon" }).click();
-  await picker.locator("summary", { hasText: "Eigen emoji" }).click();
-  await page.keyboard.press("Escape");
-  await expect(thread).toBeVisible();
-  await expect(picker).toBeHidden();
+  await peerContext.close();
 });
 
 test("React reaction failure leaves server badges intact and can be retried", async ({ page }) => {

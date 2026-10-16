@@ -90,7 +90,7 @@ test("imagegen stays private, survives reload, and accepts into a draft without 
   expect(sent.some(frame => frame.includes("send_message") && frame.includes("c63ac052"))).toBe(false);
 });
 
-test("declining a generated image adds no attachment", async ({ page }) => {
+for (const newerDraft of ["", "My newer draft"]) test(`declining a generated image restores its prompt without overwriting ${newerDraft ? "newer text" : "the empty draft"}`, async ({ page }) => {
   let declined = false;
   let channel = "";
   await page.route(/\/api\/v1\/imagegen(?:\?.*)?$/, async route => {
@@ -103,8 +103,11 @@ test("declining a generated image adds no attachment", async ({ page }) => {
   await expect(page.locator("#status")).toHaveText(/Tilkopla/, { timeout: 15000 });
   await page.locator("#body").fill('/imagegen "Seascape"');
   await page.locator("#send-form").evaluate((form: HTMLFormElement) => form.requestSubmit());
+  await expect(page.locator("#body")).toHaveValue("");
+  if (newerDraft) await page.locator("#body").fill(newerDraft);
   await page.getByRole("button", { name: "Avslå", exact: true }).click();
   await expect(page.getByRole("button", { name: "Godta", exact: true })).toHaveCount(0);
   await expect(page.locator(".media-preview-label")).toHaveCount(0);
+  await expect(page.locator("#body")).toHaveValue(newerDraft || '/imagegen "Seascape"');
   expect(declined).toBe(true);
 });

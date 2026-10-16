@@ -43,6 +43,7 @@ data:
   SPROYT_WEATHER_URL: {{ .Values.config.weatherUrl | quote }}
   SPROYT_WEATHER_AGENTS_ENABLED: {{ .Values.config.weatherAgentsEnabled | quote }}
   SPROYT_SEA_TEMPERATURE_AGENTS_ENABLED: {{ .Values.config.seaTemperatureAgentsEnabled | quote }}
+  SPROYT_AGENT_HANDOFFS_ENABLED: {{ .Values.config.agentHandoffsEnabled | quote }}
   SPROYT_FERRY_URL: {{ .Values.config.ferryUrl | quote }}
   SPROYT_FERRY_AGENTS_ENABLED: {{ .Values.config.ferryAgentsEnabled | quote }}
   SPROYT_AIS_URL: {{ .Values.config.aisUrl | quote }}

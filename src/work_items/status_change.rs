@@ -259,14 +259,14 @@ impl WorkItems {
                     return Err(RepositoryError::Conflict);
                 }
             } else if task.status == "pending" {
-                let _ = self
-                    .http
-                    .post(format!("{base}/api/v2/user-tasks/{}/complete", task.id))
-                    .header("X-Heart-Client", "sproyt-work-items")
-                    .header("Idempotency-Key", request)
-                    .json(&json!({"actor_id":actor,"result_metadata":expected}))
-                    .send()
-                    .await;
+                let _ = crate::operations::dependencies::heart_completion(
+                    self.http
+                        .post(format!("{base}/api/v2/user-tasks/{}/complete", task.id))
+                        .header("X-Heart-Client", "sproyt-work-items")
+                        .header("Idempotency-Key", request)
+                        .json(&json!({"actor_id":actor,"result_metadata":expected})),
+                )
+                .await;
                 // A later reconciliation must observe the exact committed result.
                 return Ok(());
             } else if task.status != "cancelled" {

@@ -68,6 +68,8 @@ export function PreviewReactionActions({ message, host, open, primaryAction, ove
   primaryAction?: ReactNode; overflowActions?: (close: () => void) => ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const hasOverflow = Boolean(overflowActions);
+  useEffect(() => { if (!hasOverflow) setMenuOpen(false); }, [hasOverflow]);
   const reactions = host.reactions(message.id).filter(reaction => reaction.count > 0);
   // An empty Composer collapses its tool row on blur. Keep pointerdown from
   // moving focus until click, so that reflow cannot move a message action out
@@ -81,9 +83,9 @@ export function PreviewReactionActions({ message, host, open, primaryAction, ove
       <Button className="sp-message-symbol" variant="quiet" aria-label="Legg til reaksjon" title="Legg til reaksjon"
         onPointerDown={keepPointerTarget} onClick={event => open(message, event.currentTarget)}><span aria-hidden="true">♡</span></Button>
       {primaryAction}
-      <Button className="sp-message-symbol" variant="quiet" aria-label="Fleire meldingsval" title="Fleire meldingsval"
-        onPointerDown={keepPointerTarget} onClick={() => setMenuOpen(true)}><span aria-hidden="true">⋯</span></Button>
-      <Dialog open={menuOpen} title="Meldingsval" closeLabel="Lukk meldingsvala" onClose={() => setMenuOpen(false)}>
+      {hasOverflow && <Button className="sp-message-symbol" variant="quiet" aria-label="Fleire meldingsval" title="Fleire meldingsval"
+        onPointerDown={keepPointerTarget} onClick={() => setMenuOpen(true)}><span aria-hidden="true">⋯</span></Button>}
+      <Dialog open={menuOpen && hasOverflow} title="Meldingsval" closeLabel="Lukk meldingsvala" onClose={() => setMenuOpen(false)}>
         <div className="sp-message-menu-dialog">
         {overflowActions?.(() => setMenuOpen(false))}
         </div>

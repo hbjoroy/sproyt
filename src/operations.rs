@@ -12,6 +12,7 @@ use axum::{
     response::Response,
 };
 use tokio::sync::watch;
+pub(crate) mod dependencies;
 mod measurements;
 pub(crate) use measurements::Transport;
 
@@ -340,6 +341,7 @@ pub async fn healthz() -> &'static str {
 
 pub async fn metrics(State(operations): State<OperationalState>) -> String {
     operations.metrics()
+        + &dependencies::render()
         + &crate::chatbot::memory::builder::metrics()
         + &crate::media_store::monitoring::metrics()
 }

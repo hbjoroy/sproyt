@@ -621,6 +621,23 @@
       const imageGeneration = createImageGeneration({
         http, before: sendForm, toolbar: composerTools, identity: () => currentParticipantId || "", connected: () => connectionSupervisor.snapshot().connected,
         channel: () => activeChannelId || "", channelName: (id) => knownChannels.find(channel => channel.id === id)?.name || "Opphavleg kanal",
+        restorePrompt: (draft, channelId, rootId) => {
+          if (rootId) {
+            const existing = threadComposerStates.get(rootId);
+            const current = existing?.draft ?? navigation.restoreThreadDraft(channelId, rootId);
+            if (current.trim()) return false;
+            navigation.persistThreadDraft(channelId, rootId, draft);
+            if (existing) existing.draft = draft;
+            if (activeChannelId === channelId && activeThreadRootId === rootId) syncThreadComposer();
+          } else {
+            const current = activeChannelId === channelId ? channelComposer.draft : navigation.restoreChannelDraft(channelId);
+            if (current.trim()) return false;
+            navigation.persistChannelDraft(channelId, draft);
+            if (activeChannelId === channelId) { channelComposer.draft = draft; syncComposerState(); }
+          }
+          refreshDevelopmentPreview();
+          return true;
+        },
         attach: (media, rootId) => {
           if (rootId) {
             const state = threadComposerState(rootId);

@@ -332,20 +332,9 @@ impl ProcessPilot {
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<T> {
-        let mut response = request
-            .send()
+        crate::operations::dependencies::heart_json(request)
             .await
-            .map_err(storage)?
-            .error_for_status()
-            .map_err(storage)?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(storage)? {
-            if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
-                return Err(storage("Heart response too large"));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(storage)
+            .map_err(storage)
     }
     async fn sync_run(&self, chat: &ChatEngine, id: &str, token: &str) -> Result<()> {
         let values=self.store.values("select cast(channel_id as text) || '|' || cast(assignee_id as text) || '|' || coalesce(instance_id,'') || '|' || runtime_model || '|' || engine_url || '|' || definition_name || '|' || definition_version from process_pilot_runs where id=? and lease_token=?", &[id.into(),token.into()]).await?;
@@ -427,17 +416,17 @@ impl ProcessPilot {
             let (task, key) = command.split_once('|').ok_or(RepositoryError::Conflict)?;
             // An ambiguous timeout or rejected completion must not block reconciliation:
             // only the subsequent authoritative Heart task status settles the receipt.
-            let _ = self
-                .http
-                .post(format!(
-                    "{}/api/{version}/user-tasks/{task}/complete",
-                    self.base
-                ))
-                .header("X-Heart-Client", "sproyt-pilot")
-                .header("Idempotency-Key", key)
-                .json(&json!({"actor_id":assignee,"result_metadata":{}}))
-                .send()
-                .await;
+            let _ = crate::operations::dependencies::heart_completion(
+                self.http
+                    .post(format!(
+                        "{}/api/{version}/user-tasks/{task}/complete",
+                        self.base
+                    ))
+                    .header("X-Heart-Client", "sproyt-pilot")
+                    .header("Idempotency-Key", key)
+                    .json(&json!({"actor_id":assignee,"result_metadata":{}})),
+            )
+            .await;
         }
         // Inspect before listing: if cancellation races the reads, the next tick settles
         // it; reading in this order avoids a terminal run with stale pending receipts.

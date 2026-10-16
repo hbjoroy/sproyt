@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::operations::{
+    Transport,
+    dependencies::{TransportEvent, transport_event},
+};
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -161,6 +165,9 @@ pub async fn handle_socket(
                                 message: "request_id must contain 1 to 128 bytes".to_owned(),
                             })
                         } else {
+                            if matches!(&envelope.command, ClientCommand::LoadRecentMessages { after: Some(_), .. }) {
+                                transport_event(Transport::WebSocket, TransportEvent::ResumeRequested, 1);
+                            }
                             execute_command(
                                 &chat,
                                 &participant_id,
@@ -181,7 +188,10 @@ pub async fn handle_socket(
                         }
                     }
                     Some(Ok(Message::Binary(_))) | Some(Ok(Message::Pong(_))) => {}
-                    Some(Err(_)) => break,
+                    Some(Err(_)) => {
+                        transport_event(Transport::WebSocket, TransportEvent::ReceiveFailed, 1);
+                        break;
+                    },
                 }
             }
         }
@@ -695,13 +705,19 @@ fn spawn_subscription(
                     ServerEnvelope::event(ServerEvent::Chat { event })
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    transport_event(Transport::WebSocket, TransportEvent::BroadcastLagged, 1);
+                    transport_event(
+                        Transport::WebSocket,
+                        TransportEvent::BroadcastSkipped,
+                        skipped,
+                    );
                     let latest_known_sequence = match chat.latest_sequence(channel_id.clone()).await
                     {
                         Ok(sequence) => sequence,
                         Err(error) => {
-                            let _ = outbound
-                                .send(ServerEnvelope::event(error_event(error)))
-                                .await;
+                            let _ =
+                                queue_event(&outbound, ServerEnvelope::event(error_event(error)))
+                                    .await;
                             break;
                         }
                     };
@@ -715,7 +731,7 @@ fn spawn_subscription(
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             };
-            if outbound.send(message).await.is_err() {
+            if queue_event(&outbound, message).await.is_err() {
                 break;
             }
         }
@@ -738,14 +754,77 @@ pub(crate) fn error_event(error: ChatError) -> ServerEvent {
     }
 }
 
+async fn queue_event(
+    outbound: &mpsc::Sender<ServerEnvelope>,
+    message: ServerEnvelope,
+) -> Result<(), mpsc::error::SendError<ServerEnvelope>> {
+    match outbound.try_send(message) {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(message)) => {
+            transport_event(Transport::WebSocket, TransportEvent::QueueBackpressure, 1);
+            let result = outbound.send(message).await;
+            if result.is_err() {
+                transport_event(Transport::WebSocket, TransportEvent::QueueClosed, 1);
+            }
+            result
+        }
+        Err(mpsc::error::TrySendError::Closed(message)) => {
+            transport_event(Transport::WebSocket, TransportEvent::QueueClosed, 1);
+            Err(mpsc::error::SendError(message))
+        }
+    }
+}
+
 async fn send(socket: &mut WebSocket, event: &ServerEnvelope) -> Result<(), axum::Error> {
     let payload = serde_json::to_string(event).expect("server messages must serialize");
-    socket.send(Message::Text(payload.into())).await
+    let result = socket.send(Message::Text(payload.into())).await;
+    transport_event(
+        Transport::WebSocket,
+        if result.is_ok() {
+            TransportEvent::EnvelopeSent
+        } else {
+            TransportEvent::SendFailed
+        },
+        1,
+    );
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn bounded_outbound_waits_without_dropping_and_reports_closed_queue() {
+        let (outbound, mut receiver) = mpsc::channel(1);
+        queue_event(
+            &outbound,
+            ServerEnvelope::event(ServerEvent::CirclesChanged),
+        )
+        .await
+        .unwrap();
+        let pending = queue_event(&outbound, ServerEnvelope::event(ServerEvent::Pong));
+        tokio::pin!(pending);
+        assert!(futures_util::poll!(&mut pending).is_pending());
+        assert_eq!(
+            serde_json::to_value(receiver.recv().await.unwrap()).unwrap(),
+            serde_json::to_value(ServerEnvelope::event(ServerEvent::CirclesChanged)).unwrap()
+        );
+        pending.await.unwrap();
+        assert_eq!(
+            serde_json::to_value(receiver.recv().await.unwrap()).unwrap(),
+            serde_json::to_value(ServerEnvelope::event(ServerEvent::Pong)).unwrap()
+        );
+        drop(receiver);
+        assert!(
+            queue_event(
+                &outbound,
+                ServerEnvelope::event(ServerEvent::CirclesChanged)
+            )
+            .await
+            .is_err()
+        );
+    }
 
     #[test]
     fn rejects_unknown_protocol_with_stable_error_shape() {

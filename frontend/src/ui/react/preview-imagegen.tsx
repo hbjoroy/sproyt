@@ -22,6 +22,10 @@ export function PreviewImageGeneration({ owner, channelId }: { owner: ImageGener
     <strong>Biletverkstad · berre synleg for deg</strong>
     <Button variant="quiet" onClick={owner.hide}>Skjul</Button>
     {state.status && <Status>{state.status}</Status>}
+    {state.rejectedDraft !== null && <label>Prompt til nytt forsøk
+      <textarea value={state.rejectedDraft} onChange={event => owner.editRejectedDraft(event.target.value)}
+        style={{ display: "block", width: "100%", minHeight: "5rem" }} />
+    </label>}
     {state.jobs.map(job => <article key={job.id} style={{ paddingBlock: 12, borderBlockEnd: "1px solid var(--sp-line)" }}>
       <p>{owner.channelName(job.channel_id)}{owner.threadRoot(job.id) ? " · Trådutkast" : ""} · {job.prompt}</p>
       {job.expansion && <details>

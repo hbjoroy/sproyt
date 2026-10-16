@@ -4,6 +4,27 @@ import { isRecord } from "./types";
 export type AgentWeather = Readonly<{ location: string; latitude: number; longitude: number }>;
 export type AgentSeaTemperature = Readonly<{ defaultLocation: string; locations: readonly string[] }>;
 export type AgentSeaTemperatureLocation = Readonly<{ id: string; name: string }>;
+export type AgentHandoffInput = Readonly<{ revision: number; targetAgentIds: readonly string[]; guidance: string }>;
+export type AgentHandoff = AgentHandoffInput & Readonly<{ available: boolean; agentRevision: number }>;
+
+export function validAgentHandoff(value: AgentHandoffInput): boolean {
+  return Number.isSafeInteger(value.revision) && value.revision >= 0
+    && value.targetAgentIds.length <= 4
+    && value.targetAgentIds.every(id => /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu.test(id))
+    && new Set(value.targetAgentIds.map(id => id.toLowerCase())).size === value.targetAgentIds.length
+    && [...value.guidance].length <= 1000;
+}
+
+function decodeHandoff(value: unknown): AgentHandoff {
+  if (!isRecord(value) || typeof value.available !== "boolean" || !Number.isSafeInteger(value.revision)
+    || !Number.isSafeInteger(value.agent_revision) || Number(value.agent_revision) < 1
+    || typeof value.guidance !== "string" || !Array.isArray(value.target_agent_ids)
+    || !value.target_agent_ids.every(id => typeof id === "string")) throw new Error("Ugyldig videresendingsoppsett frå tenaren.");
+  const result: AgentHandoff = { available: value.available, revision: Number(value.revision),
+    agentRevision: Number(value.agent_revision), targetAgentIds: value.target_agent_ids as string[], guidance: value.guidance };
+  if (!validAgentHandoff(result)) throw new Error("Ugyldig videresendingsoppsett frå tenaren.");
+  return result;
+}
 
 export function validAgentSeaTemperature(value: AgentSeaTemperature): boolean {
   return value.locations.length >= 1 && value.locations.length <= 8
@@ -162,6 +183,18 @@ export class CircleChatAgentApi {
   async update(circleId: string, agentId: string, input: CircleChatAgentInput): Promise<CircleChatAgent> {
     return this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}`, decodeAgent,
       { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(this.body(input)) });
+  }
+
+  handoff(circleId: string, agentId: string): Promise<AgentHandoff> {
+    return this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}/handoff`, decodeHandoff);
+  }
+
+  updateHandoff(circleId: string, agentId: string, input: AgentHandoffInput): Promise<AgentHandoff> {
+    if (!validAgentHandoff(input) || input.targetAgentIds.some(id => id.toLowerCase() === agentId.toLowerCase())) return Promise.reject(new Error("Vel inntil fire andre agentar og ei gyldig rettleiing."));
+    return this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}/handoff`, decodeHandoff,
+      { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        revision: input.revision, target_agent_ids: input.targetAgentIds, guidance: input.guidance
+      }) });
   }
 
   private body(input: CircleChatAgentInput) {
