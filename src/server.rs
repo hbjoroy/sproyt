@@ -437,6 +437,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             "/api/v1/circles/{id}/chat-agents/{agent_id}",
             axum::routing::patch(crate::web::chatbot::update),
         )
+        .route(
+            "/api/v1/circles/{id}/chat-agents/{agent_id}/handoff",
+            get(crate::web::chatbot::handoff_get).put(crate::web::chatbot::handoff_put),
+        )
         .route("/api/v1/agents/{id}/grants", post(grant_agent))
         .route("/api/v1/agents/{id}/revoke", post(revoke_agent))
         .route(

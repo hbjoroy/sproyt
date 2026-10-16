@@ -20,7 +20,7 @@ for (const newerDraft of ["", "Ei ny melding"]) {
     await expect(composer).toBeEnabled();
     const command = '/imagegen literal "Seascape"';
     await composer.fill(command);
-    await composer.press("Enter");
+    await app.getByRole("button", { name: "Send ↑", exact: true }).click();
     await expect(composer).toHaveValue("");
     if (newerDraft) await composer.fill(newerDraft);
     await app.getByRole("button", { name: "Avslå", exact: true }).click();

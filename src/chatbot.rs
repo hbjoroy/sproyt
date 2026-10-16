@@ -61,6 +61,7 @@ pub(crate) mod agent_images;
 mod channel_access;
 mod ferry;
 mod followup;
+pub(crate) mod handoffs;
 pub(crate) mod location;
 pub(crate) mod memory;
 mod mention;
@@ -1403,6 +1404,9 @@ impl CircleChatAgents {
                         "temporary location cleanup failed"
                     );
                 }
+                if let Err(error) = service.handoff_tick().await {
+                    tracing::warn!(error_kind = error.kind(), "agent handoff worker failed");
+                }
                 match service.claim().await {
                     Ok(Some(job)) => service.process(job, &chat).await,
                     Ok(None) => {}
@@ -2012,6 +2016,27 @@ async fn enqueue_postgres_with_images(
     observations_enabled: bool,
     images_enabled: bool,
 ) -> Result<()> {
+    enqueue_postgres_admission(
+        tx,
+        message,
+        followups_enabled,
+        vision_enabled,
+        observations_enabled,
+        images_enabled,
+        None,
+    )
+    .await
+}
+
+async fn enqueue_postgres_admission(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    message: &crate::domain::ChatMessage,
+    followups_enabled: bool,
+    vision_enabled: bool,
+    observations_enabled: bool,
+    images_enabled: bool,
+    forced_target: Option<&str>,
+) -> Result<()> {
     let rows = sqlx::query("select cast(a.agent_id as text) agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.sea_temperature,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
         .bind(*message.channel_id.as_uuid()).bind(*message.sender_id.as_uuid())
         .fetch_all(&mut **tx).await.map_err(storage)?;
@@ -2032,6 +2057,9 @@ async fn enqueue_postgres_with_images(
     let mut vision_cache: Option<String> = None;
     for row in rows {
         let agent_id: String = row.try_get("agent_id").map_err(storage)?;
+        if forced_target.is_some_and(|target| target != agent_id) {
+            continue;
+        }
         let words: String = row.try_get("trigger_words").map_err(storage)?;
         let revision: i64 = row.try_get("revision").map_err(storage)?;
         let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
@@ -2039,7 +2067,8 @@ async fn enqueue_postgres_with_images(
         let weather: Option<String> = row.try_get("weather").map_err(storage)?;
         let marine: Option<String> = row.try_get("sea_temperature").map_err(storage)?;
         let mentioned = addresses.ids.contains(&agent_id);
-        let triggered = mentioned || matches_trigger(message.body.as_str(), &words);
+        let triggered =
+            forced_target.is_some() || mentioned || matches_trigger(message.body.as_str(), &words);
         if addresses.found && !mentioned && !triggered {
             continue;
         }
@@ -2097,6 +2126,13 @@ async fn enqueue_postgres_with_images(
             if selected.is_none() {
                 continue;
             }
+        }
+        if forced_target.is_none()
+            && triggered
+            && handoffs::enabled()
+            && handoffs::enqueue_postgres(tx, message, &agent_id, revision, access_revision).await?
+        {
+            continue;
         }
         let vision_snapshot =
             if vision_enabled && row.try_get::<bool, _>("vision_enabled").map_err(storage)? {
@@ -2193,6 +2229,27 @@ async fn enqueue_sqlite_with_images(
     observations_enabled: bool,
     images_enabled: bool,
 ) -> Result<()> {
+    enqueue_sqlite_admission(
+        tx,
+        message,
+        followups_enabled,
+        vision_enabled,
+        observations_enabled,
+        images_enabled,
+        None,
+    )
+    .await
+}
+
+async fn enqueue_sqlite_admission(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    message: &crate::domain::ChatMessage,
+    followups_enabled: bool,
+    vision_enabled: bool,
+    observations_enabled: bool,
+    images_enabled: bool,
+    forced_target: Option<&str>,
+) -> Result<()> {
     let rows = sqlx::query("select a.agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.sea_temperature,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1 and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
         .bind(message.sender_id.to_string()).bind(message.channel_id.to_string())
         .fetch_all(&mut **tx).await.map_err(storage)?;
@@ -2213,6 +2270,9 @@ async fn enqueue_sqlite_with_images(
     let mut vision_cache: Option<String> = None;
     for row in rows {
         let agent_id: String = row.try_get("agent_id").map_err(storage)?;
+        if forced_target.is_some_and(|target| target != agent_id) {
+            continue;
+        }
         let words: String = row.try_get("trigger_words").map_err(storage)?;
         let revision: i64 = row.try_get("revision").map_err(storage)?;
         let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
@@ -2220,7 +2280,8 @@ async fn enqueue_sqlite_with_images(
         let weather: Option<String> = row.try_get("weather").map_err(storage)?;
         let marine: Option<String> = row.try_get("sea_temperature").map_err(storage)?;
         let mentioned = addresses.ids.contains(&agent_id);
-        let triggered = mentioned || matches_trigger(message.body.as_str(), &words);
+        let triggered =
+            forced_target.is_some() || mentioned || matches_trigger(message.body.as_str(), &words);
         if addresses.found && !mentioned && !triggered {
             continue;
         }
@@ -2278,6 +2339,13 @@ async fn enqueue_sqlite_with_images(
             if selected.is_none() {
                 continue;
             }
+        }
+        if forced_target.is_none()
+            && triggered
+            && handoffs::enabled()
+            && handoffs::enqueue_sqlite(tx, message, &agent_id, revision, access_revision).await?
+        {
+            continue;
         }
         let vision_snapshot =
             if vision_enabled && row.try_get::<bool, _>("vision_enabled").map_err(storage)? {

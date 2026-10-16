@@ -101,11 +101,12 @@ work_item_github_exports, ikkje work_item.id. Andre opne saker med priority/late
 2. #170: avgrensa WS/SSE send-/kø-/lag-målingar og Heart utfall/latens med faste
    etikettar. Ingen migrasjon eller driftsinfrastrukturendring; avbrotsøvingar
    skal ikkje gjerast mot den delte Heart-/chat-databasen.
-3. #271: avklar første mottakar og handoff/consult-semantikk. Ikkje aktiver ny
-   delegering i ei delt kø når eldre prod-arbeidarar ikkje kan kontrollere
-   mottakarens tilgangar etter retry/cached reply. Alle publiserande arbeidarar
-   må kontrollere persisterte avhengigheiter, eller køa må vere reelt isolert.
-   Ingen agentmelding-autotrigger eller lån av minne/GPS-grant frå andre agentar.
+3. #271: generell, eigarkonfigurert videresending i eitt steg mellom agentar i
+   same krets og kanal. Ei eiga opptakskø er isolert frå eldre prod-arbeidarar;
+   mottakaren brukar ordinær kø og sine eigne tilgangar, verktøy og minne.
+   Ingen hardkoda mottakar, rekursiv delegering eller lån av GPS/minne.
+   Migrasjon 0067 lagrar berre ID-ar/revisjonar; originalmeldinga blir lesen på
+   nytt med tilgangskontroll. Canary får eige flagg, avslått som standard.
 4. #169/#198/#201/#231 har leverte kodeendringar og manglar konkret ekstern
    akseptanse (ny verifisert brukar, opphavleg fysisk popup/iPhone-share-retur,
    naturleg agentsamtale og separat godkjend bileteidentitet). Dei skal ikkje
@@ -114,5 +115,6 @@ work_item_github_exports, ikkje work_item.id. Andre opne saker med priority/late
 Kontroll: relevante frontend-grensetestar og Chromium/WebKit, Rust/Clippy,
 PostgreSQL og eksisterande arbeidsflytkontraktar, så Astra-review av endeleg diff.
 Publiser eitt uforanderleg ARM64-image frå kontrollert main; oppdater berre canary
-web-image/chart via GitOps. Bevar migrasjons-/worker-/Heart-image og prod-digest.
+web-image/chart og migrasjonsimage via GitOps etter fersk backup/restore-gate for
+0067. Bevar worker-/Heart-image, prod-digest og produksjonskonfigurasjon.
 Verifiser /versionz, readiness, faktisk canary-metrikk og uendra produksjon.

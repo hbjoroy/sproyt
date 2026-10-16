@@ -2,6 +2,7 @@ import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useState } from "react";
 import type { AgentImageGeneration, AgentImageIdentity, AgentSeaTemperatureLocation, CircleChatAgent, CircleChatAgentApi, CircleChatAgentInput } from "../../chat-agents";
 import { validAgentSeaTemperature, validAgentWeather } from "../../chat-agents";
+import { AgentHandoff } from "./agent-handoff";
 
 const lines = (value: string) => value.split(/\r?\n/u).map(item => item.trim()).filter(Boolean);
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Prøv igjen.";
@@ -31,6 +32,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<CircleChatAgent | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [handoffAgent, setHandoffAgent] = useState<CircleChatAgent | null>(null);
   const [name, setName] = useState("");
   const [triggers, setTriggers] = useState("");
   const [phrases, setPhrases] = useState("");
@@ -112,12 +114,21 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     {!available && <Status tone="error">Modelltenesta for samtaleagentar er ikkje aktiv. Du kan lagre oppsettet, men ikkje slå på ein agent enno.</Status>}
     {loading ? <Status>Lastar agentar …</Status> : <div style={{ display: "grid", gap: 8 }}>
       {agents.length === 0 && <Status>Ingen agentar i denne kretsen enno.</Status>}
-      {agents.map(agent => <div key={agent.agentId} className="sp-circle-agent-row">
-        <span><strong>{agent.displayName}</strong> · {agent.enabled ? "På" : "Av"}</span>
-        <Button variant="quiet" onClick={() => edit(agent)}>Rediger</Button>
+      {agents.map(agent => <div key={agent.agentId} className="sp-circle-agent-row" style={{ flexWrap: "wrap" }}>
+        <span style={{ minWidth: 0, flex: "1 1 8rem", overflowWrap: "anywhere" }}><strong>{agent.displayName}</strong> · {agent.enabled ? "På" : "Av"}</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: ".25rem" }}>
+        <Button variant="quiet" disabled={handoffAgent !== null} onClick={() => edit(agent)}>Rediger</Button>
+        <Button variant="quiet" disabled={formOpen || handoffAgent !== null} aria-label={`Videresending frå ${agent.displayName}`}
+          onClick={() => setHandoffAgent(agent)}>Videresending</Button>
+        </div>
       </div>)}
-      {!formOpen && <Button onClick={() => edit(null)}>Ny agent</Button>}
+      {!formOpen && !handoffAgent && <Button onClick={() => edit(null)}>Ny agent</Button>}
     </div>}
+    {handoffAgent && <AgentHandoff key={handoffAgent.agentId} api={api} circleId={circleId} source={handoffAgent} agents={agents}
+      onClose={() => setHandoffAgent(null)} onSaved={revision => {
+        setAgents(previous => previous.map(agent => agent.agentId === handoffAgent.agentId ? { ...agent, revision } : agent));
+        setHandoffAgent(null);
+      }} />}
     {formOpen && <form className="sp-circle-agent-form" onSubmit={event => { event.preventDefault(); void save(); }}>
       <h3>{selected ? `Rediger ${selected.displayName}` : "Ny agent"}</h3>
       <TextField label="Namn" value={name} maxLength={80} onChange={event => setName(event.target.value)} />

@@ -58,6 +58,7 @@ config:
   # Enable only after all shared-database workers support weather/followup jobs.
   weatherAgentsEnabled: false
   seaTemperatureAgentsEnabled: false
+  agentHandoffsEnabled: false
   ferryUrl: ""
   # Activate after all shared-database workers support schema 54 and ferry jobs.
   ferryAgentsEnabled: false
