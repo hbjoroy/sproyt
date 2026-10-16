@@ -13,7 +13,7 @@ async function prepareMessage(page: Page, participant: string) {
   return { preview, message, body, composer };
 }
 
-test("Native message text selection survives long press; explicit reactions work in threads", async ({ page }) => {
+test("Native message text selection survives long press; explicit reactions work in threads", async ({ page, isMobile }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   const { preview, message } = await prepareMessage(page, "playwright-react-gestures");
@@ -46,7 +46,8 @@ test("Native message text selection survives long press; explicit reactions work
   const reply = thread.getByRole("textbox", { name: "Svar i tråden" });
   const replyBody = `reaksjon på svar ${Date.now()}`;
   await reply.fill(replyBody);
-  await thread.getByRole("button", { name: "Send ↑", exact: true }).click();
+  if (isMobile) await thread.getByRole("button", { name: "Send ↑", exact: true }).click();
+  else await reply.press("Enter");
   await expect(reply).toHaveValue("");
   await expect(reply).toBeFocused();
   const replyMessage = thread.locator("[data-message-id]").filter({ hasText: replyBody });
