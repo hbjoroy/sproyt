@@ -318,7 +318,8 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_attempt_is_counted_once_without_success() {
-        let collector = Box::leak(Box::new(Mutex::new(Metrics::default())));
+        let collector: &'static Mutex<Metrics> =
+            Box::leak(Box::new(Mutex::new(Metrics::default())));
         let guard = HeartAttempt {
             method: HeartMethod::Get,
             result: HeartResult::Cancelled,
