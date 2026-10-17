@@ -82,6 +82,7 @@ export function NavigationScopeActions({ group, snapshot, host, onSelect }: {
       </div>
     </div>
     {agentsOpen && circle && ["owner","moderator"].includes(circle.role) && host.chatAgents && <CircleChatAgentsDialog key={circle.id} api={host.chatAgents} circleId={circle.id} circleName={circle.name}
+      channels={snapshot.channels}
       onClose={()=>{setAgentsOpen(false);close();}} />}
     {memoryOwner && memoryOwner === host.selfId() && circle && host.agentMemory && <AgentMemoryDialog key={`${memoryOwner}:${circle.id}`} api={host.agentMemory}
       circleId={circle.id} circleName={circle.name} channels={snapshot.groups.flatMap(group => group.conversations.map(item => item.channel))}

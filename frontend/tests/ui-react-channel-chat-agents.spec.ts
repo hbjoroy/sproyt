@@ -4,15 +4,29 @@ const circle = "00000000-0000-7000-8000-000000002051";
 const channel = "00000000-0000-7000-8000-000000002052";
 const agent = "00000000-0000-7000-8000-000000002053";
 
-async function fixture(page: Page) {
+async function fixture(page: Page, circleManager = false) {
   let enabled = false;
   let revision = 1;
   let selectionAvailable = true;
   let first = true;
   let rejectPending: (() => Promise<void>) | undefined;
   const updates: unknown[] = [];
+  const agentUpdates: Record<string, unknown>[] = [];
+  let agentEnabled = false;
+  let agentRevision = 1;
+  let failToggle = false;
+  await page.route(/\/api\/v1\/circles\/[^/]+\/chat-agents(?:\/[^?]+)?(?:\?|$)/, async route => {
+    const agentView = () => ({ agent_id: agent, circle_id: circle, display_name: "Kanalhjelpar",
+      trigger_words: ["God morgen"], response_phrases: ["Ver venleg"], enabled: agentEnabled,
+      revision: agentRevision, worker_available: true, memory_enabled: true });
+    if (route.request().method() === "GET") return route.fulfill({ json: { agents: [agentView()], worker_available: true } });
+    const input = route.request().postDataJSON(); agentUpdates.push(input);
+    if (failToggle) { failToggle = false; agentRevision++; return route.fulfill({ status: 409, body: "Oppsettet er endra. Hent på nytt." }); }
+    agentEnabled = input.enabled; agentRevision++;
+    return route.fulfill({ json: agentView() });
+  });
   const view = () => ({ access_revision: revision, selection_available: selectionAvailable,
-    agents: [{ agent_id: agent, display_name: "Kanalhjelpar", agent_enabled: true, enabled }] });
+    agents: [{ agent_id: agent, display_name: "Kanalhjelpar", agent_enabled: circleManager ? agentEnabled : true, enabled }] });
   await page.route(/\/api\/v1\/channels\/[^/]+\/chat-agents(?:\/[^?]+)?(?:\?|$)/, async route => {
     if (route.request().method() === "GET") { await route.fulfill({ json: view() }); return; }
     const input = route.request().postDataJSON(); updates.push(input);
@@ -30,7 +44,7 @@ async function fixture(page: Page) {
       case "hello": reply("hello", { participant_id: "manager" }); break;
       case "ping": reply("pong"); break;
       case "list_users": reply("users_listed", { users: [] }); break;
-      case "list_my_circles": reply("circles_listed", { circles: [[{ id: circle, slug: "private-agent", name: "Testkrets", created_by: "manager", created_at: "2026-01-01T00:00:00Z" }, "member"]] }); break;
+      case "list_my_circles": reply("circles_listed", { circles: [[{ id: circle, slug: "private-agent", name: "Testkrets", created_by: "manager", created_at: "2026-01-01T00:00:00Z" }, circleManager ? "owner" : "member"]] }); break;
       case "list_my_channels": reply("channels_listed", { channels: [{ id: channel, slug: "private-agent", name: "Privat arbeid", kind: "private", circle_id: circle, direct_user_id: null, is_direct: false,
         description: "", role: "moderator", last_read_sequence: 0, latest_sequence: 0 }] }); break;
       case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
@@ -41,8 +55,54 @@ async function fixture(page: Page) {
       case "load_recent_messages": reply("messages_loaded", { channel_id: channel, messages: [] }); break;
     }
   }));
-  return { updates, reject: async () => { await rejectPending?.(); }, externalChange: () => { enabled = true; revision = 2; }, gateOff: () => { selectionAvailable = false; } };
+  return { updates, agentUpdates, failToggle: () => { failToggle = true; }, reject: async () => { await rejectPending?.(); }, externalChange: () => { enabled = true; revision = 2; }, gateOff: () => { selectionAvailable = false; } };
 }
+
+async function openCircleAgents(page: Page) {
+  await page.goto(`/?participant=channel-agent-manager&channel=${channel}`);
+  const preview = page.locator("#sproyt-react-preview");
+  await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
+  await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  await preview.getByRole("button", { name: "Val for Testkrets", exact: true }).click();
+  await preview.getByRole("button", { name: "Agentar i Testkrets", exact: true }).click();
+  return preview.getByRole("dialog", { name: "Agentar i Testkrets", exact: true });
+}
+
+test("circle setup exposes the disabled agent and private channel access together without silently granting access", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const server = await fixture(page, true);
+  const dialog = await openCircleAgents(page);
+  await expect(dialog).toContainText("Avslått – svarar ikkje");
+  await expect(dialog).toContainText("@Kanalhjelpar");
+  await dialog.getByRole("button", { name: "Kanaltilgang", exact: true }).click();
+  await expect(dialog.getByLabel("Kanal", { exact: true })).toHaveValue(channel);
+  await expect(dialog.getByRole("checkbox", { name: /Kanalhjelpar/ })).not.toBeChecked();
+  await expect(dialog).toContainText("må også slåast på");
+  await dialog.getByRole("button", { name: "Agentar", exact: true }).click();
+  await dialog.getByRole("button", { name: "Slå på Kanalhjelpar", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Slå av Kanalhjelpar", exact: true })).toBeEnabled();
+  expect(server.agentUpdates).toEqual([{ display_name: "Kanalhjelpar", trigger_words: ["God morgen"],
+    response_phrases: ["Ver venleg"], enabled: true, revision: 1 }]);
+  await dialog.getByRole("button", { name: "Kanaltilgang", exact: true }).click();
+  await expect(dialog).not.toContainText("Avslått i kretsen");
+  await expect(dialog.getByRole("checkbox", { name: "Kanalhjelpar", exact: true })).not.toBeChecked();
+  expect(server.updates).toEqual([]);
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+});
+
+test("failed activation retains confirmed state and can reload a new revision before retrying", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const server = await fixture(page, true);
+  server.failToggle();
+  const dialog = await openCircleAgents(page);
+  await dialog.getByRole("button", { name: "Slå på Kanalhjelpar", exact: true }).click();
+  await expect(dialog).toContainText("Avslått – svarar ikkje");
+  await dialog.getByRole("button", { name: "Hent agentane på nytt", exact: true }).click();
+  await dialog.getByRole("button", { name: "Slå på Kanalhjelpar", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Slå av Kanalhjelpar", exact: true })).toBeEnabled();
+  expect(server.agentUpdates.map(input => input.revision)).toEqual([1, 2]);
+});
 
 async function openAgents(page: Page) {
   const preview = page.locator("#sproyt-react-preview");

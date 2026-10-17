@@ -3,12 +3,14 @@ import { useEffect, useState } from "react";
 import type { AgentImageGeneration, AgentImageIdentity, AgentSeaTemperatureLocation, CircleChatAgent, CircleChatAgentApi, CircleChatAgentInput } from "../../chat-agents";
 import { validAgentSeaTemperature, validAgentWeather } from "../../chat-agents";
 import { AgentHandoff } from "./agent-handoff";
+import type { Channel } from "../../types";
+import { ChannelChatAgentsPanel } from "./channel-chat-agents";
 
 const lines = (value: string) => value.split(/\r?\n/u).map(item => item.trim()).filter(Boolean);
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Prøv igjen.";
 
-export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
-  api: CircleChatAgentApi; circleId: string; circleName: string; onClose: () => void;
+export function CircleChatAgentsDialog({ api, circleId, circleName, channels = [], onClose }: {
+  api: CircleChatAgentApi; circleId: string; circleName: string; channels?: readonly Channel[]; onClose: () => void;
 }) {
   const [agents, setAgents] = useState<CircleChatAgent[]>([]);
   const [available, setAvailable] = useState(false);
@@ -29,6 +31,9 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const [imagesOccasional, setImagesOccasional] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [reload, setReload] = useState(0);
+  const [channelId, setChannelId] = useState("");
+  const [showChannels, setShowChannels] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<CircleChatAgent | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -63,8 +68,14 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
   const workerAvailable = available && (!weatherEnabled || weatherAvailable) && (!seaEnabled || seaAvailable)
     && (!ferryEnabled || ferryAvailable) && (!visionEnabled || canUseVision);
 
+  // This dialog is only opened for circle managers. Private channels still require a channel role.
+  const managedChannels = channels.filter(channel => channel.circle_id === circleId && !channel.is_direct
+    && (["owner", "moderator"].includes(channel.role) || (channel.kind !== "private" && channel.role === "member")));
+  const selectedChannel = managedChannels.find(channel => channel.id === channelId) ?? managedChannels[0];
+
   useEffect(() => {
     let live = true;
+    setLoading(true); setError("");
     void api.list(circleId).then(result => {
       if (!live) return;
       setAgents(result.agents); setAvailable(result.workerAvailable); setWeatherAvailable(result.weatherAvailable); setLoading(false);
@@ -74,7 +85,24 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       setImagesAvailable(result.imageGenerationAvailable); setImageIdentities(result.imageIdentities);
     }).catch(cause => { if (live) { setError(errorText(cause)); setLoading(false); } });
     return () => { live = false; };
-  }, [api, circleId]);
+  }, [api, circleId, reload]);
+
+  const canActivate = (agent: CircleChatAgent) => available && agent.workerAvailable
+    && (!agent.weather || weatherAvailable) && (!agent.seaTemperature || seaAvailable)
+    && (!agent.ferryPort || ferryAvailable) && (!agent.visionEnabled || agent.visionAvailable)
+    && (!agent.imageGeneration?.enabled || agent.imageGenerationAvailable);
+  const toggleAgent = async (agent: CircleChatAgent) => {
+    if (saving || formOpen || handoffAgent) return;
+    setSaving(true); setError("");
+    try {
+      // Omit optional settings: toggling must never overwrite skills or memory preferences.
+      const saved = await api.update(circleId, agent.agentId, { displayName: agent.displayName,
+        triggerWords: agent.triggerWords, responsePhrases: agent.responsePhrases,
+        enabled: !agent.enabled, revision: agent.revision });
+      setAgents(previous => previous.map(item => item.agentId === saved.agentId ? saved : item));
+    } catch (cause) { setError(errorText(cause)); }
+    finally { setSaving(false); }
+  };
 
   const edit = (agent: CircleChatAgent | null) => {
     setSelected(agent); setName(agent?.displayName ?? "");
@@ -110,19 +138,38 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
     finally { setSaving(false); }
   };
   return <Dialog open title={`Agentar i ${circleName}`} closeLabel="Lukk agentar" onClose={onClose}>
-    <p>Agentar svarar når ei ny melding inneheld eit triggeruttrykk. Dei les berre dei siste 20 minutta i same kanal eller tråd. Kanalvala styrer tilgangen; private kanalar krev eit uttrykkeleg val. Direktemeldingar er ikkje med.</p>
+    <p>Slå på agenten her, og vel kvar han får svare under Kanaltilgang. Skriv @agentnamnet eller eit triggeruttrykk i ei ny melding for å få svar.</p>
+    {!formOpen && !handoffAgent && <div className="sp-agent-tabs" role="group" aria-label="Agentoppsett">
+      <Button variant="quiet" aria-pressed={!showChannels} disabled={saving} onClick={() => setShowChannels(false)}>Agentar</Button>
+      <Button variant="quiet" aria-pressed={showChannels} disabled={saving} onClick={() => setShowChannels(true)}>Kanaltilgang</Button>
+    </div>}
+    {showChannels && !formOpen && !handoffAgent ? <section className="sp-agent-channel-access" aria-label="Kanaltilgang">
+      <label htmlFor="circle-agent-channel">Kanal</label>
+      <select id="circle-agent-channel" value={selectedChannel?.id ?? ""} onChange={event => setChannelId(event.target.value)}>
+        {!managedChannels.length && <option value="">Ingen kanalar du kan administrere</option>}
+        {managedChannels.map(channel => <option key={channel.id} value={channel.id}>{channel.name}{channel.kind === "private" ? " (privat)" : ""}</option>)}
+      </select>
+      {selectedChannel ? <ChannelChatAgentsPanel key={selectedChannel.id} api={api} channelId={selectedChannel.id} privateChannel={selectedChannel.kind === "private"} />
+        : <Status>Berre kanalar du er medlem i og har rett til å administrere, blir viste her.</Status>}
+    </section> : <>
     {!available && <Status tone="error">Modelltenesta for samtaleagentar er ikkje aktiv. Du kan lagre oppsettet, men ikkje slå på ein agent enno.</Status>}
     {loading ? <Status>Lastar agentar …</Status> : <div style={{ display: "grid", gap: 8 }}>
       {agents.length === 0 && <Status>Ingen agentar i denne kretsen enno.</Status>}
       {agents.map(agent => <div key={agent.agentId} className="sp-circle-agent-row" style={{ flexWrap: "wrap" }}>
-        <span style={{ minWidth: 0, flex: "1 1 8rem", overflowWrap: "anywhere" }}><strong>{agent.displayName}</strong> · {agent.enabled ? "På" : "Av"}</span>
+        <span className="sp-agent-summary"><strong>{agent.displayName}</strong><small>{agent.enabled ? "På i kretsen" : "Avslått – svarar ikkje"}</small>
+          <small>Skriv @{agent.displayName} eller {agent.triggerWords.map(word => `«${word}»`).join(", ")}</small>
+          {!agent.enabled && !canActivate(agent) && <small>Ei teneste agenten brukar, er ikkje tilgjengeleg no.</small>}
+        </span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: ".25rem" }}>
-        <Button variant="quiet" disabled={handoffAgent !== null} onClick={() => edit(agent)}>Rediger</Button>
-        <Button variant="quiet" disabled={formOpen || handoffAgent !== null} aria-label={`Videresending frå ${agent.displayName}`}
+        <Button variant="quiet" aria-label={`${agent.enabled ? "Slå av" : "Slå på"} ${agent.displayName}`} aria-pressed={agent.enabled}
+          disabled={loading || saving || formOpen || handoffAgent !== null || (!agent.enabled && !canActivate(agent))}
+          onClick={() => void toggleAgent(agent)}>{agent.enabled ? "Slå av" : "Slå på"}</Button>
+        <Button variant="quiet" disabled={saving || formOpen || handoffAgent !== null} onClick={() => edit(agent)}>Rediger</Button>
+        <Button variant="quiet" disabled={saving || formOpen || handoffAgent !== null} aria-label={`Videresending frå ${agent.displayName}`}
           onClick={() => setHandoffAgent(agent)}>Videresending</Button>
         </div>
       </div>)}
-      {!formOpen && !handoffAgent && <Button onClick={() => edit(null)}>Ny agent</Button>}
+      {!formOpen && !handoffAgent && <Button disabled={saving || loading} onClick={() => edit(null)}>Ny agent</Button>}
     </div>}
     {handoffAgent && <AgentHandoff key={handoffAgent.agentId} api={api} circleId={circleId} source={handoffAgent} agents={agents}
       onClose={() => setHandoffAgent(null)} onSaved={revision => {
@@ -131,6 +178,9 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
       }} />}
     {formOpen && <form className="sp-circle-agent-form" onSubmit={event => { event.preventDefault(); void save(); }}>
       <h3>{selected ? `Rediger ${selected.displayName}` : "Ny agent"}</h3>
+      <label className="sp-circle-agent-enabled"><input type="checkbox" checked={enabled}
+        disabled={saving || (!workerAvailable && !enabled)} onChange={event => setEnabled(event.target.checked)} />Aktiv</label>
+      <p>Aktiv må vere på for at agenten skal svare. Private kanalar krev også eit val under Kanaltilgang.</p>
       <TextField label="Namn" value={name} maxLength={80} onChange={event => setName(event.target.value)} />
       <label htmlFor="circle-agent-triggers">Triggerord eller -frasar, eitt per linje</label>
       <textarea id="circle-agent-triggers" rows={4} value={triggers} onChange={event => setTriggers(event.target.value)} />
@@ -202,15 +252,14 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, onClose }: {
         <p>Agenten kan slå opp dagens planlagde anløp i Parikia. Rutetider stadfestar ikkje kva ferge som faktisk har kome inn.</p>
         {!ferryAvailable && <Status tone="error">Fergeoppslaget er ikkje klart. Du kan lagre oppsettet, men ikkje aktivere agenten enno.</Status>}
       </>}
-      <label className="sp-circle-agent-enabled"><input type="checkbox" checked={enabled}
-        disabled={!workerAvailable && !enabled} onChange={event => setEnabled(event.target.checked)} />Aktiv</label>
       <label className="sp-circle-agent-enabled"><input type="checkbox" checked={memoryEnabled}
         disabled={saving} onChange={event => setMemoryEnabled(event.target.checked)} />Tillat minne for agenten</label>
-      <p>Kvar brukar må også tillate eige minne. Læring og minnebruk er ikkje aktiverte enno.</p>
+      <p>Kvar brukar må også tillate eige minne under Mitt minne i kretsmenyen.</p>
       {error && <Status tone="error">{error}</Status>}
       <div className="sp-row"><Button type="button" onClick={() => { setFormOpen(false); setError(""); }}>Avbryt</Button>
         <Button type="submit" busy={saving} disabled={!name.trim() || !lines(triggers).length || !lines(phrases).length || !weatherValid || !seaValid || !imagesValid || (enabled && !workerAvailable)}>Lagre agent</Button></div>
     </form>}
-    {!formOpen && error && <Status tone="error">{error}</Status>}
+    </>}
+    {!formOpen && error && <><Status tone="error">{error}</Status><Button disabled={saving} onClick={() => setReload(value => value + 1)}>Hent agentane på nytt</Button></>}
   </Dialog>;
 }

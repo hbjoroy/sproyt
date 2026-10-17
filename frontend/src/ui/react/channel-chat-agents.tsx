@@ -5,6 +5,15 @@ import type { ChannelChatAgents, CircleChatAgentApi } from "../../chat-agents";
 export function ChannelChatAgentsDialog({ api, channelId, channelName, privateChannel, onClose }: {
   api: CircleChatAgentApi; channelId: string; channelName: string; privateChannel: boolean; onClose: () => void;
 }) {
+  return <Dialog open title={`Agentar i ${channelName}`} closeLabel="Lukk kanalagentar" onClose={onClose}>
+    <ChannelChatAgentsPanel api={api} channelId={channelId} privateChannel={privateChannel} />
+  </Dialog>;
+}
+
+/** Shared by the channel menu and circle setup; the server remains the access authority. */
+export function ChannelChatAgentsPanel({ api, channelId, privateChannel }: {
+  api: CircleChatAgentApi; channelId: string; privateChannel: boolean;
+}) {
   const [state, setState] = useState<ChannelChatAgents>();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -23,7 +32,7 @@ export function ChannelChatAgentsDialog({ api, channelId, channelName, privateCh
     catch (cause) { setError(cause instanceof Error ? cause.message : "Kunne ikkje lagre agentval. Hent vala på nytt før du prøver igjen."); }
     finally { setPending(false); }
   };
-  return <Dialog open title={`Agentar i ${channelName}`} closeLabel="Lukk kanalagentar" onClose={onClose}>
+  return <div className="sp-agent-channel-access">
     <p>{privateChannel
       ? "Private kanalar har ingen agentar før du vel dei her. Ein vald agent får lese dei siste 20 minutta i denne kanalen eller tråden når han blir utløyst."
       : "Vel kva kretsagentar som får svare her. Kretsen styrer oppsettet; du styrer tilgangen til denne kanalen."}</p>
@@ -32,11 +41,11 @@ export function ChannelChatAgentsDialog({ api, channelId, channelName, privateCh
       {state.agents.length === 0 && <Status>Ingen agentar i kretsen enno.</Status>}
       {state.agents.map(agent => <label key={agent.agentId} className="sp-channel-agent-choice">
         <input type="checkbox" checked={agent.enabled} disabled={pending || !!error || !state.selectionAvailable} onChange={event => void select(agent.agentId, event.currentTarget.checked)} />
-        <span>{agent.displayName}{!agent.agentEnabled && <small>Avslått i kretsen</small>}</span>
+        <span>{agent.displayName}{!agent.agentEnabled && <small>Avslått i kretsen – må også slåast på under Agentar i kretsmenyen.</small>}</span>
       </label>)}
     </div> : !error && <Status>Hentar agentval …</Status>}
     {pending && <Status>Lagrar agentval …</Status>}
     {error && <><Status tone="error">{error}</Status><Button disabled={pending} onClick={() => setReload(value => value + 1)}>Hent vala på nytt</Button></>}
     <p className="sp-help">Når du slår av tilgang, blir ventande svar stoppa. Svar som allereie er sende, blir ståande.</p>
-  </Dialog>;
+  </div>;
 }
