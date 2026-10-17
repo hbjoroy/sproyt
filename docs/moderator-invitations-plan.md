@@ -88,6 +88,20 @@ not a username or a browser-supplied account identifier.
 
 ## Checks and delivery
 
+### Production promotion
+
+The production variant in `deploy/authentik/sproyt-invitation-production.yaml`
+uses flow UUID `645a51d1-1d8a-5369-867d-b2a93ac7504e` and slug
+`sproyt-invitation-production`. It is an exact mirror of the reviewed Canary
+logic with separate object names, context/cache keys and a literal
+`https://sproyt.bjoroy.me` continuation. The production binding/parity contract
+is `python tools/test-invitation-production.py`. Validate it with the running
+importer and rollback-only executor before selecting it through production
+GitOps values. Preserve the original enrollment flow for outstanding old links.
+Promote the existing verified Canary app image and chart; no new application
+image, SQL migration or credential change is needed for this binding change.
+The interrupted-new-registration limitation above remains applicable.
+
 Run Rust policy/repository/OIDC tests, including moderator success, ordinary
 member and agent denial, wrong email, inactive/expired/reused invitation, and
 existing membership role preservation. Run frontend checks for both supported
