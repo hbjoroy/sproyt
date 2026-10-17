@@ -68,7 +68,7 @@ async fn create_enrollment_invitation_for_scope(
     }
     // The repository creates an inactive token first.  It is deliberately not
     // redeemable until Authentik has accepted the corresponding invitation.
-    // Preparing it here enforces circle ownership for circle invitations and
+    // Preparing it here enforces circle owner/moderator authority for invitations and
     // an existing human account for a global Sprøyt invitation.
     let expires_at = Utc::now() + Duration::hours(crate::enrollment::INVITATION_LIFETIME_HOURS);
     let invitation = match state

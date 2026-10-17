@@ -1248,7 +1248,7 @@ impl ChatRepository for PostgresChatRepository {
     ) -> RepositoryFuture<'a, IssuedInvitation> {
         Box::pin(async move {
             let role: Option<String> = sqlx::query_scalar(
-                "select role from circle_memberships where circle_id=$1 and user_id=$2",
+                "select m.role from circle_memberships m join users u on u.id=m.user_id where m.circle_id=$1 and m.user_id=$2 and u.kind='human'",
             )
             .bind(*command.circle_id.as_uuid())
             .bind(*command.actor.as_uuid())
@@ -1313,7 +1313,7 @@ impl ChatRepository for PostgresChatRepository {
         Box::pin(async move {
             let allowed = if let Some(circle_id) = &command.circle_id {
                 sqlx::query_scalar::<_, i32>(
-                    "select 1 from circle_memberships where circle_id=$1 and user_id=$2 and role='owner'",
+                    "select 1 from circle_memberships m join users u on u.id=m.user_id where m.circle_id=$1 and m.user_id=$2 and m.role in ('owner','moderator') and u.kind='human'",
                 )
                 .bind(*circle_id.as_uuid())
                 .bind(*command.actor.as_uuid())
@@ -1404,13 +1404,21 @@ impl ChatRepository for PostgresChatRepository {
                     .execute(&mut *transaction)
                     .await
                     .map_err(sql_error)?;
-                transaction.commit().await.map_err(sql_error)?;
-                return Ok(Some(CircleMembership {
+                let row = sqlx::query("select role,joined_at from circle_memberships where circle_id=$1 and user_id=$2")
+                    .bind(circle_id)
+                    .bind(*command.actor.as_uuid())
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                let membership = CircleMembership {
                     circle_id: CircleId::from_uuid(circle_id),
                     user_id: command.actor,
-                    role: CircleRole::Member,
-                    joined_at: now,
-                }));
+                    role: CircleRole::parse(&row.try_get::<String, _>("role").map_err(storage)?)
+                        .ok_or_else(|| storage("invalid circle role"))?,
+                    joined_at: row.try_get("joined_at").map_err(storage)?,
+                };
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(Some(membership));
             }
             transaction.commit().await.map_err(sql_error)?;
             Ok(None)
@@ -1433,7 +1441,7 @@ impl ChatRepository for PostgresChatRepository {
                 sqlx::query_scalar("select 1 from channels c join channel_memberships m on m.channel_id=c.id where c.id=$1 and c.circle_id=$2 and m.user_id=$3 and m.role in ('owner','moderator')")
                     .bind(channel_id).bind(circle_id).bind(*command.actor.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?
             } else {
-                sqlx::query_scalar("select 1 from circle_memberships where circle_id=$1 and user_id=$2 and role='owner'")
+                sqlx::query_scalar("select 1 from circle_memberships m join users u on u.id=m.user_id where m.circle_id=$1 and m.user_id=$2 and m.role in ('owner','moderator') and u.kind='human'")
                     .bind(circle_id).bind(*command.actor.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?
             };
             if allowed.is_none() {
@@ -3009,7 +3017,7 @@ impl ProcessRepository for PostgresChatRepository {
             .await
             .map_err(sql_error)?;
             let role = role.as_deref().and_then(CircleRole::parse);
-            if !Policy::can_invite_to_circle(role.as_ref()) {
+            if !matches!(role, Some(CircleRole::Owner)) {
                 return Err(RepositoryError::PermissionDenied);
             }
             sqlx::query("insert into circle_features(circle_id,feature,enabled,updated_by,updated_at) values($1,$2,$3,$4,$5) on conflict(circle_id,feature) do update set enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=excluded.updated_at")

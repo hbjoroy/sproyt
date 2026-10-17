@@ -2819,7 +2819,7 @@
 
       function openCircleInviteDialog(circleId: string): void {
         const circle = knownCircles.get(circleId);
-        if (!circle || circle.role !== "owner") return;
+        if (!circle || !["owner", "moderator"].includes(circle.role)) return;
         circleInviteDialog.dataset.circleId = circleId;
         circleInviteTitle.textContent = `Inviter til ${circle.name}`;
         circleInviteSearch.value = "";
@@ -3966,7 +3966,7 @@
           if (requestedCommand === "create_invitation" && circleInvitationRecipient) {
             circleInvitePersonStatuses.set(
               circleInvitePersonKey(circleInvitationRecipient.circleId, circleInvitationRecipient.userId),
-              event.payload.code === "permission_denied" ? "Berre eigaren kan invitere til kretsen." : "Invitasjonen kunne ikkje lagast. Prøv igjen."
+              event.payload.code === "permission_denied" ? "Berre eigarar og moderatorar kan invitere til kretsen." : "Invitasjonen kunne ikkje lagast. Prøv igjen."
             );
             if (circleInviteDialog.open) renderCircleInviteUsers();
             return;
@@ -3974,7 +3974,7 @@
           if (requestedCommand === "create_invitation" && circleShareInvitation) {
             createCircleShareLink.disabled = false;
             circleInviteStatus.textContent = event.payload.code === "permission_denied"
-              ? "Berre eigaren kan invitere til kretsen."
+              ? "Berre eigarar og moderatorar kan invitere til kretsen."
               : "Invitasjonslenkja kunne ikkje lagast. Prøv igjen.";
             return;
           }
@@ -4080,7 +4080,7 @@
             // channel. The server remains the authorization boundary.
             addAction("Ny kanal", () => openChannelManagement(circle.id, "create"));
             addAction("Finn opne kanalar", () => openChannelManagement(circle.id, "discover"));
-            if (circle.role === "owner") addAction("Inviter person", () => openCircleInviteDialog(circle.id));
+            if (["owner", "moderator"].includes(circle.role)) addAction("Inviter person", () => openCircleInviteDialog(circle.id));
             menu.append(summary, actions);
             row.append(menu);
             conversationList.append(row);

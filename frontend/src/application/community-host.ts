@@ -31,6 +31,11 @@ export function createCommunityHost(deps: {
     if (!value || (owner && value.role !== "owner") || (manager && !["owner", "moderator"].includes(value.role))) throw new Error("Du har ikkje tilgang til denne kanalhandlinga.");
     return value;
   };
+  const invitationCircle = (id: string) => {
+    const value = circle(id);
+    if (!["owner", "moderator"].includes(value.role)) throw new Error("Berre eigarar og moderatorar kan invitere til kretsen.");
+    return value;
+  };
   return {
     chatAgents: deps.chatAgents,
     agentMemory: deps.agentMemory,
@@ -71,7 +76,7 @@ export function createCommunityHost(deps: {
     addMember: async (id, userId) => { channel(id, false, true); await request("channel_member_added", () => deps.send("add_channel_member", { channel_id: id, user_id: userId })); },
     invite: async (circleId, channelId, userId) => {
       if (channelId) { if (channel(channelId, false, true).circle_id !== circleId) throw new Error("Kanalen høyrer ikkje til denne kretsen."); }
-      else circle(circleId, true);
+      else invitationCircle(circleId);
       const created = await request("invitation_created", () => deps.send("create_invitation", { target: channelId ? { type: "channel", circle_id: circleId, channel_id: channelId } : { type: "circle", circle_id: circleId } }));
       const token = created.payload.invitation.token;
       if (userId) {
@@ -82,7 +87,7 @@ export function createCommunityHost(deps: {
     },
     accept: async value => { const token = deps.invitationToken(value); if (!token) throw new Error("Skriv inn ein gyldig invitasjonskode eller lenkje."); await request("invitation_accepted", () => deps.send("accept_invitation", { token })); },
     enroll: async (circleId, email, name) => {
-      circle(circleId, true);
+      invitationCircle(circleId);
       try { return await deps.enrollment.create(circleId, { email, displayName: name || undefined }); }
       catch (error) { if (isEnrollmentNotConfigured(error)) throw new Error("Registrering av nye brukarar er ikkje tilgjengeleg enno. Du kan framleis dele ei vanleg kretslenkje."); throw error; }
     },

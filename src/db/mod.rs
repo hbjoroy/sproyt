@@ -1517,7 +1517,7 @@ where
             })
             .await,
         Err(RepositoryError::PermissionDenied),
-        "only the circle owner may prepare enrollment"
+        "an ordinary circle member may not prepare enrollment"
     );
 
     let expired = repository
@@ -1612,6 +1612,124 @@ where
     assert_eq!(membership.circle_id, circle.id);
     assert_eq!(membership.user_id, invitee.clone());
     assert_eq!(membership.role, crate::domain::CircleRole::Member);
+
+    // An account already using Sprøyt can join another circle through enrollment.
+    let second_circle = repository
+        .create_circle(CreateCircle {
+            actor: owner.clone(),
+            slug: ChannelSlug::new(format!("second-{suffix}")).unwrap(),
+            name: DisplayName::new("Second enrollment circle").unwrap(),
+        })
+        .await
+        .unwrap();
+    let users_before = repository
+        .list_human_users(owner.clone())
+        .await
+        .unwrap()
+        .len();
+    for (actor, target, expected_role, expected_joined_at) in [
+        (
+            &invitee,
+            &second_circle.id,
+            crate::domain::CircleRole::Member,
+            None,
+        ),
+        (
+            &invitee,
+            &circle.id,
+            crate::domain::CircleRole::Member,
+            Some(membership.joined_at),
+        ),
+        (&owner, &circle.id, crate::domain::CircleRole::Owner, None),
+    ] {
+        let roles_before = repository
+            .circle_member_roles(owner.clone(), target.clone())
+            .await
+            .unwrap();
+        let invitation = repository
+            .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
+                actor: owner.clone(),
+                circle_id: Some(target.clone()),
+                email: "existing@example.com".to_owned(),
+                expires_at: Utc::now() + Duration::hours(1),
+            })
+            .await
+            .unwrap();
+        repository
+            .activate_enrollment_invitation(ActivateEnrollmentInvitation {
+                token: invitation.token.clone(),
+                authentik_invitation_id: Uuid::new_v4(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repository
+                .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+                    actor: actor.clone(),
+                    email: "wrong@example.com".to_owned(),
+                    token: invitation.token.clone(),
+                })
+                .await,
+            Err(RepositoryError::NotFound),
+            "a mismatched email must not consume the invitation"
+        );
+        let accepted = repository
+            .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+                actor: actor.clone(),
+                email: "existing@example.com".to_owned(),
+                token: invitation.token.clone(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            accepted.role, expected_role,
+            "existing roles must not be downgraded"
+        );
+        if let Some(joined_at) = expected_joined_at {
+            assert_eq!(
+                accepted.joined_at, joined_at,
+                "re-enrollment preserves original membership time"
+            );
+        }
+        assert_eq!(
+            repository
+                .accept_enrollment_invitation(AcceptEnrollmentInvitation {
+                    actor: actor.clone(),
+                    email: "existing@example.com".to_owned(),
+                    token: invitation.token,
+                })
+                .await,
+            Err(RepositoryError::NotFound)
+        );
+        let circles = repository
+            .list_circles_for_user(actor.clone())
+            .await
+            .unwrap();
+        assert_eq!(circles.iter().filter(|(c, _)| c.id == *target).count(), 1);
+        assert!(
+            circles
+                .iter()
+                .any(|(c, r)| c.id == *target && r == &expected_role)
+        );
+        let roles_after = repository
+            .circle_member_roles(owner.clone(), target.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            roles_after.len(),
+            roles_before.len() + usize::from(!roles_before.iter().any(|(u, _)| u == actor))
+        );
+    }
+    assert_eq!(
+        repository
+            .list_human_users(owner.clone())
+            .await
+            .unwrap()
+            .len(),
+        users_before,
+        "enrollment must reuse existing accounts"
+    );
 
     let global = repository
         .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
@@ -2478,6 +2596,87 @@ async fn verify_circle_moderator_contract<R: ChatRepository>(repository: &R, suf
         .await
         .unwrap();
     assert_eq!(promoted.role, CircleRole::Moderator);
+    let moderator_invitation = repository
+        .create_circle_invitation(CreateCircleInvitation {
+            actor: moderator.clone(),
+            circle_id: circle.id.clone(),
+        })
+        .await
+        .expect("a moderator may invite people to their own circle");
+    assert_eq!(moderator_invitation.invitation.invited_by, moderator);
+    let enrollment = repository
+        .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
+            actor: moderator.clone(),
+            circle_id: Some(circle.id.clone()),
+            email: "moderator-invitee@example.com".to_owned(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+        })
+        .await
+        .expect("a moderator may prepare enrollment for their own circle");
+    assert_eq!(enrollment.invitation.invited_by, moderator);
+    // In-memory does not implement chat invitations; the SQL repositories do.
+    let chat_invitations_supported = match repository
+        .create_chat_invitation(CreateChatInvitation {
+            actor: moderator.clone(),
+            target: InvitationTarget::Circle {
+                circle_id: circle.id.clone(),
+            },
+        })
+        .await
+    {
+        Ok(_) => true,
+        Err(RepositoryError::NotFound) => false,
+        Err(error) => panic!("moderator circle chat invitation failed: {error}"),
+    };
+    let other_circle = repository
+        .create_circle(CreateCircle {
+            actor: owner.clone(),
+            slug: ChannelSlug::new(format!("other-mods-{suffix}")).unwrap(),
+            name: DisplayName::new("Another circle").unwrap(),
+        })
+        .await
+        .unwrap();
+    for (actor, target) in [
+        (&member, &circle.id),
+        (&agent, &circle.id),
+        (&moderator, &other_circle.id),
+    ] {
+        if chat_invitations_supported {
+            assert_eq!(
+                repository
+                    .create_chat_invitation(CreateChatInvitation {
+                        actor: actor.clone(),
+                        target: InvitationTarget::Circle {
+                            circle_id: target.clone()
+                        },
+                    })
+                    .await,
+                Err(RepositoryError::PermissionDenied),
+            );
+        }
+        assert_eq!(
+            repository
+                .create_circle_invitation(CreateCircleInvitation {
+                    actor: actor.clone(),
+                    circle_id: target.clone(),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied),
+            "member, agent and a moderator from another circle cannot invite"
+        );
+        assert_eq!(
+            repository
+                .prepare_enrollment_invitation(PrepareEnrollmentInvitation {
+                    actor: actor.clone(),
+                    circle_id: Some(target.clone()),
+                    email: "forbidden@example.com".to_owned(),
+                    expires_at: Utc::now() + chrono::Duration::hours(1),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied),
+            "enrollment has the same circle-scoped invitation authority"
+        );
+    }
     if let Some(events) = events.as_mut() {
         tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
             .await

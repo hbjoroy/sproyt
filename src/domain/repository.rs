@@ -1262,6 +1262,13 @@ impl ChatRepository for InMemoryChatRepository {
     ) -> RepositoryFuture<'a, IssuedInvitation> {
         Box::pin(async move {
             let mut state = self.lock_state()?;
+            if !state
+                .users
+                .get(&command.actor)
+                .is_some_and(|actor| actor.kind == crate::domain::PrincipalKind::Human)
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
             let role = state
                 .circle_memberships
                 .get(&(command.circle_id.clone(), command.actor.clone()))
@@ -1327,7 +1334,7 @@ impl ChatRepository for InMemoryChatRepository {
             let Some(actor) = state.users.get(&command.actor) else {
                 return Err(RepositoryError::PermissionDenied);
             };
-            if command.circle_id.is_none() && actor.kind != crate::domain::PrincipalKind::Human {
+            if actor.kind != crate::domain::PrincipalKind::Human {
                 return Err(RepositoryError::PermissionDenied);
             }
             if let Some(circle_id) = &command.circle_id {
@@ -1416,10 +1423,11 @@ impl ChatRepository for InMemoryChatRepository {
                 role: CircleRole::Member,
                 joined_at,
             };
-            state
+            let membership = state
                 .circle_memberships
                 .entry((circle_id, command.actor))
-                .or_insert_with(|| membership.clone());
+                .or_insert(membership)
+                .clone();
             Ok(Some(membership))
         })
     }

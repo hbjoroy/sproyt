@@ -210,17 +210,17 @@ function Invite({ host, circle }: { host: CommunityHost; circle: Readonly<Circle
     setPeople(users.filter(person => person.id !== host.selfId() && !members.some(member => member.id === person.id)));
   });
   useEffect(() => { void load(); }, [circle.id]);
-  if (circle.role !== "owner") return <Status>Berre eigaren kan invitere til vennekretsen.</Status>;
+  if (!["owner", "moderator"].includes(circle.role)) return <Status>Berre eigarar og moderatorar kan invitere til vennekretsen.</Status>;
   return <>
     <h3>Inviter ein person som er på Sprøyt</h3>
     <TextField label="Finn person å invitere" type="search" value={query} onChange={event => setQuery(event.target.value)} />
     <Button busy={op.busy} onClick={() => void load()}>Last personlista på nytt</Button>
     <PersonList people={people.filter(person => `${person.display_name} ${person.handle ?? ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(person => ({ id: person.id, name: person.display_name }))} emptyLabel="Ingen nye personar passar søket." actions={person => <Button disabled={op.busy} onClick={() => void op.run(() => host.invite(circle.id, undefined, person.id), `Invitasjonen til ${person.name} er sendt i direktemelding.`)}>Inviter {person.name}</Button>} />
     <h3>Del invitasjonslenkje</h3><Button busy={op.busy} onClick={() => void op.run(async () => { setUrl(await host.invite(circle.id)); setExpires(""); }, "Invitasjonslenkja er klar.")}>Lag kretslenkje</Button>
-    <h3>Inviter ein ny brukar</h3><form onSubmit={event => { event.preventDefault(); void op.run(async () => { const result = await host.enroll(circle.id, email.trim(), name.trim()); setUrl(result.url); setExpires(result.expiresAt); }, "Registreringsinvitasjonen er sendt på e-post."); }}>
+    <h3>Inviter på e-post</h3><p>For både nye og eksisterande brukarar. Invitasjonen gjev medlemskap i denne kretsen.</p><form onSubmit={event => { event.preventDefault(); void op.run(async () => { const result = await host.enroll(circle.id, email.trim(), name.trim()); setUrl(result.url); setExpires(result.expiresAt); }, "Invitasjonen er sendt på e-post."); }}>
       <TextField label="E-postadresse" type="email" required value={email} onChange={event => setEmail(event.target.value)} />
-      <TextField label="Namn på ny brukar" value={name} onChange={event => setName(event.target.value)} />
-      <Button type="submit" busy={op.busy}>Send registreringsinvitasjon</Button>
+      <TextField label="Namn (valfritt for nye brukarar)" value={name} onChange={event => setName(event.target.value)} />
+      <Button type="submit" busy={op.busy}>Send invitasjon</Button>
     </form>
     {url && <section aria-label="Invitasjonslenkje"><TextField label="Invitasjonslenkje" readOnly value={url} onFocus={event => event.target.select()} />{expires && <p>Gyldig til {new Date(expires).toLocaleString("nn-NO")}</p>}
       <Button onClick={() => void op.run(() => navigator.clipboard.writeText(url), "Lenkja er kopiert.")}>Kopier lenkje</Button>

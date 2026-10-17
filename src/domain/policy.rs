@@ -4,7 +4,7 @@ pub struct Policy;
 
 impl Policy {
     pub fn can_invite_to_circle(role: Option<&CircleRole>) -> bool {
-        matches!(role, Some(CircleRole::Owner))
+        matches!(role, Some(CircleRole::Owner | CircleRole::Moderator))
     }
 
     pub fn can_rename_circle(role: Option<&CircleRole>) -> bool {
@@ -61,7 +61,7 @@ impl Policy {
     }
 
     pub fn can_invite_agent_to_circle(role: Option<&CircleRole>) -> bool {
-        Self::can_invite_to_circle(role)
+        matches!(role, Some(CircleRole::Owner))
     }
 }
 
@@ -84,7 +84,8 @@ mod tests {
         assert!(Policy::can_create_channel_in_circle(Some(
             &CircleRole::Moderator
         )));
-        assert!(!Policy::can_invite_to_circle(Some(&CircleRole::Moderator)));
+        assert!(Policy::can_invite_to_circle(Some(&CircleRole::Moderator)));
+        assert!(!Policy::can_invite_to_circle(None));
         assert!(!Policy::can_rename_circle(Some(&CircleRole::Moderator)));
         assert!(!Policy::can_delete_circle(Some(&CircleRole::Moderator)));
         assert!(!Policy::can_invite_agent_to_circle(Some(

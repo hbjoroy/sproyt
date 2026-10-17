@@ -143,6 +143,12 @@ offline CI contract is not a substitute for these live checks.
 
 ## Invite a new Sprøyt user
 
+The isolated Canary flow for invitations to both new and existing accounts,
+including circle moderator authority, is described in
+[the moderator invitation plan](moderator-invitations-plan.md). It is delivered
+as an additional blueprint file in the existing mounted ConfigMap; the
+production flow below remains unchanged until a separate promotion.
+
 Sprøyt can create a combined, single-use enrollment link for a circle owner.
 The link opens the Authentik enrollment flow, creates an external user in the
 `sproyt-users` group, signs the user in, and returns through `/auth/login`.

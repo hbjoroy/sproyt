@@ -1094,7 +1094,7 @@ impl ChatRepository for SqliteChatRepository {
     ) -> RepositoryFuture<'a, IssuedInvitation> {
         Box::pin(async move {
             let role: Option<String> = sqlx::query_scalar(
-                "select role from circle_memberships where circle_id = ? and user_id = ?",
+                "select m.role from circle_memberships m join users u on u.id=m.user_id where m.circle_id=? and m.user_id=? and u.kind='human'",
             )
             .bind(command.circle_id.to_string())
             .bind(command.actor.to_string())
@@ -1166,7 +1166,7 @@ impl ChatRepository for SqliteChatRepository {
         Box::pin(async move {
             let allowed = if let Some(circle_id) = &command.circle_id {
                 sqlx::query_scalar::<_, i64>(
-                    "select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'",
+                    "select 1 from circle_memberships m join users u on u.id=m.user_id where m.circle_id=? and m.user_id=? and m.role in ('owner','moderator') and u.kind='human'",
                 )
                 .bind(circle_id.to_string())
                 .bind(command.actor.to_string())
@@ -1267,13 +1267,23 @@ impl ChatRepository for SqliteChatRepository {
                     .execute(&mut *transaction)
                     .await
                     .map_err(sql_error)?;
-                transaction.commit().await.map_err(sql_error)?;
-                return Ok(Some(CircleMembership {
+                let row = sqlx::query(
+                    "select role,joined_at from circle_memberships where circle_id=? and user_id=?",
+                )
+                .bind(&circle_id)
+                .bind(command.actor.to_string())
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+                let membership = CircleMembership {
                     circle_id: CircleId::from_uuid(Uuid::parse_str(&circle_id).map_err(storage)?),
                     user_id: command.actor,
-                    role: CircleRole::Member,
-                    joined_at: now,
-                }));
+                    role: CircleRole::parse(&row.try_get::<String, _>("role").map_err(storage)?)
+                        .ok_or_else(|| storage("invalid circle role"))?,
+                    joined_at: row.try_get("joined_at").map_err(storage)?,
+                };
+                transaction.commit().await.map_err(sql_error)?;
+                return Ok(Some(membership));
             }
             transaction.commit().await.map_err(sql_error)?;
             Ok(None)
@@ -1300,7 +1310,7 @@ impl ChatRepository for SqliteChatRepository {
                 sqlx::query_scalar("select 1 from channels c join channel_memberships m on m.channel_id=c.id where c.id=? and c.circle_id=? and m.user_id=? and m.role in ('owner','moderator')")
                     .bind(channel_id).bind(&circle_id).bind(command.actor.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?
             } else {
-                sqlx::query_scalar("select 1 from circle_memberships where circle_id=? and user_id=? and role='owner'")
+                sqlx::query_scalar("select 1 from circle_memberships m join users u on u.id=m.user_id where m.circle_id=? and m.user_id=? and m.role in ('owner','moderator') and u.kind='human'")
                     .bind(&circle_id).bind(command.actor.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?
             };
             if allowed.is_none() {
@@ -2715,7 +2725,7 @@ impl ProcessRepository for SqliteChatRepository {
             .await
             .map_err(sql_error)?;
             let role = role.as_deref().and_then(CircleRole::parse);
-            if !Policy::can_invite_to_circle(role.as_ref()) {
+            if !matches!(role, Some(CircleRole::Owner)) {
                 return Err(RepositoryError::PermissionDenied);
             }
             sqlx::query("insert into circle_features(circle_id,feature,enabled,updated_by,updated_at) values(?,?,?,?,?) on conflict(circle_id,feature) do update set enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=excluded.updated_at")

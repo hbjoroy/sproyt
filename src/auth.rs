@@ -341,7 +341,7 @@ impl OidcService {
     ) -> Result<LoginStart, AuthError> {
         let client = self.current_client()?;
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        let (url, state, nonce) = client
+        let authorization = client
             .authorize_url(
                 CoreAuthenticationFlow::AuthorizationCode,
                 CsrfToken::new_random,
@@ -350,8 +350,17 @@ impl OidcService {
             .add_scope(Scope::new("profile".to_owned()))
             .add_scope(Scope::new("email".to_owned()))
             .add_scope(Scope::new("offline_access".to_owned()))
-            .set_pkce_challenge(challenge)
-            .url();
+            .set_pkce_challenge(challenge);
+        // An invitation can be opened while a different account has an SSO
+        // session. Make the identity explicit instead of silently redeeming
+        // against that session. The verified-email match still happens below
+        // and in the repository before the invitation can be consumed.
+        let authorization = if enrollment_token.is_some() {
+            authorization.add_extra_param("prompt", "login")
+        } else {
+            authorization
+        };
+        let (url, state, nonce) = authorization.url();
         let transaction = LoginTransaction {
             state: state.secret().to_owned(),
             nonce: nonce.secret().to_owned(),
@@ -1300,6 +1309,19 @@ mod tests {
                     auth.login(None)
                 }
                 .unwrap();
+                let authorization = reqwest::Url::parse(&login.authorization_url).unwrap();
+                assert_eq!(
+                    authorization
+                        .query_pairs()
+                        .find(|(key, _)| key == "prompt")
+                        .map(|(_, value)| value.into_owned()),
+                    enrollment.then(|| "login".to_owned())
+                );
+                assert!(
+                    !login
+                        .authorization_url
+                        .contains("test-enrollment-capability")
+                );
                 *provider.nonce.lock().unwrap() =
                     authorization_parameter(&login.authorization_url, "nonce");
                 let result = auth
@@ -1452,6 +1474,10 @@ mod tests {
             .unwrap();
         let enrollment_state =
             authorization_parameter(&enrollment_login.authorization_url, "state");
+        assert_eq!(
+            authorization_parameter(&enrollment_login.authorization_url, "prompt"),
+            "login"
+        );
         let enrollment_nonce =
             authorization_parameter(&enrollment_login.authorization_url, "nonce");
         *provider.nonce.lock().unwrap() = enrollment_nonce;
