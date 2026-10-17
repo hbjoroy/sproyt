@@ -1,0 +1,414 @@
+version: 1
+metadata:
+  name: Sprøyt production invitation enrollment
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - identifiers:
+      pk: 645a51d1-1d8a-5369-867d-b2a93ac7504e
+    id: production-flow
+    model: authentik_flows.flow
+    attrs:
+      slug: sproyt-invitation-production
+      name: Sprøyt production invitation
+      title: Bli med i Sprøyt
+      designation: enrollment
+      authentication: none
+      denied_action: message
+
+  - identifiers: {name: sproyt-production-invitation}
+    id: production-invitation
+    model: authentik_stages_invitation.invitationstage
+    attrs: {continue_flow_without_invitation: false}
+
+  - identifiers: {name: sproyt-production-invitation-deny}
+    id: production-deny
+    model: authentik_stages_deny.denystage
+    attrs:
+      deny_message: Invitasjonen er ugyldig eller registreringa kan ikkje fullførast. Be om ei ny invitasjon.
+
+  - identifiers: {name: sproyt-production-invitation-context}
+    id: production-context
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        from authentik.core.models import User
+
+        invitation = request.context.get("invitation")
+        plan = request.context.get("flow_plan")
+        if invitation is None or plan is None or not request.context.get("invitation_in_effect"):
+            return True
+        if str(getattr(invitation, "flow_id", "")) != "645a51d1-1d8a-5369-867d-b2a93ac7504e":
+            return True
+        fixed = invitation.fixed_data or {}
+        token = fixed.get("sproyt_enrollment_token")
+        email = str(fixed.get("email", "")).strip()
+        if not email or not isinstance(token, str) or len(token) != 43 or not all(
+            c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in token
+        ):
+            return True
+        # The Invitation stage has already consumed its single-use object.
+        # Retain its trusted context, never a prompt field or a caller's next.
+        matches = list(User.objects.filter(email__iexact=email)[:2])
+        if len(matches) > 1:
+            return True
+        existing = bool(matches)
+        plan.context["sproyt_production_new_user"] = not existing
+        plan.context["sproyt_production_email"] = email
+        plan.context["email"] = email
+        plan.context["redirect"] = "https://sproyt.bjoroy.me/auth/login?enrollment=" + token
+        plan.context["sproyt_production_verify_email"] = not existing
+        if existing:
+            user = matches[0]
+            attributes = user.attributes or {}
+            verified = attributes.get("email_verified") is True and str(
+                attributes.get("email_verified_address", "")
+            ).strip().casefold() == email.casefold()
+            if not verified:
+                # EmailStage needs a recipient, not an authenticated identity.
+                plan.context["pending_user"] = user
+                request.context["pending_user"] = user
+                plan.context["email"] = email
+                plan.context["sproyt_production_verify_email"] = True
+        prompt = request.context.get("prompt_data", {})
+        prompt.pop("sproyt_enrollment_token", None)
+        plan.context.get("prompt_data", {}).pop("sproyt_enrollment_token", None)
+        # Existing identities never reach User Write or User Login.
+        # The subsequent Sprøyt OIDC login must authenticate the actual recipient.
+        return False
+
+  - identifiers: {name: sproyt-production-new-user-only}
+    id: production-new-only
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: false
+      expression: |
+        plan = request.context.get("flow_plan")
+        return plan is not None and plan.context.get("sproyt_production_new_user") is True
+
+  - identifiers: {name: sproyt-production-email-rate-limit}
+    id: production-email-rate-limit
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        from django.core.cache import cache
+        from hashlib import sha256
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_production_verify_email" not in plan.context:
+            return True
+        if plan.context["sproyt_production_verify_email"] is False:
+            return False
+        if request.context.get("is_restored") or plan.context.get("sproyt_production_send_counted"):
+            return False
+        email = str(plan.context.get("sproyt_production_email", "")).strip().casefold()
+        if not email:
+            return True
+        key = "sproyt:production:verify:first-send:" + sha256(email.encode("utf-8")).hexdigest()
+        try:
+            attempts = 1 if cache.add(key, 1, timeout=300) else cache.incr(key)
+        except Exception:
+            return True
+        plan.context["sproyt_production_send_counted"] = True
+        return attempts > 5
+
+  - identifiers: {name: sproyt-production-email-required}
+    id: production-email-required
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: false
+      expression: |
+        plan = request.context.get("flow_plan")
+        return plan is not None and plan.context.get("sproyt_production_verify_email") is True
+
+  - identifiers: {name: sproyt-production-existing-email}
+    id: production-existing-email
+    model: authentik_stages_email.emailstage
+    attrs:
+      use_global_settings: true
+      token_expiry: minutes=30
+      subject: Stadfest e-postadressa di for Sprøyt
+      template: email/account_confirmation.html
+      activate_user_on_success: false
+      recovery_max_attempts: 5
+      recovery_cache_timeout: minutes=5
+
+  - identifiers: {name: sproyt-production-email-proof}
+    id: production-email-proof
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        from authentik.core.models import User
+        from django.db import transaction
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_production_verify_email" not in plan.context:
+            return True
+        if plan.context["sproyt_production_verify_email"] is False:
+            return False
+        token = request.context.get("is_restored")
+        if token is None or str(token.flow_id) != "645a51d1-1d8a-5369-867d-b2a93ac7504e":
+            return True
+        original = token.plan
+        original_user = original.context.get("pending_user")
+        current_user = plan.context.get("pending_user")
+        email = str(original.context.get("email", "")).strip()
+        # Authentik 2026.8.2 prepends its email-token consent stage at index 0.
+        if len(original.bindings) < 2 or original.bindings[1].stage.name != "sproyt-production-existing-email":
+            return True
+        if (not email or original.context.get("sproyt_production_verify_email") is not True
+            or getattr(original_user, "pk", None) is None
+            or original_user.pk != getattr(current_user, "pk", None)
+            or original_user.pk != getattr(token.user, "pk", None)
+            or original.context.get("sproyt_production_new_user") is not plan.context.get("sproyt_production_new_user")
+            or email.casefold() != str(plan.context.get("sproyt_production_email", "")).strip().casefold()
+            or original.context.get("redirect") != plan.context.get("redirect")):
+            return True
+        # EmailStage's fresh mailbox token is unavailable to the inviter. Bind
+        # its original snapshot before touching only verification attributes.
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=original_user.pk)
+            if str(user.email).strip().casefold() != email.casefold():
+                return True
+            attributes = dict(user.attributes or {})
+            attributes["email_verified"] = True
+            attributes["email_verified_address"] = user.email.strip()
+            user.attributes = attributes
+            user.save(update_fields=["attributes"])
+            plan.context["pending_user"] = user
+            request.context["pending_user"] = user
+            plan.context["sproyt_production_mailbox_verified"] = True
+            plan.context["sproyt_production_verified_user_id"] = user.pk
+        return False
+
+  - identifiers: {name: sproyt-production-username}
+    id: production-username
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: username
+      label: Brukarnamn
+      type: username
+      required: true
+      placeholder: Brukarnamn
+      initial_value: ""
+      initial_value_expression: false
+      order: 200
+  - identifiers: {name: sproyt-production-name}
+    id: production-name
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: name
+      label: Namn
+      type: text
+      required: true
+      placeholder: Namn
+      initial_value: ""
+      initial_value_expression: false
+      order: 201
+  - identifiers: {name: sproyt-production-password}
+    id: production-password
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: password
+      label: Passord
+      type: password
+      required: true
+      initial_value: ""
+      order: 300
+  - identifiers: {name: sproyt-production-password-repeat}
+    id: production-password-repeat
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: password_repeat
+      label: Gjenta passordet
+      type: password
+      required: true
+      initial_value: ""
+      order: 301
+  - identifiers: {name: sproyt-production-profile-prompt}
+    id: production-profile-prompt
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields: [!KeyOf production-username, !KeyOf production-name]
+  - identifiers: {name: sproyt-production-password-prompt}
+    id: production-password-prompt
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields: [!KeyOf production-password, !KeyOf production-password-repeat]
+      validation_policies:
+        - !Find [authentik_policies.policy, [name, default-password-change-password-policy]]
+
+  - identifiers: {name: sproyt-production-before-create}
+    id: production-before-create
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        from authentik.core.models import User
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_production_new_user" not in plan.context:
+            return True
+        if plan.context["sproyt_production_new_user"] is False:
+            return False
+        email = plan.context.get("sproyt_production_email")
+        prompt = request.context.get("prompt_data")
+        if not email or not isinstance(prompt, dict):
+            return True
+        if str(prompt.get("email", "")).strip().casefold() != email.casefold():
+            return True
+        # An account appearing during registration must never be overwritten.
+        if User.objects.filter(email__iexact=email).exists():
+            return True
+        # Only the fields from this enrollment are allowed to reach User Write.
+        clean = {key: prompt[key] for key in ("username", "name") if key in prompt}
+        # UserWrite calls set_password(None), producing Django's unusable hash.
+        clean["password"] = None
+        clean["email"] = email
+        clean["attributes"] = {"email_verified": False}
+        request.context["prompt_data"] = clean
+        plan.context["prompt_data"] = clean
+        return False
+
+  - identifiers: {name: sproyt-production-user-create}
+    id: production-user-create
+    model: authentik_stages_user_write.userwritestage
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: true
+      create_users_group: !Find [authentik_core.group, [name, sproyt-users]]
+      user_type: external
+      user_path_template: users/sproyt
+  - identifiers: {name: sproyt-production-password-write-guard}
+    id: production-password-write-guard
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      failure_result: true
+      expression: |
+        from authentik.core.models import User
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_production_new_user" not in plan.context:
+            return True
+        if plan.context["sproyt_production_new_user"] is False:
+            return False
+        user = plan.context.get("pending_user")
+        prompt = request.context.get("prompt_data", {})
+        email = str(plan.context.get("sproyt_production_email", "")).strip().casefold()
+        if (plan.context.get("sproyt_production_mailbox_verified") is not True
+            or user is None or not email
+            or getattr(user, "pk", None) != plan.context.get("sproyt_production_verified_user_id")):
+            return True
+        user = User.objects.get(pk=user.pk)
+        if (user.is_active or str(user.email).strip().casefold() != email
+            or user.attributes.get("email_verified") is not True
+            or str(user.attributes.get("email_verified_address", "")).strip().casefold() != email
+            or not prompt.get("password") or prompt.get("password") != prompt.get("password_repeat")):
+            return True
+        # The password is chosen only after independent mailbox confirmation.
+        # Never carry profile data or stale verification attributes into this write.
+        clean = {"password": prompt["password"], "is_active": True}
+        request.context["prompt_data"] = clean
+        plan.context["prompt_data"] = clean
+        request.context["pending_user"] = user
+        plan.context["pending_user"] = user
+        return False
+  - identifiers: {name: sproyt-production-password-write}
+    id: production-password-write
+    model: authentik_stages_user_write.userwritestage
+    attrs:
+      user_creation_mode: never_create
+  - identifiers: {name: sproyt-production-user-login}
+    id: production-user-login
+    model: authentik_stages_user_login.userloginstage
+    attrs:
+      session_duration: seconds=0
+      terminate_other_sessions: false
+      remember_me_offset: seconds=0
+      network_binding: bind_asn
+      geoip_binding: bind_continent
+      remember_device: days=30
+
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-invitation, order: 10}
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-deny, order: 15}
+    id: production-context-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-context, target: !KeyOf production-context-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-deny, order: 44}
+    id: production-rate-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-email-rate-limit, target: !KeyOf production-rate-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-existing-email, order: 46}
+    id: production-email-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-email-required, target: !KeyOf production-email-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-deny, order: 48}
+    id: production-proof-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-email-proof, target: !KeyOf production-proof-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-profile-prompt, order: 20}
+    id: production-profile-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-new-only, target: !KeyOf production-profile-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-password-prompt, order: 49}
+    id: production-password-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-new-only, target: !KeyOf production-password-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-deny, order: 35}
+    id: production-before-create-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-before-create, target: !KeyOf production-before-create-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-user-create, order: 40}
+    id: production-write-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-new-only, target: !KeyOf production-write-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-deny, order: 51}
+    id: production-password-guard-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-password-write-guard, target: !KeyOf production-password-guard-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-password-write, order: 52}
+    id: production-password-write-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-new-only, target: !KeyOf production-password-write-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}
+  - identifiers: {target: !KeyOf production-flow, stage: !KeyOf production-user-login, order: 60}
+    id: production-login-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf production-new-only, target: !KeyOf production-login-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30}

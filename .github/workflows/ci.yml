@@ -185,6 +185,7 @@ jobs:
           bash tools/test-oidc-provider-verifier.sh
           python3 tools/test-enrollment-continuation.py
           python3 tools/test-invitation-canary.py
+          python3 tools/test-invitation-production.py
 
       - name: Validate production rollout verifier
         run: bash tools/test-production-rollout-verifier.sh
