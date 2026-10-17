@@ -79,7 +79,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
             <h3>{circle.name}</h3>
             {action("Kanalar og medlemskap", { kind: "channels", circleId: circle.id })}
             {community.agentMemory && community.selfId() && <Button onClick={() => { setOpen(false); setMemoryCircle({ id: circle.id, name: circle.name, owner: community.selfId()! }); }}>Mitt agentminne</Button>}
-            {circle.role === "owner" && action("Inviter personar og nye brukarar", { kind: "invite", circleId: circle.id })}
+            {["owner", "moderator"].includes(circle.role) && action("Inviter personar og nye brukarar", { kind: "invite", circleId: circle.id })}
             {["owner","moderator"].includes(circle.role) && <Button onClick={() => { setOpen(false); setChatAgentsCircle({ id: circle.id, name: circle.name }); }}>Agentar</Button>}
           </section>)}
       </section>}

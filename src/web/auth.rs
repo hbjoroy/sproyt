@@ -377,6 +377,11 @@ mod tests {
 
     #[tokio::test]
     async fn enrollment_callback_consumes_the_token_once_and_never_redirects_with_it() {
+        verify_enrollment_callback(false).await;
+        verify_enrollment_callback(true).await;
+    }
+
+    async fn verify_enrollment_callback(existing_account: bool) {
         let repository = Arc::new(
             SqliteChatRepository::connect("sqlite::memory:")
                 .await
@@ -442,6 +447,26 @@ mod tests {
             created_at: Utc::now(),
         };
 
+        if existing_account {
+            chat.ensure_user(invitee.clone()).await.unwrap();
+        }
+        let wrong_account = complete_login(
+            &state,
+            completed_login(
+                owner.clone(),
+                Some("wrong-account@example.test"),
+                Some(issued.token.clone()),
+            ),
+        )
+        .await;
+        assert_eq!(wrong_account.status(), StatusCode::FORBIDDEN);
+        assert!(
+            chat.list_circles(invitee.id.clone())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
         let response = complete_login(
             &state,
             completed_login(
@@ -453,6 +478,9 @@ mod tests {
         .await;
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/");
+        let memberships = chat.list_circles(invitee.id.clone()).await.unwrap();
+        assert_eq!(memberships.len(), 1);
+        assert_eq!(memberships[0].0.id, circle.id);
         assert!(
             !response
                 .headers()

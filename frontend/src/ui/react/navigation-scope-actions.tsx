@@ -77,7 +77,7 @@ export function NavigationScopeActions({ group, snapshot, host, onSelect }: {
         <span className="sp-scope-menu-symbol" aria-hidden="true">◇</span><span>Mitt minne</span></Button>}
       </div>
       {circle?.role === "owner" && action(`Endre namn på ${group.name}`, { kind: "rename-circle", circleId: circle.id }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m4 16 11-11 4 4-11 11-5 1 1-5ZM13 7l4 4" /></svg>, "Endre namn")}
-      {(!circle || circle.role === "owner") && action(circle ? `Inviter til ${group.name}` : "Inviter ny brukar til Sprøyt",
+      {(!circle || ["owner", "moderator"].includes(circle.role)) && action(circle ? `Inviter til ${group.name}` : "Inviter ny brukar til Sprøyt",
         circle ? { kind: "invite", circleId: circle.id } : { kind: "global-invite" }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="8" cy="7" r="3" /><path d="M2 21v-3a6 6 0 0 1 12 0v3M19 6v8M15 10h8" /></svg>, circle ? "Inviter personar" : "Inviter ny brukar")}
       </div>
     </div>

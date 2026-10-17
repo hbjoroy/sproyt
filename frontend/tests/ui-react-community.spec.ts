@@ -219,7 +219,7 @@ test("invitation link joins the correct circle, member can leave, enrollment rep
   await expect(invite.getByRole("textbox", { name: "Invitasjonslenkje", exact: true })).toHaveValue(/invite=/);
   const link = await invite.getByRole("textbox", { name: "Invitasjonslenkje", exact: true }).inputValue();
   await invite.getByRole("textbox", { name: "E-postadresse" }).fill("test@example.org");
-  await invite.getByRole("button", { name: "Send registreringsinvitasjon" }).click();
+  await invite.getByRole("button", { name: "Send invitasjon" }).click();
   await expect(invite).toContainText("Registrering av nye brukarar er ikkje tilgjengeleg enno");
   const peer = await context.newPage(); const member = await enter(peer, `community-invite-member-${Date.now()}`);
   await menu(member, "Kretsadministrasjon og invitasjonskode");
@@ -277,9 +277,9 @@ test("community rejects keep entered values, member loads retry and enrollment k
   });
   const invitation = preview.getByRole("dialog", { name: "Inviter til Krets etter retry" });
   await invitation.getByLabel("E-postadresse").fill("invite@example.org");
-  await invitation.getByLabel("Namn på ny brukar").fill("Ny ven");
-  await invitation.getByRole("button", { name: "Send registreringsinvitasjon" }).click();
-  await expect(invitation).toContainText("Registreringsinvitasjonen er sendt på e-post.");
+  await invitation.getByLabel("Namn (valfritt for nye brukarar)").fill("Ny ven");
+  await invitation.getByRole("button", { name: "Send invitasjon" }).click();
+  await expect(invitation).toContainText("Invitasjonen er sendt på e-post.");
   await expect(invitation.getByRole("textbox", { name: "Invitasjonslenkje", exact: true })).toHaveValue("https://auth.example.org/enrollment/test");
   expect(body).toEqual({ email: "invite@example.org", display_name: "Ny ven" });
   expect(endpoint).toMatch(/\/circles\/[0-9a-f-]{36}\/enrollment-invitations/);

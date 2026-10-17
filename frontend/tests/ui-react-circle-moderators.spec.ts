@@ -23,6 +23,8 @@ async function fixture(page: Page, initialRole: Role, messageId = "peer-message"
         case "hello": reply("hello", { participant_id: initialRole }); break;
         case "ping": reply("pong"); break;
         case "list_users": reply("users_listed", { users: [] }); break;
+        case "list_circle_users": reply("circle_users_listed", { circle_id: circleId, users: [] }); break;
+        case "create_invitation": reply("invitation_created", { invitation: { target: command.payload.target, token: "moderator-circle-token", expires_at: "2027-01-01T00:00:00Z" } }); break;
         case "list_my_circles": reply("circles_listed", { circles: [[circle, role]] }); break;
         case "list_circle_members": reply("circle_members_listed",{circle_id:circleId,members:[[profile("owner","Eigaren"),"owner"],[profile("peer","Kari"),peerRole]]});break;
         case "set_circle_member_role": peerRole=command.payload.role; reply("circle_member_role_changed",{membership:{circle_id:circleId,user_id:"peer",role:peerRole,joined_at:"2026-01-01T00:00:00Z"}});emit("circles_changed");break;
@@ -75,7 +77,8 @@ for (const width of [1280,390]) {
     await page.keyboard.press("Escape");
     if(width===390) await server.preview.getByRole("button",{name:"Samtalar",exact:true}).click();
     await server.preview.getByRole("button",{name:"Val for Testkrets",exact:true}).click();
-    await expect(server.preview.getByRole("button",{name:/Endre namn på|Inviter til/})).toHaveCount(0);
+    await expect(server.preview.getByRole("button",{name:/Endre namn på/})).toHaveCount(0);
+    await expect(server.preview.getByRole("button",{name:"Inviter til Testkrets",exact:true})).toBeVisible();
     await server.preview.getByRole("button",{name:"Medlemmer og roller i Testkrets",exact:true}).click();
     const people=server.preview.getByRole("dialog",{name:"Kretsmedlemmer og roller",exact:true});
     await expect(people).toContainText("Kari");
@@ -97,6 +100,40 @@ for (const width of [1280,390]) {
   });
 }
 
+
+for (const width of [1280, 390]) test(`moderator sends scoped email invitations without owner powers at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  const requests: { url: string; body: unknown }[] = [];
+  await page.route("**/api/v1/circles/*/enrollment-invitations?*", route => {
+    requests.push({ url: route.request().url(), body: route.request().postDataJSON() });
+    return route.fulfill({ json: { url: "https://auth.example.org/invitation/scoped", expires_at: "2027-01-01T00:00:00Z" } });
+  });
+  const server = await fixture(page, "moderator");
+  if (width === 390) await server.preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  await server.preview.getByRole("button", { name: "Val for Testkrets", exact: true }).click();
+  await expect(server.preview.getByRole("button", { name: /Endre namn på/ })).toHaveCount(0);
+  await server.preview.getByRole("button", { name: "Inviter til Testkrets", exact: true }).click();
+  const invite = server.preview.getByRole("dialog", { name: "Inviter til Testkrets", exact: true });
+  await expect(invite.getByRole("heading", { name: "Inviter på e-post", exact: true })).toBeVisible();
+  await invite.getByLabel("E-postadresse", { exact: true }).fill("existing@example.org");
+  // Existing users do not need a new display name or account.
+  await invite.getByRole("button", { name: "Send invitasjon", exact: true }).click();
+  await expect(invite).toContainText("Invitasjonen er sendt på e-post.");
+  await expect(invite.getByRole("textbox", { name: "Invitasjonslenkje", exact: true })).toHaveValue("https://auth.example.org/invitation/scoped");
+  expect(requests).toHaveLength(1);
+  expect(new URL(requests[0]!.url).pathname).toBe(`/api/v1/circles/${circleId}/enrollment-invitations`);
+  expect(requests[0]!.body).toEqual({ email: "existing@example.org", display_name: null });
+  expect(await invite.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await invite.getByRole("button", { name: "Lag kretslenkje", exact: true }).click();
+  await expect(invite.getByRole("textbox", { name: "Invitasjonslenkje", exact: true })).toHaveValue(/invite=moderator-circle-token$/);
+  expect(server.commands.filter(command => command.type === "create_invitation").map(command => command.payload)).toEqual([{ target: { type: "circle", circle_id: circleId } }]);
+  await page.keyboard.press("Escape");
+  server.role("member");
+  await server.preview.getByRole("button", { name: "Val for Testkrets", exact: true }).click();
+  await expect(server.preview.getByRole("button", { name: "Inviter til Testkrets", exact: true })).toHaveCount(0);
+  await expect(server.preview.getByRole("button", { name: /Endre namn på/ })).toHaveCount(0);
+  expect(server.commands.filter(command => ["rename_circle", "delete_circle", "set_circle_member_role"].includes(command.type))).toHaveLength(0);
+});
 
 test("ordinary members have no empty overflow menu, including thread roots", async ({ page }) => {
   await page.route(/\/work-items\/applications(?:\?|$)/, route => route.fulfill({ json: [] }));
