@@ -98,6 +98,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
       channels={snapshot.groups.flatMap(group => group.conversations.map(item => item.channel))}
       onClose={() => { setMemoryCircle(undefined); setOpen(true); }} />}
     {chatAgentsCircle && snapshot.circles.some(circle=>circle.id===chatAgentsCircle.id && ["owner","moderator"].includes(circle.role)) && <CircleChatAgentsDialog key={chatAgentsCircle.id} api={chatAgents} circleId={chatAgentsCircle.id}
+      channels={snapshot.channels}
       circleName={chatAgentsCircle.name} onClose={() => { setChatAgentsCircle(undefined); setOpen(true); }} />}
   </>;
 }

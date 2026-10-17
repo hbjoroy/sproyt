@@ -372,6 +372,14 @@
   border-top: 1px solid var(--sp-line);
   padding-block: 0.5rem;
 }
+.sp-agent-summary { min-width: 0; flex: 1 1 12rem; overflow-wrap: anywhere; }
+.sp-agent-summary small { display: block; color: var(--sp-muted); font-size: .8125rem; margin-top: 4px; }
+.sp-agent-tabs { display: flex; gap: 8px; margin-block: 12px; border-bottom: 1px solid var(--sp-line); }
+.sp-agent-tabs .sp-button { min-height: 44px; }
+.sp-agent-tabs [aria-pressed="true"] { border-bottom: 3px solid currentColor; }
+.sp-agent-channel-access { display: grid; gap: 8px; min-width: 0; }
+.sp-agent-channel-access select { width: 100%; min-width: 0; min-height: 44px; padding: 8px; font: inherit;
+  color: var(--sp-text); background: var(--sp-surface); border: 1px solid var(--sp-line); }
 
 .sp-circle-agent-form {
   display: grid;
