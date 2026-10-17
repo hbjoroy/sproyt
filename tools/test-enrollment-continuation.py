@@ -53,6 +53,8 @@ class ContinuationContract(unittest.TestCase):
             + textwrap.indent(BLUEPRINT.read_text(encoding="utf-8"), "    ")
             + "  sproyt-invitation-canary.yaml: |\n"
             + textwrap.indent((BLUEPRINT.parent / "sproyt-invitation-canary.yaml").read_text(encoding="utf-8"), "    ")
+            + "  sproyt-invitation-production.yaml: |\n"
+            + textwrap.indent((BLUEPRINT.parent / "sproyt-invitation-production.yaml").read_text(encoding="utf-8"), "    ")
             + "kind: ConfigMap\nmetadata:\n  name: sproyt-email-recovery\n  namespace: authentik\n"
         )
         self.assertEqual(rendered, expected)
