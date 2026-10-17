@@ -1564,14 +1564,16 @@ fn browser_exposes_channel_members_and_owner_managed_markdown_description() {
 }
 
 #[test]
-fn browser_exposes_owner_circle_invitations_from_the_conversation_drawer() {
+fn browser_exposes_owner_and_moderator_circle_invitations_from_the_conversation_drawer() {
     assert!(BROWSER_CLIENT.contains("id=\"circle-invite-dialog\""));
     assert!(BROWSER_CLIENT.contains(
         "Inviter ein Sprøyt-brukar i DM, eller send ei registreringsinvitasjon til ein ny brukar."
     ));
     assert!(BROWSER_CLIENT.contains("menu.className = \"conversation-circle-menu\""));
     assert!(BROWSER_CLIENT.contains("addAction(\"Inviter person\""));
-    assert!(BROWSER_CLIENT.contains("if (circle.role === \"owner\")"));
+    assert!(BROWSER_CLIENT.contains(
+        "if ([\"owner\", \"moderator\"].includes(circle.role)) addAction(\"Inviter person\""
+    ));
     assert!(BROWSER_CLIENT.contains("function eligibleCircleInviteUsers(circleId"));
     assert!(BROWSER_CLIENT.contains("user.kind === \"human\""));
     assert!(BROWSER_CLIENT.contains("!memberIds.has(user.id)"));
