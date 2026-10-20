@@ -1,0 +1,2 @@
+# Match the Django signing implementation in the deployed Authentik 2026.8.2.
+Django==5.2.17
