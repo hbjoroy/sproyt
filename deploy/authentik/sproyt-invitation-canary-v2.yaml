@@ -31,7 +31,6 @@ entries:
     id: canary-v2-context
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: true
       expression: |
         from django.core import signing
         from hashlib import sha256
@@ -111,7 +110,6 @@ entries:
     id: canary-v2-new-only
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: false
       expression: |
         plan = request.context.get("flow_plan")
         return plan is not None and plan.context.get("sproyt_canary_v2_new_user") is True
@@ -120,7 +118,6 @@ entries:
     id: canary-v2-create-only
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: false
       expression: |
         plan = request.context.get("flow_plan")
         return plan is not None and plan.context.get("sproyt_canary_v2_create_user") is True
@@ -129,7 +126,6 @@ entries:
     id: canary-v2-email-rate-limit
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: true
       expression: |
         from django.core.cache import cache
         from hashlib import sha256
@@ -156,7 +152,6 @@ entries:
     id: canary-v2-email-required
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: false
       expression: |
         plan = request.context.get("flow_plan")
         return plan is not None and plan.context.get("sproyt_canary_v2_verify_email") is True
@@ -177,7 +172,6 @@ entries:
     id: canary-v2-email-proof
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: true
       expression: |
         from django.core import signing
         from hashlib import sha256
@@ -313,7 +307,6 @@ entries:
     id: canary-v2-before-create
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: true
       expression: |
         from authentik.core.models import User
 
@@ -354,7 +347,6 @@ entries:
     id: canary-v2-stamp-placeholder
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: true
       expression: |
         from authentik.core.models import User, Group
         from django.db import transaction
@@ -399,7 +391,6 @@ entries:
     id: canary-v2-password-write-guard
     model: authentik_policies_expression.expressionpolicy
     attrs:
-      failure_result: true
       expression: |
         from django.core import signing
         from hashlib import sha256
@@ -494,70 +485,70 @@ entries:
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-context, target: !KeyOf canary-v2-context-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 44}
     id: canary-v2-rate-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-email-rate-limit, target: !KeyOf canary-v2-rate-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-existing-email, order: 46}
     id: canary-v2-email-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-email-required, target: !KeyOf canary-v2-email-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 48}
     id: canary-v2-proof-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-email-proof, target: !KeyOf canary-v2-proof-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-profile-prompt, order: 20}
     id: canary-v2-profile-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-create-only, target: !KeyOf canary-v2-profile-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-password-prompt, order: 49}
     id: canary-v2-password-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-new-only, target: !KeyOf canary-v2-password-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 35}
     id: canary-v2-before-create-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-before-create, target: !KeyOf canary-v2-before-create-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-user-create, order: 40}
     id: canary-v2-write-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-create-only, target: !KeyOf canary-v2-write-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 51}
     id: canary-v2-password-guard-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-password-write-guard, target: !KeyOf canary-v2-password-guard-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-user-login, order: 60}
     id: canary-v2-login-binding
     model: authentik_flows.flowstagebinding
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-new-only, target: !KeyOf canary-v2-login-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
 
   - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 42}
     id: canary-v2-stamp-binding
@@ -565,4 +556,4 @@ entries:
     attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
   - identifiers: {policy: !KeyOf canary-v2-stamp-placeholder, target: !KeyOf canary-v2-stamp-binding, order: 0}
     model: authentik_policies.policybinding
-    attrs: {negate: false, enabled: true, timeout: 30}
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}

@@ -26,6 +26,9 @@ from authentik.blueprints.v1.importer import Importer
 from authentik.core.api.users import UserSerializer
 from authentik.core.models import Group, Source, User, UserSourceConnection
 from authentik.flows.models import Flow, FlowToken
+from authentik.policies.engine import PolicyEngine
+from authentik.policies.expression.models import ExpressionPolicy
+from authentik.policies.models import PolicyBinding
 from authentik.stages.email.stage import QS_KEY_TOKEN
 from authentik.stages.invitation.models import Invitation
 
@@ -107,7 +110,24 @@ try:
             assert Importer.from_string(blueprint).apply(), "import failed"
             flow = Flow.objects.get(slug=SLUG)
             inviter = User.objects.create(username="sproyt-v2-inviter-" + probe_id, email="inviter" + email_suffix)
-            for scenario in ["direct", "before-proof", "after-proof"]:
+            guards = ["invitation-context", "email-rate-limit", "email-proof", "before-create",
+                      "password-write-guard", "stamp-placeholder"]
+            for name in guards:
+                binding = PolicyBinding.objects.get(policy__name="sproyt-canary-v2-" + name)
+                assert binding.failure_result is True, "Deny fallback is not stored on binding"
+                expression = binding.policy.expression
+                try:
+                    binding.policy.expression = "raise RuntimeError('isolated-v2-engine-failure')"
+                    binding.policy.save()
+                    engine = PolicyEngine(binding.target, inviter)
+                    engine.use_cache = False
+                    engine.request.debug = True
+                    assert engine.build().passing is True, "real engine exception skipped Deny"
+                finally:
+                    binding.policy.expression = expression
+                    binding.policy.save()
+            record("all-six-real-policy-bindings-deny-on-expression-exception")
+            for scenario in ["direct", "before-proof", "after-proof", "proof-error", "commit-error"]:
                 email = scenario + email_suffix
                 client, entry, response = start(inviter, flow, email, "a", authenticated=scenario == "before-proof")
                 assert response.json().get("component") == "ak-stage-prompt", "profile missing"
@@ -119,11 +139,24 @@ try:
                 assert not user.is_active and not user.has_usable_password()
                 assert MARKER in user.attributes, "creation provenance missing"
                 old_tokens = list(FlowToken.objects.filter(user=user, flow=flow).values_list("pk", flat=True))
+                if scenario == "proof-error":
+                    guard = ExpressionPolicy.objects.get(name="sproyt-canary-v2-email-proof")
+                    expression = guard.expression
+                    try:
+                        guard.expression = "raise RuntimeError('isolated-v2-proof-failure')"; guard.save()
+                        denied_client, _, denied, _ = prove(user, flow)
+                        assert denied.json().get("component") == "ak-stage-access-denied", "proof exception did not reach Deny"
+                        assert "_auth_user_id" not in denied_client.session
+                        assert not user.is_active and not user.has_usable_password() and MARKER in user.attributes
+                    finally:
+                        guard.expression = expression; guard.save()
+                    record("executor-mailbox-proof-exception-denies-without-authentication")
+                    continue
                 if scenario == "after-proof":
                     _, _, prior, _ = prove(user, flow)
                     assert prior.json().get("component") == "ak-stage-prompt"
                     assert not user.is_active and not user.has_usable_password()
-                if scenario != "direct":
+                if scenario in {"before-proof", "after-proof"}:
                     _, _, resumed = start(inviter, flow, email, "b", authenticated=True)
                     assert resumed.json().get("component") == "ak-stage-email", "resume must skip profile and reprove mailbox"
                     client, entry, response, token = prove(user, flow, old_tokens)
@@ -132,6 +165,22 @@ try:
                 assert response.json().get("component") == "ak-stage-prompt", "password prompt missing"
                 assert not user.is_active and not user.has_usable_password()
                 password = secrets.token_urlsafe(40)
+                if scenario == "commit-error":
+                    guard = ExpressionPolicy.objects.get(name="sproyt-canary-v2-password-write-guard")
+                    expression = guard.expression
+                    marker = user.attributes[MARKER]
+                    try:
+                        guard.expression = "raise RuntimeError('isolated-v2-commit-failure')"; guard.save()
+                        response = settle(client, client.post(entry, data=json.dumps({"component": "ak-stage-prompt",
+                            "password": password, "password_repeat": password}), content_type="application/json", secure=True))
+                        user.refresh_from_db()
+                        assert response.json().get("component") == "ak-stage-access-denied", "commit exception did not reach Deny"
+                        assert "_auth_user_id" not in client.session
+                        assert not user.is_active and not user.has_usable_password() and user.attributes[MARKER] == marker
+                    finally:
+                        guard.expression = expression; guard.save()
+                    record("executor-password-commit-exception-denies-without-authentication")
+                    continue
                 response = settle(client, client.post(entry, data=json.dumps({"component": "ak-stage-prompt",
                     "password": password, "password_repeat": password}), content_type="application/json", secure=True))
                 data = response.json()

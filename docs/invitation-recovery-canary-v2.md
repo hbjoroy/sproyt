@@ -35,6 +35,12 @@ attempt hits the deny stage before User Login. A failure before commit restores
 all account fields. If the browser disappears after commit, the now-active
 account uses ordinary OIDC login and cannot be reset by replaying this flow.
 
+All six Deny guards explicitly store `failure_result: true` on the actual
+Authentik PolicyBinding. Conditional-stage bindings store false. ExpressionPolicy
+has no such field; placing it there would not enforce the exception fallback.
+The runtime gate injects real engine/executor errors to prove rejection before
+mailbox verification and password completion, without an authenticated session.
+
 Unmarked, expired, ambiguous, active or otherwise ineligible identities retain
 the existing-account branch: no password change, activation, profile overwrite
 or automatic login. They must use ordinary authentication and existing operator

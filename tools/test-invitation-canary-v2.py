@@ -74,6 +74,20 @@ def request():
 
 
 class RecoveryContract(unittest.TestCase):
+    def test_deny_fallbacks_are_on_policy_bindings_not_expression_policies(self):
+        source = legacy.BLUEPRINT.read_text(encoding="utf-8")
+        deny = {"context", "rate", "proof", "before-create", "password-guard", "stamp"}
+        seen = set()
+        for block in source.split("  - identifiers:"):
+            if "model: authentik_policies_expression.expressionpolicy" in block:
+                self.assertNotIn("failure_result:", block)
+            if "model: authentik_policies.policybinding" in block:
+                target = next((name for name in deny if f"target: !KeyOf canary-v2-{name}-binding" in block), None)
+                self.assertIn("failure_result: " + ("true" if target else "false"), block)
+                if target:
+                    seen.add(target)
+        self.assertEqual(seen, deny)
+
     def setUp(self):
         self.users = {}
         models = ModuleType("authentik.core.models")
