@@ -6,6 +6,7 @@ configMapGenerator:
     files:
       - sproyt-email-recovery.yaml
       - sproyt-invitation-canary.yaml
+      - sproyt-invitation-canary-v2.yaml
       - sproyt-invitation-production.yaml
 generatorOptions:
   disableNameSuffixHash: true

@@ -1,0 +1,559 @@
+version: 1
+metadata:
+  name: Sprøyt Canary V2 invitation enrollment
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - identifiers:
+      pk: a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35
+    id: canary-v2-flow
+    model: authentik_flows.flow
+    attrs:
+      slug: sproyt-invitation-canary-v2
+      name: Sprøyt Canary V2 invitation
+      title: Bli med i Sprøyt
+      designation: enrollment
+      authentication: none
+      denied_action: message
+
+  - identifiers: {name: sproyt-canary-v2-invitation}
+    id: canary-v2-invitation
+    model: authentik_stages_invitation.invitationstage
+    attrs: {continue_flow_without_invitation: false}
+
+  - identifiers: {name: sproyt-canary-v2-invitation-deny}
+    id: canary-v2-deny
+    model: authentik_stages_deny.denystage
+    attrs:
+      deny_message: Invitasjonen er ugyldig eller registreringa kan ikkje fullførast. Be om ei ny invitasjon.
+
+  - identifiers: {name: sproyt-canary-v2-invitation-context}
+    id: canary-v2-context
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from django.core import signing
+        from hashlib import sha256
+
+        def eligible(user, marker):
+            if not isinstance(marker, str):
+                return False
+            try:
+                origin = signing.loads(marker, salt="sproyt.canary.invitation-placeholder.v2", max_age=86400)
+            except signing.BadSignature:
+                return False
+            return (
+                origin == {"v": 2, "flow": "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35", "pk": user.pk,
+                           "uuid": str(user.uuid), "email": str(user.email).strip().casefold(),
+                           "updated": user.last_updated.isoformat(),
+                           "password": sha256(user.password.encode()).hexdigest(),
+                           "group": origin.get("group")}
+                and origin.get("group") is not None
+                and list(map(str, user.groups.values_list("pk", flat=True))) == [origin["group"]]
+                and not user.roles.exists() and not user.sources.exists() and not user.is_superuser
+                and not user.is_active and not user.has_usable_password() and user.last_login is None
+                and user.type == "external" and user.path == "users/sproyt"
+                and (user.attributes or {}).get("sproyt_canary_v2_pending") == marker
+            )
+
+        from authentik.core.models import User
+
+        invitation = request.context.get("invitation")
+        plan = request.context.get("flow_plan")
+        if invitation is None or plan is None or not request.context.get("invitation_in_effect"):
+            return True
+        if str(getattr(invitation, "flow_id", "")) != "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35":
+            return True
+        fixed = invitation.fixed_data or {}
+        token = fixed.get("sproyt_enrollment_token")
+        email = str(fixed.get("email", "")).strip()
+        if not email or not isinstance(token, str) or len(token) != 43 or not all(
+            c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in token
+        ):
+            return True
+        # The Invitation stage has already consumed its single-use object.
+        # Retain its trusted context, never a prompt field or a caller's next.
+        matches = list(User.objects.filter(email__iexact=email)[:2])
+        if len(matches) > 1:
+            return True
+        existing = bool(matches)
+        plan.context["sproyt_canary_v2_create_user"] = not existing
+        plan.context["sproyt_canary_v2_new_user"] = not existing
+        plan.context["sproyt_canary_v2_email"] = email
+        plan.context["email"] = email
+        plan.context["redirect"] = "https://sproyt-canary.bjoroy.me/auth/login?enrollment=" + token
+        plan.context["sproyt_canary_v2_verify_email"] = not existing
+        if existing:
+            user = matches[0]
+            attributes = user.attributes or {}
+            marker = attributes.get("sproyt_canary_v2_pending")
+            recovery = eligible(user, marker)
+            plan.context["sproyt_canary_v2_new_user"] = recovery
+            if recovery:
+                plan.context["sproyt_canary_v2_marker"] = marker
+            verified = attributes.get("email_verified") is True and str(
+                attributes.get("email_verified_address", "")
+            ).strip().casefold() == email.casefold()
+            if recovery or not verified:
+                # Resuming a pending registration always requires a NEW mailbox proof.
+                plan.context["pending_user"] = user
+                request.context["pending_user"] = user
+                plan.context["sproyt_canary_v2_verify_email"] = True
+        prompt = request.context.get("prompt_data", {})
+        prompt.pop("sproyt_enrollment_token", None)
+        plan.context.get("prompt_data", {}).pop("sproyt_enrollment_token", None)
+        # Existing non-placeholder identities never reach password write or login.
+        # The subsequent Sprøyt OIDC login must authenticate the actual recipient.
+        return False
+
+  - identifiers: {name: sproyt-canary-v2-new-user-only}
+    id: canary-v2-new-only
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        plan = request.context.get("flow_plan")
+        return plan is not None and plan.context.get("sproyt_canary_v2_new_user") is True
+
+  - identifiers: {name: sproyt-canary-v2-create-only}
+    id: canary-v2-create-only
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        plan = request.context.get("flow_plan")
+        return plan is not None and plan.context.get("sproyt_canary_v2_create_user") is True
+
+  - identifiers: {name: sproyt-canary-v2-email-rate-limit}
+    id: canary-v2-email-rate-limit
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from django.core.cache import cache
+        from hashlib import sha256
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_canary_v2_verify_email" not in plan.context:
+            return True
+        if plan.context["sproyt_canary_v2_verify_email"] is False:
+            return False
+        if request.context.get("is_restored") or plan.context.get("sproyt_canary_v2_send_counted"):
+            return False
+        email = str(plan.context.get("sproyt_canary_v2_email", "")).strip().casefold()
+        if not email:
+            return True
+        key = "sproyt:canary:v2:verify:first-send:" + sha256(email.encode("utf-8")).hexdigest()
+        try:
+            attempts = 1 if cache.add(key, 1, timeout=300) else cache.incr(key)
+        except Exception:
+            return True
+        plan.context["sproyt_canary_v2_send_counted"] = True
+        return attempts > 5
+
+  - identifiers: {name: sproyt-canary-v2-email-required}
+    id: canary-v2-email-required
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        plan = request.context.get("flow_plan")
+        return plan is not None and plan.context.get("sproyt_canary_v2_verify_email") is True
+
+  - identifiers: {name: sproyt-canary-v2-existing-email}
+    id: canary-v2-existing-email
+    model: authentik_stages_email.emailstage
+    attrs:
+      use_global_settings: true
+      token_expiry: minutes=30
+      subject: Stadfest e-postadressa di for Sprøyt
+      template: email/account_confirmation.html
+      activate_user_on_success: false
+      recovery_max_attempts: 5
+      recovery_cache_timeout: minutes=5
+
+  - identifiers: {name: sproyt-canary-v2-email-proof}
+    id: canary-v2-email-proof
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from django.core import signing
+        from hashlib import sha256
+
+        def eligible(user, marker):
+            if not isinstance(marker, str):
+                return False
+            try:
+                origin = signing.loads(marker, salt="sproyt.canary.invitation-placeholder.v2", max_age=86400)
+            except signing.BadSignature:
+                return False
+            return (
+                origin == {"v": 2, "flow": "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35", "pk": user.pk,
+                           "uuid": str(user.uuid), "email": str(user.email).strip().casefold(),
+                           "updated": user.last_updated.isoformat(),
+                           "password": sha256(user.password.encode()).hexdigest(),
+                           "group": origin.get("group")}
+                and origin.get("group") is not None
+                and list(map(str, user.groups.values_list("pk", flat=True))) == [origin["group"]]
+                and not user.roles.exists() and not user.sources.exists() and not user.is_superuser
+                and not user.is_active and not user.has_usable_password() and user.last_login is None
+                and user.type == "external" and user.path == "users/sproyt"
+                and (user.attributes or {}).get("sproyt_canary_v2_pending") == marker
+            )
+
+        from authentik.core.models import User
+        from django.db import transaction
+        from django.utils.timezone import now
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_canary_v2_verify_email" not in plan.context:
+            return True
+        if plan.context["sproyt_canary_v2_verify_email"] is False:
+            return False
+        token = request.context.get("is_restored")
+        if token is None or token.expires <= now() or str(token.flow_id) != "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35":
+            return True
+        original = token.plan
+        original_user = original.context.get("pending_user")
+        current_user = plan.context.get("pending_user")
+        email = str(original.context.get("email", "")).strip()
+        # Authentik 2026.8.2 prepends its email-token consent stage at index 0.
+        if len(original.bindings) < 2 or original.bindings[1].stage.name != "sproyt-canary-v2-existing-email":
+            return True
+        if (not email or original.context.get("sproyt_canary_v2_verify_email") is not True
+            or getattr(original_user, "pk", None) is None
+            or original_user.pk != getattr(current_user, "pk", None)
+            or original_user.pk != getattr(token.user, "pk", None)
+            or original.context.get("sproyt_canary_v2_new_user") is not plan.context.get("sproyt_canary_v2_new_user")
+            or email.casefold() != str(plan.context.get("sproyt_canary_v2_email", "")).strip().casefold()
+            or original.context.get("redirect") != plan.context.get("redirect")
+            or original.context.get("sproyt_canary_v2_marker") != plan.context.get("sproyt_canary_v2_marker")):
+            return True
+        # EmailStage's fresh mailbox token is unavailable to the inviter. Bind
+        # its original snapshot before touching only verification attributes.
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=original_user.pk)
+            if token.expires <= now() or str(user.email).strip().casefold() != email.casefold():
+                return True
+            if plan.context.get("sproyt_canary_v2_new_user") is True and not eligible(
+                user, plan.context.get("sproyt_canary_v2_marker")
+            ):
+                return True
+            attributes = dict(user.attributes or {})
+            attributes["email_verified"] = True
+            attributes["email_verified_address"] = user.email.strip()
+            user.attributes = attributes
+            user.save(update_fields=["attributes"])
+            plan.context["pending_user"] = user
+            request.context["pending_user"] = user
+            plan.context["sproyt_canary_v2_mailbox_verified"] = True
+            plan.context["sproyt_canary_v2_verified_user_id"] = user.pk
+        return False
+
+  - identifiers: {name: sproyt-canary-v2-username}
+    id: canary-v2-username
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: username
+      label: Brukarnamn
+      type: username
+      required: true
+      placeholder: Brukarnamn
+      initial_value: ""
+      initial_value_expression: false
+      order: 200
+  - identifiers: {name: sproyt-canary-v2-name}
+    id: canary-v2-name
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: name
+      label: Namn
+      type: text
+      required: true
+      placeholder: Namn
+      initial_value: ""
+      initial_value_expression: false
+      order: 201
+  - identifiers: {name: sproyt-canary-v2-password}
+    id: canary-v2-password
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: password
+      label: Passord
+      type: password
+      required: true
+      initial_value: ""
+      order: 300
+  - identifiers: {name: sproyt-canary-v2-password-repeat}
+    id: canary-v2-password-repeat
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: password_repeat
+      label: Gjenta passordet
+      type: password
+      required: true
+      initial_value: ""
+      order: 301
+  - identifiers: {name: sproyt-canary-v2-profile-prompt}
+    id: canary-v2-profile-prompt
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields: [!KeyOf canary-v2-username, !KeyOf canary-v2-name]
+  - identifiers: {name: sproyt-canary-v2-password-prompt}
+    id: canary-v2-password-prompt
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields: [!KeyOf canary-v2-password, !KeyOf canary-v2-password-repeat]
+      validation_policies:
+        - !Find [authentik_policies.policy, [name, default-password-change-password-policy]]
+
+  - identifiers: {name: sproyt-canary-v2-before-create}
+    id: canary-v2-before-create
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from authentik.core.models import User
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_canary_v2_create_user" not in plan.context:
+            return True
+        if plan.context["sproyt_canary_v2_create_user"] is False:
+            return False
+        email = plan.context.get("sproyt_canary_v2_email")
+        prompt = request.context.get("prompt_data")
+        if not email or not isinstance(prompt, dict):
+            return True
+        if str(prompt.get("email", "")).strip().casefold() != email.casefold():
+            return True
+        # An account appearing during registration must never be overwritten.
+        if User.objects.filter(email__iexact=email).exists():
+            return True
+        # Only the fields from this enrollment are allowed to reach User Write.
+        clean = {key: prompt[key] for key in ("username", "name") if key in prompt}
+        # UserWrite calls set_password(None), producing Django's unusable hash.
+        clean["password"] = None
+        clean["email"] = email
+        clean["attributes"] = {"email_verified": False}
+        request.context["prompt_data"] = clean
+        plan.context["prompt_data"] = clean
+        return False
+
+  - identifiers: {name: sproyt-canary-v2-user-create}
+    id: canary-v2-user-create
+    model: authentik_stages_user_write.userwritestage
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: true
+      create_users_group: !Find [authentik_core.group, [name, sproyt-users]]
+      user_type: external
+      user_path_template: users/sproyt
+  - identifiers: {name: sproyt-canary-v2-stamp-placeholder}
+    id: canary-v2-stamp-placeholder
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from authentik.core.models import User, Group
+        from django.db import transaction
+        from django.core import signing
+        from hashlib import sha256
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_canary_v2_create_user" not in plan.context:
+            return True
+        if plan.context["sproyt_canary_v2_create_user"] is False:
+            return False
+        snapshot = plan.context.get("pending_user")
+        email = str(plan.context.get("sproyt_canary_v2_email", "")).strip().casefold()
+        if snapshot is None or snapshot.pk is None or not email:
+            return True
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=snapshot.pk)
+            group = Group.objects.get(name="sproyt-users")
+            if (user.uuid != snapshot.uuid or user.last_updated != snapshot.last_updated
+                or user.password != snapshot.password or user.email.strip().casefold() != email
+                or user.is_active or user.has_usable_password() or user.last_login is not None
+                or user.type != "external" or user.path != "users/sproyt"
+                or list(user.groups.values_list("pk", flat=True)) != [group.pk]
+                or user.roles.exists() or user.sources.exists() or user.is_superuser
+                or "sproyt_canary_v2_pending" in (user.attributes or {})):
+                return True
+            marker = signing.dumps({"v": 2, "flow": "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35", "pk": user.pk,
+                                    "uuid": str(user.uuid), "email": email,
+                                    "updated": user.last_updated.isoformat(),
+                                    "password": sha256(user.password.encode()).hexdigest(),
+                                    "group": str(group.pk)}, salt="sproyt.canary.invitation-placeholder.v2")
+            user.attributes = dict(user.attributes or {}, sproyt_canary_v2_pending=marker)
+            # update_fields deliberately preserves the creation timestamp. Normal admin
+            # saves advance last_updated and thereby revoke recovery, even while inactive.
+            user.save(update_fields=["attributes"])
+            plan.context["pending_user"] = user
+            request.context["pending_user"] = user
+            plan.context["sproyt_canary_v2_marker"] = marker
+        return False
+
+  - identifiers: {name: sproyt-canary-v2-password-write-guard}
+    id: canary-v2-password-write-guard
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from django.core import signing
+        from hashlib import sha256
+
+        def eligible(user, marker):
+            if not isinstance(marker, str):
+                return False
+            try:
+                origin = signing.loads(marker, salt="sproyt.canary.invitation-placeholder.v2", max_age=86400)
+            except signing.BadSignature:
+                return False
+            return (
+                origin == {"v": 2, "flow": "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35", "pk": user.pk,
+                           "uuid": str(user.uuid), "email": str(user.email).strip().casefold(),
+                           "updated": user.last_updated.isoformat(),
+                           "password": sha256(user.password.encode()).hexdigest(),
+                           "group": origin.get("group")}
+                and origin.get("group") is not None
+                and list(map(str, user.groups.values_list("pk", flat=True))) == [origin["group"]]
+                and not user.roles.exists() and not user.sources.exists() and not user.is_superuser
+                and not user.is_active and not user.has_usable_password() and user.last_login is None
+                and user.type == "external" and user.path == "users/sproyt"
+                and (user.attributes or {}).get("sproyt_canary_v2_pending") == marker
+            )
+
+        from authentik.core.models import User
+        from django.db import transaction
+        from django.utils.timezone import now
+
+        plan = request.context.get("flow_plan")
+        if plan is None or "sproyt_canary_v2_new_user" not in plan.context:
+            return True
+        if plan.context["sproyt_canary_v2_new_user"] is False:
+            return False
+        pending = plan.context.get("pending_user")
+        proof = request.context.get("is_restored")
+        prompt = request.context.get("prompt_data", {})
+        email = str(plan.context.get("sproyt_canary_v2_email", "")).strip().casefold()
+        if (proof is None or proof.expires <= now() or str(proof.flow_id) != "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35"
+            or plan.context.get("sproyt_canary_v2_mailbox_verified") is not True
+            or pending is None or pending.pk != plan.context.get("sproyt_canary_v2_verified_user_id")
+            or pending.pk != getattr(proof.user, "pk", None)
+            or not prompt.get("password") or prompt.get("password") != prompt.get("password_repeat")):
+            return True
+        original = proof.plan
+        if (len(original.bindings) < 2 or original.bindings[1].stage.name != "sproyt-canary-v2-existing-email"
+            or original.context.get("sproyt_canary_v2_new_user") is not True
+            or original.context.get("sproyt_canary_v2_verify_email") is not True
+            or getattr(original.context.get("pending_user"), "pk", None) != pending.pk
+            or str(original.context.get("email", "")).strip().casefold() != email
+            or original.context.get("redirect") != plan.context.get("redirect")
+            or original.context.get("sproyt_canary_v2_marker") != plan.context.get("sproyt_canary_v2_marker")):
+            return True
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=pending.pk)
+            if (proof.expires <= now() or not eligible(user, plan.context.get("sproyt_canary_v2_marker"))
+                or user.email.strip().casefold() != email
+                or (user.attributes or {}).get("email_verified") is not True
+                or str(user.attributes.get("email_verified_address", "")).strip().casefold() != email):
+                return True
+            # A second flow cannot change credentials after this first commit. All
+            # eligibility checks, hashing, activation and marker removal share this lock.
+            user.set_password(prompt["password"], request=request.http_request)
+            user.is_active = True
+            attributes = dict(user.attributes)
+            attributes.pop("sproyt_canary_v2_pending")
+            user.attributes = attributes
+            user.save(update_fields=["password", "password_change_date", "is_active", "attributes", "last_updated"])
+            plan.context["pending_user"] = user
+            request.context["pending_user"] = user
+            plan.context["prompt_data"] = {}
+            request.context["prompt_data"] = {}
+        return False
+
+  - identifiers: {name: sproyt-canary-v2-user-login}
+    id: canary-v2-user-login
+    model: authentik_stages_user_login.userloginstage
+    attrs:
+      session_duration: seconds=0
+      terminate_other_sessions: false
+      remember_me_offset: seconds=0
+      network_binding: bind_asn
+      geoip_binding: bind_continent
+      remember_device: days=30
+
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-invitation, order: 10}
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 15}
+    id: canary-v2-context-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-context, target: !KeyOf canary-v2-context-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 44}
+    id: canary-v2-rate-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-email-rate-limit, target: !KeyOf canary-v2-rate-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-existing-email, order: 46}
+    id: canary-v2-email-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-email-required, target: !KeyOf canary-v2-email-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 48}
+    id: canary-v2-proof-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-email-proof, target: !KeyOf canary-v2-proof-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-profile-prompt, order: 20}
+    id: canary-v2-profile-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-create-only, target: !KeyOf canary-v2-profile-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-password-prompt, order: 49}
+    id: canary-v2-password-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-new-only, target: !KeyOf canary-v2-password-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 35}
+    id: canary-v2-before-create-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-before-create, target: !KeyOf canary-v2-before-create-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-user-create, order: 40}
+    id: canary-v2-write-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-create-only, target: !KeyOf canary-v2-write-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 51}
+    id: canary-v2-password-guard-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-password-write-guard, target: !KeyOf canary-v2-password-guard-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-user-login, order: 60}
+    id: canary-v2-login-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-new-only, target: !KeyOf canary-v2-login-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: false}
+
+  - identifiers: {target: !KeyOf canary-v2-flow, stage: !KeyOf canary-v2-deny, order: 42}
+    id: canary-v2-stamp-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all}
+  - identifiers: {policy: !KeyOf canary-v2-stamp-placeholder, target: !KeyOf canary-v2-stamp-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}

@@ -51,6 +51,8 @@ class ContinuationContract(unittest.TestCase):
         expected = (
             "apiVersion: v1\ndata:\n  sproyt-email-recovery.yaml: |\n"
             + textwrap.indent(BLUEPRINT.read_text(encoding="utf-8"), "    ")
+            + "  sproyt-invitation-canary-v2.yaml: |\n"
+            + textwrap.indent((BLUEPRINT.parent / "sproyt-invitation-canary-v2.yaml").read_text(encoding="utf-8"), "    ")
             + "  sproyt-invitation-canary.yaml: |\n"
             + textwrap.indent((BLUEPRINT.parent / "sproyt-invitation-canary.yaml").read_text(encoding="utf-8"), "    ")
             + "  sproyt-invitation-production.yaml: |\n"

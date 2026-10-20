@@ -186,6 +186,8 @@ jobs:
           python3 tools/test-enrollment-continuation.py
           python3 tools/test-invitation-canary.py
           python3 tools/test-invitation-production.py
+          python3 -m pip install -r tools/requirements-authentik-tests.txt
+          python3 tools/test-invitation-canary-v2.py
 
       - name: Validate production rollout verifier
         run: bash tools/test-production-rollout-verifier.sh

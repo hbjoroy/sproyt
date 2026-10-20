@@ -81,6 +81,9 @@ Authentik consumes its invitation at its first stage, so an interrupted
 registration or wrong-account authentication may require a fresh invitation.
 An abandoned new registration can leave an inactive placeholder account; a new
 invitation does not silently activate or reset that existing account.
+The separate [Canary V2 recovery slice](invitation-recovery-canary-v2.md) adds
+proof-bound resumption only for newly marked V2 placeholders. This original flow
+and the production mirror retain their existing behavior for outstanding links.
 The local token is not consumed on a failed email match. The new-account email
 recheck reduces the race with another registration but does not add a new global
 unique-email database constraint. Account matching uses signed verified email,
