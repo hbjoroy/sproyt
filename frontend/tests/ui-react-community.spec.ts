@@ -236,7 +236,7 @@ for (const width of [1280, 390]) test(`new direct message is discoverable before
   await expect(preview.locator(".sp-context")).toContainText(peerName);
   if (width === 390) await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
   await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("");
-  await preview.getByRole("button", { name: /^# general/ }).click();
+  await preview.getByRole("button", { name: /^# General/ }).click();
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("utkast før ny direktemelding");
 });
 
