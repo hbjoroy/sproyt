@@ -1,5 +1,70 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+async function enterDirect(page: Page, participant: string) {
+  await page.goto(`/?participant=${participant}&ui=react`);
+  const preview = page.locator("#sproyt-react-preview");
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15_000 });
+  return preview;
+}
+
+for (const width of [1280, 390]) test(`new direct message is discoverable before any DM at ${width}px`, async ({ page, context }, testInfo) => {
+  // Two real users plus native modal/retry interactions are slower in Windows WebKit.
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width, height: 844 });
+  await page.emulateMedia({ colorScheme: width === 390 ? "dark" : "light" });
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    let rejected = false;
+    window.WebSocket = class extends NativeWebSocket {
+      send(data: string) {
+        const command = JSON.parse(data);
+        if (command.type === "open_direct_channel" && !rejected) {
+          rejected = true;
+          setTimeout(() => this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({
+            protocol: "sproyt.chat.v1", request_id: command.request_id, type: "error",
+            payload: { code: "validation_error", message: "Direktemeldinga feila, prøv igjen" }
+          }) })), 30);
+        } else super.send(data);
+      }
+    };
+  });
+  const suffix = `${width}-${Date.now()}`;
+  const peer = await context.newPage();
+  const peerName = `new-dm-peer-${suffix}`;
+  await enterDirect(peer, peerName);
+  const preview = await enterDirect(page, `new-dm-owner-${suffix}`);
+  await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast før ny direktemelding");
+  if (width === 390) await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  await expect(preview.locator('[data-conversation-group="scope:direct"]')).toHaveCount(0);
+  const action = preview.getByRole("button", { name: "Ny direktemelding", exact: true });
+  await expect(action).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("new-direct-message.png") });
+  await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("ingen treff her");
+  await action.focus();
+  await page.keyboard.press("Enter");
+  const people = preview.getByRole("dialog", { name: "Personar og ny direktemelding" });
+  await expect(people.getByRole("searchbox", { name: "Finn person" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(action).toBeFocused();
+  await action.click();
+  await people.getByRole("searchbox", { name: "Finn person" }).fill(peerName);
+  const start = people.getByRole("button", { name: `Start samtale med ${peerName}` });
+  await start.click();
+  await expect(people).toContainText("Direktemeldinga feila, prøv igjen");
+  await expect(people.getByRole("searchbox", { name: "Finn person" })).toHaveValue(peerName);
+  await expect(preview.getByRole("textbox", { name: "Skriv melding", includeHidden: true })).toHaveValue("utkast før ny direktemelding");
+  await start.click();
+  await expect(people).toHaveCount(0);
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeVisible();
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("");
+  await expect(preview.locator(".sp-context")).toContainText(peerName);
+  if (width === 390) await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("");
+  await preview.getByRole("button", { name: /^# General/ }).click();
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("utkast før ny direktemelding");
+});
+
+
 test("touch navigation exposes Felles actions, restores modal focus and preserves the channel draft", async ({ browser, baseURL }) => {
   const context = await browser.newContext({ baseURL, serviceWorkers: "block", viewport: { width: 320, height: 568 }, hasTouch: true, isMobile: true });
   try {
