@@ -4,6 +4,8 @@ Dato: 24. oktober 2026. Status: arkitekturforslag og gjennomføringsplan, revide
 
 Sprøyt skal kjennast rask, sosial og enkel på Android, iOS, Windows, macOS og Linux. Plattformene deler identitet, innhald, leveringsreglar og designmeining, medan grensesnitt og systemintegrasjonar er native. Android blir første brukbare klient; små iOS- og Windows-prøver skal avsløre feil i fellesarkitekturen tidleg.
 
+Den konkrete rekkjefølgja, avhengigheitene og testportane er utdjupa i [implementasjonsplanen](native-client-implementation-plan.md), [identitetsavgjerda](native-client-identity-adr.md) og [synkroniseringsavgjerda](native-client-sync-adr.md).
+
 Ambisjonen frå tidleg WhatsApp blir omsett til låg friksjon, lite bakgrunnsarbeid og målbar kostnad per aktiv brukar. Han er ikkje ein dokumentert kapasitetsgaranti for Sprøyt. Kapasitet må skilje mellom registrerte brukarar, aktive brukarar, samtidige einingar, fanout, meldingar og media.
 
 ## 1. Produktløftet
@@ -60,9 +62,11 @@ Første retning er serverformidla mobilinnlogging som bevarer dagens Authentik-p
 
 Ingen klienthemmelegheit i appen, ingen kopiering av nettlesarcookie til appen og ingen varige token i URL-ar. Appøkter får avgrensa levetid og kontrollert fornying. Backend må ha éin autentiseringsgrense for appøkter på HTTP, WS, SSE, kommandoar og media, før dei same eksisterande tilgangskontrollane blir brukte. Utlogging og tilbakekalling må også avslutte sanntid og stoppe nye overføringar.
 
-Credential Manager/passnøklar, Google-innlogging og lokal biometrisk opplåsing er ulike val. Valet av telefoninnlogging er framleis ei produktavklaring; vi skal ikkje føresetje at Google-kontoen på telefonen er Sprøyt-kontoen. Dagens OIDC-flyt kan bruke passnøklar dersom Authentik-oppsettet er gjort klart for det. Direkte Credential Manager-integrasjon krev dokumentert serverstøtte, rett RP-domene og Digital Asset Links. Kontoar blir aldri automatisk slått saman berre fordi e-postadressene er like.
+Avklart produktretning er passnøkkel ved innlogging, direkte opning til dagleg og valfri lokal applås. Vi skal ikkje føresetje at Google-kontoen på telefonen er Sprøyt-kontoen. Dagens OIDC-flyt kan bruke passnøklar dersom Authentik-oppsettet er gjort klart for det. Direkte Credential Manager-integrasjon krev framleis dokumentert serverstøtte, rett RP-domene og Digital Asset Links. Kontoar blir aldri automatisk slått saman berre fordi e-postadressene er like.
 
 Onboarding: invitasjon → krets og inviterande person → synleg aktiv konto / vel annan konto → eksisterande konto eller registrering → stadfesta medlemskap → rett samtale. Avbrot, utgått invitasjon, allereie medlem, feil konto og app som enno ikkje er installert må vere uttrykkelege testscenario.
+
+Gjenoppretting via kontoens stadfesta e-post er også vald, med varsling til eksisterande einingar og moglegheit til å tilbakekalle ein telefon. Det krev ei ny bevist Authentik-policy: dagens dokumenterte recovery krev MFA og dekkjer ikkje mista telefon og einaste passnøkkel. Gamle provider-, browser- og native økter må få dokumentert handsaming; sjå ADR N01.
 
 ### 3.4 Synkronisering må dekke endringar, ikkje berre nye meldingar
 
