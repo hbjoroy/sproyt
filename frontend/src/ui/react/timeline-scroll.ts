@@ -6,6 +6,8 @@ export interface TimelineScrollModel {
   readonly error?: string;
   readonly messageSequences?: readonly number[];
   readonly initialReadSequence?: number;
+  /** A never-read channel opens near recent roots; saved positions still win. */
+  readonly initialUnreadLimit?: number;
   readonly waitingForLink?: boolean;
   readonly revealMessageId?: string | null;
 }
@@ -41,7 +43,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   const nearEdge = options.nearEdge ?? 80;
   const positions = new Map<string, ReadingPosition>();
   const openingReadSequences = new Map<string, number>();
-  let opening: { position: ReadingPosition | null; readSequence: number } | null = null;
+  let opening: { position: ReadingPosition | null; readSequence: number; unreadLimit?: number } | null = null;
   let viewport: HTMLElement | null = null;
   let model: TimelineScrollModel = { key: null, messageIds: [] };
   let pending: PendingRestore | null = null;
@@ -191,8 +193,11 @@ export function createTimelineScrollController(options: TimelineScrollController
         followBottom = (capture()?.distanceFromBottom ?? Infinity) <= nearEdge;
       } else if (!target && model.initialReadSequence !== undefined) {
         const sequences = model.messageSequences ?? [];
-        if (model.hasOlder && (sequences[0] ?? Infinity) > opening.readSequence) { requestOlder(); return; }
-        const unread = model.messageIds.find((_, index) => sequences[index]! > opening!.readSequence);
+        const limit = opening.readSequence === 0 ? opening.unreadLimit : undefined;
+        if (model.hasOlder && (limit ? model.messageIds.length < limit
+          : (sequences[0] ?? Infinity) > opening.readSequence)) { requestOlder(); return; }
+        const unread = limit ? model.messageIds[Math.max(0, model.messageIds.length - limit)]
+          : model.messageIds.find((_, index) => sequences[index]! > opening!.readSequence);
         if (unread) { scrollToMessage(unread, true); followBottom = false; }
         else { scrollToBottom(); followBottom = true; }
       } else { scrollToBottom(); followBottom = true; }
@@ -375,7 +380,8 @@ export function createTimelineScrollController(options: TimelineScrollController
     if (keyChanged) {
       clampedAnchor = false;
       scrollIntent = false;
-      opening = next.key ? { position: stored, readSequence: next.initialReadSequence ?? 0 } : null;
+      opening = next.key ? { position: stored, readSequence: next.initialReadSequence ?? 0,
+        unreadLimit: next.initialUnreadLimit } : null;
       if (next.key && !openingReadSequences.has(next.key)) openingReadSequences.set(next.key, next.initialReadSequence ?? 0);
     }
     // Several host publications can be coalesced into one concurrent React

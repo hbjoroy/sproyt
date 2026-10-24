@@ -11,6 +11,13 @@ Plassering ved opning har denne prioriteten:
 3. Ei ny økt brukar lesesekvensen ved opning og viser første uleste rotmelding
    med inntil 120 px kontekst. Når alt er lese, viser ho siste melding.
 
+Ein kanal utan lesemarkør opnar ved dei siste 20 synlege rotmeldingane. Klienten
+lastar berre nok eldre sider til å finne dette vindauget, også når dei nyaste
+sidene berre inneheld svar eller sletta meldingar. Eldre historikk kan framleis
+lastast ved å rulle opp. Lagra posisjonar, meldingslenkjer og etablerte
+lesemarkørar har forrang. Ingen markør blir flytta før plassering og synleg
+måling; den vanlege kumulative kvitteringa omfattar også tidlegare historikk.
+
 Det valde opningsmålet står fast under lasting, kanalbyte og endringar frå ein
 annan klient. Klienten lastar eldre sider til målet og konteksten finst, eller
 til den faktiske starten er nådd. Tomme renderingar, svar utan røter og seint

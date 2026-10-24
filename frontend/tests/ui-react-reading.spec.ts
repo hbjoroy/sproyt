@@ -195,6 +195,46 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
   };
 }
 
+for (const count of [19, 20, 21, 160]) test(`never-read channel opens at its last 20 roots out of ${count}, with older history on demand`, async ({ page }) => {
+  const server = readingServer(0, Array.from({ length: count }, (_, index) => root("a", index + 1)));
+  await server.install(page);
+  const target = viewport(page).locator(`[data-message-id="a-${Math.max(1, count - 19)}"]`);
+  await expect(target).toBeVisible();
+  await expect.poll(() => target.evaluate(element => Math.abs(element.getBoundingClientRect().top
+    - element.parentElement!.getBoundingClientRect().top))).toBeLessThan(125);
+  // Initial newest-page loading is allowed; never backfill to sequence zero.
+  expect(server.pages.filter(command => command.payload.before !== undefined)).toHaveLength(0);
+  await expect.poll(() => server.reads.get("a")!).toBeGreaterThan(0);
+  expect(server.reads.get("a")!).toBeLessThan(count);
+  const saved = await anchor(page);
+  server.append("a");
+  await expectAnchor(page, saved);
+  if (count === 160) {
+    await expect(viewport(page).locator('[data-message-id="a-1"]')).toHaveCount(0);
+    await viewport(page).evaluate(element => { element.dispatchEvent(new Event("wheel")); element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+    await expect.poll(() => server.pages.filter(command => command.payload.before !== undefined).length).toBeGreaterThan(0);
+  }
+});
+
+test("never-read channel pages through reply-only and deleted tails only far enough for 20 roots", async ({ page }) => {
+  const messages = Array.from({ length: 160 }, (_, index) => root("a", index + 1));
+  messages.push(...Array.from({ length: 100 }, (_, index) => ({ ...root("a", 161 + index),
+    parent_message_id: index < 50 ? "a-160" : null, deleted_at: index >= 50 ? "2025-01-02T00:00:00Z" : null })));
+  const server = readingServer(0, messages);
+  server.hold(true);
+  await server.install(page);
+  expect(server.acknowledgements).toHaveLength(0);
+  server.release();
+  const target = viewport(page).locator('[data-message-id="a-141"]');
+  await expect(target).toBeVisible();
+  await expect.poll(() => target.evaluate(element => element.getBoundingClientRect().top
+    - element.parentElement!.getBoundingClientRect().top)).toBeLessThan(125);
+  await expect(viewport(page).locator('[data-message-id="a-1"]')).toHaveCount(0);
+  expect(server.pages.length).toBeLessThanOrEqual(4);
+  await expect.poll(() => server.reads.get("a")!).toBeGreaterThan(0);
+  expect(server.reads.get("a")!).toBeLessThan(160);
+});
+
 test("unrelated messages and reactions preserve focused draft, reading anchor and open task details", async ({ page }) => {
   const taskId = "c63ac052-a05a-4b5d-bfff-04429338df90";
   const messages = Array.from({ length: 160 }, (_, index) => root("a", index + 1));

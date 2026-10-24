@@ -61,6 +61,13 @@ function People({ host, channel, onClose, focusMemberAction = false }: { host: C
   const [confirmLeave, setConfirmLeave] = useState(false);
   const op = useOperation();
   const memberField = useRef<HTMLSelectElement>(null);
+  const searchField = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (channel) return;
+    // Dialog.showModal first focuses its close control; focus search afterwards.
+    const frame = requestAnimationFrame(() => searchField.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [channel?.id]);
   const memberActionFocused = useRef(false);
   useEffect(() => {
     if (!focusMemberAction || !loaded || op.busy || memberActionFocused.current) return;
@@ -93,7 +100,7 @@ function People({ host, channel, onClose, focusMemberAction = false }: { host: C
         <Button type="submit" busy={op.busy}>Lagre omtale</Button>
       </form>}
     </section>}
-    <TextField label={channel ? "Finn kanalmedlem" : "Finn person"} type="search" value={query} onChange={event => setQuery(event.target.value)} />
+    <TextField ref={searchField} label={channel ? "Finn kanalmedlem" : "Finn person"} type="search" value={query} onChange={event => setQuery(event.target.value)} />
     <Button onClick={() => void load()} busy={op.busy}>Last personlista på nytt</Button>
     {loaded && <PersonList people={visible.map(person => ({ id: person.id, name: person.display_name, detail: [person.handle ? `@${person.handle}` : "", person.status_emoji, person.status_text].filter(Boolean).join(" · ") }))}
       emptyLabel="Ingen personar passar søket." actions={person => person.id === host.selfId() ? null
