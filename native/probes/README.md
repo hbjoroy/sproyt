@@ -29,17 +29,31 @@ library and managed console, and executes separate managed processes:
 1. **seed** saves a draft, atomically admits it to a durable local outbox, and
    marks dispatch in progress. It then waits with the library/database open.
 2. **busy** proves another process cannot open that same owned database.
-3. The runner forcibly terminates seed after its committed dispatch marker.
+3. The parent retains a SHA-256 of the actual persisted wire payload, then
+   forcibly terminates seed after its committed dispatch marker.
 4. **resume** reopens SQLite, recovers uncertain delivery, exposes the original
    request bytes, rejects changed-payload reuse, and simulates replay and ACK.
    It also installs a synthetic incoming edit.
 5. **verify** starts again, checks persisted ACK, account binding and the
    persisted generation fence after invalidation.
+6. **worker** calls the ordinary native library on a dedicated C# worker
+   thread. Deterministic gates exercise two-slot queue saturation, cancellation
+   before claim and after commit, logout fencing, and draining shutdown with
+   exactly one native close on that worker.
+7. A separate, explicitly enabled diagnostic build pauses a child after outbox
+   insertion, after draft removal before commit, and after commit before the
+   API response. The parent receives and hashes the canonical payload before
+   killing/reaping each child. **fault_verify** checks the recovered state
+   before retry, then verifies one complete admission and the same bytes.
 
 Rust and C# read the same fictional scenario in
 `scenarios/persistence-v1.json`. The Rust test independently compares payload
 before and after close/reopen. The managed runner compares the recovered
-payload with replay; it does not store a separate pre-kill copy of those bytes.
+payload with the independently parent-retained pre-kill hash and with replay.
+The schema-2 receipt records both library hashes, the pre-termination payload
+hash and each recovered crash site. A receipt is emitted only after all phases
+pass. The default native library is separately checked to reject diagnostic
+commands; the `fault-injection` feature is disabled by default.
 
 ## Deliberate boundaries
 
@@ -52,9 +66,9 @@ payload with replay; it does not store a separate pre-kill copy of those bytes.
   events do not enter `Uncertain` after a process restart; this probe's storage
   adapter explicitly owns that recovery transition.
 - SQLite has exclusive ownership while open. The process registry serializes
-  all calls, including close. This is a proof restriction, not a production
-  scheduling, cancellation, multi-process or UI-thread design. All calls are
-  synchronous and must stay off UI threads.
+  all calls, including close. Native calls remain synchronous. The C# lifecycle
+  probe keeps them on one dedicated worker; this is not a WinUI dispatcher,
+  a production scheduler or a multi-process architecture decision.
 - Schema handling creates v1, reopens it and rejects unsupported versions.
   There is no older-schema migration, full sync cursor, retention/replay-age
   policy, or account reactivation flow here.
@@ -65,11 +79,38 @@ payload with replay; it does not store a separate pre-kill copy of those bytes.
 - Dispatch and acknowledgement are simulated locally. There is no server
   deduplication or exactly-once delivery proof. Recovery after a forced process
   exit does not establish power-loss or storage-controller durability.
-- The write-failure test uses SQLite `query_only=ON` (read-only failure), not a
-  physically full disk, `SQLITE_FULL` or a commit-time I/O fault.
+- Rust tests cover read-only failure, injected errors between transaction
+  operations and after commit, and a real commit failure from a deferred
+  foreign-key constraint. The last test proves the pre-commit site is reached
+  before allowing SQLite itself to reject commit. These are not physically
+  full disk, `SQLITE_FULL`, or commit-time I/O fault tests.
 - Invalidation removes logical rows and persists an inactive generation; it
   is not secure file erasure. Key storage, encrypted caches and native privacy
   UI have not been implemented.
+
+## Worker lifecycle contract
+
+`managed/ProbeWorker.cs` admits at most two pending delegates plus the running
+operation; saturation immediately faults the returned task. It never waits for
+queue capacity. A canceled pending delegate is never executed, but still holds
+its queue slot until drained. Execution is claimed under the same gate as
+logout, before the delegate enters P/Invoke. Once claimed, cancellation cannot
+hide the actual result or exception. The tests gate both sides of that boundary.
+
+`BeginLogout` immediately closes admission and rejects queued delegates; its
+single control-barrier slot invalidates the native generation after already
+running work finishes. Logout does not cancel a native transaction halfway
+through. Normal `CloseAsync` closes admission, drains admitted work and closes
+the native handle exactly once on its worker. Repeated disposal shares that
+completion. A failed logout must be observed by the caller, not reported as
+successful. These are local lifecycle semantics, not remote session revocation.
+
+Diagnostic `arm_fault` requests target the next decoded `enqueue` attempt on
+that handle. Validation or an idempotent duplicate fast path consumes the
+one-shot hook even when the chosen site is not reached. A post-commit error is
+an **unknown acknowledgement**, never evidence of rollback. Retrying uses the
+same request ID and payload. Diagnostic pauses intentionally never return; the
+runner has a bounded marker deadline and kills/reaps its own child on failure.
 
 ## Small C ABI
 

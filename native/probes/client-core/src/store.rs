@@ -10,6 +10,8 @@ pub type Result<T> = std::result::Result<T, &'static str>;
 
 pub struct Store {
     connection: Connection,
+    #[cfg(any(test, feature = "fault-injection"))]
+    fault: Option<crate::fault::Fault>,
 }
 
 fn db<T>(result: rusqlite::Result<T>) -> Result<T> {
@@ -43,6 +45,7 @@ impl Store {
         }
         let mut connection = db(Connection::open(path))?;
         db(connection.busy_timeout(Duration::from_millis(250)))?;
+        db(connection.pragma_update(None, "synchronous", "FULL"))?;
         // A probe has one owner, even across processes. This is deliberately
         // not a production concurrency or multi-process architecture decision.
         db(connection.pragma_update(None, "locking_mode", "EXCLUSIVE"))?;
@@ -84,8 +87,11 @@ impl Store {
             [],
         ))?;
         db(tx.commit())?;
-        db(connection.pragma_update(None, "synchronous", "FULL"))?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            #[cfg(any(test, feature = "fault-injection"))]
+            fault: None,
+        })
     }
 
     fn transaction(&mut self, generation: u64) -> Result<Transaction<'_>> {
@@ -118,6 +124,10 @@ impl Store {
     }
 
     pub fn enqueue(&mut self, generation: u64, id: &str, channel: &str, body: &str) -> Result<()> {
+        // One-shot means the next decoded enqueue attempt, even if validation
+        // or duplicate-ID checks return before the chosen site is reached.
+        #[cfg(any(test, feature = "fault-injection"))]
+        let fault = self.fault.take();
         identifier(id)?;
         identifier(channel)?;
         text(body)?;
@@ -150,12 +160,29 @@ impl Store {
             "insert into outbox values(?1,?2,?3,'queued')",
             params![id, channel, payload],
         ))?;
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::fault::hit(fault.as_ref(), crate::fault::Site::AfterInsert, &payload)?;
         // Journal first; clearing the matching draft belongs to the same commit.
         db(tx.execute(
             "delete from drafts where channel=?1 and body=?2",
             params![channel, body],
         ))?;
-        db(tx.commit())
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::fault::hit(fault.as_ref(), crate::fault::Site::BeforeCommit, &payload)?;
+        db(tx.commit())?;
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::fault::hit(fault.as_ref(), crate::fault::Site::AfterCommit, &payload)?;
+        Ok(())
+    }
+
+    #[cfg(any(test, feature = "fault-injection"))]
+    pub fn arm_fault(&mut self, generation: u64, fault: crate::fault::Fault) -> Result<()> {
+        drop(self.transaction(generation)?);
+        if self.fault.is_some() {
+            return Err("fault_already_armed");
+        }
+        self.fault = Some(fault);
+        Ok(())
     }
 
     pub fn delivery(&mut self, generation: u64, id: &str, action: &str) -> Result<()> {
