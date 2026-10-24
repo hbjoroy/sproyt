@@ -55,14 +55,21 @@ Lokal native ARM64-prøve på Windows med 200 % skalering har verifisert:
   sending går og feil etter at lagringsadapteren er disponert.
 - Appen sitt native WinUI-kontrolltre: 60 materialiserte TextBlock-kontrollar
   med 1 000 meldingar per kanal, stabil tekstkontroll/markør ved autosave,
-  kanalutkast, leseposisjon, faktiske lyse/mørke penslar, UI-sending, kompakt
-  vindauge og siste tekst lagra ved umiddelbar avslutting.
+  kanalutkast, leseposisjon ved fleire og raske kanalbyte, faktiske
+  lyse/mørke penslar, UI-sending, minimumsbreidda 360 DIP og siste tekst lagra
+  ved umiddelbar avslutting.
 
 Runneren krev både vellukka UI-kvittering, native `Closed`-hending etter
 lagringslukking og prosessavslutting med kode 0. Hosted Windows x64 køyrer same
 runner i `Native interoperability probe`; CI-kvitteringa, ikkje eit ARM64-bygg,
 er evidensen for x64. Kvitteringar inneheld revisjon, rein/endra kjeldestatus,
 arkitektur og hash av exe, DLL og den nødvendige samanslåtte ressursindeksen.
+
+Første x64-køyring avdekte at kollaps av eit virtualisert viewport kan flytte
+leseposisjonen. Kanalbyte fangar no posisjonen før kollaps og gjenopprettar
+etter faktisk måling, med generasjonsgjerde og avgrensa venting. Ny navigasjon,
+lukking eller brukarinput i historikken avbryt utsett restaurering. Berre
+første reelle vising utan lagra posisjon rullar til botnen.
 
 Den lokale UI-automatiseringa kunne lese kontrolltreet, men kunne ikkje
 aktivere det fanga vindauget. Derfor er fysisk tastatur/IME, touch,

@@ -21,8 +21,13 @@ internal sealed class PilotComponent : Component
     internal static FrameworkElement? RootForClose;
     internal static TextBox? EditorForClose;
     internal static Action? InvalidateForClose;
+    internal static Func<bool>? ReadingPositionSettledForProbe;
     private readonly Dictionary<string, (string Key, IReadOnlyList<TimelineMessage> Rows)> _timelines = [];
     private readonly Dictionary<string, ScrollViewer> _scrollers = [];
+    private readonly Dictionary<string, double> _readingOffsets = [];
+    private string _activeChannel = "prat";
+    private string? _restoringChannel;
+    private int _navigationGeneration;
     private int _revision;
 
     public override Element Render()
@@ -59,7 +64,18 @@ internal sealed class PilotComponent : Component
         bool canSend = state.Ready && !Program.CloseAdmissionClosed && !state.Closing && !state.Terminal && !state.Sending && !state.NeedsRetry &&
             !string.IsNullOrWhiteSpace(draft.Body) && Encoding.UTF8.GetByteCount(draft.Body) <= 1024 && state.Outbox.Count < 8;
 
-        void Select(string id) { if (!Program.CloseAdmissionClosed) { selectChannel(id); setShowList(false); } }
+        void Select(string id)
+        {
+            if (Program.CloseAdmissionClosed) return;
+            if (conversationVisible) SaveReadingPosition();
+            if (id != _activeChannel)
+            {
+                _activeChannel = id;
+                selectChannel(id);
+            }
+            setShowList(false);
+            QueueRestore(id);
+        }
         Task EnqueueCurrent() => canSend ? Program.Workspace.SendAsync(channel) : Task.FromException(new InvalidOperationException("Sending is unavailable."));
         async void Send()
         {
@@ -72,6 +88,7 @@ internal sealed class PilotComponent : Component
             SelectForProbe = Select;
             ThemeForProbe = setDark;
             SendForProbe = EnqueueCurrent;
+            ReadingPositionSettledForProbe = () => _restoringChannel is null;
         }
         async void Retry()
         {
@@ -111,7 +128,7 @@ internal sealed class PilotComponent : Component
             .Grid(column: 0, columnSpan: wide ? 1 : 2);
 
         var context = Grid([GridSize.Auto, GridSize.Star(), GridSize.Auto], [GridSize.Auto],
-            Button("←", () => { if (!Program.CloseAdmissionClosed) setShowList(true); }).FontSize(22).Size(44, 44)
+            Button("←", () => { if (!Program.CloseAdmissionClosed) { SaveReadingPosition(); CancelRestore(_activeChannel); setShowList(true); } }).FontSize(22).Size(44, 44)
                 .AutomationId("conversations").AutomationName("Vis samtalar").ToolTip("Samtalar")
                 .IsVisible(!wide).Margin(0, 0, 12, 0).Grid(column: 0),
             VStack(3,
@@ -120,7 +137,7 @@ internal sealed class PilotComponent : Component
             ).Grid(column: 1),
             HStack(12,
                 TextBlock(state.Terminal ? "Lagringsdelen er lukka" : state.Closing ? "Lagrar og lukkar …" : dirty ? "Lagrar utkast …" : "● Lokalt lagra")
-                    .AutomationId("draft-status").FontSize(12).Foreground(muted).VAlign(VerticalAlignment.Center),
+                    .AutomationId("draft-status").FontSize(12).Foreground(muted).VAlign(VerticalAlignment.Center).IsVisible(wide),
                 Button("◐", () => { if (!Program.CloseAdmissionClosed) setDark(!dark); }).Size(44, 44).FontSize(22)
                     .AutomationId("toggle-theme").AutomationName("Byt mellom lyst og mørkt tema").ToolTip("Byt tema")
             ).Grid(column: 2)
@@ -146,12 +163,14 @@ internal sealed class PilotComponent : Component
                 loaded = (_, _) =>
                 {
                     scroller.Loaded -= loaded;
-                    scroller.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
-                        () => scroller.ChangeView(null, scroller.ScrollableHeight, null, true));
+                    if (id == _activeChannel) QueueRestore(id);
                 };
                 scroller.Loaded += loaded;
+                scroller.PointerPressed += (_, _) => CancelRestore(id);
+                scroller.PointerWheelChanged += (_, _) => CancelRestore(id);
+                scroller.KeyDown += (_, _) => CancelRestore(id);
             })
-            .OnUnmount(_ => _scrollers.Remove(id))
+            .OnUnmount(_ => { _scrollers.Remove(id); CancelRestore(id); })
             .IsVisible(channel == id).WithKey("timeline-" + id);
 
         var history = Grid([GridSize.Star()], [GridSize.Star()], Timeline("prat"), Timeline("idear"));
@@ -193,7 +212,7 @@ internal sealed class PilotComponent : Component
                 .IsEnabled(canSend).AutomationId("queue-message").AutomationName("Lagre meldinga lokalt")
                 .ToolTip("Lagre lokalt · Ctrl+Enter").Grid(column: 1),
             Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
-                TextBlock("Ctrl+Enter lagrar · Enter gir ny linje").FontSize(11).Foreground(muted).Grid(column: 0),
+                TextBlock("Ctrl+Enter lagrar · Enter gir ny linje").FontSize(11).Foreground(muted).IsVisible(wide).Grid(column: 0),
                 TextBlock($"{state.Outbox.Count}/8 i lokal prøvekø").FontSize(11).Foreground(muted).Grid(column: 1)
             ).Margin(2, 6, 0, 0).Grid(row: 1, columnSpan: 2)
         )).Padding(12).BorderThickness(new Thickness(0, 2, 0, 0)).BorderBrush(rule);
@@ -207,6 +226,59 @@ internal sealed class PilotComponent : Component
             .OnMount(element => { RootForClose = element; UiProbe.Attach(element); })
             .OnUnmount(element => { if (ReferenceEquals(RootForClose, element)) RootForClose = null; })
             .AutomationId("sproyt-root");
+    }
+
+    private void SaveReadingPosition()
+    {
+        if (_restoringChannel != _activeChannel && _scrollers.TryGetValue(_activeChannel, out var previous)
+            && previous.Visibility == Visibility.Visible && previous.ViewportHeight > 0)
+            _readingOffsets[_activeChannel] = previous.VerticalOffset;
+    }
+
+    private void CancelRestore(string id)
+    {
+        if (_restoringChannel != id) return;
+        _restoringChannel = null;
+        _navigationGeneration++;
+    }
+
+    private void QueueRestore(string id)
+    {
+        _restoringChannel = id;
+        int generation = ++_navigationGeneration;
+        if (!_scrollers.TryGetValue(id, out var scroller) ||
+            !scroller.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                () => RestorePosition(id, scroller, generation)))
+            if (generation == _navigationGeneration) _restoringChannel = null;
+    }
+
+    private async void RestorePosition(string id, ScrollViewer scroller, int generation)
+    {
+        // Collapsing an ItemsRepeater's viewport can change its measured extent.
+        // Wait for actual layout; callbacks from older navigation cannot win.
+        // The bounded retry is per navigation, never per keystroke. User input
+        // into the scroller cancels it, so restoration cannot fight scrolling.
+        try
+        {
+            int settled = 0;
+            for (int attempt = 0; attempt < 60; attempt++)
+            {
+                await Task.Delay(16);
+                if (generation != _navigationGeneration || id != _activeChannel || Program.CloseAdmissionClosed
+                    || !_scrollers.TryGetValue(id, out var mounted) || !ReferenceEquals(mounted, scroller)) return;
+                if (scroller.Visibility != Visibility.Visible || scroller.ViewportHeight <= 0 || scroller.ScrollableHeight <= 0) continue;
+                double target = _readingOffsets.TryGetValue(id, out var saved) ? saved : scroller.ScrollableHeight;
+                if (scroller.ScrollableHeight + 1 < target) continue;
+                if (Math.Abs(scroller.VerticalOffset - target) < 2)
+                {
+                    if (++settled < 2) continue;
+                    return;
+                }
+                settled = 0;
+                scroller.ChangeView(null, target, null, true);
+            }
+        }
+        finally { if (generation == _navigationGeneration) _restoringChannel = null; }
     }
 
     private IReadOnlyList<TimelineMessage> TimelineRows(string channel, IReadOnlyList<QueuedMessage> outbox)

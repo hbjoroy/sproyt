@@ -55,15 +55,26 @@ internal static class UiProbe
             await Until(() => Find<TextBox>(root, "composer").Text == first);
 
             var scroller = Find<ScrollViewer>(root, "timeline-prat");
+            await Until(() => PilotComponent.ReadingPositionSettledForProbe!());
             scroller.ChangeView(null, 300, null, true);
-            await Until(() => scroller.VerticalOffset > 200);
+            await Until(() => Math.Abs(scroller.VerticalOffset - 300) < 2);
             double readingOffset = scroller.VerticalOffset;
             PilotComponent.SelectForProbe!("idear");
             await Until(() => Find<TextBox>(root, "composer").Text == "Eit eige idéutkast");
             PilotComponent.SelectForProbe!("prat");
             await Until(() => Find<TextBox>(root, "composer").Text == first);
-            Check(ReferenceEquals(scroller, Find<ScrollViewer>(root, "timeline-prat")) &&
-                Math.Abs(scroller.VerticalOffset - readingOffset) < 2, "Channel switching lost reading position.");
+            await Until(() => PilotComponent.ReadingPositionSettledForProbe!() && scroller.Visibility == Visibility.Visible
+                && Math.Abs(scroller.VerticalOffset - readingOffset) < 2);
+            Check(ReferenceEquals(scroller, Find<ScrollViewer>(root, "timeline-prat")), "Channel switching replaced the scroller.");
+            scroller.ChangeView(null, 650, null, true);
+            await Until(() => Math.Abs(scroller.VerticalOffset - 650) < 2);
+            PilotComponent.SelectForProbe!("idear");
+            await Until(() => Find<TextBox>(root, "composer").Text == "Eit eige idéutkast");
+            PilotComponent.SelectForProbe!("prat");
+            await Until(() => PilotComponent.ReadingPositionSettledForProbe!() && Math.Abs(scroller.VerticalOffset - 650) < 2);
+            PilotComponent.SelectForProbe!("idear");
+            PilotComponent.SelectForProbe!("prat");
+            await Until(() => PilotComponent.ReadingPositionSettledForProbe!() && Math.Abs(scroller.VerticalOffset - 650) < 2);
 
             PilotComponent.ThemeForProbe!(false);
             await Until(() => root.RequestedTheme == ElementTheme.Light);
@@ -77,7 +88,7 @@ internal static class UiProbe
             await Until(() => Find<TextBox>(root, "composer").Text == "" && Program.Workspace.State.Outbox.Count == 1);
             Check(Program.Workspace.State.Outbox[0].Body == first, "The UI binding changed queued content.");
 
-            window.SetSize(620, 720);
+            window.SetSize(360, 720);
             await Until(() => root.ActualWidth < 800 && Find<Button>(root, "conversations").Visibility == Visibility.Visible);
             Check(Find<TextBox>(root, "composer").ActualWidth > 200, "Compact layout left no room to write.");
             Find<TextBox>(root, "composer").Text = "Dette skal vente etter avslutting";
@@ -96,6 +107,7 @@ internal static class UiProbe
                 passed = true, architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
                 materializedTextBlocks = materialized, syntheticMessagesPerChannel = 1000,
                 rasterizationScale = root.XamlRoot.RasterizationScale,
+                compactWidthDip = root.ActualWidth,
                 checks = new[] { "native WinUI tree", "virtualization", "editor identity and selection", "independent drafts",
                     "reading position", "light and dark semantic brushes", "UI enqueue binding", "compact layout", "flush and reopen" },
                 notTested = new[] { "physical keyboard and IME", "touch", "screen reader", "visual screenshot approval", "production" },
