@@ -306,3 +306,180 @@ fn escaped_text_and_item_limits_keep_snapshot_inside_the_abi_bound() {
         Err("text_too_large")
     );
 }
+
+#[test]
+fn failures_between_insert_draft_removal_and_commit_roll_back_together() {
+    use crate::fault::{Fault, Mode, Site};
+    for site in [Site::AfterInsert, Site::BeforeCommit] {
+        let fixture = Fixture::new();
+        let mut store = Store::open(&fixture.database, "fixture-alice").unwrap();
+        store.save_draft(1, "channel", "Bevar utkastet").unwrap();
+        store
+            .arm_fault(
+                1,
+                Fault {
+                    site,
+                    mode: Mode::Error,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store.enqueue(1, "request", "channel", "Bevar utkastet"),
+            Err("injected_failure")
+        );
+        assert_eq!(
+            store.snapshot().unwrap()["drafts"][0]["body"],
+            "Bevar utkastet"
+        );
+        assert_eq!(store.snapshot().unwrap()["outbox"], json!([]));
+        drop(store);
+        let mut reopened = Store::open(&fixture.database, "fixture-alice").unwrap();
+        assert_eq!(reopened.snapshot().unwrap()["outbox"], json!([]));
+        assert_eq!(
+            reopened.snapshot().unwrap()["drafts"][0]["body"],
+            "Bevar utkastet"
+        );
+        reopened
+            .enqueue(1, "request", "channel", "Bevar utkastet")
+            .unwrap();
+        assert_eq!(
+            reopened.snapshot().unwrap()["outbox"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn lost_api_result_after_commit_preserves_one_admission() {
+    use crate::fault::{Fault, Mode, Site};
+    let fixture = Fixture::new();
+    let mut store = Store::open(&fixture.database, "fixture-alice").unwrap();
+    store.save_draft(1, "channel", "Send meg").unwrap();
+    store
+        .arm_fault(
+            1,
+            Fault {
+                site: Site::AfterCommit,
+                mode: Mode::Error,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.enqueue(1, "request", "channel", "Send meg"),
+        Err("injected_unknown_outcome")
+    );
+    assert_eq!(store.snapshot().unwrap()["drafts"], json!([]));
+    let payload = store.snapshot().unwrap()["outbox"][0]["payload"].clone();
+    drop(store);
+    let mut reopened = Store::open(&fixture.database, "fixture-alice").unwrap();
+    reopened
+        .enqueue(1, "request", "channel", "Send meg")
+        .unwrap();
+    let snapshot = reopened.snapshot().unwrap();
+    assert_eq!(snapshot["outbox"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["outbox"][0]["payload"], payload);
+}
+
+#[test]
+fn actual_deferred_commit_failure_restores_draft_and_leaves_connection_usable() {
+    use crate::fault::{Fault, Mode, Site};
+    let fixture = Fixture::new();
+    let mut store = Store::open(&fixture.database, "fixture-alice").unwrap();
+    store
+        .save_draft(1, "channel", "Commit må vere atomisk")
+        .unwrap();
+    store.execute_test_sql("PRAGMA foreign_keys=ON;
+        create table fault_parent(id integer primary key);
+        create table fault_child(parent_id integer references fault_parent(id) deferrable initially deferred);
+        create trigger fail_commit after insert on outbox begin insert into fault_child values(99); end;");
+    // Reaching this diagnostic point proves the violation was deferred, and
+    // both insertion and draft removal completed before the commit boundary.
+    store
+        .arm_fault(
+            1,
+            Fault {
+                site: Site::BeforeCommit,
+                mode: Mode::Error,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.enqueue(1, "request", "channel", "Commit må vere atomisk"),
+        Err("injected_failure")
+    );
+    assert_eq!(
+        store.enqueue(1, "request", "channel", "Commit må vere atomisk"),
+        Err("storage_error")
+    );
+    assert_eq!(
+        store.snapshot().unwrap()["drafts"][0]["body"],
+        "Commit må vere atomisk"
+    );
+    assert_eq!(store.snapshot().unwrap()["outbox"], json!([]));
+    // A readable snapshot alone would not prove that the failed commit left
+    // the connection able to start and commit another write transaction.
+    store
+        .save_draft(1, "write-after-failure", "Connection remains writable")
+        .unwrap();
+    drop(store);
+    let mut reopened = Store::open(&fixture.database, "fixture-alice").unwrap();
+    assert_eq!(reopened.snapshot().unwrap()["outbox"], json!([]));
+    assert_eq!(
+        reopened.snapshot().unwrap()["drafts"][1]["body"],
+        "Connection remains writable"
+    );
+    assert_eq!(
+        reopened.snapshot().unwrap()["drafts"][0]["body"],
+        "Commit må vere atomisk"
+    );
+    reopened.execute_test_sql("drop trigger fail_commit");
+    reopened
+        .enqueue(1, "request", "channel", "Commit må vere atomisk")
+        .unwrap();
+}
+
+#[test]
+fn armed_fault_is_consumed_by_validation_or_duplicate_fast_path() {
+    use crate::fault::{Fault, Mode, Site};
+    let fixture = Fixture::new();
+    let mut store = Store::open(&fixture.database, "fixture-alice").unwrap();
+    store
+        .arm_fault(
+            1,
+            Fault {
+                site: Site::BeforeCommit,
+                mode: Mode::Error,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.enqueue(1, "", "channel", "Hei"),
+        Err("invalid_identifier")
+    );
+    store.enqueue(1, "first", "channel", "Hei").unwrap();
+    store
+        .arm_fault(
+            1,
+            Fault {
+                site: Site::BeforeCommit,
+                mode: Mode::Error,
+            },
+        )
+        .unwrap();
+    store.enqueue(1, "first", "channel", "Hei").unwrap();
+    store.enqueue(1, "second", "channel", "Hei igjen").unwrap();
+}
+
+#[test]
+#[cfg(not(feature = "fault-injection"))]
+fn ordinary_abi_rejects_diagnostic_requests() {
+    assert_eq!(
+        call(
+            json!({"op":"arm_fault","handle":1,"generation":1,"site":"before_commit","mode":"pause"})
+        )["error"],
+        "invalid_request"
+    );
+}

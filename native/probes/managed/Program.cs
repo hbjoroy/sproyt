@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -47,6 +48,7 @@ internal static class Program
 
     private static ulong Open(string path) => Call(new { Op = "open", Database = path, Account }).GetProperty("handle").GetUInt64();
     private static JsonElement Snapshot(ulong handle) => Call(new { Op = "snapshot", Handle = handle });
+    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     private static int Main(string[] args)
     {
@@ -61,8 +63,59 @@ internal static class Program
             NativeLibrary.SetDllImportResolver(Assembly.GetExecutingAssembly(), (name, _, _) =>
                 name == "sproyt_native_probe" ? NativeLibrary.Load(library) : IntPtr.Zero);
             Check(sproyt_probe_abi_version() == 1, "Unexpected ABI version");
-            Check(args.Length == 2 && new[] { "seed", "busy", "resume", "verify" }.Contains(args[0]), "Use seed|busy|resume|verify <test-owned database>");
+            Check(args.Length >= 2 && new[] { "seed", "busy", "resume", "verify", "guard", "fault_seed", "fault_verify", "worker" }.Contains(args[0]), "Supply a supported probe phase and test-owned database");
             string phase = args[0], path = Path.GetFullPath(args[1]);
+            if (phase == "worker")
+            {
+                Check(args.Length == 2, "Worker phase takes only a database");
+                WorkerProbe.Run(Call, path, Account, Channel);
+                return 0;
+            }
+            if (phase == "guard")
+            {
+                Call(new { Op = "arm_fault", Handle = 0, Generation = 1, Site = "after_insert", Mode = "pause" }, "invalid_request");
+                Console.WriteLine("PASS guard: ordinary library rejects diagnostic commands");
+                return 0;
+            }
+            if (phase is "fault_seed" or "fault_verify")
+            {
+                Check(args.Length >= 3 && new[] { "after_insert", "before_commit", "after_commit" }.Contains(args[2]), "Invalid diagnostic site");
+                string site = args[2];
+                if (phase == "fault_seed")
+                {
+                    Check(args.Length == 3 && !File.Exists(path), "Fault seed requires a fresh database");
+                    ulong handle = Open(path);
+                    Call(new { Op = "save_draft", Handle = handle, Generation = 1, Channel, Body });
+                    Call(new { Op = "arm_fault", Handle = handle, Generation = 1, Site = site, Mode = "pause" });
+                    Call(new { Op = "enqueue", Handle = handle, Generation = 1, RequestId, Channel, Body });
+                    throw new InvalidOperationException("Diagnostic hook returned instead of pausing");
+                }
+                Check(args.Length == 4 && args[3].Length == 64, "Fault verification requires the parent-retained payload hash");
+                ulong reopened = Open(path);
+                var snapshot = Snapshot(reopened);
+                // Assert the recovered state BEFORE any retry can conceal it.
+                if (site == "after_commit")
+                {
+                    Check(snapshot.GetProperty("drafts").GetArrayLength() == 0 && snapshot.GetProperty("outbox").GetArrayLength() == 1,
+                        "Committed admission was incomplete");
+                    Check(Hash(snapshot.GetProperty("outbox")[0].GetProperty("payload").GetString()!) == args[3], "Committed bytes changed after termination");
+                }
+                else
+                {
+                    Check(snapshot.GetProperty("outbox").GetArrayLength() == 0 && snapshot.GetProperty("drafts").GetArrayLength() == 1,
+                        "Uncommitted transaction was partly recovered");
+                    Check(snapshot.GetProperty("drafts")[0].GetProperty("body").GetString() == Body, "Rollback lost the draft");
+                }
+                Call(new { Op = "enqueue", Handle = reopened, Generation = 1, RequestId, Channel, Body });
+                Call(new { Op = "enqueue", Handle = reopened, Generation = 1, RequestId, Channel, Body });
+                snapshot = Snapshot(reopened);
+                Check(snapshot.GetProperty("outbox").GetArrayLength() == 1 && snapshot.GetProperty("drafts").GetArrayLength() == 0,
+                    "Retry did not produce exactly one complete local admission");
+                Check(Hash(snapshot.GetProperty("outbox")[0].GetProperty("payload").GetString()!) == args[3], "Retried payload differs from pre-termination bytes");
+                Call(new { Op = "close", Handle = reopened });
+                Console.WriteLine($"PASS transaction: {site}; recovered state verified before same-ID retry");
+                return 0;
+            }
             if (phase == "seed")
             {
                 Check(!File.Exists(path), "Seed refuses to overwrite an existing database.");
@@ -73,6 +126,7 @@ internal static class Program
                 var snapshot = Snapshot(handle);
                 Check(snapshot.GetProperty("drafts").GetArrayLength() == 0, "Draft not atomically cleared");
                 Check(snapshot.GetProperty("outbox")[0].GetProperty("state").GetString() == "dispatching", "No durable dispatch");
+                Console.WriteLine("PROBE_HASH " + Hash(snapshot.GetProperty("outbox")[0].GetProperty("payload").GetString()!));
                 Console.WriteLine("PASS seed: Rust DLL journaled Unicode payload and cleared draft atomically");
                 Console.Out.Flush();
                 // Parent kills this process while its native handle is still open.
@@ -87,11 +141,13 @@ internal static class Program
             }
             else if (phase == "resume")
             {
+                Check(args.Length == 3 && args[2].Length == 64, "Resume requires the independently parent-retained hash");
                 ulong handle = Open(path);
                 var recovered = Snapshot(handle).GetProperty("outbox")[0];
                 Check(recovered.GetProperty("request_id").GetString() == RequestId, "Request identity changed");
                 Check(recovered.GetProperty("state").GetString() == "uncertain", "Interrupted dispatch not uncertain");
                 string wire = recovered.GetProperty("payload").GetString()!;
+                Check(Hash(wire) == args[2], "Persisted bytes differ from pre-kill parent proof");
                 using var payload = JsonDocument.Parse(wire);
                 Check(payload.RootElement.GetProperty("payload").GetProperty("body").GetString() == Body, "Unicode payload changed");
                 Call(new { Op = "enqueue", Handle = handle, Generation = 1, RequestId, Channel, Body = "Changed" }, "request_conflict");

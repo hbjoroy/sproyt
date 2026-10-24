@@ -1,12 +1,18 @@
 # Implementasjonsplan for native Sprøyt
 
-Dato: 24. oktober 2026. Status: plan for gjennomføring, ikkje startordre for implementering eller utrulling. Byggjer på [arkitekturplanen](native-client-architecture-plan.md), produktavklaringar med Harald og arkitekturrevisjon med Astra.
+Dato: 24. oktober 2026. Status: gjennomføring starta for avgrensa N00/N02-prøver; seinare pakkar står framleis som plan. Byggjer på [arkitekturplanen](native-client-architecture-plan.md), produktavklaringar med Harald og arkitekturrevisjon med Astra.
 
 Målet er ein rask Android-klient med ein påliteleg felleskjerne som også er prøvd frå Swift og WinUI. Arbeidet blir små PR-ar som kan vurderast og målast kvar for seg. Ingen ny innlogging eller synkroniseringsprotokoll skal aktiverast før nødvendig serverkode, gamle klientar og tilbakeføring er prøvde.
 
 Gjennomføring starta etter uttrykkeleg oppdrag om å bruke tilgjengelege verkty: [N00-verktøybaseline](native-client-tooling-baseline.md) og [ei avgrensa N02-prøve på Windows ARM64](native-client-probe-results.md) er utførte. N00/N02 er berre delvis dekte; N01 og produksjonsfunksjonane er ikkje starta.
 
 ## 1. Avklarte produktval
+
+N02-prøva er utvida etter Astra-review med prosessavbrot ved tre punkt rundt
+commit, kontrollsum frå før prosessdød og ein dedikert C#-arbeidar med avgrensa
+kø, definert avbrotsgrense, utloggingsgjerde og kontrollert lukking. Sjå
+[resultat og attståande avgrensingar](native-client-probe-results.md). Dette
+dekkjer fleire N02-krav; Kotlin, Swift, faktisk WinUI og identitetsprøva står att.
 
 | Val | Føring for implementasjonen |
 | --- | --- |
@@ -102,7 +108,7 @@ Sol styrer avgrensa arbeidspakkar og gjer mesteparten av implementasjonen. Astra
 
 Stopp og avklar dersom native passnøkkel krev ustøtta Authentik-API, same brukar får ny ID, recovery krev ein nøkkel brukaren nettopp har mista, SQLite får to eigarar, bindingane krev mykje plattformspesifikk kjernekode, eller ein syncmarkør kan hoppe over ei commit. Registrer den konkrete blokka og det enklaste alternativet. Ikkje bruk token på gjentekne fulle bygg eller utrullingar for å omgå eit uavklart arkitekturval.
 
-Planen er klar for gjennomføringsbatch N00–N02 etter oppstartsinstruks. Ingen implementering er utført i denne planrunden.
+Gjennomføringsbatch N00–N02 er starta etter oppstartsinstruks. Resultat og avgrensingar blir førte i dei lenkja prøvedokumenta; ein pakke blir ikkje rekna som fullført fordi ein delprøve er grøn.
 
 ### Astra sin sluttrevisjon
 

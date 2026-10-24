@@ -1,4 +1,6 @@
 //! Local-only N02 interoperability probe, not a shipping native client SDK.
+#[cfg(any(test, feature = "fault-injection"))]
+mod fault;
 mod store;
 
 use serde::Deserialize;
@@ -16,6 +18,13 @@ pub const RESPONSE_CAPACITY: usize = 256 * 1024;
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
+    #[cfg(feature = "fault-injection")]
+    ArmFault {
+        handle: u64,
+        generation: u64,
+        site: fault::Site,
+        mode: fault::Mode,
+    },
     Open {
         database: String,
         account: String,
@@ -94,10 +103,19 @@ fn execute(request: Request) -> Result<Value> {
                 | Request::Delivery { handle, .. }
                 | Request::ApplyMessage { handle, .. }
                 | Request::Invalidate { handle, .. } => *handle,
+                #[cfg(feature = "fault-injection")]
+                Request::ArmFault { handle, .. } => *handle,
                 _ => unreachable!(),
             };
             let store = registry.stores.get_mut(&handle).ok_or("invalid_handle")?;
             match request {
+                #[cfg(feature = "fault-injection")]
+                Request::ArmFault {
+                    generation,
+                    site,
+                    mode,
+                    ..
+                } => store.arm_fault(generation, fault::Fault { site, mode })?,
                 Request::Snapshot { .. } => return store.snapshot(),
                 Request::SaveDraft {
                     generation,
