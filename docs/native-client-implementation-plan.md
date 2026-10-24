@@ -14,7 +14,10 @@ kø, definert avbrotsgrense, utloggingsgjerde og kontrollert lukking. Sjå
 [resultat og attståande avgrensingar](native-client-probe-results.md). Dette
 dekkjer fleire N02-krav. Kotlin/JVM og Swift/macOS er deretter
 [verifiserte i hosted CI](native-client-language-probes.md). Android/ART,
-iOS-pakking, faktisk WinUI og identitetsprøva står att.
+iOS-pakking og identitetsprøva står att. Eit separat
+[Windows Reactor-laboratorium](native-client-windows-probe.md) prøver no ekte
+WinUI med same Rust-lagring og fiktive data. Dette er UI-utforsking, ikkje ein
+ferdig N13-klient.
 
 | Val | Føring for implementasjonen |
 | --- | --- |
@@ -32,7 +35,7 @@ Skisser, minimum OS-versjonar, direkte Credential Manager-støtte og signerings-
 
 Den neste avgrensa N02-batchen har lagt til [Kotlin/JVM- og Swift/macOS-prøver](native-client-language-probes.md)
 mot den same Rust-kjerna. Grøne språk-kvitteringar frå CI er evidensen for denne
-porten; Android/ART, iOS-pakking, faktisk WinUI og identitetsprøva blir vurderte kvar for seg.
+porten; Android/ART, iOS-pakking, Windows UI-prøva og identitetsprøva blir vurderte kvar for seg.
 
 - [ADR N01: identitet, appøkter og gjenoppretting](native-client-identity-adr.md).
 - [ADR N02: varig synkronisering og lokal lagring](native-client-sync-adr.md).
