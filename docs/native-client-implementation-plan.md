@@ -4,6 +4,8 @@ Dato: 24. oktober 2026. Status: plan for gjennomføring, ikkje startordre for im
 
 Målet er ein rask Android-klient med ein påliteleg felleskjerne som også er prøvd frå Swift og WinUI. Arbeidet blir små PR-ar som kan vurderast og målast kvar for seg. Ingen ny innlogging eller synkroniseringsprotokoll skal aktiverast før nødvendig serverkode, gamle klientar og tilbakeføring er prøvde.
 
+Gjennomføring starta etter uttrykkeleg oppdrag om å bruke tilgjengelege verkty: [N00-verktøybaseline](native-client-tooling-baseline.md) og [ei avgrensa N02-prøve på Windows ARM64](native-client-probe-results.md) er utførte. N00/N02 er berre delvis dekte; N01 og produksjonsfunksjonane er ikkje starta.
+
 ## 1. Avklarte produktval
 
 | Val | Føring for implementasjonen |

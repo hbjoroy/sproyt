@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "account": "fixture-alice",
+  "channel": "fixture-channel",
+  "request_id": "fixture-request-01",
+  "body": "Hei frå native-prøva 👋"
+}
