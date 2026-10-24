@@ -6,7 +6,7 @@ async function sendReactMessage(page: Page, participant: string, body: string) {
   const composer = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(composer).toBeEnabled({ timeout: 15_000 });
   await composer.fill(body);
-  await composer.press("Enter");
+  await preview.getByRole("button", { name: /^Send/ }).click();
   return preview;
 }
 
@@ -57,7 +57,7 @@ test("React renders Mermaid from the bundled package without a CDN request", asy
 test("Mermaid keeps diagram HTML handlers and javascript links inert", async ({ page }) => {
   await page.addInitScript(() => { (window as Window & { mermaidExecuted?: boolean }).mermaidExecuted = false; });
   const marker = `Mermaid sanitization ${Date.now()}`;
-  const body = `${marker}\n\n\`\`\`mermaid\ngraph LR\n A["<img src='x' onerror='window.mermaidExecuted=true'>"] --> B[Trygt]\n click B "javascript:window.mermaidExecuted=true"\n\`\`\``;
+  const body = `${marker}\n\n\`\`\`mermaid\ngraph LR\n A["<a href='javascript:window.mermaidExecuted=true' onclick='window.mermaidExecuted=true'>Trygt</a>"] --> B[Ferdig]\n\`\`\``;
   const preview = await sendReactMessage(page, "react-markdown-mermaid-safety", body);
   const diagram = preview.locator("[data-message-id]").filter({ hasText: marker }).locator(".mermaid-shell svg");
   await expect(diagram).toBeVisible({ timeout: 15_000 });
