@@ -53,3 +53,14 @@ test("React renders Mermaid from the bundled package without a CDN request", asy
   await expect(message.locator(".mermaid-shell svg")).toBeVisible({ timeout: 15_000 });
   expect(externalMermaidRequests).toEqual([]);
 });
+
+test("Mermaid keeps diagram HTML handlers and javascript links inert", async ({ page }) => {
+  await page.addInitScript(() => { (window as Window & { mermaidExecuted?: boolean }).mermaidExecuted = false; });
+  const marker = `Mermaid sanitization ${Date.now()}`;
+  const body = `${marker}\n\n\`\`\`mermaid\ngraph LR\n A["<img src='x' onerror='window.mermaidExecuted=true'>"] --> B[Trygt]\n click B "javascript:window.mermaidExecuted=true"\n\`\`\``;
+  const preview = await sendReactMessage(page, "react-markdown-mermaid-safety", body);
+  const diagram = preview.locator("[data-message-id]").filter({ hasText: marker }).locator(".mermaid-shell svg");
+  await expect(diagram).toBeVisible({ timeout: 15_000 });
+  await expect(diagram.locator("script, [onerror], [onload], [onclick], a[href^='javascript:']")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as Window & { mermaidExecuted?: boolean }).mermaidExecuted)).toBe(false);
+});

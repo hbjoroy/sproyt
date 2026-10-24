@@ -184,6 +184,62 @@ test("Felles sends a global registration invitation without using a circle endpo
   await expect(management.getByRole("button", { name: "Inviter ny brukar til Sprøyt" })).toBeFocused();
 });
 
+for (const width of [1280, 390]) test(`new direct message is discoverable before any DM at ${width}px`, async ({ page, context }, testInfo) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width, height: 844 });
+  await page.emulateMedia({ colorScheme: width === 390 ? "dark" : "light" });
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    let rejected = false;
+    window.WebSocket = class extends NativeWebSocket {
+      send(data: string) {
+        const command = JSON.parse(data);
+        if (command.type === "open_direct_channel" && !rejected) {
+          rejected = true;
+          setTimeout(() => this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({
+            protocol: "sproyt.chat.v1", request_id: command.request_id, type: "error",
+            payload: { code: "validation_error", message: "Direktemeldinga feila, prøv igjen" }
+          }) })), 30);
+        } else super.send(data);
+      }
+    };
+  });
+  const suffix = `${width}-${Date.now()}`;
+  const peer = await context.newPage();
+  const peerName = `new-dm-peer-${suffix}`;
+  await enter(peer, peerName);
+  const preview = await enter(page, `new-dm-owner-${suffix}`);
+  await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast før ny direktemelding");
+  if (width === 390) await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  await expect(preview.locator('[data-conversation-group="scope:direct"]')).toHaveCount(0);
+  const action = preview.getByRole("button", { name: "Ny direktemelding", exact: true });
+  await expect(action).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("new-direct-message.png") });
+  await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("ingen treff her");
+  await action.focus();
+  await page.keyboard.press("Enter");
+  const people = preview.getByRole("dialog", { name: "Personar og ny direktemelding" });
+  await expect(people.getByRole("searchbox", { name: "Finn person" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(action).toBeFocused();
+  await action.click();
+  await people.getByRole("searchbox", { name: "Finn person" }).fill(peerName);
+  const start = people.getByRole("button", { name: `Start samtale med ${peerName}` });
+  await start.click();
+  await expect(people).toContainText("Direktemeldinga feila, prøv igjen");
+  await expect(people.getByRole("searchbox", { name: "Finn person" })).toHaveValue(peerName);
+  await expect(preview.getByRole("textbox", { name: "Skriv melding", includeHidden: true })).toHaveValue("utkast før ny direktemelding");
+  await start.click();
+  await expect(people).toHaveCount(0);
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeVisible();
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("");
+  await expect(preview.locator(".sp-context")).toContainText(peerName);
+  if (width === 390) await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("");
+  await preview.getByRole("button", { name: /^# general/ }).click();
+  await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("utkast før ny direktemelding");
+});
+
 test("people search filters self, opens real DM and preserves original draft", async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const peer = await context.newPage();

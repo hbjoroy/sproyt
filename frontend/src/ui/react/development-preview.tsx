@@ -29,6 +29,7 @@ import { MarkdownContent, markdownTextFromMessage } from "./markdown-content";
 import { processTaskId, type ProcessPilotApi } from "../../process-pilot";
 import { ProcessPilotChannelAction, ProcessTaskMessage } from "./process-pilot";
 import { NavigationScopeActions } from "./navigation-scope-actions";
+import { NewDirectMessage } from "./new-direct-message";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import { ChannelChatAgentsDialog } from "./channel-chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
@@ -385,6 +386,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       messageIds: channelMessageIds,
       messageSequences: channelMessages.map(message => message.sequence),
       initialReadSequence: snapshot.activeChannel?.last_read_sequence,
+      initialUnreadLimit: 20,
       hasOlder: snapshot.timeline.hasOlder,
       loading: snapshot.timeline.loading,
       error: snapshot.timeline.error,
@@ -419,7 +421,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
       <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate} captureUpdatePosition={captureUpdatePosition}
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions></>,
-    navigationActions: null,
+    navigationActions: <NewDirectMessage snapshot={snapshot} host={host.community}
+      onStarted={() => { view = "detail"; update(); }} />,
     renderGroupActions: group => group.id === "scope:direct" ? null : <NavigationScopeActions
       key={`${host.community.selfId() ?? ""}:${group.id}`} group={group} snapshot={snapshot} host={host.community}
       onSelect={channelId => { reactionPicker.close(); host.select(channelId); view = "detail"; update(); }} />,

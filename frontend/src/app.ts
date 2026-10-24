@@ -4639,7 +4639,7 @@
         const previousChannelId = connectionSupervisor.takeSubscribedChannel();
         if (previousChannelId) sendCommand("unsubscribe_channel", { channel_id: previousChannelId });
         if (!developmentPreviewActive) legacyChannelScroll.prepare({ key: `channel:${channel.id}`, messageIds: [],
-          initialReadSequence: channel.last_read_sequence, loading: true });
+          initialReadSequence: channel.last_read_sequence, initialUnreadLimit: 20, loading: true });
         timeline.length = 0;
         threadReplies.clear();
         threadRoots.clear();
@@ -4865,6 +4865,7 @@
           legacyChannelScroll.prepare({ key: activeChannelId ? `channel:${activeChannelId}` : null,
             messageIds: messages.map(message => message.id), messageSequences: messages.map(message => message.sequence),
             initialReadSequence: knownChannels.find(channel => channel.id === activeChannelId)?.last_read_sequence,
+            initialUnreadLimit: 20,
             loading: historyLoading, hasOlder: historyHasMore, error: historyError,
             waitingForLink: pendingMessageLink !== null, revealMessageId });
         }
