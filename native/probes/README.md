@@ -1,10 +1,14 @@
 # Native interoperability probe: N00 and part of N02
 
-This is a local-only feasibility probe, not an Android application, WinUI app,
+The base probe is a local-only feasibility probe, not an Android application,
 authentication implementation, production sync engine, or shipping SDK.
 Use only synthetic data and a test-owned database. It never contacts Sprøyt,
 Authentik or a network server at runtime. Dependency restore may use package
 registries while building.
+
+The separate [Windows Reactor UI laboratory](windows-reactor/README.md) mounts
+this same Rust storage probe in real WinUI controls. It has its own runner and
+still uses only synthetic, local data.
 
 ## Run
 
