@@ -1,0 +1,202 @@
+<div id="sproyt-native-direction">
+<style>
+#sproyt-native-direction{color-scheme:light dark;--paper:light-dark(#faf9f5,#191b18);--surface:light-dark(#f0f0e7,#242820);--ink:light-dark(#191b18,#eeeee5);--muted-ink:light-dark(#62675e,#b0b7a8);--rule:light-dark(#d9ddd1,#3d4438);--mark:light-dark(#dcebac,#4b5730);--mark-ink:light-dark(#25320c,#f0f5df);font-family:system-ui,sans-serif;color:var(--ink)}
+#sproyt-native-direction *{box-sizing:border-box}
+#sproyt-native-direction [hidden]{display:none!important}
+#sproyt-native-direction .native-stage{height:706px;display:flex;align-items:flex-start;justify-content:center;padding:16px 8px}
+#sproyt-native-direction .native-app{background:var(--paper);color:var(--ink);border:1px solid var(--rule);width:min(390px,100%);height:668px;display:flex;flex-direction:column;position:relative;isolation:isolate;overflow:hidden;border-radius:22px}
+#sproyt-native-direction button{font:inherit;color:inherit;cursor:default}
+#sproyt-native-direction button:focus-visible,#sproyt-native-direction textarea:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+#sproyt-native-direction .statusbar{display:flex;justify-content:space-between;align-items:center;padding:10px 20px 2px;font-size:12px;font-weight:600;min-height:30px}
+#sproyt-native-direction .statusbar span:last-child{letter-spacing:2px}
+#sproyt-native-direction .native-header{display:flex;align-items:center;gap:4px;padding:2px 8px 8px;min-height:62px;border-bottom:1px solid var(--rule)}
+#sproyt-native-direction .native-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:48px;height:48px;border:0;background:transparent;border-radius:12px}
+#sproyt-native-direction .native-icon:hover{background:var(--surface)}
+#sproyt-native-direction .native-icon svg{width:21px;height:21px;stroke-width:1.7}
+#sproyt-native-direction .heading{min-width:0;flex:1}
+#sproyt-native-direction .eyebrow{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted-ink)}
+#sproyt-native-direction .heading h2{font-size:21px;line-height:1.2;margin:1px 0 0;font-weight:650;letter-spacing:-.03em}
+#sproyt-native-direction .header-subtitle{font-size:12px;color:var(--muted-ink);margin-top:2px}
+#sproyt-native-direction .native-chat{display:flex;flex-direction:column;min-height:0;flex:1}
+#sproyt-native-direction .timeline{padding:14px 16px;overflow:auto;flex:1;min-height:0;overscroll-behavior:contain}
+#sproyt-native-direction .day{text-align:center;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted-ink);margin:0 0 18px}
+#sproyt-native-direction .message{margin:0 0 19px;position:relative;overflow-wrap:anywhere}
+#sproyt-native-direction .message+.message:before{content:"";display:block;width:40px;height:1px;background:var(--rule);margin-bottom:12px}
+#sproyt-native-direction .byline{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px;color:var(--muted-ink)}
+#sproyt-native-direction .byline strong{color:var(--ink);font-size:13px;font-weight:650}
+#sproyt-native-direction .message p{margin:0;font-size:15px;line-height:1.5}
+#sproyt-native-direction .message-action{margin-left:auto;width:32px;height:28px;background:transparent;border:0;display:flex;align-items:center;justify-content:center}
+#sproyt-native-direction .message-action svg{width:16px;height:16px}
+#sproyt-native-direction .reaction{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;margin-top:7px;border:1px solid var(--rule);background:var(--surface);border-radius:10px;font-size:12px}
+#sproyt-native-direction .reaction svg{width:13px;height:13px}
+#sproyt-native-direction .coast{height:112px;margin-top:8px;position:relative;overflow:hidden;border-radius:5px;background:light-dark(#d5e3dd,#34443c)}
+#sproyt-native-direction .coast:before{content:"";position:absolute;inset:42% -5% -40%;background:light-dark(#8da99f,#526e62);transform:rotate(-8deg);border-radius:50%}
+#sproyt-native-direction .coast:after{content:"";position:absolute;inset:80% -2% -22%;background:light-dark(#ecdfc0,#84795e);transform:rotate(-5deg);border-radius:50%}
+#sproyt-native-direction .coast span{position:absolute;bottom:10px;left:12px;z-index:1;color:light-dark(#27372e,#fff6df);font-size:12px}
+#sproyt-native-direction .quote{border-left:2px solid var(--muted-ink);padding:3px 10px;margin-bottom:6px;color:var(--muted-ink);font-size:12px}
+#sproyt-native-direction .send-state{font-size:11px;color:var(--muted-ink);margin-top:5px;display:flex;align-items:center;gap:6px}
+#sproyt-native-direction .send-state button{padding:5px 8px;min-height:36px;border:1px solid var(--rule);border-radius:7px;background:var(--surface)}
+#sproyt-native-direction .offline-strip{font-size:12px;background:var(--surface);padding:8px 16px;display:flex;gap:8px;align-items:center}
+#sproyt-native-direction .offline-strip svg{width:15px;height:15px}
+#sproyt-native-direction .composer{border-top:1px solid var(--rule);padding:6px 6px 8px;background:var(--paper)}
+#sproyt-native-direction .composer-row{display:flex;gap:2px;align-items:flex-end}
+#sproyt-native-direction .composer textarea{font:inherit;font-family:system-ui,sans-serif;font-size:16px;line-height:1.4;resize:none;min-height:48px;max-height:112px;flex:1;min-width:0;background:var(--surface);color:var(--ink);border:0;border-radius:14px;padding:13px 12px}
+#sproyt-native-direction .send-button{background:var(--mark);color:var(--mark-ink);border-radius:14px}
+#sproyt-native-direction .attachment{display:flex;align-items:center;gap:9px;font-size:12px;padding:7px 12px 10px}
+#sproyt-native-direction .attachment svg{width:22px;height:22px}
+#sproyt-native-direction .attachment .native-icon{margin-left:auto;width:40px;height:40px}
+#sproyt-native-direction .keyboard{background:var(--surface);border-top:1px solid var(--rule);padding:10px 5px 8px;display:grid;gap:6px}
+#sproyt-native-direction .keys{display:flex;gap:4px;justify-content:center}
+#sproyt-native-direction .key{background:var(--paper);border-radius:5px;padding:7px 0;width:8.7%;text-align:center;font-size:13px}
+#sproyt-native-direction .space{width:55%;font-size:11px}
+#sproyt-native-direction .native-home{height:16px;flex-shrink:0;display:grid;place-items:center;background:var(--paper)}
+#sproyt-native-direction .native-home:after{content:"";width:95px;height:3px;border-radius:2px;background:var(--ink);opacity:.65}
+#sproyt-native-direction .native-list{padding:14px 14px 0;flex:1;min-height:0;overflow:auto}
+#sproyt-native-direction .circle-row{display:flex;gap:8px;margin:12px 0 18px;flex-wrap:wrap}
+#sproyt-native-direction .circle-choice{border:1px solid var(--rule);background:transparent;padding:9px 12px;min-height:44px;border-radius:12px;font-size:12px}
+#sproyt-native-direction .circle-choice[aria-pressed="true"]{background:var(--surface);border-color:var(--muted-ink)}
+#sproyt-native-direction .conversation{width:100%;display:flex;text-align:left;align-items:center;gap:12px;min-height:83px;border:0;border-bottom:1px solid var(--rule);padding:12px 0;background:transparent}
+#sproyt-native-direction .avatar{width:39px;height:39px;display:grid;place-items:center;background:var(--surface);border-radius:12px;font-size:13px;flex-shrink:0}
+#sproyt-native-direction .conversation-copy{display:block;flex:1;min-width:0;overflow:hidden}
+#sproyt-native-direction .conversation-name{display:block;font-size:15px;font-weight:650}
+#sproyt-native-direction .conversation-preview{display:block;font-size:13px;color:var(--muted-ink);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sproyt-native-direction .list-meta{font-size:11px;color:var(--muted-ink);text-align:right;flex-shrink:0;min-width:30px}
+#sproyt-native-direction .unread{display:block;border-radius:8px;background:var(--mark);color:var(--mark-ink);padding:3px 6px;margin-top:6px}
+#sproyt-native-direction .native-navigation{display:flex;justify-content:space-around;border-top:1px solid var(--rule);background:var(--paper);padding:5px}
+#sproyt-native-direction .native-navigation button{border:0;background:transparent;display:flex;align-items:center;gap:5px;padding:10px 7px;min-height:48px;font-size:12px}
+#sproyt-native-direction .native-navigation svg{width:18px;height:18px}
+#sproyt-native-direction .native-sheet{position:absolute;z-index:3;bottom:16px;left:8px;right:8px;background:var(--surface);border:1px solid var(--rule);border-radius:17px;padding:8px;box-shadow:0 -8px 30px light-dark(#191b1810,#00000030)}
+#sproyt-native-direction .native-sheet button{display:flex;align-items:center;gap:12px;min-height:48px;width:100%;padding:8px 12px;border:0;background:transparent;text-align:left;border-radius:9px;font-size:14px}
+#sproyt-native-direction .native-sheet button:hover{background:var(--paper)}
+#sproyt-native-direction .native-sheet svg{width:19px;height:19px}
+#sproyt-native-direction .desktop{width:100%;max-width:990px;border-radius:12px;height:668px}
+#sproyt-native-direction .desktop-titlebar{display:flex;align-items:center;gap:12px;background:var(--surface);height:40px;padding:0 16px;font-size:12px}
+#sproyt-native-direction .desktop-titlebar span:first-child{font-weight:650}
+#sproyt-native-direction .desktop-layout{display:grid;grid-template-columns:225px 1fr;flex:1;min-height:0}
+#sproyt-native-direction .desktop-sidebar{border-right:1px solid var(--rule);display:flex;flex-direction:column;min-height:0;padding:8px 12px}
+#sproyt-native-direction .desktop .native-header{padding:4px 12px;min-height:68px}
+#sproyt-native-direction .desktop .timeline{padding:20px 28px}
+#sproyt-native-direction .desktop .composer{padding:8px 16px 12px}
+#sproyt-native-direction .desktop .coast{height:150px;max-width:370px}
+#sproyt-native-direction .desktop .message{max-width:600px}
+#sproyt-native-direction .desktop .native-list{padding:0;overflow:auto}
+#sproyt-native-direction .desktop .conversation{min-height:76px}
+#sproyt-native-direction .desktop .conversation-preview{max-width:130px}
+#sproyt-native-direction .desktop .native-home,#sproyt-native-direction .desktop .statusbar{display:none}
+@media(max-width:620px){#sproyt-native-direction .desktop-layout{grid-template-columns:1fr}#sproyt-native-direction .desktop-sidebar{display:none}#sproyt-native-direction .desktop .timeline{padding:14px 16px}#sproyt-native-direction .desktop .composer{padding:6px}}
+@media(pointer:coarse){#sproyt-native-direction .message-action{width:48px;height:48px}#sproyt-native-direction .reaction{min-width:48px;min-height:48px}}
+@media(prefers-reduced-motion:no-preference){#sproyt-native-direction .native-sheet{animation:sp-rise .16s ease-out}@keyframes sp-rise{from{transform:translateY(12px)}to{transform:translateY(0)}}}
+</style>
+<div class="viz-carousel viz-dotted-background" aria-label="Native Sprøyt designretningar" data-previous-label="Førre" data-next-label="Neste">
+ <section data-variant="Samtalen først" aria-label="Samtalen først"><div class="native-stage"><div class="native-app" data-product="mobile" data-priority="conversation" aria-label="Sprøyt på Android"></div></div></section>
+ <section data-variant="Kretsen først" aria-label="Kretsen først" hidden><div class="native-stage"><div class="native-app" data-product="mobile" data-priority="circle" aria-label="Sprøyt med kretsveljar"></div></div></section>
+ <section data-variant="Skrivebord" aria-label="Sprøyt på skrivebordet" hidden><div class="native-stage"><div class="native-app desktop" data-product="desktop" aria-label="Sprøyt på skrivebordet"></div></div></section>
+</div>
+<template id="sproyt-native-template">
+ <div class="statusbar"><span>09:41</span><span aria-label="Mobilnett og batteri">▴ ▰</span></div>
+ <div class="desktop-titlebar" hidden><span>Sprøyt</span><span>Paros · Prat</span></div>
+ <header class="native-header">
+  <button class="native-icon cursor-interaction" type="button" data-action="back" aria-label="Til samtalane"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
+  <div class="heading"><div class="eyebrow">Paros</div><h2>Prat</h2><div class="header-subtitle">Ein liten prat ved sjøen</div></div>
+  <button class="native-icon cursor-interaction" type="button" data-action="details" aria-label="Samtaledetaljar"><i data-lucide="ellipsis" aria-hidden="true"></i></button>
+ </header>
+ <div class="native-chat">
+  <div class="offline-strip" hidden><i data-lucide="wifi-off" aria-hidden="true"></i><span>Utan nett · meldingar blir lagra her</span></div>
+  <div class="timeline" aria-label="Meldingar">
+   <div class="day">I dag</div>
+   <article class="message"><div class="byline"><strong>Maja</strong><time>09:32</time><button class="message-action cursor-interaction" type="button" data-action="message-menu" aria-label="Handlingar for meldinga frå Maja"><i data-lucide="ellipsis" aria-hidden="true"></i></button></div><p>Kaffi ved sjøen om ein halvtime?</p></article>
+   <article class="message"><div class="byline"><strong>Ingrid</strong><time>09:34</time><button class="message-action cursor-interaction" type="button" data-action="message-menu" aria-label="Handlingar for meldinga frå Ingrid"><i data-lucide="ellipsis" aria-hidden="true"></i></button></div><p>Eg tek bordet med den beste utsikta.</p><div class="coast" role="img" aria-label="Stilisert førevising av sjø og strand, ikkje eit fotografi"><span>Ved sjøen · 1 bilete</span></div><button class="reaction cursor-interaction" data-action="like" type="button" aria-label="Lik meldinga" aria-pressed="false"><i data-lucide="heart" aria-hidden="true"></i><span>2</span></button></article>
+   <article class="message"><div class="byline"><strong>Du</strong><time>09:36</time></div><p>Dette høyrest ut som ein god plan.</p><div class="send-state">Sendt</div></article>
+  </div>
+  <div class="composer">
+   <div class="quote" hidden>Svar til Maja · Kaffi ved sjøen om ein halvtime?</div>
+   <div class="attachment" hidden><i data-lucide="image" aria-hidden="true"></i><span>Stranda.jpg · klar til å sende</span><button class="native-icon cursor-interaction" type="button" data-action="remove-attachment" aria-label="Fjern vedlegget"><i data-lucide="x" aria-hidden="true"></i></button></div>
+   <div class="composer-row"><button class="native-icon cursor-interaction" type="button" data-action="attach" aria-label="Legg ved"><i data-lucide="plus" aria-hidden="true"></i></button><textarea rows="1" aria-label="Skriv ei melding" placeholder="Skriv ei melding …"></textarea><button class="native-icon send-button cursor-interaction" type="button" data-action="send" aria-label="Send melding"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div>
+  </div>
+  <div class="keyboard" hidden aria-label="Skjematisk plasshaldar for systemtastaturet"><div class="keys"><span class="key">Q</span><span class="key">W</span><span class="key">E</span><span class="key">R</span><span class="key">T</span><span class="key">Y</span><span class="key">U</span><span class="key">I</span><span class="key">O</span><span class="key">P</span></div><div class="keys"><span class="key">A</span><span class="key">S</span><span class="key">D</span><span class="key">F</span><span class="key">G</span><span class="key">H</span><span class="key">J</span><span class="key">K</span><span class="key">L</span></div><div class="keys"><span class="key">⇧</span><span class="key">Z</span><span class="key">X</span><span class="key">C</span><span class="key">V</span><span class="key">B</span><span class="key">N</span><span class="key">M</span><span class="key">⌫</span></div><div class="keys"><span class="key">123</span><span class="key space">Mellomrom</span><span class="key">↵</span></div></div>
+ </div>
+ <div class="native-list" hidden aria-label="Samtalar"><div class="eyebrow">Samtalar</div><div class="circle-row" hidden><button class="circle-choice cursor-interaction" type="button" aria-pressed="true" data-circle="Paros">Paros</button><button class="circle-choice cursor-interaction" type="button" aria-pressed="false" data-circle="Oktett">Oktett</button><button class="circle-choice cursor-interaction" type="button" aria-pressed="false" data-circle="Alle">Alle</button></div><button class="conversation cursor-interaction" type="button" data-action="open" data-circle-item="Paros"><span class="avatar">P</span><span class="conversation-copy"><span class="conversation-name">Prat</span><span class="conversation-preview">Paros · Maja: Kaffi ved sjøen?</span></span><span class="list-meta">09:36<span class="unread">3</span></span></button><button class="conversation cursor-interaction" type="button" data-action="open" data-circle-item="Paros"><span class="avatar">B</span><span class="conversation-copy"><span class="conversation-name">Bilete</span><span class="conversation-preview">Paros · Ingrid delte eit bilete</span></span><span class="list-meta">I går</span></button><button class="conversation cursor-interaction" type="button" data-action="open" data-circle-item="Oktett"><span class="avatar">O</span><span class="conversation-copy"><span class="conversation-name">Prat</span><span class="conversation-preview">Oktett · Neste veke passar fint</span></span><span class="list-meta">I går<span class="unread">1</span></span></button><button class="conversation cursor-interaction" type="button" data-action="open" data-circle-item="Alle"><span class="avatar">I</span><span class="conversation-copy"><span class="conversation-name">Ingrid</span><span class="conversation-preview">Direkte · Takk for i dag!</span></span><span class="list-meta">I går</span></button></div>
+ <nav class="native-navigation" aria-label="Hovudområde" hidden><button type="button" data-action="list" class="cursor-interaction"><i data-lucide="messages-square" aria-hidden="true"></i>Samtalar</button><button type="button" data-action="mentions" class="cursor-interaction"><i data-lucide="at-sign" aria-hidden="true"></i>Omtalar</button><button type="button" data-action="profile" class="cursor-interaction"><i data-lucide="circle-user-round" aria-hidden="true"></i>Deg</button></nav>
+ <div class="native-sheet" role="group" aria-label="Samtalehandlingar" hidden><button type="button" data-action="reply" class="cursor-interaction"><i data-lucide="reply" aria-hidden="true"></i>Svar</button><button type="button" data-action="sheet-like" class="cursor-interaction"><i data-lucide="heart" aria-hidden="true"></i>Lik</button><button type="button" data-action="channel-details" class="cursor-interaction"><i data-lucide="users" aria-hidden="true"></i>Medlemmer og kanalval</button><button type="button" data-action="close-sheet" class="cursor-interaction"><i data-lucide="x" aria-hidden="true"></i>Lukk</button></div>
+ <div class="native-home" aria-hidden="true"></div>
+ <span class="native-live" role="status" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"></span>
+</template>
+<script>
+(()=>{
+ const root=document.getElementById('sproyt-native-direction');
+ const template=document.getElementById('sproyt-native-template');
+ const saved=window.openai?.widgetState?.privateContent;
+ root.querySelectorAll('.native-app').forEach((app,index)=>{
+  app.append(template.content.cloneNode(true));
+  const desktop=app.dataset.product==='desktop';
+  const circleFirst=app.dataset.priority==='circle';
+  const state={offline:false,keyboard:false,attached:false,list:circleFirst,scope:'Paros',messageSize:15};
+  if(saved&&Array.isArray(saved.apps)&&saved.apps[index])Object.assign(state,saved.apps[index]);
+  const chat=app.querySelector('.native-chat'),list=app.querySelector('.native-list');
+  const input=app.querySelector('textarea'),timeline=app.querySelector('.timeline');
+  if(desktop){
+   app.querySelector('.desktop-titlebar').hidden=false;
+   const layout=document.createElement('div');layout.className='desktop-layout';
+   const sidebar=document.createElement('aside');sidebar.className='desktop-sidebar';sidebar.setAttribute('aria-label','Samtalar');
+   sidebar.append(list);list.hidden=false;
+   const main=document.createElement('div');main.className='native-chat';main.append(app.querySelector('.native-header'),chat);
+   layout.append(sidebar,main);app.insertBefore(layout,app.querySelector('.native-home'));
+  }
+  function render(){
+   chat.hidden=!desktop&&state.list;list.hidden=!desktop&&!state.list;
+   app.querySelector('.native-navigation').hidden=desktop||!state.list;
+   app.querySelector('.circle-row').hidden=!circleFirst;
+   app.querySelector('.offline-strip').hidden=!state.offline;
+   app.querySelector('.keyboard').hidden=desktop||!state.keyboard||state.list;
+   app.querySelector('.attachment').hidden=!state.attached;
+   app.querySelectorAll('.message p').forEach(p=>p.style.fontSize=state.messageSize+'px');
+   const header=app.querySelector('.native-header');
+   header.querySelector('h2').textContent=state.list&&!desktop?'Samtalar':'Prat';
+   header.querySelector('.eyebrow').textContent=state.list&&!desktop?'Sprøyt':state.scope;
+   header.querySelector('.header-subtitle').textContent=state.list&&!desktop?'Nære folk. Gode samtalar.':'Ein liten prat ved sjøen';
+   app.querySelectorAll('[data-circle]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.circle===state.scope)));
+   app.querySelectorAll('[data-circle-item]').forEach(b=>b.hidden=circleFirst&&state.scope!=='Alle'&&b.dataset.circleItem!==state.scope);
+   app.querySelectorAll('.send-state[data-pending]').forEach(s=>s.firstChild.textContent=state.offline?'Lagra på telefonen · ventar på nett ':'I kø · ');
+  }
+  function persist(){if(!window.openai?.setWidgetState)return;const apps=[...root.querySelectorAll('.native-app')].map(p=>p._nativeState);window.openai.setWidgetState({modelContent:{prototype:'native-sproyt',offline:state.offline},privateContent:{apps}}).catch(()=>{});}
+  app._nativeState=state;
+  function announce(text){app.querySelector('.native-live').textContent=text;}
+  app.addEventListener('click',event=>{
+   const button=event.target.closest('button');if(!button)return;
+   const action=button.dataset.action;
+   if(button.dataset.circle){state.scope=button.dataset.circle;render();persist();return;}
+   if(action==='back'||action==='list'){if(state.keyboard){state.keyboard=false;}else{state.list=true;}render();}
+   if(action==='open'){state.list=false;state.scope=button.dataset.circleItem==='Alle'?'Direkte':button.dataset.circleItem;render();}
+   if(action==='attach'){state.attached=true;render();announce('Bilete lagt til i skissa.');}
+   if(action==='remove-attachment'){state.attached=false;render();}
+   if(action==='details'||action==='message-menu'){app.querySelector('.native-sheet').hidden=false;}
+   if(action==='close-sheet'){app.querySelector('.native-sheet').hidden=true;}
+   if(action==='reply'){app.querySelector('.native-sheet').hidden=true;app.querySelector('.quote').hidden=false;input.focus();}
+   if(action==='like'||action==='sheet-like'){
+    const reaction=app.querySelector('.reaction'),liked=reaction.getAttribute('aria-pressed')==='true';reaction.setAttribute('aria-pressed',String(!liked));reaction.querySelector('span').textContent=liked?'2':'3';app.querySelector('.native-sheet').hidden=true;announce(liked?'Reaksjon fjerna.':'Hjarte lagt til.');
+   }
+   if(action==='channel-details'){app.querySelector('.native-sheet').hidden=true;announce('Kanalval er ikkje med i denne skissa.');}
+   if(action==='mentions'||action==='profile')announce('Denne flata er ikkje med i skissa.');
+   if(action==='send'){
+    const value=input.value.trim();if(!value&&!state.attached){input.focus();return;}
+    const article=document.createElement('article');article.className='message';
+    const byline=document.createElement('div');byline.className='byline';byline.textContent='Du · no';
+    const text=document.createElement('p');text.textContent=value||(state.attached?'Eit bilete':'');
+    const status=document.createElement('div');status.className='send-state';status.dataset.pending='true';status.append(document.createTextNode(state.offline?'Lagra på telefonen · ventar på nett ':'I kø · '));
+    const retry=document.createElement('button');retry.type='button';retry.className='cursor-interaction';retry.dataset.action='retry';retry.textContent='Prøv igjen';status.append(retry);
+    article.append(byline,text,status);timeline.append(article);input.value='';state.attached=false;app.querySelector('.quote').hidden=true;render();timeline.scrollTop=timeline.scrollHeight;announce('Skisse: meldinga er berre lagra lokalt i denne visinga.');
+   }
+   if(action==='retry'){
+    const status=button.closest('.send-state');if(state.offline){announce('Utan nett. Meldinga står framleis i kø.');}else{status.removeAttribute('data-pending');status.textContent='Sendt · simulert serverkvittering';announce('Skissa simulerer ei serverkvittering.');}
+   }
+   persist();
+  });
+  input.addEventListener('focus',()=>{state.keyboard=!desktop;render();});
+  app.addEventListener('keydown',event=>{if(event.key==='Escape'){app.querySelector('.native-sheet').hidden=true;state.keyboard=false;render();input.blur();}});
+  render();
+  if(globalThis.Tweak){const tweak=new Tweak({container:app,onChange:()=>{render();persist();}});tweak.addToggle(state,'offline',{label:'Utan nett'});if(!desktop)tweak.addToggle(state,'keyboard',{label:'Vis tastatur'});tweak.addToggle(state,'attached',{label:'Valt vedlegg'});tweak.addSlider(state,'messageSize',{label:'Meldingstekst',min:15,max:25,unit:'px'});}
+ });
+ if(globalThis.lucide)lucide.createIcons();
+})();
+</script>
+</div>
