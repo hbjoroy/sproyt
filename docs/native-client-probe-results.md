@@ -32,7 +32,9 @@ Astra vurderte først ABI, eigarskap, generasjonsfencing og journalopptak. Ei ua
 
 Grunnlagsprøva i [PR 282](https://github.com/hbjoroy/sproyt/pull/282), kjelde `550376dc1c7bb78b90d076b0a34e50137126c65d`, er grøn på hosted Windows x64 og Linux x64 i [CI-køyring 40118539359](https://github.com/hbjoroy/sproyt/actions/runs/40118539359). Denne køyringa gjaldt før transaksjons- og arbeidarutvidinga. Ho er separat frå lokal Windows ARM64-evidens.
 
-Workflowen køyrer den same utvida runneren på hosted Windows og Linux når oppfølginga blir send. Resultata for utvidinga skal førast her etter køyring; dei blir ikkje førehandsrekna som grøne.
+Den utvida prøva i [PR 283](https://github.com/hbjoroy/sproyt/pull/283), kjelde `67dcfcf05a40f979edc5631862afd0fc13ca1fb0`, er også grøn på hosted Windows x64 og Linux x64 i [CI-køyring 40120408892](https://github.com/hbjoroy/sproyt/actions/runs/40120408892). Begge nedlasta schema-2-kvitteringane har rein kjelde, elleve utfall og tre gjenoppretta krasjpunkt. Den testa merge-revisjonen har nøyaktig same kjeldetre som den vurderte head-revisjonen.
+
+CI-scope skil denne sjølvstendige prøvemappa frå appkode. Prøvene får framleis native Windows/Linux-køyring og dei obligatoriske appkontrollane, men ei endring berre her treng ikkje nettlesar- eller databasegjenopprettingsøving. Ukjende native-stiar, endra delt kjerne, blanda appendringar, manglande baseline og eksplisitt full regresjon held full gate.
 
 ## Kva som står att
 

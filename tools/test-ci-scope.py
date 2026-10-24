@@ -78,6 +78,21 @@ class ScopeTests(unittest.TestCase):
             run.return_value.returncode = 1
             self.assertEqual(ci_scope.change_range('workflow_dispatch', {}, '', 'a' * 40, False), ([], True))
 
+    def test_isolated_native_probe_uses_its_dedicated_workflow(self):
+        paths = ['native/probes/client-core/Cargo.toml', 'native/probes/client-core/Cargo.lock',
+                 'native/probes/managed/Program.cs', 'native/probes/run-probe.ps1',
+                 '.github/workflows/native-probe.yml', 'tools/ci-scope.py',
+                 'tools/test-ci-scope.py', 'docs/native-client-probe-results.md']
+        result = ci_scope.scope(paths)
+        self.assertEqual((result['browser'], result['recovery']), ('none', 'false'))
+        for added in ('Cargo.lock', 'crates/sproyt-client-core/src/lib.rs', 'src/db/postgres.rs',
+                      'frontend/src/app.ts', 'migrations/0065_media.sql', 'native/apps/android/build.gradle',
+                      '.github/workflows/ci.yml'):
+            result = ci_scope.scope(paths + [added])
+            self.assertEqual((result['browser'], result['recovery']), ('full', 'true'), added)
+        result = ci_scope.scope(paths, True)
+        self.assertEqual((result['browser'], result['recovery']), ('full', 'true'))
+
     def test_pull_request_and_push_use_the_event_base(self):
         with patch.object(ci_scope.subprocess, 'run') as run, patch.object(ci_scope.subprocess, 'check_output') as diff:
             run.return_value.returncode = 0

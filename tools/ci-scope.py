@@ -21,6 +21,17 @@ def scope(paths, force_full=False):
         return {'browser': 'none', 'recovery': 'false',
                 'reason': 'isolated codec test only; mandatory codec gate still runs'}
 
+    # This workspace has its own dependency lock and Windows/Linux workflow.
+    # Its Cargo files do not change production dependencies. Keep unknown native
+    # paths, shared core changes and mixed application changes fail-closed.
+    def native_probe(path):
+        return path.startswith('native/probes/') or path == '.github/workflows/native-probe.yml'
+
+    selector_tests = {'tools/ci-scope.py', 'tools/test-ci-scope.py'}
+    if any(native_probe(p) for p in paths) and all(native_probe(p) or p in selector_tests for p in paths):
+        return {'browser': 'none', 'recovery': 'false',
+                'reason': 'isolated native probe; dedicated Windows/Linux interoperability checks apply'}
+
     # Unclassified build/configuration changes retain the complete gate.
     known = ('src/', 'frontend/', 'assets/', 'crates/', 'migrations/', 'packages/sproyt-ui/')
     if any((not p.startswith(known) and p not in policy) or p.endswith(('Cargo.toml', 'Cargo.lock')) for p in paths):
