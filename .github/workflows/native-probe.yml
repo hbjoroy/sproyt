@@ -44,3 +44,47 @@ jobs:
         with:
           name: native-probe-${{ matrix.os }}
           path: ${{ runner.temp }}/sproyt-native-probe/fixtures/**/receipt.json
+
+  kotlin-binding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: native/probes/kotlin/pom.xml
+      - name: Install pinned Rust
+        shell: pwsh
+        run: rustup show active-toolchain
+      - name: Run the Kotlin JVM and JNI binding probe
+        shell: pwsh
+        run: ./native/probes/run-language-probe.ps1 -Language kotlin -ArtifactsDirectory '${{ runner.temp }}/sproyt-native-language-probe'
+      - name: Preserve Kotlin fixture receipts
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-probe-kotlin
+          path: ${{ runner.temp }}/sproyt-native-language-probe/kotlin/fixtures/**/receipt.json
+
+  swift-binding:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Record Apple toolchain
+        run: swift --version
+      - name: Install pinned Rust
+        shell: pwsh
+        run: rustup show active-toolchain
+      - name: Run the Swift and C header binding probe
+        shell: pwsh
+        run: ./native/probes/run-language-probe.ps1 -Language swift -ArtifactsDirectory '${{ runner.temp }}/sproyt-native-language-probe'
+      - name: Preserve Swift fixture receipts
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-probe-swift
+          path: ${{ runner.temp }}/sproyt-native-language-probe/swift/fixtures/**/receipt.json

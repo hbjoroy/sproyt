@@ -28,6 +28,10 @@ Skisser, minimum OS-versjonar, direkte Credential Manager-støtte og signerings-
 
 ## 2. Avgjerdsgrunnlag før kode
 
+Neste avgrensa N02-batch legg til [Kotlin/JVM- og Swift/macOS-prøver](native-client-language-probes.md)
+mot den same Rust-kjerna. Grøne språk-kvitteringar frå CI er evidensen for denne
+porten; Android/ART, iOS-pakking, faktisk WinUI og identitetsprøva blir vurderte kvar for seg.
+
 - [ADR N01: identitet, appøkter og gjenoppretting](native-client-identity-adr.md).
 - [ADR N02: varig synkronisering og lokal lagring](native-client-sync-adr.md).
 - Kvar ADR skil vald retning frå ei konkret teknisk prøve. Ingen uavklart detalj skal bli implementert som ein stilltiande tryggleiks- eller kapasitetsgaranti.

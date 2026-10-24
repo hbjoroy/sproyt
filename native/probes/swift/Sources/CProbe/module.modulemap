@@ -1,0 +1,5 @@
+module CProbe [system] {
+    header "shim.h"
+    link "sproyt_native_probe"
+    export *
+}

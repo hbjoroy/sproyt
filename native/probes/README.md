@@ -142,6 +142,42 @@ Operations: `open(database,account)`, `close(handle)`, `snapshot(handle)`,
 `invalidate(handle,generation)`. The managed code is the complete executable
 example. A fixture account string is a local partition, not authentication.
 
+## Kotlin and Swift desktop bindings
+
+`run-language-probe.ps1` adds two desktop-language probes against the same
+Rust store and shared Unicode scenario. Kotlin/JVM uses a feature-gated JNI
+adapter that delegates once to the existing C ABI; copied input/output buffers
+avoid retaining JNI critical arrays during SQLite work. Swift imports the
+authoritative C header through a module map and verifies the actual loaded
+library path. Neither language implements persistence or a second outbox.
+
+```powershell
+# Requires a JDK and Maven; CI supplies Temurin 21 on Linux.
+./native/probes/run-language-probe.ps1 -Language kotlin -ArtifactsDirectory /tmp/sproyt-native-languages
+# Requires a Mac with Swift 6 or later; CI uses macos-15.
+./native/probes/run-language-probe.ps1 -Language swift -ArtifactsDirectory /tmp/sproyt-native-languages
+```
+
+These commands check tool availability and never install a local SDK. They
+build outside the source tree, retain fresh test-owned fixtures, and run ABI
+guards, separate seed/busy/recovery/verification processes and a language-owned
+bounded worker. The parent retains the pre-kill payload hash. Each worker
+exercises saturation, pending cancellation, claimed work before/after mutation,
+logout admission fencing and drain/close exactly once. A post-execution bridge
+or reply failure is an unknown outcome; no wrapper automatically retries it.
+
+Language receipts have their own schema 1 and identify the language, actual
+compiler/runtime, platform, source revision/dirty status, ordinary library hash,
+and twelve outcomes. JNI and fault-injection are independent optional features;
+ordinary language probes reject diagnostic commands. Existing C# transaction
+crash tests remain in place rather than being duplicated in each wrapper.
+
+This is desktop binding feasibility. Kotlin on HotSpot is not Android/ART,
+and Swift on macOS is not an iOS package. Compose/SwiftUI, OS credential stores,
+physical devices, generated-binding selection, packaging, schema migration and
+native authentication still require their own gates. See
+[the language probe contract](../../docs/native-client-language-probes.md).
+
 ## Acceptance status
 
 See [the recorded results](../../docs/native-client-probe-results.md) and
