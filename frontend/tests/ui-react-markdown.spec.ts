@@ -6,7 +6,7 @@ async function sendReactMessage(page: Page, participant: string, body: string) {
   const composer = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(composer).toBeEnabled({ timeout: 15_000 });
   await composer.fill(body);
-  await preview.getByRole("button", { name: /^Send/ }).click();
+  await preview.getByTitle("Send melding", { exact: true }).click();
   return preview;
 }
 
