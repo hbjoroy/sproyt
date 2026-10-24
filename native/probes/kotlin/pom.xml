@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.sproyt.probe</groupId>
+  <artifactId>native-kotlin-probe</artifactId>
+  <version>0.1.0</version>
+  <properties>
+    <kotlin.version>2.3.21</kotlin.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>17</maven.compiler.release>
+    <probe.build.directory>${project.basedir}/target</probe.build.directory>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId><artifactId>kotlin-stdlib</artifactId><version>${kotlin.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlinx</groupId><artifactId>kotlinx-serialization-json-jvm</artifactId><version>1.9.0</version>
+    </dependency>
+  </dependencies>
+  <build>
+    <directory>${probe.build.directory}</directory>
+    <sourceDirectory>src/main/kotlin</sourceDirectory>
+    <plugins>
+      <plugin>
+        <groupId>org.jetbrains.kotlin</groupId><artifactId>kotlin-maven-plugin</artifactId><version>${kotlin.version}</version>
+        <configuration><jvmTarget>17</jvmTarget><args><arg>-Werror</arg></args></configuration>
+        <executions><execution><id>compile</id><goals><goal>compile</goal></goals></execution></executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-dependency-plugin</artifactId><version>3.8.1</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

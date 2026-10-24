@@ -1,6 +1,8 @@
 //! Local-only N02 interoperability probe, not a shipping native client SDK.
 #[cfg(any(test, feature = "fault-injection"))]
 mod fault;
+#[cfg(feature = "jni")]
+mod jni_bridge;
 mod store;
 
 use serde::Deserialize;
