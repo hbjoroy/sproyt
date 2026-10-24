@@ -79,6 +79,27 @@ try {
     $libraryName = if ($IsWindows) { 'sproyt_native_probe.dll' } elseif ($IsMacOS) { 'libsproyt_native_probe.dylib' } else { 'libsproyt_native_probe.so' }
     $library = Join-Path $targetDirectory ('debug/' + $libraryName)
     if (!(Test-Path -LiteralPath $library -PathType Leaf)) { throw 'Missing built native library' }
+    if ($Language -eq 'swift') {
+        # Cargo may hard-link the public artifact from debug/deps while the
+        # Mach-O install name still identifies the original deps image. Use the
+        # actual image, after proving it is this build's identical artifact.
+        $installNames = @(& otool '-D' $library)
+        if ($LASTEXITCODE -ne 0 -or $installNames.Count -lt 2) { throw 'Cannot read the native Mach-O install name' }
+        $installName = $installNames[1].Trim()
+        if ([IO.Path]::IsPathFullyQualified($installName)) {
+            $image = [IO.Path]::GetFullPath($installName)
+            $targetPrefix = [IO.Path]::GetFullPath($targetDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+            if (!$image.StartsWith($targetPrefix, [StringComparison]::Ordinal) -or !(Test-Path -LiteralPath $image -PathType Leaf)) {
+                throw 'Native install name does not identify an image inside this build directory'
+            }
+            if ((Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $library -Algorithm SHA256).Hash) {
+                throw 'Native install-name image differs from the built artifact'
+            }
+            $library = $image
+        } elseif (!$installName.StartsWith('@rpath/')) {
+            throw 'Unsupported native Mach-O install name'
+        }
+    }
     $env:SPROYT_NATIVE_PROBE_LIBRARY = $library
     $versions = [ordered]@{}
     if ($Language -eq 'kotlin') {
