@@ -2,6 +2,20 @@
 
 Desse prøvene utvidar [Rust/C#-grunnlaget](native-client-probe-results.md) med Kotlin/JVM på Linux og Swift på macOS. Omfanget er språkgrense og lokal livssyklus. Android/ART, iOS-pakking, fysisk eining, innlogging og produksjonssynkronisering er eigne akseptportar i [implementasjonsplanen](native-client-implementation-plan.md).
 
+## Verifisert 24. oktober 2026
+
+[CI-køyring 40125478249](https://github.com/hbjoroy/sproyt/actions/runs/40125478249) er grøn for kode `9c971432f468336edfe9acb5a0d3e8f8e0dca71a` i [PR 284](https://github.com/hbjoroy/sproyt/pull/284). Dei fire nedlasta kvitteringane har rein kjelde; den testa merge-revisjonen har same kjeldetre som den vurderte kode-revisjonen.
+
+| Klient | Verifisert vert og verkty | Resultat |
+| --- | --- | --- |
+| Kotlin/JNI | Linux x64, Kotlin 2.3.21, Temurin 21.0.12.1, Maven 3.10.0, `-Xcheck:jni` | Alle seks prosessfasar og tolv utfall. |
+| Swift/C | macOS ARM64, Apple Swift 6.1.2 | Alle seks prosessfasar og tolv utfall, med kontroll av faktisk lasta biblioteksti. |
+| C#/C | Hosted Windows x64 og Linux x64 | Dei eksisterande elleve utfalla og tre transaksjonskrasjpunkt på begge vertar. |
+
+Alle fire har same SHA-256 for faktisk wire-payload frå før prosessdød: `f705a69c26a18d1a84f4644655d5c1299337c3c0b5414c9e412be8287bac570e`. Dermed er same fiktive sending bevart over både språkgrense, plattform og omstart. Dette er ikkje eit server-dedupliseringsbevis.
+
+Astra reviderte arkitekturen og kjelda. Ein kansellerbar Kotlin-utloggingsbarriere vart retta og fekk ein deterministisk regresjonstest. Første Swift-køyring bygde, men den strenge bibliotekkontrollen oppdaga Cargo sin interne `debug/deps`-sti. Runneren les no Mach-O-installnamnet, krev at det ligg i denne byggmappa og har identisk hash med byggeartefakten, og bruker den faktiske stien vidare. Astra godkjende rettinga; neste hosted køyring lasta rett bibliotek og fullførte alle fasane. Allokeringsfeil og svikt i responslevering er kjeldereviderte, men ikkje feilinjisert gjennom JVM/Swift.
+
 ## Eitt lagringsansvar
 
 Rust eig framleis SQLite, utkast, outbox, handle-register og generasjonskontroll. Kotlin kallar den eksisterande C-ABI-en gjennom ein liten valfri JNI-adapter. Swift importerer den autoritative C-headeren med ein Clang-modul. Ingen av klientane får eigen SQL-tilgang eller eigne leveringsreglar.

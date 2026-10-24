@@ -12,7 +12,9 @@ N02-prøva er utvida etter Astra-review med prosessavbrot ved tre punkt rundt
 commit, kontrollsum frå før prosessdød og ein dedikert C#-arbeidar med avgrensa
 kø, definert avbrotsgrense, utloggingsgjerde og kontrollert lukking. Sjå
 [resultat og attståande avgrensingar](native-client-probe-results.md). Dette
-dekkjer fleire N02-krav; Kotlin, Swift, faktisk WinUI og identitetsprøva står att.
+dekkjer fleire N02-krav. Kotlin/JVM og Swift/macOS er deretter
+[verifiserte i hosted CI](native-client-language-probes.md). Android/ART,
+iOS-pakking, faktisk WinUI og identitetsprøva står att.
 
 | Val | Føring for implementasjonen |
 | --- | --- |
@@ -28,7 +30,7 @@ Skisser, minimum OS-versjonar, direkte Credential Manager-støtte og signerings-
 
 ## 2. Avgjerdsgrunnlag før kode
 
-Neste avgrensa N02-batch legg til [Kotlin/JVM- og Swift/macOS-prøver](native-client-language-probes.md)
+Den neste avgrensa N02-batchen har lagt til [Kotlin/JVM- og Swift/macOS-prøver](native-client-language-probes.md)
 mot den same Rust-kjerna. Grøne språk-kvitteringar frå CI er evidensen for denne
 porten; Android/ART, iOS-pakking, faktisk WinUI og identitetsprøva blir vurderte kvar for seg.
 
