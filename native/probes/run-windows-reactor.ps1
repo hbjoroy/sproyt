@@ -58,6 +58,7 @@ try {
     if (!(Test-Path -LiteralPath (Join-Path $coreTests 'core-result.txt'))) { throw 'Core test evidence missing' }
     Get-Content -LiteralPath (Join-Path $coreTests 'core-result.txt')
     $ui = $null
+    $resume = $null
     if ($UiSmoke) {
         $uiTests = Join-Path $run 'ui-tests'
         ProbeProcess @('--ui-smoke', $uiTests) $true
@@ -65,6 +66,12 @@ try {
         if (!$ui.passed -or $ui.architecture.ToLowerInvariant() -ne $Architecture) { throw 'Native UI evidence failed' }
         if ((Get-Content -LiteralPath (Join-Path $uiTests 'ui-closed.txt') -Raw).Trim() -ne 'PASS: native Closed event after shutdown') {
             throw 'The native window did not close after shutdown'
+        }
+        ProbeProcess @('--ui-resume', $uiTests) $true
+        $resume = Get-Content -LiteralPath (Join-Path $uiTests 'ui-resume-result.json') -Raw | ConvertFrom-Json
+        if (!$resume.passed -or $resume.architecture.ToLowerInvariant() -ne $Architecture -or
+            (Get-Content -LiteralPath (Join-Path $uiTests 'ui-closed.txt') -Raw).Trim() -ne 'PASS: native Closed event after shutdown') {
+            throw 'The restarted app did not restore its editor and close cleanly'
         }
     }
     $receipt = [ordered]@{
@@ -82,6 +89,7 @@ try {
         applicationPriSha256 = (Get-FileHash -LiteralPath (Join-Path $publish 'Sproyt.ReactorProbe.pri') -Algorithm SHA256).Hash.ToLowerInvariant()
         coreTests = $true
         uiSmoke = $ui
+        uiResume = $resume
         publishDirectory = $publish
         notTested = @('physical keyboard and IME', 'touch', 'screen reader', 'visual screenshot approval', 'production sync', 'authentication',
             'hard process termination during equal-body newer-draft repair after an unknown enqueue')

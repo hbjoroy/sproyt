@@ -44,7 +44,11 @@ tekstendringar og tek vare på request-ID ved uviss kvittering.
 
 `--self-test <ny-mappe>` køyrer dei deterministiske lagringsprøvene.
 `--ui-smoke <ny-mappe>` køyrer integrasjon mot appen sitt eige native kontrolltre,
-lagar kvittering og lukkar vindauget. Dette injiserer ikkje OS-input og erstattar
+lagar kvittering og lukkar vindauget. Runneren startar deretter ein ny prosess
+med `--ui-resume <same-mappe>` og kontrollerer at fleirlinjeutkast faktisk kjem
+tilbake i skrivefeltet, saman med utkastet i den andre kanalen og lokal kø.
+UI-prøva krev at eiga sending blir synleg utan manuell rulling.
+Desse automatiske integrasjonsprøvene injiserer ikkje OS-input og erstattar
 ikkje testing av fysisk tastatur, IME, touch, skjermlesar eller visuell kvalitet.
 
 Reactor er eksperimentell. Denne prøva tek ikkje stilling til ein endeleg
