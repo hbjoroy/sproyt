@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory)][string]$RunDirectory,
     [switch]$SystemBrowser,
-    [switch]$HttpOnly
+    [switch]$HttpOnly,
+    [switch]$Revocation
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -9,12 +10,13 @@ $run = [IO.Path]::GetFullPath($RunDirectory)
 $environment = Get-Content (Join-Path $run 'environment.json') -Raw | ConvertFrom-Json
 if ($environment.environment -ne 'sproyt-n01c-local' -or $environment.status -ne 'ready' -or $environment.prefix -notmatch '^sproyt-n01c-[a-f0-9]{8}$') { throw 'Not a ready local lab.' }
 if ($SystemBrowser -and (!$IsWindows -or $HttpOnly)) { throw 'The system-browser lab requires Windows native handoff.' }
+if ($SystemBrowser -and $Revocation) { throw 'Revocation uses explicitly synthetic sessions, not system-browser authentication.' }
 if (!$IsWindows -and !$HttpOnly) { throw 'Linux CI must explicitly request the HTTP contract, not native Windows acceptance.' }
 $containerCli = if ($IsWindows) { 'wslc' } else { 'docker' }
 $worker = $environment.prefix + '-worker'
 # Only the synthetic lab worker can mint these test sessions. None are logged
 # or included in the public receipt. This is not password/passkey acceptance.
-if (!$SystemBrowser) {
+if (!$SystemBrowser -and !$Revocation) {
     $sessionOutput = @(& $containerCli exec $worker ak shell -c "exec(compile(open('/lab-code/session-fixture.py').read(), '/lab-code/session-fixture.py', 'exec'))" 2>&1)
     $sessionLine = @($sessionOutput | Where-Object { $_ -is [string] -and $_.StartsWith('N01C_SESSIONS ') })
     if ($LASTEXITCODE -ne 0 -or $sessionLine.Count -ne 1) { throw 'Isolated browser-session fixture failed; output suppressed.' }
@@ -38,12 +40,12 @@ try {
     $environment | Add-Member -NotePropertyName sourceRevision -NotePropertyValue ((git -C $PSScriptRoot rev-parse HEAD).Trim()) -Force
     $environment | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $run 'environment.json') -Encoding utf8
     $serverName = if ($IsWindows) { 'sproyt-identity-probe.exe' } else { 'sproyt-identity-probe' }
-    $mode = if ($SystemBrowser) { '--authentik-browser' } elseif ($HttpOnly) { '--authentik-http-test' } else { '--authentik-test' }
+    $mode = if ($Revocation -and $HttpOnly) { '--authentik-revocation-http-test' } elseif ($Revocation) { '--authentik-revocation-test' } elseif ($SystemBrowser) { '--authentik-browser' } elseif ($HttpOnly) { '--authentik-http-test' } else { '--authentik-test' }
     Checked 'dotnet' @((Join-Path $check 'client/IdentityProbe.dll'),$mode,(Join-Path $env:CARGO_TARGET_DIR ('debug/' + $serverName)),$run,(Join-Path $check 'evidence'))
     $receiptPath = Join-Path $check 'evidence/receipt.json'
     $receipt = Get-Content $receiptPath -Raw | ConvertFrom-Json
     if (!$receipt.passed) { throw 'N01c evidence failed.' }
     $receipt | Add-Member -NotePropertyName sourceDirty -NotePropertyValue (@(git -C $PSScriptRoot status --porcelain -- ':(top)native/probes').Count -gt 0) -Force
     $receipt | ConvertTo-Json -Depth 8 | Set-Content $receiptPath -Encoding utf8
-    Write-Output ('PASS N01c Authentik contract; receipt: ' + $receiptPath)
+    Write-Output ('PASS ' + $(if ($Revocation) { 'N01d revocation matrix' } else { 'N01c Authentik contract' }) + '; receipt: ' + $receiptPath)
 } finally { $env:CARGO_TARGET_DIR = $priorTarget }

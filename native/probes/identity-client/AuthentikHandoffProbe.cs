@@ -11,10 +11,11 @@ using static DesktopHandoffClient;
 
 internal static class AuthentikHandoffProbe
 {
-    internal static async Task<int> Run(string executable, string lab, string output, bool systemBrowser, bool httpOnly = false)
+    internal static async Task<int> Run(string executable, string lab, string output, bool systemBrowser, bool httpOnly = false, bool revocation = false)
     {
         Check(httpOnly || OperatingSystem.IsWindows());
         Check(!httpOnly || !systemBrowser);
+        Check(!revocation || !systemBrowser);
         using var environment = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(lab, "environment.json")));
         Check(environment.RootElement.GetProperty("environment").GetString() == "sproyt-n01c-local" && environment.RootElement.GetProperty("status").GetString() == "ready");
         string origin = environment.RootElement.GetProperty("origin").GetString()!;
@@ -41,13 +42,14 @@ internal static class AuthentikHandoffProbe
             var cookieJar = new CookieContainer();
             using var browser = new HttpClient(new HttpClientHandler { CookieContainer = cookieJar, AllowAutoRedirect = false, UseProxy = false }) { Timeout = TimeSpan.FromSeconds(20) };
             DesktopState Read(string folder) { using var journal = new WindowsProtectedJournal(folder, false); return journal.Read<DesktopState>(); }
-            async Task FollowAuth(string[] transactions, string[] accounts)
+            async Task FollowAuth(string[] transactions, string[] accounts, string? slot = null)
             {
-                    using var sessions = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(lab, "private", "browser-sessions.json")));
+                    using var sessions = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(lab, "private", slot is null ? "browser-sessions.json" : "revocation-sessions.json")));
                     string cookieName = sessions.RootElement.GetProperty("cookie_name").GetString()!;
                     for (int index = 0; index < accounts.Length; index++)
                     {
-                        cookieJar.Add(new Uri(origin), new Cookie(cookieName, sessions.RootElement.GetProperty("cookies").GetProperty(accounts[index]).GetString()!, "/"));
+                        string cookie = slot is null ? sessions.RootElement.GetProperty("cookies").GetProperty(accounts[index]).GetString()! : sessions.RootElement.GetProperty("sessions").GetProperty(slot).GetProperty("cookie").GetString()!;
+                        cookieJar.Add(new Uri(origin), new Cookie(cookieName, cookie, "/"));
                         var target = new Uri(address + "/probe/browser/" + transactions[index]);
                         bool returned = false;
                         for (int hop = 0; hop < 16; hop++)
@@ -66,7 +68,7 @@ internal static class AuthentikHandoffProbe
                         Check(returned);
                     }
             }
-            async Task<(DesktopState State, string[] Transactions)> HttpLogin(string[] accounts)
+            async Task<(DesktopState State, string[] Transactions)> HttpLogin(string[] accounts, string? slot)
             {
                 // Deliberately RAM-only: this mode proves the HTTP contract on Linux,
                 // and provides no native journal, restart, or process-death evidence.
@@ -119,15 +121,15 @@ internal static class AuthentikHandoffProbe
                         attempts.Add(new(transaction, account, verifier, Guid.NewGuid().ToString("N")));
                     }
                     string[] transactions = attempts.Select(a => a.Transaction).ToArray();
-                    await FollowAuth(transactions, accounts);
+                    await FollowAuth(transactions, accounts, slot);
                     Check(attempts.All(a => a.Result is not null));
                     return (new DesktopState(1, "n01-lab", new DesktopConfig(address, instance, callback, accounts, false, issuer, subjects), DateTimeOffset.UtcNow.AddMinutes(8), attempts.ToArray()), transactions);
                 }
                 finally { await listener.StopAsync(); }
             }
-            async Task<(DesktopState State, string[] Transactions)> Login(string name, string[] accounts)
+            async Task<(DesktopState State, string[] Transactions)> Login(string name, string[] accounts, string? slot = null)
             {
-                if (httpOnly) return await HttpLogin(accounts);
+                if (httpOnly) return await HttpLogin(accounts, slot);
                 string folder = Path.Combine(output, name), config = Path.Combine(output, name + ".json");
                 await File.WriteAllTextAsync(config, JsonSerializer.Serialize(new DesktopConfig(address, instance, callback, accounts, systemBrowser, issuer, subjects), Json));
                 await using var client = new DesktopHandoffProbe.Client(folder, config, "none");
@@ -139,12 +141,18 @@ internal static class AuthentikHandoffProbe
                     transactions.Add(signal.GetProperty("transaction").GetString()!);
                 }
                 if (systemBrowser) Console.WriteLine("N01c Edge: sign in as synthetic alice using the private lab credential.");
-                else await FollowAuth(transactions.ToArray(), accounts);
+                else await FollowAuth(transactions.ToArray(), accounts, slot);
                 await client.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(systemBrowser ? 9 : 1));
                 await client.Exit(0);
                 DesktopState state = Read(folder);
                 Check(state.Attempts.All(a => a.Result is not null));
                 return (state, transactions.ToArray());
+            }
+            if (revocation)
+            {
+                return await AuthentikRevocationProbe.Run(api, environment.RootElement, policy.RootElement, lab, output, httpOnly,
+                    async (name, slot) => (await Login(name, [slot == "bob" ? "bob" : "alice"], slot)).State,
+                    name => Read(Path.Combine(output, name)));
             }
             var first = await Login("initial", systemBrowser ? ["alice"] : ["alice", "bob"]);
             var account = first.State.Attempts.Single(a => a.Account == "alice");

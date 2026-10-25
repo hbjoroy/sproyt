@@ -97,6 +97,13 @@ medvite kasta upstream-svar med den valde labpolicyen. N03 må handtere dette
 som ny autentisering med bevart lokal tilstand når grantet ikkje kan reparerast.
 Dette er ikkje ei lovnad om stille recovery eller ein produksjonsaksept.
 
+[N01d](../native/probes/authentik/REVOCATION.md) stadfestar dessutan at sletting
+av éi Authentik-browserøkt kan stoppe gammal access/cookie medan refresh framleis
+utferdar nytt aktivt access-token. Ei slik øktsletting er ikkje i seg sjølv
+Sprøyt si framtidige globale native tilbakekalling. N03 må ha eksplisitt
+einingssperring og ei verifisert providerkopling; RP-logout og recovery er enno
+ikkje aksepterte av denne prøva.
+
 N01 beviser same konto, støtta passnøkkelinnlogging og recovery utan den tapte nøkkelen. N03 beviser rotasjon, providerkopling og autorisasjon på alle transportar. N04 beviser heile invitasjons-/recoverykjeda med testkontoar. Funksjonane er inaktive i prod til desse portane er godkjende og eit eige utrullingsmandat finst.
 
 - [Gjeldande Sprøyt/Authen-kontrakt](authentik.md).
