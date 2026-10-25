@@ -8,7 +8,7 @@ using static DesktopHandoffClient;
 
 internal static class DesktopHandoffProbe
 {
-    private sealed class Client : IAsyncDisposable
+    internal sealed class Client : IAsyncDisposable
     {
         internal readonly Process Process;
         private readonly Task<string> errors;

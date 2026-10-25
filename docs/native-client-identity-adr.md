@@ -91,6 +91,12 @@ Vi skal ikkje både krevje biometrisk godkjenning av kvar nøkkelbruk og love ua
 
 ## Aktiveringsport og referansar
 
+[N01c-observasjonen på Authentik 2026.8.2](../native/probes/authentik/README.md)
+stadfestar normal refresh-rotasjon og avvist gammalt refresh-token etter eit
+medvite kasta upstream-svar med den valde labpolicyen. N03 må handtere dette
+som ny autentisering med bevart lokal tilstand når grantet ikkje kan reparerast.
+Dette er ikkje ei lovnad om stille recovery eller ein produksjonsaksept.
+
 N01 beviser same konto, støtta passnøkkelinnlogging og recovery utan den tapte nøkkelen. N03 beviser rotasjon, providerkopling og autorisasjon på alle transportar. N04 beviser heile invitasjons-/recoverykjeda med testkontoar. Funksjonane er inaktive i prod til desse portane er godkjende og eit eige utrullingsmandat finst.
 
 - [Gjeldande Sprøyt/Authen-kontrakt](authentik.md).
