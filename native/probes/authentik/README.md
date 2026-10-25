@@ -12,6 +12,11 @@ ikkje kan behandlast som same hending i den komande native øktmodellen.
 plattformpassnøkkel, fersk passordfri innlogging og ein kontrollert beviskjede
 frå app-handoff til providerøkt og WebAuthn-device.
 
+[N01f1](RECOVERY.md) måler e-postrecovery med lokal SMTP-fangar, lenkjeforkar
+og feilinjeksjon. Funna held recovery-porten **underkjend**: ein ytre
+policyfeil kan hoppe over ei Deny-sperre. Dette er eit isolert eksperiment,
+ikkje ei recovery-løysing klar for brukarar.
+
 ## Pinna miljø og køyring
 
 Produksjonsversjonen vart kontrollert lesande med Kubernetes: server og worker

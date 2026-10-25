@@ -1,12 +1,15 @@
 param(
     [string]$ArtifactsDirectory = $(if ($IsWindows) { 'S:/Build/sproyt-authentik' } else { Join-Path ([IO.Path]::GetTempPath()) 'sproyt-authentik' }),
-    [switch]$Passkey
+    [switch]$Passkey,
+    [switch]$Recovery
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($Recovery) { $Passkey = $true }
 $containerCli = if ($IsWindows) { 'wslc' } else { 'docker' }
 $authImage = 'ghcr.io/goauthentik/server:2026.8.2@sha256:ff8489a5af4f4fe415ffd180a8e3c10b120bc2592d13d79dac050d977f7b9ecd'
 $pgImage = 'docker.io/library/postgres:16-alpine@sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36'
+$mailpitImage = 'docker.io/axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498'
 $runId = [guid]::NewGuid().ToString('N')
 $run = Join-Path ([IO.Path]::GetFullPath($ArtifactsDirectory)) ('runs/' + $runId)
 $private = Join-Path $run 'private'
@@ -16,12 +19,15 @@ $edgeNetwork = $prefix + '-edge'
 $database = $prefix + '-db'
 $server = $prefix + '-server'
 $worker = $prefix + '-worker'
+$mailpit = $prefix + '-mailpit'
 function CheckedContainer([string[]]$Arguments) {
     & $containerCli @Arguments
     if ($LASTEXITCODE -ne 0) { throw ('Container operation failed: ' + $Arguments[0]) }
 }
 function RandomSecret { [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant() }
-foreach ($port in @(19090,19191,19192)) {
+$ports = @(19090,19191,19192)
+if ($Recovery) { $ports += 19093 }
+foreach ($port in $ports) {
     $reservation = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$port)
     try { $reservation.Start() } catch { throw ('Lab port occupied: ' + $port) } finally { $reservation.Stop() }
 }
@@ -49,25 +55,41 @@ $origin = if ($Passkey) { 'http://localhost:19090' } else { 'http://127.0.0.1:19
     'AUTHENTIK_LOG_LEVEL=warning','AUTHENTIK_DISABLE_STARTUP_ANALYTICS=true','AUTHENTIK_DISABLE_UPDATE_CHECK=true',
     'AUTHENTIK_ERROR_REPORTING__ENABLED=false',('AUTHENTIK_WEB__BASE_URL=' + $origin)) |
     Set-Content (Join-Path $private 'authentik.env') -Encoding utf8
-[ordered]@{environment='sproyt-n01c-local';redirect='http://127.0.0.1:19191/probe/callback';client_secret=$clientSecret;test_password=$testPassword;passkey_lab=[bool]$Passkey} |
+if ($Recovery) {
+    @('AUTHENTIK_EMAIL__HOST=mailpit','AUTHENTIK_EMAIL__PORT=1025','AUTHENTIK_EMAIL__USE_TLS=false',
+        'AUTHENTIK_EMAIL__USE_SSL=false','AUTHENTIK_EMAIL__FROM=n01-lab@example.invalid') |
+        Add-Content (Join-Path $private 'authentik.env') -Encoding utf8
+}
+[ordered]@{environment='sproyt-n01c-local';redirect='http://127.0.0.1:19191/probe/callback';client_secret=$clientSecret;test_password=$testPassword;passkey_lab=[bool]$Passkey;recovery_lab=[bool]$Recovery} |
     ConvertTo-Json | Set-Content (Join-Path $private 'bootstrap.json') -Encoding utf8
 [IO.File]::WriteAllText((Join-Path $private 'client-secret'),$clientSecret,[Text.UTF8Encoding]::new($false))
 [ordered]@{issuer=($origin + '/application/o/n01-lab/');client_id='n01-lab';client_secret_file=(Join-Path $private 'client-secret');listen_port=19191} |
     ConvertTo-Json | Set-Content (Join-Path $private 'broker.json') -Encoding utf8
-[ordered]@{schema=1;environment='sproyt-n01c-local';prefix=$prefix;containers=@($server,$worker,$database);network=$network;volume=$database;
-    containerCli=$containerCli;edgeNetwork=$edgeNetwork;authImage=$authImage;postgresImage=$pgImage;origin=$origin;passkeyLab=[bool]$Passkey;runDirectory=$run;status='starting'} |
+$containers = @($server,$worker,$database)
+if ($Recovery) { $containers += $mailpit }
+[ordered]@{schema=1;environment='sproyt-n01c-local';prefix=$prefix;containers=$containers;network=$network;volume=$database;
+    containerCli=$containerCli;edgeNetwork=$edgeNetwork;authImage=$authImage;postgresImage=$pgImage;origin=$origin;passkeyLab=[bool]$Passkey;recoveryLab=[bool]$Recovery;
+    mailpitImage=$(if ($Recovery) { $mailpitImage } else { $null });mailpitOrigin=$(if ($Recovery) { 'http://127.0.0.1:19093' } else { $null });runDirectory=$run;status='starting'} |
     ConvertTo-Json -Depth 4 | Set-Content (Join-Path $run 'environment.json') -Encoding utf8
 # Read actual help before using WSLC; never assume all Docker syntax transfers.
+CheckedContainer @('--help') | Out-Null
 CheckedContainer @('run','--help') | Out-Null
 CheckedContainer @('network','create','--help') | Out-Null
 CheckedContainer @('volume','create','--help') | Out-Null
 CheckedContainer @('exec','--help') | Out-Null
 CheckedContainer @('pull','--quiet',$authImage) | Out-Null
 CheckedContainer @('pull','--quiet',$pgImage) | Out-Null
+if ($Recovery) { CheckedContainer @('pull','--quiet',$mailpitImage) | Out-Null }
 CheckedContainer @('network','create','--internal','--label','app=sproyt-n01c',$network) | Out-Null
 CheckedContainer @('network','create','--label','app=sproyt-n01c',$edgeNetwork) | Out-Null
 CheckedContainer @('network','connect','--help') | Out-Null
 CheckedContainer @('volume','create','--label','app=sproyt-n01c',$database) | Out-Null
+if ($Recovery) {
+    # SMTP is internal-only. No relay credentials or external SMTP are configured.
+    CheckedContainer @('run','--detach','--name',$mailpit,'--network',$network,'--network-alias','mailpit','--label','app=sproyt-n01c',
+        '--memory','128M','--cpus','0.5','--publish','127.0.0.1:19093:8025',$mailpitImage) | Out-Null
+    CheckedContainer @('network','connect',$edgeNetwork,$mailpit) | Out-Null
+}
 CheckedContainer @('run','--detach','--name',$database,'--network',$network,'--network-alias','postgresql','--label','app=sproyt-n01c',
     '--memory','512M','--cpus','1','--env-file',(Join-Path $private 'postgres.env'),'--volume',($database+':/var/lib/postgresql/data'),$pgImage) | Out-Null
 $pgReady = $false
@@ -122,6 +144,13 @@ if ($Passkey) {
     $passkeyLine = @($passkeyOutput | Where-Object { $_ -is [string] -and $_.StartsWith('N01E_RESULT ') })
     if ($LASTEXITCODE -ne 0 -or $passkeyLine.Count -ne 1) { throw 'Passkey lab configuration failed; private output suppressed.' }
     $passkeyLine[0].Substring('N01E_RESULT '.Length) | Set-Content (Join-Path $run 'passkey-policy.json') -Encoding utf8
+}
+if ($Recovery) {
+    $recoveryOutput = @(& $containerCli exec --env N01F_ACTION=configure $worker ak shell -c "exec(compile(open('/lab-code/recovery-fixture.py').read(), '/lab-code/recovery-fixture.py', 'exec'))" 2>&1)
+    $recoveryLine = @($recoveryOutput | Where-Object { $_ -is [string] -and $_.StartsWith('N01F_RESULT ') })
+    if ($LASTEXITCODE -ne 0 -or $recoveryLine.Count -ne 1) { throw 'Recovery lab configuration failed; private output suppressed.' }
+    $recoveryLine[0].Substring('N01F_RESULT '.Length) | ConvertFrom-Json | ConvertTo-Json -Depth 6 |
+        Set-Content (Join-Path $run 'recovery-policy.json') -Encoding utf8
 }
 $environment = Get-Content (Join-Path $run 'environment.json') -Raw | ConvertFrom-Json
 $environment.status='ready'

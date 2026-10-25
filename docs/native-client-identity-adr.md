@@ -111,6 +111,13 @@ grant-/økt-/devicebevis ved app-handoff. Ho er ikkje bevis for direkte native
 Credential Manager eller produksjonsidentiteten. Den observerte løkka ved
 ekstra `prompt=login` er dokumentert; UV-kravet vart ikkje redusert.
 
+[N01f1](../native/probes/authentik/RECOVERY.md) beviser e-post-/lenkjeåtferd,
+men underkjenner den prøvde policybaserte recovery-sperra: ytre motorfeil
+kan hoppe over Deny-stage. Databaseunikskap åleine reparerer ikkje dette.
+Ein støtta, feillukka overgang og ei varig, autentisert fullføringsbinding
+står att; ingen `recovered`-attribute eller generell webhook blir godkjend
+som erstatning for den manglande kontrakten.
+
 N01 beviser same konto, støtta passnøkkelinnlogging og recovery utan den tapte nøkkelen. N03 beviser rotasjon, providerkopling og autorisasjon på alle transportar. N04 beviser heile invitasjons-/recoverykjeda med testkontoar. Funksjonane er inaktive i prod til desse portane er godkjende og eit eige utrullingsmandat finst.
 
 - [Gjeldande Sprøyt/Authen-kontrakt](authentik.md).
