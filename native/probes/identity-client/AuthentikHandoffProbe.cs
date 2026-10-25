@@ -11,15 +11,18 @@ using static DesktopHandoffClient;
 
 internal static class AuthentikHandoffProbe
 {
-    internal static async Task<int> Run(string executable, string lab, string output, bool systemBrowser, bool httpOnly = false, bool revocation = false)
+    internal static async Task<int> Run(string executable, string lab, string output, bool systemBrowser, bool httpOnly = false, bool revocation = false, string? passkeyMode = null)
     {
         Check(httpOnly || OperatingSystem.IsWindows());
         Check(!httpOnly || !systemBrowser);
         Check(!revocation || !systemBrowser);
+        Check(passkeyMode is null or "password" or "passkey");
+        Check(passkeyMode is null || (OperatingSystem.IsWindows() && systemBrowser && !httpOnly && !revocation));
         using var environment = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(lab, "environment.json")));
-        Check(environment.RootElement.GetProperty("environment").GetString() == "sproyt-n01c-local" && environment.RootElement.GetProperty("status").GetString() == "ready");
+        Check((environment.RootElement.GetProperty("environment").GetString() == "sproyt-n01c-local" ||
+            (passkeyMode is not null && environment.RootElement.GetProperty("environment").GetString() == "sproyt-n01e-local")) && environment.RootElement.GetProperty("status").GetString() == "ready");
         string origin = environment.RootElement.GetProperty("origin").GetString()!;
-        Check(origin == "http://127.0.0.1:19090");
+        Check(origin == (passkeyMode is null ? "http://127.0.0.1:19090" : "http://localhost:19090"));
         using var policy = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(lab, "provider-policy.json")));
         var subjects = policy.RootElement.GetProperty("subjects").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString()!);
         Check(subjects.Count == 2 && subjects.Keys.All(a => a is "alice" or "bob") && subjects.Values.All(v => Guid.TryParse(v, out _)));
@@ -140,7 +143,7 @@ internal static class AuthentikHandoffProbe
                     Check(signal.GetProperty("account").GetString() == account);
                     transactions.Add(signal.GetProperty("transaction").GetString()!);
                 }
-                if (systemBrowser) Console.WriteLine("N01c Edge: sign in as synthetic alice using the private lab credential.");
+                if (systemBrowser) Console.WriteLine(passkeyMode switch { "password" => "N01e system browser: complete the synthetic Alice password baseline.", "passkey" => "N01e system browser: authenticate synthetic Alice with the registered lab passkey.", _ => "N01c Edge: sign in as synthetic alice using the private lab credential." });
                 else await FollowAuth(transactions.ToArray(), accounts, slot);
                 await client.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(systemBrowser ? 9 : 1));
                 await client.Exit(0);
@@ -157,6 +160,7 @@ internal static class AuthentikHandoffProbe
             var first = await Login("initial", systemBrowser ? ["alice"] : ["alice", "bob"]);
             var account = first.State.Attempts.Single(a => a.Account == "alice");
             string userId = UserId(issuer + ":" + subjects["alice"]).ToString();
+            if (passkeyMode is not null) return await AuthentikPasskeyProbe.Complete(lab, output, issuer, userId, first.State, environment.RootElement, passkeyMode == "passkey");
             async Task<JsonElement> Refresh(string action, string transaction, string user)
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, "/probe/upstream-check")

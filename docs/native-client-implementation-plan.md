@@ -21,6 +21,13 @@ Administrativ browserøktsletting stoppar gammal access/cookie, men lèt refresh
 skaffe ny tilgang med denne providerpolicyen. N03 må halde browser-, provider-
 og einingsøkt frå kvarandre. RP-logout, passnøkkel og recovery står framleis att.
 
+[N01e](../native/probes/authentik/PASSKEY.md) har deretter prøvd faktisk
+plattformpassnøkkel i Edge på Windows ARM64, fersk WebAuthn-only-innlogging og
+same identitet innan ein separat localhost-issuer. OS-verna handoff og eit
+eingongsbevis knytt til eksakt providergrant/økt/device er kontrollerte.
+Direkte native Credential Manager, recovery, RP-logout og produksjonskopling
+står att; dette er ikkje ei fullført N01-/N03-aktivering.
+
 [N01b-laboratoriet på Windows](../native/probes/identity/DESKTOP.md) har no
 OS-verna, varig app-handoff, reelle prosessavbrot og ein faktisk Edge-rundtur
 med to fiktive kontoar. Dette er framleis isolert frå Authentik og vanleg chat;

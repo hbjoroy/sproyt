@@ -8,6 +8,10 @@ providerar eller flytar blir kopierte frå produksjon.
 administrativ browserøktsletting og deaktivert brukar. Ho viser kvifor desse
 ikkje kan behandlast som same hending i den komande native øktmodellen.
 
+[N01e](PASSKEY.md) legg til ein separat localhost-lab med faktisk
+plattformpassnøkkel, fersk passordfri innlogging og ein kontrollert beviskjede
+frå app-handoff til providerøkt og WebAuthn-device.
+
 ## Pinna miljø og køyring
 
 Produksjonsversjonen vart kontrollert lesande med Kubernetes: server og worker

@@ -1,5 +1,6 @@
 param(
-    [string]$ArtifactsDirectory = $(if ($IsWindows) { 'S:/Build/sproyt-authentik' } else { Join-Path ([IO.Path]::GetTempPath()) 'sproyt-authentik' })
+    [string]$ArtifactsDirectory = $(if ($IsWindows) { 'S:/Build/sproyt-authentik' } else { Join-Path ([IO.Path]::GetTempPath()) 'sproyt-authentik' }),
+    [switch]$Passkey
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -40,20 +41,21 @@ $secretKey = RandomSecret
 $adminPassword = RandomSecret
 $clientSecret = RandomSecret
 $testPassword = RandomSecret
+$origin = if ($Passkey) { 'http://localhost:19090' } else { 'http://127.0.0.1:19090' }
 @('POSTGRES_DB=n01c','POSTGRES_USER=n01c',('POSTGRES_PASSWORD=' + $dbPassword)) | Set-Content (Join-Path $private 'postgres.env') -Encoding utf8
 @('AUTHENTIK_POSTGRESQL__HOST=postgresql','AUTHENTIK_POSTGRESQL__NAME=n01c','AUTHENTIK_POSTGRESQL__USER=n01c',
     ('AUTHENTIK_POSTGRESQL__PASSWORD=' + $dbPassword),('AUTHENTIK_SECRET_KEY=' + $secretKey),
     ('AUTHENTIK_BOOTSTRAP_PASSWORD=' + $adminPassword),'AUTHENTIK_BOOTSTRAP_EMAIL=admin@example.invalid',
     'AUTHENTIK_LOG_LEVEL=warning','AUTHENTIK_DISABLE_STARTUP_ANALYTICS=true','AUTHENTIK_DISABLE_UPDATE_CHECK=true',
-    'AUTHENTIK_ERROR_REPORTING__ENABLED=false','AUTHENTIK_WEB__BASE_URL=http://127.0.0.1:19090') |
+    'AUTHENTIK_ERROR_REPORTING__ENABLED=false',('AUTHENTIK_WEB__BASE_URL=' + $origin)) |
     Set-Content (Join-Path $private 'authentik.env') -Encoding utf8
-[ordered]@{environment='sproyt-n01c-local';redirect='http://127.0.0.1:19191/probe/callback';client_secret=$clientSecret;test_password=$testPassword} |
+[ordered]@{environment='sproyt-n01c-local';redirect='http://127.0.0.1:19191/probe/callback';client_secret=$clientSecret;test_password=$testPassword;passkey_lab=[bool]$Passkey} |
     ConvertTo-Json | Set-Content (Join-Path $private 'bootstrap.json') -Encoding utf8
 [IO.File]::WriteAllText((Join-Path $private 'client-secret'),$clientSecret,[Text.UTF8Encoding]::new($false))
-[ordered]@{issuer='http://127.0.0.1:19090/application/o/n01-lab/';client_id='n01-lab';client_secret_file=(Join-Path $private 'client-secret');listen_port=19191} |
+[ordered]@{issuer=($origin + '/application/o/n01-lab/');client_id='n01-lab';client_secret_file=(Join-Path $private 'client-secret');listen_port=19191} |
     ConvertTo-Json | Set-Content (Join-Path $private 'broker.json') -Encoding utf8
 [ordered]@{schema=1;environment='sproyt-n01c-local';prefix=$prefix;containers=@($server,$worker,$database);network=$network;volume=$database;
-    containerCli=$containerCli;edgeNetwork=$edgeNetwork;authImage=$authImage;postgresImage=$pgImage;origin='http://127.0.0.1:19090';runDirectory=$run;status='starting'} |
+    containerCli=$containerCli;edgeNetwork=$edgeNetwork;authImage=$authImage;postgresImage=$pgImage;origin=$origin;passkeyLab=[bool]$Passkey;runDirectory=$run;status='starting'} |
     ConvertTo-Json -Depth 4 | Set-Content (Join-Path $run 'environment.json') -Encoding utf8
 # Read actual help before using WSLC; never assume all Docker syntax transfers.
 CheckedContainer @('run','--help') | Out-Null
@@ -115,6 +117,12 @@ for ($attempt=0; $attempt -lt 20; $attempt++) {
 }
 if (!$configured) { throw ('Local fixture configuration failed; no secret-bearing output was printed. Run: ' + $run) }
 $configured | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $run 'provider-policy.json') -Encoding utf8
+if ($Passkey) {
+    $passkeyOutput = @(& $containerCli exec --env N01E_ACTION=configure $worker ak shell -c "exec(compile(open('/lab-code/passkey-fixture.py').read(), '/lab-code/passkey-fixture.py', 'exec'))" 2>&1)
+    $passkeyLine = @($passkeyOutput | Where-Object { $_ -is [string] -and $_.StartsWith('N01E_RESULT ') })
+    if ($LASTEXITCODE -ne 0 -or $passkeyLine.Count -ne 1) { throw 'Passkey lab configuration failed; private output suppressed.' }
+    $passkeyLine[0].Substring('N01E_RESULT '.Length) | Set-Content (Join-Path $run 'passkey-policy.json') -Encoding utf8
+}
 $environment = Get-Content (Join-Path $run 'environment.json') -Raw | ConvertFrom-Json
 $environment.status='ready'
 $environment | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $run 'environment.json') -Encoding utf8
