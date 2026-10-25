@@ -296,7 +296,10 @@ internal sealed class NativeAuthSession : IDisposable
     private static bool CanonicalUser(string text) => Guid.TryParseExact(text, "D", out var id) && id.ToString("D") == text;
     private static void Validate(Grant grant, NativeAuthConfig config)
     {
-        Require(grant is not null && grant.Scope == config.Scope && grant.Environment == config.Environment && grant.InstanceId == config.Instance && CanonicalUser(grant.UserId) && (config.UserId == "" || grant.UserId == config.UserId) && Proof(grant.Family) && Token(grant.AccessToken, "access", config) && Token(grant.RefreshToken, "refresh", config) && Token(grant.RevokeToken, "revoke", config) && grant.ExpiresAt > 0 && (config.Scope != "sproyt_native_v1" || grant.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 300));
+        // This is a shape bound, not authorization. Allow small client/server
+        // clock differences; the server still enforces the actual five-minute expiry.
+        const int clockSkewSeconds = 30;
+        Require(grant is not null && grant.Scope == config.Scope && grant.Environment == config.Environment && grant.InstanceId == config.Instance && CanonicalUser(grant.UserId) && (config.UserId == "" || grant.UserId == config.UserId) && Proof(grant.Family) && Token(grant.AccessToken, "access", config) && Token(grant.RefreshToken, "refresh", config) && Token(grant.RevokeToken, "revoke", config) && grant.ExpiresAt > 0 && (config.Scope != "sproyt_native_v1" || grant.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 300 + clockSkewSeconds));
     }
     internal static void ValidateConfig(NativeAuthConfig config)
     {
