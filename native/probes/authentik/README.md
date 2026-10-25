@@ -17,6 +17,11 @@ og feilinjeksjon. Funna held recovery-porten **underkjend**: ein ytre
 policyfeil kan hoppe over ei Deny-sperre. Dette er eit isolert eksperiment,
 ikkje ei recovery-løysing klar for brukarar.
 
+[N01f2](../../../docs/native-recovery-integration-adr.md) prøver det offentlege
+recovery-API-et og vel vidare eigarskap. Kontoavgrensa mint fungerer, men to
+samtidige restaureringar av same lenkje når begge nøkkelregistrering.
+Native recovery er framleis avslått.
+
 ## Pinna miljø og køyring
 
 Produksjonsversjonen vart kontrollert lesande med Kubernetes: server og worker

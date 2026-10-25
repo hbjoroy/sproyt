@@ -42,6 +42,12 @@ jobs:
           $labs = @(Get-ChildItem '${{ runner.temp }}/sproyt-passkey/runs' -Directory)
           if ($labs.Count -ne 1) { throw 'Expected one separate recovery lab.' }
           ./native/probes/authentik/run-recovery.ps1 -RunDirectory $labs[0].FullName
+      - name: Measure scoped public recovery API and concurrent link consumption
+        shell: pwsh
+        run: |
+          $labs = @(Get-ChildItem '${{ runner.temp }}/sproyt-passkey/runs' -Directory)
+          if ($labs.Count -ne 1) { throw 'Expected one separate recovery lab.' }
+          ./native/probes/authentik/run-recovery-api.ps1 -RunDirectory $labs[0].FullName
       - name: Preserve only non-secret passkey configuration receipts
         if: success()
         uses: actions/upload-artifact@v6
@@ -56,6 +62,13 @@ jobs:
           name: native-recovery-link-contract
           retention-days: 7
           path: ${{ runner.temp }}/sproyt-passkey/runs/**/recovery-checks/**/evidence/receipt.json
+      - name: Preserve only non-secret public recovery API receipts
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-recovery-api-contract
+          retention-days: 7
+          path: ${{ runner.temp }}/sproyt-passkey/runs/**/recovery-api-checks/**/evidence/receipt.json
       - name: Stop only owned passkey laboratory containers
         if: always()
         shell: pwsh

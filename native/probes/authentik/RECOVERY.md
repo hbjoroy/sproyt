@@ -140,3 +140,24 @@ Pinna kjelder: [EmailStage og tokenoppretting](https://github.com/goauthentik/au
 [samtykke og tokenforbruk](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/stages/email/flow.py),
 [ytre policyfeil](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/policies/process.py),
 [policykøyring](https://github.com/goauthentik/authentik/blob/version/2026.8.2/authentik/policies/engine.py).
+
+## N01f2: offentleg API og vidare eigarskap
+
+[Integrasjonsavgjerda](../../../docs/native-recovery-integration-adr.md)
+fører N01f1 vidare med ei eiga, avgrensa API-prøve. Ein ekte bearer-brukar med
+`reset_user_password` og `add_user` berre på Alice kan lage recovery-lenkje;
+Bob og global brukaroppretting blir avviste. To mint før forbruk gir same
+tokennøkkel. Ved to samtidige restaureringar når begge registreringssteget,
+medan eit seinare replay blir avvist. Offentleg API åleine er derfor ikkje
+godkjent som atomisk opptak til recovery.
+
+```powershell
+./native/probes/authentik/run-recovery-api.ps1 -RunDirectory <klar-recovery-lab>
+```
+
+Proben stoppar ved WebAuthn-utfordringa og kontrollerer at mellombelse objekt
+er fjerna og Brand er tilbakeført. CI køyrer han i den same isolerte laben
+etter N01f1, og lastar berre opp `recovery-api-checks/**/evidence/receipt.json`.
+`passed=true` betyr at observasjonen er reprodusert, medan
+`publicRecoveryApiApproved=false` og `fullRecoveryVerified=false` held
+aktiveringsporten stengd. Ingen ny nøkkel eller produksjonsflyt er oppretta.

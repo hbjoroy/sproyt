@@ -118,6 +118,13 @@ Ein støtta, feillukka overgang og ei varig, autentisert fullføringsbinding
 står att; ingen `recovered`-attribute eller generell webhook blir godkjend
 som erstatning for den manglande kontrakten.
 
+[N01f2](native-recovery-integration-adr.md) vel ein Sprøyt-eigd koordinator
+med Authentik-eigd WebAuthn som retning, men måler at den offentlege
+recovery-lenkja slepper to samtidige restaureringar til registrering.
+API-et åleine er derfor ikkje godkjent som atomisk opptak. Ei støtta
+fullføringsbinding er heller ikkje etablert; ingen vedlikehalden providerfork
+er innført utan ei eiga avgjerd.
+
 N01 beviser same konto, støtta passnøkkelinnlogging og recovery utan den tapte nøkkelen. N03 beviser rotasjon, providerkopling og autorisasjon på alle transportar. N04 beviser heile invitasjons-/recoverykjeda med testkontoar. Funksjonane er inaktive i prod til desse portane er godkjende og eit eige utrullingsmandat finst.
 
 - [Gjeldande Sprøyt/Authen-kontrakt](authentik.md).
