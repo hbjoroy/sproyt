@@ -6,8 +6,12 @@ $path = Join-Path $run 'environment.json'
 $environment = Get-Content $path -Raw | ConvertFrom-Json
 if ($environment.environment -ne 'sproyt-n01c-local' -or $environment.prefix -notmatch '^sproyt-n01c-[a-f0-9]{8}$') { throw 'Not an owned local lab.' }
 $cli = if ($IsWindows) { 'wslc' } else { 'docker' }
+& $cli --help | Out-Null
 & $cli stop --help | Out-Null
-foreach ($suffix in @('-server','-worker','-db')) {
+& $cli inspect --help | Out-Null
+$suffixes = @('-server','-worker','-db')
+if ($environment.PSObject.Properties.Name -contains 'recoveryLab' -and $environment.recoveryLab -eq $true) { $suffixes += '-mailpit' }
+foreach ($suffix in $suffixes) {
     $name = $environment.prefix + $suffix
     $format = if ($IsWindows) { 'json' } else { '{{json .}}' }
     $inspected = @(& $cli inspect --format $format $name 2>$null)

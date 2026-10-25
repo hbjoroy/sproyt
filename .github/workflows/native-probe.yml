@@ -27,22 +27,35 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
-      - name: Start separate localhost passkey laboratory
+      - name: Start separate localhost recovery and passkey laboratory
         shell: pwsh
-        run: ./native/probes/authentik/start-lab.ps1 -ArtifactsDirectory '${{ runner.temp }}/sproyt-passkey' -Passkey
+        run: ./native/probes/authentik/start-lab.ps1 -ArtifactsDirectory '${{ runner.temp }}/sproyt-passkey' -Recovery
       - name: Verify WebAuthn policy and negative flow contract
         shell: pwsh
         run: |
           $labs = @(Get-ChildItem '${{ runner.temp }}/sproyt-passkey/runs' -Directory)
           if ($labs.Count -ne 1) { throw 'Expected one separate passkey lab.' }
           ./native/probes/authentik/run-passkey.ps1 -RunDirectory $labs[0].FullName -Phase Contract
+      - name: Measure recovery links and blocking policy failure boundaries
+        shell: pwsh
+        run: |
+          $labs = @(Get-ChildItem '${{ runner.temp }}/sproyt-passkey/runs' -Directory)
+          if ($labs.Count -ne 1) { throw 'Expected one separate recovery lab.' }
+          ./native/probes/authentik/run-recovery.ps1 -RunDirectory $labs[0].FullName
       - name: Preserve only non-secret passkey configuration receipts
         if: success()
         uses: actions/upload-artifact@v6
         with:
           name: native-passkey-configuration
           retention-days: 7
-          path: ${{ runner.temp }}/sproyt-passkey/runs/**/evidence/receipt.json
+          path: ${{ runner.temp }}/sproyt-passkey/runs/**/passkey-checks/**/evidence/receipt.json
+      - name: Preserve only non-secret recovery receipts
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-recovery-link-contract
+          retention-days: 7
+          path: ${{ runner.temp }}/sproyt-passkey/runs/**/recovery-checks/**/evidence/receipt.json
       - name: Stop only owned passkey laboratory containers
         if: always()
         shell: pwsh

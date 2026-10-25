@@ -28,6 +28,13 @@ eingongsbevis knytt til eksakt providergrant/økt/device er kontrollerte.
 Direkte native Credential Manager, recovery, RP-logout og produksjonskopling
 står att; dette er ikkje ei fullført N01-/N03-aktivering.
 
+[N01f1](../native/probes/authentik/RECOVERY.md) har prøvd ekte SMTP til lokal
+fangar, e-postbinding, replay/forkar, rategrenser og feilbaner. Standard
+e-postsamtykke slepper to restaurerte planar vidare; databaseclaim avgrensar
+normalt opptak, men ein ytre policyfeil kan hoppe over sperra. Recovery-porten
+er derfor ikkje godkjend. Neste avgjerd er ein støtta, feillukka
+serverintegrasjon før ny nøkkel/fullføringskvittering og N03 kan godkjennast.
+
 [N01b-laboratoriet på Windows](../native/probes/identity/DESKTOP.md) har no
 OS-verna, varig app-handoff, reelle prosessavbrot og ein faktisk Edge-rundtur
 med to fiktive kontoar. Dette er framleis isolert frå Authentik og vanleg chat;
