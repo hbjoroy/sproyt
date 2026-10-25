@@ -144,6 +144,10 @@ async fn run() -> store::Result<()> {
         |config| config.issuer.clone(),
     );
     let http = reqwest::Client::builder()
+        .resolve(
+            "localhost",
+            std::net::SocketAddr::from(([127, 0, 0, 1], 19090)),
+        )
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(10))

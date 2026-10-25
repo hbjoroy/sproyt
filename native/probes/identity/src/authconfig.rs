@@ -3,6 +3,7 @@ use openidconnect::{
     core::{CoreJsonWebKeySet, CoreProviderMetadata, CoreTokenResponse},
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -88,7 +89,8 @@ impl Config {
 fn local_url(value: &str) -> Result<reqwest::Url, ()> {
     let url = reqwest::Url::parse(value).map_err(|_| ())?;
     if url.scheme() != "http"
-        || url.host_str() != Some("127.0.0.1")
+        || !(url.host_str() == Some("127.0.0.1")
+            || (url.host_str() == Some("localhost") && url.port() == Some(19090)))
         || url.port().is_none_or(|port| port == 0)
         || !url.username().is_empty()
         || url.password().is_some()
@@ -119,24 +121,32 @@ pub struct Check {
     pub transaction_id: String,
     pub action: String,
 }
+fn allowed_action(action: &str) -> bool {
+    matches!(
+        action,
+        "refresh"
+            | "drop-refresh-result"
+            | "retry-old"
+            | "introspect-access"
+            | "introspect-refresh"
+            | "revoke-refresh"
+            | "access-fingerprint"
+    )
+}
+fn access_fingerprint(access: &str) -> serde_json::Value {
+    serde_json::json!({"access_fingerprint":format!("{:x}", Sha256::digest(access.as_bytes()))})
+}
 pub async fn check(app: &crate::App, input: Check) -> Result<serde_json::Value, crate::ProbeError> {
-    if !app.external
-        || !matches!(
-            input.action.as_str(),
-            "refresh"
-                | "drop-refresh-result"
-                | "retry-old"
-                | "introspect-access"
-                | "introspect-refresh"
-                | "revoke-refresh"
-        )
-    {
+    if !app.external || !allowed_action(&input.action) {
         return Err(crate::ProbeError);
     }
     let mut sessions = app.upstream.lock().await;
     let current = sessions
         .get_mut(&(input.transaction_id, input.user_id))
         .ok_or(crate::ProbeError)?;
+    if input.action == "access-fingerprint" {
+        return Ok(access_fingerprint(&current.access));
+    }
     if matches!(
         input.action.as_str(),
         "introspect-access" | "introspect-refresh" | "revoke-refresh"
@@ -278,6 +288,18 @@ fn introspection_observation(bytes: &[u8]) -> Result<serde_json::Value, ()> {
 mod tests {
     use super::*;
     #[test]
+    fn fingerprint_action_is_allowlisted_and_exposes_only_sha256() {
+        assert!(allowed_action("access-fingerprint"));
+        assert!(!allowed_action("access-token"));
+        assert!(!allowed_action("access-fingerprint-extra"));
+        let observation = access_fingerprint("abc");
+        assert_eq!(
+            observation,
+            serde_json::json!({"access_fingerprint":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"})
+        );
+        assert_eq!(observation.as_object().unwrap().len(), 1);
+    }
+    #[test]
     fn introspection_strips_all_provider_claims_and_requires_boolean_active() {
         let observation = introspection_observation(br#"{"active":true,"sub":"synthetic-subject","token":"synthetic-secret","scope":"openid","exp":123}"#).unwrap();
         assert_eq!(observation, serde_json::json!({"active":true}));
@@ -398,9 +420,11 @@ mod tests {
     #[test]
     fn local_origin_has_no_aliases_or_extra_components() {
         assert!(local_url("http://127.0.0.1:19090/application/o/n01-lab/").is_ok());
+        assert!(local_url("http://localhost:19090/application/o/n01-lab/").is_ok());
         for value in [
             "https://127.0.0.1:19090/application/o/n01-lab/",
-            "http://localhost:19090/application/o/n01-lab/",
+            "http://localhost:19091/application/o/n01-lab/",
+            "http://LOCALHOST:19090/application/o/n01-lab/",
             "http://[::1]:19090/application/o/n01-lab/",
             "http://127.0.0.1:19090/application/o/n01-lab/?x=1",
             "http://127.0.0.1:19090/application/o/n01-lab/#x",
@@ -410,6 +434,39 @@ mod tests {
         ] {
             assert!(local_url(value).is_err());
         }
+    }
+    #[test]
+    fn localhost_variant_is_a_separate_exact_origin() {
+        let config = Config {
+            issuer: "http://localhost:19090/application/o/n01-lab/".into(),
+            client_id: "n01-lab".into(),
+            client_secret_file: PathBuf::new(),
+            listen_port: 19191,
+        };
+        assert!(
+            config
+                .endpoint("http://localhost:19090/application/o/token/")
+                .is_ok()
+        );
+        assert!(
+            config
+                .endpoint("http://127.0.0.1:19090/application/o/token/")
+                .is_err()
+        );
+        assert!(
+            config
+                .endpoint("http://localhost:19091/application/o/token/")
+                .is_err()
+        );
+        let control = Control::new(&config, "synthetic-client-secret").unwrap();
+        assert_eq!(
+            control.introspect.as_str(),
+            "http://localhost:19090/application/o/introspect/"
+        );
+        assert_eq!(
+            control.revoke.as_str(),
+            "http://localhost:19090/application/o/revoke/"
+        );
     }
     #[test]
     fn every_endpoint_must_stay_on_the_configured_origin() {
@@ -426,6 +483,7 @@ mod tests {
         );
         for value in [
             "http://127.0.0.1:19191/application/o/token/",
+            "http://localhost:19090/application/o/token/",
             "http://127.0.0.2:19090/application/o/token/",
             "https://example.com/token",
             "http://127.0.0.1:19090/token?redirect=1",

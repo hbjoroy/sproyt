@@ -22,6 +22,37 @@ permissions:
   contents: read
 
 jobs:
+  authentik-passkey-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - name: Start separate localhost passkey laboratory
+        shell: pwsh
+        run: ./native/probes/authentik/start-lab.ps1 -ArtifactsDirectory '${{ runner.temp }}/sproyt-passkey' -Passkey
+      - name: Verify WebAuthn policy and negative flow contract
+        shell: pwsh
+        run: |
+          $labs = @(Get-ChildItem '${{ runner.temp }}/sproyt-passkey/runs' -Directory)
+          if ($labs.Count -ne 1) { throw 'Expected one separate passkey lab.' }
+          ./native/probes/authentik/run-passkey.ps1 -RunDirectory $labs[0].FullName -Phase Contract
+      - name: Preserve only non-secret passkey configuration receipts
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-passkey-configuration
+          retention-days: 7
+          path: ${{ runner.temp }}/sproyt-passkey/runs/**/evidence/receipt.json
+      - name: Stop only owned passkey laboratory containers
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path '${{ runner.temp }}/sproyt-passkey/runs') {
+            Get-ChildItem '${{ runner.temp }}/sproyt-passkey/runs' -Directory | ForEach-Object {
+              ./native/probes/authentik/stop-lab.ps1 -RunDirectory $_.FullName
+            }
+          }
+
   authentik-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 20

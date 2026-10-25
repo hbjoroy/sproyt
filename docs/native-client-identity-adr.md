@@ -104,6 +104,13 @@ Sprøyt si framtidige globale native tilbakekalling. N03 må ha eksplisitt
 einingssperring og ei verifisert providerkopling; RP-logout og recovery er enno
 ikkje aksepterte av denne prøva.
 
+[N01e-passnøkkelprøva](../native/probes/authentik/PASSKEY.md) har verifisert
+systemnettlesar med plattformpassnøkkel på Windows ARM64. Ho held same
+localhost-identitet før/etter registrering og krev eit ferskt, eingongs
+grant-/økt-/devicebevis ved app-handoff. Ho er ikkje bevis for direkte native
+Credential Manager eller produksjonsidentiteten. Den observerte løkka ved
+ekstra `prompt=login` er dokumentert; UV-kravet vart ikkje redusert.
+
 N01 beviser same konto, støtta passnøkkelinnlogging og recovery utan den tapte nøkkelen. N03 beviser rotasjon, providerkopling og autorisasjon på alle transportar. N04 beviser heile invitasjons-/recoverykjeda med testkontoar. Funksjonane er inaktive i prod til desse portane er godkjende og eit eige utrullingsmandat finst.
 
 - [Gjeldande Sprøyt/Authen-kontrakt](authentik.md).

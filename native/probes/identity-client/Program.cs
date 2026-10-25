@@ -26,6 +26,7 @@ internal static class Program
         {
             if (args.Length == 4 && args[0] == "--desktop-child") return await DesktopHandoffClient.Run(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] is "--desktop-test" or "--desktop-browser") return await DesktopHandoffProbe.Run(args[1], args[2], args[3], args[0] == "--desktop-browser");
+            if (args.Length == 4 && args[0] is "--authentik-password-browser" or "--authentik-passkey-browser") return await AuthentikHandoffProbe.Run(args[1], args[2], args[3], true, passkeyMode: args[0] == "--authentik-password-browser" ? "password" : "passkey");
             if (args.Length == 4 && args[0] == "--authentik-http-test") return await AuthentikHandoffProbe.Run(args[1], args[2], args[3], false, httpOnly: true);
             if (args.Length == 4 && args[0] is "--authentik-revocation-test" or "--authentik-revocation-http-test") return await AuthentikHandoffProbe.Run(args[1], args[2], args[3], false, httpOnly: args[0] == "--authentik-revocation-http-test", revocation: true);
             if (args.Length == 4 && args[0] is "--authentik-test" or "--authentik-browser") return await AuthentikHandoffProbe.Run(args[1], args[2], args[3], args[0] == "--authentik-browser");

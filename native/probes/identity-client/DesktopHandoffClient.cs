@@ -39,7 +39,8 @@ internal static class DesktopHandoffClient
     private static void ValidateIdentity(DesktopConfig config)
     {
         if (config.Issuer is null) { Check(config.Subjects is null); return; }
-        var issuer = Loopback(config.Issuer, "/application/o/n01-lab/");
+        var issuer = config.Issuer == "http://localhost:19090/application/o/n01-lab/"
+            ? new Uri(config.Issuer, UriKind.Absolute) : Loopback(config.Issuer, "/application/o/n01-lab/");
         Check(issuer.AbsoluteUri == config.Issuer && issuer.Port != new Uri(config.Broker).Port);
         var subjects = config.Subjects;
         Check(subjects is not null && subjects.Count is >= 1 and <= 2);
