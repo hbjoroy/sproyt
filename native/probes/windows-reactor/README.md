@@ -10,7 +10,7 @@ På Windows 11 med PowerShell 7, .NET SDK 10.0.301, Rust 1.96 og ein native
 C-kompilator for SQLite:
 
 ```powershell
-./native/probes/run-windows-reactor.ps1 -UiSmoke -Launch
+./native/probes/run-windows-reactor.ps1 -ArtifactsDirectory S:/Build/sproyt-reactor -UiSmoke -Launch
 ```
 
 Runneren byggjer på den lokale maskina sin ARM64- eller x64-arkitektur, køyrer
@@ -35,7 +35,22 @@ Dette er ei avgrensa lagringsprøve: maks åtte kølagde meldingar og 1 024
 UTF-8-byte per utkast/melding. Køen sender ingenting til andre brukarar. Han
 kan bli full; bruk ein ny testprofil for fleire prøvesendingar.
 
+## Vindauge og skjermtastatur
+
+Når du er ved botnen av samtalen, blir siste melding halden synleg ved endra
+vindaugsstorleik. Justeringa ventar til geometrien har vore roleg i 180 ms,
+slik at raske endringar blir samla. Har du rulla opp for å lese, blir
+leseposisjonen bevart; musehjul, peikar og tastatur avbryt ei venta justering.
+
+Desktop-innkoplinga til Windows InputPane varslar om opning og lukking av
+skjermtastaturet. WinUI handterer framleis plasseringa av skrivefeltet.
+Automatisk testing dekkjer samling av desse varsla; faktisk touch-tastatur
+må prøvast på maskina.
+
 ## Bygg, testing og avgrensingar
+
+Kvart bygg bruker eigne managed mellomfiler og eigen C#-kompilatorprosess.
+Dermed kan gamle byggfiler ikkje skjule kjeldeendringar når filklokkene avvik.
 
 Sjå [resultat og arkitektur](../../../docs/native-client-windows-probe.md).
 Den felles Rust-prøva eig SQLite. Den eksisterande C#-arbeidaren serialiserer

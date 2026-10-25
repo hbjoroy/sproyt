@@ -125,6 +125,39 @@ internal static class UiProbe
             PilotComponent.SelectForProbe!("prat");
             await Until(() => Find<TextBox>(root, "composer").Text == "");
 
+            await Until(() => PilotComponent.ReadingPositionSettledForProbe!() && MessageVisible(scroller, beforeNavigation));
+            int beforeResize = PilotComponent.ViewportAdjustmentsForProbe!();
+            window.SetSize(1040, 700);
+            await Task.Delay(40);
+            window.SetSize(1000, 620);
+            await Task.Delay(40);
+            window.SetSize(960, 540);
+            await Until(() => PilotComponent.ViewportAdjustmentsForProbe!() > beforeResize &&
+                !PilotComponent.ViewportPendingForProbe!() && PilotComponent.ReadingPositionSettledForProbe!() && MessageVisible(scroller, beforeNavigation));
+            await Task.Delay(250);
+            Check(PilotComponent.ViewportAdjustmentsForProbe!() == beforeResize + 1, "Resize burst caused repeated tail corrections.");
+
+            // The OS keyboard bridge uses this same debounced notification.
+            int beforeKeyboard = PilotComponent.ViewportAdjustmentsForProbe!();
+            PilotComponent.ViewportTransition!();
+            PilotComponent.ViewportTransition!();
+            await Until(() => PilotComponent.ViewportAdjustmentsForProbe!() == beforeKeyboard + 1 && PilotComponent.ReadingPositionSettledForProbe!());
+
+            // Reading history must not be mistaken for following the tail.
+            scroller.ChangeView(null, 650, null, true);
+            await Until(() => Math.Abs(scroller.VerticalOffset - 650) < 2);
+            await Task.Delay(220);
+            var readingAnchor = VisibleAnchor(scroller);
+            int whileReading = PilotComponent.ViewportAdjustmentsForProbe!();
+            window.SetSize(960, 600);
+            await Until(() => root.ActualHeight > 550);
+            await Task.Delay(250);
+            var sameAnchor = Descendants(scroller).OfType<FrameworkElement>()
+                .FirstOrDefault(element => AutomationProperties.GetAutomationId(element) == readingAnchor.Id);
+            Check(sameAnchor is not null && Math.Abs(TopIn(scroller, sameAnchor) - readingAnchor.Top) < 4 &&
+                PilotComponent.ViewportAdjustmentsForProbe!() == whileReading,
+                "Resizing moved the visible history message or forced a tail correction.");
+
             window.SetSize(360, 720);
             await Until(() => root.ActualWidth < 800 && Find<Button>(root, "conversations").Visibility == Visibility.Visible);
             Check(Find<TextBox>(root, "composer").ActualWidth > 200, "Compact layout left no room to write.");
@@ -145,10 +178,11 @@ internal static class UiProbe
                 passed = true, architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
                 materializedTextBlocks = materialized, syntheticMessagesPerChannel = 1000,
                 rasterizationScale = root.XamlRoot.RasterizationScale,
+                keyboardViewportAvailable = Program.KeyboardViewportAvailable,
                 compactWidthDip = root.ActualWidth,
                 checks = new[] { "native WinUI tree", "virtualization", "editor identity and selection", "independent drafts",
                     "reading position", "light and dark semantic brushes", "UI enqueue binding", "own message visible", "immediate send and navigation",
-                    "compact layout", "flush and reopen" },
+                    "debounced resize tail", "resize preserves history reader", "keyboard transition coalescing", "compact layout", "flush and reopen" },
                 notTested = new[] { "physical keyboard and IME", "touch", "screen reader", "visual screenshot approval", "production" },
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -163,6 +197,20 @@ internal static class UiProbe
 
     private static bool SameText(string left, string right) => left.Replace("\r\n", "\n").Replace('\r', '\n')
         == right.Replace("\r\n", "\n").Replace('\r', '\n');
+
+    private static double TopIn(ScrollViewer scroller, FrameworkElement element) =>
+        element.TransformToVisual(scroller).TransformPoint(new Windows.Foundation.Point()).Y;
+
+    private static (string Id, double Top) VisibleAnchor(ScrollViewer scroller)
+    {
+        var row = Descendants(scroller).OfType<FrameworkElement>()
+            .Where(element => AutomationProperties.GetAutomationId(element).StartsWith("message-", StringComparison.Ordinal))
+            .Select(element => (Element: element, Top: TopIn(scroller, element)))
+            .Where(value => value.Top >= 0 && value.Top < scroller.ViewportHeight)
+            .MinBy(value => value.Top);
+        Check(row.Element is not null, "No visible history anchor was materialized.");
+        return (AutomationProperties.GetAutomationId(row.Element!), row.Top);
+    }
 
     private static bool MessageVisible(ScrollViewer scroller, string body)
     {

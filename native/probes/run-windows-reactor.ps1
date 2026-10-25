@@ -47,7 +47,8 @@ try {
     Push-Location (Split-Path -Parent $project)
     try {
         Checked 'dotnet' @('publish', $project, '-c', 'Release', '-r', $runtime, ('-p:Platform=' + $platform),
-            '-p:RestoreLockedMode=true', '--artifacts-path', (Join-Path $root 'managed'), '-o', $publish, '--nologo')
+            '-p:UseSharedCompilation=false',
+            '-p:RestoreLockedMode=true', '--artifacts-path', (Join-Path $run 'managed'), '-o', $publish, '--nologo')
     } finally { Pop-Location }
     $library = Join-Path $publish 'sproyt_native_probe.dll'
     Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'debug/sproyt_native_probe.dll') -Destination $library
