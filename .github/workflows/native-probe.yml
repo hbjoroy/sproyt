@@ -46,6 +46,7 @@ jobs:
             ${{ runner.temp }}/sproyt-reactor/runs/**/ui-result.json
             ${{ runner.temp }}/sproyt-reactor/runs/**/ui-resume-result.json
             ${{ runner.temp }}/sproyt-reactor/runs/**/ui-closed.txt
+            ${{ runner.temp }}/sproyt-reactor/runs/**/ui-resume-closed.txt
             ${{ runner.temp }}/sproyt-reactor/runs/**/ui-failure.txt
             ${{ runner.temp }}/sproyt-reactor/runs/**/ui-resume-failure.txt
             ${{ runner.temp }}/sproyt-reactor/runs/**/startup.log

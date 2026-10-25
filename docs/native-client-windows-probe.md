@@ -81,8 +81,10 @@ utprøving av den køyrbare appen.
 
 Ctrl+Enter vart fanga i bubbling-hendinga `KeyDown`, etter at WinUI-tekstfeltet
 kunne ha handsama Enter. Han blir no fanga i `PreviewKeyDown`. Både knapp og
-tastesnarveg les den aktuelle native editorverdien før sending, slik at eit
-ventande TextChanged ikkje sender eit eldre snapshot.
+tastesnarveg sjekkar siste koordinator-snapshot før sending. Dei les ikkje ein
+gammal, enno ikkje tømd TextBox tilbake som nytt utkast etter sendesuksess.
+Ein regresjonstest sender på nytt og byter kanal straks etter suksess, utan
+å vente på at rendereren tømmer tekstfeltet.
 
 Godteken eiga sending ber no om botnplassering etter at historikken er målt.
 Den same avgrensa restaureringa og generasjonskontrollen gjeld. Vanleg render,

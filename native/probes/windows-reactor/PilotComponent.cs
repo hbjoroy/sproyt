@@ -29,7 +29,6 @@ internal sealed class PilotComponent : Component
     private string? _restoringChannel;
     private int _navigationGeneration;
     private int _revision;
-    private string? _editorChannel;
 
     public override Element Render()
     {
@@ -67,7 +66,6 @@ internal sealed class PilotComponent : Component
         void Select(string id)
         {
             if (Program.CloseAdmissionClosed) return;
-            CaptureEditorDraft(_activeChannel);
             if (conversationVisible) SaveReadingPosition();
             if (id != _activeChannel)
             {
@@ -203,8 +201,8 @@ internal sealed class PilotComponent : Component
                     Send();
                 }
             })
-            .OnMount(element => { EditorForClose = element as TextBox; _editorChannel = channel; })
-            .OnUnmount(element => { if (ReferenceEquals(EditorForClose, element)) { EditorForClose = null; _editorChannel = null; } })
+            .OnMount(element => EditorForClose = element as TextBox)
+            .OnUnmount(element => { if (ReferenceEquals(EditorForClose, element)) EditorForClose = null; })
             .WithKey("composer-" + channel);
         var composer = Border(Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto, GridSize.Auto],
             input.Grid(column: 0),
@@ -233,27 +231,21 @@ internal sealed class PilotComponent : Component
         && !state.Closing && !state.Terminal && !state.Sending && !state.NeedsRetry
         && !string.IsNullOrWhiteSpace(body) && Encoding.UTF8.GetByteCount(body) <= 1024 && state.Outbox.Count < 8;
 
-    private void CaptureEditorDraft(string channel)
-    {
-        var latest = Program.Workspace.State;
-        if (_editorChannel == channel && EditorForClose is { } editor && latest.Ready && !latest.Closing
-            && !latest.Terminal && !Program.CloseAdmissionClosed && latest.Drafts[channel].Body != editor.Text)
-            Program.Workspace.EditDraft(channel, editor.Text);
-    }
-
     private async Task EnqueueMessage(string channel)
     {
         if (channel != _activeChannel || Program.CloseAdmissionClosed) throw new InvalidOperationException("Sending is unavailable.");
-        // A native TextChanged can still be pending when the shortcut or button
-        // fires. Admit the editor's current value, not an earlier render snapshot.
-        CaptureEditorDraft(channel);
+        // The coordinator owns the controlled input. Reading the old native
+        // TextBox here could resurrect accepted text before its render clears.
         var latest = Program.Workspace.State;
         if (!CanSend(latest, latest.Drafts[channel].Body)) throw new InvalidOperationException("Sending is unavailable.");
         await Program.Workspace.SendAsync(channel);
         // Explicit own sending reveals the accepted message. Ordinary renders
         // (typing/theme changes) continue to preserve the reading position.
-        _readingOffsets.Remove(channel);
-        if (channel == _activeChannel && !Program.CloseAdmissionClosed) QueueRestore(channel);
+        if (channel == _activeChannel && !Program.CloseAdmissionClosed)
+        {
+            _readingOffsets.Remove(channel);
+            QueueRestore(channel);
+        }
     }
 
     private void SaveReadingPosition()

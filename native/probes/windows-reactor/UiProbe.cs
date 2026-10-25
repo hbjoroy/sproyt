@@ -32,7 +32,7 @@ internal static class UiProbe
         string folder = Program.UiProbeDirectory!;
         Directory.CreateDirectory(folder);
         var window = ReactorApp.PrimaryWindow!;
-        window.Closed += (_, _) => File.WriteAllText(Path.Combine(folder, "ui-closed.txt"),
+        window.Closed += (_, _) => File.WriteAllText(Path.Combine(folder, Program.UiResume ? "ui-resume-closed.txt" : "ui-closed.txt"),
             Program.Workspace.State.Ready ? "FAIL: closed before shutdown" : "PASS: native Closed event after shutdown");
         try
         {
@@ -43,7 +43,7 @@ internal static class UiProbe
                 // A new OS process must hydrate the actual editor, not merely
                 // reopen SQLite successfully in the old process.
                 await Until(() => SameText(composer.Text, ClosingDraft));
-                Check(Program.Workspace.State.Outbox.Count == 1, "Restart lost the locally queued message.");
+                Check(Program.Workspace.State.Outbox.Count == 2, "Restart lost a locally queued message.");
                 PilotComponent.SelectForProbe!("idear");
                 await Until(() => Find<TextBox>(root, "composer").Text == "Eit eige idéutkast");
                 PilotComponent.SelectForProbe!("prat");
@@ -104,9 +104,26 @@ internal static class UiProbe
 
             await Until(() => Find<Button>(root, "queue-message").IsEnabled);
             await PilotComponent.SendForProbe!();
+            bool repeatedSendRejected = false;
+            try { await PilotComponent.SendForProbe!(); }
+            catch (InvalidOperationException) { repeatedSendRejected = true; }
+            Check(repeatedSendRejected && Program.Workspace.State.Outbox.Count == 1,
+                "An immediate second send resurrected accepted editor text.");
             await Until(() => Find<TextBox>(root, "composer").Text == "" && Program.Workspace.State.Outbox.Count == 1);
             Check(Program.Workspace.State.Outbox[0].Body == first, "The UI binding changed queued content.");
             await Until(() => MessageVisible(scroller, first));
+
+            const string beforeNavigation = "Ei sending rett før kanalbyte";
+            Find<TextBox>(root, "composer").Text = beforeNavigation;
+            await Until(() => Saved("prat", beforeNavigation));
+            await PilotComponent.SendForProbe!();
+            // No wait for the renderer to clear the old native TextBox here.
+            PilotComponent.SelectForProbe!("idear");
+            await Until(() => Find<TextBox>(root, "composer").Text == "Eit eige idéutkast");
+            Check(Program.Workspace.State.Drafts["prat"].Body == "" && Program.Workspace.State.Outbox.Count == 2,
+                "Immediate navigation resurrected accepted text.");
+            PilotComponent.SelectForProbe!("prat");
+            await Until(() => Find<TextBox>(root, "composer").Text == "");
 
             window.SetSize(360, 720);
             await Until(() => root.ActualWidth < 800 && Find<Button>(root, "conversations").Visibility == Visibility.Visible);
@@ -120,7 +137,8 @@ internal static class UiProbe
                     "Closing lost the latest editor text.");
                 Check(snapshot.Drafts.Any(value => value.Channel == "idear" && value.Body == "Eit eige idéutkast"),
                     "Closing lost another channel's draft.");
-                Check(snapshot.Outbox.Count == 1 && snapshot.Outbox[0].Body == first, "The accepted local message was not durable.");
+                Check(snapshot.Outbox.Count == 2 && snapshot.Outbox[0].Body == first && snapshot.Outbox[1].Body == beforeNavigation,
+                    "The accepted local messages were not durable.");
             }
             File.WriteAllText(Path.Combine(folder, "ui-result.json"), JsonSerializer.Serialize(new
             {
@@ -129,7 +147,8 @@ internal static class UiProbe
                 rasterizationScale = root.XamlRoot.RasterizationScale,
                 compactWidthDip = root.ActualWidth,
                 checks = new[] { "native WinUI tree", "virtualization", "editor identity and selection", "independent drafts",
-                    "reading position", "light and dark semantic brushes", "UI enqueue binding", "own message visible", "compact layout", "flush and reopen" },
+                    "reading position", "light and dark semantic brushes", "UI enqueue binding", "own message visible", "immediate send and navigation",
+                    "compact layout", "flush and reopen" },
                 notTested = new[] { "physical keyboard and IME", "touch", "screen reader", "visual screenshot approval", "production" },
             }, new JsonSerializerOptions { WriteIndented = true }));
         }

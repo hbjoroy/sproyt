@@ -70,7 +70,7 @@ try {
         ProbeProcess @('--ui-resume', $uiTests) $true
         $resume = Get-Content -LiteralPath (Join-Path $uiTests 'ui-resume-result.json') -Raw | ConvertFrom-Json
         if (!$resume.passed -or $resume.architecture.ToLowerInvariant() -ne $Architecture -or
-            (Get-Content -LiteralPath (Join-Path $uiTests 'ui-closed.txt') -Raw).Trim() -ne 'PASS: native Closed event after shutdown') {
+            (Get-Content -LiteralPath (Join-Path $uiTests 'ui-resume-closed.txt') -Raw).Trim() -ne 'PASS: native Closed event after shutdown') {
             throw 'The restarted app did not restore its editor and close cleanly'
         }
     }
