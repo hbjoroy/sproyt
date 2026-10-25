@@ -30,6 +30,8 @@ type Oidc = CoreClient<
     EndpointMaybeSet,
 >;
 pub struct App {
+    instance_id: String,
+    interactive: bool,
     address: String,
     issuer: String,
     oidc_callback: String,
@@ -98,6 +100,11 @@ async fn run() -> store::Result<()> {
         return Err(());
     }
     let callback_uri = args.next().ok_or(())?;
+    let interactive = match args.next().as_deref() {
+        None => false,
+        Some("--interactive") => true,
+        _ => return Err(()),
+    };
     if args.next().is_some() {
         return Err(());
     }
@@ -126,16 +133,19 @@ async fn run() -> store::Result<()> {
         .build()
         .map_err(|_| ())?;
     let app = Arc::new(App {
+        instance_id: store::random()?,
+        interactive,
         oidc_callback: format!("{address}/probe/callback"),
         address: address.clone(),
         issuer: issuer.clone(),
         callback_uri,
-        store: Mutex::new(store::Store::create(&database)?),
+        store: Mutex::new(store::Store::create(&database, interactive)?),
         provider: provider::Provider::new()?,
         client: tokio::sync::OnceCell::new(),
         http,
     });
     let routes = Router::new()
+        .route("/provider/choose", post(provider::choose))
         .route(
             "/provider/.well-known/openid-configuration",
             get(provider::metadata),
@@ -151,6 +161,7 @@ async fn run() -> store::Result<()> {
         .route("/fixture/expire", post(expire))
         .fallback(|| async { ProbeError })
         .layer(DefaultBodyLimit::max(8192))
+        .layer(axum::middleware::map_response(private_response))
         .with_state(app.clone());
     let server = tokio::spawn(async move { axum::serve(listener, routes).await });
     let metadata = CoreProviderMetadata::discover_async(
@@ -166,8 +177,22 @@ async fn run() -> store::Result<()> {
     )
     .set_redirect_uri(RedirectUrl::new(app.oidc_callback.clone()).map_err(|_| ())?);
     app.client.set(client).map_err(|_| ())?;
-    println!("N01_READY {}", json!({"address":address,"issuer":issuer}));
+    println!(
+        "N01_READY {}",
+        json!({"address":address,"issuer":issuer,"instance_id":app.instance_id})
+    );
     server.await.map_err(|_| ())?.map_err(|_| ())
+}
+
+async fn private_response(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .entry("referrer-policy")
+        .or_insert(HeaderValue::from_static("no-referrer"));
+    response
 }
 
 async fn start(
@@ -205,8 +230,10 @@ async fn browser(
     response.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&format!(
-            "probe_{}={}; Path=/probe/callback; HttpOnly; SameSite=Lax; Max-Age=120",
-            attempt.id, attempt.cookie
+            "probe_{}={}; Path=/probe/callback; HttpOnly; SameSite=Lax; Max-Age={}",
+            attempt.id,
+            attempt.cookie,
+            if app.interactive { 600 } else { 120 }
         ))
         .map_err(|_| ProbeError)?,
     );
@@ -319,7 +346,7 @@ async fn status(
 ) -> std::result::Result<Json<serde_json::Value>, ProbeError> {
     let (attempts, session_families) = app.store.lock().map_err(|_| ProbeError)?.status()?;
     Ok(Json(
-        json!({"attempts":attempts,"session_families":session_families}),
+        json!({"attempts":attempts,"session_families":session_families,"instance_id":app.instance_id}),
     ))
 }
 

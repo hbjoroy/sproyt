@@ -22,7 +22,13 @@ internal static class Program
     private static string B64(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     public static async Task<int> Main(string[] args)
     {
-        try { Require(args.Length == 3); await Run(args[0], args[1], args[2]); Console.WriteLine("PASS isolated identity HTTP probe"); return 0; }
+        try
+        {
+            if (args.Length == 4 && args[0] == "--desktop-child") return await DesktopHandoffClient.Run(args[1], args[2], args[3]);
+            if (args.Length == 4 && args[0] is "--desktop-test" or "--desktop-browser") return await DesktopHandoffProbe.Run(args[1], args[2], args[3], args[0] == "--desktop-browser");
+            Require(args.Length == 3); await Run(args[0], args[1], args[2]); Console.WriteLine("PASS isolated identity HTTP probe"); return 0;
+        }
+        catch (DesktopHandoffClient.Failure failure) { Console.Error.WriteLine($"FAIL desktop identity assertion line {failure.Line}"); return 1; }
         catch (ProbeFailure failure) { Console.Error.WriteLine($"FAIL isolated identity HTTP probe: assertion line {failure.Line}"); return 1; }
         catch { Console.Error.WriteLine("FAIL isolated identity HTTP probe (details suppressed to protect transient proofs)"); return 1; }
     }

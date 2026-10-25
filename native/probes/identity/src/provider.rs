@@ -5,8 +5,8 @@ use crate::{
 use axum::{
     Form, Json,
     extract::{Query, State},
-    http::{HeaderMap, header},
-    response::Response,
+    http::{HeaderMap, HeaderValue, header},
+    response::{Html, IntoResponse, Response},
 };
 use base64::{
     Engine,
@@ -43,6 +43,13 @@ pub struct Provider {
     key: RsaPrivateKey,
     wrong_key: RsaPrivateKey,
     grants: Mutex<HashMap<String, Grant>>,
+    choices: Mutex<HashMap<String, Choice>>,
+}
+
+struct Choice {
+    authorization: Authorization,
+    cookie: String,
+    expires: i64,
 }
 
 impl Provider {
@@ -51,6 +58,7 @@ impl Provider {
             key: RsaPrivateKey::new(&mut OsRng, 2048).map_err(|_| ())?,
             wrong_key: RsaPrivateKey::new(&mut OsRng, 2048).map_err(|_| ())?,
             grants: Mutex::new(HashMap::new()),
+            choices: Mutex::new(HashMap::new()),
         })
     }
 }
@@ -100,10 +108,10 @@ pub async fn authorize(
     {
         return Err(ProbeError);
     }
-    let account = headers
-        .get("x-probe-account")
-        .and_then(|v| v.to_str().ok())
-        .ok_or(ProbeError)?;
+    let account = headers.get("x-probe-account").and_then(|v| v.to_str().ok());
+    let Some(account) = account else {
+        return selection_page(&app, input);
+    };
     if !matches!(account, "alice" | "bob") {
         return Err(ProbeError);
     }
@@ -114,6 +122,103 @@ pub async fn authorize(
     if !matches!(fault, "" | "nonce" | "audience" | "issuer" | "signature") {
         return Err(ProbeError);
     }
+    issue(&app, input, account, fault)
+}
+
+fn selection_page(
+    app: &App,
+    authorization: Authorization,
+) -> std::result::Result<Response, ProbeError> {
+    let id = store::random()?;
+    let cookie = store::random()?;
+    {
+        let mut choices = app.provider.choices.lock().map_err(|_| ProbeError)?;
+        choices.retain(|_, v| v.expires > store::now());
+        if choices.len() >= 32 {
+            return Err(ProbeError);
+        }
+        choices.insert(
+            id.clone(),
+            Choice {
+                authorization,
+                cookie: store::digest(&cookie),
+                expires: store::now() + if app.interactive { 600 } else { 120 },
+            },
+        );
+    }
+    let mut response = Html(format!("<!doctype html><html lang=nn><meta charset=utf-8><title>Sprøyt · innloggingslaboratorium</title><h1>Sprøyt · innloggingsprøve</h1><p>Berre fiktive kontoar. Dette gir ingen tilgang til Sprøyt.</p><form method=post action=/provider/choose><input type=hidden name=request value=\"{id}\"><button name=account value=alice>Alice (fiktiv konto)</button><button name=account value=bob>Bob (fiktiv konto)</button></form></html>")).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format!(
+            "choice_{id}={cookie}; Path=/provider/choose; HttpOnly; SameSite=Strict; Max-Age={}",
+            if app.interactive { 600 } else { 120 }
+        ))
+        .map_err(|_| ProbeError)?,
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert("referrer-policy", HeaderValue::from_static("origin"));
+    // Chromium applies form-action to the redirect chain too. Permit only
+    // this provider and the pre-registered loopback return, never a wildcard.
+    let return_origin = reqwest::Url::parse(&app.callback_uri)
+        .map_err(|_| ProbeError)?
+        .origin()
+        .ascii_serialization();
+    response.headers_mut().insert("content-security-policy", HeaderValue::from_str(&format!(
+        "default-src 'none'; form-action 'self' {return_origin}; frame-ancestors 'none'; base-uri 'none'"
+    )).map_err(|_| ProbeError)?);
+    Ok(response)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Selection {
+    request: String,
+    account: String,
+}
+
+pub async fn choose(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    form: std::result::Result<Form<Selection>, axum::extract::rejection::FormRejection>,
+) -> std::result::Result<Response, ProbeError> {
+    let Form(input) = form.map_err(|_| ProbeError)?;
+    if !store::valid_challenge(&input.request)
+        || !matches!(input.account.as_str(), "alice" | "bob")
+        || headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) != Some(app.address.as_str())
+    {
+        return Err(ProbeError);
+    }
+    let name = format!("choice_{}=", input.request);
+    let cookie = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.split(';')
+                .map(str::trim)
+                .find_map(|v| v.strip_prefix(&name))
+        })
+        .ok_or(ProbeError)?;
+    let choice = {
+        let mut choices = app.provider.choices.lock().map_err(|_| ProbeError)?;
+        let choice = choices.get(&input.request).ok_or(ProbeError)?;
+        if choice.expires <= store::now() || store::digest(cookie) != choice.cookie {
+            return Err(ProbeError);
+        }
+        choices.remove(&input.request).ok_or(ProbeError)?
+    };
+    issue(&app, choice.authorization, &input.account, "")
+}
+
+fn issue(
+    app: &App,
+    input: Authorization,
+    account: &str,
+    fault: &str,
+) -> std::result::Result<Response, ProbeError> {
     let code = store::random().map_err(|_| ProbeError)?;
     {
         let mut grants = app.provider.grants.lock().map_err(|_| ProbeError)?;
