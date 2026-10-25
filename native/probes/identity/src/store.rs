@@ -1,3 +1,4 @@
+use crate::sessions;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,8 @@ pub struct Receipt {
     pub user_id: String,
     pub session_family: String,
     pub credential: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_session: Option<sessions::Grant>,
 }
 
 pub struct BrowserAttempt {
@@ -88,6 +91,7 @@ pub struct CallbackAttempt {
 pub struct Store {
     connection: Connection,
     login_seconds: i64,
+    session: Option<sessions::Context>,
 }
 
 type RedemptionRow = (
@@ -114,6 +118,147 @@ impl Store {
         Ok(store)
     }
 
+    pub fn open_session_lab(
+        path: &Path,
+        interactive: bool,
+        origin: &str,
+        issuer: &str,
+    ) -> Result<Self> {
+        let fresh = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(_) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(_) => return Err(()),
+        };
+        let mut store = if fresh {
+            Self::initialize(Connection::open(path).map_err(|_| ())?)?
+        } else {
+            Self {
+                connection: Connection::open_with_flags(
+                    path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+                )
+                .map_err(|_| ())?,
+                login_seconds: 120,
+                session: None,
+            }
+        };
+        store.session = Some(if fresh {
+            let context = sessions::Context {
+                instance_id: random()?,
+                origin: origin.into(),
+                issuer: issuer.into(),
+            };
+            sessions::initialize(&store.connection, &context)?;
+            context
+        } else {
+            sessions::reopen(&store.connection, origin, issuer)?
+        });
+        store.login_seconds = if interactive { 600 } else { 120 };
+        Ok(store)
+    }
+    pub fn instance_id(&self) -> Option<&str> {
+        self.session
+            .as_ref()
+            .map(|context| context.instance_id.as_str())
+    }
+    pub fn session_probe(&mut self, token: &str) -> Result<sessions::Claims> {
+        self.session.as_ref().ok_or(())?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
+        sessions::probe(&tx, token)
+    }
+    pub fn session_refresh(
+        &mut self,
+        token: &str,
+        input: &sessions::Refresh,
+    ) -> Result<sessions::Grant> {
+        self.session.as_ref().ok_or(())?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
+        let grant = sessions::refresh(&tx, token, input)?;
+        tx.commit().map_err(|_| ())?;
+        Ok(grant)
+    }
+    pub fn session_revoke(&mut self, token: &str) -> Result<()> {
+        self.session.as_ref().ok_or(())?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
+        sessions::revoke(&tx, token)?;
+        tx.commit().map_err(|_| ())
+    }
+    pub fn session_epoch(&mut self, user: &str) -> Result<u64> {
+        self.session.as_ref().ok_or(())?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
+        let epoch = sessions::bump_epoch(&tx, user)?;
+        tx.commit().map_err(|_| ())?;
+        Ok(epoch)
+    }
+    pub fn session_cancel_login(
+        &mut self,
+        id: &str,
+        verifier: &str,
+        environment: &str,
+        destination: &str,
+    ) -> Result<()> {
+        self.session.as_ref().ok_or(())?;
+        if !valid_challenge(id)
+            || !valid_verifier(verifier)
+            || environment != ENVIRONMENT
+            || destination != DESTINATION
+        {
+            return Err(());
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
+        let (challenge,phase,saved):(String,String,Option<String>)=tx.query_row("SELECT challenge,phase,receipt FROM attempts WHERE id=?1 AND environment=?2 AND destination=?3",params![id,environment,destination],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional().map_err(|_| ())?.ok_or(())?;
+        if digest(verifier) != challenge {
+            return Err(());
+        }
+        if phase != "cancelled" {
+            if let Some(json) = saved {
+                let receipt: Receipt = serde_json::from_str(&json).map_err(|_| ())?;
+                let grant = receipt.native_session.as_ref().ok_or(())?;
+                // The family comes only from our committed handoff receipt, never
+                // from a caller. Retain hashes/receipt so cancellation is retryable.
+                if receipt.session_family != grant.family {
+                    return Err(());
+                }
+                tx.execute(
+                    "UPDATE session_families SET revoked=1 WHERE family=?1",
+                    [&grant.family],
+                )
+                .map_err(|_| ())?;
+            }
+            tx.execute("UPDATE attempts SET phase='cancelled',verifier=NULL,nonce=NULL,cookie_hash=NULL WHERE id=?1",[id]).map_err(|_| ())?;
+        }
+        tx.commit().map_err(|_| ())
+    }
+
+    pub fn session_expire(&mut self, family: &str, scope: &str) -> Result<()> {
+        self.session.as_ref().ok_or(())?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
+        sessions::expire(&tx, family, scope)?;
+        tx.commit().map_err(|_| ())
+    }
+
     fn initialize(connection: Connection) -> Result<Self> {
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
             CREATE TABLE attempts (
@@ -121,11 +266,12 @@ impl Store {
               environment TEXT NOT NULL, destination TEXT NOT NULL, expires INTEGER NOT NULL,
               phase TEXT NOT NULL, oidc_state TEXT UNIQUE, nonce TEXT, verifier TEXT, cookie_hash TEXT,
               user_id TEXT, code_hash TEXT, code_expires INTEGER,
-              redemption_id TEXT, receipt TEXT, receipt_expires INTEGER
+              redemption_id TEXT, receipt TEXT, receipt_expires INTEGER, start_epoch INTEGER
             );").map_err(|_| ())?;
         Ok(Self {
             connection,
             login_seconds: 120,
+            session: None,
         })
     }
 
@@ -145,6 +291,14 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| ())?;
+        let start_epoch = if self.session.is_some() {
+            Some(sessions::epoch(
+                &tx,
+                request.expected_user_id.as_deref().ok_or(())?,
+            )?)
+        } else {
+            None
+        };
         let count: i64 = tx
             .query_row("SELECT count(*) FROM attempts", [], |r| r.get(0))
             .map_err(|_| ())?;
@@ -152,8 +306,8 @@ impl Store {
             return Err(());
         }
         let id = random()?;
-        tx.execute("INSERT INTO attempts(id,challenge,expected_user_id,environment,destination,expires,phase) VALUES(?1,?2,?3,?4,?5,?6,'new')",
-            params![id, request.challenge, request.expected_user_id, ENVIRONMENT, DESTINATION, now()+self.login_seconds]).map_err(|_| ())?;
+        tx.execute("INSERT INTO attempts(id,challenge,expected_user_id,environment,destination,expires,phase,start_epoch) VALUES(?1,?2,?3,?4,?5,?6,'new',?7)",
+            params![id, request.challenge, request.expected_user_id, ENVIRONMENT, DESTINATION, now()+self.login_seconds,start_epoch.map(|value|value as i64)]).map_err(|_| ())?;
         tx.commit().map_err(|_| ())?;
         Ok(id)
     }
@@ -213,10 +367,13 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| ())?;
-        let (expected, expires): (Option<String>,i64) = tx.query_row(
-            "SELECT expected_user_id,expires FROM attempts WHERE id=?1 AND phase='verifying' AND expires>?2", params![id,now()],
-            |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(|_| ())?.ok_or(())?;
+        let (expected, expires, start_epoch): (Option<String>,i64,Option<i64>) = tx.query_row(
+            "SELECT expected_user_id,expires,start_epoch FROM attempts WHERE id=?1 AND phase='verifying' AND expires>?2", params![id,now()],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|_| ())?.ok_or(())?;
         if expected.as_deref().is_some_and(|v| v != user_id) {
+            return Err(());
+        }
+        if self.session.is_some() && start_epoch != Some(sessions::epoch(&tx, user_id)? as i64) {
             return Err(());
         }
         let code = random()?;
@@ -260,22 +417,46 @@ impl Store {
         if digest(&request.verifier) != challenge || digest(&request.code) != code_hash {
             return Err(());
         }
+        if self.session.is_some() {
+            let start_epoch: Option<i64> = tx
+                .query_row(
+                    "SELECT start_epoch FROM attempts WHERE id=?1",
+                    [&request.transaction_id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| ())?;
+            if start_epoch != Some(sessions::epoch(&tx, &user)? as i64) {
+                return Err(());
+            }
+        }
         if phase == "redeemed" {
             if redeemed.as_deref() != Some(&request.redemption_id)
                 || receipt_expires.is_none_or(|v| v <= now())
             {
                 return Err(());
             }
-            return serde_json::from_str(saved.as_deref().ok_or(())?).map_err(|_| ());
+            let receipt: Receipt =
+                serde_json::from_str(saved.as_deref().ok_or(())?).map_err(|_| ())?;
+            if self.session.is_some() {
+                sessions::valid_family(&tx, receipt.native_session.as_ref().ok_or(())?)?;
+            }
+            return Ok(receipt);
         }
         if code_expires <= now() {
             return Err(());
         }
+        let family = random()?;
+        let native_session = if let Some(context) = &self.session {
+            Some(sessions::issue(&tx, context, &user, family.clone())?)
+        } else {
+            None
+        };
         let receipt = Receipt {
             kind: "non_api_fixture".into(),
             user_id: user,
-            session_family: random()?,
+            session_family: family,
             credential: format!("fixture-only.{}", random()?),
+            native_session,
         };
         let json = serde_json::to_string(&receipt).map_err(|_| ())?;
         tx.execute("UPDATE attempts SET phase='redeemed',redemption_id=?1,receipt=?2,receipt_expires=?3 WHERE id=?4",
@@ -369,5 +550,424 @@ mod tests {
         assert_eq!(store.status().unwrap().1, 1);
         store.expire(&request.transaction_id, "receipt").unwrap();
         assert!(store.exchange(&request).is_err());
+    }
+
+    fn session_store() -> Store {
+        let mut store = Store::initialize(Connection::open_in_memory().unwrap()).unwrap();
+        let context = sessions::Context {
+            instance_id: random().unwrap(),
+            origin: "http://127.0.0.1:19191".into(),
+            issuer: "http://127.0.0.1:19191/provider".into(),
+        };
+        sessions::initialize(&store.connection, &context).unwrap();
+        store.session = Some(context);
+        store
+    }
+    fn session_ready(store: &mut Store) -> (Exchange, String) {
+        let user = sproyt_protocol::UserId::from_oidc("http://127.0.0.1:19191/provider", "alice")
+            .to_string();
+        let verifier = random().unwrap();
+        let id = store
+            .start(&Start {
+                challenge: digest(&verifier),
+                platform: "windows".into(),
+                environment: ENVIRONMENT.into(),
+                destination_id: DESTINATION.into(),
+                expected_user_id: Some(user.clone()),
+            })
+            .unwrap();
+        let browser = store.begin_browser(&id).unwrap();
+        store
+            .claim_callback(&browser.state, &format!("probe_{id}={}", browser.cookie))
+            .unwrap();
+        let code = store.complete_callback(&id, &user).unwrap();
+        (
+            Exchange {
+                transaction_id: id,
+                code,
+                verifier,
+                redemption_id: "1".repeat(32),
+                environment: ENVIRONMENT.into(),
+                destination_id: DESTINATION.into(),
+            },
+            user,
+        )
+    }
+    #[test]
+    fn session_rotation_exact_retry_revoke_and_epoch_fence_all_receipts() {
+        let mut store = session_store();
+        let (handoff, user) = session_ready(&mut store);
+        let receipt = store.exchange(&handoff).unwrap();
+        let grant = receipt.native_session.as_ref().unwrap();
+        assert!(
+            receipt.session_family == grant.family && grant.generation == 0 && grant.epoch == 0
+        );
+        assert!(store.session_probe(&grant.access_token).is_ok());
+        let rotate = sessions::Refresh {
+            operation_id: "a".repeat(32),
+            generation: 0,
+        };
+        let rotated = store
+            .session_refresh(&grant.refresh_token, &rotate)
+            .unwrap();
+        assert!(rotated.generation == 1 && rotated.revoke_token == grant.revoke_token);
+        assert!(store.session_probe(&grant.access_token).is_err());
+        assert!(store.session_probe(&rotated.access_token).is_ok());
+        assert!(
+            store
+                .session_refresh(&grant.refresh_token, &rotate)
+                .unwrap()
+                == rotated
+        );
+        assert!(
+            store
+                .session_refresh(
+                    &grant.refresh_token,
+                    &sessions::Refresh {
+                        operation_id: "b".repeat(32),
+                        generation: 0
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .session_refresh(&rotated.refresh_token, &rotate)
+                .is_err()
+        );
+        store.session_revoke(&grant.revoke_token).unwrap();
+        store.session_revoke(&grant.revoke_token).unwrap();
+        assert!(store.session_probe(&rotated.access_token).is_err());
+        assert!(
+            store
+                .session_refresh(&grant.refresh_token, &rotate)
+                .is_err()
+        );
+        assert!(store.exchange(&handoff).is_err());
+        let (second, _) = session_ready(&mut store);
+        let second_grant = store.exchange(&second).unwrap().native_session.unwrap();
+        let second_result = store
+            .session_refresh(&second_grant.refresh_token, &rotate)
+            .unwrap();
+        assert!(store.session_epoch(&user).unwrap() == 1);
+        assert!(store.session_probe(&second_result.access_token).is_err());
+        assert!(
+            store
+                .session_refresh(&second_grant.refresh_token, &rotate)
+                .is_err()
+        );
+        assert!(store.exchange(&second).is_err());
+        let (third, _) = session_ready(&mut store);
+        assert!(
+            store
+                .exchange(&third)
+                .unwrap()
+                .native_session
+                .unwrap()
+                .epoch
+                == 1
+        );
+    }
+    #[test]
+    fn session_expiry_and_pending_callback_fences_do_not_issue_families() {
+        let mut store = session_store();
+        let (handoff, user) = session_ready(&mut store);
+        store.session_epoch(&user).unwrap();
+        assert!(store.exchange(&handoff).is_err());
+        assert!(store.status().unwrap().1 == 0);
+        let verifier = random().unwrap();
+        let id = store
+            .start(&Start {
+                challenge: digest(&verifier),
+                platform: "windows".into(),
+                environment: ENVIRONMENT.into(),
+                destination_id: DESTINATION.into(),
+                expected_user_id: Some(user.clone()),
+            })
+            .unwrap();
+        let browser = store.begin_browser(&id).unwrap();
+        store
+            .claim_callback(&browser.state, &format!("probe_{id}={}", browser.cookie))
+            .unwrap();
+        store.session_epoch(&user).unwrap();
+        assert!(store.complete_callback(&id, &user).is_err());
+        let (valid, _) = session_ready(&mut store);
+        let grant = store.exchange(&valid).unwrap().native_session.unwrap();
+        store.session_expire(&grant.family, "access").unwrap();
+        assert!(store.session_probe(&grant.access_token).is_err());
+        let rotate = sessions::Refresh {
+            operation_id: "c".repeat(32),
+            generation: 0,
+        };
+        assert!(store.session_refresh(&grant.refresh_token, &rotate).is_ok());
+        store.session_expire(&grant.family, "receipt").unwrap();
+        assert!(
+            store
+                .session_refresh(&grant.refresh_token, &rotate)
+                .is_err()
+        );
+    }
+    #[test]
+    fn session_database_reopen_pins_identity_and_preserves_revocation() {
+        let path = std::env::temp_dir().join(format!("sproyt-n03a-{}.sqlite", random().unwrap()));
+        let origin = "http://127.0.0.1:19191";
+        let issuer = "http://127.0.0.1:19191/provider";
+        let mut store = Store::open_session_lab(&path, false, origin, issuer).unwrap();
+        let instance = store.instance_id().unwrap().to_owned();
+        let (handoff, _) = session_ready(&mut store);
+        let grant = store.exchange(&handoff).unwrap().native_session.unwrap();
+        let rotate = sessions::Refresh {
+            operation_id: "d".repeat(32),
+            generation: 0,
+        };
+        let rotated = store
+            .session_refresh(&grant.refresh_token, &rotate)
+            .unwrap();
+        drop(store);
+        assert!(Store::create(&path, false).is_err());
+        assert!(Store::open_session_lab(&path, false, "http://127.0.0.1:19193", issuer).is_err());
+        assert!(
+            Store::open_session_lab(&path, false, origin, "http://127.0.0.1:19191/other").is_err()
+        );
+        let mut store = Store::open_session_lab(&path, false, origin, issuer).unwrap();
+        assert!(store.instance_id() == Some(instance.as_str()));
+        assert!(
+            store
+                .session_refresh(&grant.refresh_token, &rotate)
+                .unwrap()
+                == rotated
+        );
+        assert!(store.session_probe(&rotated.access_token).is_ok());
+        store.session_revoke(&rotated.revoke_token).unwrap();
+        drop(store);
+        let mut store = Store::open_session_lab(&path, false, origin, issuer).unwrap();
+        assert!(store.session_probe(&rotated.access_token).is_err());
+        assert!(
+            store
+                .session_refresh(&grant.refresh_token, &rotate)
+                .is_err()
+        );
+        assert!(store.exchange(&handoff).is_err());
+        drop(store);
+        std::fs::remove_file(&path).unwrap();
+    }
+    #[test]
+    fn session_handoff_rolls_back_family_when_receipt_commit_fails() {
+        let mut store = session_store();
+        let (handoff, _) = session_ready(&mut store);
+        store.connection.execute_batch("CREATE TRIGGER fixture_abort BEFORE UPDATE OF receipt ON attempts BEGIN SELECT RAISE(ABORT,'fixture abort'); END;").unwrap();
+        assert!(store.exchange(&handoff).is_err());
+        let count: i64 = store
+            .connection
+            .query_row("SELECT count(*) FROM session_families", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(count == 0 && store.status().unwrap().1 == 0);
+        store
+            .connection
+            .execute_batch("DROP TRIGGER fixture_abort;")
+            .unwrap();
+        assert!(store.exchange(&handoff).unwrap().native_session.is_some());
+    }
+    #[test]
+    fn concurrent_refresh_connections_return_one_committed_rotation() {
+        let path = std::env::temp_dir().join(format!(
+            "sproyt-n03a-concurrent-{}.sqlite",
+            random().unwrap()
+        ));
+        let origin = "http://127.0.0.1:19191";
+        let issuer = "http://127.0.0.1:19191/provider";
+        let mut store = Store::open_session_lab(&path, false, origin, issuer).unwrap();
+        let (handoff, _) = session_ready(&mut store);
+        let grant = store.exchange(&handoff).unwrap().native_session.unwrap();
+        drop(store);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let path = path.clone();
+                let token = grant.refresh_token.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut store = Store::open_session_lab(&path, false, origin, issuer).unwrap();
+                    barrier.wait();
+                    store
+                        .session_refresh(
+                            &token,
+                            &sessions::Refresh {
+                                operation_id: "e".repeat(32),
+                                generation: 0,
+                            },
+                        )
+                        .unwrap()
+                })
+            })
+            .collect();
+        let results: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert!(results[0] == results[1] && results[0].generation == 1);
+        let store = Store::open_session_lab(&path, false, origin, issuer).unwrap();
+        let families: i64 = store
+            .connection
+            .query_row("SELECT count(*) FROM session_families", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let receipts: i64 = store
+            .connection
+            .query_row("SELECT count(*) FROM session_receipts", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(families == 1 && receipts == 1);
+        store
+            .connection
+            .pragma_update(None, "user_version", 999)
+            .unwrap();
+        drop(store);
+        assert!(Store::open_session_lab(&path, false, origin, issuer).is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+    #[test]
+    fn proof_bound_cancel_fences_all_pending_phases_and_ignores_expiry_epoch() {
+        let mut store = session_store();
+        let user = sproyt_protocol::UserId::from_oidc("http://127.0.0.1:19191/provider", "alice")
+            .to_string();
+        for phase in ["new", "authorizing", "verifying"] {
+            let verifier = random().unwrap();
+            let id = store
+                .start(&Start {
+                    challenge: digest(&verifier),
+                    platform: "windows".into(),
+                    environment: ENVIRONMENT.into(),
+                    destination_id: DESTINATION.into(),
+                    expected_user_id: Some(user.clone()),
+                })
+                .unwrap();
+            if phase != "new" {
+                let browser = store.begin_browser(&id).unwrap();
+                if phase == "verifying" {
+                    store
+                        .claim_callback(&browser.state, &format!("probe_{id}={}", browser.cookie))
+                        .unwrap();
+                }
+            }
+            assert!(
+                store
+                    .session_cancel_login(&id, &random().unwrap(), ENVIRONMENT, DESTINATION)
+                    .is_err()
+            );
+            store.expire(&id, "login").unwrap();
+            store.session_epoch(&user).unwrap();
+            store
+                .session_cancel_login(&id, &verifier, ENVIRONMENT, DESTINATION)
+                .unwrap();
+            store
+                .session_cancel_login(&id, &verifier, ENVIRONMENT, DESTINATION)
+                .unwrap();
+            assert!(store.begin_browser(&id).is_err());
+            assert!(store.complete_callback(&id, &user).is_err());
+            store.release_callback(&id).unwrap(); // An in-flight callback's RAII cannot reopen it.
+            let actual: String = store
+                .connection
+                .query_row("SELECT phase FROM attempts WHERE id=?1", [&id], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert!(actual == "cancelled");
+        }
+        assert!(store.status().unwrap().1 == 0);
+    }
+    #[test]
+    fn cancel_after_lost_handoff_result_revokes_family_and_every_saved_result() {
+        let mut store = session_store();
+        let (handoff, user) = session_ready(&mut store);
+        let grant = store.exchange(&handoff).unwrap().native_session.unwrap(); // Commit, then caller loses reply.
+        assert!(
+            store
+                .session_cancel_login(
+                    &handoff.transaction_id,
+                    &random().unwrap(),
+                    ENVIRONMENT,
+                    DESTINATION
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .session_cancel_login(
+                    &handoff.transaction_id,
+                    &handoff.verifier,
+                    "wrong",
+                    DESTINATION
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .session_cancel_login(
+                    &handoff.transaction_id,
+                    &handoff.verifier,
+                    ENVIRONMENT,
+                    "wrong"
+                )
+                .is_err()
+        );
+        assert!(store.session_probe(&grant.access_token).is_ok());
+        let rotate = sessions::Refresh {
+            operation_id: "f".repeat(32),
+            generation: 0,
+        };
+        let rotated = store
+            .session_refresh(&grant.refresh_token, &rotate)
+            .unwrap();
+        store.expire(&handoff.transaction_id, "receipt").unwrap();
+        store.expire(&handoff.transaction_id, "login").unwrap();
+        store
+            .session_cancel_login(
+                &handoff.transaction_id,
+                &handoff.verifier,
+                ENVIRONMENT,
+                DESTINATION,
+            )
+            .unwrap();
+        assert!(store.exchange(&handoff).is_err());
+        assert!(store.session_probe(&rotated.access_token).is_err());
+        assert!(
+            store
+                .session_refresh(&grant.refresh_token, &rotate)
+                .is_err()
+        );
+        assert!(
+            store
+                .session_refresh(
+                    &rotated.refresh_token,
+                    &sessions::Refresh {
+                        operation_id: "0".repeat(32),
+                        generation: 1
+                    }
+                )
+                .is_err()
+        );
+        store.session_epoch(&user).unwrap();
+        store
+            .session_cancel_login(
+                &handoff.transaction_id,
+                &handoff.verifier,
+                ENVIRONMENT,
+                DESTINATION,
+            )
+            .unwrap();
+        let revoked: bool = store
+            .connection
+            .query_row(
+                "SELECT revoked=1 FROM session_families WHERE family=?1",
+                [&grant.family],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(revoked);
     }
 }

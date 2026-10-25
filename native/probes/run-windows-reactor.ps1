@@ -60,6 +60,7 @@ try {
     Get-Content -LiteralPath (Join-Path $coreTests 'core-result.txt')
     $ui = $null
     $resume = $null
+    $sessionUi = $false
     if ($UiSmoke) {
         $uiTests = Join-Path $run 'ui-tests'
         ProbeProcess @('--ui-smoke', $uiTests) $true
@@ -74,12 +75,17 @@ try {
             (Get-Content -LiteralPath (Join-Path $uiTests 'ui-resume-closed.txt') -Raw).Trim() -ne 'PASS: native Closed event after shutdown') {
             throw 'The restarted app did not restore its editor and close cleanly'
         }
+        Checked 'cargo' @('build', '--manifest-path', (Join-Path $PSScriptRoot 'identity/Cargo.toml'), '--locked')
+        & (Join-Path $PSScriptRoot 'run-session-ui.ps1') -PublishDirectory $publish `
+            -BrokerExecutable (Join-Path $env:CARGO_TARGET_DIR 'debug/sproyt-identity-probe.exe') `
+            -ArtifactsDirectory (Join-Path $run 'session-ui')
+        $sessionUi = $true
     }
     $receipt = [ordered]@{
         schema = 1
         scope = 'windows_reactor_local_feasibility'
         sourceRevision = (git -C $PSScriptRoot rev-parse HEAD).Trim()
-        sourceDirty = @(git -C $PSScriptRoot status --porcelain -- ':(top)native/probes' ':(top)crates/sproyt-client-core').Count -gt 0
+        sourceDirty = @(git -C $PSScriptRoot status --porcelain -- ':(top)native/probes' ':(top)native/session-client' ':(top)crates/sproyt-client-core').Count -gt 0
         architecture = $Architecture
         platform = [Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier
         reactor = '0.1.0-preview.16'
@@ -91,8 +97,9 @@ try {
         coreTests = $true
         uiSmoke = $ui
         uiResume = $resume
+        syntheticSessionUi = $sessionUi
         publishDirectory = $publish
-        notTested = @('physical keyboard and IME', 'touch', 'screen reader', 'visual screenshot approval', 'production sync', 'authentication',
+        notTested = @('physical keyboard and IME', 'touch', 'screen reader', 'visual screenshot approval', 'production sync', 'production authentication',
             'hard process termination during equal-body newer-draft repair after an unknown enqueue')
     }
     $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $run 'receipt.json') -Encoding utf8

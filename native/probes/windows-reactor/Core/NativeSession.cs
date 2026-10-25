@@ -15,6 +15,7 @@ public sealed class NativeSession : IAsyncDisposable
     private CallNative? _call;
     private ulong _handle;
     private ulong _generation;
+    private string _account = FixtureAccount;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate uint AbiVersion();
@@ -25,7 +26,7 @@ public sealed class NativeSession : IAsyncDisposable
 
     private NativeSession() => _worker = new ProbeWorker(CloseNative);
 
-    public static async Task<NativeSession> OpenAsync(string database, string libraryPath)
+    public static async Task<NativeSession> OpenAsync(string database, string libraryPath, string account = FixtureAccount)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(database);
         ArgumentException.ThrowIfNullOrWhiteSpace(libraryPath);
@@ -34,6 +35,7 @@ public sealed class NativeSession : IAsyncDisposable
         string actualLibrary = Path.GetFullPath(libraryPath);
         string actualDatabase = Path.GetFullPath(database);
         var session = new NativeSession();
+        session._account = account;
         try
         {
             await session._worker.Queue(() =>
@@ -44,7 +46,7 @@ public sealed class NativeSession : IAsyncDisposable
                 if (version() != 1 || capacity() != ResponseCapacity)
                     throw new NativeProbeException("abi_mismatch", "Expected probe ABI 1 and a 256 KiB response buffer.");
                 session._call = session.Export<CallNative>("sproyt_probe_call");
-                var opened = session.Call(new { Op = "open", Database = actualDatabase, Account = FixtureAccount });
+                var opened = session.Call(new { Op = "open", Database = actualDatabase, Account = account });
                 if (!opened.TryGetProperty("handle", out var handle) || handle.ValueKind != JsonValueKind.Number ||
                     !handle.TryGetUInt64(out session._handle) || session._handle == 0)
                     throw Unknown("The native open reply did not contain a valid handle.");
@@ -143,7 +145,7 @@ public sealed class NativeSession : IAsyncDisposable
     private (StoreSnapshot Snapshot, ulong Generation) ReadSnapshot()
     {
         var result = Call(new { Op = "snapshot", Handle = _handle });
-        if (RequiredString(result, "account") != FixtureAccount ||
+        if (RequiredString(result, "account") != _account ||
             !result.TryGetProperty("generation", out var generation) || generation.ValueKind != JsonValueKind.Number ||
             !generation.TryGetUInt64(out ulong currentGeneration) || currentGeneration == 0 ||
             !result.TryGetProperty("active", out var active) || active.ValueKind is not (JsonValueKind.True or JsonValueKind.False))

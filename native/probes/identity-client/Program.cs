@@ -24,6 +24,8 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 4 && args[0] == "--session-test") return await NativeSessionProbe.Run(args[1], args[2], args[3]);
+            if (args.Length == 4 && args[0] == "--session-child") return await NativeSessionProbe.Child(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--desktop-child") return await DesktopHandoffClient.Run(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] is "--desktop-test" or "--desktop-browser") return await DesktopHandoffProbe.Run(args[1], args[2], args[3], args[0] == "--desktop-browser");
             if (args.Length == 4 && args[0] is "--authentik-password-browser" or "--authentik-passkey-browser") return await AuthentikHandoffProbe.Run(args[1], args[2], args[3], true, passkeyMode: args[0] == "--authentik-password-browser" ? "password" : "passkey");

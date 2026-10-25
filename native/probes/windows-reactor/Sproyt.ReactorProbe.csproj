@@ -24,6 +24,10 @@
     <!-- Match the preview's analyzers without changing the machine-wide SDK. -->
     <PackageReference Include="Microsoft.Net.Compilers.Toolset" Version="5.9.0" PrivateAssets="all" />
     <Compile Include="../managed/ProbeWorker.cs" Link="Core/ProbeWorker.cs" />
+    <Compile Include="../../session-client/*.cs" Link="Authentication/%(Filename)%(Extension)" />
+    <Compile Include="../identity-client/WindowsProtectedJournal.cs" Link="Authentication/WindowsProtectedJournal.cs" />
+    <Compile Include="../identity-client/DesktopHandoffClient.cs" Link="Authentication/DesktopHandoffClient.cs" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <!-- Code-only WinUI still needs the merged application resource index.
        Publish otherwise copies component PRIs but omits this generated PRI. -->

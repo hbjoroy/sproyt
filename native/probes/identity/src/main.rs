@@ -1,5 +1,6 @@
 mod authconfig;
 mod provider;
+mod sessions;
 mod store;
 
 use axum::{
@@ -34,6 +35,7 @@ pub struct App {
     instance_id: String,
     interactive: bool,
     external: bool,
+    session_lab: bool,
     upstream: authconfig::Sessions,
     control: tokio::sync::OnceCell<authconfig::Control>,
     address: String,
@@ -106,9 +108,19 @@ async fn run() -> store::Result<()> {
     let callback_uri = args.next().ok_or(())?;
     let mut interactive = false;
     let mut external_config = None;
+    let mut session_lab = false;
+    let mut listen_port = None;
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--interactive" if !interactive => interactive = true,
+            "--session-lab" if !session_lab => session_lab = true,
+            "--listen-port" if listen_port.is_none() => {
+                let port = args.next().ok_or(())?.parse::<u16>().map_err(|_| ())?;
+                if port == 0 {
+                    return Err(());
+                }
+                listen_port = Some(port);
+            }
             "--authentik-config" if external_config.is_none() => {
                 external_config = Some(authconfig::Config::read(&PathBuf::from(
                     args.next().ok_or(())?,
@@ -116,6 +128,9 @@ async fn run() -> store::Result<()> {
             }
             _ => return Err(()),
         }
+    }
+    if (session_lab && external_config.is_some()) || (listen_port.is_some() && !session_lab) {
+        return Err(());
     }
     let callback = reqwest::Url::parse(&callback_uri).map_err(|_| ())?;
     if callback.scheme() != "http"
@@ -134,7 +149,7 @@ async fn run() -> store::Result<()> {
         std::net::Ipv4Addr::LOCALHOST,
         external_config
             .as_ref()
-            .map_or(0, |config| config.listen_port),
+            .map_or(listen_port.unwrap_or(0), |config| config.listen_port),
     ))
     .await
     .map_err(|_| ())?;
@@ -153,17 +168,27 @@ async fn run() -> store::Result<()> {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|_| ())?;
+    let store = if session_lab {
+        store::Store::open_session_lab(&database, interactive, &address, &issuer)?
+    } else {
+        store::Store::create(&database, interactive)?
+    };
+    let instance_id = store
+        .instance_id()
+        .map(str::to_owned)
+        .unwrap_or(store::random()?);
     let app = Arc::new(App {
-        instance_id: store::random()?,
+        instance_id,
         interactive,
         external: external_config.is_some(),
+        session_lab,
         upstream: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         control: tokio::sync::OnceCell::new(),
         oidc_callback: format!("{address}/probe/callback"),
         address: address.clone(),
         issuer: issuer.clone(),
         callback_uri,
-        store: Mutex::new(store::Store::create(&database, interactive)?),
+        store: Mutex::new(store),
         provider: provider::Provider::new()?,
         client: tokio::sync::OnceCell::new(),
         http,
@@ -180,6 +205,16 @@ async fn run() -> store::Result<()> {
             .route("/provider/authorize", get(provider::authorize))
             .route("/provider/token", post(provider::token))
             .route("/fixture/expire", post(expire));
+    }
+    if session_lab {
+        routes = routes
+            .route("/session/info", get(session_info))
+            .route("/session/probe", get(session_probe))
+            .route("/session/refresh", post(session_refresh))
+            .route("/session/revoke", post(session_revoke))
+            .route("/session/cancel-login", post(session_cancel_login))
+            .route("/fixture/session/epoch", post(session_epoch))
+            .route("/fixture/session/expire", post(session_expire));
     }
     let routes = routes
         .route("/probe/start", post(start))
@@ -444,4 +479,164 @@ async fn upstream_check(
     }
     let Json(input) = input.map_err(|_| ProbeError)?;
     Ok(Json(authconfig::check(&app, input).await?))
+}
+
+fn session_denied() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error":"probe_rejected"})),
+    )
+        .into_response()
+}
+fn session_bearer(headers: &HeaderMap) -> store::Result<&str> {
+    if headers.get_all(header::AUTHORIZATION).iter().count() != 1 {
+        return Err(());
+    }
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|value| !value.is_empty() && !value.chars().any(char::is_whitespace))
+        .ok_or(())
+}
+async fn session_info(State(app): State<Arc<App>>) -> Response {
+    if !app.session_lab {
+        return session_denied();
+    }
+    Json(json!({"scope":sessions::SCOPE,"environment":store::ENVIRONMENT,"instance_id":app.instance_id,"issuer":app.issuer})).into_response()
+}
+async fn session_probe(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let result = (|| {
+        let token = session_bearer(&headers)?;
+        app.store.lock().map_err(|_| ())?.session_probe(token)
+    })();
+    match result {
+        Ok(claims) => Json(claims).into_response(),
+        Err(()) => session_denied(),
+    }
+}
+async fn session_refresh(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    input: std::result::Result<Json<sessions::Refresh>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let result = (|| {
+        let Json(input) = input.map_err(|_| ())?;
+        let token = session_bearer(&headers)?;
+        app.store
+            .lock()
+            .map_err(|_| ())?
+            .session_refresh(token, &input)
+    })();
+    match result {
+        Ok(grant)
+            if headers
+                .get("x-probe-drop-ack")
+                .and_then(|value| value.to_str().ok())
+                == Some("1") =>
+        {
+            drop(grant); // The rotation is already durably committed: deliberately lose the result.
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error":"probe_rejected"})),
+            )
+                .into_response()
+        }
+        Ok(grant) => Json(grant).into_response(),
+        Err(()) => session_denied(),
+    }
+}
+async fn session_revoke(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let result = (|| {
+        if !body.is_empty() {
+            return Err(());
+        }
+        let token = session_bearer(&headers)?;
+        app.store.lock().map_err(|_| ())?.session_revoke(token)
+    })();
+    match result {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(()) => session_denied(),
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionEpoch {
+    user_id: String,
+}
+async fn session_epoch(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    input: std::result::Result<Json<SessionEpoch>, axum::extract::rejection::JsonRejection>,
+) -> std::result::Result<Json<serde_json::Value>, ProbeError> {
+    if headers
+        .get("x-probe-control")
+        .and_then(|value| value.to_str().ok())
+        != Some("1")
+    {
+        return Err(ProbeError);
+    }
+    let Json(input) = input.map_err(|_| ProbeError)?;
+    let epoch = app
+        .store
+        .lock()
+        .map_err(|_| ProbeError)?
+        .session_epoch(&input.user_id)?;
+    Ok(Json(json!({"epoch":epoch})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionExpire {
+    family: String,
+    scope: String,
+}
+async fn session_expire(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    input: std::result::Result<Json<SessionExpire>, axum::extract::rejection::JsonRejection>,
+) -> std::result::Result<Json<serde_json::Value>, ProbeError> {
+    if headers
+        .get("x-probe-control")
+        .and_then(|value| value.to_str().ok())
+        != Some("1")
+    {
+        return Err(ProbeError);
+    }
+    let Json(input) = input.map_err(|_| ProbeError)?;
+    app.store
+        .lock()
+        .map_err(|_| ProbeError)?
+        .session_expire(&input.family, &input.scope)?;
+    Ok(Json(json!({"ok":true})))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CancelLogin {
+    transaction_id: String,
+    verifier: String,
+    environment: String,
+    destination_id: String,
+}
+async fn session_cancel_login(
+    State(app): State<Arc<App>>,
+    input: std::result::Result<Json<CancelLogin>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let result = (|| {
+        let Json(input) = input.map_err(|_| ())?;
+        app.store.lock().map_err(|_| ())?.session_cancel_login(
+            &input.transaction_id,
+            &input.verifier,
+            &input.environment,
+            &input.destination_id,
+        )
+    })();
+    match result {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(()) => session_denied(),
+    }
 }

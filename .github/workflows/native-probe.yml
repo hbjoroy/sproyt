@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'native/probes/**'
+      - 'native/session-client/**'
       - 'crates/sproyt-client-core/**'
       - 'crates/sproyt-protocol/**'
       - 'rust-toolchain.toml'
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - 'native/probes/**'
+      - 'native/session-client/**'
       - 'crates/sproyt-client-core/**'
       - 'crates/sproyt-protocol/**'
       - 'rust-toolchain.toml'
@@ -178,6 +180,9 @@ jobs:
             ${{ runner.temp }}/sproyt-reactor/runs/**/ui-failure.txt
             ${{ runner.temp }}/sproyt-reactor/runs/**/ui-resume-failure.txt
             ${{ runner.temp }}/sproyt-reactor/runs/**/startup.log
+            ${{ runner.temp }}/sproyt-reactor/runs/**/session-ui/*-result.json
+            ${{ runner.temp }}/sproyt-reactor/runs/**/session-ui/*-closed.txt
+            ${{ runner.temp }}/sproyt-reactor/runs/**/session-ui/*-failure.txt
 
   interoperability:
     strategy:

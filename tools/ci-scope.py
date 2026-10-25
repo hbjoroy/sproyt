@@ -21,11 +21,11 @@ def scope(paths, force_full=False):
         return {'browser': 'none', 'recovery': 'false',
                 'reason': 'isolated codec test only; mandatory codec gate still runs'}
 
-    # This workspace has its own dependency lock and Windows/Linux workflow.
+    # The native lab and its shared Windows adapter have dedicated Windows/Linux checks.
     # Its Cargo files do not change production dependencies. Keep unknown native
     # paths, shared core changes and mixed application changes fail-closed.
     def native_probe(path):
-        return path.startswith('native/probes/') or path == '.github/workflows/native-probe.yml'
+        return path.startswith(('native/probes/', 'native/session-client/')) or path == '.github/workflows/native-probe.yml'
 
     selector_tests = {'tools/ci-scope.py', 'tools/test-ci-scope.py'}
     if any(native_probe(p) for p in paths) and all(native_probe(p) or p in selector_tests for p in paths):

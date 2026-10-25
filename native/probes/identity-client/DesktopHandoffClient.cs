@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
-internal sealed record DesktopConfig(string Broker, string Instance, string Callback, string[] Accounts, bool SystemBrowser, string? Issuer = null, Dictionary<string, string>? Subjects = null);
+internal sealed record DesktopConfig(string Broker, string Instance, string Callback, string[] Accounts, bool SystemBrowser, string? Issuer = null, Dictionary<string, string>? Subjects = null, bool SessionLab = false);
 internal sealed record DesktopAttempt(string Transaction, string Account, string Verifier, string Redemption, string? Code = null, string? Result = null);
 internal sealed record DesktopState(int Schema, string Environment, DesktopConfig Config, DateTimeOffset Expires, DesktopAttempt[] Attempts);
 
@@ -51,7 +51,7 @@ internal static class DesktopHandoffClient
     {
         UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
         RedirectStandardOutput = true, RedirectStandardError = true,
-        ArgumentList = { typeof(Program).Assembly.Location, "--desktop-child", directory, config, fault }
+        ArgumentList = { typeof(DesktopHandoffClient).Assembly.Location, "--desktop-child", directory, config, fault }
     };
     private static void Signal(string phase, string? transaction = null, string? account = null) =>
         Console.WriteLine(JsonSerializer.Serialize(new { phase, transaction, account }, Json));
@@ -65,7 +65,7 @@ internal static class DesktopHandoffClient
             body.RootElement.GetProperty("credential").GetString() is string credential && credential.StartsWith("fixture-only.", StringComparison.Ordinal) && Proof(credential[13..]));
     }
 
-    internal static async Task<int> Run(string directory, string configPath, string fault)
+    internal static async Task<int> Run(string directory, string configPath, string fault, CancellationToken cancellationToken = default, Action<Uri>? testBrowser = null)
     {
         Check(OperatingSystem.IsWindows());
         Check(new FileInfo(configPath).Length <= 4096);
@@ -182,6 +182,7 @@ internal static class DesktopHandoffClient
                     var attempts = new List<DesktopAttempt>();
                     foreach (var account in config.Accounts)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         string verifier = Random();
                         // The proof is encrypted durably before any browser opens.
                         using var response = await app.PostAsJsonAsync("/probe/start", new { challenge = Challenge(verifier), platform = "windows", environment = "n01-lab", destination_id = "windows-loopback", expected_user_id = AccountId(config, account) });
@@ -195,6 +196,7 @@ internal static class DesktopHandoffClient
                 }
                 for (int index = 0; index < state.Attempts.Length; index++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var attempt = state.Attempts[index];
                     if (attempt.Result is not null) continue;
                     if (attempt.Code is not null)
@@ -212,11 +214,12 @@ internal static class DesktopHandoffClient
                             string address = broker.GetLeftPart(UriPartial.Authority) + "/probe/browser/" + attempt.Transaction;
                             using var opened = Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
                         }
+                        else testBrowser?.Invoke(new Uri(broker, "/probe/browser/" + attempt.Transaction));
                     }
                 }
             }
             finally { gate.Release(); }
-            if (!state.Attempts.All(a => a.Result is not null)) await done.Task.WaitAsync(TimeSpan.FromMinutes(config.SystemBrowser ? 8 : 3));
+            if (!state.Attempts.All(a => a.Result is not null)) await done.Task.WaitAsync(TimeSpan.FromMinutes(config.SystemBrowser ? 8 : 3), cancellationToken);
             // Completion is emitted only after a successful protected commit.
             Signal("completed");
             await Task.Delay(600); // Let the browser load the code-free completion page.

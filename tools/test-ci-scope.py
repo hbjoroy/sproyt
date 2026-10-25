@@ -81,13 +81,16 @@ class ScopeTests(unittest.TestCase):
     def test_isolated_native_probe_uses_its_dedicated_workflow(self):
         paths = ['native/probes/client-core/Cargo.toml', 'native/probes/client-core/Cargo.lock',
                  'native/probes/managed/Program.cs', 'native/probes/run-probe.ps1',
+                 'native/session-client/NativeAuthSession.cs',
                  '.github/workflows/native-probe.yml', 'tools/ci-scope.py',
                  'tools/test-ci-scope.py', 'docs/native-client-probe-results.md']
         result = ci_scope.scope(paths)
         self.assertEqual((result['browser'], result['recovery']), ('none', 'false'))
+        result = ci_scope.scope(['native/session-client/NativeAuthSession.cs'])
+        self.assertEqual((result['browser'], result['recovery']), ('none', 'false'))
         for added in ('Cargo.lock', 'crates/sproyt-client-core/src/lib.rs', 'src/db/postgres.rs',
                       'frontend/src/app.ts', 'migrations/0065_media.sql', 'native/apps/android/build.gradle',
-                      '.github/workflows/ci.yml'):
+                      '.github/workflows/ci.yml', 'native/unknown-runtime.cfg'):
             result = ci_scope.scope(paths + [added])
             self.assertEqual((result['browser'], result['recovery']), ('full', 'true'), added)
         result = ci_scope.scope(paths, True)
