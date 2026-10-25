@@ -238,8 +238,8 @@ internal sealed class PilotComponent : Component
 
         return Grid([wide ? GridSize.Px(244) : GridSize.Px(0), GridSize.Star()], [GridSize.Star()], sidebar, conversation)
             .Background(paper).RequestedTheme(dark ? ElementTheme.Dark : ElementTheme.Light)
-            .OnMount(element => { RootForClose = element; UiProbe.Attach(element); })
-            .OnUnmount(element => { if (ReferenceEquals(RootForClose, element)) RootForClose = null; })
+            .OnMount(element => { RootForClose = element; Program.Keyboard?.Attach(element as Grid); UiProbe.Attach(element); })
+            .OnUnmount(element => { if (ReferenceEquals(RootForClose, element)) { Program.Keyboard?.Attach(null); RootForClose = null; } })
             .AutomationId("sproyt-root");
     }
 

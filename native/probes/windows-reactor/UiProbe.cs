@@ -143,6 +143,44 @@ internal static class UiProbe
             PilotComponent.ViewportTransition!();
             await Until(() => PilotComponent.ViewportAdjustmentsForProbe!() == beforeKeyboard + 1 && PilotComponent.ReadingPositionSettledForProbe!());
 
+            // Exercise actual native layout for an overlay keyboard. Merely
+            // delivering a Showing notification does not make space for it.
+            await Until(() => Program.Keyboard is not null);
+            var keyboard = Program.Keyboard!;
+            double clientHeight = root.ActualHeight;
+            double unobstructedViewport = scroller.ViewportHeight;
+            var occlusion = new Windows.Foundation.Rect(0, clientHeight - 160, root.ActualWidth, 160);
+            var sameEditor = Find<TextBox>(root, "composer");
+            keyboard.SetOcclusionForProbe(occlusion);
+            await Until(() => Math.Abs(keyboard.Inset - 160) < 1 &&
+                Math.Abs(scroller.ViewportHeight - (unobstructedViewport - 160)) < 1 &&
+                PilotComponent.ReadingPositionSettledForProbe!() && !PilotComponent.ViewportPendingForProbe!() &&
+                MessageVisible(scroller, beforeNavigation));
+            Check(Math.Abs(root.ActualHeight - clientHeight) < 1 &&
+                TopInRoot(root, sameEditor) + sameEditor.ActualHeight <= occlusion.Top &&
+                ReferenceEquals(sameEditor, Find<TextBox>(root, "composer")),
+                "Overlay keyboard hid/replaced the editor or changed the measurement root.");
+            int afterOcclusion = PilotComponent.ViewportAdjustmentsForProbe!();
+            keyboard.SetOcclusionForProbe(occlusion);
+            await Task.Delay(250);
+            Check(PilotComponent.ViewportAdjustmentsForProbe!() == afterOcclusion,
+                "An unchanged keyboard rectangle caused repeated layout/scroll corrections.");
+
+            // The same keyboard rectangle must not reserve space a second
+            // time when Windows has already reduced the native client.
+            window.SetSize(960, 460);
+            await Until(() => root.ActualHeight < clientHeight - 40);
+            double expectedInset = Math.Max(0, root.ActualHeight - occlusion.Top);
+            await Until(() => Math.Abs(keyboard.Inset - expectedInset) < 1);
+            keyboard.SetOcclusionForProbe(default(Windows.Foundation.Rect));
+            await Until(() => keyboard.Inset == 0 && !PilotComponent.ViewportPendingForProbe!() &&
+                PilotComponent.ReadingPositionSettledForProbe!() && MessageVisible(scroller, beforeNavigation));
+            Check(KeyboardViewport.BottomOverlap(new(0, 0, 800, 400), new(0, 400, 800, 300)) == 0 &&
+                KeyboardViewport.BottomOverlap(new(0, 0, 800, 600), new(0, 300, 400, 100)) == 0 &&
+                KeyboardViewport.BottomOverlap(new(0, 0, 800, 600), new(900, 400, 800, 300)) == 0 &&
+                Math.Abs(KeyboardViewport.BottomOverlap(new(0, 0, 800, 599.5), new(0, 420.25, 800, 300)) - 179.25) < .01,
+                "Keyboard geometry confused a resized client, floating keyboard, other screen or fractional DIPs.");
+
             // Reading history must not be mistaken for following the tail.
             scroller.ChangeView(null, 650, null, true);
             await Until(() => Math.Abs(scroller.VerticalOffset - 650) < 2);
@@ -157,6 +195,18 @@ internal static class UiProbe
             Check(sameAnchor is not null && Math.Abs(TopIn(scroller, sameAnchor) - readingAnchor.Top) < 4 &&
                 PilotComponent.ViewportAdjustmentsForProbe!() == whileReading,
                 "Resizing moved the visible history message or forced a tail correction.");
+
+            keyboard.SetOcclusionForProbe(new(0, root.ActualHeight - 140, root.ActualWidth, 140));
+            await Until(() => Math.Abs(keyboard.Inset - 140) < 1);
+            await Task.Delay(250);
+            sameAnchor = Descendants(scroller).OfType<FrameworkElement>()
+                .FirstOrDefault(element => AutomationProperties.GetAutomationId(element) == readingAnchor.Id);
+            Check(sameAnchor is not null && Math.Abs(TopIn(scroller, sameAnchor) - readingAnchor.Top) < 4 &&
+                PilotComponent.ViewportAdjustmentsForProbe!() == whileReading,
+                "Opening the overlay keyboard dragged the history reader to the tail.");
+            keyboard.SetOcclusionForProbe(default(Windows.Foundation.Rect));
+            await Until(() => keyboard.Inset == 0);
+            keyboard.SetOcclusionForProbe(null);
 
             window.SetSize(360, 720);
             await Until(() => root.ActualWidth < 800 && Find<Button>(root, "conversations").Visibility == Visibility.Visible);
@@ -182,7 +232,9 @@ internal static class UiProbe
                 compactWidthDip = root.ActualWidth,
                 checks = new[] { "native WinUI tree", "virtualization", "editor identity and selection", "independent drafts",
                     "reading position", "light and dark semantic brushes", "UI enqueue binding", "own message visible", "immediate send and navigation",
-                    "debounced resize tail", "resize preserves history reader", "keyboard transition coalescing", "compact layout", "flush and reopen" },
+                    "debounced resize tail", "resize preserves history reader", "keyboard transition coalescing",
+                    "overlay keyboard editor and tail visibility", "no double keyboard inset", "stable keyboard geometry",
+                    "keyboard preserves history reader", "compact layout", "flush and reopen" },
                 notTested = new[] { "physical keyboard and IME", "touch", "screen reader", "visual screenshot approval", "production" },
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -200,6 +252,9 @@ internal static class UiProbe
 
     private static double TopIn(ScrollViewer scroller, FrameworkElement element) =>
         element.TransformToVisual(scroller).TransformPoint(new Windows.Foundation.Point()).Y;
+
+    private static double TopInRoot(FrameworkElement root, FrameworkElement element) =>
+        element.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point()).Y;
 
     private static (string Id, double Top) VisibleAnchor(ScrollViewer scroller)
     {
