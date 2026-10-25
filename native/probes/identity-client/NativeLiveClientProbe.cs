@@ -44,6 +44,41 @@ internal static class NativeLiveClientProbe
             return new HttpResponseMessage(status) { Content = body is null ? null : new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
         }
     }
+    private sealed class RefreshFixture(NativeAuthConfig config, int lifetime) : HttpMessageHandler
+    {
+        internal const string User = "c49b194b-5cf8-41b5-82b0-02eb254945ec";
+        private static readonly string Family = new('F', 43);
+        private ulong generation;
+        internal object Grant(int seconds) => new
+        {
+            scope = config.Scope, environment = config.Environment, instance_id = config.Instance,
+            user_id = User, family = Family, generation, epoch = 0,
+            access_token = "sproyt-access." + new string(generation == 0 ? 'A' : 'B', 43),
+            refresh_token = "sproyt-refresh." + new string(generation == 0 ? 'C' : 'D', 43),
+            revoke_token = "sproyt-revoke." + new string('R', 43),
+            expires_at = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + seconds, display_name = "Synthetic account",
+        };
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Check(request.RequestUri!.GetLeftPart(UriPartial.Authority) == config.Broker && !request.Headers.Contains("Cookie"));
+            object body;
+            switch (request.RequestUri.AbsolutePath)
+            {
+                case "/api/v1/native/info":
+                    body = new { scope = config.Scope, environment = config.Environment, instance_id = config.Instance, issuer = config.Issuer }; break;
+                case "/api/v1/native/session":
+                    Check(request.Headers.Authorization?.Parameter == "sproyt-access." + new string(generation == 0 ? 'A' : 'B', 43));
+                    body = new { user_id = User, family = Family, generation, epoch = 0 }; break;
+                case "/api/v1/native/refresh":
+                    Check(request.Method == HttpMethod.Post && request.Headers.Authorization?.Parameter == "sproyt-refresh." + new string('C', 43));
+                    using (var input = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)))
+                        Check(input.RootElement.GetProperty("generation").GetUInt64() == generation);
+                    generation++; body = Grant(lifetime); break;
+                default: throw new InvalidOperationException("Unexpected refresh fixture route.");
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+        }
+    }
     internal static async Task<int> Run(string directory, string receipt)
     {
         Check(OperatingSystem.IsWindows() && !Directory.Exists(directory)); Directory.CreateDirectory(directory);
@@ -54,6 +89,25 @@ internal static class NativeLiveClientProbe
         Reject(() => NativeAuthSession.ValidateConfig(config with { Environment = "production" }));
         Reject(() => NativeAuthSession.ValidateConfig(config with { UserId = "unverified-account" }));
         Reject(() => NativeAuthSession.ValidateConfig(config with { Issuer = "http://identity.example.invalid/provider" }));
+        string skewDirectory = Path.Combine(directory, "clock-skew");
+        using (var owner = NativeAuthSession.Open(skewDirectory, config, handler: new RefreshFixture(config, 302)))
+        {
+            var initial = new RefreshFixture(config, 302);
+            long ticket = await owner.BeginLoginAsync();
+            await owner.CompleteLoginAsync(ticket, JsonSerializer.Serialize(new { user_id = RefreshFixture.User, native_session = initial.Grant(120) }));
+            await owner.RefreshAsync();
+            Check(owner.Snapshot.Phase == NativeAuthPhase.Active && owner.Snapshot.Generation == 1);
+        }
+        using (var owner = NativeAuthSession.Open(skewDirectory, config))
+            Check(owner.Snapshot.Phase == NativeAuthPhase.Offline && owner.Snapshot.Generation == 1);
+        using (var owner = NativeAuthSession.Open(Path.Combine(directory, "clock-skew-too-large"), config, handler: new RefreshFixture(config, 3600)))
+        {
+            var initial = new RefreshFixture(config, 3600);
+            long ticket = await owner.BeginLoginAsync();
+            await owner.CompleteLoginAsync(ticket, JsonSerializer.Serialize(new { user_id = RefreshFixture.User, native_session = initial.Grant(120) }));
+            bool rejected = false; try { await owner.RefreshAsync(); } catch { rejected = true; }
+            Check(rejected && owner.Snapshot.Phase == NativeAuthPhase.AuthRequired && owner.Snapshot.UserId is null);
+        }
         string ownerDirectory = Path.Combine(directory, "owner"), loginDirectory = Path.Combine(directory, "login");
         string? originalProof;
         using (var owner = NativeAuthSession.Open(ownerDirectory, config))

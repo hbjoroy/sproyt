@@ -24,6 +24,10 @@ PostgreSQL eig native forsøk, familiar, epoch og retry. Provider-/retrymaterial
 er kryptert med formåls- og instancebinding og støttar eksisterande tidlegare
 sessionnøklar. Native access varer høgst fem minutt og ikkje lenger enn den
 underliggjande providerøkta. Native refresh fornyar den dedikerte providergranten.
+Klienten toler 30 sekund klokkeskeivheit i formkontrollen av grantens utløp.
+Dette forlenger ikkje serverens accesslevetid; serveren handhevar utløpet ved
+HTTP- og WebSocket-opptak. Ein refresh frå ei klokke to sekund framfor klienten
+og avvising av urimeleg framtidig utløp er dekte av klientkontrakten.
 Uvisst upstreamutfall sperrar familien til ny innlogging; gammalt provider-
 refresh-token blir ikkje prøvd på nytt. Lokal refresh-retry har same operasjons-ID
 og får same krypterte resultat innan det avgrensa vindauget.
