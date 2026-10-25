@@ -9,6 +9,7 @@ internal static class Program
     internal static string DataDirectory { get; private set; } = "";
     internal static string? UiProbeDirectory { get; private set; }
     internal static bool UiResume { get; private set; }
+    internal static bool KeyboardViewportAvailable { get; private set; }
     internal static string LibraryPath => Path.Combine(AppContext.BaseDirectory, "sproyt_native_probe.dll");
     private static bool _closing;
     private static bool _preparingShutdown;
@@ -47,11 +48,17 @@ internal static class Program
             var session = NativeSession.OpenAsync(Path.Combine(DataDirectory, "demo-v1.sqlite"), library).GetAwaiter().GetResult();
             Workspace = new(new NativeWorkspaceStoreAdapter(session), ["prat", "idear"]);
             Workspace.InitializeAsync().GetAwaiter().GetResult();
-            ReactorApp.WindowOpened += (_, window) => window.Closing += (_, closing) =>
+            ReactorApp.WindowOpened += (_, window) =>
             {
-                if (_allowFinalClose) return;
-                closing.Cancel = true;
-                RequestClose(window);
+                var keyboard = new KeyboardViewport(window);
+                KeyboardViewportAvailable = keyboard.Available;
+                window.Closed += (_, _) => keyboard.Dispose();
+                window.Closing += (_, closing) =>
+                {
+                    if (_allowFinalClose) return;
+                    closing.Cancel = true;
+                    RequestClose(window);
+                };
             };
             ReactorApp.Run<PilotComponent>(new WindowSpec
             {

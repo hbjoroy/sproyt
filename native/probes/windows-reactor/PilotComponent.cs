@@ -22,8 +22,12 @@ internal sealed class PilotComponent : Component
     internal static TextBox? EditorForClose;
     internal static Action? InvalidateForClose;
     internal static Func<bool>? ReadingPositionSettledForProbe;
+    internal static Action? ViewportTransition;
+    internal static Func<bool>? ViewportPendingForProbe;
+    internal static Func<int>? ViewportAdjustmentsForProbe;
     private readonly Dictionary<string, (string Key, IReadOnlyList<TimelineMessage> Rows)> _timelines = [];
     private readonly Dictionary<string, ScrollViewer> _scrollers = [];
+    private readonly Dictionary<string, ChatViewportFollow> _viewportFollowers = [];
     private readonly Dictionary<string, double> _readingOffsets = [];
     private string _activeChannel = "prat";
     private string? _restoringChannel;
@@ -34,6 +38,7 @@ internal sealed class PilotComponent : Component
     {
         var (_, invalidate) = UseState(0, threadSafe: true);
         InvalidateForClose = () => invalidate(Interlocked.Increment(ref _revision));
+        ViewportTransition = () => { if (_viewportFollowers.TryGetValue(_activeChannel, out var follow)) follow.Transition(); };
         var (channel, selectChannel) = UseState("prat");
         var (showList, setShowList) = UseState(false);
         var (dark, setDark) = UseState(Application.Current.RequestedTheme == ApplicationTheme.Dark);
@@ -42,7 +47,13 @@ internal sealed class PilotComponent : Component
         {
             void Changed() => invalidate(Interlocked.Increment(ref _revision));
             Program.Workspace.Changed += Changed;
-            return () => Program.Workspace.Changed -= Changed;
+            return () =>
+            {
+                Program.Workspace.Changed -= Changed;
+                foreach (var follow in _viewportFollowers.Values) follow.Dispose();
+                _viewportFollowers.Clear();
+                ViewportTransition = null;
+            };
         }, []);
 
         // Read the latest immutable coordinator snapshot on every render;
@@ -88,6 +99,8 @@ internal sealed class PilotComponent : Component
             ThemeForProbe = setDark;
             SendForProbe = EnqueueCurrent;
             ReadingPositionSettledForProbe = () => _restoringChannel is null;
+            ViewportPendingForProbe = () => _viewportFollowers.TryGetValue(_activeChannel, out var follow) && follow.Pending;
+            ViewportAdjustmentsForProbe = () => _viewportFollowers.TryGetValue(_activeChannel, out var follow) ? follow.Adjustments : 0;
         }
         async void Retry()
         {
@@ -150,7 +163,7 @@ internal sealed class PilotComponent : Component
                 TextBlock(message.Queued ? "Lagra lokalt" : "").FontSize(12).Foreground(muted)
             ),
             TextBlock(message.Body).FontSize(16).Foreground(ink).TextWrapping().IsTextSelectionEnabled()
-        ).Padding(20, 8).WithKey(message.Id);
+        ).Padding(20, 8).WithKey(message.Id).AutomationId("message-" + message.Id);
 
         Element Timeline(string id) => LazyVStack<TimelineMessage>(TimelineRows(id, state.Outbox), item => item.Id, (item, _) => Row(item))
             .AutomationId("timeline-" + id).AutomationName("Meldingar i " + (id == "prat" ? "Prat" : "Idear"))
@@ -158,6 +171,9 @@ internal sealed class PilotComponent : Component
             {
                 if (element is not ScrollViewer scroller) return;
                 _scrollers[id] = scroller;
+                _viewportFollowers[id] = new ChatViewportFollow(scroller,
+                    () => id == _activeChannel && _restoringChannel is null && !Program.CloseAdmissionClosed && scroller.Visibility == Visibility.Visible,
+                    () => { _readingOffsets.Remove(id); QueueRestore(id); });
                 RoutedEventHandler? loaded = null;
                 loaded = (_, _) =>
                 {
@@ -169,7 +185,7 @@ internal sealed class PilotComponent : Component
                 scroller.PointerWheelChanged += (_, _) => CancelRestore(id);
                 scroller.KeyDown += (_, _) => CancelRestore(id);
             })
-            .OnUnmount(_ => { _scrollers.Remove(id); CancelRestore(id); })
+            .OnUnmount(_ => { if (_viewportFollowers.Remove(id, out var follow)) follow.Dispose(); _scrollers.Remove(id); CancelRestore(id); })
             .IsVisible(channel == id).WithKey("timeline-" + id);
 
         var history = Grid([GridSize.Star()], [GridSize.Star()], Timeline("prat"), Timeline("idear"));
@@ -298,7 +314,14 @@ internal sealed class PilotComponent : Component
                 scroller.ChangeView(null, target, null, true);
             }
         }
-        finally { if (generation == _navigationGeneration) _restoringChannel = null; }
+        finally
+        {
+            if (generation == _navigationGeneration)
+            {
+                _restoringChannel = null;
+                if (_viewportFollowers.TryGetValue(id, out var follow)) follow.Synchronize();
+            }
+        }
     }
 
     private IReadOnlyList<TimelineMessage> TimelineRows(string channel, IReadOnlyList<QueuedMessage> outbox)
