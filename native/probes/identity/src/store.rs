@@ -87,6 +87,7 @@ pub struct CallbackAttempt {
 
 pub struct Store {
     connection: Connection,
+    login_seconds: i64,
 }
 
 type RedemptionRow = (
@@ -101,14 +102,16 @@ type RedemptionRow = (
 );
 
 impl Store {
-    pub fn create(path: &Path) -> Result<Self> {
+    pub fn create(path: &Path, interactive: bool) -> Result<Self> {
         // Claim a fresh fixture file; never initialize someone else's database.
         std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(path)
             .map_err(|_| ())?;
-        Self::initialize(Connection::open(path).map_err(|_| ())?)
+        let mut store = Self::initialize(Connection::open(path).map_err(|_| ())?)?;
+        store.login_seconds = if interactive { 600 } else { 120 };
+        Ok(store)
     }
 
     fn initialize(connection: Connection) -> Result<Self> {
@@ -120,7 +123,10 @@ impl Store {
               user_id TEXT, code_hash TEXT, code_expires INTEGER,
               redemption_id TEXT, receipt TEXT, receipt_expires INTEGER
             );").map_err(|_| ())?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            login_seconds: 120,
+        })
     }
 
     pub fn start(&mut self, request: &Start) -> Result<String> {
@@ -147,7 +153,7 @@ impl Store {
         }
         let id = random()?;
         tx.execute("INSERT INTO attempts(id,challenge,expected_user_id,environment,destination,expires,phase) VALUES(?1,?2,?3,?4,?5,?6,'new')",
-            params![id, request.challenge, request.expected_user_id, ENVIRONMENT, DESTINATION, now()+120]).map_err(|_| ())?;
+            params![id, request.challenge, request.expected_user_id, ENVIRONMENT, DESTINATION, now()+self.login_seconds]).map_err(|_| ())?;
         tx.commit().map_err(|_| ())?;
         Ok(id)
     }

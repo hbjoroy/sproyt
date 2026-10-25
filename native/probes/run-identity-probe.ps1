@@ -1,8 +1,10 @@
 param(
-    [string]$ArtifactsDirectory = $(if ($env:RUNNER_TEMP) { Join-Path $env:RUNNER_TEMP 'sproyt-native-identity' } else { Join-Path ([IO.Path]::GetTempPath()) 'sproyt-native-identity' })
+    [string]$ArtifactsDirectory = $(if ($env:RUNNER_TEMP) { Join-Path $env:RUNNER_TEMP 'sproyt-native-identity' } else { Join-Path ([IO.Path]::GetTempPath()) 'sproyt-native-identity' }),
+    [switch]$SystemBrowser
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($SystemBrowser -and !$IsWindows) { throw 'The system-browser probe requires Windows.' }
 $root = [IO.Path]::GetFullPath($ArtifactsDirectory)
 $run = Join-Path $root ('runs/' + [guid]::NewGuid().ToString('N'))
 $manifest = Join-Path $PSScriptRoot 'identity/Cargo.toml'
@@ -23,7 +25,7 @@ try {
     Checked 'cargo' @('build', '--manifest-path', $manifest, '--locked')
     Push-Location $projectDirectory
     try {
-        Checked 'dotnet' @('publish', $project, '-c', 'Release', '--artifacts-path', (Join-Path $root 'managed'), '-o', $publish, '--nologo')
+        Checked 'dotnet' @('publish', $project, '-c', 'Release', '-p:UseSharedCompilation=false', '--artifacts-path', (Join-Path $run 'managed'), '-o', $publish, '--nologo')
     } finally { Pop-Location }
     $serverName = if ($IsWindows) { 'sproyt-identity-probe.exe' } else { 'sproyt-identity-probe' }
     $server = Join-Path $env:CARGO_TARGET_DIR ('debug/' + $serverName)
@@ -31,6 +33,20 @@ try {
     Checked 'dotnet' @((Join-Path $publish 'IdentityProbe.dll'), $server, (Join-Path $run 'fixture.sqlite'), $checks)
     $evidence = Get-Content -LiteralPath $checks -Raw | ConvertFrom-Json
     if (!$evidence.passed) { throw 'Identity probe evidence failed' }
+    $desktop = $null
+    if ($IsWindows) {
+        $desktopChecks = Join-Path $run 'desktop-checks.json'
+        Checked 'dotnet' @((Join-Path $publish 'IdentityProbe.dll'), '--desktop-test', $server, (Join-Path $run 'desktop'), $desktopChecks)
+        $desktop = Get-Content -LiteralPath $desktopChecks -Raw | ConvertFrom-Json
+        if (!$desktop.passed) { throw 'Desktop handoff evidence failed' }
+    }
+    $browser = $null
+    if ($SystemBrowser) {
+        $browserChecks = Join-Path $run 'browser-checks.json'
+        Checked 'dotnet' @((Join-Path $publish 'IdentityProbe.dll'), '--desktop-browser', $server, (Join-Path $run 'browser'), $browserChecks)
+        $browser = Get-Content -LiteralPath $browserChecks -Raw | ConvertFrom-Json
+        if (!$browser.passed) { throw 'System-browser handoff evidence failed' }
+    }
     $receipt = [ordered]@{
         schema = 1
         scope = 'n01_isolated_identity_http_lab'
@@ -43,6 +59,8 @@ try {
         cargoClippy = $true
         cargoTests = $true
         evidence = $evidence
+        desktop = $desktop
+        systemBrowser = $browser
     }
     $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $run 'receipt.json') -Encoding utf8
     Write-Output ('PASS identity lab; receipt: ' + (Join-Path $run 'receipt.json'))

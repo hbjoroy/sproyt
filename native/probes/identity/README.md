@@ -1,5 +1,9 @@
 # N01a: isolert innloggingsprøve
 
+[N01b for Windows](DESKTOP.md) utvidar laboratoriet med faktisk systemnettlesar,
+OS-verna journal og gjenopptaking etter app-prosessdød. N01a-prøva nedanfor
+held fram som ei separat, automatisert HTTP-prøve.
+
 Denne prøva skal bevise serverformidla OIDC, separat app-prov og eingongs
 innløysing med retry. Berre syntetiske identitetar og prøvelegitimasjon blir
 brukte. Ho kan ikkje kontakte Authentik eller gi tilgang til Sprøyt-API.

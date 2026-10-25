@@ -8,6 +8,11 @@ Gjennomføring starta etter uttrykkeleg oppdrag om å bruke tilgjengelege verkty
 
 ## 1. Avklarte produktval
 
+[N01b-laboratoriet på Windows](../native/probes/identity/DESKTOP.md) har no
+OS-verna, varig app-handoff, reelle prosessavbrot og ein faktisk Edge-rundtur
+med to fiktive kontoar. Dette er framleis isolert frå Authentik og vanleg chat;
+passnøkkel, recovery og produksjonsøkter er ikkje godkjende av dette snittet.
+
 N02-prøva er utvida etter Astra-review med prosessavbrot ved tre punkt rundt
 commit, kontrollsum frå før prosessdød og ein dedikert C#-arbeidar med avgrensa
 kø, definert avbrotsgrense, utloggingsgjerde og kontrollert lukking. Sjå
