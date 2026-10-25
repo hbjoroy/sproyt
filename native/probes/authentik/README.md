@@ -4,6 +4,10 @@ Dato: 25. oktober 2026. Dette byggjer vidare på [N01b](../identity/DESKTOP.md).
 Berre syntetiske kontoar og ein eigen database blir brukte. Ingen data, nøklar,
 providerar eller flytar blir kopierte frå produksjon.
 
+[N01d-matrisa](REVOCATION.md) prøver no separat tilbakekalling av refresh-token,
+administrativ browserøktsletting og deaktivert brukar. Ho viser kvifor desse
+ikkje kan behandlast som same hending i den komande native øktmodellen.
+
 ## Pinna miljø og køyring
 
 Produksjonsversjonen vart kontrollert lesande med Kubernetes: server og worker
@@ -87,5 +91,6 @@ rapportert som reparert grant. Utfallet ligg i kvitteringa for kvar køyring.
 
 CI lastar berre opp `evidence/receipt.json`, med revisjon, image/policy og
 scenarioresultat. Cookiear, passord, klienthemmelegheit, databasar og token blir
-haldne utanfor artefaktlista. Passnøkkel, recovery, tilbakekalling og
-produksjonskopling står framleis att. N01c frigir ikkje N03-porten åleine.
+haldne utanfor artefaktlista. Passnøkkel, recovery, RP-logout og
+produksjonskopling står framleis att. Administrativ tilbakekalling blir prøvd
+separat i N01d. N01c frigir ikkje N03-porten åleine.

@@ -12,7 +12,14 @@ Gjennomføring starta etter uttrykkeleg oppdrag om å bruke tilgjengelege verkty
 verifisert OIDC, stabil issuer/subject og normal refresh, med separat faktisk
 Edge-innlogging. Prøva viser at tapt upstream-refresh-svar kan gi avvist gammalt
 token og krav om ny innlogging. Dette blir eit eksplisitt utfall i N03;
-passnøkkel, recovery, tilbakekalling og produksjonskopling står framleis att.
+passnøkkel, recovery og produksjonskopling står framleis att. Tilbakekalling er
+undersøkt vidare i N01d nedanfor.
+
+[N01d-matrisa](../native/probes/authentik/REVOCATION.md) har deretter målt tre
+ulike tilbakekallingar med to økter for same brukar og éin kontrollbrukar.
+Administrativ browserøktsletting stoppar gammal access/cookie, men lèt refresh
+skaffe ny tilgang med denne providerpolicyen. N03 må halde browser-, provider-
+og einingsøkt frå kvarandre. RP-logout, passnøkkel og recovery står framleis att.
 
 [N01b-laboratoriet på Windows](../native/probes/identity/DESKTOP.md) har no
 OS-verna, varig app-handoff, reelle prosessavbrot og ein faktisk Edge-rundtur

@@ -35,6 +35,7 @@ pub struct App {
     interactive: bool,
     external: bool,
     upstream: authconfig::Sessions,
+    control: tokio::sync::OnceCell<authconfig::Control>,
     address: String,
     issuer: String,
     oidc_callback: String,
@@ -153,6 +154,7 @@ async fn run() -> store::Result<()> {
         interactive,
         external: external_config.is_some(),
         upstream: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        control: tokio::sync::OnceCell::new(),
         oidc_callback: format!("{address}/probe/callback"),
         address: address.clone(),
         issuer: issuer.clone(),
@@ -205,6 +207,11 @@ async fn run() -> store::Result<()> {
             provider::SECRET.into(),
         )
     };
+    if let Some(config) = &external_config {
+        app.control
+            .set(authconfig::Control::new(config, &secret)?)
+            .map_err(|_| ())?;
+    }
     let client = CoreClient::from_provider_metadata(
         metadata,
         ClientId::new(client_id),

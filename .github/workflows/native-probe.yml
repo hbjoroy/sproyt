@@ -42,6 +42,12 @@ jobs:
           $labs = @(Get-ChildItem '${{ runner.temp }}/sproyt-authentik/runs' -Directory)
           if ($labs.Count -ne 1) { throw 'Expected one isolated Authentik run.' }
           ./native/probes/authentik/run-lab.ps1 -RunDirectory $labs[0].FullName -HttpOnly
+      - name: Verify isolated provider revocation scope
+        shell: pwsh
+        run: |
+          $labs = @(Get-ChildItem '${{ runner.temp }}/sproyt-authentik/runs' -Directory)
+          if ($labs.Count -ne 1) { throw 'Expected one isolated Authentik run.' }
+          ./native/probes/authentik/run-lab.ps1 -RunDirectory $labs[0].FullName -HttpOnly -Revocation
       - name: Preserve only non-secret Authentik receipts
         if: success()
         uses: actions/upload-artifact@v6

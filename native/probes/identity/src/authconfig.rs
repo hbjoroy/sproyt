@@ -103,13 +103,13 @@ fn local_url(value: &str) -> Result<reqwest::Url, ()> {
 
 pub struct Upstream {
     refresh: Option<String>,
-    _access: String,
+    access: String,
 }
 pub type Sessions = tokio::sync::Mutex<HashMap<(String, String), Upstream>>;
 pub fn session(token: &CoreTokenResponse) -> Upstream {
     Upstream {
         refresh: token.refresh_token().map(|value| value.secret().clone()),
-        _access: token.access_token().secret().clone(),
+        access: token.access_token().secret().clone(),
     }
 }
 #[derive(Deserialize)]
@@ -123,7 +123,12 @@ pub async fn check(app: &crate::App, input: Check) -> Result<serde_json::Value, 
     if !app.external
         || !matches!(
             input.action.as_str(),
-            "refresh" | "drop-refresh-result" | "retry-old"
+            "refresh"
+                | "drop-refresh-result"
+                | "retry-old"
+                | "introspect-access"
+                | "introspect-refresh"
+                | "revoke-refresh"
         )
     {
         return Err(crate::ProbeError);
@@ -132,6 +137,16 @@ pub async fn check(app: &crate::App, input: Check) -> Result<serde_json::Value, 
     let current = sessions
         .get_mut(&(input.transaction_id, input.user_id))
         .ok_or(crate::ProbeError)?;
+    if matches!(
+        input.action.as_str(),
+        "introspect-access" | "introspect-refresh" | "revoke-refresh"
+    ) {
+        let control = app.control.get().ok_or(crate::ProbeError)?;
+        return control
+            .check(&app.http, current, &input.action)
+            .await
+            .map_err(|_| crate::ProbeError);
+    }
     let Some(refresh) = current.refresh.clone() else {
         return Ok(
             serde_json::json!({"accepted":false,"refresh_rotated":false,"expires_in":null,"requires_reauthentication":true}),
@@ -170,9 +185,174 @@ pub async fn check(app: &crate::App, input: Check) -> Result<serde_json::Value, 
     )
 }
 
+// These are fixed Authentik 2026.8.2 endpoints, not URLs supplied by a caller
+// or by an unchecked discovery extension. Credentials and token bodies stay private.
+pub struct Control {
+    introspect: reqwest::Url,
+    revoke: reqwest::Url,
+    client_id: String,
+    secret: String,
+}
+impl Control {
+    pub fn new(config: &Config, secret: &str) -> Result<Self, ()> {
+        let issuer = local_url(&config.issuer)?;
+        let introspect = issuer.join("/application/o/introspect/").map_err(|_| ())?;
+        let revoke = issuer.join("/application/o/revoke/").map_err(|_| ())?;
+        config.endpoint(introspect.as_str())?;
+        config.endpoint(revoke.as_str())?;
+        Ok(Self {
+            introspect,
+            revoke,
+            client_id: config.client_id.clone(),
+            secret: secret.to_owned(),
+        })
+    }
+    async fn check(
+        &self,
+        http: &reqwest::Client,
+        grant: &Upstream,
+        action: &str,
+    ) -> Result<serde_json::Value, ()> {
+        let (endpoint, token, hint) = match action {
+            "introspect-access" => (&self.introspect, grant.access.as_str(), "access_token"),
+            "introspect-refresh" => (
+                &self.introspect,
+                grant.refresh.as_deref().ok_or(())?,
+                "refresh_token",
+            ),
+            "revoke-refresh" => (
+                &self.revoke,
+                grant.refresh.as_deref().ok_or(())?,
+                "refresh_token",
+            ),
+            _ => return Err(()),
+        };
+        let response = http
+            .post(endpoint.clone())
+            .basic_auth(&self.client_id, Some(&self.secret))
+            .form(&[("token", token), ("token_type_hint", hint)])
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|_| ())?;
+        let accepted = response.status() == reqwest::StatusCode::OK;
+        let bytes = bounded_response(response).await?;
+        if action == "revoke-refresh" {
+            // HTTP 200 also covers nonexistent tokens. Keep the local token unchanged
+            // so later introspection/refresh records actual upstream invalidation.
+            return Ok(serde_json::json!({"accepted":accepted}));
+        }
+        if !accepted {
+            return Err(());
+        }
+        introspection_observation(&bytes)
+    }
+}
+async fn bounded_response(mut response: reqwest::Response) -> Result<Vec<u8>, ()> {
+    const MAXIMUM: usize = 16384;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAXIMUM as u64)
+    {
+        return Err(());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
+        if bytes.len() + chunk.len() > MAXIMUM {
+            return Err(());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+fn introspection_observation(bytes: &[u8]) -> Result<serde_json::Value, ()> {
+    // Never forward introspection's ID-token claims, subject, scope, or client data.
+    let response: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| ())?;
+    let active = response
+        .get("active")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or(())?;
+    Ok(serde_json::json!({"active":active}))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn introspection_strips_all_provider_claims_and_requires_boolean_active() {
+        let observation = introspection_observation(br#"{"active":true,"sub":"synthetic-subject","token":"synthetic-secret","scope":"openid","exp":123}"#).unwrap();
+        assert_eq!(observation, serde_json::json!({"active":true}));
+        assert_eq!(
+            introspection_observation(br#"{"active":false}"#).unwrap(),
+            serde_json::json!({"active":false})
+        );
+        for bytes in [
+            b"{}".as_slice(),
+            br#"{"active":"true"}"#,
+            b"not-json",
+            b"[]",
+        ] {
+            assert!(introspection_observation(bytes).is_err());
+        }
+        assert!(serde_json::from_str::<Check>(r#"{"user_id":"alice","transaction_id":"one","action":"revoke-refresh","token":"injected"}"#).is_err());
+    }
+    #[tokio::test]
+    async fn controls_use_fixed_paths_and_reject_oversized_responses() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let routes = axum::Router::new()
+            .route(
+                "/application/o/introspect/",
+                axum::routing::post(|| async {
+                    axum::Json(serde_json::json!({"active":true,"sub":"must-not-escape"}))
+                }),
+            )
+            .route(
+                "/application/o/revoke/",
+                axum::routing::post(|| async { "x".repeat(16385) }),
+            );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, routes).await.unwrap();
+        });
+        let config = Config {
+            issuer: format!("http://127.0.0.1:{port}/application/o/n01-lab/"),
+            client_id: "n01-lab".into(),
+            client_secret_file: PathBuf::new(),
+            listen_port: 19191,
+        };
+        let control = Control::new(&config, "synthetic-client-secret").unwrap();
+        assert_eq!(
+            control.introspect.as_str(),
+            format!("http://127.0.0.1:{port}/application/o/introspect/")
+        );
+        assert_eq!(
+            control.revoke.as_str(),
+            format!("http://127.0.0.1:{port}/application/o/revoke/")
+        );
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let grant = Upstream {
+            refresh: Some("synthetic-refresh".into()),
+            access: "synthetic-access".into(),
+        };
+        assert_eq!(
+            control
+                .check(&http, &grant, "introspect-access")
+                .await
+                .unwrap(),
+            serde_json::json!({"active":true})
+        );
+        assert!(
+            control
+                .check(&http, &grant, "revoke-refresh")
+                .await
+                .is_err()
+        );
+        assert!(control.check(&http, &grant, "unknown").await.is_err());
+        server.abort();
+    }
     #[test]
     fn grants_are_bound_to_both_transaction_and_user() {
         let mut sessions = HashMap::new();
@@ -185,7 +365,7 @@ mod tests {
                 (transaction.to_owned(), user.to_owned()),
                 Upstream {
                     refresh: Some(marker.into()),
-                    _access: "synthetic".into(),
+                    access: "synthetic".into(),
                 },
             );
         }
