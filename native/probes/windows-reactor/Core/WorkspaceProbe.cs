@@ -7,7 +7,17 @@ public static class WorkspaceProbe
 
     public static async Task<string> RunAsync(string database, string libraryPath)
     {
+        Check(LiveApplication.SameSendFamily("7:family-a", "7:family-a:2") &&
+            !LiveApplication.SameSendFamily("7:family-a", "8:family-a:1") &&
+            !LiveApplication.SameSendFamily("7:family-a", "7:family-b:2") &&
+            !LiveApplication.SameSendFamily(null, "7:family-a:1"),
+            "Old queued sends must require approval after a new login, while same-family rotation preserves admission.");
         string path = Path.GetFullPath(database);
+        using (var approval = new SendAdmissionStore(path + ".send-consent", "instance", "account"))
+            approval.Approve("7:family-a");
+        using (var afterRestart = new SendAdmissionStore(path + ".send-consent", "instance", "account"))
+            Check(!LiveApplication.SameSendFamily(afterRestart.Family, "8:family-b:1"),
+                "Restart must not approve old queued sends for a new authentication family.");
         Check(!File.Exists(path) && !File.Exists(path + ".closing") && !File.Exists(path + ".terminal") &&
             !File.Exists(path + ".beforecommit"), "Workspace probe refuses existing test databases.");
         var forwarding = new ForwardingStore(await NativeSession.OpenAsync(path, libraryPath).ConfigureAwait(false));

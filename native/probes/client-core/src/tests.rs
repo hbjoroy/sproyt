@@ -483,3 +483,50 @@ fn ordinary_abi_rejects_diagnostic_requests() {
         "invalid_request"
     );
 }
+
+#[test]
+fn only_server_acknowledged_sends_can_free_outbox_capacity() {
+    let fixture = Fixture::new();
+    let mut store = Store::open(&fixture.database, "native-pilot").unwrap();
+    for index in 0..20 {
+        let id = format!("request-{index}");
+        store.enqueue(1, &id, "channel", "Hei").unwrap();
+        assert_eq!(
+            store.delivery(1, &id, "forget"),
+            Err("invalid_delivery_transition")
+        );
+        store.delivery(1, &id, "dispatch").unwrap();
+        store.delivery(1, &id, "uncertain").unwrap();
+        assert_eq!(
+            store.delivery(1, &id, "forget"),
+            Err("invalid_delivery_transition")
+        );
+        store.delivery(1, &id, "dispatch").unwrap();
+        store.delivery(1, &id, "acknowledge").unwrap();
+        store.delivery(1, &id, "forget").unwrap();
+    }
+    assert!(
+        store.snapshot().unwrap()["outbox"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn cleared_channel_drafts_do_not_exhaust_live_storage_slots() {
+    let fixture = Fixture::new();
+    let mut store = Store::open(&fixture.database, "native-pilot").unwrap();
+    for index in 0..20 {
+        let channel = format!("channel-{index}");
+        store.save_draft(1, &channel, "eit utkast").unwrap();
+        assert_eq!(store.clear_draft(2, &channel), Err("stale_generation"));
+        store.clear_draft(1, &channel).unwrap();
+    }
+    assert!(
+        store.snapshot().unwrap()["drafts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}

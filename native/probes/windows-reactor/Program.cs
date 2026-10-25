@@ -7,6 +7,14 @@ internal static class Program
 {
     internal static ChatWorkspace Workspace { get; private set; } = null!;
     internal static NativeAuthentication? Authentication { get; private set; }
+    internal static ILiveApplication? Live { get; private set; }
+    internal static string? LiveUiProbeDirectory { get; private set; }
+    internal static string? CanaryAcceptanceDirectory { get; private set; }
+    internal static bool LiveMode { get; private set; }
+    internal static string? LiveError { get; private set; }
+    internal static event Action? LiveStateChanged;
+    private static string _liveServer = "";
+    private static Task? _liveOpening;
     internal static string DataDirectory { get; private set; } = "";
     internal static string? UiProbeDirectory { get; private set; }
     internal static bool UiResume { get; private set; }
@@ -56,19 +64,28 @@ internal static class Program
             SessionUiProbeDirectory = args.Length == 2 && args[0] is "--session-ui-smoke" or "--session-ui-resume" or "--session-ui-cancel"
                 ? Path.GetDirectoryName(Path.GetFullPath(args[1])) : null;
             UiProbeDirectory = args.Length == 2 && args[0] is "--ui-smoke" or "--ui-resume" ? Path.GetFullPath(args[1]) : null;
-            DataDirectory = UiProbeDirectory is not null ? Path.Combine(UiProbeDirectory, "data") : args.Length == 2 && args[0] == "--data-dir"
+            LiveMode = args.Length == 2 && args[0] is "--server" or "--live-ui-smoke" or "--canary-acceptance";
+            CanaryAcceptanceDirectory = args.Length == 2 && args[0] == "--canary-acceptance" ? Path.GetFullPath(args[1]) : null;
+            LiveUiProbeDirectory = args.Length == 2 && args[0] == "--live-ui-smoke" ? Path.GetFullPath(args[1]) : null;
+            if (LiveMode) _liveServer = CanaryAcceptanceDirectory is not null ? "https://sproyt-canary.bjoroy.me/" : args[1];
+            DataDirectory = LiveUiProbeDirectory ?? (LiveMode ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsCanary")
+                : UiProbeDirectory is not null ? Path.Combine(UiProbeDirectory, "data") : args.Length == 2 && args[0] == "--data-dir"
                 ? Path.GetFullPath(args[1])
                 : sessionMode
                 ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!, "windows-data")
-                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsProbe");
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsProbe"));
             Directory.CreateDirectory(DataDirectory);
+            if (LiveUiProbeDirectory is not null) Live = new LiveUiFixture();
             if (sessionMode)
                 Authentication = new(args[1], Path.Combine(DataDirectory, "authentication"));
             string database = Authentication is null ? Path.Combine(DataDirectory, "demo-v1.sqlite")
                 : Path.Combine(DataDirectory, "account-" + Authentication.UserId + ".sqlite");
-            var session = NativeSession.OpenAsync(database, library, Authentication?.UserId ?? NativeSession.FixtureAccount).GetAwaiter().GetResult();
-            Workspace = new(new NativeWorkspaceStoreAdapter(session), ["prat", "idear"]);
-            Workspace.InitializeAsync().GetAwaiter().GetResult();
+            if (!LiveMode)
+            {
+                var session = NativeSession.OpenAsync(database, library, Authentication?.UserId ?? NativeSession.FixtureAccount).GetAwaiter().GetResult();
+                Workspace = new(new NativeWorkspaceStoreAdapter(session), ["prat", "idear"]);
+                Workspace.InitializeAsync().GetAwaiter().GetResult();
+            }
             ReactorApp.WindowOpened += (_, window) =>
             {
                 var keyboard = Keyboard = new KeyboardViewport(window);
@@ -76,6 +93,8 @@ internal static class Program
                 keyboard.Attach(PilotComponent.RootForClose as Microsoft.UI.Xaml.Controls.Grid);
                 window.NativeWindow.Activated += (_, activated) =>
                 {
+                    if (!CloseAdmissionClosed && activated.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated && Live is not null)
+                        _ = Live.ResumeAsync();
                     if (!CloseAdmissionClosed && activated.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated
                         && Authentication is not null) _ = Authentication.ResumeAsync();
                 };
@@ -88,12 +107,33 @@ internal static class Program
                     RequestClose(window);
                 };
             };
-            ReactorApp.Run<PilotComponent>(new WindowSpec
+            var windowSpec = new WindowSpec
             {
-                Title = "Sprøyt · Windows-prøve", Width = 1120, Height = 760, MinWidth = 360, MinHeight = 460,
-            });
+                Title = LiveMode ? "Sprøyt · Windows Canary" : "Sprøyt · Windows-prøve", Width = 1120, Height = 760, MinWidth = 360, MinHeight = 460,
+            };
+            if (LiveMode) ReactorApp.Run<LiveChatComponent>(windowSpec);
+            else ReactorApp.Run<PilotComponent>(windowSpec);
         }
         catch (Exception exception) { Log(exception); Environment.ExitCode = 1; }
+    }
+
+    internal static Task OpenLiveAsync()
+    {
+        if (Live is not null || CloseAdmissionClosed) return Task.CompletedTask;
+        if (_liveOpening is { IsCompleted: false }) return _liveOpening;
+        return _liveOpening = OpenLiveCoreAsync();
+    }
+    private static async Task OpenLiveCoreAsync()
+    {
+        LiveError = null; LiveStateChanged?.Invoke();
+        try
+        {
+            var opened = await LiveApplication.OpenAsync(_liveServer, DataDirectory);
+            if (CloseAdmissionClosed) await opened.DisposeAsync();
+            else Live = opened;
+        }
+        catch { LiveError = "Fekk ikkje kontakt med Windows-tenesta på Canary. Prøv igjen om litt."; }
+        LiveStateChanged?.Invoke();
     }
 
     private static async void RequestClose(ReactorWindow window)
@@ -132,14 +172,19 @@ internal static class Program
                     throw new InvalidOperationException("The UI dispatcher closed before editor events were flushed.");
                 await flushed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             }
-            await Workspace.ShutdownAsync();
+            if (LiveMode)
+            {
+                if (_liveOpening is not null) await _liveOpening;
+                if (Live is not null) await Live.DisposeAsync();
+            }
+            else await Workspace.ShutdownAsync();
             if (Authentication is not null) await Authentication.DisposeAsync();
         }
         catch
         {
             _preparingShutdown = false;
             if (root is not null) root.IsHitTestVisible = true;
-            if (editor is not null) editor.IsReadOnly = Workspace.State.Terminal;
+            if (editor is not null) editor.IsReadOnly = !LiveMode && Workspace.State.Terminal;
             throw;
         }
     }

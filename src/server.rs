@@ -61,6 +61,7 @@ use crate::{
 
 #[derive(Clone)]
 pub(super) struct AppState {
+    pub(super) native_sessions: Option<crate::native_sessions::NativeSessions>,
     pub(super) media_store: Option<crate::media_store::MediaStore>,
     pub(super) auth: AuthService,
     pub(super) chat: ChatEngine,
@@ -160,7 +161,10 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     if let Some(store) = &media_store {
         store.start_cleanup(operations.subscribe_shutdown());
     }
+    let native_sessions =
+        crate::native_sessions::NativeSessions::from_env(&config, postgres_pool.as_ref()).await?;
     let state = AppState {
+        native_sessions,
         media_store,
         process_pilot,
         work_items: Some(work_items),
@@ -198,6 +202,12 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
 pub(super) fn build_router(state: AppState, operations: OperationalState) -> Router {
     let request_id_header = HeaderName::from_static("x-request-id");
     Router::new()
+        .merge(crate::web::native::routes())
+        .route("/api/v1/native/ws", get(crate::web::native_chat::socket))
+        .route(
+            "/api/v1/native/commands",
+            post(crate::web::native_chat::command).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .route("/", get(index))
         .route("/healthz", get(healthz))
         .route("/readyz", get(app_readyz))

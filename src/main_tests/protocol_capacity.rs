@@ -1673,6 +1673,7 @@ async fn start_test_server_with_state(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        native_sessions: None,
         media_store: None,
         imagegen: None,
         process_pilot: None,
@@ -1710,6 +1711,7 @@ async fn start_postgres_test_server(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        native_sessions: None,
         media_store: None,
         imagegen: None,
         process_pilot: None,
@@ -1747,6 +1749,7 @@ async fn start_test_server_with_gateway(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        native_sessions: None,
         media_store: None,
         imagegen: None,
         process_pilot: None,

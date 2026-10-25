@@ -41,11 +41,11 @@ public sealed class ChatWorkspace
     private long _lastRequestTicks;
     private string? _errorCode, _errorMessage;
 
-    public ChatWorkspace(IWorkspaceStore store, IReadOnlyList<string> channels)
+    public ChatWorkspace(IWorkspaceStore store, IReadOnlyList<string> channels, int maximumChannels = 2)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(channels);
-        if (channels.Count is < 1 or > 2 || channels.Any(string.IsNullOrWhiteSpace) || channels.Distinct(StringComparer.Ordinal).Count() != channels.Count)
+        if (maximumChannels is < 1 or > 512 || channels.Count < 1 || channels.Count > maximumChannels || channels.Any(string.IsNullOrWhiteSpace) || channels.Distinct(StringComparer.Ordinal).Count() != channels.Count)
             throw new ArgumentException("The bounded pilot requires one or two distinct channels.", nameof(channels));
         _store = store;
         _drafts = channels.ToDictionary(channel => channel, _ => new DraftState(), StringComparer.Ordinal);
@@ -54,6 +54,26 @@ public sealed class ChatWorkspace
 
     // Notifications may come from a background thread; the UI dispatches them.
     public event Action? Changed;
+
+    internal void EnsureChannels(IEnumerable<string> channels)
+    {
+        lock (_gate)
+        {
+            foreach (string channel in channels)
+            {
+                if (string.IsNullOrWhiteSpace(channel)) throw new ArgumentException("Invalid channel.");
+                if (_drafts.ContainsKey(channel)) continue;
+                if (_drafts.Count == 512) throw new InvalidOperationException("Channel capacity reached.");
+                _drafts.Add(channel, new DraftState());
+            }
+        }
+    }
+
+    internal void ServerAcknowledged(string requestId)
+    {
+        lock (_gate) _outbox.RemoveAll(item => item.RequestId == requestId);
+        Notify();
+    }
 
     public WorkspaceSnapshot State
     {

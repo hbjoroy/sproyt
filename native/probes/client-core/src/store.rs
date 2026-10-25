@@ -123,6 +123,13 @@ impl Store {
         db(tx.commit())
     }
 
+    pub fn clear_draft(&mut self, generation: u64, channel: &str) -> Result<()> {
+        identifier(channel)?;
+        let tx = self.transaction(generation)?;
+        db(tx.execute("delete from drafts where channel=?1", [channel]))?;
+        db(tx.commit())
+    }
+
     pub fn enqueue(&mut self, generation: u64, id: &str, channel: &str, body: &str) -> Result<()> {
         // One-shot means the next decoded enqueue attempt, even if validation
         // or duplicate-ID checks return before the chosen site is reached.
@@ -196,6 +203,13 @@ impl Store {
             )
             .optional())?;
         let state = state.ok_or("unknown_request")?;
+        if action == "forget" {
+            if state != "acknowledged" {
+                return Err("invalid_delivery_transition");
+            }
+            db(tx.execute("delete from outbox where request_id=?1", [id]))?;
+            return db(tx.commit());
+        }
         let from = match state.as_str() {
             "queued" => DurableSendState::Queued,
             "dispatching" => DurableSendState::Dispatching,
@@ -205,6 +219,16 @@ impl Store {
             _ => return Err("storage_error"),
         };
         let next = match action {
+            "uncertain"
+                if matches!(
+                    from,
+                    DurableSendState::Dispatching | DurableSendState::Uncertain
+                ) =>
+            {
+                // A wire attempt may already have committed remotely. Keep
+                // that uncertainty explicit while retaining the same ID.
+                DurableSendState::Uncertain
+            }
             "dispatch"
                 if matches!(from, DurableSendState::Queued | DurableSendState::Uncertain) =>
             {
@@ -239,6 +263,7 @@ impl Store {
             DurableSendState::Dispatching => "dispatching",
             DurableSendState::Acknowledged => "acknowledged",
             DurableSendState::Rejected => "rejected",
+            DurableSendState::Uncertain => "uncertain",
             _ => return Err("invalid_delivery_transition"),
         };
         db(tx.execute(

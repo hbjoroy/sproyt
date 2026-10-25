@@ -34,6 +34,7 @@ data:
   SPROYT_ENV: {{ .Values.config.environment | quote }}
   SPROYT_LOG_FORMAT: {{ .Values.config.logFormat | quote }}
   SPROYT_AUTH_MODE: {{ .Values.config.authMode | quote }}
+  SPROYT_NATIVE_ENABLED: {{ .Values.config.nativeClientEnabled | default false | quote }}
   SPROYT_WS_IDLE_TIMEOUT_SECONDS: {{ .Values.config.websocketIdleTimeoutSeconds | quote }}
   SPROYT_DB_MAX_CONNECTIONS: {{ .Values.config.dbMaxConnections | quote }}
   SPROYT_UI_ADVANCED_ENABLED: {{ .Values.config.uiAdvancedEnabled | quote }}

@@ -12,6 +12,7 @@ mod imagegen_prompt;
 mod integration;
 mod media_store;
 mod media_worker;
+mod native_sessions;
 mod notification;
 mod operations;
 mod process;

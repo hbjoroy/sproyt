@@ -158,6 +158,28 @@ impl AuthService {
         }
     }
 
+    /// Native callers own a separate OIDC grant and must fence uncertain refresh outcomes.
+    pub(crate) async fn renew_native_session(
+        &self,
+        cookie_header: Option<&str>,
+    ) -> Result<SessionRenewal, AuthError> {
+        match self {
+            Self::Development => Err(AuthError::Unauthorized),
+            Self::Oidc(service) => service.renew_session_inner(cookie_header, true).await,
+        }
+    }
+
+    pub(crate) fn native_session_expires_at(&self, cookie_header: &str) -> Result<u64, AuthError> {
+        let Self::Oidc(service) = self else {
+            return Err(AuthError::Unauthorized);
+        };
+        let value =
+            read_cookie(Some(cookie_header), SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
+        let claims: SessionClaims = service.codec.open(value)?;
+        validate_session_claims(&claims, &service.issuer)?;
+        Ok(claims.expires_at)
+    }
+
     pub fn session_refresh_after(&self, cookie_header: Option<&str>) -> Result<u64, AuthError> {
         match self {
             Self::Development => Ok(300),
@@ -591,6 +613,14 @@ impl OidcService {
         &self,
         cookie_header: Option<&str>,
     ) -> Result<SessionRenewal, AuthError> {
+        self.renew_session_inner(cookie_header, false).await
+    }
+
+    async fn renew_session_inner(
+        &self,
+        cookie_header: Option<&str>,
+        preserve_uncertain: bool,
+    ) -> Result<SessionRenewal, AuthError> {
         let (issuer, subject, display_name, preferred_username, email, refresh_token) =
             if let Some(value) = read_cookie(cookie_header, REFRESH_COOKIE) {
                 let claims: RefreshClaims = self.codec.open(value)?;
@@ -630,7 +660,11 @@ impl OidcService {
             .map_err(AuthError::external)?
             .request_async(&self.http_client)
             .await
-            .map_err(|_| AuthError::Unauthorized)?;
+            .map_err(|error| {
+                if preserve_uncertain && !matches!(&error, openidconnect::RequestTokenError::ServerResponse(response) if response.error() == &openidconnect::core::CoreErrorResponseType::InvalidGrant) {
+                    AuthError::External("native provider refresh outcome uncertain".into())
+                } else { AuthError::Unauthorized }
+            })?;
         // Refresh-token exchange already authenticates the grant. Do not make
         // renewal depend on a second userinfo round-trip: profile freshness is
         // handled by the explicit revalidation path, while background renewal
@@ -900,7 +934,7 @@ mod tests {
         signature::{SignatureEncoding, Signer},
         traits::PublicKeyParts,
     };
-    use sha2::Sha256;
+    use sha2::{Digest, Sha256};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[derive(Clone)]
@@ -913,6 +947,9 @@ mod tests {
         email: Arc<Mutex<Option<String>>>,
         signing_key: Arc<Mutex<(String, RsaPrivateKey)>>,
         active: Arc<AtomicBool>,
+        native_refresh_failure: Arc<AtomicBool>,
+        refresh_requests: Arc<std::sync::atomic::AtomicUsize>,
+        last_refresh: Arc<Mutex<String>>,
     }
 
     async fn provider_metadata(State(provider): State<TestProvider>) -> Json<serde_json::Value> {
@@ -993,7 +1030,7 @@ mod tests {
         State(provider): State<TestProvider>,
         headers: HeaderMap,
         Form(form): Form<std::collections::HashMap<String, String>>,
-    ) -> Json<serde_json::Value> {
+    ) -> axum::response::Response {
         assert!(
             headers
                 .get("authorization")
@@ -1001,22 +1038,38 @@ mod tests {
                 .is_some_and(|value| value.starts_with("Basic ")),
             "OIDC client did not authenticate at the token endpoint"
         );
+        if form.get("grant_type").map(String::as_str) == Some("refresh_token") {
+            provider.refresh_requests.fetch_add(1, Ordering::SeqCst);
+            *provider.last_refresh.lock().unwrap() = form.get("refresh_token").unwrap().clone();
+            if provider.native_refresh_failure.load(Ordering::SeqCst) {
+                return (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({"error":"server_error"})),
+                )
+                    .into_response();
+            }
+        }
         let refresh_token = match form.get("grant_type").map(String::as_str) {
             Some("authorization_code") => {
-                assert_eq!(form.get("code").map(String::as_str), Some("valid-code"));
+                assert!(matches!(
+                    form.get("code").map(String::as_str),
+                    Some("valid-code" | "native-code")
+                ));
                 assert!(
                     form.get("code_verifier")
                         .is_some_and(|value| !value.is_empty())
                 );
-                "refresh-a"
+                if form.get("code").map(String::as_str) == Some("native-code") {
+                    "native-refresh-a"
+                } else {
+                    "refresh-a"
+                }
             }
-            Some("refresh_token") => {
-                assert_eq!(
-                    form.get("refresh_token").map(String::as_str),
-                    Some("refresh-a")
-                );
-                "refresh-b"
-            }
+            Some("refresh_token") => match form.get("refresh_token").map(String::as_str) {
+                Some("refresh-a") => "refresh-b",
+                Some("native-refresh-a") => "native-refresh-b",
+                _ => panic!("unexpected fixture refresh grant"),
+            },
             grant => panic!("unexpected grant type {grant:?}"),
         };
         Json(serde_json::json!({
@@ -1026,6 +1079,7 @@ mod tests {
             "id_token":signed_id_token(&provider),
             "refresh_token":refresh_token
         }))
+        .into_response()
     }
 
     async fn provider_user_info(
@@ -1058,6 +1112,9 @@ mod tests {
             email: Arc::new(Mutex::new(Some("  Authentik.User@Example.Test  ".into()))),
             signing_key: Arc::new(Mutex::new(generate_signing_key("key-a"))),
             active: Arc::new(AtomicBool::new(true)),
+            native_refresh_failure: Arc::new(AtomicBool::new(false)),
+            refresh_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            last_refresh: Arc::new(Mutex::new(String::new())),
         };
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(provider_metadata))
@@ -1631,5 +1688,378 @@ mod tests {
                 .contains("Path=/auth/refresh")
         );
         server.abort();
+    }
+    #[tokio::test]
+    async fn native_dedicated_grant_refresh_and_uncertain_provider_fence() {
+        use crate::native_sessions::{
+            CancelRequest, ExchangeRequest, LoginRequest, NativeError, NativeSessions,
+            RefreshRequest,
+        };
+        let (config, provider, server) = test_oidc_provider().await;
+        let auth = AuthService::oidc(&config).await.unwrap();
+        let browser = auth.login(None).unwrap();
+        *provider.nonce.lock().unwrap() =
+            authorization_parameter(&browser.authorization_url, "nonce");
+        let browser_complete = auth
+            .callback(
+                "valid-code".into(),
+                authorization_parameter(&browser.authorization_url, "state"),
+                Some(&browser.set_cookie),
+            )
+            .await
+            .unwrap();
+        let browser_cookies = format!(
+            "{}; {}",
+            browser_complete.set_cookie,
+            browser_complete.set_refresh_cookie.as_ref().unwrap()
+        );
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let native = NativeSessions::for_test(pool, config.issuer(), config.session_key())
+            .await
+            .unwrap();
+        let verifier = URL_SAFE_NO_PAD.encode([19u8; 32]);
+        let started = native
+            .login(
+                &auth,
+                LoginRequest {
+                    challenge: URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
+                    destination_id: "windows-loopback".into(),
+                    callback_port: 19192,
+                    expected_user_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        let (upstream, cookie) = native.browser(&started.transaction_id).await.unwrap();
+        assert!(
+            authorization_parameter(&upstream, "state")
+                != authorization_parameter(&browser.authorization_url, "state")
+        );
+        *provider.nonce.lock().unwrap() = authorization_parameter(&upstream, "nonce");
+        // A browser's unrelated LOGIN_COOKIE cannot replace the native per-attempt cookie.
+        assert!(
+            native
+                .callback(
+                    &auth,
+                    "native-code".into(),
+                    authorization_parameter(&upstream, "state"),
+                    Some(&browser.set_cookie)
+                )
+                .await
+                .is_err()
+        );
+        let confirmation = native
+            .callback(
+                &auth,
+                "native-code".into(),
+                authorization_parameter(&upstream, "state"),
+                Some(&cookie),
+            )
+            .await
+            .unwrap();
+        let target = native
+            .confirm(&started.transaction_id, &confirmation.nonce, Some(&cookie))
+            .await
+            .unwrap();
+        let target = reqwest::Url::parse(&target).unwrap();
+        let code = target
+            .query_pairs()
+            .find(|(key, _)| key == "code")
+            .unwrap()
+            .1
+            .into_owned();
+        let grant = native
+            .exchange(ExchangeRequest {
+                transaction_id: started.transaction_id.clone(),
+                code,
+                verifier: verifier.clone(),
+                redemption_id: "a".repeat(32),
+                environment: "canary".into(),
+                destination_id: "windows-loopback".into(),
+            })
+            .await
+            .unwrap()
+            .native_session;
+        assert!(
+            grant.display_name == "Authentik Test User" && grant.expires_at <= now_seconds() + 300
+        );
+        assert!(
+            native
+                .authenticate(&auth, &grant.access_token)
+                .await
+                .unwrap()
+                .user
+                .id
+                == browser_complete.principal.user.id
+        );
+        let refreshed = native
+            .refresh(
+                &auth,
+                &grant.refresh_token,
+                RefreshRequest {
+                    operation_id: "b".repeat(32),
+                    generation: 0,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(provider.last_refresh.lock().unwrap().as_str() == "native-refresh-a");
+        assert!(
+            native
+                .refresh(
+                    &auth,
+                    &grant.refresh_token,
+                    RefreshRequest {
+                        operation_id: "b".repeat(32),
+                        generation: 0
+                    }
+                )
+                .await
+                .unwrap()
+                == refreshed
+        );
+        assert!(provider.refresh_requests.load(Ordering::SeqCst) == 1);
+        provider
+            .native_refresh_failure
+            .store(true, Ordering::SeqCst);
+        assert!(
+            native
+                .refresh(
+                    &auth,
+                    &refreshed.refresh_token,
+                    RefreshRequest {
+                        operation_id: "c".repeat(32),
+                        generation: 1
+                    }
+                )
+                .await
+                == Err(NativeError::Unavailable)
+        );
+        assert!(provider.last_refresh.lock().unwrap().as_str() == "native-refresh-b");
+        assert!(
+            native
+                .refresh(
+                    &auth,
+                    &refreshed.refresh_token,
+                    RefreshRequest {
+                        operation_id: "c".repeat(32),
+                        generation: 1
+                    }
+                )
+                .await
+                .is_err()
+        );
+        assert!(provider.refresh_requests.load(Ordering::SeqCst) == 2);
+        assert!(
+            auth.authenticate_session(Some(&browser_cookies))
+                .await
+                .is_ok()
+        );
+        native
+            .cancel_login(CancelRequest {
+                transaction_id: started.transaction_id,
+                verifier,
+                environment: "canary".into(),
+                destination_id: "windows-loopback".into(),
+            })
+            .await
+            .unwrap();
+        server.abort();
+    }
+    #[tokio::test]
+    async fn native_http_callback_and_same_origin_account_confirmation() {
+        let (config, provider, provider_server) = test_oidc_provider().await;
+        let auth = AuthService::oidc(&config).await.unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let native = crate::native_sessions::NativeSessions::for_test(
+            pool,
+            config.issuer(),
+            config.session_key(),
+        )
+        .await
+        .unwrap();
+        let state = crate::web::native::test_state(auth, Some(native)).await;
+        let app = crate::web::native::routes()
+            .route("/auth/callback", get(crate::web::auth::auth_callback))
+            .layer(axum::middleware::from_fn(
+                crate::web::system::add_security_headers,
+            ))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let verifier = URL_SAFE_NO_PAD.encode([29u8; 32]);
+        let response=client.post(format!("{origin}/api/v1/native/login")).json(&serde_json::json!({"challenge":URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),"destination_id":"windows-loopback","callback_port":19192})).send().await.unwrap();
+        assert!(response.status().is_success());
+        let started: serde_json::Value = response.json().await.unwrap();
+        let id = started["transaction_id"].as_str().unwrap();
+        assert!(
+            started["authorization_url"]
+                == format!("https://sproyt-canary.bjoroy.me/auth/native/browser/{id}")
+        );
+        let entry = client
+            .get(format!("{origin}/auth/native/browser/{id}"))
+            .send()
+            .await
+            .unwrap();
+        assert!(entry.status() == axum::http::StatusCode::FOUND);
+        let upstream = entry.headers()["location"].to_str().unwrap();
+        *provider.nonce.lock().unwrap() = authorization_parameter(upstream, "nonce");
+        let cookie = entry.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        assert!(
+            !cookie.starts_with(SESSION_COOKIE)
+                && !cookie.starts_with(REFRESH_COOKIE)
+                && !cookie.starts_with(LOGIN_COOKIE)
+        );
+        let callback = client
+            .get(format!("{origin}/auth/callback"))
+            .query(&[
+                ("code", "native-code"),
+                ("state", authorization_parameter(upstream, "state").as_str()),
+            ])
+            .header("Cookie", &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert!(callback.status().is_success() && !callback.headers().contains_key("set-cookie"));
+        assert!(callback.headers()["referrer-policy"] == "origin");
+        let policy = callback.headers()["content-security-policy"]
+            .to_str()
+            .unwrap();
+        assert!(
+            policy.contains("form-action 'self' http://127.0.0.1:19192")
+                && !policy.contains("127.0.0.1:*")
+        );
+        let html = callback.text().await.unwrap();
+        assert!(html.contains("Authentik Test User"));
+        let nonce = html
+            .split("name=nonce value='")
+            .nth(1)
+            .unwrap()
+            .split('\'')
+            .next()
+            .unwrap();
+        let confirmation = format!("{origin}/auth/native/confirm/{id}");
+        let denied = client
+            .post(&confirmation)
+            .header("Cookie", &cookie)
+            .header("Origin", "https://wrong.example")
+            .form(&[("nonce", nonce)])
+            .send()
+            .await
+            .unwrap();
+        assert!(denied.status() == axum::http::StatusCode::UNAUTHORIZED);
+        let accepted = client
+            .post(&confirmation)
+            .header("Cookie", &cookie)
+            .header("Origin", "https://sproyt-canary.bjoroy.me")
+            .form(&[("nonce", nonce)])
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            accepted.status() == axum::http::StatusCode::FOUND
+                && !accepted.headers().contains_key("set-cookie")
+        );
+        let target = reqwest::Url::parse(accepted.headers()["location"].to_str().unwrap()).unwrap();
+        assert!(
+            target.host_str() == Some("127.0.0.1")
+                && target.port() == Some(19192)
+                && target.path() == "/return"
+        );
+        let code = target
+            .query_pairs()
+            .find(|(key, _)| key == "code")
+            .unwrap()
+            .1
+            .into_owned();
+        let response=client.post(format!("{origin}/api/v1/native/exchange")).json(&serde_json::json!({"transaction_id":id,"code":code,"verifier":verifier,"redemption_id":"a".repeat(32),"environment":"canary","destination_id":"windows-loopback"})).send().await.unwrap();
+        assert!(response.status().is_success());
+        let result: serde_json::Value = response.json().await.unwrap();
+        assert!(
+            result["native_session"]["scope"] == "sproyt_native_v1"
+                && result["display_name"] == "Authentik Test User"
+        );
+        let access = result["native_session"]["access_token"].as_str().unwrap();
+        let response = client
+            .get(format!("{origin}/api/v1/native/session"))
+            .bearer_auth(access)
+            .header("Cookie", "sproyt_session=browser")
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status() == axum::http::StatusCode::UNAUTHORIZED);
+        let response = client
+            .get(format!("{origin}/api/v1/native/session"))
+            .bearer_auth(access)
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let refresh = result["native_session"]["refresh_token"].as_str().unwrap();
+        let revoke = result["native_session"]["revoke_token"].as_str().unwrap();
+        let refreshed = client
+            .post(format!("{origin}/api/v1/native/refresh"))
+            .bearer_auth(refresh)
+            .json(&serde_json::json!({"operation_id":"b".repeat(32),"generation":0}))
+            .send()
+            .await
+            .unwrap();
+        assert!(refreshed.status().is_success());
+        let refreshed: serde_json::Value = refreshed.json().await.unwrap();
+        let repeated = client
+            .post(format!("{origin}/api/v1/native/refresh"))
+            .bearer_auth(refresh)
+            .json(&serde_json::json!({"operation_id":"b".repeat(32),"generation":0}))
+            .send()
+            .await
+            .unwrap();
+        assert!(repeated.status().is_success());
+        assert!(repeated.json::<serde_json::Value>().await.unwrap() == refreshed);
+        assert!(provider.refresh_requests.load(Ordering::SeqCst) == 1);
+        for _ in 0..2 {
+            let response = client
+                .post(format!("{origin}/api/v1/native/revoke"))
+                .bearer_auth(revoke)
+                .send()
+                .await
+                .unwrap();
+            assert!(response.status() == axum::http::StatusCode::NO_CONTENT);
+        }
+        let response = client
+            .get(format!("{origin}/api/v1/native/session"))
+            .bearer_auth(refreshed["access_token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status() == axum::http::StatusCode::UNAUTHORIZED);
+        let response = client
+            .post(format!("{origin}/api/v1/native/refresh"))
+            .bearer_auth(refresh)
+            .json(&serde_json::json!({"operation_id":"b".repeat(32),"generation":0}))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status() == axum::http::StatusCode::UNAUTHORIZED);
+        server.abort();
+        provider_server.abort();
     }
 }

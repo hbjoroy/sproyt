@@ -7,6 +7,11 @@ Målet er ein rask Android-klient med ein påliteleg felleskjerne som også er p
 Prioritering etter ny avklaring: først ein fungerande native Windows-app,
 deretter Android. Vi bruker den eksisterande WinUI-prøva og same framtidige
 server-/sessionkontrakt; Windows blir ikkje ei separat produktarkitektur.
+
+[Windows Canary-snittet](native-windows-canary.md) implementerer no ekte
+innlogging, kanalval og tekstchat på denne vegen. Det har eige standard-av
+serverflagg, dedikert providergrant og kontoavgrensa native lagring. Endeleg
+browser-/Canary-aksept blir ført separat frå syntetiske klient- og UI-prøver.
 Neste synlege milepåle etter N03a er ekte innlogging, kanalar og tekstchat i
 ein avgrensa Windows-Canary, før Android-klienten blir bygd på dette grunnlaget.
 

@@ -13,6 +13,8 @@ pub(crate) mod integrations;
 pub(crate) mod mcp;
 pub(crate) mod media;
 pub(crate) mod media_uploads;
+pub(crate) mod native;
+pub(crate) mod native_chat;
 pub(crate) mod process_pilot;
 pub(crate) mod processes;
 pub(crate) mod socket;
