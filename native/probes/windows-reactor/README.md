@@ -42,10 +42,22 @@ vindaugsstorleik. Justeringa ventar til geometrien har vore roleg i 180 ms,
 slik at raske endringar blir samla. Har du rulla opp for å lese, blir
 leseposisjonen bevart; musehjul, peikar og tastatur avbryt ei venta justering.
 
-Desktop-innkoplinga til Windows InputPane varslar om opning og lukking av
-skjermtastaturet. WinUI handterer framleis plasseringa av skrivefeltet.
-Automatisk testing dekkjer samling av desse varsla; faktisk touch-tastatur
-må prøvast på maskina.
+Desktop-innkoplinga til Windows InputPane reserverer faktisk overlappa
+botnplass når skjermtastaturet dekkjer klienten utan å krympe vindauget.
+Målinga bruker klientkoordinatar i DIP og ei ytre ramme som held seg stabil.
+Har Windows alt krympa klienten, blir berre eventuell attståande overlapp
+reservert; flytande tastatur gir ikkje fullbreidd botnplass.
+
+Showing/Hiding, vindaugsendringar og fokushendingar oppdaterer målinga.
+Medan tekstfeltet har fokus eller vi kjenner til overlapp i eit aktivt vindauge,
+tek éin native timer ei måling kvar 200 ms som vern mot manglande Showing-varsel.
+Uendra geometri gir ingen layout- eller rulleoperasjon. Ingen polling går i
+bakgrunnen når vindauget er inaktivt. Timer og hendingar blir kopla frå ved lukking.
+
+UI-prøva kontrollerer at både skrivefelt og siste melding ligg over eit simulert
+tastaturområde, at lukking gir plassen tilbake, at mindre klient ikkje gir dobbel
+reservasjon og at lesing av eldre meldingar blir bevart. Dette erstattar ikkje
+utprøving av faktiske Windows-tastaturhendingar med touch på maskina.
 
 ## Bygg, testing og avgrensingar
 
