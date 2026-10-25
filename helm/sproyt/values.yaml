@@ -36,6 +36,8 @@ config:
   environment: production
   logFormat: json
   authMode: oidc
+  # Native Windows pilot is opt-in and restricted to the Canary origin.
+  nativeClientEnabled: false
   # Pinned production issuer exposed through Cloudflare.
   oidcIssuer: https://sproyt-security.bjoroy.me/application/o/sproyt/
   oidcClientId: ""

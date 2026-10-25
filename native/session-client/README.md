@@ -1,5 +1,10 @@
 # N03a: delt økteigar og Windows-integrasjon
 
+Den same økteigaren støttar no også den separate, ekte
+[Windows Canary-piloten](../../docs/native-windows-canary.md). Omfanget nedanfor
+gjeld framleis N03a-testmodusen; live HTTPS, kanaltransport og produksjonsgrenser
+er dokumenterte i den nye pilotbeskrivinga.
+
 Dette er ein køyrbar, isolert del av native-appen. `NativeAuthSession` blir
 kompilert frå same kjelde i identitetsprøva og Windows Reactor-appen. Han eig
 legitimasjon og livsløp; `NativeSession` i Windows/Core eig framleis berre

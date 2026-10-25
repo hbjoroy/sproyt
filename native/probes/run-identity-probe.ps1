@@ -35,6 +35,7 @@ try {
     if (!$evidence.passed) { throw 'Identity probe evidence failed' }
     $desktop = $null
     $nativeSession = $null
+    $liveClient = $null
     if ($IsWindows) {
         $desktopChecks = Join-Path $run 'desktop-checks.json'
         Checked 'dotnet' @((Join-Path $publish 'IdentityProbe.dll'), '--desktop-test', $server, (Join-Path $run 'desktop'), $desktopChecks)
@@ -44,6 +45,10 @@ try {
         Checked 'dotnet' @((Join-Path $publish 'IdentityProbe.dll'), '--session-test', $server, (Join-Path $run 'native-session'), $sessionChecks)
         $nativeSession = Get-Content -LiteralPath $sessionChecks -Raw | ConvertFrom-Json
         if (!$nativeSession.passed -or !$nativeSession.dpapi) { throw 'Native session evidence failed' }
+        $liveChecks = Join-Path $run 'live-client-checks.json'
+        Checked 'dotnet' @((Join-Path $publish 'IdentityProbe.dll'), '--live-client-test', (Join-Path $run 'live-client'), $liveChecks)
+        $liveClient = Get-Content -LiteralPath $liveChecks -Raw | ConvertFrom-Json
+        if (!$liveClient.passed) { throw 'Live client contract failed' }
     }
     $browser = $null
     if ($SystemBrowser) {
@@ -66,6 +71,7 @@ try {
         evidence = $evidence
         desktop = $desktop
         nativeSession = $nativeSession
+        liveClient = $liveClient
         systemBrowser = $browser
     }
     $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $run 'receipt.json') -Encoding utf8

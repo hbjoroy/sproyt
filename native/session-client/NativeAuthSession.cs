@@ -1,21 +1,22 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-internal sealed record NativeAuthConfig(string Broker, string Instance, string Issuer, string UserId);
+internal sealed record NativeAuthConfig(string Broker, string Instance, string Issuer, string UserId,
+    string Scope = "n03a_session_lab", string Environment = "n01-lab");
 internal enum NativeAuthPhase { SignedOut, SigningIn, Active, Offline, AuthRequired }
-internal sealed record NativeAuthSnapshot(NativeAuthPhase Phase, string? UserId, ulong Generation, bool PendingRevocation, bool Busy, long? LoginTicket = null);
+internal sealed record NativeAuthSnapshot(NativeAuthPhase Phase, string? UserId, ulong Generation, bool PendingRevocation, bool Busy, long? LoginTicket = null, string? DisplayName = null, string? SessionStamp = null);
+internal sealed record NativeSocketConnection(ClientWebSocket Socket, string UserId, string SessionStamp, ulong Generation);
 
 // This owner deliberately has no credential getter. UI consumers only receive Snapshot.
 // The shared DPAPI journal supplies exclusive process ownership and atomic durable writes.
 internal sealed class NativeAuthSession : IDisposable
 {
-    private const string Scope = "n03a_session_lab";
-    private const string EnvironmentName = "n01-lab";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly object gate = new();
     private readonly SemaphoreSlim refreshGate = new(1, 1);
@@ -44,6 +45,7 @@ internal sealed class NativeAuthSession : IDisposable
         [JsonPropertyName("refresh_token")] public string RefreshToken { get; set; } = "";
         [JsonPropertyName("revoke_token")] public string RevokeToken { get; set; } = "";
         [JsonPropertyName("expires_at")] public long ExpiresAt { get; set; }
+        [JsonPropertyName("display_name")] public string? DisplayName { get; set; }
     }
     private sealed class Stored
     {
@@ -62,15 +64,13 @@ internal sealed class NativeAuthSession : IDisposable
         WindowsProtectedJournal? journal = null;
         try
         {
-            var broker = new Uri(config.Broker, UriKind.Absolute);
-            Require(broker.Scheme == "http" && broker.Host == "127.0.0.1" && broker.Port > 0 && broker.AbsolutePath == "/" && broker.Query == "" && broker.Fragment == "" && broker.UserInfo == "");
-            Require(config.Issuer == config.Broker.TrimEnd('/') + "/provider" && Proof(config.Instance) && CanonicalUser(config.UserId));
+            ValidateConfig(config);
             bool exists = File.Exists(Path.Combine(directory, "state.bin"));
             journal = new WindowsProtectedJournal(directory, create: !exists);
             var stored = exists ? journal.Read<Stored>() : new Stored { Config = config };
             Require(stored.Schema == 1 && stored.Config == config && stored.Lifecycle >= 0 && Enum.IsDefined(stored.Phase));
-            Require(stored.PendingRevoke is null || Token(stored.PendingRevoke, "revoke"));
-            Require(stored.AdditionalRevocations is not null && stored.AdditionalRevocations.Count <= 7 && stored.AdditionalRevocations.All(token => Token(token, "revoke")) &&
+            Require(stored.PendingRevoke is null || Token(stored.PendingRevoke, "revoke", config));
+            Require(stored.AdditionalRevocations is not null && stored.AdditionalRevocations.Count <= 7 && stored.AdditionalRevocations.All(token => Token(token, "revoke", config)) &&
                 stored.AdditionalRevocations.Distinct(StringComparer.Ordinal).Count() == stored.AdditionalRevocations.Count &&
                 (stored.PendingRevoke is not null || stored.AdditionalRevocations.Count == 0) && !stored.AdditionalRevocations.Contains(stored.PendingRevoke!));
             Require(stored.Operation is null || (stored.Operation.Length == 32 && stored.Operation.All(char.IsAsciiHexDigit) && stored.Credential is not null));
@@ -90,12 +90,12 @@ internal sealed class NativeAuthSession : IDisposable
     private NativeAuthSession(WindowsProtectedJournal journal, NativeAuthConfig config, Stored state, Func<string, Task>? checkpoint, HttpMessageHandler? handler)
     {
         this.journal = journal; this.config = config; this.state = state; this.checkpoint = checkpoint;
-        http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = false })
+        http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = config.Scope == "sproyt_native_v1" })
         { BaseAddress = new Uri(config.Broker), Timeout = TimeSpan.FromSeconds(12) };
     }
     internal NativeAuthSnapshot Snapshot
     {
-        get { lock (gate) return new(state.Phase, state.Credential is null ? null : config.UserId, state.Credential?.Generation ?? 0, state.PendingRevoke is not null, busy > 0, state.Phase == NativeAuthPhase.SigningIn ? state.Lifecycle : null); }
+        get { lock (gate) return new(state.Phase, state.Credential?.UserId, state.Credential?.Generation ?? 0, state.PendingRevoke is not null, busy > 0, state.Phase == NativeAuthPhase.SigningIn ? state.Lifecycle : null, state.Credential?.DisplayName, state.Credential is null ? null : Stamp(state.Lifecycle, state.Credential)); }
     }
     private void Notify() { try { Changed?.Invoke(); } catch { /* Observers cannot alter authentication results. */ } }
     private void Live() { if (disposed || storageFailed) throw Failure(); }
@@ -111,13 +111,14 @@ internal sealed class NativeAuthSession : IDisposable
         if (state.PendingRevoke is null) state.PendingRevoke = token;
         else { Require(state.AdditionalRevocations.Count < 7); state.AdditionalRevocations.Add(token); }
     }
-    internal async Task<long> BeginLoginAsync()
+    internal async Task<long> BeginLoginAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         await RetryRevocationAsync();
         long ticket;
         lock (gate)
         {
-            Live(); Require(state.PendingRevoke is null && state.Credential is null);
+            Live(); cancellationToken.ThrowIfCancellationRequested(); Require(state.PendingRevoke is null && state.Credential is null);
             ticket = state.Lifecycle = checked(state.Lifecycle + 1); state.Phase = NativeAuthPhase.SigningIn; Save();
         }
         Notify(); return ticket;
@@ -129,9 +130,10 @@ internal sealed class NativeAuthSession : IDisposable
             Require(Encoding.UTF8.GetByteCount(originalExchangeJson) <= 8192);
             using var document = JsonDocument.Parse(originalExchangeJson);
             var root = document.RootElement;
-            Require(root.GetProperty("kind").GetString() == "non_api_fixture" && root.GetProperty("user_id").GetString() == config.UserId);
+            if (config.Scope == "n03a_session_lab") Require(root.GetProperty("kind").GetString() == "non_api_fixture");
             var grant = root.GetProperty("native_session").Deserialize<Grant>(Json)!; Validate(grant, config);
-            Require(root.GetProperty("session_family").GetString() == grant.Family);
+            Require(root.GetProperty("user_id").GetString() == grant.UserId);
+            if (config.Scope == "n03a_session_lab") Require(root.GetProperty("session_family").GetString() == grant.Family);
             bool stale;
             lock (gate)
             {
@@ -170,10 +172,10 @@ internal sealed class NativeAuthSession : IDisposable
     }
     private async Task<bool> ServerIdentity(long lifecycle)
     {
-        using var response = await http.GetAsync("/session/info", HttpCompletionOption.ResponseHeadersRead);
+        using var response = await http.GetAsync(Endpoint("info"), HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode) { if (response.StatusCode == HttpStatusCode.Unauthorized) Fence(lifecycle); else Offline(lifecycle); return false; }
         using var document = JsonDocument.Parse(await Read(response)); var root = document.RootElement;
-        if (root.GetProperty("scope").GetString() != Scope || root.GetProperty("environment").GetString() != EnvironmentName || root.GetProperty("instance_id").GetString() != config.Instance || root.GetProperty("issuer").GetString() != config.Issuer) { Fence(lifecycle); return false; }
+        if (!IdentityMatches(root)) { Fence(lifecycle); return false; }
         return true;
     }
     internal async Task ResumeAsync()
@@ -187,12 +189,12 @@ internal sealed class NativeAuthSession : IDisposable
             if (!await ServerIdentity(lifecycle)) return;
             lock (gate) { if (!Current(lifecycle, grant)) return; refresh = state.Operation is not null; }
             if (refresh) return;
-            using var request = Authorized(HttpMethod.Get, "/session/probe", grant.AccessToken);
+            using var request = Authorized(HttpMethod.Get, Endpoint("probe"), grant.AccessToken);
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
             if (response.StatusCode == HttpStatusCode.Unauthorized) { refresh = true; return; }
             if (!response.IsSuccessStatusCode) { Offline(lifecycle); return; }
             using var document = JsonDocument.Parse(await Read(response)); var root = document.RootElement;
-            Require(root.GetProperty("user_id").GetString() == config.UserId && root.GetProperty("family").GetString() == grant.Family && root.GetProperty("generation").GetUInt64() == grant.Generation && root.GetProperty("epoch").GetUInt64() == grant.Epoch);
+            Require(root.GetProperty("user_id").GetString() == grant.UserId && root.GetProperty("family").GetString() == grant.Family && root.GetProperty("generation").GetUInt64() == grant.Generation && root.GetProperty("epoch").GetUInt64() == grant.Epoch);
             lock (gate) { if (!Current(lifecycle, grant)) return; state.Phase = NativeAuthPhase.Active; Save(); }
         }
         catch (Exception ex) when (Network(ex)) { Offline(lifecycle); }
@@ -214,13 +216,13 @@ internal sealed class NativeAuthSession : IDisposable
             }
             Notify(); if (!await ServerIdentity(lifecycle)) return;
             lock (gate) if (!Current(lifecycle, grant)) return;
-            using var request = Authorized(HttpMethod.Post, "/session/refresh", grant.RefreshToken);
+            using var request = Authorized(HttpMethod.Post, Endpoint("refresh"), grant.RefreshToken);
             request.Content = JsonContent.Create(new { operation_id = operation, generation = grant.Generation });
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
             if (response.StatusCode == HttpStatusCode.Unauthorized) { Fence(lifecycle); return; }
             if (!response.IsSuccessStatusCode) { Offline(lifecycle); return; }
             var next = JsonSerializer.Deserialize<Grant>(await Read(response), Json)!; Validate(next, config);
-            Require(next.Family == grant.Family && next.Generation == checked(grant.Generation + 1) && next.Epoch == grant.Epoch && next.RevokeToken == grant.RevokeToken);
+            Require(next.UserId == grant.UserId && next.Family == grant.Family && next.Generation == checked(grant.Generation + 1) && next.Epoch == grant.Epoch && next.RevokeToken == grant.RevokeToken);
             if (checkpoint is not null) await checkpoint("rotation-received");
             lock (gate)
             {
@@ -249,18 +251,18 @@ internal sealed class NativeAuthSession : IDisposable
         {
             lock (gate) { Live(); if (state.PendingRevoke is null) return; busy++; countedBusy = true; }
             Notify();
-            using (var info = await http.GetAsync("/session/info", HttpCompletionOption.ResponseHeadersRead))
+            using (var info = await http.GetAsync(Endpoint("info"), HttpCompletionOption.ResponseHeadersRead))
             {
                 if (!info.IsSuccessStatusCode) return;
                 using var document = JsonDocument.Parse(await Read(info)); var root = document.RootElement;
-                if (root.GetProperty("scope").GetString() != Scope || root.GetProperty("environment").GetString() != EnvironmentName || root.GetProperty("instance_id").GetString() != config.Instance || root.GetProperty("issuer").GetString() != config.Issuer) return;
+                if (!IdentityMatches(root)) return;
             }
             // At most eight outstanding families; new login is blocked until this drains.
             for (int count = 0; count < 8; count++)
             {
                 string token;
                 lock (gate) { if (disposed || storageFailed || state.PendingRevoke is null) return; token = state.PendingRevoke; }
-                using var request = Authorized(HttpMethod.Post, "/session/revoke", token);
+                using var request = Authorized(HttpMethod.Post, Endpoint("revoke"), token);
                 using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                 // Only a positive server acknowledgement releases durable revocation work.
                 if (response.StatusCode != HttpStatusCode.NoContent) return;
@@ -289,11 +291,79 @@ internal sealed class NativeAuthSession : IDisposable
     }
     private static bool Network(Exception ex) => ex is HttpRequestException or IOException or OperationCanceledException;
     private static bool Proof(string? text) => text is { Length: 43 } && text.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
-    private static bool Token(string? text, string kind) => text is not null && text.StartsWith("n03a-" + kind + ".", StringComparison.Ordinal) && Proof(text[(kind.Length + 6)..]);
+    private static bool Token(string? text, string kind, NativeAuthConfig config)
+    { string prefix = (config.Scope == "sproyt_native_v1" ? "sproyt-" : "n03a-") + kind + "."; return text is not null && text.StartsWith(prefix, StringComparison.Ordinal) && Proof(text[prefix.Length..]); }
     private static bool CanonicalUser(string text) => Guid.TryParseExact(text, "D", out var id) && id.ToString("D") == text;
     private static void Validate(Grant grant, NativeAuthConfig config)
     {
-        Require(grant is not null && grant.Scope == Scope && grant.Environment == EnvironmentName && grant.InstanceId == config.Instance && grant.UserId == config.UserId && Proof(grant.Family) && Token(grant.AccessToken, "access") && Token(grant.RefreshToken, "refresh") && Token(grant.RevokeToken, "revoke") && grant.ExpiresAt > 0);
+        Require(grant is not null && grant.Scope == config.Scope && grant.Environment == config.Environment && grant.InstanceId == config.Instance && CanonicalUser(grant.UserId) && (config.UserId == "" || grant.UserId == config.UserId) && Proof(grant.Family) && Token(grant.AccessToken, "access", config) && Token(grant.RefreshToken, "refresh", config) && Token(grant.RevokeToken, "revoke", config) && grant.ExpiresAt > 0 && (config.Scope != "sproyt_native_v1" || grant.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 300));
+    }
+    internal static void ValidateConfig(NativeAuthConfig config)
+    {
+        var broker = new Uri(config.Broker, UriKind.Absolute);
+        Require(broker.AbsolutePath == "/" && broker.Query == "" && broker.Fragment == "" && broker.UserInfo == "" && broker.AbsoluteUri.TrimEnd('/') == config.Broker.TrimEnd('/') && Proof(config.Instance));
+        if (config.Scope == "n03a_session_lab")
+            Require(config.Environment == "n01-lab" && broker.Scheme == "http" && broker.Host == "127.0.0.1" && broker.Port > 0 && config.Issuer == config.Broker.TrimEnd('/') + "/provider" && CanonicalUser(config.UserId));
+        else
+        {
+            var issuer = new Uri(config.Issuer, UriKind.Absolute);
+            Require(config.Scope == "sproyt_native_v1" && config.Environment == "canary" && broker.Scheme == "https" && issuer.Scheme == "https" && issuer.AbsoluteUri == config.Issuer && issuer.UserInfo == "" && issuer.Query == "" && issuer.Fragment == "" && (config.UserId == "" || CanonicalUser(config.UserId)));
+        }
+    }
+    private string Endpoint(string operation) => config.Scope == "sproyt_native_v1" ? "/api/v1/native/" + (operation == "probe" ? "session" : operation) : "/session/" + operation;
+    private bool IdentityMatches(JsonElement root) => root.GetProperty("scope").GetString() == config.Scope && root.GetProperty("environment").GetString() == config.Environment && root.GetProperty("instance_id").GetString() == config.Instance && root.GetProperty("issuer").GetString() == config.Issuer;
+
+    private async Task<(Grant Grant, long Lifecycle)> TransportCredential(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested(); Require(config.Scope == "sproyt_native_v1");
+        bool resume; bool refresh;
+        lock (gate) { Live(); resume = state.Phase != NativeAuthPhase.Active; refresh = state.Credential is not null && state.Credential.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 30; }
+        if (resume) await ResumeAsync().WaitAsync(cancellationToken);
+        else if (refresh) await RefreshAsync().WaitAsync(cancellationToken);
+        lock (gate) { Live(); Require(state.Phase == NativeAuthPhase.Active && state.Credential is not null); return (state.Credential!, state.Lifecycle); }
+    }
+    internal async Task<HttpResponseMessage> SendAuthorizedAsync(HttpRequestMessage request, CancellationToken cancellationToken = default)
+    {
+        Require(request.RequestUri is { IsAbsoluteUri: false } && request.RequestUri.OriginalString == "/api/v1/native/commands" && request.Method == HttpMethod.Post && !request.Headers.Contains("Authorization") && !request.Headers.Contains("Proxy-Authorization") && request.Headers.Host is null && !request.Headers.Contains("Cookie") && request.Content?.Headers.Contains("Cookie") != true);
+        var credential = await TransportCredential(cancellationToken);
+        lock (gate) { Live(); Require(Current(credential.Lifecycle, credential.Grant)); request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Grant.AccessToken); }
+        try
+        {
+            var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            request.Headers.Authorization = null;
+            lock (gate) { if (!Current(credential.Lifecycle, credential.Grant)) { response.Dispose(); throw Failure(); } }
+            if (response.StatusCode == HttpStatusCode.Unauthorized) Fence(credential.Lifecycle);
+            return response;
+        }
+        catch (Exception ex) when (Network(ex)) { Offline(credential.Lifecycle); throw Failure(); }
+        finally { request.Headers.Authorization = null; }
+    }
+    internal async Task<ClientWebSocket> ConnectWebSocketAsync(CancellationToken cancellationToken = default) => (await ConnectBoundWebSocketAsync(cancellationToken)).Socket;
+    internal async Task<NativeSocketConnection> ConnectBoundWebSocketAsync(CancellationToken cancellationToken = default)
+    {
+        var credential = await TransportCredential(cancellationToken); var socket = new ClientWebSocket();
+        try
+        {
+            socket.Options.SetRequestHeader("Authorization", "Bearer " + credential.Grant.AccessToken);
+            socket.Options.CollectHttpResponseDetails = true;
+            socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
+            var endpoint = new UriBuilder(config.Broker) { Scheme = "wss", Path = "/api/v1/native/ws", Query = "", Fragment = "" }.Uri;
+            await socket.ConnectAsync(endpoint, http, cancellationToken);
+            lock (gate) { Live(); Require(Current(credential.Lifecycle, credential.Grant)); }
+            return new(socket, credential.Grant.UserId, Stamp(credential.Lifecycle, credential.Grant), credential.Grant.Generation);
+        }
+        catch { bool unauthorized = socket.HttpStatusCode == HttpStatusCode.Unauthorized; socket.Dispose(); if (unauthorized) Fence(credential.Lifecycle); else Offline(credential.Lifecycle); throw Failure(); }
+    }
+    private static string Stamp(long lifecycle, Grant grant) => lifecycle.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + grant.Family + ":" + grant.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    // Admission holds the owner gate only while a caller selects/starts work;
+    // callers must return an asynchronous operation and await it outside the gate.
+    internal T AdmitTransport<T>(string expectedUserId, string expectedSessionStamp, Func<T> operation)
+    {
+        lock (gate)
+        {
+            Live(); Require(state.Phase == NativeAuthPhase.Active && state.Credential is not null && state.Credential.UserId == expectedUserId && Stamp(state.Lifecycle, state.Credential) == expectedSessionStamp);
+            return operation();
+        }
     }
     private static void Require(bool condition) { if (!condition) throw Failure(); }
     private static InvalidOperationException Failure() => new("Native session operation failed.");

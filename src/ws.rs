@@ -37,6 +37,10 @@ pub struct SocketAuthentication {
     principal: AuthenticatedPrincipal,
     requested_name: Option<String>,
     session_cookie: Option<String>,
+    native: Option<(
+        crate::native_sessions::NativeSessions,
+        crate::native_sessions::NativeSessionRef,
+    )>,
 }
 
 impl SocketAuthentication {
@@ -51,7 +55,36 @@ impl SocketAuthentication {
             principal,
             requested_name,
             session_cookie,
+            native: None,
         }
+    }
+
+    pub(crate) fn native(
+        service: AuthService,
+        principal: AuthenticatedPrincipal,
+        sessions: crate::native_sessions::NativeSessions,
+        reference: crate::native_sessions::NativeSessionRef,
+    ) -> Self {
+        Self {
+            service,
+            principal,
+            requested_name: None,
+            session_cookie: None,
+            native: Some((sessions, reference)),
+        }
+    }
+}
+
+async fn native_admitted(
+    native: &Option<(
+        crate::native_sessions::NativeSessions,
+        crate::native_sessions::NativeSessionRef,
+    )>,
+    auth: &AuthService,
+) -> bool {
+    match native {
+        Some((sessions, reference)) => sessions.recheck(auth, reference).await.is_ok(),
+        None => true,
     }
 }
 
@@ -67,6 +100,7 @@ pub async fn handle_socket(
         principal,
         requested_name,
         session_cookie,
+        native,
     } = authentication;
     let participant_id = principal.user.id.clone();
     if *shutdown.borrow() {
@@ -95,10 +129,12 @@ pub async fn handle_socket(
     loop {
         tokio::select! {
             _ = reauthentication.tick() => {
-                if auth
-                    .authenticate_request(requested_name.clone(), session_cookie.as_deref())
-                    .await
-                    .is_err()
+                let admitted = if native.is_some() {
+                    native_admitted(&native, &auth).await
+                } else {
+                    auth.authenticate_request(requested_name.clone(), session_cookie.as_deref()).await.is_ok()
+                };
+                if !admitted
                 {
                     let _ = socket.send(Message::Close(Some(CloseFrame {
                         code: 1008,
@@ -125,9 +161,11 @@ pub async fn handle_socket(
             }
             changed = next_circle_update(&mut circle_updates) => {
                 if !changed { circle_updates = None; continue; }
+                if !native_admitted(&native, &auth).await { break; }
                 if send(&mut socket, &ServerEnvelope::event(ServerEvent::CirclesChanged)).await.is_err() { break; }
             }
             Some(message) = outbound_events.recv() => {
+                if !native_admitted(&native, &auth).await { break; }
                 if send(&mut socket, &message).await.is_err() {
                     break;
                 }
@@ -136,6 +174,7 @@ pub async fn handle_socket(
                 idle.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
                 match frame {
                     Some(Ok(Message::Text(text))) => {
+                        if !native_admitted(&native, &auth).await { break; }
                         let envelope = match serde_json::from_str::<ClientEnvelope>(&text) {
                             Ok(envelope) => envelope,
                             Err(_) => {
@@ -177,7 +216,7 @@ pub async fn handle_socket(
                             )
                             .await
                         };
-                        if send(&mut socket, &response).await.is_err() {
+                        if !native_admitted(&native, &auth).await || send(&mut socket, &response).await.is_err() {
                             break;
                         }
                     }

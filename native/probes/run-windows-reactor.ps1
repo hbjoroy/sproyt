@@ -61,6 +61,7 @@ try {
     $ui = $null
     $resume = $null
     $sessionUi = $false
+    $liveUi = $null
     if ($UiSmoke) {
         $uiTests = Join-Path $run 'ui-tests'
         ProbeProcess @('--ui-smoke', $uiTests) $true
@@ -80,6 +81,11 @@ try {
             -BrokerExecutable (Join-Path $env:CARGO_TARGET_DIR 'debug/sproyt-identity-probe.exe') `
             -ArtifactsDirectory (Join-Path $run 'session-ui')
         $sessionUi = $true
+        $liveUiTests = Join-Path $run 'live-ui'
+        ProbeProcess @('--live-ui-smoke', $liveUiTests) $true
+        $liveUi = Get-Content -LiteralPath (Join-Path $liveUiTests 'live-ui-result.json') -Raw | ConvertFrom-Json
+        if (!$liveUi.passed -or $liveUi.actualTransport -or $liveUi.productionAuthentication -or
+            (Get-Content -LiteralPath (Join-Path $liveUiTests 'live-ui-closed.txt') -Raw).Trim() -ne 'closed') { throw 'Live view fixture failed.' }
     }
     $receipt = [ordered]@{
         schema = 1
@@ -98,6 +104,7 @@ try {
         uiSmoke = $ui
         uiResume = $resume
         syntheticSessionUi = $sessionUi
+        liveChatViewFixture = $liveUi
         publishDirectory = $publish
         notTested = @('physical keyboard and IME', 'touch', 'screen reader', 'visual screenshot approval', 'production sync', 'production authentication',
             'hard process termination during equal-body newer-draft repair after an unknown enqueue')

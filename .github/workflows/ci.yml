@@ -251,6 +251,7 @@ jobs:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: |
           cargo test db::postgres::tests --locked
+          TEST_DATABASE_URL="$SPROYT_POSTGRES_TEST_URL" cargo test native_sessions::tests::postgres_ --locked -- --test-threads=1
           cargo test media_store::tests::postgres_ --locked -- --test-threads=1
           cargo test postgres_saved_status_history_contract --locked
           cargo test postgres_notifications_share_the_repository_connection_budget --locked

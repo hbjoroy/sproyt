@@ -104,6 +104,16 @@ pub(crate) async fn auth_callback(
     Query(query): Query<OidcCallbackQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
+    if let Some(native) = &state.native_sessions {
+        match native.owns_state(&query.state).await {
+            Ok(true) => {
+                return crate::web::native::callback(&state, query.code, query.state, &headers)
+                    .await;
+            }
+            Ok(false) => {}
+            Err(error) => return error.into_response(),
+        }
+    }
     let cookie = headers.get(COOKIE).and_then(|value| value.to_str().ok());
     match state.auth.callback(query.code, query.state, cookie).await {
         Ok(login) => complete_login(&state, login).await,
@@ -425,6 +435,7 @@ mod tests {
             process_pilot: None,
             work_items: None,
             auth: AuthService::development(),
+            native_sessions: None,
             chat: chat.clone(),
             operations: OperationalState::default(),
             processes: ProcessService::start(repository.clone(), None),

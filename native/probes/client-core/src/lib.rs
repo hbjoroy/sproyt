@@ -43,6 +43,11 @@ enum Request {
         channel: String,
         body: String,
     },
+    ClearDraft {
+        handle: u64,
+        generation: u64,
+        channel: String,
+    },
     Enqueue {
         handle: u64,
         generation: u64,
@@ -101,6 +106,7 @@ fn execute(request: Request) -> Result<Value> {
             let handle = match &request {
                 Request::Snapshot { handle }
                 | Request::SaveDraft { handle, .. }
+                | Request::ClearDraft { handle, .. }
                 | Request::Enqueue { handle, .. }
                 | Request::Delivery { handle, .. }
                 | Request::ApplyMessage { handle, .. }
@@ -125,6 +131,11 @@ fn execute(request: Request) -> Result<Value> {
                     body,
                     ..
                 } => store.save_draft(generation, &channel, &body)?,
+                Request::ClearDraft {
+                    generation,
+                    channel,
+                    ..
+                } => store.clear_draft(generation, &channel)?,
                 Request::Enqueue {
                     generation,
                     request_id,

@@ -5,6 +5,9 @@ on:
     paths:
       - 'native/probes/**'
       - 'native/session-client/**'
+      - 'src/native_sessions.rs'
+      - 'src/native_sessions/**'
+      - 'src/web/native*.rs'
       - 'crates/sproyt-client-core/**'
       - 'crates/sproyt-protocol/**'
       - 'rust-toolchain.toml'
@@ -14,6 +17,9 @@ on:
     paths:
       - 'native/probes/**'
       - 'native/session-client/**'
+      - 'src/native_sessions.rs'
+      - 'src/native_sessions/**'
+      - 'src/web/native*.rs'
       - 'crates/sproyt-client-core/**'
       - 'crates/sproyt-protocol/**'
       - 'rust-toolchain.toml'
@@ -183,6 +189,9 @@ jobs:
             ${{ runner.temp }}/sproyt-reactor/runs/**/session-ui/*-result.json
             ${{ runner.temp }}/sproyt-reactor/runs/**/session-ui/*-closed.txt
             ${{ runner.temp }}/sproyt-reactor/runs/**/session-ui/*-failure.txt
+            ${{ runner.temp }}/sproyt-reactor/runs/**/live-ui/*-result.json
+            ${{ runner.temp }}/sproyt-reactor/runs/**/live-ui/*-closed.txt
+            ${{ runner.temp }}/sproyt-reactor/runs/**/live-ui/*-failure.txt
 
   interoperability:
     strategy:

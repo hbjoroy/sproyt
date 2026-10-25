@@ -24,6 +24,7 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 3 && args[0] == "--live-client-test") return await NativeLiveClientProbe.Run(args[1], args[2]);
             if (args.Length == 4 && args[0] == "--session-test") return await NativeSessionProbe.Run(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--session-child") return await NativeSessionProbe.Child(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--desktop-child") return await DesktopHandoffClient.Run(args[1], args[2], args[3]);

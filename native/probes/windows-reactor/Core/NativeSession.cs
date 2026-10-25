@@ -16,6 +16,7 @@ public sealed class NativeSession : IAsyncDisposable
     private ulong _handle;
     private ulong _generation;
     private string _account = FixtureAccount;
+    private bool _clearEmptyDraft;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate uint AbiVersion();
@@ -26,7 +27,7 @@ public sealed class NativeSession : IAsyncDisposable
 
     private NativeSession() => _worker = new ProbeWorker(CloseNative);
 
-    public static async Task<NativeSession> OpenAsync(string database, string libraryPath, string account = FixtureAccount)
+    public static async Task<NativeSession> OpenAsync(string database, string libraryPath, string account = FixtureAccount, bool clearEmptyDraft = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(database);
         ArgumentException.ThrowIfNullOrWhiteSpace(libraryPath);
@@ -36,6 +37,7 @@ public sealed class NativeSession : IAsyncDisposable
         string actualDatabase = Path.GetFullPath(database);
         var session = new NativeSession();
         session._account = account;
+        session._clearEmptyDraft = clearEmptyDraft;
         try
         {
             await session._worker.Queue(() =>
@@ -65,11 +67,18 @@ public sealed class NativeSession : IAsyncDisposable
 
     public Task<StoreSnapshot> SnapshotAsync() => _worker.Queue(() => ReadSnapshot().Snapshot);
 
+    public Task DeliveryAsync(string requestId, string action) => _worker.Queue(() =>
+    {
+        Call(new { Op = "delivery", Handle = _handle, Generation = _generation, RequestId = requestId, Action = action });
+        return true;
+    });
+
     public Task SaveDraftAsync(string channel, string body) => _worker.Queue(() =>
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentNullException.ThrowIfNull(body);
-        Call(new { Op = "save_draft", Handle = _handle, Generation = _generation, Channel = channel, Body = body });
+        if (_clearEmptyDraft && body.Length == 0) Call(new { Op = "clear_draft", Handle = _handle, Generation = _generation, Channel = channel });
+        else Call(new { Op = "save_draft", Handle = _handle, Generation = _generation, Channel = channel, Body = body });
         return true;
     });
 
