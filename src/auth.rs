@@ -796,7 +796,7 @@ fn principal(
 ) -> Result<AuthenticatedPrincipal, AuthError> {
     Ok(AuthenticatedPrincipal {
         user: User {
-            id: UserId::named(format!("{issuer}:{subject}")),
+            id: UserId::from_oidc(issuer, subject),
             kind: PrincipalKind::Human,
             display_name: DisplayName::new(display_name)?,
             handle: preferred_username.map(Handle::from_external),

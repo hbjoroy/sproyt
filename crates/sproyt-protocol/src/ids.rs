@@ -21,6 +21,12 @@ impl UserId {
         ))
     }
 
+    /// Preserve the existing browser identity mapping exactly. This derives an
+    /// ID; it does not verify claims or authenticate an issuer/subject pair.
+    pub fn from_oidc(issuer: &str, subject: &str) -> Self {
+        Self::named(format!("{issuer}:{subject}"))
+    }
+
     pub const fn from_uuid(value: Uuid) -> Self {
         Self(value)
     }
@@ -205,6 +211,20 @@ fn parse_uuid(value: impl Into<String>, field: &'static str) -> Result<Uuid, Tex
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn oidc_identity_preserves_existing_uuid_and_exact_identity_space() {
+        let issuer = "https://identity.example.test/application/o/sproyt/";
+        let alice = UserId::from_oidc(issuer, "alice");
+        // Independently calculated UUIDv5 URL-namespace fixture, also checked
+        // independently by the .NET HTTP probe against verified OIDC claims.
+        assert_eq!(alice.to_string(), "016da322-5eee-5543-9fa4-da7142e90176");
+        assert_ne!(alice, UserId::from_oidc(issuer, "Alice"));
+        assert_ne!(
+            alice,
+            UserId::from_oidc(issuer.trim_end_matches('/'), "alice")
+        );
+    }
+
     #[test]
     fn sequence_overflow_is_explicit() {
         assert_eq!(
