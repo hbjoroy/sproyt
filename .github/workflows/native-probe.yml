@@ -22,6 +22,43 @@ permissions:
   contents: read
 
 jobs:
+  authentik-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.301'
+      - name: Install pinned Rust
+        shell: pwsh
+        run: rustup show active-toolchain
+      - name: Start isolated pinned Authentik and PostgreSQL
+        shell: pwsh
+        run: ./native/probes/authentik/start-lab.ps1 -ArtifactsDirectory '${{ runner.temp }}/sproyt-authentik'
+      - name: Verify OIDC identity and provider refresh behavior
+        shell: pwsh
+        run: |
+          $labs = @(Get-ChildItem '${{ runner.temp }}/sproyt-authentik/runs' -Directory)
+          if ($labs.Count -ne 1) { throw 'Expected one isolated Authentik run.' }
+          ./native/probes/authentik/run-lab.ps1 -RunDirectory $labs[0].FullName -HttpOnly
+      - name: Preserve only non-secret Authentik receipts
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-authentik-contract
+          retention-days: 7
+          path: ${{ runner.temp }}/sproyt-authentik/runs/**/evidence/receipt.json
+      - name: Stop only owned local lab containers
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path '${{ runner.temp }}/sproyt-authentik/runs') {
+            Get-ChildItem '${{ runner.temp }}/sproyt-authentik/runs' -Directory | ForEach-Object {
+              ./native/probes/authentik/stop-lab.ps1 -RunDirectory $_.FullName
+            }
+          }
+
   native-identity:
     strategy:
       fail-fast: false

@@ -8,6 +8,12 @@ Gjennomføring starta etter uttrykkeleg oppdrag om å bruke tilgjengelege verkty
 
 ## 1. Avklarte produktval
 
+[N01c mot ekte, isolert Authentik](../native/probes/authentik/README.md) har
+verifisert OIDC, stabil issuer/subject og normal refresh, med separat faktisk
+Edge-innlogging. Prøva viser at tapt upstream-refresh-svar kan gi avvist gammalt
+token og krav om ny innlogging. Dette blir eit eksplisitt utfall i N03;
+passnøkkel, recovery, tilbakekalling og produksjonskopling står framleis att.
+
 [N01b-laboratoriet på Windows](../native/probes/identity/DESKTOP.md) har no
 OS-verna, varig app-handoff, reelle prosessavbrot og ein faktisk Edge-rundtur
 med to fiktive kontoar. Dette er framleis isolert frå Authentik og vanleg chat;

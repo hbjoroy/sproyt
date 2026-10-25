@@ -1,3 +1,4 @@
+mod authconfig;
 mod provider;
 mod store;
 
@@ -32,6 +33,8 @@ type Oidc = CoreClient<
 pub struct App {
     instance_id: String,
     interactive: bool,
+    external: bool,
+    upstream: authconfig::Sessions,
     address: String,
     issuer: String,
     oidc_callback: String,
@@ -100,13 +103,18 @@ async fn run() -> store::Result<()> {
         return Err(());
     }
     let callback_uri = args.next().ok_or(())?;
-    let interactive = match args.next().as_deref() {
-        None => false,
-        Some("--interactive") => true,
-        _ => return Err(()),
-    };
-    if args.next().is_some() {
-        return Err(());
+    let mut interactive = false;
+    let mut external_config = None;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--interactive" if !interactive => interactive = true,
+            "--authentik-config" if external_config.is_none() => {
+                external_config = Some(authconfig::Config::read(&PathBuf::from(
+                    args.next().ok_or(())?,
+                ))?);
+            }
+            _ => return Err(()),
+        }
     }
     let callback = reqwest::Url::parse(&callback_uri).map_err(|_| ())?;
     if callback.scheme() != "http"
@@ -121,11 +129,19 @@ async fn run() -> store::Result<()> {
     {
         return Err(());
     }
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|_| ())?;
+    let listener = tokio::net::TcpListener::bind((
+        std::net::Ipv4Addr::LOCALHOST,
+        external_config
+            .as_ref()
+            .map_or(0, |config| config.listen_port),
+    ))
+    .await
+    .map_err(|_| ())?;
     let address = format!("http://{}", listener.local_addr().map_err(|_| ())?);
-    let issuer = format!("{address}/provider");
+    let issuer = external_config.as_ref().map_or_else(
+        || format!("{address}/provider"),
+        |config| config.issuer.clone(),
+    );
     let http = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -135,6 +151,8 @@ async fn run() -> store::Result<()> {
     let app = Arc::new(App {
         instance_id: store::random()?,
         interactive,
+        external: external_config.is_some(),
+        upstream: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         oidc_callback: format!("{address}/probe/callback"),
         address: address.clone(),
         issuer: issuer.clone(),
@@ -144,36 +162,53 @@ async fn run() -> store::Result<()> {
         client: tokio::sync::OnceCell::new(),
         http,
     });
-    let routes = Router::new()
-        .route("/provider/choose", post(provider::choose))
-        .route(
-            "/provider/.well-known/openid-configuration",
-            get(provider::metadata),
-        )
-        .route("/provider/jwks", get(provider::jwks))
-        .route("/provider/authorize", get(provider::authorize))
-        .route("/provider/token", post(provider::token))
+    let mut routes = Router::new();
+    if external_config.is_none() {
+        routes = routes
+            .route("/provider/choose", post(provider::choose))
+            .route(
+                "/provider/.well-known/openid-configuration",
+                get(provider::metadata),
+            )
+            .route("/provider/jwks", get(provider::jwks))
+            .route("/provider/authorize", get(provider::authorize))
+            .route("/provider/token", post(provider::token))
+            .route("/fixture/expire", post(expire));
+    }
+    let routes = routes
         .route("/probe/start", post(start))
         .route("/probe/browser/{id}", get(browser))
         .route("/probe/callback", get(callback_handler))
         .route("/probe/exchange", post(exchange))
         .route("/probe/status", get(status))
-        .route("/fixture/expire", post(expire))
+        .route("/probe/upstream-check", post(upstream_check))
         .fallback(|| async { ProbeError })
         .layer(DefaultBodyLimit::max(8192))
         .layer(axum::middleware::map_response(private_response))
         .with_state(app.clone());
     let server = tokio::spawn(async move { axum::serve(listener, routes).await });
-    let metadata = CoreProviderMetadata::discover_async(
-        IssuerUrl::new(issuer.clone()).map_err(|_| ())?,
-        &app.http,
-    )
-    .await
-    .map_err(|_| ())?;
+    let (metadata, client_id, secret) = if let Some(config) = &external_config {
+        (
+            config.metadata(&app.http).await?,
+            config.client_id.clone(),
+            config.secret()?,
+        )
+    } else {
+        (
+            CoreProviderMetadata::discover_async(
+                IssuerUrl::new(issuer.clone()).map_err(|_| ())?,
+                &app.http,
+            )
+            .await
+            .map_err(|_| ())?,
+            "n01-broker".into(),
+            provider::SECRET.into(),
+        )
+    };
     let client = CoreClient::from_provider_metadata(
         metadata,
-        ClientId::new("n01-broker".into()),
-        Some(ClientSecret::new(provider::SECRET.into())),
+        ClientId::new(client_id),
+        Some(ClientSecret::new(secret)),
     )
     .set_redirect_uri(RedirectUrl::new(app.oidc_callback.clone()).map_err(|_| ())?);
     app.client.set(client).map_err(|_| ())?;
@@ -217,14 +252,19 @@ async fn browser(
         .begin_browser(&id)?;
     let client = app.client.get().ok_or(ProbeError)?;
     let verifier = PkceCodeVerifier::new(attempt.verifier);
-    let (url, _, _) = client
+    let authorization = client
         .authorize_url(
             CoreAuthenticationFlow::AuthorizationCode,
             || CsrfToken::new(attempt.state),
             || Nonce::new(attempt.nonce),
         )
-        .set_pkce_challenge(PkceCodeChallenge::from_code_verifier_sha256(&verifier))
-        .url();
+        .set_pkce_challenge(PkceCodeChallenge::from_code_verifier_sha256(&verifier));
+    let authorization = if app.external {
+        authorization.add_scope(openidconnect::Scope::new("offline_access".into()))
+    } else {
+        authorization
+    };
+    let (url, _, _) = authorization.url();
     let mut response = redirect(url.as_str())?;
     // HTTP and non-Secure cookies are exclusively for this loopback fixture.
     response.headers_mut().insert(
@@ -253,7 +293,11 @@ async fn callback_handler(
     input: std::result::Result<Query<Callback>, axum::extract::rejection::QueryRejection>,
 ) -> std::result::Result<Response, ProbeError> {
     let Query(input) = input.map_err(|_| ProbeError)?;
-    if !store::valid_challenge(&input.code) {
+    if if app.external {
+        input.code.is_empty() || input.code.len() > 2048 || input.code.chars().any(char::is_control)
+    } else {
+        !store::valid_challenge(&input.code)
+    } {
         return Err(ProbeError);
     }
     let cookie = headers
@@ -290,6 +334,12 @@ async fn callback_handler(
         .lock()
         .map_err(|_| ProbeError)?
         .complete_callback(&attempt.id, &user)?;
+    if app.external {
+        app.upstream
+            .lock()
+            .await
+            .insert((attempt.id.clone(), user), authconfig::session(&token));
+    }
     let mut target = reqwest::Url::parse(&app.callback_uri).map_err(|_| ProbeError)?;
     target
         .query_pairs_mut()
@@ -346,7 +396,7 @@ async fn status(
 ) -> std::result::Result<Json<serde_json::Value>, ProbeError> {
     let (attempts, session_families) = app.store.lock().map_err(|_| ProbeError)?.status()?;
     Ok(Json(
-        json!({"attempts":attempts,"session_families":session_families,"instance_id":app.instance_id}),
+        json!({"attempts":attempts,"session_families":session_families,"instance_id":app.instance_id,"issuer":app.issuer}),
     ))
 }
 
@@ -367,4 +417,20 @@ async fn expire(
         .map_err(|_| ProbeError)?
         .expire(&input.transaction_id, &input.scope)?;
     Ok(Json(json!({"ok":true})))
+}
+
+async fn upstream_check(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    input: std::result::Result<Json<authconfig::Check>, axum::extract::rejection::JsonRejection>,
+) -> std::result::Result<Json<serde_json::Value>, ProbeError> {
+    if headers
+        .get("x-probe-control")
+        .and_then(|value| value.to_str().ok())
+        != Some("1")
+    {
+        return Err(ProbeError);
+    }
+    let Json(input) = input.map_err(|_| ProbeError)?;
+    Ok(Json(authconfig::check(&app, input).await?))
 }

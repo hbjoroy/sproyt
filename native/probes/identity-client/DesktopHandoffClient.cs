@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
-internal sealed record DesktopConfig(string Broker, string Instance, string Callback, string[] Accounts, bool SystemBrowser);
+internal sealed record DesktopConfig(string Broker, string Instance, string Callback, string[] Accounts, bool SystemBrowser, string? Issuer = null, Dictionary<string, string>? Subjects = null);
 internal sealed record DesktopAttempt(string Transaction, string Account, string Verifier, string Redemption, string? Code = null, string? Result = null);
 internal sealed record DesktopState(int Schema, string Environment, DesktopConfig Config, DateTimeOffset Expires, DesktopAttempt[] Attempts);
 
@@ -34,6 +34,18 @@ internal static class DesktopHandoffClient
         hash[6] = (byte)((hash[6] & 15) | 0x50); hash[8] = (byte)((hash[8] & 63) | 0x80);
         return Guid.ParseExact(Convert.ToHexString(hash.AsSpan(0, 16)), "N");
     }
+    private static string IdentityIssuer(DesktopConfig config) => config.Issuer ?? config.Broker.TrimEnd('/') + "/provider";
+    private static Guid AccountId(DesktopConfig config, string account) => UserId(IdentityIssuer(config) + ":" + (config.Subjects is null ? account : config.Subjects[account]));
+    private static void ValidateIdentity(DesktopConfig config)
+    {
+        if (config.Issuer is null) { Check(config.Subjects is null); return; }
+        var issuer = Loopback(config.Issuer, "/application/o/n01-lab/");
+        Check(issuer.AbsoluteUri == config.Issuer && issuer.Port != new Uri(config.Broker).Port);
+        var subjects = config.Subjects;
+        Check(subjects is not null && subjects.Count is >= 1 and <= 2);
+        Check(subjects!.All(pair => pair.Key is "alice" or "bob" && pair.Value is { Length: >= 1 and <= 128 } && pair.Value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')));
+        Check(config.Accounts.All(subjects!.ContainsKey) && subjects.Values.Distinct(StringComparer.Ordinal).Count() == subjects.Count);
+    }
     internal static ProcessStartInfo Child(string directory, string config, string fault) => new("dotnet")
     {
         UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
@@ -47,7 +59,7 @@ internal static class DesktopHandoffClient
         Check(result.Length <= 8192);
         using var body = JsonDocument.Parse(result);
         Check(body.RootElement.GetProperty("kind").GetString() == "non_api_fixture" &&
-            Guid.Parse(body.RootElement.GetProperty("user_id").GetString()!) == UserId(config.Broker.TrimEnd('/') + "/provider:" + attempt.Account) &&
+            Guid.Parse(body.RootElement.GetProperty("user_id").GetString()!) == AccountId(config, attempt.Account) &&
             body.RootElement.GetProperty("session_family").GetString() is string family && Proof(family) &&
             body.RootElement.GetProperty("credential").GetString() is string credential && credential.StartsWith("fixture-only.", StringComparison.Ordinal) && Proof(credential[13..]));
     }
@@ -59,12 +71,13 @@ internal static class DesktopHandoffClient
         var config = JsonSerializer.Deserialize<DesktopConfig>(await File.ReadAllTextAsync(configPath), Json)!;
         var broker = Loopback(config.Broker, "/"); var callback = Loopback(config.Callback, "/return");
         Check(Proof(config.Instance) && config.Accounts.Length is >= 1 and <= 2 && config.Accounts.Distinct().Count() == config.Accounts.Length && config.Accounts.All(a => a is "alice" or "bob"));
+        ValidateIdentity(config);
         Check(fault is "none" or "return-durable" or "exchange-unknown" or "result-received" or "result-durable" or "resume-gated");
         bool resume = File.Exists(Path.Combine(directory, "state.bin"));
         using var journal = new WindowsProtectedJournal(directory, create: !resume);
         using var app = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = false }) { BaseAddress = broker, Timeout = TimeSpan.FromSeconds(12) };
         using (var status = await app.GetFromJsonAsync<JsonDocument>("/probe/status"))
-            Check(status!.RootElement.GetProperty("instance_id").GetString() == config.Instance);
+            Check(status!.RootElement.GetProperty("instance_id").GetString() == config.Instance && status.RootElement.GetProperty("issuer").GetString() == IdentityIssuer(config));
         DesktopState state;
         if (resume)
         {
@@ -170,7 +183,7 @@ internal static class DesktopHandoffClient
                     {
                         string verifier = Random();
                         // The proof is encrypted durably before any browser opens.
-                        using var response = await app.PostAsJsonAsync("/probe/start", new { challenge = Challenge(verifier), platform = "windows", environment = "n01-lab", destination_id = "windows-loopback", expected_user_id = UserId(config.Broker.TrimEnd('/') + "/provider:" + account) });
+                        using var response = await app.PostAsJsonAsync("/probe/start", new { challenge = Challenge(verifier), platform = "windows", environment = "n01-lab", destination_id = "windows-loopback", expected_user_id = AccountId(config, account) });
                         Check(response.IsSuccessStatusCode);
                         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                         string transaction = body.RootElement.GetProperty("transaction_id").GetString()!; Check(Proof(transaction));
