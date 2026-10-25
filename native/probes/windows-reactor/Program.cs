@@ -8,6 +8,7 @@ internal static class Program
     internal static ChatWorkspace Workspace { get; private set; } = null!;
     internal static string DataDirectory { get; private set; } = "";
     internal static string? UiProbeDirectory { get; private set; }
+    internal static bool UiResume { get; private set; }
     internal static string LibraryPath => Path.Combine(AppContext.BaseDirectory, "sproyt_native_probe.dll");
     private static bool _closing;
     private static bool _preparingShutdown;
@@ -37,7 +38,8 @@ internal static class Program
                 File.WriteAllText(Path.Combine(testRoot, "core-result.txt"), sessionResult + Environment.NewLine + workspaceResult);
                 return;
             }
-            UiProbeDirectory = args.Length == 2 && args[0] == "--ui-smoke" ? Path.GetFullPath(args[1]) : null;
+            UiResume = args.Length == 2 && args[0] == "--ui-resume";
+            UiProbeDirectory = args.Length == 2 && args[0] is "--ui-smoke" or "--ui-resume" ? Path.GetFullPath(args[1]) : null;
             DataDirectory = UiProbeDirectory is not null ? Path.Combine(UiProbeDirectory, "data") : args.Length == 2 && args[0] == "--data-dir"
                 ? Path.GetFullPath(args[1])
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsProbe");

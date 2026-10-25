@@ -12,6 +12,7 @@ namespace Sproyt.WindowsProbe;
 internal static class UiProbe
 {
     private static int _started;
+    private const string ClosingDraft = "Dette skal vente etter avslutting\r\nOgså den andre linja.";
 
     internal static void Attach(FrameworkElement root)
     {
@@ -31,12 +32,30 @@ internal static class UiProbe
         string folder = Program.UiProbeDirectory!;
         Directory.CreateDirectory(folder);
         var window = ReactorApp.PrimaryWindow!;
-        window.Closed += (_, _) => File.WriteAllText(Path.Combine(folder, "ui-closed.txt"),
+        window.Closed += (_, _) => File.WriteAllText(Path.Combine(folder, Program.UiResume ? "ui-resume-closed.txt" : "ui-closed.txt"),
             Program.Workspace.State.Ready ? "FAIL: closed before shutdown" : "PASS: native Closed event after shutdown");
         try
         {
             await Until(() => root.ActualWidth > 500 && root.ActualHeight > 300);
             var composer = Find<TextBox>(root, "composer");
+            if (Program.UiResume)
+            {
+                // A new OS process must hydrate the actual editor, not merely
+                // reopen SQLite successfully in the old process.
+                await Until(() => SameText(composer.Text, ClosingDraft));
+                Check(Program.Workspace.State.Outbox.Count == 2, "Restart lost a locally queued message.");
+                PilotComponent.SelectForProbe!("idear");
+                await Until(() => Find<TextBox>(root, "composer").Text == "Eit eige idéutkast");
+                PilotComponent.SelectForProbe!("prat");
+                await Until(() => SameText(Find<TextBox>(root, "composer").Text, ClosingDraft));
+                await Program.PrepareShutdownAsync();
+                File.WriteAllText(Path.Combine(folder, "ui-resume-result.json"), JsonSerializer.Serialize(new
+                {
+                    passed = true, architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
+                    checks = new[] { "new app process", "multiline editor hydration", "second channel draft", "queued message retained" },
+                }));
+                return;
+            }
             int materialized = Descendants(root).OfType<TextBlock>().Count();
             Check(materialized is > 10 and < 250, "The synthetic history was not virtualized.");
 
@@ -85,22 +104,41 @@ internal static class UiProbe
 
             await Until(() => Find<Button>(root, "queue-message").IsEnabled);
             await PilotComponent.SendForProbe!();
+            bool repeatedSendRejected = false;
+            try { await PilotComponent.SendForProbe!(); }
+            catch (InvalidOperationException) { repeatedSendRejected = true; }
+            Check(repeatedSendRejected && Program.Workspace.State.Outbox.Count == 1,
+                "An immediate second send resurrected accepted editor text.");
             await Until(() => Find<TextBox>(root, "composer").Text == "" && Program.Workspace.State.Outbox.Count == 1);
             Check(Program.Workspace.State.Outbox[0].Body == first, "The UI binding changed queued content.");
+            await Until(() => MessageVisible(scroller, first));
+
+            const string beforeNavigation = "Ei sending rett før kanalbyte";
+            Find<TextBox>(root, "composer").Text = beforeNavigation;
+            await Until(() => Saved("prat", beforeNavigation));
+            await PilotComponent.SendForProbe!();
+            // No wait for the renderer to clear the old native TextBox here.
+            PilotComponent.SelectForProbe!("idear");
+            await Until(() => Find<TextBox>(root, "composer").Text == "Eit eige idéutkast");
+            Check(Program.Workspace.State.Drafts["prat"].Body == "" && Program.Workspace.State.Outbox.Count == 2,
+                "Immediate navigation resurrected accepted text.");
+            PilotComponent.SelectForProbe!("prat");
+            await Until(() => Find<TextBox>(root, "composer").Text == "");
 
             window.SetSize(360, 720);
             await Until(() => root.ActualWidth < 800 && Find<Button>(root, "conversations").Visibility == Visibility.Visible);
             Check(Find<TextBox>(root, "composer").ActualWidth > 200, "Compact layout left no room to write.");
-            Find<TextBox>(root, "composer").Text = "Dette skal vente etter avslutting";
+            Find<TextBox>(root, "composer").Text = ClosingDraft;
             await Program.PrepareShutdownAsync();
             await using (var reopened = await NativeSession.OpenAsync(Path.Combine(Program.DataDirectory, "demo-v1.sqlite"), Program.LibraryPath))
             {
                 var snapshot = await reopened.SnapshotAsync();
-                Check(snapshot.Drafts.Any(value => value.Channel == "prat" && value.Body == "Dette skal vente etter avslutting"),
+                Check(snapshot.Drafts.Any(value => value.Channel == "prat" && SameText(value.Body, ClosingDraft)),
                     "Closing lost the latest editor text.");
                 Check(snapshot.Drafts.Any(value => value.Channel == "idear" && value.Body == "Eit eige idéutkast"),
                     "Closing lost another channel's draft.");
-                Check(snapshot.Outbox.Count == 1 && snapshot.Outbox[0].Body == first, "The accepted local message was not durable.");
+                Check(snapshot.Outbox.Count == 2 && snapshot.Outbox[0].Body == first && snapshot.Outbox[1].Body == beforeNavigation,
+                    "The accepted local messages were not durable.");
             }
             File.WriteAllText(Path.Combine(folder, "ui-result.json"), JsonSerializer.Serialize(new
             {
@@ -109,17 +147,29 @@ internal static class UiProbe
                 rasterizationScale = root.XamlRoot.RasterizationScale,
                 compactWidthDip = root.ActualWidth,
                 checks = new[] { "native WinUI tree", "virtualization", "editor identity and selection", "independent drafts",
-                    "reading position", "light and dark semantic brushes", "UI enqueue binding", "compact layout", "flush and reopen" },
+                    "reading position", "light and dark semantic brushes", "UI enqueue binding", "own message visible", "immediate send and navigation",
+                    "compact layout", "flush and reopen" },
                 notTested = new[] { "physical keyboard and IME", "touch", "screen reader", "visual screenshot approval", "production" },
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception exception)
         {
             Environment.ExitCode = 1;
-            File.WriteAllText(Path.Combine(folder, "ui-failure.txt"), exception.ToString());
+            File.WriteAllText(Path.Combine(folder, Program.UiResume ? "ui-resume-failure.txt" : "ui-failure.txt"), exception.ToString());
             try { await Program.Workspace.ShutdownAsync(); } catch { }
         }
         finally { Program.CloseAfterShutdown(window); }
+    }
+
+    private static bool SameText(string left, string right) => left.Replace("\r\n", "\n").Replace('\r', '\n')
+        == right.Replace("\r\n", "\n").Replace('\r', '\n');
+
+    private static bool MessageVisible(ScrollViewer scroller, string body)
+    {
+        var text = Descendants(scroller).OfType<TextBlock>().FirstOrDefault(value => value.Text == body);
+        if (text is null || text.ActualHeight <= 0) return false;
+        var bounds = text.TransformToVisual(scroller).TransformBounds(new Windows.Foundation.Rect(0, 0, text.ActualWidth, text.ActualHeight));
+        return bounds.Top >= -1 && bounds.Bottom <= scroller.ActualHeight + 1;
     }
 
     private static bool Saved(string channel, string body)

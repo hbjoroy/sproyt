@@ -77,6 +77,33 @@ skjermlesar og visuell skjermbiletgodkjenning **ikkje verifiserte**. Den
 interne UI-prøva er ikkje ført som slike testar. Desse blir del av manuell
 utprøving av den køyrbare appen.
 
+### Rettar etter den første brukarprøva, 25. oktober
+
+Ctrl+Enter vart fanga i bubbling-hendinga `KeyDown`, etter at WinUI-tekstfeltet
+kunne ha handsama Enter. Han blir no fanga i `PreviewKeyDown`. Både knapp og
+tastesnarveg sjekkar siste koordinator-snapshot før sending. Dei les ikkje ein
+gammal, enno ikkje tømd TextBox tilbake som nytt utkast etter sendesuksess.
+Ein regresjonstest sender på nytt og byter kanal straks etter suksess, utan
+å vente på at rendereren tømmer tekstfeltet.
+
+Godteken eiga sending ber no om botnplassering etter at historikken er målt.
+Den same avgrensa restaureringa og generasjonskontrollen gjeld. Vanleg render,
+skriving og temabyte flyttar framleis ikkje leseposisjonen. Sending i ein kanal
+som ikkje lenger er aktiv, flyttar ikkje visinga i den nye kanalen.
+
+Rapportert tap av buffer ved omstart kunne ikkje reproduserast; brukaren
+stadfesta at neste forsøk fungerte. Lagringsløysinga er uendra. Testdekninga
+omfattar no ein **ny OS-prosess** med det same testlageret: fleirlinjeutkast
+må vere synleg i den faktiske editoren, utkast i andre kanal må finnast, og
+godteken lokal sending må framleis vere der. Å berre opne SQLite frå den
+første prosessen blir ikkje rekna som denne aksepten.
+
+Med det oppdaterte CUA-verktøyet vart native Windows-input seinare prøvd i ein
+isolert profil på ARM64: Ctrl+Enter gav éi sending utan linjeskift, vanleg Enter
+gav to linjer, og send-knappen viste den nye meldinga. Etter Alt+F4 og ein ny
+prosess var begge sendingane og eit usendt fleirlinjeutkast tilbake. Dette er
+syntetisk native OS-input; fysisk tastatur/IME, touch og skjermlesar står att.
+
 ## Kjende grenser før ein ekte klient
 
 Rust-prøva lagrar utkast etter innhald, utan varig utkast-revisjon. Når ei
