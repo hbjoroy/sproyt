@@ -35,6 +35,14 @@ normalt opptak, men ein ytre policyfeil kan hoppe over sperra. Recovery-porten
 er derfor ikkje godkjend. Neste avgjerd er ein støtta, feillukka
 serverintegrasjon før ny nøkkel/fullføringskvittering og N03 kan godkjennast.
 
+[N01f2](native-recovery-integration-adr.md) har deretter prøvd det offentlege
+recovery-API-et med objektavgrensa løyve. Det fungerer for rett konto, men
+to samtidige restaureringar av same lenkje når begge nøkkelregistrering.
+Sprøyt skal eige recovery-samordninga og Authentik WebAuthn; atomisk opptak
+og støtta fullføringsbevis står att. Neste avklaring er ein verifisert
+upstream-kontrakt eller ei uttrykkeleg eigd providerutviding, før vidare
+recovery-implementasjon. N01/N03 er framleis ikkje godkjende for aktivering.
+
 [N01b-laboratoriet på Windows](../native/probes/identity/DESKTOP.md) har no
 OS-verna, varig app-handoff, reelle prosessavbrot og ein faktisk Edge-rundtur
 med to fiktive kontoar. Dette er framleis isolert frå Authentik og vanleg chat;
