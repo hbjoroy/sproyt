@@ -1,6 +1,6 @@
 # ADR N01: same identitet, native appøkter og recovery
 
-Dato: 24. oktober 2026. Status: vald implementeringsretning, med tekniske kontrollpunkt i N01 og sikkerheitsreview før aktivering. Del av [implementasjonsplanen](native-client-implementation-plan.md). Ingen ruter, tabellar eller innloggingsflytar er oppretta enno.
+Dato: 24. oktober 2026. Status: vald implementeringsretning, med tekniske kontrollpunkt i N01 og sikkerheitsreview før aktivering. Del av [implementasjonsplanen](native-client-implementation-plan.md). Ei [isolert N01a-prøve](../native/probes/identity/README.md) er implementert med syntetisk OIDC-provider og .NET-klient. Ingen produksjonsruter, appøkter eller Authentik-flytar er aktiverte. N01-aksepten står framleis open.
 
 ## Kontekst og produktval
 
