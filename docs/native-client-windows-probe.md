@@ -2,7 +2,13 @@
 
 Dato: 25. oktober 2026. Dette er eit isolert, lokalt UI-laboratorium og ei
 utviding av N02. Det leverer ikkje N01-identitet, N06-produksjonskjerne eller
-ein ferdig Windows-klient. Android er framleis første produktleveranse.
+ein ferdig Windows-klient. Etter ny prioritering skal ein fungerande Windows-
+pilot kome først, deretter Android på same servergrunnlag.
+
+[N03a](../native/session-client/README.md) koplar no den delte DPAPI-økteigaren
+til denne WinUI-appen: syntetisk innlogging, fornying, utlogging og omstart,
+med kontoavgrensa lokale utkast. Det gamle demolageret er ikkje flytta eller
+overskrive. Ekte Sprøyt-innlogging og servermeldingar er neste Windows-milepåle.
 
 ## Retning og omfang
 

@@ -47,9 +47,11 @@ internal sealed class PilotComponent : Component
         {
             void Changed() => invalidate(Interlocked.Increment(ref _revision));
             Program.Workspace.Changed += Changed;
+            if (Program.Authentication is not null) Program.Authentication.Changed += Changed;
             return () =>
             {
                 Program.Workspace.Changed -= Changed;
+                if (Program.Authentication is not null) Program.Authentication.Changed -= Changed;
                 foreach (var follow in _viewportFollowers.Values) follow.Dispose();
                 _viewportFollowers.Clear();
                 ViewportTransition = null;
@@ -133,7 +135,8 @@ internal sealed class PilotComponent : Component
             ).Padding(8).Grid(row: 1),
             VStack(6,
                 TextBlock("Berre lokale testdata").SemiBold().FontSize(13).Foreground(ink),
-                TextBlock("Meldingane blir lagra på denne maskina. Prøva har inga nettilkopling.")
+                TextBlock(Program.Authentication is null ? "Meldingane blir lagra på denne maskina. Prøva har inga nettilkopling."
+                    : "Testkonto og lokale meldingar. Innlogginga bruker berre testtenaren på denne maskina.")
                     .TextWrapping().FontSize(12).Foreground(muted)
             ).Padding(20).Grid(row: 2)
         ).Background(chrome).WithKey("sidebar").IsVisible(wide || showList)
@@ -236,20 +239,51 @@ internal sealed class PilotComponent : Component
             context.Grid(row: 0), history.Grid(row: 1), notice.Grid(row: 2), composer.Grid(row: 3)
         ).WithKey("conversation").IsVisible(conversationVisible).Grid(column: 1);
 
-        return Grid([wide ? GridSize.Px(244) : GridSize.Px(0), GridSize.Star()], [GridSize.Star()], sidebar, conversation)
+        var authentication = Program.Authentication;
+        var auth = authentication?.Snapshot;
+        string authText = auth?.Phase switch
+        {
+            NativeAuthPhase.Active => "● Alice · testkonto",
+            NativeAuthPhase.SigningIn => "◌ Innlogging ventar",
+            NativeAuthPhase.Offline => "◌ Fråkopla · utkastet blir teke vare på",
+            NativeAuthPhase.AuthRequired => "○ Logg inn på nytt · utkastet er bevart",
+            _ => auth?.PendingRevocation == true ? "○ Logga ut · sperring ventar på nett" : "○ Logga ut · lokale testdata",
+        };
+        async void Login() { if (authentication is not null && !Program.CloseAdmissionClosed) await authentication.LoginAsync(); }
+        async void Logout() { if (authentication is not null && !Program.CloseAdmissionClosed) await authentication.LogoutAsync(); }
+        async void Resume() { if (authentication is not null && !Program.CloseAdmissionClosed) await authentication.ResumeAsync(); }
+        var authBar = Grid([GridSize.Star(), GridSize.Auto, GridSize.Auto], [GridSize.Auto],
+            TextBlock(authentication?.Notice ?? authText).TextWrapping().FontSize(12).Foreground(muted)
+                .AutomationId("authentication-status").LiveRegion().VAlign(VerticalAlignment.Center).Grid(column: 0),
+            Button(auth?.Phase == NativeAuthPhase.SigningIn ? "Fortset innlogging" : "Logg inn", Login)
+                .IsVisible(auth?.PendingRevocation != true && auth?.Phase is NativeAuthPhase.SignedOut or NativeAuthPhase.SigningIn or NativeAuthPhase.AuthRequired)
+                .IsEnabled(auth?.Busy != true && !Program.CloseAdmissionClosed).Padding(12, 8)
+                .AutomationId("authentication-login").AutomationName("Logg inn med testkontoen Alice").Grid(column: 1),
+            Button("Prøv igjen", Resume).IsVisible(auth?.Phase == NativeAuthPhase.Offline || auth?.PendingRevocation == true)
+                .IsEnabled(auth?.Busy != true && !Program.CloseAdmissionClosed).Padding(12, 8)
+                .AutomationId("authentication-retry").AutomationName("Prøv øktkontrollen igjen").Grid(column: 1),
+            Button("Logg ut", Logout).IsVisible(auth?.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline or NativeAuthPhase.SigningIn)
+                .IsEnabled(!Program.CloseAdmissionClosed).Padding(12, 8).Margin(8, 0, 0, 0)
+                .AutomationId("authentication-logout").AutomationName("Logg ut av testkontoen Alice").Grid(column: 2)
+        ).Padding(12, 4).Background(chrome).IsVisible(authentication is not null).Grid(columnSpan: 2);
+
+        return Grid([wide ? GridSize.Px(244) : GridSize.Px(0), GridSize.Star()], [GridSize.Auto, GridSize.Star()],
+                authBar, sidebar.Grid(row: 1, column: 0, columnSpan: wide ? 1 : 2), conversation.Grid(row: 1, column: 1))
             .Background(paper).RequestedTheme(dark ? ElementTheme.Dark : ElementTheme.Light)
-            .OnMount(element => { RootForClose = element; Program.Keyboard?.Attach(element as Grid); UiProbe.Attach(element); })
+            .OnMount(element => { RootForClose = element; Program.Keyboard?.Attach(element as Grid); UiProbe.Attach(element); AuthUiProbe.Attach(element); })
             .OnUnmount(element => { if (ReferenceEquals(RootForClose, element)) { Program.Keyboard?.Attach(null); RootForClose = null; } })
             .AutomationId("sproyt-root");
     }
 
     private static bool CanSend(WorkspaceSnapshot state, string body) => state.Ready && !Program.CloseAdmissionClosed
+        && (Program.Authentication is null || Program.Authentication.Snapshot.Phase == NativeAuthPhase.Active)
         && !state.Closing && !state.Terminal && !state.Sending && !state.NeedsRetry
         && !string.IsNullOrWhiteSpace(body) && Encoding.UTF8.GetByteCount(body) <= 1024 && state.Outbox.Count < 8;
 
     private async Task EnqueueMessage(string channel)
     {
         if (channel != _activeChannel || Program.CloseAdmissionClosed) throw new InvalidOperationException("Sending is unavailable.");
+        if (Program.Authentication is not null) await Program.Authentication.ResumeAsync();
         // The coordinator owns the controlled input. Reading the old native
         // TextBox here could resurrect accepted text before its render clears.
         var latest = Program.Workspace.State;

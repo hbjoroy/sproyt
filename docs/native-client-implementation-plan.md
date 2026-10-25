@@ -4,6 +4,12 @@ Dato: 24. oktober 2026. Status: gjennomføring starta for avgrensa N00/N02-prøv
 
 Målet er ein rask Android-klient med ein påliteleg felleskjerne som også er prøvd frå Swift og WinUI. Arbeidet blir små PR-ar som kan vurderast og målast kvar for seg. Ingen ny innlogging eller synkroniseringsprotokoll skal aktiverast før nødvendig serverkode, gamle klientar og tilbakeføring er prøvde.
 
+Prioritering etter ny avklaring: først ein fungerande native Windows-app,
+deretter Android. Vi bruker den eksisterande WinUI-prøva og same framtidige
+server-/sessionkontrakt; Windows blir ikkje ei separat produktarkitektur.
+Neste synlege milepåle etter N03a er ekte innlogging, kanalar og tekstchat i
+ein avgrensa Windows-Canary, før Android-klienten blir bygd på dette grunnlaget.
+
 Gjennomføring starta etter uttrykkeleg oppdrag om å bruke tilgjengelege verkty: [N00-verktøybaseline](native-client-tooling-baseline.md) og [ei avgrensa N02-prøve på Windows ARM64](native-client-probe-results.md) er utførte. N00/N02 er berre delvis dekte. [N01a-laboratoriet](../native/probes/identity/README.md) prøver no OIDC og appbunde kodebyte med syntetiske identitetar; produksjonsfunksjonane er ikkje starta.
 
 ## 1. Avklarte produktval
@@ -103,6 +109,31 @@ porten; Android/ART, iOS-pakking, Windows UI-prøva og identitetsprøva blir vur
 | N13 iOS og skrivebord | Stabil kjerne og N11-erfaring | Utvid Swift-prøva til full iOS-klient; ta deretter avtalt desktopprioritet. Gjenta dei felles kontraktane og native forløpa, ikkje berre kopier Android-skjermane. |
 
 N03/N04 og N05 kan byggjast som separate arbeidspakkar etter N01 og N02; dei må samlast før N07. Ingen implementeringsagent skal endre den same autentiserings- eller migreringsstien parallelt utan eit uttrykkeleg eigarskap.
+
+### N03a og den korte vegen til Windows-pilot
+
+[N03a](../native/session-client/README.md) avgrensar no N03 til ein køyrbar,
+syntetisk sessionkjerne kopla til den eksisterande Windows-appen. Denne delen
+kan implementerast før recovery-porten er løyst. Han endrar arbeidsrekkjefølgja,
+og godkjenner ikkje nye produksjonsøkter eller recovery.
+
+1. **N03a, denne batchen:** varige familiar, rotasjon/retry, lokal og serverstyrt
+   sperre, kansellering av handoff, same DPAPI-eigar i prøver og WinUI, og
+   omstart/utlogging med bevart kontoavgrensa utkast.
+2. **Windows W1:** flytt den prøvde sessionkontrakten inn i den ekte backend-en
+   med PostgreSQL, kryptert provider-/retrylagring og eksisterande kanonisk
+   Authentik-identitet. Test normal innlogging, fornying, revokasjon og felles
+   autentisering gjennom HTTP/WS/SSE, avslått inntil eiga Canary-godkjenning.
+3. **Windows W2:** kople eksisterande native samtale til kanalliste, historikk,
+   tekstsending og innkomande meldingar. Godkjenn omstart, nettbrot, tapt ACK,
+   konto-/kanalbyte og utkast på den fysiske Windows-maskina. Prioriter denne
+   nyttige nettbaserte piloten før full rikinnhaldsdekning og N05-offlinesync.
+4. **Android A1:** start Compose-klienten mot dei same prøvde endepunkta, med
+   Android sitt nøkkellager og systemnettlesar. Gjenta dei felles kontraktane;
+   bruk ikkje ein separat innloggings- eller meldingsprotokoll.
+
+Recovery og full provider-/produksjonsgodkjenning står framleis att. N01f sine
+funn er ikkje omklassifiserte til ein godkjend recovery-flyt av denne omprioriteringa.
 
 ## 4. Planlagd kodeplassering og eigarskap
 

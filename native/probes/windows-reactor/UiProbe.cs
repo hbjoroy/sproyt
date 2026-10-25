@@ -209,7 +209,8 @@ internal static class UiProbe
             keyboard.SetOcclusionForProbe(null);
 
             window.SetSize(360, 720);
-            await Until(() => root.ActualWidth < 800 && Find<Button>(root, "conversations").Visibility == Visibility.Visible);
+            await Until(() => root.ActualWidth < 800 && Find<Button>(root, "conversations").Visibility == Visibility.Visible &&
+                Find<TextBox>(root, "composer").ActualWidth > 200);
             Check(Find<TextBox>(root, "composer").ActualWidth > 200, "Compact layout left no room to write.");
             Find<TextBox>(root, "composer").Text = ClosingDraft;
             await Program.PrepareShutdownAsync();

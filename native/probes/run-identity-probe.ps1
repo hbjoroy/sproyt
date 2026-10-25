@@ -34,11 +34,16 @@ try {
     $evidence = Get-Content -LiteralPath $checks -Raw | ConvertFrom-Json
     if (!$evidence.passed) { throw 'Identity probe evidence failed' }
     $desktop = $null
+    $nativeSession = $null
     if ($IsWindows) {
         $desktopChecks = Join-Path $run 'desktop-checks.json'
         Checked 'dotnet' @((Join-Path $publish 'IdentityProbe.dll'), '--desktop-test', $server, (Join-Path $run 'desktop'), $desktopChecks)
         $desktop = Get-Content -LiteralPath $desktopChecks -Raw | ConvertFrom-Json
         if (!$desktop.passed) { throw 'Desktop handoff evidence failed' }
+        $sessionChecks = Join-Path $run 'native-session-checks.json'
+        Checked 'dotnet' @((Join-Path $publish 'IdentityProbe.dll'), '--session-test', $server, (Join-Path $run 'native-session'), $sessionChecks)
+        $nativeSession = Get-Content -LiteralPath $sessionChecks -Raw | ConvertFrom-Json
+        if (!$nativeSession.passed -or !$nativeSession.dpapi) { throw 'Native session evidence failed' }
     }
     $browser = $null
     if ($SystemBrowser) {
@@ -51,7 +56,7 @@ try {
         schema = 1
         scope = 'n01_isolated_identity_http_lab'
         sourceRevision = (git -C $PSScriptRoot rev-parse HEAD).Trim()
-        sourceDirty = @(git -C $PSScriptRoot status --porcelain -- ':(top)native/probes' ':(top)crates/sproyt-protocol' ':(top)src/auth.rs' ':(top).github/workflows/native-probe.yml').Count -gt 0
+        sourceDirty = @(git -C $PSScriptRoot status --porcelain -- ':(top)native/probes' ':(top)native/session-client' ':(top)crates/sproyt-protocol' ':(top)src/auth.rs' ':(top).github/workflows/native-probe.yml').Count -gt 0
         architecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant()
         platform = [Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier
         sdk = '10.0.301'
@@ -60,6 +65,7 @@ try {
         cargoTests = $true
         evidence = $evidence
         desktop = $desktop
+        nativeSession = $nativeSession
         systemBrowser = $browser
     }
     $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $run 'receipt.json') -Encoding utf8

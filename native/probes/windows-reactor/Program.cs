@@ -6,9 +6,13 @@ namespace Sproyt.WindowsProbe;
 internal static class Program
 {
     internal static ChatWorkspace Workspace { get; private set; } = null!;
+    internal static NativeAuthentication? Authentication { get; private set; }
     internal static string DataDirectory { get; private set; } = "";
     internal static string? UiProbeDirectory { get; private set; }
     internal static bool UiResume { get; private set; }
+    internal static string? SessionUiProbeDirectory { get; private set; }
+    internal static bool SessionUiResume { get; private set; }
+    internal static bool SessionUiCancellation { get; private set; }
     internal static bool KeyboardViewportAvailable { get; private set; }
     internal static KeyboardViewport? Keyboard { get; private set; }
     internal static string LibraryPath => Path.Combine(AppContext.BaseDirectory, "sproyt_native_probe.dll");
@@ -30,6 +34,11 @@ internal static class Program
         ReactorApplication.OnUnhandledException = exception => { Log(exception); return false; };
         try
         {
+            if (args.Length == 4 && args[0] == "--desktop-child")
+            {
+                Environment.ExitCode = DesktopHandoffClient.Run(args[1], args[2], args[3]).GetAwaiter().GetResult();
+                return;
+            }
             string library = LibraryPath;
             if (args.Length == 2 && args[0] == "--self-test")
             {
@@ -41,12 +50,23 @@ internal static class Program
                 return;
             }
             UiResume = args.Length == 2 && args[0] == "--ui-resume";
+            bool sessionMode = args.Length == 2 && args[0] is "--session-config" or "--session-ui-smoke" or "--session-ui-resume" or "--session-ui-cancel";
+            SessionUiResume = args.Length == 2 && args[0] == "--session-ui-resume";
+            SessionUiCancellation = args.Length == 2 && args[0] == "--session-ui-cancel";
+            SessionUiProbeDirectory = args.Length == 2 && args[0] is "--session-ui-smoke" or "--session-ui-resume" or "--session-ui-cancel"
+                ? Path.GetDirectoryName(Path.GetFullPath(args[1])) : null;
             UiProbeDirectory = args.Length == 2 && args[0] is "--ui-smoke" or "--ui-resume" ? Path.GetFullPath(args[1]) : null;
             DataDirectory = UiProbeDirectory is not null ? Path.Combine(UiProbeDirectory, "data") : args.Length == 2 && args[0] == "--data-dir"
                 ? Path.GetFullPath(args[1])
+                : sessionMode
+                ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!, "windows-data")
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsProbe");
             Directory.CreateDirectory(DataDirectory);
-            var session = NativeSession.OpenAsync(Path.Combine(DataDirectory, "demo-v1.sqlite"), library).GetAwaiter().GetResult();
+            if (sessionMode)
+                Authentication = new(args[1], Path.Combine(DataDirectory, "authentication"));
+            string database = Authentication is null ? Path.Combine(DataDirectory, "demo-v1.sqlite")
+                : Path.Combine(DataDirectory, "account-" + Authentication.UserId + ".sqlite");
+            var session = NativeSession.OpenAsync(database, library, Authentication?.UserId ?? NativeSession.FixtureAccount).GetAwaiter().GetResult();
             Workspace = new(new NativeWorkspaceStoreAdapter(session), ["prat", "idear"]);
             Workspace.InitializeAsync().GetAwaiter().GetResult();
             ReactorApp.WindowOpened += (_, window) =>
@@ -54,6 +74,12 @@ internal static class Program
                 var keyboard = Keyboard = new KeyboardViewport(window);
                 KeyboardViewportAvailable = keyboard.Available;
                 keyboard.Attach(PilotComponent.RootForClose as Microsoft.UI.Xaml.Controls.Grid);
+                window.NativeWindow.Activated += (_, activated) =>
+                {
+                    if (!CloseAdmissionClosed && activated.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated
+                        && Authentication is not null) _ = Authentication.ResumeAsync();
+                };
+                if (Authentication is not null) _ = Authentication.ResumeAsync();
                 window.Closed += (_, _) => { keyboard.Dispose(); Keyboard = null; };
                 window.Closing += (_, closing) =>
                 {
@@ -107,6 +133,7 @@ internal static class Program
                 await flushed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             }
             await Workspace.ShutdownAsync();
+            if (Authentication is not null) await Authentication.DisposeAsync();
         }
         catch
         {
