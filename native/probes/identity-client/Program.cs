@@ -191,8 +191,3 @@ internal static class Program
         return Guid.ParseExact(Convert.ToHexString(hash.AsSpan(0, 16)), "N");
     }
 }
-
-
-
-
-

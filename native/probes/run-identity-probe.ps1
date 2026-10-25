@@ -47,4 +47,3 @@ try {
     $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $run 'receipt.json') -Encoding utf8
     Write-Output ('PASS identity lab; receipt: ' + (Join-Path $run 'receipt.json'))
 } finally { $env:CARGO_TARGET_DIR = $priorTarget }
-
