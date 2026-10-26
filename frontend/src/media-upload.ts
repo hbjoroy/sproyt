@@ -2,10 +2,12 @@
  * full-file ArrayBuffer. An uncertain request is retried with the same identity. */
 export async function uploadMediaChunks(file: File, channelId: string, options: {
   authQuery?: string; refresh: () => Promise<boolean>; progress: (message: string) => void;
+  admitted?: () => boolean;
 }): Promise<Response | null> {
   const query = options.authQuery || "";
   async function request(path: string, init: RequestInit = {}): Promise<Response> {
     for (let attempt = 0; ; attempt += 1) {
+      if (options.admitted && !options.admitted()) throw new Error("Kontoen vart endra under opplastinga.");
       let response: Response;
       try {
         response = await fetch(`${path}${query}`, { ...init, credentials: "same-origin", signal: AbortSignal.timeout(60000) });
@@ -18,10 +20,12 @@ export async function uploadMediaChunks(file: File, channelId: string, options: 
           response = new Response(text,{status:response.status,headers:response.headers});
         }
       } catch (error) {
+        if (options.admitted && !options.admitted()) throw error;
         if (attempt >= 4) throw error;
         await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
         continue;
       }
+      if (options.admitted && !options.admitted()) throw new Error("Kontoen vart endra under opplastinga.");
       if (response.status === 401 && attempt < 4 && await options.refresh()) continue;
       if ([408,429,502,503,504].includes(response.status) && attempt < 4) {
         await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));

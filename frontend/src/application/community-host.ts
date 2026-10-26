@@ -10,6 +10,7 @@ export function createCommunityHost(deps: {
   requests: ReturnType<typeof createCommunityRequests>;
   send: <T extends ClientCommand["type"]>(type: T, ...args: ClientCommandArguments<T>) => string | null;
   openDirect(userId: string): string | null;
+  openDirectForDelivery?(userId: string): string | null;
   selfId(): string | null;
   channels(): readonly Channel[];
   circles(): ReadonlyMap<string, Circle>;
@@ -80,7 +81,7 @@ export function createCommunityHost(deps: {
       const created = await request("invitation_created", () => deps.send("create_invitation", { target: channelId ? { type: "channel", circle_id: circleId, channel_id: channelId } : { type: "circle", circle_id: circleId } }));
       const token = created.payload.invitation.token;
       if (userId) {
-        const direct = await request("direct_channel_opened", () => deps.openDirect(userId));
+        const direct = await request("direct_channel_opened", () => deps.openDirectForDelivery ? deps.openDirectForDelivery(userId) : deps.openDirect(userId));
         await request("message_accepted", () => deps.send("send_message", { channel_id: direct.payload.channel.id, body: `[[invite:${token}]]` }));
       }
       return `${window.location.origin}/?invite=${encodeURIComponent(token)}`;

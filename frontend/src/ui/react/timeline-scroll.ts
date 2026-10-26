@@ -10,6 +10,8 @@ export interface TimelineScrollModel {
   readonly initialUnreadLimit?: number;
   readonly waitingForLink?: boolean;
   readonly revealMessageId?: string | null;
+  readonly restorationId?: string;
+  readonly restoredPosition?: ReadingPosition | null;
 }
 
 export interface ReadingPosition {
@@ -31,6 +33,7 @@ export interface TimelineScrollControllerOptions {
   readonly onNearStart?: () => void;
   readonly onReachedBottom?: (lastMessageId: string | null) => void;
   readonly onVisibleMessages?: (key: string, messageIds: readonly string[]) => void;
+  readonly onPositionChanged?: () => void;
   readonly nearEdge?: number;
 }
 
@@ -62,6 +65,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   let revealMessageId: string | null = null;
   let requestedOlderAt: string | null = null;
   let reportedBottomAt: string | null = null;
+  let openingPages = 0;
 
   const messageElement = (id: string): HTMLElement | null => {
     if (!viewport) return null;
@@ -86,7 +90,10 @@ export function createTimelineScrollController(options: TimelineScrollController
   const save = () => {
     if (!model.key) return null;
     const position = capture();
-    if (position?.anchorId && !opening) positions.set(model.key, position);
+    if (position?.anchorId && !opening) {
+      positions.set(model.key, position);
+      while (positions.size > 100) positions.delete(positions.keys().next().value!);
+    }
     return position;
   };
 
@@ -164,6 +171,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     const cursor = `${model.key}:${model.messageIds[0] ?? ""}:${model.messageIds.length}`;
     if (requestedOlderAt === cursor) return;
     requestedOlderAt = cursor;
+    if (opening?.position) openingPages++;
     options.onNearStart?.();
   };
 
@@ -186,7 +194,7 @@ export function createTimelineScrollController(options: TimelineScrollController
         const restored = restoreAnchor(target);
         if (restored === "clamped") return;
         if (restored === "missing") {
-          if (model.hasOlder) { requestOlder(); return; }
+          if (model.hasOlder && openingPages < 25) { requestOlder(); return; }
           const closest = model.messageIds.find((_, index) => (model.messageSequences?.[index] ?? 0) >= (target.sequence ?? 0));
           if (closest) scrollToMessage(closest);
         }
@@ -241,6 +249,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     rememberGeometry();
     reportBottom();
     reportVisible();
+    options.onPositionChanged?.();
   };
 
   const scheduleReconcile = () => {
@@ -299,6 +308,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     }
     reportBottom();
     reportVisible();
+    options.onPositionChanged?.();
   };
 
   const onScrollIntent = (event: Event) => {
@@ -363,7 +373,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     const previous = (pending || scheduled || applying || (!scrollIntent && geometryChanged())) && model.key
       ? pending?.position ?? positions.get(model.key) ?? capture()
       : save();
-    const keyChanged = model.key !== next.key;
+    const keyChanged = model.key !== next.key || model.restorationId !== next.restorationId;
     // Several history responses/publications may arrive before the next frame
     // restores the DOM. Keep the original reading anchor through that batch.
     let position = !keyChanged && pending ? pending.position : previous;
@@ -376,8 +386,10 @@ export function createTimelineScrollController(options: TimelineScrollController
       if (neighbour) position = { ...position, anchorId: nextId!, sequence: Number(neighbour.dataset.messageSequence),
         anchorOffset: neighbour.getBoundingClientRect().top - viewport.getBoundingClientRect().top };
     }
-    const stored = next.key ? positions.get(next.key) ?? options.restorePosition?.(next.key) ?? null : null;
+    const stored = next.restoredPosition !== undefined ? next.restoredPosition
+      : next.key ? positions.get(next.key) ?? options.restorePosition?.(next.key) ?? null : null;
     if (keyChanged) {
+      openingPages = 0;
       clampedAnchor = false;
       scrollIntent = false;
       opening = next.key ? { position: stored, readSequence: next.initialReadSequence ?? 0,
@@ -403,6 +415,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     if (pending) followBottom = pending.forceBottom || ((keyChanged || followBottom) && (pending.position?.distanceFromBottom ?? 0) <= nearEdge);
     if (keyChanged || next.messageIds[0] !== model.messageIds[0]) requestedOlderAt = null;
     if (keyChanged) reportedBottomAt = null;
+    while (openingReadSequences.size > 100) openingReadSequences.delete(openingReadSequences.keys().next().value!);
     model = next;
     scheduleReconcile();
   };
@@ -421,10 +434,17 @@ export function createTimelineScrollController(options: TimelineScrollController
   const goToLatest = () => {
     opening = null; pending = null; clampedAnchor = false; revealMessageId = null; followBottom = true;
     scrollToBottom(); save(); rememberGeometry(); reportVisible();
+    options.onPositionChanged?.();
   };
   const unreadAfterSequence = () => model.key ? openingReadSequences.get(model.key) : undefined;
   const readingPosition = () => { const position = save(); return model.key && position ? { key: model.key, position } : null; };
-  return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, readingPosition, dispose });
+  const reset = () => {
+    positions.clear(); openingReadSequences.clear(); pending = null; opening = null;
+    revealMessageId = null; requestedOlderAt = null; clampedAnchor = false; geometry = null;
+    openingPages = 0; appliedScrollTop = null; scrollIntent = false; scrollIntentGeneration++; reportedBottomAt = null;
+    model = { key: null, messageIds: [] }; followBottom = true;
+  };
+  return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, readingPosition, reset, dispose });
 }
 
 export type TimelineScrollController = ReturnType<typeof createTimelineScrollController>;

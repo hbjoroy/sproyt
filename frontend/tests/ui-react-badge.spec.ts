@@ -8,7 +8,7 @@ test("first-50 badge is visible on the profile and compact beside chat authors",
   await expect(preview.locator(".sp-header-early-adopter")).toHaveCount(0);
 
   await preview.getByRole("button", { name: "Meny", exact: true }).click();
-  await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
   await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
   await expect(preview.getByRole("dialog", { name: "Profil og status" })).toContainText("Første 50 på Sprøyt");
   await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
@@ -33,7 +33,7 @@ for (const touch of [false, true]) {
       const composer = preview.getByRole("textbox", { name: "Skriv melding" });
       await expect(composer).toBeEnabled({ timeout: 15000 });
       await preview.getByRole("button", { name: "Meny", exact: true }).click();
-      await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
+      await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
       await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
       const dialog = preview.getByRole("dialog", { name: "Profil og status" });
       await dialog.getByLabel("Statusemoji", { exact: true }).fill("☀️");

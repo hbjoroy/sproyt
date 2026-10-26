@@ -1,0 +1,95 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { ViewHistory, readViewTarget, viewHref, type ViewTarget } from "./view-history";
+import { NavigationController } from "./navigation";
+
+function fixture(storage?: Storage) {
+  const entries = [{ state: { otherFeature: "keep" } as unknown, href: "https://chat.test/?invite=secret" }];
+  let cursor = 0;
+  const port = { storage, href: () => entries[cursor]!.href, history: {
+    get state() { return entries[cursor]!.state; },
+    replaceState(state: unknown, _unused: string, url?: string | URL | null) { entries[cursor] = { state: structuredClone(state), href: url ? String(url) : entries[cursor]!.href }; },
+    pushState(state: unknown, _unused: string, url?: string | URL | null) { entries.splice(cursor + 1); entries.push({ state: structuredClone(state), href: String(url) }); cursor++; },
+    back() { if (cursor) cursor--; }, forward() { if (cursor < entries.length - 1) cursor++; }
+  } };
+  return { port, entries, history: new ViewHistory(port) };
+}
+function storage(): Storage {
+  const data = new Map<string, string>();
+  return { get length() { return data.size; }, clear: () => data.clear(), key: n => [...data.keys()][n] ?? null,
+    getItem: key => data.get(key) ?? null, setItem: (key, value) => { data.set(key, value); }, removeItem: key => { data.delete(key); } };
+}
+const channel = (channelId: string): ViewTarget => ({ kind: "conversation", channelId });
+const anchor = (anchorId: string, sequence: number) => [{ key: "channel:a", position: { anchorId, sequence, anchorOffset: -12, distanceFromBottom: 300 } }];
+
+test("destinations round-trip without leaking invitation or identity parameters into shared URLs", () => {
+  const targets: ViewTarget[] = [channel("a"), { kind: "conversation", channelId: "a", messageId: "reply", sequence: 12, threadId: "root" },
+    { kind: "directory", scope: "direct" }, { kind: "inbox", inbox: "mentions" },
+    { kind: "management", page: { kind: "chat-agents", circleId: "c" } },
+    { kind: "management", page: { kind: "community", destination: { kind: "create-channel", circleId: null } } },
+    { kind: "management", page: { kind: "advanced", feature: "agent", channelId: "a" } }];
+  for (const target of targets) {
+    const href = viewHref(target, "https://chat.test/?invite=secret&participant=alice&state=oidc&code=credential&thread=stale");
+    assert.deepEqual(readViewTarget(href), target);
+    for (const secret of ["secret", "alice", "credential", "oidc", "stale"]) assert.ok(!href.includes(secret));
+  }
+});
+
+test("two visits to the same conversation restore distinct anchors and retain unrelated history state", () => {
+  const f = fixture(); f.history.bindOwner("alice"); f.history.navigate(channel("a"));
+  f.history.capture(anchor("a-10", 10));
+  f.history.navigate({ kind: "conversation", channelId: "a", messageId: "a-20", sequence: 20 });
+  f.history.capture(anchor("a-20", 20));
+  assert.equal(f.entries.length, 2);
+  f.history.back();
+  // A late scroll publication cannot overwrite the entry the browser has moved to.
+  f.history.capture(anchor("wrong", 99));
+  assert.deepEqual(f.history.restore(f.port.history.state), channel("a"));
+  assert.equal(f.history.getSnapshot().positions[0]?.position.anchorId, "a-10");
+  assert.equal(f.history.getSnapshot().canForward, true);
+  f.history.forward(); f.history.restore(f.port.history.state);
+  assert.equal(f.history.getSnapshot().positions[0]?.position.anchorId, "a-20");
+  assert.equal((f.port.history.state as {otherFeature:string}).otherFeature, "keep");
+});
+
+test("refresh publications do not grow history; a new branch clears forward traversal", () => {
+  const f = fixture(); f.history.bindOwner("alice"); f.history.navigate(channel("a"));
+  for (let i = 0; i < 5; i++) f.history.navigate(channel("a"));
+  assert.equal(f.entries.length, 1);
+  f.history.navigate(channel("b")); f.history.back(); f.history.restore(f.port.history.state);
+  f.history.navigate({ kind: "directory", scope: "circles" });
+  assert.equal(f.history.getSnapshot().canForward, false);
+  assert.equal(f.entries.length, 2);
+});
+
+test("recent views are bounded, structural and account-isolated; foreign history is rejected", () => {
+  const disk = storage(), f = fixture(disk); f.history.bindOwner("alice");
+  for (let i = 0; i < 45; i++) f.history.navigate(channel(`c-${i}`));
+  assert.equal(f.history.getSnapshot().recent.length, 30);
+  const old = f.port.history.state;
+  f.history.bindOwner("bob");
+  assert.equal(f.history.getSnapshot().recent.length, 0);
+  assert.equal(f.history.restore(old), null);
+  f.history.bindOwner("alice");
+  assert.equal(f.history.getSnapshot().recent.length, 30);
+  assert.equal(f.history.getSnapshot().recent[0]?.target.kind, "conversation");
+});
+
+test("denied storage/history leaves navigation usable without unsafe traversal controls", () => {
+  const disk = storage(); disk.getItem = () => { throw new Error("denied"); }; disk.setItem = () => { throw new Error("denied"); };
+  const f = fixture(disk); f.port.history.pushState = () => { throw new Error("denied"); };
+  f.history.bindOwner("alice"); f.history.navigate(channel("a")); f.history.navigate(channel("b"));
+  assert.deepEqual(f.history.getSnapshot().target, channel("b"));
+  assert.equal(f.history.getSnapshot().canBack, false);
+});
+
+test("drafts remain account-scoped and old unowned drafts require explicit recovery", () => {
+  const disk = storage(); disk.setItem("sproyt.channel-draft.v1.a", "old unowned draft");
+  const nav = new NavigationController(disk, { href: "https://chat.test/" }, { accountScoped: true });
+  assert.equal(nav.restoreChannelDraft("a"), "");
+  nav.bindOwner("alice"); assert.equal(nav.restoreChannelDraft("a"), ""); assert.equal(nav.hasLegacyDraft("a"), true);
+  nav.recoverLegacyDraft("a"); nav.persistThreadDraft("a", "root", "alice thread");
+  nav.bindOwner("bob"); assert.equal(nav.restoreChannelDraft("a"), ""); assert.equal(nav.restoreThreadDraft("a", "root"), "");
+  nav.persistChannelDraft("a", "bob draft"); nav.bindOwner("alice");
+  assert.equal(nav.restoreChannelDraft("a"), "old unowned draft"); assert.equal(nav.restoreThreadDraft("a", "root"), "alice thread");
+});

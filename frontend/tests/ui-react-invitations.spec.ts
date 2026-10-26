@@ -138,25 +138,45 @@ test("React invitation completes a real server decline and acceptance, and refre
   await page.goto(`/?participant=react-invitation-real-owner-${Date.now()}&ui=react`);
   const owner = page.locator("#sproyt-react-preview");
   await expect(owner.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15_000 });
-  if (!await owner.getByRole("button", { name: "Meny og innstillingar", exact: true }).isVisible()) {
+  if (!await owner.getByRole("button", { name: "Innstillingar", exact: true }).isVisible()) {
     await owner.getByRole("button", { name: "Meny", exact: true }).click();
   }
-  await owner.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
-  await owner.getByRole("dialog", { name: "Meny og innstillingar" }).getByRole("button", { name: "Ny vennekrets", exact: true }).click();
+  await owner.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await owner.getByRole("dialog", { name: "Innstillingar" }).getByRole("button", { name: "Ny vennekrets", exact: true }).click();
   const circleName = `Invitasjonstest ${Date.now()}`;
   const create = owner.getByRole("dialog", { name: "Ny vennekrets", exact: true });
   await create.getByLabel("Namn på vennekrets").fill(circleName);
   await create.getByRole("button", { name: "Opprett vennekrets" }).click();
   await expect(create).toHaveCount(0);
-  await owner.getByRole("region", { name: circleName, exact: true }).getByRole("button", { name: "Inviter personar og nye brukarar" }).click();
+  // Creation now opens the new circle rather than a stack of parent dialogs.
+  const createdCircle = owner.getByRole("dialog", { name: circleName, exact: true });
+  if (await createdCircle.isVisible()) await page.keyboard.press("Escape");
+  const settings = owner.getByRole("dialog", { name: "Innstillingar", exact: true });
+  if (!await settings.isVisible()) {
+    const trigger = owner.getByRole("button", { name: "Innstillingar", exact: true });
+    if (!await trigger.isVisible()) await owner.getByRole("button", { name: "Meny", exact: true }).click();
+    await trigger.click();
+  }
+  await settings.getByRole("button", { name: "Administrer krets", exact: true }).click();
+  const directory = owner.getByRole("dialog", { name: "Vel krets", exact: true });
+  await directory.getByRole("searchbox", { name: "Finn vennekrets" }).fill(circleName);
+  await directory.getByRole("button", { name: circleName, exact: true }).click();
+  await owner.getByRole("dialog", { name: circleName, exact: true }).getByRole("button", { name: "Inviter personar og nye brukarar" }).click();
   const invite = owner.getByRole("dialog", { name: `Inviter til ${circleName}` });
   await invite.getByRole("button", { name: "Lag kretslenkje" }).click();
   const link = invite.getByRole("textbox", { name: "Invitasjonslenkje", exact: true });
   await expect(link).toHaveValue(/invite=/);
   const realToken = new URL(await link.inputValue()).searchParams.get("invite")!;
   await page.keyboard.press("Escape");
-  await expect(owner.getByRole("dialog", { name: "Meny og innstillingar" })).toBeVisible();
+  await expect(owner.getByRole("dialog", { name: circleName, exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(directory).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(owner.getByRole("dialog", { name: "Innstillingar" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  const ownerShared = owner.locator('[data-conversation-group="scope:shared"]');
+  const ownerDisclosure = ownerShared.locator(".sp-product-nav-disclosure");
+  if (await ownerDisclosure.getAttribute("aria-expanded") !== "true") await ownerDisclosure.click();
   await owner.getByRole("button", { name: /^# general/i }).click();
   const composer = owner.getByRole("textbox", { name: "Skriv melding" });
   await composer.fill(`${circleName} [[invite:${realToken}]]`);
@@ -175,6 +195,9 @@ test("React invitation completes a real server decline and acceptance, and refre
   await peer.bringToFront();
   await memberCard.getByRole("button", { name: "Godta likevel", exact: true }).click();
   await expect(member.getByRole("heading", { name: circleName, exact: true })).toBeVisible();
+  const shared = member.locator('[data-conversation-group="scope:shared"]');
+  const disclosure = shared.locator(".sp-product-nav-disclosure");
+  if (await disclosure.getAttribute("aria-expanded") !== "true") await disclosure.click();
   await member.getByRole("button", { name: /^# general/i }).click();
   await expect(memberCard).toContainText("Du har godteke invitasjonen.");
   await expect(memberCard.getByRole("button")).toHaveCount(0);

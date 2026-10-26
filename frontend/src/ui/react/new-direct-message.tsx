@@ -4,8 +4,9 @@ import type { ConversationSnapshot } from "../../application/conversation-snapsh
 import { PreviewCommunity, type CommunityHost } from "./preview-community";
 
 /** Available before the first direct conversation exists, including in search. */
-export function NewDirectMessage({ snapshot, host, onStarted }: {
+export function NewDirectMessage({ snapshot, host, onStarted, onOpen }: {
   snapshot: ConversationSnapshot; host: CommunityHost; onStarted(): void;
+  onOpen?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -15,7 +16,7 @@ export function NewDirectMessage({ snapshot, host, onStarted }: {
     if (!started.current) requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
   };
   return <>
-    <Button ref={trigger} variant="quiet" onClick={() => { started.current = false; setOpen(true); }}>
+    <Button ref={trigger} variant="quiet" onClick={event => { event.currentTarget.focus({ preventScroll: true }); if (onOpen) { onOpen(); return; } started.current = false; setOpen(true); }}>
       Ny direktemelding
     </Button>
     {open && <PreviewCommunity destination={{ kind: "people" }} snapshot={snapshot}

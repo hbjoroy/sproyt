@@ -2081,7 +2081,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("const activeCircleKey = \"sproyt.active-circle.v1\""));
     assert!(BROWSER_CLIENT.contains("function restoreActiveCircle()"));
     assert!(NAVIGATION_SOURCE.contains("const candidate = [this.#activeCircleId"));
-    assert!(NAVIGATION_SOURCE.contains("writeStorage(this.storage, activeCircleKey, circleId)"));
+    assert!(NAVIGATION_SOURCE.contains("this.write(activeCircleKey, circleId)"));
     assert!(BROWSER_CLIENT.contains("const restoredCircle = restoreActiveCircle();"));
     assert!(BROWSER_CLIENT.contains("if (restoredCircle) sendCommand(\"list_joinable_channels\", { circle_id: restoredCircle });"));
     assert!(BROWSER_CLIENT.contains("clearActiveCircle(deletedCircleId);"));
@@ -2128,9 +2128,10 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("const channelDraftPrefix = \"sproyt.channel-draft.v1.\""));
     assert!(BROWSER_CLIENT.contains("function persistActiveDraft()"));
     assert!(BROWSER_CLIENT.contains("function restoreActiveDraft()"));
-    assert!(NAVIGATION_SOURCE.contains("writeStorage(this.storage, key, draft)"));
+    assert!(NAVIGATION_SOURCE.contains("this.write(key, draft)"));
+    assert!(NAVIGATION_SOURCE.contains("bindOwner(ownerId: string)"));
     assert!(BROWSER_CLIENT.contains(
-            "if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;\n        if (pendingMessageLink && pendingMessageLink.channelId !== channel.id) pendingMessageLink = null;\n        messageLinkHistoryRequestId = null;\n        composerScopeGeneration += 1;\n        persistActiveDraft();"
+            "if (pendingMessageLink && pendingMessageLink.channelId !== channel.id) pendingMessageLink = null;\n        messageLinkHistoryRequestId = null;\n        composerScopeGeneration += 1;\n        persistActiveDraft();"
         ));
     assert!(BROWSER_CLIENT.contains(
         "navigation.setActiveChannel(channel);\n        syncRenderedNavigation();\n        restoreActiveDraft();"
@@ -2240,7 +2241,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     // Navigation persistence is now owned by the typed controller rather than
     // ad-hoc DOM code, while retaining the durable active-channel behaviour.
     assert!(APP_SOURCE.contains("navigation.setActiveChannel(channel)"));
-    assert!(NAVIGATION_SOURCE.contains("writeStorage(this.storage, activeChannelKey, channel.id)"));
+    assert!(NAVIGATION_SOURCE.contains("this.write(activeChannelKey, channel.id)"));
     assert!(APP_SOURCE.contains("let reconnectScrollOffset: number | null = null"));
     assert!(BROWSER_CLIENT.contains("restoreConversationScrollOffset(scrollOffset)"));
     assert!(CONNECTION_SOURCE.contains("previousSocket.close(4000, \"session refreshed\")"));

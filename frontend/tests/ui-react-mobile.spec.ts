@@ -36,6 +36,7 @@ for (const width of [1280, 390]) test(`new direct message is discoverable before
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast før ny direktemelding");
   if (width === 390) await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
   await expect(preview.locator('[data-conversation-group="scope:direct"]')).toHaveCount(0);
+  await preview.getByRole("tab", { name: /^Direktemeldingar/ }).click();
   const action = preview.getByRole("button", { name: "Ny direktemelding", exact: true });
   await expect(action).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("new-direct-message.png") });
@@ -60,6 +61,10 @@ for (const width of [1280, 390]) test(`new direct message is discoverable before
   await expect(preview.locator(".sp-context")).toContainText(peerName);
   if (width === 390) await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
   await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("");
+  await preview.getByRole("tab", { name: /^Kretsar/ }).click();
+  const shared = preview.locator('[data-conversation-group="scope:shared"]');
+  const disclosure = shared.locator(".sp-product-nav-disclosure");
+  if (await disclosure.getAttribute("aria-expanded") !== "true") await disclosure.click();
   await preview.getByRole("button", { name: /^# General/ }).click();
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("utkast før ny direktemelding");
 });
@@ -196,10 +201,10 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await expect(menu).toHaveAttribute("aria-expanded", "true");
   await expect(app.getByRole("button", { name: "Kanalval", exact: true })).toBeVisible();
   await app.getByRole("button", { name: "Byt tema", exact: true }).click();
-  await app.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
-  const dialog = app.getByRole("dialog", { name: "Meny og innstillingar" });
+  await app.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  const dialog = app.getByRole("dialog", { name: "Innstillingar" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Lukk menyen" }).click();
+  await dialog.getByRole("button", { name: "Lukk innstillingane" }).click();
   await page.keyboard.press("Escape");
   await expect(menu).toHaveAttribute("aria-expanded", "false");
   await expect(composer).toHaveValue("Bevar mobilutkastet");

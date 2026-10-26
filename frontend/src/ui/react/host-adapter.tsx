@@ -13,6 +13,10 @@ export type TimelineControls = Pick<TimelineProps,
 /** Commands and feature renderers belong to the host. The adapter neither sends
  * messages nor replaces the host's draft, attachment, reaction or modal state. */
 export interface ConversationHostBindings {
+  readonly ownerId?: string;
+  readonly directoryScope?: "circles" | "direct";
+  readonly onDirectoryScopeChange?: (scope: "circles" | "direct") => void;
+  readonly recentChannelIds?: readonly string[];
   readonly runtime: ConversationViewProps["runtime"];
   readonly theme: ConversationViewProps["theme"];
   readonly view: ConversationViewProps["view"];
@@ -73,6 +77,9 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
     title: snapshot.title, context,
     contextActions: host.contextActions, onBack: host.onBack,
     navigation: {
+      ownerId: host.ownerId,
+      directoryScope: host.directoryScope, onDirectoryScopeChange: host.onDirectoryScopeChange,
+      recentChannelIds: host.recentChannelIds,
       groups: snapshot.groups.map(group => ({
         id: group.id, name: group.name,
         // Notification subscriptions are not a mute policy. Do not map disabled

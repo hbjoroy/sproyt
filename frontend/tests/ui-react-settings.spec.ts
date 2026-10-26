@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 async function settings(page: Page, label: "Profil og status" | "Varslingsinnstillingar") {
   const preview = page.locator("#sproyt-react-preview");
   await preview.getByRole("button", { name: "Meny", exact: true }).click();
-  await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
   await preview.getByRole("button", { name: label, exact: true }).click();
   return preview.getByRole("dialog", { name: label, exact: true });
 }

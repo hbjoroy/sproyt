@@ -10,7 +10,7 @@ test("saved statuses survive reload, prefill without publishing, and can be forg
     const preview = page.locator("#sproyt-react-preview");
     await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15000 });
     await preview.getByRole("button", { name: "Meny", exact: true }).click();
-    await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
+    await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
     await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
     return preview.getByRole("dialog", { name: "Profil og status" });
   };

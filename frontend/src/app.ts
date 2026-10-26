@@ -29,6 +29,9 @@
       import { createSseSocketFactory } from "./sse-socket";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
       import { NavigationController, readMessageLink, type MessageLink } from "./navigation";
+      import { ViewHistory, readViewTarget, type ViewTarget, type ViewPosition } from "./view-history";
+      import { managementParent, type ManagementTarget } from "./application/management-target";
+      import { clientCapabilities } from "./application/client-capabilities";
       import { createSendAdmissionPolicy } from "./send-admission-wasm";
       import { createSessionController, fetchWithTimeout, sessionRefreshAfterSeconds, type SessionController } from "./session";
       import { isJsonObject, isRecord, mediaFromUpload } from "./types";
@@ -427,7 +430,77 @@
       let pendingCircleCreationRequestId: string | null = null;
       let pendingManagedChannelRequestId: string | null = null;
       let reconnectScrollOffset: number | null = null;
-      const navigation = new NavigationController(window.localStorage, window.location);
+      const navigation = new NavigationController(window.localStorage, window.location, { accountScoped: true });
+      const viewHistory = new ViewHistory({ history: window.history, href: () => window.location.href, storage: window.localStorage });
+      let pendingViewTarget = readViewTarget(window.location.href);
+      let managementTarget: ManagementTarget | null = null;
+      let viewNavigationDepth = 0;
+      let navigationNotice = "";
+      const availableClientFeatures = clientCapabilities(document.querySelector<HTMLMetaElement>('meta[name="sproyt-capabilities"]')?.content);
+      const deliveryDirectRequests = new Set<string>();
+      const viewFocus = new Map<string, HTMLElement>();
+      let captureViewPositions: () => readonly ViewPosition[] = () => [];
+      const quietlyNavigate = (action: () => void) => { viewNavigationDepth++; try { action(); } finally { viewNavigationDepth--; } };
+      function rememberView(target: ViewTarget, mode: "push" | "replace" = "push") {
+        if (viewNavigationDepth || !currentParticipantId) return;
+        const previousEntry = viewHistory.getSnapshot().entryId;
+        if (previousEntry && document.activeElement instanceof HTMLElement) {
+          viewFocus.set(previousEntry, document.activeElement);
+          while (viewFocus.size > 30) viewFocus.delete(viewFocus.keys().next().value!);
+        }
+        viewHistory.capture(captureViewPositions());
+        viewHistory.navigate(target, mode);
+        managementTarget = target.kind === "management" ? target.page : null;
+        navigationNotice = "";
+      }
+      function applyView(target: ViewTarget, restored = false): void {
+        persistActiveDraft(); persistThreadDraft();
+        pendingThreadRevealMessageId = null;
+        managementTarget = target.kind === "management" ? target.page : null;
+        navigationNotice = "";
+        quietlyNavigate(() => {
+          if (target.kind === "management") return;
+          if (target.kind === "directory") return;
+          if (target.kind === "inbox") { if (!developmentPreviewActive) showInbox(target.inbox); return; }
+          const channel = knownChannels.find(channel => channel.id === target.channelId);
+          if (!channel) { navigationNotice = "Denne samtalen er ikkje tilgjengeleg for kontoen din. Vel ei anna samtale."; pendingMessageLink = null; return; }
+          pendingMessageLink = null; messageLinkHistoryRequestId = null; messageLinkSearchPages = 0;
+          selectChannel(channel);
+          const hasPosition = restored && viewHistory.getSnapshot().positions.some(p => p.key === `channel:${channel.id}`);
+          if (target.messageId && !hasPosition) navigateToMessage({ channelId: channel.id, messageId: target.messageId,
+            sequence: target.sequence ?? null, threadId: target.threadId ?? null });
+          else if (target.threadId) openThread(target.threadId);
+          else closeThreadState();
+        });
+        refreshDevelopmentPreview();
+        if (restored) {
+          const entryId = viewHistory.getSnapshot().entryId, owner = currentParticipantId;
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const focus = viewFocus.get(entryId);
+            if (currentParticipantId === owner && viewHistory.getSnapshot().entryId === entryId && focus?.isConnected)
+              focus.focus({ preventScroll: true });
+          }));
+        }
+      }
+      function navigateView(target: ViewTarget, mode: "push" | "replace" = "push") { rememberView(target, mode); applyView(target); }
+      function backFromManagement() {
+        viewHistory.capture(captureViewPositions());
+        if (viewHistory.getSnapshot().canBack) { viewHistory.back(); return; }
+        const parent = managementTarget ? managementParent(managementTarget, { channels: knownChannels }) : null;
+        if (parent) navigateView({ kind: "management", page: parent }, "replace");
+        else if (activeChannelId) navigateView({ kind: "conversation", channelId: activeChannelId }, "replace");
+        else navigateView({ kind: "directory", scope: "circles" }, "replace");
+      }
+      window.addEventListener("popstate", event => {
+        pendingViewTarget = null;
+        const target = viewHistory.restore(event.state);
+        if (target) applyView(target, true);
+        else {
+          const linked = readViewTarget(window.location.href);
+          if (linked) { viewHistory.adopt(linked); applyView(linked); }
+          else { navigationNotice = "Denne historikkoppføringa er ikkje tilgjengeleg. Vel ei samtale."; managementTarget = null; refreshDevelopmentPreview(); }
+        }
+      });
       let pendingMessageLink: MessageLink | null = readMessageLink(window.location);
       let messageLinkHistoryRequestId: string | null = null;
       const messageLinkHistoryRequestIds = new Set<string>();
@@ -438,6 +511,7 @@
       let restoredChannelId = navigation.restoredChannelId;
       let restoredCircleId = navigation.restoredCircleId;
       let currentParticipantId: string | null = null;
+      let accountGeneration = 0;
       let composerScopeGeneration = 0;
       let threadScopeGeneration = 0;
       const composerController = createComposerController({
@@ -480,6 +554,14 @@
         }
       });
       document.addEventListener("click", event => {
+        if (!event.defaultPrevented && event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+          const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+          if (anchor && !anchor.download && (!anchor.target || anchor.target === "_self")) {
+            const url = new URL(anchor.href);
+            const target = url.origin === window.location.origin && url.pathname === "/" ? readViewTarget(url.href) : null;
+            if (target) { event.preventDefault(); navigateView(target); return; }
+          }
+        }
         const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href="/auth/logout"]') : null;
         if (!link) return;
         event.preventDefault();
@@ -703,7 +785,7 @@
             throw new Error("Vent til endringa er stadfesta før du oppdaterer appen.");
           persistActiveDraft(); persistThreadDraft();
           if (activeChannelId && (navigation.restoreChannelDraft(activeChannelId) !== channelComposer.draft
-            || localStorage.getItem("sproyt.active-channel.v1") !== activeChannelId))
+            || navigation.persistedChannelId !== activeChannelId))
             throw new Error("Utkastet eller kanalvalet kunne ikkje lagrast. Oppdateringa er utsett.");
           for (const [rootId, state] of threadComposerStates) {
             if (!state.draft) continue;
@@ -1101,25 +1183,35 @@
       }
 
       async function postMediaFile(channelId: string, file: File, filename: string, setStatus: (message: string, kind?: string) => void): Promise<UploadResponse> {
+        const owner = currentParticipantId, generation = accountGeneration;
+        const admitted = () => owner === currentParticipantId && generation === accountGeneration;
+        const check = () => { if (!admitted()) throw new Error("Kontoen vart endra. Opplastinga blir ikkje teken vidare."); };
+        const progress = (message: string, kind?: string) => { if (admitted()) setStatus(message, kind); };
         const participant = new URL(window.location.href).searchParams.get("participant");
         const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
-        const chunked = await uploadMediaChunks(file,channelId,{authQuery,refresh:()=>sessionController.refresh(true),progress:setStatus});
+        const chunked = await uploadMediaChunks(file,channelId,{authQuery,admitted,refresh:async()=>{check();const result=await sessionController.refresh(true);check();return result;},progress});
+        check();
         if (chunked) return chunked;
         if (!file.size || file.size > 35*1024*1024) throw new Error("Store vedlegg er ikkje aktiverte på denne serveren enno.");
         const form = new FormData();
         form.append("file",file,filename);
         const url = `/api/v1/channels/${channelId}/media${authQuery}`;
-        let response = await postMedia(url,form,filename,setStatus);
-        if (response.status===401 && await sessionController.refresh(true)) response=await postMedia(url,form,filename,setStatus);
+        let response = await postMedia(url,form,filename,progress);
+        check();
+        if (response.status===401 && await sessionController.refresh(true)) { check(); response=await postMedia(url,form,filename,progress); }
+        check();
         return response;
       }
 
       async function uploadMediaFiles(files: Iterable<File>): Promise<void> {
+        const owner = currentParticipantId, generation = accountGeneration;
+        const admitted = () => owner === currentParticipantId && generation === accountGeneration;
         const channelId = activeChannelId;
         if (!channelId) return;
         const state = channelUploads.get(channelId) ?? { count: 0, status: "", kind: "progress" };
         channelUploads.set(channelId, state);
         const updateStatus = (message: string, kind = "progress") => {
+          if (!admitted()) return;
           state.status = message;
           state.kind = kind;
           if (activeChannelId === channelId) setUploadStatus(message, kind);
@@ -1128,7 +1220,7 @@
         setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
         try {
         for (const file of files) {
-
+          if (!admitted()) return;
           const form = new FormData();
           form.append("file", file, file.name || "clipboard-image.png");
           const filename = file.name || "bilete";
@@ -1137,6 +1229,7 @@
           try {
             response = await postMediaFile(channelId, file, filename, updateStatus);
           } catch (error) {
+            if (!admitted()) return;
             reportClientEvent("upload_failed");
             const online = navigator.onLine ? "Nettlesaren fekk ikkje noko HTTP-svar frå tenesta" : "Eininga er fråkopla nettet";
             updateStatus(`Opplasting av ${file.name || "fila"} feila: ${online}. ${error instanceof Error ? error.message : "Ukjend nettverksfeil"}.`, "error");
@@ -1150,6 +1243,7 @@
           if (!response.ok) { reportClientEvent("upload_failed"); updateStatus(await uploadFailureMessage(response, file.name || "fila"), "error"); continue; }
           let media: MediaObject | null;
           try { media = mediaFromUpload(await response.json()); } catch { media = null; }
+          if (!admitted()) return;
           if (media === null) { reportClientEvent("upload_failed"); updateStatus("Opplastinga var ferdig, men tenesta svarte med ugyldige mediedata. Prøv igjen.", "error"); continue; }
           pendingMedia.push({ ...media, channel_id: channelId });
           renderMediaPreviews();
@@ -1158,8 +1252,7 @@
         }
         } finally {
           state.count = Math.max(0, state.count - 1);
-          setConnected(connectionSupervisor.snapshot().connected, "Tilkopla");
-          refreshDevelopmentPreview();
+          if (admitted()) { setConnected(connectionSupervisor.snapshot().connected, "Tilkopla"); refreshDevelopmentPreview(); }
         }
       }
 
@@ -1246,12 +1339,14 @@
       }
 
       async function uploadThreadMediaFiles(files: Iterable<File>): Promise<void> {
+        const owner = currentParticipantId, generation = accountGeneration;
+        const admitted = () => owner === currentParticipantId && generation === accountGeneration;
         const channelId = activeChannelId;
         const rootId = activeThreadRootId;
         const state = threadComposerState(rootId);
         if (!channelId || !rootId || !state) return;
         for (const file of files) {
-
+          if (!admitted()) return;
           state.uploadCount += 1;
           syncThreadComposer();
           const form = new FormData();
@@ -1259,21 +1354,23 @@
           const filename = file.name || "bilete";
           setThreadUploadStatus(`Gjer klar ${filename} …`, "progress", rootId);
           try {
-            let response = await postMediaFile(channelId, file, filename, (message, kind) => setThreadUploadStatus(message, kind, rootId));
+            let response = await postMediaFile(channelId, file, filename, (message, kind) => { if (admitted()) setThreadUploadStatus(message, kind, rootId); });
             if (response.status === 401) throw new Error("Økta kunne ikkje fornyast. Logg inn på nytt.");
             if (!response.ok) throw new Error(await uploadFailureMessage(response, filename));
             const media = mediaFromUpload(await response.json());
+            if (!admitted()) return;
             if (media === null) throw new Error("Serveren svarte med ugyldige mediedata.");
             // The upload belongs to the channel and root that were active when it started.
             state.media.push({ ...media, channel_id: channelId, parent_message_id: rootId });
             reportClientEvent("upload_succeeded");
             setThreadUploadStatus(`${filename} er behandla og klar til å sendast.`, "success", rootId);
           } catch (error) {
+            if (!admitted()) return;
             reportClientEvent("upload_failed");
             setThreadUploadStatus(`Opplasting av ${filename} feila: ${error instanceof Error ? error.message : "Ukjend feil"}`, "error", rootId);
           } finally {
             state.uploadCount = Math.max(0, state.uploadCount - 1);
-            if (rootId === activeThreadRootId) renderThreadMediaPreviews();
+            if (admitted() && rootId === activeThreadRootId) renderThreadMediaPreviews();
           }
         }
       }
@@ -1305,7 +1402,11 @@
       requireElement("#media-lightbox-close", HTMLButtonElement).addEventListener("click", () => mediaLightbox.close());
       requireElement("#thread-close", HTMLButtonElement).addEventListener("click", () => threadPanel.close());
       function closeThreadState(): void {
+        pendingThreadRevealMessageId = null;
         if (!activeThreadRootId) return;
+        const previousView = viewHistory.getSnapshot().target;
+        if (previousView?.kind === "conversation" && previousView.channelId === activeChannelId && previousView.threadId === activeThreadRootId)
+          rememberView({ kind: "conversation", channelId: activeChannelId! });
         persistThreadDraft();
         threadScopeGeneration += 1;
         activeThreadRootId = null;
@@ -3191,10 +3292,26 @@
 
         if (event.type === "hello") {
           const changedUser = currentParticipantId !== null && currentParticipantId !== event.payload.participant_id;
+          if (changedUser) { persistActiveDraft(); persistThreadDraft(); }
           currentParticipantId = event.payload.participant_id;
+          navigation.bindOwner(currentParticipantId);
+          syncRenderedNavigation();
+          viewHistory.bindOwner(currentParticipantId);
           if (changedUser) {
+            accountGeneration++;
+            viewFocus.clear();
+            deliveryDirectRequests.clear();
+            managementTarget = null; pendingViewTarget = null; pendingMessageLink = null;
+            pendingThreadRevealMessageId = null; developmentThreadLoad = null;
+            pendingMedia = []; channelUploads.clear();
+            composerScopeGeneration++; threadScopeGeneration++;
+            channelComposer.draft = ""; threadComposerStates.clear();
+            knownChannels = []; knownCircles.clear(); knownUsers = [];
+            knownCircleUsers.clear(); knownChannelUsers.clear();
+            timeline.length = 0; threadReplies.clear(); threadRoots.clear(); threadSummaries.clear(); activeThreadRootId = null;
             shares.clear();
             pendingMessages.clear(); uncertainMessages.clear(); pendingThreadReplies.clear(); uncertainThreadReplies.clear(); retriedUncertainRequests.clear();
+            sendCommand("list_my_channels"); sendCommand("list_my_circles"); sendCommand("list_users");
           }
           durableJournalReady = durableOutbox.setUser(currentParticipantId).then(async entries => {
             await shares.refresh(); return entries;
@@ -3476,7 +3593,7 @@
           copyInvitation.hidden = true;
           const cleanUrl = new URL(window.location.href);
           cleanUrl.searchParams.delete("invite");
-          window.history.replaceState({}, "", cleanUrl);
+          window.history.replaceState(window.history.state, "", cleanUrl);
           sendCommand("list_my_circles");
           sendCommand("list_my_channels");
           return;
@@ -3501,6 +3618,14 @@
           const invited = knownChannels.find((channel) => channel.id === pendingInvitationChannel);
           const next = invited || current || restored || requested || knownChannels[0];
           if (invited) pendingInvitationChannel = null;
+          if (pendingViewTarget && !invited) {
+            const target = pendingViewTarget; pendingViewTarget = null;
+            // Settings/inbox URLs may still retain a conversation underneath.
+            if (target.kind === "management" && next) quietlyNavigate(() => selectChannel(next));
+            const resumed = viewHistory.getSnapshot().target !== null && viewHistory.getSnapshot().positions.length > 0;
+            viewHistory.navigate(target, "replace"); applyView(target, resumed);
+            return;
+          }
           if (next && next.id !== activeChannelId) selectChannel(next);
           return;
         }
@@ -3580,7 +3705,9 @@
             directMessageStatus.textContent = "";
             directMessageDialog.close();
           }
-          selectChannel(channel);
+          // Opening a delivery channel for an invitation is not user navigation.
+          const deliveryOnly = event.request_id ? deliveryDirectRequests.delete(event.request_id) : false;
+          if (!directInvitationMessage && !deliveryOnly) selectChannel(channel);
           if (event.type === "direct_channel_opened" && directInvitationMessage) {
             const messageRequestId = sendCommand("send_message", { channel_id: channel.id, body: directInvitationMessage });
             if (directCircleInvitation) {
@@ -4448,6 +4575,8 @@
       }
 
       function showInbox(kind: "unread" | "mentions" | "tasks"): void {
+        if (activeInboxKind !== kind) rememberView({ kind: "inbox", inbox: kind });
+        persistActiveDraft(); persistThreadDraft();
         const subscribedChannelId = connectionSupervisor.takeSubscribedChannel();
         if (subscribedChannelId) {
           sendCommand("unsubscribe_channel", {
@@ -4630,6 +4759,11 @@
       function selectChannel(channel: Channel): void {
         if (!channel) return;
         if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;
+        if (!pendingViewTarget) rememberView({ kind: "conversation", channelId: channel.id,
+          ...(pendingMessageLink?.channelId === channel.id ? { messageId: pendingMessageLink.messageId,
+            ...(pendingMessageLink.sequence ? { sequence: pendingMessageLink.sequence } : {}),
+            ...(pendingMessageLink.threadId ? { threadId: pendingMessageLink.threadId } : {}) } : {}) },
+          managementTarget?.kind === "community" && ["people", "create-channel"].includes(managementTarget.destination.kind) ? "replace" : "push");
         if (pendingMessageLink && pendingMessageLink.channelId !== channel.id) pendingMessageLink = null;
         messageLinkHistoryRequestId = null;
         composerScopeGeneration += 1;
@@ -5051,6 +5185,8 @@
       function navigateToMessage(link: MessageLink): void {
         const channel = knownChannels.find(item => item.id === link.channelId);
         if (!channel) return;
+        rememberView({ kind: "conversation", channelId: link.channelId, messageId: link.messageId,
+          ...(link.sequence ? { sequence: link.sequence } : {}), ...(link.threadId ? { threadId: link.threadId } : {}) });
         pendingMessageLink = link;
         messageLinkHistoryRequestId = null;
         messageLinkSearchPages = 0;
@@ -5071,7 +5207,7 @@
         if (threadId) {
           pendingMessageLink = null;
           pendingThreadRevealMessageId = link.messageId;
-          openThread(threadId);
+          quietlyNavigate(() => openThread(threadId));
           return true;
         }
         if (root?.type === "message") {
@@ -5105,6 +5241,7 @@
       }
 
       function openThreadState(messageId: string): void {
+        if (activeChannelId && activeThreadRootId !== messageId) rememberView({ kind: "conversation", channelId: activeChannelId, threadId: messageId });
         persistThreadDraft();
         threadScopeGeneration += 1;
         const wasKnown = threadComposerStates.has(messageId);
@@ -6024,10 +6161,7 @@
             advanced: createAdvancedHost({
               agents: agentsApi, integrations: integrationsApi, processes: processesApi,
               channels: () => knownChannels, circles: () => knownCircles,
-              capabilities: () => ({
-                agent: !createAgentAccessButton.closest<HTMLElement>(".agent-access")?.hidden,
-                heart: !processTitle.closest<HTMLElement>(".advanced-tools")?.hidden
-              })
+              capabilities: () => availableClientFeatures
             }),
             imageGeneration,
             chatAgents: circleChatAgentsApi,
@@ -6035,6 +6169,25 @@
             processPilot: processPilotApi,
             workItems: workItemsApi,
             appUpdate,
+            viewHistory,
+            managementTarget: () => managementTarget,
+            navigateView,
+            openRecentView: target => {
+              viewHistory.capture(captureViewPositions());
+              viewHistory.openRecent(target); applyView(target, true);
+            },
+            backFromManagement,
+            navigationNotice: () => navigationNotice,
+            recoverLegacyDraft: () => {
+              if (activeChannelId && !(activeThreadRootId ? threadComposerState()?.draft : channelComposer.draft) && window.confirm("Denne nettlesaren har eit eldre utkast utan kontomerking. Det kan tilhøyre ein annan konto. Vil du hente det til denne kontoen?")) {
+                const rootId = activeThreadRootId;
+                navigation.recoverLegacyDraft(activeChannelId, rootId);
+                if (rootId) { const state = threadComposerState(rootId); if (state) state.draft = navigation.restoreThreadDraft(activeChannelId, rootId); syncThreadComposer(); }
+                else restoreActiveDraft();
+                refreshDevelopmentPreview();
+              }
+            },
+            hasLegacyDraft: () => !!activeChannelId && !(activeThreadRootId ? threadComposerState()?.draft : channelComposer.draft) && navigation.hasLegacyDraft(activeChannelId, activeThreadRootId),
             shares,
             processPilotIdentity: () => currentParticipantId ?? "",
             openImageGeneration: () => imageGeneration.open(),
@@ -6058,6 +6211,14 @@
             },
             community: createCommunityHost({
               requests: communityRequests, send: sendCommand, openDirect: openDirectChannel,
+              openDirectForDelivery: userId => {
+                const requestId = openDirectChannel(userId);
+                if (requestId) {
+                  deliveryDirectRequests.add(requestId);
+                  while (deliveryDirectRequests.size > 64) deliveryDirectRequests.delete(deliveryDirectRequests.values().next().value!);
+                }
+                return requestId;
+              },
               selfId: () => currentParticipantId, channels: () => knownChannels, circles: () => knownCircles,
               slugify, channelSlug: scopedCircleChannelSlug, invitationToken: invitationValueToToken,
               enrollment: enrollmentApi, chatAgents: circleChatAgentsApi, agentMemory: agentMemoryApi
@@ -6071,10 +6232,7 @@
             }),
             load: kind => runPreviewInboxRequest(kind === "mentions" ? "mentions_listed" : "tasks_listed",
               () => sendCommand(kind === "mentions" ? "list_mentions" : "list_tasks")),
-            openChannel: channelId => {
-              const channel = knownChannels.find(item => item.id === channelId);
-              if (channel) selectChannel(channel);
-            },
+            openChannel: channelId => navigateView({ kind: "conversation", channelId }),
             openMentionSource: mention => {
               persistActiveDraft();
               persistThreadDraft();
@@ -6096,10 +6254,7 @@
             },
             setTaskDone: (taskId, done) => runPreviewInboxRequest("task_updated",
               () => sendCommand("set_task_done", { task_id: taskId, done })),
-            managementCapabilities: () => ({
-              agent: !createAgentAccessButton.closest<HTMLElement>(".agent-access")?.hidden,
-              heart: !processTitle.closest<HTMLElement>(".advanced-tools")?.hidden
-            }),
+            managementCapabilities: () => availableClientFeatures,
             setChannelNotifications: (channelId, enabled) => { void setChannelNotifications(channelId, enabled); },
             reauthenticateNow,
             select: (channelId) => {
@@ -6220,6 +6375,7 @@
               }
             }
           });
+          captureViewPositions = preview.capturePositions;
           refreshDevelopmentPreview = preview.update;
         }).catch((error: unknown) => console.error("React-førehandsvisinga kunne ikkje opnast", error));
       }

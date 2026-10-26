@@ -1,7 +1,13 @@
 # Plan: ryddig oppsett og innstillingar i Sprøyt
 
-Dato: 26. oktober 2026. Status: forslag, utarbeidd med Astra; ikkje implementert.
+Dato: 26. oktober 2026. Status: første navigasjonsleveranse implementert; resten er planlagt.
 Grunnlag: `main` på `44bc12c9a0d000f87c82dec07a88d19b0371c9bb`.
+
+Gjennomføring er starta etter nytt oppdrag 26. oktober. Det første snittet
+utvidar navigasjonsgrunnlaget med prioriterte/samanfoldbare kretsar, eiga
+direktemeldingsflate, adresserbare sider og personleg historikk. Sjå
+[leveranse og vidare produktarbeid](product-navigation-implementation.md).
+Resten av denne planen er framleis eit målbilete, ikkje levert funksjonalitet.
 
 Astra har vurdert arkitektur og planutkast. Sluttreviewet er teke inn som
 presiseringar om omfang, prosessinnsyn og binding av pågåande operasjonar.

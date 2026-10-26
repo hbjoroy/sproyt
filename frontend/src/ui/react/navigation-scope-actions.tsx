@@ -1,14 +1,16 @@
 import { Button } from "@sproyt/ui/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ConversationSnapshot, ConversationSnapshotGroup } from "../../application/conversation-snapshot";
+import type { ManagementTarget } from "../../application/management-target";
 import { CircleChatAgentsDialog } from "./circle-chat-agents";
 import { AgentMemoryDialog } from "./agent-memory";
 import { PreviewCommunity, type CommunityDestination, type CommunityHost } from "./preview-community";
 
 /** Navigation opens existing host-owned flows; it never mutates on mount. */
-export function NavigationScopeActions({ group, snapshot, host, onSelect }: {
+export function NavigationScopeActions({ group, snapshot, host, onSelect, onNavigate }: {
   group: ConversationSnapshotGroup; snapshot: ConversationSnapshot; host: CommunityHost;
   onSelect(channelId: string): void;
+  onNavigate?: (page: ManagementTarget) => void;
 }) {
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [memoryOwner, setMemoryOwner] = useState<string>();
@@ -58,7 +60,7 @@ export function NavigationScopeActions({ group, snapshot, host, onSelect }: {
       event.currentTarget.focus({ preventScroll: true });
       panel.current?.hidePopover();
       trigger.current?.focus({ preventScroll: true });
-      setDestination(target);
+      if (onNavigate) onNavigate({ kind: "community", destination: target }); else setDestination(target);
     }}><span className="sp-scope-menu-symbol" aria-hidden="true">{symbol}</span><span>{visibleLabel}</span></Button>;
   return <>
     <div className="sp-scope-actions">
@@ -71,9 +73,9 @@ export function NavigationScopeActions({ group, snapshot, host, onSelect }: {
       {circle && action(`Medlemmer og roller i ${group.name}`, {kind:"circle-members",circleId:circle.id}, "♙", "Medlemmer og roller")}
       <div className="sp-scope-menu-agent-actions">
       {circle && ["owner","moderator"].includes(circle.role) && host.chatAgents && <Button className="sp-scope-menu-action" variant="quiet" aria-label={`Agentar i ${group.name}`}
-        onClick={()=>{panel.current?.hidePopover();trigger.current?.focus({preventScroll:true});setAgentsOpen(true);}}><span className="sp-scope-menu-symbol" aria-hidden="true">⚙</span><span>Agentar</span></Button>}
+        onClick={()=>{panel.current?.hidePopover();trigger.current?.focus({preventScroll:true});if (onNavigate) onNavigate({ kind: "chat-agents", circleId: circle.id }); else setAgentsOpen(true);}}><span className="sp-scope-menu-symbol" aria-hidden="true">⚙</span><span>Agentar</span></Button>}
       {circle && host.agentMemory && host.selfId() && <Button className="sp-scope-menu-action" variant="quiet" aria-label={`Mitt agentminne i ${group.name}`}
-        onClick={() => { panel.current?.hidePopover(); trigger.current?.focus({ preventScroll: true }); setMemoryOwner(host.selfId() ?? undefined); }}>
+        onClick={() => { panel.current?.hidePopover(); trigger.current?.focus({ preventScroll: true }); if (onNavigate) onNavigate({ kind: "memory", circleId: circle.id }); else setMemoryOwner(host.selfId() ?? undefined); }}>
         <span className="sp-scope-menu-symbol" aria-hidden="true">◇</span><span>Mitt minne</span></Button>}
       </div>
       {circle?.role === "owner" && action(`Endre namn på ${group.name}`, { kind: "rename-circle", circleId: circle.id }, <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m4 16 11-11 4 4-11 11-5 1 1-5ZM13 7l4 4" /></svg>, "Endre namn")}

@@ -46,21 +46,25 @@ test("React draft state and sends survive poisoned hidden controls, channel chan
   await expect(composer).toHaveValue("");
   await composer.fill("kanalutkast utan skjult felt");
 
-  if (!await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).isVisible()) {
+  if (!await preview.getByRole("button", { name: "Innstillingar", exact: true }).isVisible()) {
     await preview.getByRole("button", { name: "Meny", exact: true }).click();
   }
-  await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
-  await preview.getByRole("dialog", { name: "Meny og innstillingar" }).getByRole("button", { name: "Kanalar i Felles", exact: true }).click();
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await preview.getByRole("dialog", { name: "Innstillingar" }).getByRole("button", { name: "Kanalar i Felles", exact: true }).click();
   const channels = preview.getByRole("dialog", { name: "Kanalar i Felles" });
   const channelName = `Modellkanal ${Date.now()}`;
-  await channels.getByLabel("Kanalnamn").fill(channelName);
-  await channels.getByLabel("Kanaltype").selectOption("public");
-  await channels.getByRole("button", { name: "Opprett kanal" }).click();
+  await channels.getByRole("button", { name: "Ny kanal i Felles", exact: true }).click();
+  const create = preview.getByRole("dialog", { name: "Ny kanal i Felles", exact: true });
+  await create.getByLabel("Kanalnamn").fill(channelName);
+  await create.getByLabel("Kanaltype").selectOption("public");
+  await create.getByRole("button", { name: "Opprett kanal" }).click();
   await expect(channels).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(composer).toHaveValue("");
   await composer.fill("anna kanalutkast");
-  await preview.getByRole("button", { name: /^# general/i }).click();
+  const shared = preview.locator('[data-conversation-group="scope:shared"]');
+  if (await shared.locator('.sp-product-nav-disclosure').getAttribute('aria-expanded') === 'false') await shared.locator('.sp-product-nav-disclosure').click();
+  await shared.getByRole("button", { name: /^# general/i }).click();
   await expect(composer).toHaveValue("kanalutkast utan skjult felt");
   await root.getByRole("button", { name: "Svar i tråd" }).click();
   const reply = preview.locator(".sp-thread-pane").getByRole("textbox", { name: "Svar i tråden" });
