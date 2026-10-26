@@ -8,7 +8,9 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Media.Core;
 using Windows.Media.Playback;
+using Windows.Graphics.Imaging;
 using Windows.Storage;
+using Windows.Storage.Streams;
 using Launcher = Windows.System.Launcher;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -16,6 +18,23 @@ namespace Sproyt.WindowsProbe;
 
 internal static class NativeMessageView
 {
+    internal static async Task<(BitmapImage Bitmap, double AspectRatio)> DecodeBitmapAsync(IRandomAccessStream stream, int maximumEdge, CancellationToken cancellation)
+    {
+        var decoder = await BitmapDecoder.CreateAsync(stream).AsTask(cancellation);
+        uint width = decoder.OrientedPixelWidth, height = decoder.OrientedPixelHeight;
+        if (width == 0 || height == 0) throw new InvalidDataException("Biletet manglar gyldige mål.");
+        double scale = Math.Min(1, maximumEdge / (double)Math.Max(width, height));
+        // Both decode dimensions must follow the source ratio. A square decode
+        // size stretches the pixels before Image.Stretch can preserve anything.
+        var bitmap = new BitmapImage
+        {
+            DecodePixelWidth = Math.Max(1, (int)Math.Round(width * scale)),
+            DecodePixelHeight = Math.Max(1, (int)Math.Round(height * scale))
+        };
+        stream.Seek(0);
+        await bitmap.SetSourceAsync(stream).AsTask(cancellation);
+        return (bitmap, width / (double)height);
+    }
     internal static Uri MessageLink(NativeMessage message)
     {
         if (!Guid.TryParseExact(message.ChannelId, "D", out _) || !Guid.TryParseExact(message.Id, "D", out _))
@@ -55,7 +74,7 @@ internal sealed class NativeMediaComponent : Component<NativeMediaProps>
         .OnMount(element =>
         {
             if (element is not Border host) return;
-            _presenter = new(Props, host.DispatcherQueue);
+            _presenter = new(Props, host);
             host.Child = _presenter.Root;
         })
         .OnUnmount(_ => { _presenter?.Dispose(); _presenter = null; })
@@ -67,10 +86,12 @@ internal sealed class NativeMediaComponent : Component<NativeMediaProps>
 internal sealed class NativeMediaPresenter : IDisposable
 {
     private readonly NativeMediaProps _props;
+    private readonly Border _host;
     private readonly DispatcherQueue _dispatcher;
     private readonly CancellationTokenSource _life = new();
-    // Keep row geometry when a cached/offscreen bitmap is released.
-    private readonly Microsoft.UI.Xaml.Controls.Image _image = new() { Height = 220, MaxWidth = 640, Stretch = Stretch.Uniform };
+    // Reserve the learned aspect ratio even after releasing an offscreen bitmap.
+    private double _aspectRatio = 1;
+    private readonly Microsoft.UI.Xaml.Controls.Image _image = new() { Width = 320, Height = 320, Stretch = Stretch.Uniform };
     private readonly Microsoft.UI.Xaml.Controls.TextBlock _status;
     private readonly Microsoft.UI.Xaml.Controls.Button _open;
     private readonly Microsoft.UI.Xaml.Controls.Button _load;
@@ -81,11 +102,11 @@ internal sealed class NativeMediaPresenter : IDisposable
     private MediaPlayer? _player;
     private bool _disposed, _opening, _loading, _visible, _waitingForCapacity;
     internal StackPanel Root { get; }
-    internal NativeMediaPresenter(NativeMediaProps props, DispatcherQueue dispatcher)
+    internal NativeMediaPresenter(NativeMediaProps props, Border host)
     {
-        _props = props; _dispatcher = dispatcher;
+        _props = props; _host = host; _dispatcher = host.DispatcherQueue;
         AutomationProperties.SetAutomationId(_image, "native-image-" + props.Part.MediaId);
-        Root = new StackPanel { Spacing = 8, MaxWidth = 640, HorizontalAlignment = HorizontalAlignment.Left };
+        Root = new StackPanel { Spacing = 8, MaxWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetAutomationId(Root, "native-media-" + props.Part.MediaId);
         bool video = props.Part.ContentType!.StartsWith("video/", StringComparison.Ordinal);
         _status = new() { FontSize = 13, Foreground = props.Palette.Muted, TextWrapping = TextWrapping.Wrap };
@@ -123,6 +144,8 @@ internal sealed class NativeMediaPresenter : IDisposable
         }
         if (!video)
         {
+            host.SizeChanged += HostSizeChanged;
+            SizePreview();
             Root.EffectiveViewportChanged += ViewportChanged;
             Root.Unloaded += Unloaded;
         }
@@ -131,6 +154,13 @@ internal sealed class NativeMediaPresenter : IDisposable
     private void Status(string text) { _status.Text = text; _status.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible; }
     private bool Post(Action action) => !_disposed && _dispatcher.TryEnqueue(() => { if (!_disposed) action(); });
     private void ReleasePreview() { _image.Source = null; Interlocked.Exchange(ref _previewLease, null)?.Dispose(); }
+    private void HostSizeChanged(object sender, SizeChangedEventArgs args) => SizePreview();
+    private void SizePreview()
+    {
+        if (_host.ActualWidth <= 0) return;
+        _image.Width = Math.Min(320, _host.ActualWidth);
+        _image.Height = _image.Width / _aspectRatio;
+    }
     private void ViewportChanged(FrameworkElement sender, EffectiveViewportChangedEventArgs args)
     {
         var viewport = args.EffectiveViewport;
@@ -188,11 +218,11 @@ internal sealed class NativeMediaPresenter : IDisposable
                 {
                     if (!PreviewCurrent(attempt) || !lease.BeginDecode()) return;
                     using var data = new MemoryStream(lease.Bytes); using var stream = data.AsRandomAccessStream();
-                    var bitmap = new BitmapImage { DecodePixelWidth = 720, DecodePixelHeight = 720 };
-                    await bitmap.SetSourceAsync(stream).AsTask(attempt.Token);
+                    var decoded = await NativeMessageView.DecodeBitmapAsync(stream, 720, attempt.Token);
                     if (PreviewCurrent(attempt))
                     {
-                        _previewLease = lease; retained = true; _image.Source = bitmap;
+                        _previewLease = lease; retained = true;
+                        _aspectRatio = decoded.AspectRatio; SizePreview(); _image.Source = decoded.Bitmap;
                         Status(""); _load.Visibility = Visibility.Collapsed; _web.Visibility = Visibility.Collapsed;
                     }
                 }
@@ -239,9 +269,8 @@ internal sealed class NativeMediaPresenter : IDisposable
                 }
                 else
                 {
-                    var bitmap = new BitmapImage { DecodePixelWidth = 1600, DecodePixelHeight = 1600 };
-                    await bitmap.SetSourceAsync(stream);
-                    content = new ScrollViewer { Content = new Microsoft.UI.Xaml.Controls.Image { Source = bitmap, Stretch = Stretch.Uniform, MaxWidth = 900, MaxHeight = 650 }, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 1, MaxZoomFactor = 5, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+                    var decoded = await NativeMessageView.DecodeBitmapAsync(stream, 1600, _life.Token);
+                    content = new ScrollViewer { Content = new Microsoft.UI.Xaml.Controls.Image { Source = decoded.Bitmap, Stretch = Stretch.Uniform, MaxWidth = 900, MaxHeight = 650 }, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 1, MaxZoomFactor = 5, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
                 }
                 if (!Current) return;
                 _dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = _props.Part.Text, Content = content, CloseButtonText = "Lukk", FullSizeDesired = true };
@@ -264,6 +293,7 @@ internal sealed class NativeMediaPresenter : IDisposable
         if (_disposed) return;
         _disposed = true; _life.Cancel(); StopPreview(); _player?.Pause(); _dialog?.Hide();
         Root.EffectiveViewportChanged -= ViewportChanged; Root.Unloaded -= Unloaded;
+        _host.SizeChanged -= HostSizeChanged;
         if (_props.Library is not null) { _props.Library.Invalidated -= Invalidated; _props.Library.PreviewSlotAvailable -= PreviewSlotAvailable; }
     }
 }

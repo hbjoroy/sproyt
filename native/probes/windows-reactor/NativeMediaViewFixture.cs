@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Windows.Graphics.Imaging;
+using Windows.Storage.Streams;
 
 namespace Sproyt.WindowsProbe;
 
@@ -12,6 +14,18 @@ internal sealed class NativeMediaViewFixture : IDisposable
     private sealed class Handler(NativeAuthConfig config, string user) : HttpMessageHandler
     {
         private static readonly string Family = new('F', 43);
+        private static readonly byte[] Landscape = Png(2400,1200), Portrait = Png(1200,2400);
+        private static byte[] Png(uint width,uint height)
+        {
+            using var stream=new InMemoryRandomAccessStream();
+            var encoder=BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId,stream).AsTask().GetAwaiter().GetResult();
+            byte[] pixels=new byte[checked(width*height*4)];
+            for(int index=0;index<pixels.Length;index+=4)
+            {pixels[index]=90;pixels[index+1]=150;pixels[index+2]=50;pixels[index+3]=255;}
+            encoder.SetPixelData(BitmapPixelFormat.Bgra8,BitmapAlphaMode.Straight,width,height,96,96,pixels);
+            encoder.FlushAsync().AsTask().GetAwaiter().GetResult(); stream.Seek(0);
+            using var input=stream.AsStreamForRead(); using var output=new MemoryStream(); input.CopyTo(output); return output.ToArray();
+        }
         internal object Grant => new { scope=config.Scope, environment=config.Environment, instance_id=config.Instance,
             user_id=user, family=Family, generation=0, epoch=0, display_name="UI-prøve",
             access_token="sproyt-access."+new string('A',43), refresh_token="sproyt-refresh."+new string('R',43),
@@ -25,10 +39,12 @@ internal sealed class NativeMediaViewFixture : IDisposable
                 case "/api/v1/native/info": payload=new {scope=config.Scope,environment=config.Environment,instance_id=config.Instance,issuer=config.Issuer}; break;
                 case "/api/v1/native/session": payload=new {user_id=user,family=Family,generation=0,epoch=0}; break;
                 case var path when path == "/api/v1/media/"+Id || path == "/api/v1/media/"+Id+"/preview" ||
-                    Enumerable.Range(0,24).Any(index => path == "/api/v1/media/"+GalleryId(index)+"/preview"):
+                    Enumerable.Range(0,24).Any(index => path == "/api/v1/media/"+GalleryId(index) || path == "/api/v1/media/"+GalleryId(index)+"/preview"):
                     if(request.Headers.Authorization?.Parameter!="sproyt-access."+new string('A',43)) throw new InvalidOperationException("Fixture media is not authorized.");
-                    var image=new ByteArrayContent(Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="));
-                    image.Headers.ContentType=new("image/gif");
+                    bool gallery=path.Contains("c8940bd1-9acf-4108-8e8b-000000",StringComparison.Ordinal);
+                    bool portrait=gallery && Enumerable.Range(0,12).Any(index=>path.Contains(GalleryId(index*2+1),StringComparison.Ordinal));
+                    var image=new ByteArrayContent(gallery ? portrait ? Portrait : Landscape : Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="));
+                    image.Headers.ContentType=new(gallery ? "image/png" : "image/gif");
                     return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=image});
                 default: throw new InvalidOperationException("Unexpected fixture route.");
             }

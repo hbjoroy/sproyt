@@ -3,6 +3,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Storage;
 using System.Text.Json;
 
 namespace Sproyt.WindowsProbe;
@@ -35,7 +37,7 @@ internal sealed class LiveUiFixture : ILiveApplication
         _messages.Clear();
         for (int index=0;index<24;index++)
             _messages.Add(new(Guid.NewGuid().ToString(),_selected,User,"UI-prøve",
-                "[[media:"+NativeMediaViewFixture.GalleryId(index)+"|image/gif|gallery-"+index+".gif]]",DateTimeOffset.Now,(ulong)index+1));
+                "[[media:"+NativeMediaViewFixture.GalleryId(index)+"|image/png|gallery-"+index+".png]]",DateTimeOffset.Now,(ulong)index+1));
         Changed?.Invoke();
     }
     public Task LogoutAsync() => Task.CompletedTask;
@@ -126,9 +128,12 @@ internal static class LiveUiProbe
             });
             root.UpdateLayout();
             var lastPreview=Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23));
+            CheckImage(lastPreview,.5,320);
             double height=lastPreview.ActualHeight;
             history.ChangeView(null,0,null,true);
             await Until(() => Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(0)).Source is not null);
+            root.UpdateLayout();
+            CheckImage(Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(0)),2,320);
             await Until(() => PreviewReleased(root,NativeMediaViewFixture.GalleryId(23)));
             root.UpdateLayout();
             // ItemsRepeater may refine its total extent as different rows are
@@ -141,11 +146,26 @@ internal static class LiveUiProbe
             history.ChangeView(null,history.ScrollableHeight,null,true);
             await Until(() => Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)).Source is not null);
             await Until(() => PreviewReleased(root,NativeMediaViewFixture.GalleryId(0)));
+            // The original viewer uses the same aspect-preserving decode path,
+            // with a larger pixel budget, including for portrait photographs.
+            foreach(int index in new[]{0,23})
+            {
+                using var original=await Program.Live.Media!.OriginalAsync(NativeMediaViewFixture.GalleryId(index),Program.Live.Media.Capture(),null,CancellationToken.None);
+                var file=await StorageFile.GetFileFromPathAsync(original.Path); using var stream=await file.OpenReadAsync();
+                var decoded=await NativeMessageView.DecodeBitmapAsync(stream,1600,CancellationToken.None);
+                double ratio=index==0 ? 2 : .5;
+                if(Math.Abs(decoded.Bitmap.DecodePixelWidth/(double)decoded.Bitmap.DecodePixelHeight-ratio)>.01 ||
+                    decoded.Bitmap.DecodePixelWidth>1600 || decoded.Bitmap.DecodePixelHeight>1600)
+                    throw new InvalidOperationException("Original decode changed image proportions or exceeded its pixel budget.");
+            }
             window.SetSize(360,720);
             await Until(() => root.ActualWidth < 800 && Find<TextBox>(root,"live-composer").ActualWidth > 200);
+            await Until(() => Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)).Source is not null);
+            root.UpdateLayout();
+            CheckImage(Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)),.5,Math.Min(320,root.ActualWidth-32));
             await Program.PrepareShutdownAsync();
             File.WriteAllText(Path.Combine(folder,"live-ui-result.json"),JsonSerializer.Serialize(new
-            {passed=true,scope="live_chat_view_fixture",actualWinUi=true,channelDrafts=true,sendBinding=true,compactComposer=true,circleGroups=true,decodedMediaPreview=true,boundedPreviewLeases=true,viewportPreviewGallery=24,viewportRelease=true,stablePreviewGeometry=true,rapidPreviewReentry=true,macroCard=true,temporaryOriginalCleanup=true,
+            {passed=true,scope="live_chat_view_fixture",actualWinUi=true,channelDrafts=true,sendBinding=true,compactComposer=true,circleGroups=true,decodedMediaPreview=true,boundedPreviewLeases=true,viewportPreviewGallery=24,viewportRelease=true,stablePreviewGeometry=true,rapidPreviewReentry=true,portraitAndLandscape=true,originalAspectRatio=true,responsivePreviewWidth=true,macroCard=true,temporaryOriginalCleanup=true,
                 productionAuthentication=false,actualTransport=false,storageAcceptance=false}));
             Program.CloseAfterShutdown(window);
         }
@@ -176,5 +196,13 @@ internal static class LiveUiProbe
     {
         try { return Find<Image>(root,"native-image-"+id).Source is null; }
         catch(KeyNotFoundException) { return true; } // Fully recycled is also released.
+    }
+    private static void CheckImage(Image image,double ratio,double maximumWidth)
+    {
+        if(image.Source is not BitmapImage bitmap || Math.Abs(bitmap.DecodePixelWidth/(double)bitmap.DecodePixelHeight-ratio)>.01 ||
+            bitmap.DecodePixelWidth>720 || bitmap.DecodePixelHeight>720 || Math.Abs(image.ActualWidth/image.ActualHeight-ratio)>.01 ||
+            image.ActualWidth>maximumWidth+1 || image.ActualWidth<100)
+            throw new InvalidOperationException($"Preview proportions/bounds failed: pixels {bitmapSize(image.Source)}, view {image.ActualWidth}x{image.ActualHeight}, ratio {ratio}, max {maximumWidth}.");
+        static string bitmapSize(ImageSource? source)=>source is BitmapImage value ? $"{value.PixelWidth}x{value.PixelHeight}" : "none";
     }
 }
