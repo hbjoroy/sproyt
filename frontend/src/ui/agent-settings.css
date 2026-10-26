@@ -1,0 +1,27 @@
+.sp-theme .sp-settings-section { display: grid; gap: 8px; min-width: 0; margin-block: 16px; }
+.sp-theme .sp-settings-section h3 { margin: 0; font-size: 1rem; line-height: 1.3; }
+.sp-theme .sp-settings-section-description, .sp-theme .sp-settings-context { margin: 0; color: var(--sp-muted); font-size: .875rem; line-height: 1.4; overflow-wrap: anywhere; }
+.sp-theme .sp-settings-choice.sp-button { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 44px; padding: 12px 0; border: 0; border-bottom: 1px solid var(--sp-line); border-radius: 0; text-align: left; font-size: 1rem; }
+.sp-theme .sp-settings-choice-copy { display: grid; flex: 1 1 auto; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.sp-theme .sp-settings-choice-label { font-weight: 500; }
+.sp-theme .sp-settings-choice-detail { color: var(--sp-muted); font-size: .875rem; line-height: 1.4; font-weight: 400; }
+.sp-theme .sp-settings-choice-extra { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.sp-theme .sp-settings-choice-arrow { flex: none; font-size: 1.25rem; }
+.sp-theme .sp-settings-summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; min-width: 0; padding-block: 8px; border-bottom: 1px solid var(--sp-line); overflow-wrap: anywhere; }
+.sp-theme .sp-settings-summary strong { font-weight: 500; }
+.sp-theme .sp-settings-summary[data-tone="warning"] strong { color: var(--sp-error); }
+.sp-theme .sp-agent-settings { width: 100%; max-width: 42rem; min-width: 0; }
+.sp-theme .sp-agent-detail-heading { min-width: 0; overflow-wrap: anywhere; }
+.sp-theme .sp-agent-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.sp-theme .sp-agent-overview-list, .sp-theme .sp-agent-skill-list { display: grid; gap: 0; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.sp-theme .sp-agent-editor-footer { position: sticky; bottom: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0 max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--sp-line); background: var(--sp-surface); }
+.sp-theme .sp-agent-status-explanation { margin: 0; color: var(--sp-muted); font-size: .875rem; line-height: 1.4; overflow-wrap: anywhere; }
+.sp-theme .sp-agent-activation { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.sp-theme .sp-dialog:has(.sp-agent-settings) > .sp-dialog-head > .sp-button { flex: none; width: 44px; min-width: 44px; height: 44px; padding: 0; font-size: 0; display: grid; place-items: center; }
+.sp-theme .sp-dialog:has(.sp-agent-settings) > .sp-dialog-head > .sp-button::after { content: "×"; font-size: 1.5rem; line-height: 1; }
+.sp-theme .sp-agent-editor-fields { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.sp-theme .sp-agent-channel-picker { display: grid; gap: 8px; min-width: 0; }
+.sp-theme .sp-agent-channel-picker select { min-height: 44px; width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--sp-line); background: var(--sp-surface); color: var(--sp-text); font: inherit; }
+.sp-theme .sp-agent-editor-comparison { display: grid; gap: 8px; }
+.sp-theme .sp-agent-editor-comparison dt { font-weight: 600; }
+.sp-theme .sp-agent-editor-comparison dd { display: grid; gap: 4px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

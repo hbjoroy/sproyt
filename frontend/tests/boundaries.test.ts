@@ -8,6 +8,7 @@ import "./saved-statuses.test";
 import "./chat-agent-weather.test";
 import "./chat-agent-sea-temperature.test";
 import "./chat-agent-handoff.test";
+import "./agent-settings-drafts.test";
 import "./chat-agent-images.test";
 import "./agent-memory.test";
 import "./agent-locations.test";

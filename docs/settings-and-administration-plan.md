@@ -1,6 +1,6 @@
 # Plan: ryddig oppsett og innstillingar i Sprøyt
 
-Dato: 26. oktober 2026. Status: første navigasjonsleveranse implementert; resten er planlagt.
+Dato: 26. oktober 2026. Status: første navigasjonsleveranse og agentarbeidet i S2b/S2c er implementerte; agentarbeidet er under validering og ikkje utrulla.
 Grunnlag: `main` på `44bc12c9a0d000f87c82dec07a88d19b0371c9bb`.
 
 Gjennomføring er starta etter nytt oppdrag 26. oktober. Det første snittet
@@ -110,17 +110,28 @@ gjeld. Treff og titlar må filtrerast etter faktisk innsyn; søk skal ikkje
 avsløre private kanalar eller andre sine minne. Eit søketreff opnar ei side,
 ikkje ei muterande handling.
 
-Utvid `@sproyt/ui` med mønster for innstillingsrad, gruppe, kontekstoverskrift,
-navigasjon og statusforklaring. Dokumenter desse i komponentbiblioteket før
-dei blir kopierte rundt i appen. Bevar eksisterande symbolstil, lys/mørk tema,
-44 px touchmål, tastaturfokus og lågt visuelt støynivå. Innstillingane får
-meir tekst enn meldingshandlingane, fordi omfang og konsekvens må vere klare.
+SettingsContext, SettingsSection, SettingsRow og SettingsSummary er
+appkomposisjonar av eksisterande `@sproyt/ui`, ikkje nye eksportar frå pakken.
+Dei bruker same rekkjefølgje, semantiske token, lys/mørk tema, tastaturfokus
+og minst 44 px trykkflate, med lågt visuelt støynivå.
 
 Web, Compose, SwiftUI og WinUI deler namn, bestemmingar og tilstandar. Dei
 skal bruke sine eigne navigasjons- og kontrollmønster. Dette innfører ikkje
 ein felles nettlesarflate i native eller eit nytt UI-rammeverk.
 
 ## 5. Agentoppsett som første prioriterte arbeidsflyt
+
+S2b/S2c-agentarbeidet er implementert og under validering, ikkje utrulla.
+Flyten er adresserbar frå liste til agent og vidare til éin vald del:
+Oppførsel, Minne, Bilettolking, Biletskaping, Vêr, Sjøtemperatur, Ferger,
+Samarbeid eller tilgang for vald kanal. Konto/servermerking viser eigarskap.
+Nye agentar blir oppretta avslått som standard.
+
+Agentutkast er eigarbundne i minnet, avgrensa til 24, og ikkje profilsynkroniserte.
+Back, lukking og før-unload vernar uferdige utkast. Små CAS-oppdateringar med
+revisjon bevarer uendra delar. Ved timeout krevst tilbake-lesing før ny endring;
+ved konflikt kan brukaren behalde utkastet eller velje lagra oppsett. Dette gjer
+ikkje tilsvarande arbeid for andre profil- og innstillingsskjema ferdig.
 
 Eksempel: **Paros → Agentar → Maria**. Lista viser formål og ei kort
 statusoppsummering. Detaljsida har desse delane:
@@ -137,15 +148,11 @@ Hent relevant oversikt når sida blir opna, og detaljar ved behov. Bruk
 eksisterande status og kort, avgrensa cache; ikkje nye modellkall eller
 hyppige prober berre for å vise innstillingar.
 
-Status skal skilje mellom **Avslått**, **Tilgjengeleg her**, **Ingen kanaltilgang**,
-**Manglar oppsett**, **Teneste utilgjengeleg** og **Status ukjend**. Vis primærårsak
-og relevante detaljar, til dømes «Maria er på, men har ikkje tilgang til Prat»
-med lenkje til rett tilgangsside. Ein feil i ei valfri ferdigheit må ikkje
-framstillast som total stans dersom resten kan fungere etter dagens reglar.
-
-Skil ønskt konfigurasjon, faktisk tilgang og observert tenestetilstand.
-«Tilgjengeleg» lovar ikkje at kvar kommentar utløyser eit svar; triggarreglar,
-varsam gjenkjenning og køyrereglar gjeld framleis.
+Kanalstatus forklarer konfigurasjon og tilgang for den valde kanalen, med
+relevant neste handling. Han er ikkje ein helseprobe eller garanti for svar;
+triggarreglar og køyrereglar gjeld framleis. Faktisk tenestetilstand kan
+vurderast separat etter eksisterande innsynsrettar. Ein feil i ei valfri
+ferdigheit skal ikkje framstillast som total stans dersom resten kan fungere.
 
 Private kanalar bevarer eksplisitt agentval og eksisterande innsynsgrenser.
 Ei samleoversikt skal aldri slå på tilgang som sideverknad. **Mitt agentminne**
@@ -202,8 +209,8 @@ tilsynelatande brytarar som ikkje kan påverke tenesta.
 | **S1a – navigasjonsgrunnlag** | Typa destinasjonar, eksplisitt ressursmål, éi navigasjonshistorikk og trygt konto-/rollebyte. Definer minimal capability-/feilkontrakt. | Meny og kontekstsnarveg opnar same side; ingen modalstakk eller implisitt aktiv-kanal-mål. Tilgang kan ikkje utleiast frå DOM. |
 | **S1b – personlege sider og søk** | Ny innstillingsoversikt, eksisterande profil/varsel, tydeleg lokal/servermerking og lite tilgangsfiltrert søk. Dokumenter designmønstra. | Profil, varsling og tema er lette å finne; tilbake bevarer chat og utkast. Avslag frå OS blir forklart. Ingen ny kontosynkronisering. |
 | **S2a – krets og kanal** | Flytt medlemmer, invitasjonar og kanaloppsett til faste sider. Bevar gamle inngangar som snarvegar under overgangen. | Felles, krets og kanal er eintydige; eksisterande medlems-/invitasjonsreglar og private grenser er uendra. |
-| **S2b – agentoversikt og forklaring** | Agentliste/detalj, samla konfigurasjonsstatus og same tilgangsside frå begge inngangar. | Oktett-/Paros-scenario: brukaren finn kvifor agenten ikkje svarar og får rett neste handling utan hjelp frå utviklar. |
-| **S2c – agentredigering** | Del opp oppførsel, ferdigheiter og samarbeid. Bevar revisjon, delvise oppdateringar og ukjende/gamle val. | Endring i éin del bevarer andre delar; feil, timeout, konflikt og tilbake bevarer utkast. Ingen automatisk melding eller modellkall. |
+| **S2b – agentoversikt og forklaring** | Implementert, under validering og ikkje utrulla: agentliste/detalj, konfigurasjonsstatus og same tilgangsside frå begge inngangar. | Oktett-/Paros-scenario: brukaren finn kvifor agenten ikkje svarar og får rett neste handling utan hjelp frå utviklar. |
+| **S2c – agentredigering** | Implementert, under validering og ikkje utrulla: del opp oppførsel, ferdigheiter og samarbeid. Bevar revisjon, delvise oppdateringar og ukjende/gamle val. | Endring i éin del bevarer andre delar; feil, timeout, konflikt og tilbake bevarer utkast. Ingen automatisk melding eller modellkall. |
 | **S3 – prosessar og integrasjonar** | Skil prosessoppsett frå oppstart/oppgåvearbeid. Gje ekstern agenttilgang presist namn og plass. Flytt teknisk inspeksjon til drift. | Prosess blir starta i eksplisitt vald kanal; kanalen kan berre starte konfigurerte prosessar/applikasjonar. Oppgåvene blir verande i sine kanalar. |
 | **S4 – native paritet** | Implementer først personlege innstillingar og éi representativ krets-/agentflyt i Windows; bruk same kontrakt i Android-arbeidet. | Same eigarskap og feiltilstandar med native navigasjon. Manglande native funksjon opnar presist nettmål og blir ikkje framstilt som implementert. |
 | **S5 – opprydding** | Fjern gamle opningsvegar og legacy-DOM-avhengigheiter som no er erstatta. Oppdater hjelp og paritetskart. | Kvar gammal funksjon er spora til testa ny plass; ingen ny menyparallell blir ståande. |

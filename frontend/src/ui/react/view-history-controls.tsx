@@ -22,6 +22,13 @@ export function viewTargetLabel(target: ViewTarget, snapshot: ConversationSnapsh
   if (page.kind === "circle" || page.kind === "chat-agents" || page.kind === "memory") {
     const circle = snapshot.circles.find(c => c.id === page.circleId)!;
     if (page.kind === "chat-agents" && !["owner", "moderator"].includes(circle.role)) return null;
+    if (page.kind === "chat-agents") {
+      if (page.channelId && !snapshot.channels.some(c => c.id === page.channelId && c.circle_id === page.circleId)) return null;
+      const panel = page.panel ? { overview: "Oversikt", behaviour: "Oppførsel", skills: "Ferdigheiter", memory: "Minne",
+        vision: "Bilettolking", images: "Biletskaping", weather: "Vêr", sea: "Sjøtemperatur", ferry: "Ferger",
+        handoff: "Samarbeid", channels: "Kanalar og tilgang" }[page.panel] : null;
+      return [circle.name, "Agentar", page.agentId === "new" ? "Ny agent" : page.agentId ? "Agent" : null, panel].filter(Boolean).join(" · ");
+    }
     return `${circle.name} · ${page.kind === "circle" ? "Kretsinnstillingar" : page.kind === "memory" ? "Mitt minne" : "Agentar"}`;
   }
   if (page.kind === "advanced") return "Integrasjonar";

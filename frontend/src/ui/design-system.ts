@@ -3,6 +3,7 @@ import bridgeCss from "./legacy-bridge.css";
 import reactAppCss from "./react-app.css";
 import conversationNavigationCss from "./conversation-navigation.css";
 import settingsNavigationCss from "./settings-navigation.css";
+import agentSettingsCss from "./agent-settings.css";
 
 const styleId = "sproyt-editorial-design-system";
 const themeStorageKey = "sproyt.theme.v1";
@@ -14,7 +15,7 @@ export function installSproytStyles(): void {
   if (document.getElementById(styleId)) return;
   const style = document.createElement("style");
   style.id = styleId;
-  style.textContent = `${sproytUiCss}\n${reactAppCss}\n${bridgeCss}\n${conversationNavigationCss}\n${settingsNavigationCss}`;
+  style.textContent = `${sproytUiCss}\n${reactAppCss}\n${bridgeCss}\n${conversationNavigationCss}\n${settingsNavigationCss}\n${agentSettingsCss}`;
   document.head.append(style);
 }
 
