@@ -11,6 +11,7 @@ async function accountFixture(page: Page, holdUpload: boolean) {
   let socket: WebSocketRoute;
   let started = false;
   let completed = false;
+  let latestChannelOwner = "";
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   const sends: Send[] = [];
@@ -30,7 +31,7 @@ async function accountFixture(page: Page, holdUpload: boolean) {
         case "ping": reply("pong"); break;
         case "list_users": reply("users_listed", { users: [] }); break;
         case "list_my_circles": reply("circles_listed", { circles: [] }); break;
-        case "list_my_channels": reply("channels_listed", { channels: [{ id: channelId, slug: "shared-account-channel",
+        case "list_my_channels": latestChannelOwner = identity; reply("channels_listed", { channels: [{ id: channelId, slug: "shared-account-channel",
           name: "Same kanal", kind: "public", circle_id: null, direct_user_id: null, is_direct: false,
           description: "", role: "member", last_read_sequence: 0, latest_sequence: 0 }] }); break;
         case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
@@ -69,7 +70,7 @@ async function accountFixture(page: Page, holdUpload: boolean) {
   await composer.fill("Alice sitt private utkast");
   await app.locator('.sp-channel-pane input[type="file"]').setInputFiles({ name: "alice-private.png", mimeType: "image/png", buffer: image });
   await expect.poll(() => started).toBe(true);
-  return { app, composer, sends, errors, uploads, release, completed: () => completed,
+  return { app, composer, sends, errors, uploads, release, completed: () => completed, channelOwner: () => latestChannelOwner,
     switchAccount: () => { identity = "bob"; emit("hello", { participant_id: identity }); } };
 }
 
@@ -81,6 +82,19 @@ for (const holdUpload of [false, true]) test(`${holdUpload ? "late" : "completed
     await expect.poll(fixture.completed).toBe(true);
   }
   fixture.switchAccount();
+  await expect.poll(fixture.channelOwner).toBe("bob");
+  // A new account selects its own authorized conversation; do not depend on
+  // implicitly restoring Alice's active view during asynchronous bootstrap.
+  const nav = fixture.app.getByRole("navigation", { name: "Samtalar", exact: true });
+  if (!await nav.isVisible()) {
+    const show = fixture.app.getByRole("button", { name: "Vis samtalar", exact: true });
+    if (await show.isVisible()) await show.click();
+    else await fixture.app.getByRole("button", { name: "Samtalar", exact: true }).click();
+  }
+  const shared = nav.locator('[data-conversation-group="scope:shared"]');
+  const disclosure = shared.locator(".sp-product-nav-disclosure");
+  if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
+  await shared.getByRole("button", { name: "# Same kanal", exact: true }).click();
   await expect(fixture.composer).toBeEnabled();
   await expect(fixture.composer).toHaveValue("");
   await expect(attachments).toHaveCount(0);

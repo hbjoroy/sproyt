@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createChannelViaUi } from "./support/channel-setup";
 
 async function photo(page: Page, name = "landskap.png") {
   const data = await page.evaluate(() => {
@@ -170,26 +171,12 @@ test("image generation preserves uploaded references and does not publish", asyn
 });
 
 test("a multi-file upload keeps its original channel after navigation", async ({ page }) => {
-  await page.addInitScript(() => {
-    const NativeWebSocket = window.WebSocket;
-    window.WebSocket = class extends NativeWebSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols);
-        (window as unknown as { mediaTestSocket: WebSocket }).mediaTestSocket = this;
-      }
-    };
-  });
   await page.goto("/?participant=preview-media-channel&ui=react");
   const preview = page.locator("#sproyt-react-preview");
   const input = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled({ timeout: 15000 });
   const name = `Media-${Date.now()}`;
-  await page.evaluate(channelName => {
-    (window as unknown as { mediaTestSocket: WebSocket }).mediaTestSocket.send(JSON.stringify({
-      protocol: "sproyt.chat.v1", type: "create_channel", request_id: crypto.randomUUID(),
-      payload: { slug: channelName.toLowerCase(), name: channelName, kind: "public" }
-    }));
-  }, name);
+  await createChannelViaUi(page, name);
   await expect(preview.getByRole("heading", { name: `# ${name}`, exact: true })).toBeVisible();
   await preview.getByRole("button", { name: /# general/i }).click();
   await expect(input).toBeEnabled();

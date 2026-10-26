@@ -296,6 +296,18 @@ test("the channel-menu entry fences pending reads across two administrators and 
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
   const access = preview.getByRole("dialog", { name: "Agentar i Privat arbeid", exact: true });
   const openAccess = async () => {
+    if (!await preview.getByRole("textbox", { name: "Skriv melding", exact: true }).isVisible()) {
+      const nav = preview.getByRole("navigation", { name: "Samtalar", exact: true });
+      if (!await nav.isVisible()) {
+        const show = preview.getByRole("button", { name: "Vis samtalar", exact: true });
+        if (await show.isVisible()) await show.click();
+        else await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+      }
+      const group = nav.locator(`[data-conversation-group="circle:${circle}"]`);
+      const disclosure = group.locator(".sp-product-nav-disclosure");
+      if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
+      await group.getByRole("button", { name: "# Privat arbeid", exact: true }).click();
+    }
     const menu = preview.getByRole("button", { name: "Meny", exact: true });
     if (await menu.getAttribute("aria-expanded") !== "true") await menu.click();
     await preview.locator(".sp-mobile-channel-menu").getByRole("button", { name: "Kanalval", exact: true }).click();

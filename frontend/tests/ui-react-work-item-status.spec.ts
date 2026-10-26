@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createChannelViaUi } from "./support/channel-setup";
 
 const reviewId = "c63ac052-a05a-4b5d-bfff-04429338df90";
 const statusTaskId = "c63ac052-a05a-4b5d-bfff-04429338df91";
@@ -7,14 +8,6 @@ const hiddenItemId = "c63ac052-a05a-4b5d-bfff-04429338df93";
 
 test("mobile status tasks preserve a retry and public cards hide private data", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => {
-    const NativeSocket = WebSocket;
-    window.WebSocket = class extends NativeSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols); (window as unknown as { testSocket: WebSocket }).testSocket = this;
-      }
-    };
-  });
   const statusBodies: Record<string, unknown>[] = [];
   const startBodies: Record<string, unknown>[] = [];
   let fail = true;
@@ -56,10 +49,7 @@ test("mobile status tasks preserve a retry and public cards hide private data", 
   const input = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled({ timeout: 15000 });
   const name = `Status-${Date.now()}`;
-  await page.evaluate(name => (window as unknown as { testSocket: WebSocket }).testSocket.send(JSON.stringify({
-    protocol: "sproyt.chat.v1", type: "create_channel", request_id: crypto.randomUUID(),
-    payload: { name, slug: name.toLowerCase(), kind: "public" }
-  })), name);
+  await createChannelViaUi(page, name);
   await expect(preview.getByRole("region", { name: `# ${name}`, exact: true })).toBeVisible();
   for (const marker of [
     `[[work-item-task:${reviewId}]]`, `[[work-item-task:${statusTaskId}]]`,

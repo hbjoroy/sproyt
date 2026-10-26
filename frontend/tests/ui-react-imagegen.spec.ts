@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createChannelViaUi } from "./support/channel-setup";
 
 const mediaId = "c63ac052-a05a-4b5d-bfff-04429338df90";
 type Job = { id: string; channel_id: string; prompt: string; state: string; [key: string]: unknown };
@@ -78,14 +79,6 @@ test("private image review survives reload and attaches without publishing; deta
 });
 
 test("decline publishes nothing and a delayed accept cannot attach to a different channel", async ({ page }) => {
-  await page.addInitScript(() => {
-    const NativeSocket = WebSocket;
-    window.WebSocket = class extends NativeSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols); (window as unknown as { testSocket: WebSocket }).testSocket = this;
-      }
-    };
-  });
   const state = await fixture(page);
   await page.goto("/?participant=react-image-origin&ui=react");
   const preview = page.locator("#sproyt-react-preview");
@@ -93,7 +86,7 @@ test("decline publishes nothing and a delayed accept cannot attach to a differen
   const inbox = preview.getByRole("region", { name: "Private biletmeldingar" });
   await expect(input).toBeEnabled({ timeout: 15000 });
   const name = `Image-${Date.now()}`;
-  await page.evaluate(name => (window as unknown as { testSocket: WebSocket }).testSocket.send(JSON.stringify({ protocol: "sproyt.chat.v1", type: "create_channel", request_id: crypto.randomUUID(), payload: { name, slug: name.toLowerCase(), kind: "public" } })), name);
+  await createChannelViaUi(page, name);
   await expect(preview.getByRole("heading", { name: `# ${name}`, exact: true })).toBeVisible();
   await input.fill('/imagegen "Decline me"'); await input.press("Enter");
   await inbox.getByRole("button", { name: "Avslå", exact: true }).click();

@@ -518,7 +518,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       </Status>}
       {host.navigationNotice() && <Status tone="error">{host.navigationNotice()}</Status>}
       {host.hasLegacyDraft() && <Status>Eit eldre lokalt utkast manglar kontomerking. <Button onClick={host.recoverLegacyDraft}>Hent eldre utkast</Button></Status>}
-      <HeaderActions primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
+      <HeaderActions navigationKey={historyState.entryId} primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
         onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
         <PreviewInboxes key={owner ?? "signed-out"} state={host.inboxState()} host={host}
           activeKind={historyState.target?.kind === "inbox" ? historyState.target.inbox : null}

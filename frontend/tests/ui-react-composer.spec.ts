@@ -167,7 +167,7 @@ test("DM expansion requires confirmation and preserves the original private draf
   await expect.poll(() => expansions.length).toBe(1);
   await expect(input).toHaveValue("");
   await expect(preview).toBeVisible();
-  const original = preview.getByRole("button", { name: "mention-dm-peer · @mention-dm-peer", exact: true });
+  const original = preview.getByRole("button", { name: "mention-dm-peer", exact: true });
   await original.click();
   await expect(input).toHaveValue("privat utkast @mention-new");
 });

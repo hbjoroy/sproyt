@@ -1,17 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { createChannelViaUi } from "./support/channel-setup";
 
 const ids = ["c63ac052-a05a-4b5d-bfff-04429338df90", "c63ac052-a05a-4b5d-bfff-04429338df91", "c63ac052-a05a-4b5d-bfff-04429338df92"];
 
 test("compact information tasks preserve drafts and distinguish requester from reviewer controls", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => {
-    const NativeSocket = WebSocket;
-    window.WebSocket = class extends NativeSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols); (window as unknown as { testSocket: WebSocket }).testSocket = this;
-      }
-    };
-  });
   const submissions: Record<string, unknown>[] = [];
   const completed = new Set<string>();
   let fail = true;
@@ -37,9 +30,7 @@ test("compact information tasks preserve drafts and distinguish requester from r
   const input = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled({ timeout: 15000 });
   const name = `Information-${Date.now()}`;
-  await page.evaluate(name => (window as unknown as { testSocket: WebSocket }).testSocket.send(JSON.stringify({
-    protocol: "sproyt.chat.v1", type: "create_channel", request_id: crypto.randomUUID(), payload: { name, slug: name.toLowerCase(), kind: "public" }
-  })), name);
+  await createChannelViaUi(page, name);
   await expect(preview.getByRole("region", { name: `# ${name}`, exact: true })).toBeVisible();
   await expect(input).toBeEnabled();
   for (const id of ids) {

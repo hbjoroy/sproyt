@@ -12,8 +12,32 @@ async function enter(page: Page, enabled = true) {
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled();
   return preview;
 }
+async function closeManagedDialog(page: Page) {
+  const preview = page.locator("#sproyt-react-preview");
+  const before = page.url();
+  const dialogs = preview.getByRole("dialog");
+  const previous = await dialogs.count() ? await dialogs.last().elementHandle() : null;
+  // A local popup can sit above a management dialog without changing its URL.
+  const routed = !!previous && new URL(before).searchParams.get("view") === "settings"
+    && await preview.locator("dialog[open]").count() === 1;
+  await page.keyboard.press("Escape");
+  if (routed) await expect.poll(() => page.url()).not.toBe(before);
+  if (previous) await previous.waitForElementState("hidden");
+  if (routed && new URL(page.url()).searchParams.get("view") === "settings") {
+    // URL publication precedes React mounting the parent. Wait for both sides
+    // of Back before a menu helper decides whether it should open the toolbar.
+    await expect(dialogs).toHaveCount(1);
+    await expect(dialogs).toBeVisible();
+  } else if (routed) await expect(dialogs).toHaveCount(0);
+}
 async function menu(preview: Locator, label: string) {
   const menu = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
+  for (let depth = 0; depth < 4 && !await menu.isVisible(); depth++) {
+    const dialogs = preview.getByRole("dialog");
+    if (!await dialogs.count()) break;
+    await expect(dialogs).toHaveCount(1);
+    await closeManagedDialog(preview.page());
+  }
   if (!await menu.isVisible()) {
     const trigger = preview.getByRole("button", { name: "Innstillingar", exact: true });
     if (!await trigger.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
@@ -24,10 +48,24 @@ async function menu(preview: Locator, label: string) {
 async function owner(preview: Locator) {
   await menu(preview, "Ny vennekrets");
   const dialog = preview.getByRole("dialog", { name: "Ny vennekrets", exact: true });
-  await dialog.getByLabel("Namn på vennekrets").fill(`Avanserte funksjonar ${Date.now()}`);
+  const name = `Avanserte funksjonar ${Date.now()}`;
+  await dialog.getByLabel("Namn på vennekrets").fill(name);
   await dialog.getByRole("button", { name: "Opprett vennekrets" }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(preview.getByRole("button", { name: "# Prat", exact: true })).toBeVisible();
+  const settings = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
+  if (await settings.isVisible()) {
+    await settings.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
+    await expect(settings).toHaveCount(0);
+  }
+  const back = preview.getByRole("button", { name: "Samtalar", exact: true });
+  if (await back.isVisible()) await back.click();
+  const tab = preview.getByRole("tab", { name: /^Kretsar/ });
+  if (await tab.getAttribute("aria-selected") !== "true") await tab.click();
+  const group = preview.locator("[data-conversation-group]").filter({ has: preview.page().getByText(name, { exact: true }) });
+  const disclosure = group.locator(".sp-product-nav-disclosure");
+  await expect(group).toHaveCount(1);
+  if (await disclosure.getAttribute("aria-expanded") !== "true") await disclosure.click();
+  await group.getByRole("button", { name: "# Prat", exact: true }).click();
 }
 
 test("feature flags hide agent/Heart and member role hides Grafana", async ({ page }) => {
@@ -48,11 +86,11 @@ test("real short-lived agent grants both scopes, clears secret on close and reta
   const preview = await enter(page);
   await menu(preview, "Kanaldetaljar, medlemmer og integrasjonar");
   await expect(preview.getByRole("button", { name: "Lag kortliva tilgang" })).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await expect(preview.getByRole("button", { name: "Mellombels tilgang for ekstern agent", exact: true })).toHaveCount(0);
   const agent = preview.getByRole("dialog", { name: "Agenttilgang", exact: true });
   await owner(preview);
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("agentutkast");
   await menu(preview, "Mellombels tilgang for ekstern agent");
   await agent.getByRole("button", { name: "Lag kortliva tilgang" }).click();
@@ -61,13 +99,13 @@ test("real short-lived agent grants both scopes, clears secret on close and reta
   expect(grants.map(item => item.scope)).toEqual(["read_history", "send_messages"]);
   expect(grants[0].channel_id).toBe(grants[1].channel_id);
   expect(await page.evaluate(() => JSON.stringify({ local: localStorage, session: sessionStorage }))).not.toContain(credential);
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await menu(preview, "Mellombels tilgang for ekstern agent");
   await expect(agent.getByLabel("Agentcredential", { exact: true })).toHaveCount(0);
   await agent.getByRole("button", { name: "Trekk tilbake", exact: true }).click();
   await expect(agent).toContainText("Agenttilgangen er trekt tilbake.");
   await expect(agent.getByRole("button", { name: "Lag kortliva tilgang" })).toBeEnabled();
-  await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
+  await closeManagedDialog(page); await closeManagedDialog(page);
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("agentutkast");
   expect(sockets).toBe(1);
 });
@@ -91,8 +129,9 @@ test("failed agent grant rolls back and failed rollback keeps explicit revoke an
   expect(revokes).toBe(2);
 });
 
-test("Grafana creation retries, exposes token once and clears it on details close", async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+test("Grafana creation retries, exposes token once and clears it on details close", async ({ page, context, browserName }) => {
+  // WebKit does not implement Playwright's Chromium clipboard permissions.
+  if (browserName === "chromium") await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   let first = true;
   await page.route("**/integrations/grafana?*", route => {
     if (first) { first = false; return route.fulfill({ status: 503, body: "Grafana er mellombels utilgjengeleg" }); }
@@ -108,8 +147,8 @@ test("Grafana creation retries, exposes token once and clears it on details clos
   const token = await dialog.getByLabel("Grafana-token", { exact: true }).inputValue();
   await dialog.getByRole("button", { name: "Kopier grafana-token" }).click();
   await expect(dialog).toContainText("Grafana-token er kopiert.");
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(token);
-  await page.keyboard.press("Escape");
+  if (browserName === "chromium") expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(token);
+  await closeManagedDialog(page);
   await menu(preview, "Kanaldetaljar, medlemmer og integrasjonar");
   await expect(dialog.getByLabel("Grafana-token", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => JSON.stringify({ local: localStorage, session: sessionStorage }))).not.toContain(token);
@@ -148,6 +187,6 @@ test("Heart enables feature, starts scoped process, retries status and sends ins
   expect(requests.find(item => item.url === "/api/v1/processes")?.body).toMatchObject({ metadata: { title: "Felles middag" }, channel_id: expect.any(String) });
   expect(requests.filter(item => item.url.endsWith("/messages")).map(item => item.body.payload.answer)).toEqual(["yes", "no"]);
   expect(new Set(requests.filter(item => item.body?.request_id).map(item => item.body.request_id)).size).toBe(4);
-  await page.keyboard.press("Escape"); await menu(preview, "Heart og planlegging");
+  await closeManagedDialog(page); await menu(preview, "Heart og planlegging");
   await expect(dialog.getByLabel("Prosess-ID", { exact: true })).toHaveValue("fixture-process");
 });

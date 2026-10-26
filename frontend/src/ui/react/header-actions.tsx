@@ -14,10 +14,11 @@ function shortenMiddle(value: string, maximum = 14): { readonly head: string; re
 }
 
 /** Keep the same controls and open dialogs mounted across compact/list layouts. */
-export function HeaderActions({ children, primary, compactConversation }: {
+export function HeaderActions({ children, primary, compactConversation, navigationKey }: {
   readonly children: ReactNode;
   readonly primary?: ReactNode;
   readonly compactConversation?: CompactConversationHeader;
+  readonly navigationKey?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [conversationOpen, setConversationOpen] = useState(false);
@@ -25,6 +26,21 @@ export function HeaderActions({ children, primary, compactConversation }: {
   const trigger = useRef<HTMLButtonElement>(null);
   const conversationTrigger = useRef<HTMLButtonElement>(null);
   const id = useId();
+  const restoreMenuFocus = useRef(false);
+  // An action's destination owns the screen once navigation is accepted. Keep
+  // controls mounted for their dialogs, but never leave the menu over content.
+  useEffect(() => {
+    if (open) { setOpen(false); restoreMenuFocus.current = true; }
+    setConversationOpen(false);
+    const frame = requestAnimationFrame(() => {
+      if (!restoreMenuFocus.current || document.querySelector("dialog:modal")) return;
+      const active = document.activeElement;
+      if (active === document.body || (active instanceof HTMLElement && !active.getClientRects().length))
+        trigger.current?.focus({ preventScroll: true });
+      restoreMenuFocus.current = false;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [navigationKey]);
   useEffect(() => {
     if (!open && !conversationOpen) return;
     const dismiss = (event: PointerEvent | KeyboardEvent) => {
