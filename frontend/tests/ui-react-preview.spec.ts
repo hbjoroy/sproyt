@@ -124,7 +124,7 @@ test("local React preview follows the existing runtime and returns without recon
 
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast bevart gjennom førehandsvisinga");
   await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("finnst-ikkje");
-  await expect(preview).toContainText("Ingen samtalar funne.");
+  await expect(preview.getByRole("tabpanel", { name: /^Kretsar/ })).toContainText("Ingen kretsar eller kanalar passar søket.");
   await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("");
   await expect(preview.getByRole("button", { name: /# general/i })).toBeVisible();
   await preview.getByRole("button", { name: "Meny", exact: true }).click();

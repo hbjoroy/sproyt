@@ -138,7 +138,9 @@ test("React management preserves both channel and thread drafts", async ({ page 
   await expect(preview.getByRole("dialog", { name: "Personar og ny direktemelding" })).toBeVisible();
   await expect(page.locator("#thread-panel")).not.toHaveAttribute("open", "");
   await page.keyboard.press("Escape");
+  await expect(preview.getByRole("dialog", { name: "Innstillingar", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(preview.getByRole("dialog")).toHaveCount(0);
   await expect(preview.getByRole("textbox", { name: "Svar i tråden" })).toHaveValue("trådutkast gjennom meny");
   await expect(channelInput).toHaveValue("kanalutkast gjennom meny");
 });

@@ -242,8 +242,10 @@ test("a circle owner invites an existing user from the conversation drawer", asy
 
   await expect(dialog).toBeHidden({ timeout: 15_000 });
   await expect(conversationShortcut).toBeFocused();
-  await expect(page.locator("#conversation-circle")).toHaveText("Direktemelding");
-  await expect(page.locator("#conversation-title")).toContainText(peerName);
+  // Opening a DM internally to deliver an invitation preserves the owner's
+  // current conversation; the actual invitation send is checked below.
+  await expect(page.locator("#conversation-circle")).toHaveText(circleName);
+  await expect(page.locator("#conversation-title")).toContainText(channelName);
   await expect.poll(() => page.evaluate(() => window.__sproytCircleInviteCommands.some((serialized) => {
     const command: unknown = JSON.parse(serialized);
     if (typeof command !== "object" || command === null || !("type" in command) || command.type !== "send_message") return false;

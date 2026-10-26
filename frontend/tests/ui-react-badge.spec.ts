@@ -1,4 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
+
+async function returnFromProfile(preview: Locator) {
+  await preview.getByRole("dialog", { name: "Profil og status", exact: true })
+    .getByRole("button", { name: "Tilbake til menyen", exact: true }).click();
+  const settings = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
+  await expect(settings).toBeVisible();
+  await settings.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
+  await expect(settings).toHaveCount(0);
+  const toolbar = preview.getByRole("button", { name: "Meny", exact: true });
+  if (await toolbar.isVisible() && await toolbar.getAttribute("aria-expanded") === "true") await toolbar.click();
+  await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeVisible();
+}
 
 test("first-50 badge is visible on the profile and compact beside chat authors", async ({ page }) => {
   await page.goto("/?participant=preview-early-adopter&ui=react");
@@ -11,7 +23,7 @@ test("first-50 badge is visible on the profile and compact beside chat authors",
   await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
   await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
   await expect(preview.getByRole("dialog", { name: "Profil og status" })).toContainText("Første 50 på Sprøyt");
-  await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
+  await returnFromProfile(preview);
 
   await composer.fill("Merket skal følgje meldinga");
   await composer.press("Enter");
@@ -40,8 +52,7 @@ for (const touch of [false, true]) {
       await dialog.getByLabel("Statusmelding", { exact: true }).fill("Ute i sola");
       await dialog.getByRole("button", { name: "Lagre status", exact: true }).click();
       await expect(dialog).toContainText("Statusen er lagra.");
-      await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
-      await preview.getByRole("button", { name: "Meny", exact: true }).click();
+      await returnFromProfile(preview);
       const body = `uavhengige statusmål ${touch ? "touch" : "desktop"}`;
       await composer.fill(body);
       if (touch) await preview.getByRole("button", { name: /^Send / }).click(); else await composer.press("Enter");

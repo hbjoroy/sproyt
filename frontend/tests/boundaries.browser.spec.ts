@@ -114,6 +114,11 @@ test("malformed initial session JSON does not crash the client", async ({ page }
 
 test("explicit reauthentication preserves the active draft and supports keyboard activation", async ({ page }) => {
   let loginRequests = 0;
+  let ownerId: string | undefined;
+  page.on("websocket", socket => socket.on("framereceived", ({ payload }) => {
+    const event = JSON.parse(String(payload));
+    if (event.type === "hello") ownerId = event.payload.participant_id;
+  }));
   await page.route(/\/auth\/login(?:\?.*)?$/, async (route) => { loginRequests += 1; await route.fulfill({ contentType: "text/html", body: "reauth" }); });
   await page.goto("/?participant=boundary-reauth&ui=legacy", { waitUntil: "domcontentloaded" });
   const composer = page.locator("#body");
@@ -126,7 +131,12 @@ test("explicit reauthentication preserves the active draft and supports keyboard
   await expect(page.locator("#reauthenticate-now")).toBeVisible();
   await page.locator("#reauthenticate-now").click();
   await expect.poll(() => loginRequests).toBe(1);
-  const storedDraft = await page.evaluate(() => { const channelId = localStorage.getItem("sproyt.active-channel.v1"); return channelId ? localStorage.getItem(`sproyt.channel-draft.v1.${channelId}`) : null; });
+  expect(ownerId).toBeTruthy();
+  const storedDraft = await page.evaluate(owner => {
+    const prefix = `sproyt.account.v1.${encodeURIComponent(owner)}.`;
+    const channelId = localStorage.getItem(`${prefix}sproyt.active-channel.v1`);
+    return channelId ? localStorage.getItem(`${prefix}sproyt.channel-draft.v1.${channelId}`) : null;
+  }, ownerId!);
   expect(storedDraft).toBe("utkast som må bevarast");
 });
 
