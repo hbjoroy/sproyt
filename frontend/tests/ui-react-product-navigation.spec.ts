@@ -111,9 +111,13 @@ test("favorites remain isolated when the active account changes", async ({ page 
   const selected = nav.locator(`[data-conversation-group="circle:${circleId(29)}"]`);
   await selected.getByRole("button", { name: "Fest Krets 30 som favoritt", exact: true }).click();
   await expect(selected.getByRole("button", { name: "Løys Krets 30 frå favorittar", exact: true })).toHaveAttribute("aria-pressed", "true");
-  switchAccount("navigation-other-owner");
+  const otherLoaded = page.waitForResponse(response => response.url().includes("/api/v1/me/favorite-circles") && response.request().headers()["x-sproyt-account"] === "navigation-other-owner" && response.ok());
+  switchAccount("navigation-other-owner"); await otherLoaded;
+  await navigation(app);
   await expect(selected.getByRole("button", { name: "Fest Krets 30 som favoritt", exact: true })).toHaveAttribute("aria-pressed", "false");
-  switchAccount("navigation-owner");
+  const ownerLoaded = page.waitForResponse(response => response.url().includes("/api/v1/me/favorite-circles") && response.request().headers()["x-sproyt-account"] === "navigation-owner" && response.ok());
+  switchAccount("navigation-owner"); await ownerLoaded;
+  await navigation(app);
   await expect(selected.getByRole("button", { name: "Løys Krets 30 frå favorittar", exact: true })).toHaveAttribute("aria-pressed", "true");
   const keys = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith("sproyt:conversation-navigation:")));
   expect(keys).toEqual([]); // Profile pins are not browser-local preferences.
