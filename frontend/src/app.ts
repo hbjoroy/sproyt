@@ -4906,10 +4906,10 @@
 
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState !== "visible") { hiddenSince = Date.now(); return; }
-        void favoriteCircles.refresh(false);
         resumeAfterBackground(false);
         hiddenSince = null;
         sendCommand("list_my_channels");
+        void favoriteCircles.refresh(false);
       });
 
       function pushSystem(text: string): void {
