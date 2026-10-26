@@ -1889,10 +1889,19 @@ mod tests {
         let state = crate::web::native::test_state(auth, Some(native)).await;
         let app = crate::web::native::routes()
             .route("/auth/callback", get(crate::web::auth::auth_callback))
+            .route("/api/v1/media/{id}", get(crate::web::media::download_media))
+            .route(
+                "/api/v1/media/{id}/preview",
+                get(crate::web::media::download_media_preview),
+            )
+            .route(
+                "/api/v1/media/{id}/status",
+                get(crate::web::media::media_preview_status),
+            )
             .layer(axum::middleware::from_fn(
                 crate::web::system::add_security_headers,
             ))
-            .with_state(state);
+            .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -1999,6 +2008,103 @@ mod tests {
                 && result["display_name"] == "Authentik Test User"
         );
         let access = result["native_session"]["access_token"].as_str().unwrap();
+        let actor = state
+            .native_sessions
+            .as_ref()
+            .unwrap()
+            .authenticate(&state.auth, access)
+            .await
+            .unwrap();
+        let other = AuthService::development()
+            .authenticate_request(Some("native-media-other".into()), None)
+            .await
+            .unwrap();
+        let mut media_ids = Vec::new();
+        for (principal, slug) in [(&actor, "native-media-own"), (&other, "native-media-other")] {
+            state
+                .chat
+                .ensure_user(principal.user.clone())
+                .await
+                .unwrap();
+            let channel = state
+                .chat
+                .create_channel(
+                    principal.user.id.clone(),
+                    crate::domain::ChannelSlug::new(slug).unwrap(),
+                    crate::domain::DisplayName::new(slug).unwrap(),
+                    crate::domain::ChannelKind::Private,
+                    None,
+                )
+                .await
+                .unwrap();
+            let media = state
+                .chat
+                .store_media(crate::domain::MediaUpload {
+                    actor: principal.user.id.clone(),
+                    channel_id: channel.id,
+                    filename: "native.mp4".into(),
+                    content_type: "video/mp4".into(),
+                    content: vec![7; 10],
+                    dimensions: None,
+                    preview: None,
+                })
+                .await
+                .unwrap();
+            media_ids.push(media.id);
+        }
+        let media_url = format!("{origin}/api/v1/media/{}", media_ids[0]);
+        let bytes = client
+            .get(&media_url)
+            .bearer_auth(access)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(bytes.status(), axum::http::StatusCode::OK);
+        assert_eq!(bytes.bytes().await.unwrap().as_ref(), &[7; 10]);
+        let range = client
+            .get(&media_url)
+            .bearer_auth(access)
+            .header("Range", "bytes=2-5")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(range.status(), axum::http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(range.bytes().await.unwrap().len(), 4);
+        let head = client
+            .head(&media_url)
+            .bearer_auth(access)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(head.status(), axum::http::StatusCode::OK);
+        assert!(head.bytes().await.unwrap().is_empty());
+        for suffix in ["", "/preview", "/status"] {
+            let denied = client
+                .get(format!("{origin}/api/v1/media/{}{suffix}", media_ids[1]))
+                .bearer_auth(access)
+                .send()
+                .await
+                .unwrap();
+            assert!(matches!(
+                denied.status(),
+                axum::http::StatusCode::FORBIDDEN | axum::http::StatusCode::NOT_FOUND
+            ));
+            let mixed = client
+                .get(format!("{media_url}{suffix}"))
+                .bearer_auth(access)
+                .header("Cookie", "sproyt_session=browser")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(mixed.status(), axum::http::StatusCode::UNAUTHORIZED);
+        }
+        let mixed = client
+            .get(format!("{media_url}?participant=other"))
+            .bearer_auth(access)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(mixed.status(), axum::http::StatusCode::UNAUTHORIZED);
         let response = client
             .get(format!("{origin}/api/v1/native/session"))
             .bearer_auth(access)
@@ -2044,6 +2150,13 @@ mod tests {
                 .unwrap();
             assert!(response.status() == axum::http::StatusCode::NO_CONTENT);
         }
+        let revoked_media = client
+            .get(&media_url)
+            .bearer_auth(refreshed["access_token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(revoked_media.status(), axum::http::StatusCode::UNAUTHORIZED);
         let response = client
             .get(format!("{origin}/api/v1/native/session"))
             .bearer_auth(refreshed["access_token"].as_str().unwrap())

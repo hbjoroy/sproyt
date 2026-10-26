@@ -13,7 +13,7 @@ use crate::{
     ws,
 };
 
-fn bearer(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn bearer(headers: &HeaderMap) -> Option<&str> {
     // Native transport never converts browser cookies to a native principal.
     if headers.contains_key(header::COOKIE) {
         return None;

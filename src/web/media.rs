@@ -24,6 +24,31 @@ static IMAGE_PROCESSING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_
 // Slow clients retain one permit, never a database connection or whole original.
 static MEDIA_DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
 
+// Read-only native media uses the same channel checks and bounded streaming as
+// the browser. Never interpret a malformed/mixed bearer as browser authority.
+async fn authenticate_media(
+    state: &AppState,
+    query: WsQuery,
+    headers: &HeaderMap,
+) -> Result<crate::auth::AuthenticatedPrincipal, axum::response::Response> {
+    if headers.contains_key(axum::http::header::AUTHORIZATION) {
+        let unauthorized = || axum::http::StatusCode::UNAUTHORIZED.into_response();
+        if query.participant.is_some() {
+            return Err(unauthorized());
+        }
+        let sessions = state.native_sessions.as_ref().ok_or_else(unauthorized)?;
+        let token = super::native_chat::bearer(headers).ok_or_else(unauthorized)?;
+        sessions
+            .authenticate(&state.auth, token)
+            .await
+            .map_err(IntoResponse::into_response)
+    } else {
+        authenticate_http(state, query, headers)
+            .await
+            .map_err(auth_error_response)
+    }
+}
+
 pub(crate) fn admit_media()
 -> Result<tokio::sync::SemaphorePermit<'static>, Box<axum::response::Response>> {
     MEDIA_ADMISSION.try_acquire().map_err(|_| {
@@ -357,9 +382,9 @@ async fn serve_media(
     method: Method,
     attachment: bool,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match authenticate_media(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(error) => return error,
     };
     let media_id = match MediaId::new(id) {
         Ok(value) => value,
@@ -622,9 +647,9 @@ pub(crate) async fn download_media_preview(
     headers: HeaderMap,
     method: Method,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match authenticate_media(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(error) => return error,
     };
     let media_id = match MediaId::new(id) {
         Ok(value) => value,
@@ -674,9 +699,9 @@ pub(crate) async fn media_preview_status(
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match authenticate_media(&state, query, &headers).await {
         Ok(p) => p,
-        Err(e) => return auth_error_response(e),
+        Err(e) => return e,
     };
     let id = match MediaId::new(id) {
         Ok(id) => id,

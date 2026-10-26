@@ -59,8 +59,37 @@ Berre eksplisitt stadfesta meldingar kan fjernast frå den lokale køen. Det er
 plass til åtte samtidige ventande meldingar og åtte kanalutkast i dette første
 lagringssnittet. Stadfesta sendingar og sletta utkast frigjer plassen. Tekst er
 førebels avgrensa til 1024 UTF-8-byte; UI forklarer grensa og bevarer teksten.
-Rikt innhald, vedlegg, reaksjonar, full offlinesync og Android kjem etter
-denne avgrensa tekstpiloten.
+Opplasting, reaksjonar, full offlinesync og Android kjem etter denne piloten.
+
+## Kretsgrupper og meldingsinnhald
+
+Windows viser Felles, separate grupper per krets-ID og Direkte, i same
+rekkjefølgje som nettappens scope-inndeling. Like kretsnamn blir ikkje slått saman.
+Meldingskroppen blir tolka som avgrensa Sprøyt-data: tekst og `[[media:…]]`
+blir viste i den opphavlege rekkjefølgja. Invitasjonar, prosessoppgåver og
+saksstatus får kort med lenkje til akkurat den aktuelle meldinga. Handlingane
+og dei avanserte skjema-/diagramvisingane blir førebels opna i nettappen.
+Markørar i kode blir verande tekst; markørar kan ikkje styre media-URL eller HTML.
+
+Native media bruker same GET-ruter, kanalautorisasjon, Range og avgrensa
+serverstraum som browser. Når native er aktivert, kan desse leserutene ta
+native bearer; cookie/bearer og participant/bearer blir avviste. Ingen nye
+opplastingsrettar eller offentlege media-URL-ar blir innførte.
+
+Klienten har åtte globale preview-leasar og høgst to samtidige hente-/dekode-
+operasjonar. Ein lease varer til bitmapet blir fjerna frå visinga. Preview er
+avgrensa til 8 MiB komprimert og 720×720 dekodepikslar; bytebufferen blir sleppt
+etter dekoding. Fleire kort har ein eksplisitt lasteknapp. Unmount under dekoding
+frigjer ikkje pipelineplassen før den gamle dekodinga faktisk er ferdig.
+
+Opne/Spel av hentar originalen med avgrensa buffer til ei mellombels fil før
+native Image/MediaPlayer viser han. Det er éin slik henting om gongen og eit
+samla filbudsjett på 512 MiB, med avbrot og framdrift. Video startar difor etter
+nedlasting i dette snittet. Filene ligg i den lokale brukerprofilen i klartekst;
+dette er ikkje eit kryptert medielager. Fil-leasar, logout og avslutting ryddar,
+og oppstart fjernar verifiserte, eigne restmapper. Konto-/livsløpsbyte avbryt
+henting og fjernar bilete og avspeling. Vanleg tokenrotasjon i same familie
+bevarer visinga. Opplasting og permanente offline-mediekopiar er ikkje med.
 
 ## CI og utrulling
 

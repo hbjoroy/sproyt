@@ -106,14 +106,15 @@ internal sealed class LiveChatComponent : Component
         ).Padding(16, 8).Background(palette.Chrome).Grid(columnSpan: 2);
 
         Element ChannelRow(NativeChannel item) => Button(
-            VStack(3, TextBlock("# " + item.Name).FontSize(16).SemiBold().Foreground(palette.Ink),
-                TextBlock(item.CircleName ?? "Felles").FontSize(12).Foreground(palette.Muted)), () => Select(item.Id))
+            TextBlock((item.IsDirect ? "" : "# ") + item.Name).FontSize(16).TextWrapping().Foreground(palette.Ink), () => Select(item.Id))
             .HorizontalContentAlignment(HorizontalAlignment.Stretch).HAlign(HorizontalAlignment.Stretch)
-            .MinHeight(52).Padding(12, 8).Margin(4, 2).Background(item.Id == channel ? palette.Selection : palette.Chrome)
+            .MinHeight(44).Padding(12, 8).Margin(4, 0).Background(item.Id == channel ? palette.Selection : palette.Chrome)
             .BorderThickness(new Thickness(0)).CornerRadius(2).AutomationName("Opne " + item.Name).AutomationId("live-channel-" + item.Id);
         var list = ScrollViewer(VStack(4,
             new Element[] { TextBlock("SAMTALAR").FontFamily("Cascadia Mono").FontSize(12).Foreground(palette.Muted).Margin(16, 12) }
-                .Concat(state.ShowConversation ? chat.Channels.Select(ChannelRow) : [])
+                .Concat(state.ShowConversation ? NativeMessageContent.Groups(chat.Channels).SelectMany(group =>
+                    new Element[] { TextBlock(group.Name.ToUpperInvariant()).FontFamily("Cascadia Mono").FontSize(12).Foreground(palette.Muted).Margin(16, 16, 12, 6).AutomationId("live-group-" + group.Id) }
+                        .Concat(group.Channels.Select(ChannelRow))) : [])
                 .ToArray())).Background(palette.Chrome).IsVisible(state.ShowConversation && (wide || showList))
             .Grid(row: 1, column: 0, columnSpan: wide ? 1 : 2);
 
@@ -122,7 +123,7 @@ internal sealed class LiveChatComponent : Component
             HStack(8, TextBlock(message.Author).FontSize(14).SemiBold().Foreground(palette.Ink),
                 TextBlock(message.Id.StartsWith("pending:", StringComparison.Ordinal) ? "Lagra på denne eininga" : message.SentAt.ToLocalTime().ToString("HH:mm"))
                     .FontSize(12).Foreground(palette.Muted)),
-            TextBlock(message.Body).FontSize(16).TextWrapping().IsTextSelectionEnabled().Foreground(palette.Ink)
+            NativeMessageView.Render(app, message, palette, auth)
         ).Padding(16, 8).AutomationId("live-message-" + message.Id).WithKey(message.Id);
         var history = LazyVStack<NativeMessage>(rows, item => item.Id, (item, _) => Message(item))
             .AutomationId("live-history").AutomationName("Meldingar")
@@ -167,8 +168,8 @@ internal sealed class LiveChatComponent : Component
         )).Padding(12).BorderThickness(new Thickness(0, 2, 0, 0)).BorderBrush(palette.Rule).Grid(row: 3);
         var conversation = Grid([GridSize.Star()], [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
             HStack(12, Button("←", () => setShowList(true)).AutomationName("Vis samtalar").Size(44, 44).IsVisible(!wide),
-                VStack(2, TextBlock(selected?.CircleName ?? "Felles").FontSize(12).Foreground(palette.Muted),
-                    TextBlock(selected is null ? "Samtalar" : "# " + selected.Name).FontSize(21).Bold().Foreground(palette.Ink)))
+                VStack(2, TextBlock(selected?.IsDirect == true ? "Direkte" : selected?.CircleName ?? "Felles").FontSize(12).Foreground(palette.Muted),
+                    TextBlock(selected is null ? "Samtalar" : (selected.IsDirect ? "" : "# ") + selected.Name).FontSize(21).Bold().Foreground(palette.Ink)))
                 .Padding(12, 8).Grid(row: 0), history,
             Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], TextBlock(notice).TextWrapping().FontSize(12).Foreground(palette.Muted).Grid(column: 0),
                 Button(state.ConfirmPendingSends ? "Send ventande" : "Prøv igjen", async () =>

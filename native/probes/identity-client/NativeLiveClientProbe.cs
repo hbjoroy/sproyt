@@ -49,6 +49,8 @@ internal static class NativeLiveClientProbe
         internal const string User = "c49b194b-5cf8-41b5-82b0-02eb254945ec";
         private static readonly string Family = new('F', 43);
         private ulong generation;
+        internal int MediaRequests;
+        internal TaskCompletionSource? MediaStarted, MediaRelease;
         internal object Grant(int seconds) => new
         {
             scope = config.Scope, environment = config.Environment, instance_id = config.Instance,
@@ -74,6 +76,13 @@ internal static class NativeLiveClientProbe
                     using (var input = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)))
                         Check(input.RootElement.GetProperty("generation").GetUInt64() == generation);
                     generation++; body = Grant(lifetime); break;
+                case "/api/v1/native/revoke":
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+                case "/api/v1/media/c8940bd1-9acf-4108-8e8b-499b02a57482/preview":
+                    Check(request.Method == HttpMethod.Get && request.Headers.Authorization?.Parameter == "sproyt-access." + new string(generation == 0 ? 'A' : 'B', 43));
+                    MediaRequests++; MediaStarted?.TrySetResult();
+                    if (MediaRelease is not null) await MediaRelease.Task.WaitAsync(cancellationToken);
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
                 default: throw new InvalidOperationException("Unexpected refresh fixture route.");
             }
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
@@ -89,6 +98,40 @@ internal static class NativeLiveClientProbe
         Reject(() => NativeAuthSession.ValidateConfig(config with { Environment = "production" }));
         Reject(() => NativeAuthSession.ValidateConfig(config with { UserId = "unverified-account" }));
         Reject(() => NativeAuthSession.ValidateConfig(config with { Issuer = "http://identity.example.invalid/provider" }));
+        var mediaFixture = new RefreshFixture(config, 302);
+        using (var owner = NativeAuthSession.Open(Path.Combine(directory, "media-owner"), config, handler: mediaFixture))
+        {
+            long ticket = await owner.BeginLoginAsync();
+            await owner.CompleteLoginAsync(ticket, JsonSerializer.Serialize(new { user_id = RefreshFixture.User, native_session = mediaFixture.Grant(120) }));
+            var scope = owner.MediaScope();
+            using (var image = await owner.ReadMediaAsync("c8940bd1-9acf-4108-8e8b-499b02a57482", true, scope, CancellationToken.None))
+            { Check(image.RequestMessage?.Headers.Authorization is null); Check((await image.Content.ReadAsByteArrayAsync()).Length == 3); }
+            await owner.RefreshAsync();
+            Check(owner.MediaScopeCurrent(scope));
+            using (var image = await owner.ReadMediaAsync("c8940bd1-9acf-4108-8e8b-499b02a57482", true, scope, CancellationToken.None)) Check(image.IsSuccessStatusCode);
+            foreach (string invalid in new[] { "https://elsewhere.invalid/image", "../outside", "c8940bd1-9acf-4108-8e8b-499b02a57482?url=elsewhere" })
+            { bool rejected = false; try { using var image = await owner.ReadMediaAsync(invalid, true, scope, CancellationToken.None); } catch { rejected = true; } Check(rejected); }
+            Check(mediaFixture.MediaRequests == 2);
+            mediaFixture.MediaStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); mediaFixture.MediaRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pendingImage = owner.ReadMediaAsync("c8940bd1-9acf-4108-8e8b-499b02a57482", true, scope, CancellationToken.None);
+            await mediaFixture.MediaStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await owner.LogoutAsync(); mediaFixture.MediaRelease.SetResult();
+            bool blocked = false; try { using var image = await pendingImage; } catch { blocked = true; }
+            Check(blocked && !owner.MediaScopeCurrent(scope));
+        }
+        var grouped = NativeMessageContent.Groups([
+            new("common", "general"), new("one", "Prat", "Vener", "circle-one"),
+            new("two", "Prat", "Vener", "circle-two"), new("direct", "Person", IsDirect: true)]);
+        Check(grouped.Count == 4 && grouped[0].Name == "Felles" && grouped[^1].Name == "Direkte" && grouped[1].Id != grouped[2].Id);
+        string marker = "[[media:c8940bd1-9acf-4108-8e8b-499b02a57482|image/jpeg|Foto%20fr%C3%A5%20Paros.jpg]]";
+        var rich = NativeMessageContent.Parse("Før\n" + marker + "\nEtter\n[[invite:" + new string('A', 43) + "]]");
+        Check(rich.Count(p => p.Kind == "media") == 1 && rich.Single(p => p.Kind == "media").Text == "Foto frå Paros.jpg" && rich.Any(p => p.Kind == "invite") && rich.Any(p => p.Text.Contains("Etter")));
+        Check(NativeMessageContent.Parse("[[work-item-task:c8940bd1-9acf-4108-8e8b-499b02a57482]]").Single().Kind == "task");
+        Check(NativeMessageContent.Parse("[[work-item-task:123]]").Single().Kind == "text");
+        Check(NativeMessageContent.Parse(string.Concat(Enumerable.Repeat(marker+"\n",200))).Count(p=>p.Kind=="media")<=64);
+        Check(NativeMessageContent.Parse("```text\n" + marker + "\n```").All(p => p.Kind == "text"));
+        Check(NativeMessageContent.Parse("```mermaid\ngraph TD; A-->B\n"+marker+"\n```").Single().Kind == "diagram");
+        Check(NativeMessageContent.Parse("[[media:https://elsewhere.invalid|image/png|name]]").All(p => p.Kind == "text"));
         string skewDirectory = Path.Combine(directory, "clock-skew");
         using (var owner = NativeAuthSession.Open(skewDirectory, config, handler: new RefreshFixture(config, 302)))
         {

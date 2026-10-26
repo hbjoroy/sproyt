@@ -12,6 +12,7 @@ internal sealed record NativeAuthConfig(string Broker, string Instance, string I
 internal enum NativeAuthPhase { SignedOut, SigningIn, Active, Offline, AuthRequired }
 internal sealed record NativeAuthSnapshot(NativeAuthPhase Phase, string? UserId, ulong Generation, bool PendingRevocation, bool Busy, long? LoginTicket = null, string? DisplayName = null, string? SessionStamp = null);
 internal sealed record NativeSocketConnection(ClientWebSocket Socket, string UserId, string SessionStamp, ulong Generation);
+internal sealed record NativeMediaScope(string UserId, string FamilyStamp);
 
 // This owner deliberately has no credential getter. UI consumers only receive Snapshot.
 // The shared DPAPI journal supplies exclusive process ownership and atomic durable writes.
@@ -314,6 +315,38 @@ internal sealed class NativeAuthSession : IDisposable
         }
     }
     private string Endpoint(string operation) => config.Scope == "sproyt_native_v1" ? "/api/v1/native/" + (operation == "probe" ? "session" : operation) : "/session/" + operation;
+    internal NativeMediaScope MediaScope()
+    {
+        lock (gate)
+        {
+            Live(); Require(config.Scope == "sproyt_native_v1" && state.Credential is not null && state.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline);
+            return new(state.Credential!.UserId, state.Lifecycle + ":" + state.Credential.Family);
+        }
+    }
+    internal bool MediaScopeCurrent(NativeMediaScope scope)
+    {
+        lock (gate) return !disposed && !storageFailed && state.Credential is not null &&
+            state.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline && state.Credential.UserId == scope.UserId &&
+            scope.FamilyStamp == state.Lifecycle + ":" + state.Credential.Family;
+    }
+    internal async Task<HttpResponseMessage> ReadMediaAsync(string id, bool preview, NativeMediaScope scope, CancellationToken cancellationToken)
+    {
+        Require(Guid.TryParseExact(id, "D", out var parsed) && parsed.ToString("D") == id && MediaScopeCurrent(scope));
+        var credential = await TransportCredential(cancellationToken);
+        Require(MediaScopeCurrent(scope));
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/media/" + id + (preview ? "/preview" : ""));
+        lock (gate) { Live(); Require(Current(credential.Lifecycle, credential.Grant) && MediaScopeCurrent(scope)); request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Grant.AccessToken); }
+        try
+        {
+            var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            request.Headers.Authorization = null;
+            if (!MediaScopeCurrent(scope)) { response.Dispose(); throw Failure(); }
+            // No redirects, arbitrary URLs, cookie authority, or bearer-bearing
+            // RequestMessage is exposed to the media consumer.
+            return response;
+        }
+        finally { request.Headers.Authorization = null; }
+    }
     private bool IdentityMatches(JsonElement root) => root.GetProperty("scope").GetString() == config.Scope && root.GetProperty("environment").GetString() == config.Environment && root.GetProperty("instance_id").GetString() == config.Instance && root.GetProperty("issuer").GetString() == config.Issuer;
 
     private async Task<(Grant Grant, long Lifecycle)> TransportCredential(CancellationToken cancellationToken)
