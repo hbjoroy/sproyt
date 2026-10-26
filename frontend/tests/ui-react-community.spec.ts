@@ -227,8 +227,8 @@ test("people search filters self, opens real DM and preserves original draft", a
   await enter(peer, "community-peer-anna");
   const preview = await enter(page, "community-dm-owner");
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("privat kanalutkast");
-  await menu(preview, "Personar og ny direktemelding");
-  const people = preview.getByRole("dialog", { name: "Personar og ny direktemelding" });
+  await menu(preview, "Ny direktemelding");
+  const people = preview.getByRole("dialog", { name: "Ny direktemelding" });
   await people.getByRole("searchbox", { name: "Finn person" }).fill("community-dm-owner");
   await expect(people.getByRole("button", { name: /Start samtale med/ })).toHaveCount(0);
   await people.getByRole("searchbox", { name: "Finn person" }).fill("community-peer-anna");

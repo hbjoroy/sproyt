@@ -25,7 +25,7 @@ export function readViewTarget(href: string): ViewTarget | null {
   }
   if (p.get("view") === "settings") {
     const kind = p.get("section") ?? "overview";
-    if (kind === "overview" || kind === "profile" || kind === "notifications") return { kind: "management", page: { kind } };
+    if (kind === "overview" || kind === "profile" || kind === "notifications" || kind === "welcome") return { kind: "management", page: { kind } };
     if ((kind === "circle" || kind === "memory") && id(circleId)) return { kind: "management", page: { kind, circleId } };
     if (kind === "chat-agents" && id(circleId)) {
       const agentId = p.get("agent") ?? undefined, panel = p.get("panel") ?? undefined, channel = channelId ?? undefined;
@@ -39,7 +39,7 @@ export function readViewTarget(href: string): ViewTarget | null {
     if (kind === "community") {
       const task = p.get("task");
       let destination: CommunityDestination | null = null;
-      if (task === "people" || task === "create-circle" || task === "circles" || task === "global-channels" || task === "global-invite") destination = { kind: task };
+      if (task === "people" || task === "create-circle" || task === "circles" || task === "global-channels" || task === "global-invite" || task === "accept-invitation") destination = { kind: task };
       if (task === "create-channel" && (circleId === null || id(circleId))) destination = { kind: task, circleId };
       if (task === "channel" && id(channelId)) destination = { kind: task, channelId };
       if ((task === "channels" || task === "invite" || task === "rename-circle" || task === "circle-members") && id(circleId)) destination = { kind: task, circleId };

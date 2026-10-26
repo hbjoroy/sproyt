@@ -14,6 +14,7 @@
       import { createApplicationRuntime } from "./application/runtime";
       import { createCommunityRequests } from "./application/community-requests";
       import { createCommunityHost } from "./application/community-host";
+      import { directConversationTitle } from "./direct-conversation";
       import { createAdvancedHost } from "./application/advanced-host";
       import { hasThreadContext, projectConversationSnapshot, type ConversationTimelineItem as TimelineItem } from "./application/conversation-snapshot";
       import { historyPage } from "./application/history-pagination";
@@ -314,6 +315,15 @@
         createRequestId: () => nextRequestId(),
         onCommandSent: (requestId, command) => {
           pendingCommands.set(requestId, command.type);
+          if (command.type === "open_direct_channel" || command.type === "expand_direct_channel") {
+            directIntents.set(requestId, { owner: currentParticipantId, generation: accountGeneration, navigation: directNavigationEpoch });
+            while (directIntents.size > 128) directIntents.delete(directIntents.keys().next().value!);
+          }
+          if (command.type === "create_circle" || command.type === "create_channel") {
+            creationIntents.set(requestId, { command: command.type, owner: currentParticipantId, generation: accountGeneration,
+              connectionGeneration: communityRequests.generation, navigation: directNavigationEpoch });
+            while (creationIntents.size > 128) creationIntents.delete(creationIntents.keys().next().value!);
+          }
           if (command.type === "list_my_channels") latestChannelListRequestId = requestId;
           if (command.type === "list_my_circles") latestCircleListRequestId = requestId;
           if (command.type === "subscribe_channel") latestSubscriptionRequestId = requestId;
@@ -356,6 +366,7 @@
           for (const requestId of pendingMessages.keys()) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
           for (const requestId of [...pendingThreadReplies.keys()]) failPendingThreadReply(requestId, "sambandet vart brote; kontroller tråden før du prøver igjen");
           failPendingPeopleDirectRequests("Sambandet vart brote. Prøv igjen.");
+          communityRequests.reset(); directIntents.clear(); creationIntents.clear();
           pendingDirectChannelUsers.clear();
           failPendingCircleInvitations("Sambandet vart brote. Prøv invitasjonen igjen.");
           resetTransientRequestsAfterDisconnect({ historyRequestIds, pendingCommands, pendingInvitationResponses, pendingInvitationInspections, pendingChannelInvitationRecipients, pendingDirectInvitationMessages }, {
@@ -371,6 +382,7 @@
         },
         onRequestsLost: (requestIds) => {
           for (const requestId of requestIds) {
+            creationIntents.delete(requestId);
             visibleRead.fail(requestId);
             failPreviewInboxRequest(requestId, "Sambandet vart brote. Prøv igjen.");
             finishPendingProfileUpdate("Sambandet vart brote. Namnet er ikkje lagra – prøv igjen.", requestId);
@@ -444,6 +456,7 @@
       const quietlyNavigate = (action: () => void) => { viewNavigationDepth++; try { action(); } finally { viewNavigationDepth--; } };
       function rememberView(target: ViewTarget, mode: "push" | "replace" = "push") {
         if (viewNavigationDepth || !currentParticipantId) return;
+        directNavigationEpoch++;
         const previousEntry = viewHistory.getSnapshot().entryId;
         if (previousEntry && document.activeElement instanceof HTMLElement) {
           viewFocus.set(previousEntry, document.activeElement);
@@ -455,6 +468,7 @@
         navigationNotice = "";
       }
       function applyView(target: ViewTarget, restored = false): void {
+        directNavigationEpoch++;
         persistActiveDraft(); persistThreadDraft();
         pendingThreadRevealMessageId = null;
         managementTarget = target.kind === "management" ? target.page : null;
@@ -513,6 +527,10 @@
       let restoredCircleId = navigation.restoredCircleId;
       let currentParticipantId: string | null = null;
       let accountGeneration = 0;
+      let directNavigationEpoch = 0;
+      const directIntents = new Map<string, { owner: string | null; generation: number; navigation: number }>();
+      const creationIntents = new Map<string, { command: "create_circle" | "create_channel"; owner: string | null;
+        generation: number; connectionGeneration: number; navigation: number }>();
       let composerScopeGeneration = 0;
       let threadScopeGeneration = 0;
       const composerController = createComposerController({
@@ -612,6 +630,7 @@
       });
       let latestChannelListRequestId: string | null = null;
       let latestCircleListRequestId: string | null = null;
+      let directoryChannelsLoaded = false, directoryCirclesLoaded = false, directoryError = "";
       const historyPageSize = 50;
       let historyHasMore = false;
       let historyLoading = false;
@@ -679,7 +698,8 @@
           threadSummaries, activeThreadRootId, historyLoading, historyHasMore, historyError,
           waitingForMessageLink: pendingMessageLink !== null,
           connection: applicationStore.snapshot.connection,
-          channelNotificationIds, pendingChannelNotificationIds, channelNotificationErrors, directChannelLabel
+          channelNotificationIds, pendingChannelNotificationIds, channelNotificationErrors, directChannelLabel,
+          directoryReady: directoryChannelsLoaded && directoryCirclesLoaded, directoryError
         });
       }
       const sessionBroadcast = typeof BroadcastChannel === "function" ? new BroadcastChannel("sproyt-session-refresh-v1") : null;
@@ -3030,8 +3050,7 @@
       }
 
       function directChannelLabel(channel: Channel | null | undefined): string {
-        const peer = activeProfile(channel?.direct_user_id);
-        return peer ? profileIdentity(peer) : channel?.name || "Direktesamtale";
+        return directConversationTitle(channel, knownUsers);
       }
 
       function profileStatus(profile: UserProfile | null | undefined): Readonly<{ symbol: string; text: string; label: string }> | null {
@@ -3266,6 +3285,24 @@
           return;
         }
         if (event.type === "pong") return;
+        const creationIntent = event.request_id ? creationIntents.get(event.request_id) : undefined;
+        const requestedCreation = event.request_id ? pendingCommands.get(event.request_id) : undefined;
+        if (event.type === "circle_created" || event.type === "channel_created"
+          || (event.type === "error" && (requestedCreation === "create_circle" || requestedCreation === "create_channel"))) {
+          if (event.request_id) creationIntents.delete(event.request_id);
+          // Creation replies are private command results, including the automatic
+          // Prat step. Never let an old account/connection populate this account.
+          if (!creationIntent || !creationIntent.owner || creationIntent.owner !== currentParticipantId
+            || creationIntent.generation !== accountGeneration || creationIntent.connectionGeneration !== communityRequests.generation
+            || (event.type === "circle_created" && creationIntent.command !== "create_circle")
+            || (event.type === "channel_created" && creationIntent.command !== "create_channel")) return;
+        }
+        if (event.type === "error" && event.request_id) {
+          directIntents.delete(event.request_id);
+          if (event.request_id === latestChannelListRequestId || event.request_id === latestCircleListRequestId)
+            directoryError = "Samtalane kunne ikkje hentast. Prøv igjen.";
+        }
+        if (communityRequests.isRetired(event.request_id)) return;
         communityRequests.observe(event);
         const profileRequest = event.request_id ? previewProfileRequests.get(event.request_id) : undefined;
         if (profileRequest && (event.type === "error" || event.type === profileRequest.type)) {
@@ -3297,12 +3334,16 @@
           const changedUser = currentParticipantId !== null && currentParticipantId !== event.payload.participant_id;
           if (changedUser) { persistActiveDraft(); persistThreadDraft(); }
           currentParticipantId = event.payload.participant_id;
+          communityRequests.bindOwner(currentParticipantId);
           navigation.bindOwner(currentParticipantId);
           syncRenderedNavigation();
           viewHistory.bindOwner(currentParticipantId);
           favoriteCircles.bindOwner(currentParticipantId);
           if (changedUser) {
             accountGeneration++;
+            directIntents.clear();
+            creationIntents.clear();
+            directoryChannelsLoaded = false; directoryCirclesLoaded = false; directoryError = "";
             viewFocus.clear();
             deliveryDirectRequests.clear();
             managementTarget = null; pendingViewTarget = null; pendingMessageLink = null;
@@ -3448,6 +3489,7 @@
         if (event.type === "circles_listed") {
           if (event.request_id !== latestCircleListRequestId) return;
           latestCircleListRequestId = null;
+          directoryCirclesLoaded = true; if (directoryChannelsLoaded) directoryError = "";
           knownCircles.clear();
           circleSelect.replaceChildren(new Option("Ingen", ""));
           event.payload.circles.forEach(([circle, role]) => {
@@ -3462,6 +3504,7 @@
           return;
         }
         if (event.type === "circle_created") {
+          if (!creationIntent) return;
           const createdByThisDialog = event.request_id !== undefined && event.request_id === pendingCircleCreationRequestId;
           if (createdByThisDialog) {
             pendingCircleCreationRequestId = null;
@@ -3469,8 +3512,10 @@
           }
           knownCircles.set(event.payload.circle.id, { ...event.payload.circle, role: "owner" });
           circleSelect.add(new Option(`${event.payload.circle.name} (owner)`, event.payload.circle.id));
-          circleSelect.value = event.payload.circle.id;
-          setActiveCircle(event.payload.circle.id);
+          if (creationIntent.navigation === directNavigationEpoch) {
+            circleSelect.value = event.payload.circle.id;
+            setActiveCircle(event.payload.circle.id);
+          }
           pushSystem(`Vennekretsen ${event.payload.circle.name} er oppretta.`);
           onboardingNotice.textContent = `${event.payload.circle.name} er klar. No kan du invitere vener.`;
           if (createdByThisDialog) {
@@ -3479,9 +3524,12 @@
             if (createCircleDialog.open) createCircleDialog.close();
           }
           updateOnboardingButtons();
-          sendCommand("create_channel", {
+          const pratRequestId = sendCommand("create_channel", {
             slug: scopedCircleChannelSlug(event.payload.circle.id, "prat"), name: "Prat", kind: "private", circle_id: event.payload.circle.id
           });
+          // Preserve the original user intent: dispatching this required second
+          // step must not grant it permission to override intervening navigation.
+          if (pratRequestId) creationIntents.set(pratRequestId, { ...creationIntent, command: "create_channel" });
           return;
         }
         if (event.type === "circle_member_role_changed") { sendCommand("list_my_circles"); return; }
@@ -3606,6 +3654,7 @@
         if (event.type === "channels_listed") {
           if (event.request_id !== latestChannelListRequestId) return;
           latestChannelListRequestId = null;
+          directoryChannelsLoaded = true; if (directoryCirclesLoaded) directoryError = "";
           knownChannels = event.payload.channels.map(channel => {
             const previous = knownChannels.find(item => item.id === channel.id);
             return { ...channel, last_read_sequence: Math.max(channel.last_read_sequence, previous?.last_read_sequence ?? 0),
@@ -3630,11 +3679,15 @@
             viewHistory.navigate(target, "replace"); applyView(target, resumed);
             return;
           }
+          // Membership refresh is data arrival, not a new navigation intent.
+          const currentView = viewHistory.getSnapshot().target;
+          if (!invited && currentView && currentView.kind !== "conversation") return;
           if (next && next.id !== activeChannelId) selectChannel(next);
           return;
         }
 
         if (event.type === "channel_created") {
+          if (!creationIntent) return;
           const createdByThisDialog = event.request_id !== undefined && event.request_id === pendingManagedChannelRequestId;
           if (createdByThisDialog) {
             pendingManagedChannelRequestId = null;
@@ -3644,7 +3697,7 @@
           const channel = channelFromBase(event.payload.channel, "owner");
           knownChannels.push(channel);
           renderChannels();
-          selectChannel(channel);
+          if (creationIntent.navigation === directNavigationEpoch) selectChannel(channel);
           if (createdByThisDialog) {
             managedChannelName.value = "";
             if (circleChannelDialog.open) circleChannelDialog.close();
@@ -3695,6 +3748,9 @@
         }
 
         if (event.type === "direct_channel_opened" || event.type === "direct_channel_expanded") {
+          const intent = event.request_id ? directIntents.get(event.request_id) : undefined;
+          if (event.request_id) directIntents.delete(event.request_id);
+          if (!intent || intent.owner !== currentParticipantId || intent.generation !== accountGeneration) return;
           let channel = knownChannels.find((item) => item.id === event.payload.channel.id);
           if (!channel) {
             channel = channelFromBase(event.payload.channel, "member", "", event.type === "direct_channel_opened" ? directPeerUserId ?? null : null, true);
@@ -3711,7 +3767,7 @@
           }
           // Opening a delivery channel for an invitation is not user navigation.
           const deliveryOnly = event.request_id ? deliveryDirectRequests.delete(event.request_id) : false;
-          if (!directInvitationMessage && !deliveryOnly) selectChannel(channel);
+          if (!directInvitationMessage && !deliveryOnly && intent.navigation === directNavigationEpoch) selectChannel(channel);
           if (event.type === "direct_channel_opened" && directInvitationMessage) {
             const messageRequestId = sendCommand("send_message", { channel_id: channel.id, body: directInvitationMessage });
             if (directCircleInvitation) {
@@ -4761,6 +4817,7 @@
       }
 
       function selectChannel(channel: Channel): void {
+        directNavigationEpoch++;
         if (!channel) return;
         if (channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId) return;
         if (!pendingViewTarget) rememberView({ kind: "conversation", channelId: channel.id,
@@ -6272,6 +6329,7 @@
             closeThread: closeThreadState,
             loadOlder: loadOlderHistory,
             retryHistory,
+            retryDirectory: () => { directoryError = ""; sendCommand("list_my_channels"); sendCommand("list_my_circles"); refreshDevelopmentPreview(); },
             acknowledgeVisible,
             isOwnMessage: (message) => message.sender_id === currentParticipantId,
             takeScrollIntent: () => {

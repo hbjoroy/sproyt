@@ -1,6 +1,7 @@
 # Plan: ryddig oppsett og innstillingar i Sprøyt
 
-Dato: 26. oktober 2026. Status: første navigasjonsleveranse og agentarbeidet i S2b/S2c er implementerte; agentarbeidet er under validering og ikkje utrulla.
+Dato: 26. oktober 2026. Status: navigasjonsleveransen og S2b/S2c er i Canary.
+Førstegongsoppleving og neste DM-pakke er implementerte og under validering.
 Grunnlag: `main` på `44bc12c9a0d000f87c82dec07a88d19b0371c9bb`.
 
 Gjennomføring er starta etter nytt oppdrag 26. oktober. Det første snittet
@@ -121,7 +122,7 @@ ein felles nettlesarflate i native eller eit nytt UI-rammeverk.
 
 ## 5. Agentoppsett som første prioriterte arbeidsflyt
 
-S2b/S2c-agentarbeidet er implementert og under validering, ikkje utrulla.
+S2b/S2c-agentarbeidet er i Canary (PR #304 / GitOps #271).
 Flyten er adresserbar frå liste til agent og vidare til éin vald del:
 Oppførsel, Minne, Bilettolking, Biletskaping, Vêr, Sjøtemperatur, Ferger,
 Samarbeid eller tilgang for vald kanal. Konto/servermerking viser eigarskap.
@@ -209,8 +210,8 @@ tilsynelatande brytarar som ikkje kan påverke tenesta.
 | **S1a – navigasjonsgrunnlag** | Typa destinasjonar, eksplisitt ressursmål, éi navigasjonshistorikk og trygt konto-/rollebyte. Definer minimal capability-/feilkontrakt. | Meny og kontekstsnarveg opnar same side; ingen modalstakk eller implisitt aktiv-kanal-mål. Tilgang kan ikkje utleiast frå DOM. |
 | **S1b – personlege sider og søk** | Ny innstillingsoversikt, eksisterande profil/varsel, tydeleg lokal/servermerking og lite tilgangsfiltrert søk. Dokumenter designmønstra. | Profil, varsling og tema er lette å finne; tilbake bevarer chat og utkast. Avslag frå OS blir forklart. Ingen ny kontosynkronisering. |
 | **S2a – krets og kanal** | Flytt medlemmer, invitasjonar og kanaloppsett til faste sider. Bevar gamle inngangar som snarvegar under overgangen. | Felles, krets og kanal er eintydige; eksisterande medlems-/invitasjonsreglar og private grenser er uendra. |
-| **S2b – agentoversikt og forklaring** | Implementert, under validering og ikkje utrulla: agentliste/detalj, konfigurasjonsstatus og same tilgangsside frå begge inngangar. | Oktett-/Paros-scenario: brukaren finn kvifor agenten ikkje svarar og får rett neste handling utan hjelp frå utviklar. |
-| **S2c – agentredigering** | Implementert, under validering og ikkje utrulla: del opp oppførsel, ferdigheiter og samarbeid. Bevar revisjon, delvise oppdateringar og ukjende/gamle val. | Endring i éin del bevarer andre delar; feil, timeout, konflikt og tilbake bevarer utkast. Ingen automatisk melding eller modellkall. |
+| **S2b – agentoversikt og forklaring** | I Canary: agentliste/detalj, konfigurasjonsstatus og same tilgangsside frå begge inngangar. | Oktett-/Paros-scenario: brukaren finn kvifor agenten ikkje svarar og får rett neste handling utan hjelp frå utviklar. |
+| **S2c – agentredigering** | I Canary: del opp oppførsel, ferdigheiter og samarbeid. Bevar revisjon, delvise oppdateringar og ukjende/gamle val. | Endring i éin del bevarer andre delar; feil, timeout, konflikt og tilbake bevarer utkast. Ingen automatisk melding eller modellkall. |
 | **S3 – prosessar og integrasjonar** | Skil prosessoppsett frå oppstart/oppgåvearbeid. Gje ekstern agenttilgang presist namn og plass. Flytt teknisk inspeksjon til drift. | Prosess blir starta i eksplisitt vald kanal; kanalen kan berre starte konfigurerte prosessar/applikasjonar. Oppgåvene blir verande i sine kanalar. |
 | **S4 – native paritet** | Implementer først personlege innstillingar og éi representativ krets-/agentflyt i Windows; bruk same kontrakt i Android-arbeidet. | Same eigarskap og feiltilstandar med native navigasjon. Manglande native funksjon opnar presist nettmål og blir ikkje framstilt som implementert. |
 | **S5 – opprydding** | Fjern gamle opningsvegar og legacy-DOM-avhengigheiter som no er erstatta. Oppdater hjelp og paritetskart. | Kvar gammal funksjon er spora til testa ny plass; ingen ny menyparallell blir ståande. |

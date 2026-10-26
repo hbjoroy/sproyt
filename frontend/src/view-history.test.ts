@@ -142,3 +142,10 @@ test("drafts remain account-scoped and old unowned drafts require explicit recov
   nav.persistChannelDraft("a", "bob draft"); nav.bindOwner("alice");
   assert.equal(nav.restoreChannelDraft("a"), "old unowned draft"); assert.equal(nav.restoreThreadDraft("a", "root"), "alice thread");
 });
+test("getting started and invitation acceptance have canonical destinations", () => {
+  for (const href of ["/?view=settings&section=welcome", "/?view=settings&section=community&task=accept-invitation"]) {
+    const target = readViewTarget(`https://sproyt.test${href}`);
+    assert.ok(target);
+    assert.equal(new URL(viewHref(target, "https://sproyt.test/")).search, new URL(href, "https://sproyt.test/").search);
+  }
+});

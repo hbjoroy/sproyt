@@ -64,7 +64,7 @@ impl SafeViewQuery {
             Some("settings") => {
                 let section = self.section.as_deref().unwrap_or("overview");
                 let path = match section {
-                    "overview" | "profile" | "notifications" => {
+                    "overview" | "profile" | "notifications" | "welcome" => {
                         format!("/?view=settings&section={section}")
                     }
                     "circle" | "memory" => format!(
@@ -118,7 +118,7 @@ impl SafeViewQuery {
                         let base = format!("/?view=settings&section=community&task={task}");
                         match task {
                             "people" | "create-circle" | "circles" | "global-channels"
-                            | "global-invite" => base,
+                            | "global-invite" | "accept-invitation" => base,
                             "create-channel" => match self.circle.as_deref() {
                                 Some(circle) => {
                                     format!("{base}&circle={}", resource(Some(circle))?)
@@ -521,6 +521,7 @@ mod tests {
             "/?view=settings&section=overview",
             "/?view=settings&section=profile",
             "/?view=settings&section=notifications",
+            "/?view=settings&section=welcome",
         ] {
             assert_view_login_roundtrip(path);
         }
@@ -541,6 +542,7 @@ mod tests {
             "circles",
             "global-channels",
             "global-invite",
+            "accept-invitation",
             "create-channel",
         ] {
             assert_view_login_roundtrip(&format!("/?view=settings&section=community&task={task}"));

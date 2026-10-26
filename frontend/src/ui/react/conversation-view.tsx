@@ -11,7 +11,7 @@ import { ProductConversationNavigation } from "./conversation-navigation";
 export interface ConversationGroup {
   readonly id: string;
   readonly name: string;
-  readonly conversations: readonly (Omit<Conversation, "group"> & { readonly action?: ReactNode })[];
+  readonly conversations: readonly (Omit<Conversation, "group"> & { readonly action?: ReactNode; readonly directGroup?: boolean })[];
   readonly actions?: ReactNode;
 }
 
@@ -23,6 +23,11 @@ export interface ConversationNavigationProps {
   readonly recentChannelIds?: readonly string[];
   readonly groups: readonly ConversationGroup[];
   readonly selectedId: string | null;
+  readonly directoryReady?: boolean;
+  readonly directoryError?: string;
+  readonly onFindChannels?: () => void;
+  readonly onInvitation?: () => void;
+  readonly onGuide?: () => void;
   readonly query: string;
   readonly onQueryChange: (query: string) => void;
   readonly onSelect: (id: string) => void;
@@ -269,6 +274,7 @@ export interface ConversationViewProps {
   /** Supply a ThreadPane; the channel stays mounted underneath on narrow views. */
   readonly thread?: ReactNode;
   readonly overlays?: ReactNode;
+  readonly emptyContent?: ReactNode;
 }
 
 function ConnectionIndicator({ connected, status }: { readonly connected: boolean; readonly status: string }) {
@@ -288,13 +294,12 @@ export function ConversationView(props: ConversationViewProps) {
       header={<>{props.header}{snapshot.connection.status && <ConnectionIndicator {...snapshot.connection} />}</>}>
       <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}>
         <section className="sp-channel-pane" aria-label={props.title}>
-          <header className="sp-context">
+          {!props.emptyContent && <header className="sp-context">
             <Button className="sp-only-compact" onClick={props.onBack}>← Samtalar</Button>
             <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 className="sp-heading">{props.title}</h1></div>
             {props.contextActions}
-          </header>
-          <ConversationTimeline {...props.timeline} />
-          {props.composer}
+          </header>}
+          {props.emptyContent ?? <><ConversationTimeline {...props.timeline} />{props.composer}</>}
         </section>
         {props.thread}
       </div>

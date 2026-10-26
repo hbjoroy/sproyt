@@ -1,0 +1,14 @@
+.sp-theme .sp-getting-started { box-sizing: border-box; width: 100%; max-width: 40rem; min-width: 0; padding: 32px 24px; color: var(--sp-text); font-size: 1rem; line-height: 1.5; }
+.sp-theme .sp-getting-started-heading { border-top: 3px solid var(--sp-rule); padding-top: 16px; }
+.sp-theme .sp-getting-started-heading h1 { margin: 0 0 8px; font-size: 2rem; line-height: 1.2; }
+.sp-theme .sp-getting-started-heading p { margin: 0; }
+.sp-theme .sp-getting-started-explanations { display: grid; gap: 8px; margin: 24px 0; padding-left: 1.25rem; }
+.sp-theme .sp-getting-started-actions, .sp-theme .sp-directory-empty-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sp-theme .sp-getting-started .sp-button, .sp-theme .sp-directory-empty .sp-button { min-height: 45px; max-width: 100%; white-space: normal; text-align: left; font-size: .875rem; }
+.sp-theme .sp-getting-started-profile.sp-button { margin-top: 16px; }
+.sp-theme .sp-channel-pane > .sp-getting-started, .sp-theme .sp-directory-waiting { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.sp-theme .sp-directory-waiting { padding: 24px; }
+.sp-theme .sp-product-nav-guide.sp-button { justify-self: start; font-size: .875rem; color: var(--sp-muted); }
+.sp-theme .sp-directory-empty { min-width: 0; padding: 16px; color: var(--sp-muted); font-size: 1rem; line-height: 1.5; overflow-wrap: anywhere; }
+.sp-theme .sp-directory-empty p { margin: 0 0 8px; }
+@media (max-width: 400px) { .sp-theme .sp-getting-started { padding: 24px 16px; } .sp-theme .sp-getting-started-heading h1 { font-size: 1.5rem; } }

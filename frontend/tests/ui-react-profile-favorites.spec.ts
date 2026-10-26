@@ -66,10 +66,16 @@ for (const touch of [false, true]) test(`new-DM people rows stay compact without
     const app = await enter(page, "people-compact");
     const back = app.getByRole("button", { name: "Samtalar", exact: true }); if (await back.isVisible()) await back.click();
     await app.getByRole("tab", { name: /^Direktemeldingar/ }).click(); await app.getByRole("button", { name: "Ny direktemelding", exact: true }).click();
-    const dialog = app.getByRole("dialog", { name: "Personar og ny direktemelding", exact: true });
-    await expect(dialog.locator(".sp-person")).toHaveCount(names.length);
-    const rows = await dialog.locator(".sp-person").evaluateAll(elements => elements.map(element => ({ height: element.getBoundingClientRect().height, border: getComputedStyle(element).borderBottomWidth, overflow: element.scrollWidth > element.clientWidth })));
-    expect(rows.every(row => row.height >= (touch ? 44 : 36) && row.height <= (touch ? 45 : 37) && row.border === "0px" && !row.overflow)).toBe(true);
+    const dialog = app.getByRole("dialog", { name: "Ny direktemelding", exact: true });
+    await expect(dialog.locator(".sp-direct-person")).toHaveCount(names.length);
+    const rows = await dialog.locator(".sp-direct-person").evaluateAll(elements => elements.map(element => ({
+      height: element.getBoundingClientRect().height, border: getComputedStyle(element).borderBottomWidth,
+      overflow: element.scrollWidth > element.clientWidth,
+      nameWhiteSpace: getComputedStyle(element.querySelector(".sp-direct-person-name")!).whiteSpace,
+      detailWhiteSpace: getComputedStyle(element.querySelector(".sp-direct-person-detail")!).whiteSpace
+    })));
+    expect(rows.every(row => row.height >= (touch ? 44 : 36) && row.height <= 44.5 && row.border === "0px"
+      && !row.overflow && row.nameWhiteSpace === "nowrap" && row.detailWhiteSpace === "nowrap")).toBe(true);
     await expect(dialog.getByRole("button", { name: `Start samtale med ${names[1]}`, exact: true })).toBeVisible();
     await page.screenshot({ path: info.outputPath(`compact-people-${touch ? "touch" : "pointer"}.png`) });
   } finally { await context.close(); }

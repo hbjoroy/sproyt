@@ -2,7 +2,7 @@ import type { ConversationSnapshot } from "./conversation-snapshot";
 
 /** Resource IDs are captured when a destination opens, never inferred on save. */
 export type CommunityDestination =
-  | { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" }
+  | { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" | "accept-invitation" }
   | { kind: "create-channel"; circleId: string | null }
   | { kind: "channel"; channelId: string }
   | { kind: "channels" | "invite" | "rename-circle" | "circle-members"; circleId: string };
@@ -22,7 +22,7 @@ export function validAgentSettingsRoute(agentId: unknown, panel: unknown, channe
 }
 
 export type ManagementTarget =
-  | { kind: "overview" | "profile" | "notifications" }
+  | { kind: "overview" | "profile" | "notifications" | "welcome" }
   | { kind: "circle" | "memory"; circleId: string }
   | { kind: "chat-agents"; circleId: string; agentId?: string; panel?: AgentSettingsPanel; channelId?: string }
   | { kind: "community"; destination: CommunityDestination }

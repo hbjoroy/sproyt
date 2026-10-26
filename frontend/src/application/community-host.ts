@@ -21,7 +21,18 @@ export function createCommunityHost(deps: {
   chatAgents?: CircleChatAgentApi;
   agentMemory?: AgentMemoryApi;
 }): CommunityHost {
-  const request = deps.requests.request;
+  const capture = () => {
+    const owner = deps.selfId(), generation = deps.requests.generation;
+    return () => {
+      if (!owner || owner !== deps.selfId() || generation !== deps.requests.generation)
+        throw new Error("Kontoen eller sambandet vart endra. Opne handlinga på nytt.");
+    };
+  };
+  const request: typeof deps.requests.request = async (type, send) => {
+    const check = capture(); check();
+    const result = await deps.requests.request(type, () => { check(); return send(); });
+    check(); return result;
+  };
   const circle = (id: string, owner = false) => {
     const value = deps.circles().get(id);
     if (!value || (owner && value.role !== "owner")) throw new Error("Du har ikkje tilgang til denne kretshandlinga.");
@@ -76,14 +87,18 @@ export function createCommunityHost(deps: {
     description: async (id, description) => { channel(id, true); await request("channel_description_updated", () => deps.send("update_channel_description", { channel_id: id, description })); },
     addMember: async (id, userId) => { channel(id, false, true); await request("channel_member_added", () => deps.send("add_channel_member", { channel_id: id, user_id: userId })); },
     invite: async (circleId, channelId, userId) => {
+      const check = capture(); check();
       if (channelId) { if (channel(channelId, false, true).circle_id !== circleId) throw new Error("Kanalen høyrer ikkje til denne kretsen."); }
       else invitationCircle(circleId);
       const created = await request("invitation_created", () => deps.send("create_invitation", { target: channelId ? { type: "channel", circle_id: circleId, channel_id: channelId } : { type: "circle", circle_id: circleId } }));
       const token = created.payload.invitation.token;
+      check();
       if (userId) {
         const direct = await request("direct_channel_opened", () => deps.openDirectForDelivery ? deps.openDirectForDelivery(userId) : deps.openDirect(userId));
+        check();
         await request("message_accepted", () => deps.send("send_message", { channel_id: direct.payload.channel.id, body: `[[invite:${token}]]` }));
       }
+      check();
       return `${window.location.origin}/?invite=${encodeURIComponent(token)}`;
     },
     accept: async value => { const token = deps.invitationToken(value); if (!token) throw new Error("Skriv inn ein gyldig invitasjonskode eller lenkje."); await request("invitation_accepted", () => deps.send("accept_invitation", { token })); },

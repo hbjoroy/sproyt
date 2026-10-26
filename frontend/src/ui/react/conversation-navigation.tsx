@@ -6,6 +6,7 @@ import { conversationPreferenceKey, MAX_PINNED_CIRCLES, partitionNavigationCircl
   recordCircleSelection, setCircleExpanded, toggleCirclePinned, writeConversationPreferences } from "../../conversation-preferences";
 import type { ConversationPreferences, ConversationPreferenceStorage } from "../../conversation-preferences";
 import { emptyCircleFavorites } from "../../circle-favorites";
+import { DirectoryEmptyState } from "./getting-started";
 
 const noSubscription = () => () => {};
 const emptyFavoritesSnapshot = () => emptyCircleFavorites;
@@ -115,6 +116,7 @@ function AccountNavigation(props: NavigationProps) {
       {conversations.map(item => <div className="sp-conversation-row" key={item.id}>
         <button type="button" className="sp-conversation" aria-current={item.id === props.selectedId ? "page" : undefined}
           onClick={() => select(group, item.id)}>
+          {item.directGroup && <svg width="16" height="16" viewBox="0 0 24 24" role="img" aria-label="Gruppesamtale" className="sp-direct-group-icon"><circle cx="9" cy="8" r="3" /><path d="M3 21v-3a6 6 0 0112 0v3M16 5a3 3 0 010 6M18 15a5 5 0 013 4v2" /></svg>}
           <span className="sp-conversation-name">{item.name}</span><UnreadBadge count={item.unread ?? 0} />
         </button>
         {item.action && <div className="sp-conversation-actions">{item.action}</div>}
@@ -180,6 +182,8 @@ function AccountNavigation(props: NavigationProps) {
           if (props.ownerId) void props.favorites?.transfer(props.ownerId, legacyPins.map(id => id.slice("circle:".length)));
         }}>Overfør lokale favorittar</Button>
       </details>}
+      {props.directoryReady === false ? <Status>{props.directoryError || "Hentar samtalane dine …"}</Status> : <>
+      {props.directoryError && <Status tone="error">{props.directoryError}</Status>}
       {sharedGroups.map(groupSection)}
       {(foldOthers ? preferred : circles).map(groupSection)}
       {foldOthers && <div className="sp-product-nav-others">
@@ -190,16 +194,20 @@ function AccountNavigation(props: NavigationProps) {
         </button>
         <div id={`${id}-others`} hidden={!othersOpen}>{others.map(groupSection)}</div>
       </div>}
-      {sharedGroups.length + circles.length === 0 && <Status>{searching ? "Ingen kretsar eller kanalar passar søket." : "Ingen kretsar eller kanalar enno."}</Status>}
+      {sharedGroups.length + circles.length === 0 && <DirectoryEmptyState scope="circles" searching={searching} onFindChannels={props.onFindChannels} onInvitation={props.onInvitation} />}
       {sharedGroups.length + circles.length > 0 && !searching && [...sharedGroups, ...circles].every(group => !group.conversations.length)
         && <p className="sp-product-nav-empty">Ingen kanalar enno. Opne menyen ved ein krets for å finne eller opprette ein kanal.</p>}
+      </>}
     </div>
     <div role="tabpanel" id={`${id}-direct-panel`} aria-labelledby={`${id}-direct-tab`} hidden={scope !== "direct"}>
+      {props.directoryReady === false ? <Status>{props.directoryError || "Hentar samtalane dine …"}</Status> : <>
       <div className="sp-product-nav-direct-actions">{props.actions}</div>
       {directGroups.map(group => <section key={group.id} data-conversation-group={group.id} aria-label="Direktemeldingar">
         {group.actions}{rows(group)}
       </section>)}
-      {directGroups.length === 0 && <Status>{searching ? "Ingen direktemeldingar passar søket." : "Ingen direktemeldingar enno. Start ei ny samtale."}</Status>}
+      {directGroups.length === 0 && <DirectoryEmptyState scope="direct" searching={searching} />}
+      </>}
     </div>
+    {props.onGuide && <Button variant="quiet" className="sp-product-nav-guide" onClick={props.onGuide}>Kom i gang</Button>}
   </div>;
 }

@@ -5,6 +5,8 @@ import type { AgentMemoryApi } from "../../agent-memory";
 import type { Channel, Circle, UserProfile } from "../../types";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import { MarkdownContent } from "./markdown-content";
+import { directConversationTitle, existingDirectChannel } from "../../direct-conversation";
+import { DirectMessagePicker, useCommunityViewScope } from "./direct-message-picker";
 
 import type { CommunityDestination } from "../../application/management-target";
 export type { CommunityDestination } from "../../application/management-target";
@@ -35,64 +37,77 @@ export interface CommunityHost {
   renderIntegration?: (channelId: string) => ReactNode;
 }
 
-function useOperation() {
+function useOperation(capture?: () => () => boolean) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const run = async (action: () => Promise<unknown>, success = "") => {
-    if (busy) return;
+  const run = async (action: (admitted: () => boolean) => Promise<unknown>, success = "") => {
+    const admitted = capture?.() ?? (() => true);
+    if (busy || !admitted()) return;
     setBusy(true); setError(""); setNotice("");
-    try { await action(); setNotice(success); } catch (error) { setError(error instanceof Error ? error.message : "Handlinga feila. Prøv igjen."); }
-    finally { setBusy(false); }
+    try { await action(admitted); if (admitted()) setNotice(success); }
+    catch (error) { if (admitted()) setError(error instanceof Error ? error.message : "Handlinga feila. Prøv igjen."); }
+    finally { if (admitted()) setBusy(false); }
   };
-  return { busy, run, feedback: <>{error && <Status tone="error">{error}</Status>}{notice && <Status>{notice}</Status>}</> };
+  return { busy, error, run, feedback: <>{error && <Status tone="error">{error}</Status>}{notice && <Status>{notice}</Status>}</> };
 }
 
 function Markdown({ text }: { text: string }) {
   return <MarkdownContent source={text} />;
 }
 
-function People({ host, channel, onClose, focusMemberAction = false }: { host: CommunityHost; channel?: Readonly<Channel>; onClose(): void; focusMemberAction?: boolean }) {
+function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focusMemberAction = false }: {
+  host: CommunityHost; channel: Readonly<Channel>; snapshot: ConversationSnapshot;
+  onClose(): void; onSelectChannel?: (channelId: string) => void; focusMemberAction?: boolean;
+}) {
+  const scope = useCommunityViewScope(host, JSON.stringify([channel.id, channel.role, channel.kind, channel.circle_id, channel.is_direct]));
   const [people, setPeople] = useState<UserProfile[]>([]);
   const [eligible, setEligible] = useState<UserProfile[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState("");
-  const [description, setDescription] = useState(channel?.description ?? "");
+  const [description, setDescription] = useState(channel.description);
   const [loaded, setLoaded] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
-  const op = useOperation();
+  const op = useOperation(scope.capture);
   const memberField = useRef<HTMLSelectElement>(null);
-  const searchField = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (channel) return;
-    // Dialog.showModal first focuses its close control; focus search afterwards.
-    const frame = requestAnimationFrame(() => searchField.current?.focus({ preventScroll: true }));
-    return () => cancelAnimationFrame(frame);
-  }, [channel?.id]);
   const memberActionFocused = useRef(false);
+  const direct = !!channel.is_direct;
+  const manager = !direct && ["owner", "moderator"].includes(channel.role);
   useEffect(() => {
-    if (!focusMemberAction || !loaded || op.busy || memberActionFocused.current) return;
+    if (!focusMemberAction || !loaded || op.busy || memberActionFocused.current || direct) return;
     const frame = requestAnimationFrame(() => {
       if (!memberField.current) return;
       memberActionFocused.current = true;
-      memberField.current?.scrollIntoView({ block: "nearest" });
-      memberField.current?.focus({ preventScroll: true });
+      memberField.current.scrollIntoView({ block: "nearest" });
+      memberField.current.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [focusMemberAction, loaded, op.busy]);
-  const load = () => op.run(async () => {
-    const members = channel ? await host.members(channel.id) : await host.users();
+  }, [focusMemberAction, loaded, op.busy, direct]);
+  const load = () => op.run(async admitted => {
+    const members = await host.members(channel.id);
+    if (!admitted()) return;
     setPeople(members); setLoaded(true);
-    if (channel && ["owner", "moderator"].includes(channel.role)) {
+    if (manager) {
       const candidates = channel.circle_id ? await host.circleMembers(channel.circle_id) : await host.users();
-      setEligible(candidates.filter(person => person.id !== host.selfId() && !members.some(member => member.id === person.id)));
+      if (!admitted()) return;
+      setEligible(candidates.filter(person => person.id !== scope.owner && !members.some(member => member.id === person.id)));
     }
   });
-  useEffect(() => { void load(); }, []);
-  const visible = people.filter(person => (channel || person.id !== host.selfId())
-    && `${person.display_name} ${person.handle ?? ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  useEffect(() => { void load(); }, [channel.id, scope.owner]);
+  const visible = people.filter(person => `${person.display_name} ${person.handle ?? ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const openPerson = (userId: string) => op.run(async admitted => {
+    const existing = existingDirectChannel(snapshot.channels, userId);
+    if (existing && onSelectChannel) onSelectChannel(existing.id);
+    else await host.openDirect(userId);
+    if (admitted()) onClose();
+  });
   return <>
-    {channel && <section aria-label="Kanalomtale">
+    {direct ? <section aria-label="Om samtalen">
+      <h3 className="sp-direct-conversation-heading">{directConversationTitle(channel, people)}</h3>
+      <p className="sp-direct-conversation-kind">{channel.direct_user_id ? "Direktemelding" : "Gruppesamtale"}</p>
+      <p>Dette er ei samtale mellom medlemmene nedanfor. Vanlege kanaltypar og kanalroller gjeld ikkje her.</p>
+      <p>Om du nemner ein ny person med @, kan du starte ei ny gruppesamtale. Den opphavlege samtalen og meldingane hennar blir bevarte.</p>
+    </section> : <section aria-label="Kanalomtale">
       <h3>Om {channel.name}</h3>
       {channel.description ? <Markdown text={channel.description} /> : <p>Ingen kanalomtale enno.</p>}
       {channel.role === "owner" && <form onSubmit={event => { event.preventDefault(); void op.run(() => host.description(channel.id, description), "Omtalen er lagra."); }}>
@@ -101,24 +116,31 @@ function People({ host, channel, onClose, focusMemberAction = false }: { host: C
         <Button type="submit" busy={op.busy}>Lagre omtale</Button>
       </form>}
     </section>}
-    <TextField ref={searchField} label={channel ? "Finn kanalmedlem" : "Finn person"} type="search" value={query} onChange={event => setQuery(event.target.value)} />
-    <Button onClick={() => void load()} busy={op.busy}>Last personlista på nytt</Button>
-    {loaded && <div className={channel ? undefined : "sp-direct-people"}><PersonList people={visible.map(person => ({ id: person.id, name: person.display_name, detail: [person.handle ? `@${person.handle}` : "", person.status_emoji, person.status_text].filter(Boolean).join(" · ") }))}
-      emptyLabel="Ingen personar passar søket." actions={person => person.id === host.selfId() ? null
-        : <Button className="sp-community-direct" variant="quiet" aria-label={`Start samtale med ${person.name}`} title={`Start samtale med ${person.name}`}
-          disabled={op.busy} onClick={() => void op.run(async () => { await host.openDirect(person.id); onClose(); })}><span aria-hidden="true">→</span></Button>} /></div>}
-    {channel && ["owner", "moderator"].includes(channel.role) && <section aria-label="Legg til kanalmedlem">
+    <TextField label={direct ? "Finn medlem" : "Finn kanalmedlem"} type="search" value={query} onChange={event => setQuery(event.target.value)} />
+    {(!direct || op.error) && <Button variant="quiet" onClick={() => void load()} busy={op.busy}>{direct ? "Prøv igjen" : "Last personlista på nytt"}</Button>}
+    {!loaded && !op.error && <Status>Hentar medlemmer …</Status>}
+    {loaded && <PersonList people={visible.map(person => ({ id: person.id, name: person.display_name, detail: [person.handle ? `@${person.handle}` : "", person.status_emoji, person.status_text].filter(Boolean).join(" · ") }))}
+      emptyLabel="Ingen personar passar søket." actions={person => person.id === scope.owner ? null
+        : <Button className="sp-community-direct" variant="quiet" aria-label={`${existingDirectChannel(snapshot.channels, person.id) ? "Opne" : "Start"} samtale med ${person.name}`} title={`${existingDirectChannel(snapshot.channels, person.id) ? "Opne" : "Start"} samtale med ${person.name}`}
+          disabled={op.busy} onClick={() => void openPerson(person.id)}><span aria-hidden="true">→</span></Button>} />}
+    {manager && <section aria-label="Legg til kanalmedlem">
       <h3>Legg til kanalmedlem</h3>
       <label htmlFor="community-member">Vel person</label>
       <select ref={memberField} id="community-member" value={selected} onChange={event => setSelected(event.target.value)}><option value="">Vel person</option>{eligible.map(person => <option key={person.id} value={person.id}>{person.display_name}</option>)}</select>
-      <Button disabled={!selected || op.busy} onClick={() => void op.run(async () => { await host.addMember(channel.id, selected); setPeople(await host.members(channel.id)); setEligible(eligible.filter(person => person.id !== selected)); setSelected(""); }, "Personen er lagd til.")}>Legg til</Button>
+      <Button disabled={!selected || op.busy} onClick={() => void op.run(async admitted => {
+        await host.addMember(channel.id, selected);
+        if (!admitted()) return;
+        const members = await host.members(channel.id);
+        if (!admitted()) return;
+        setPeople(members); setEligible(eligible.filter(person => person.id !== selected)); setSelected("");
+      }, "Personen er lagd til.")}>Legg til</Button>
       {channel.circle_id && <Button disabled={!selected || op.busy} onClick={() => void op.run(() => host.invite(channel.circle_id!, channel.id, selected), "Invitasjonen er sendt i direktemelding.")}>Inviter i direktemelding</Button>}
     </section>}
-    {channel && !channel.is_direct && <section>
+    {!direct && <section>
       <Button variant="danger" disabled={op.busy} onClick={() => setConfirmLeave(true)}>Forlat kanalen</Button>
-      {confirmLeave && <div role="group" aria-label="Stadfest at du vil forlate kanalen"><p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p><Button onClick={() => setConfirmLeave(false)}>Avbryt</Button><Button variant="danger" disabled={op.busy} onClick={() => void op.run(async () => { await host.leaveChannel(channel.id); onClose(); })}>Ja, forlat kanalen</Button></div>}
+      {confirmLeave && <div role="group" aria-label="Stadfest at du vil forlate kanalen"><p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p><Button onClick={() => setConfirmLeave(false)}>Avbryt</Button><Button variant="danger" disabled={op.busy} onClick={() => void op.run(async admitted => { await host.leaveChannel(channel.id); if (admitted()) onClose(); })}>Ja, forlat kanalen</Button></div>}
     </section>}
-    {channel && !channel.is_direct && ["owner", "moderator"].includes(channel.role) && host.renderIntegration?.(channel.id)}
+    {manager && host.renderIntegration?.(channel.id)}
     {op.feedback}
   </>;
 }
@@ -261,11 +283,11 @@ export function PreviewCommunity({ destination, snapshot, host, onClose, onNavig
 }) {
   const circle = "circleId" in destination ? snapshot.circles.find(item => item.id === destination.circleId) : undefined;
   const channel = destination.kind === "channel" ? snapshot.channels.find(item => item.id === destination.channelId) : undefined;
-  const title = destination.kind === "circle-members" ? "Kretsmedlemmer og roller" : destination.kind === "rename-circle" ? "Endre kretsnamn" : destination.kind === "create-channel" ? `Ny kanal i ${circle?.name ?? "Felles"}` : destination.kind === "people" ? "Personar og ny direktemelding" : destination.kind === "channel" ? `Kanaldetaljar: ${channel?.name ?? "Kanal"}` : destination.kind === "create-circle" ? "Ny vennekrets" : destination.kind === "circles" ? "Kretsadministrasjon og invitasjonskode" : destination.kind === "global-channels" ? "Kanalar i Felles" : destination.kind === "global-invite" ? "Inviter ny brukar til Sprøyt" : destination.kind === "channels" ? `Kanalar i ${circle?.name ?? "vennekretsen"}` : `Inviter til ${circle?.name ?? "vennekretsen"}`;
+  const title = destination.kind === "circle-members" ? "Kretsmedlemmer og roller" : destination.kind === "rename-circle" ? "Endre kretsnamn" : destination.kind === "create-channel" ? `Ny kanal i ${circle?.name ?? "Felles"}` : destination.kind === "people" ? "Ny direktemelding" : destination.kind === "channel" ? channel?.is_direct ? "Om samtalen" : `Kanaldetaljar: ${channel?.name ?? "Kanal"}` : destination.kind === "create-circle" ? "Ny vennekrets" : destination.kind === "circles" ? "Kretsadministrasjon og invitasjonskode" : destination.kind === "global-channels" ? "Kanalar i Felles" : destination.kind === "global-invite" ? "Inviter ny brukar til Sprøyt" : destination.kind === "channels" ? `Kanalar i ${circle?.name ?? "vennekretsen"}` : `Inviter til ${circle?.name ?? "vennekretsen"}`;
   return <Dialog open title={title} closeLabel="Lukk" onClose={onClose}>
     <div className="sp-community-dialog">
-      {destination.kind === "people" && <People host={host} onClose={onClose} />}
-      {destination.kind === "channel" && (channel ? <People host={host} channel={channel} onClose={onClose} focusMemberAction={focusMemberAction} /> : <Status>Kanalen er ikkje lenger tilgjengeleg.</Status>)}
+      {destination.kind === "people" && <DirectMessagePicker key={host.selfId()} host={host} snapshot={snapshot} onClose={onClose} onSelectChannel={onSelectChannel} />}
+      {destination.kind === "channel" && (channel ? <ChannelPeople key={`${host.selfId()}:${channel.id}:${channel.role}:${channel.kind}:${channel.is_direct}`} host={host} channel={channel} snapshot={snapshot} onClose={onClose} onSelectChannel={onSelectChannel} focusMemberAction={focusMemberAction} /> : <Status>Kanalen er ikkje lenger tilgjengeleg.</Status>)}
       {destination.kind === "create-circle" && <CreateCircle host={host} onClose={onClose} />}
       {destination.kind === "circle-members" && circle && <CirclePeople host={host} circle={circle} />}
       {destination.kind === "rename-circle" && (circle ? <RenameCircle host={host} circle={circle} onClose={onClose} /> : <Status>Kretsen er ikkje lenger tilgjengeleg.</Status>)}

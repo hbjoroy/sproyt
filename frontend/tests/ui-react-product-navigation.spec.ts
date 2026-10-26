@@ -109,18 +109,31 @@ test("favorites remain isolated when the active account changes", async ({ page 
   const { app, switchAccount } = await fixture(page);
   const nav = await navigation(app);
   const selected = nav.locator(`[data-conversation-group="circle:${circleId(29)}"]`);
+  const revealSelected = async () => {
+    await expect(selected).toBeAttached();
+    const star = selected.getByRole("button", { name: /^(Fest|Løys) Krets 30/, includeHidden: true });
+    if (!await star.isVisible()) {
+      const others = nav.getByRole("button", { name: /^Andre kretsar/ });
+      await expect(others).toHaveAttribute("aria-expanded", "false");
+      await others.click();
+    }
+    await expect(star).toBeVisible();
+  };
   await selected.getByRole("button", { name: "Fest Krets 30 som favoritt", exact: true }).click();
   await expect(selected.getByRole("button", { name: "Løys Krets 30 frå favorittar", exact: true })).toHaveAttribute("aria-pressed", "true");
   const otherLoaded = page.waitForResponse(response => response.url().includes("/api/v1/me/favorite-circles") && response.request().headers()["x-sproyt-account"] === "navigation-other-owner" && response.ok());
   switchAccount("navigation-other-owner"); await otherLoaded;
   await navigation(app);
+  await revealSelected();
   await expect(selected.getByRole("button", { name: "Fest Krets 30 som favoritt", exact: true })).toHaveAttribute("aria-pressed", "false");
   const ownerLoaded = page.waitForResponse(response => response.url().includes("/api/v1/me/favorite-circles") && response.request().headers()["x-sproyt-account"] === "navigation-owner" && response.ok());
   switchAccount("navigation-owner"); await ownerLoaded;
   await navigation(app);
+  await revealSelected();
   await expect(selected.getByRole("button", { name: "Løys Krets 30 frå favorittar", exact: true })).toHaveAttribute("aria-pressed", "true");
-  const keys = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith("sproyt:conversation-navigation:")));
-  expect(keys).toEqual([]); // Profile pins are not browser-local preferences.
+  const localPins = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith("sproyt:conversation-navigation:"))
+    .flatMap(key => JSON.parse(localStorage.getItem(key)!).entries ?? []).filter(entry => entry.pinned));
+  expect(localPins).toEqual([]); // Expanding "others" is local; profile pins are not.
 });
 
 for (const width of [1280, 320]) test(`direct directory has its own URL, new-message action and bounded layout at ${width}px`, async ({ page }, testInfo) => {
@@ -139,7 +152,7 @@ for (const width of [1280, 320]) test(`direct directory has its own URL, new-mes
   await nav.getByRole("searchbox", { name: "Finn samtale" }).fill("ingen samtalar passar");
   await expect(create).toBeVisible();
   await create.click();
-  const people = app.getByRole("dialog", { name: "Personar og ny direktemelding", exact: true });
+  const people = app.getByRole("dialog", { name: "Ny direktemelding", exact: true });
   await expect(people.getByRole("searchbox", { name: "Finn person" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(create).toBeFocused();

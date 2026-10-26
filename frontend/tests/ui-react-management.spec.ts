@@ -36,7 +36,7 @@ test("management directory contains focus, cancels with Escape and does not muta
 });
 
 for (const [label, title] of [
-  ["Personar og ny direktemelding", /Personar og ny direktemelding/],
+  ["Ny direktemelding", /Ny direktemelding/],
   ["Kanaldetaljar, medlemmer og integrasjonar", /Kanaldetaljar:/],
   ["Administrer krets", /Vel krets/],
 ] as const) {
@@ -134,8 +134,8 @@ test("React management preserves both channel and thread drafts", async ({ page 
   await preview.locator("[data-message-id]").filter({ hasText: root }).getByRole("button", { name: "Svar i tråd" }).click();
   await preview.getByRole("textbox", { name: "Svar i tråden" }).fill("trådutkast gjennom meny");
   await openManagement(preview);
-  await preview.getByRole("button", { name: "Personar og ny direktemelding" }).click();
-  await expect(preview.getByRole("dialog", { name: "Personar og ny direktemelding" })).toBeVisible();
+  await preview.getByRole("button", { name: "Ny direktemelding" }).click();
+  await expect(preview.getByRole("dialog", { name: "Ny direktemelding" })).toBeVisible();
   await expect(page.locator("#thread-panel")).not.toHaveAttribute("open", "");
   await page.keyboard.press("Escape");
   await expect(preview.getByRole("dialog", { name: "Innstillingar", exact: true })).toBeVisible();

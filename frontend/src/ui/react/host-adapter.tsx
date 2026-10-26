@@ -32,6 +32,10 @@ export interface ConversationHostBindings {
   readonly renderGroupActions?: (group: ConversationSnapshotGroup) => ReactNode;
   readonly renderConversationAction?: (conversation: ConversationSnapshotGroup["conversations"][number]) => ReactNode;
   readonly contextActions?: ReactNode;
+  readonly emptyContent?: ReactNode;
+  readonly onFindChannels?: () => void;
+  readonly onInvitation?: () => void;
+  readonly onGuide?: () => void;
   readonly message: MessagePresentation;
   readonly timeline?: TimelineControls;
   readonly threadTimeline?: TimelineControls & { readonly loading?: boolean; readonly hasOlder?: boolean };
@@ -68,17 +72,19 @@ function ThreadTimeline(props: TimelineProps) {
 export function createConversationViewProps(snapshot: ConversationSnapshot, host: ConversationHostBindings): ConversationViewProps {
   const channelId = snapshot.selection.channelId;
   const channel = snapshot.activeChannel;
-  const context = channel?.is_direct ? "Direkte" : channel?.circle_id
+  const context = channel?.is_direct ? channel.direct_user_id ? "Direkte" : "Gruppesamtale" : channel?.circle_id
     ? snapshot.circles.find(circle => circle.id === channel.circle_id)?.name ?? "Vennekrets"
     : channel ? "Felles" : undefined;
   const thread = snapshot.thread;
   const threadVisible = thread !== null && channelId !== null && thread.channelId === channelId;
   return {
     runtime: host.runtime, theme: host.theme, view: host.view, header: host.header,
-    title: snapshot.title, context,
+    title: snapshot.title, context, emptyContent: host.emptyContent,
     contextActions: host.contextActions, onBack: host.onBack,
     navigation: {
       favorites: host.favorites,
+      directoryReady: snapshot.directory.ready, directoryError: snapshot.directory.error,
+      onFindChannels: host.onFindChannels, onInvitation: host.onInvitation, onGuide: host.onGuide,
       ownerId: host.ownerId,
       directoryScope: host.directoryScope, onDirectoryScopeChange: host.onDirectoryScopeChange,
       recentChannelIds: host.recentChannelIds,
@@ -87,6 +93,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
         // Notification subscriptions are not a mute policy. Do not map disabled
         // notifications to the library's `muted` appearance.
         conversations: group.conversations.map(item => ({ id: item.id, name: item.name, unread: item.unread,
+          directGroup: !!item.channel.is_direct && !item.channel.direct_user_id,
           action: host.renderConversationAction?.(item) })),
         actions: host.renderGroupActions?.(group)
       })),
