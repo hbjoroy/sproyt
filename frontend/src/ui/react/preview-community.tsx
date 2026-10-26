@@ -103,10 +103,10 @@ function People({ host, channel, onClose, focusMemberAction = false }: { host: C
     </section>}
     <TextField ref={searchField} label={channel ? "Finn kanalmedlem" : "Finn person"} type="search" value={query} onChange={event => setQuery(event.target.value)} />
     <Button onClick={() => void load()} busy={op.busy}>Last personlista på nytt</Button>
-    {loaded && <PersonList people={visible.map(person => ({ id: person.id, name: person.display_name, detail: [person.handle ? `@${person.handle}` : "", person.status_emoji, person.status_text].filter(Boolean).join(" · ") }))}
+    {loaded && <div className={channel ? undefined : "sp-direct-people"}><PersonList people={visible.map(person => ({ id: person.id, name: person.display_name, detail: [person.handle ? `@${person.handle}` : "", person.status_emoji, person.status_text].filter(Boolean).join(" · ") }))}
       emptyLabel="Ingen personar passar søket." actions={person => person.id === host.selfId() ? null
         : <Button className="sp-community-direct" variant="quiet" aria-label={`Start samtale med ${person.name}`} title={`Start samtale med ${person.name}`}
-          disabled={op.busy} onClick={() => void op.run(async () => { await host.openDirect(person.id); onClose(); })}><span aria-hidden="true">→</span></Button>} />}
+          disabled={op.busy} onClick={() => void op.run(async () => { await host.openDirect(person.id); onClose(); })}><span aria-hidden="true">→</span></Button>} /></div>}
     {channel && ["owner", "moderator"].includes(channel.role) && <section aria-label="Legg til kanalmedlem">
       <h3>Legg til kanalmedlem</h3>
       <label htmlFor="community-member">Vel person</label>

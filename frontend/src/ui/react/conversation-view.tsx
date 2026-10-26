@@ -16,6 +16,7 @@ export interface ConversationGroup {
 }
 
 export interface ConversationNavigationProps {
+  readonly favorites?: import("../../circle-favorites").CircleFavorites;
   readonly ownerId?: string;
   readonly directoryScope?: "circles" | "direct";
   readonly onDirectoryScopeChange?: (scope: "circles" | "direct") => void;

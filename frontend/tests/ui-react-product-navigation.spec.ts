@@ -11,6 +11,15 @@ async function fixture(page: Page, start = `channel=${channelId(29)}`) {
   let socket: WebSocketRoute;
   let identity = "navigation-owner";
   const commands: Command[] = [];
+  const profilePins = new Map<string, Set<string>>();
+  await page.route(/\/api\/v1\/me\/favorite-circles(?:\/[^?]+)?(?:\?.*)?$/, async route => {
+    const owner = route.request().headers()["x-sproyt-account"]!;
+    const pins = profilePins.get(owner) ?? new Set<string>();
+    if (route.request().method() === "GET") return route.fulfill({ json: [...pins] });
+    const id = new URL(route.request().url()).pathname.split("/").at(-1)!;
+    if (route.request().method() === "PUT") pins.add(id); else pins.delete(id);
+    profilePins.set(owner, pins); await route.fulfill({ status: 204 });
+  });
   const circles = Array.from({ length: 30 }, (_, index) => ({ id: circleId(index), slug: `circle-${index}`,
     name: `Krets ${String(index + 1).padStart(2, "0")}${index === 5 ? ` ${"Langt kretsnamn ".repeat(8)}` : ""}`,
     created_by: "owner", created_at: "2026-01-01T00:00:00Z" }));
@@ -102,12 +111,16 @@ test("favorites remain isolated when the active account changes", async ({ page 
   const selected = nav.locator(`[data-conversation-group="circle:${circleId(29)}"]`);
   await selected.getByRole("button", { name: "Fest Krets 30 som favoritt", exact: true }).click();
   await expect(selected.getByRole("button", { name: "Løys Krets 30 frå favorittar", exact: true })).toHaveAttribute("aria-pressed", "true");
-  switchAccount("navigation-other-owner");
+  const otherLoaded = page.waitForResponse(response => response.url().includes("/api/v1/me/favorite-circles") && response.request().headers()["x-sproyt-account"] === "navigation-other-owner" && response.ok());
+  switchAccount("navigation-other-owner"); await otherLoaded;
+  await navigation(app);
   await expect(selected.getByRole("button", { name: "Fest Krets 30 som favoritt", exact: true })).toHaveAttribute("aria-pressed", "false");
-  switchAccount("navigation-owner");
+  const ownerLoaded = page.waitForResponse(response => response.url().includes("/api/v1/me/favorite-circles") && response.request().headers()["x-sproyt-account"] === "navigation-owner" && response.ok());
+  switchAccount("navigation-owner"); await ownerLoaded;
+  await navigation(app);
   await expect(selected.getByRole("button", { name: "Løys Krets 30 frå favorittar", exact: true })).toHaveAttribute("aria-pressed", "true");
   const keys = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith("sproyt:conversation-navigation:")));
-  expect(keys).toEqual(["sproyt:conversation-navigation:v1:navigation-owner"]);
+  expect(keys).toEqual([]); // Profile pins are not browser-local preferences.
 });
 
 for (const width of [1280, 320]) test(`direct directory has its own URL, new-message action and bounded layout at ${width}px`, async ({ page }, testInfo) => {

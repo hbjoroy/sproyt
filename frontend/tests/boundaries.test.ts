@@ -16,6 +16,7 @@ import "./share-target.test";
 import "../src/process-pilot.test";
 import "../src/work-items.test";
 import "../src/view-history.test";
+import "../src/circle-favorites.test";
 import { runConversationPreferenceTests } from "../src/conversation-preferences.test";
 runConversationPreferenceTests();
 import { readFileSync } from "node:fs";

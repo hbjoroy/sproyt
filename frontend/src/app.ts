@@ -5,6 +5,7 @@
       import { appVersion, createAppUpdate, latestAppVersion, updateAppWorker } from "./app-update";
       import { createShareTarget, shareInbox } from "./share-target";
       import { SavedEmojiApi } from "./saved-emojis";
+      import { CircleFavorites, ProfileCircleFavoritesApi } from "./circle-favorites";
       import { SavedStatusApi } from "./saved-statuses";
       import { CircleChatAgentApi } from "./chat-agents";
       import { AgentMemoryApi } from "./agent-memory";
@@ -733,6 +734,7 @@
           }
         }
       });
+      const favoriteCircles = new CircleFavorites(new ProfileCircleFavoritesApi(http), () => currentParticipantId);
       const savedEmojisApi = new SavedEmojiApi(http);
       const savedStatusesApi = new SavedStatusApi(http);
       const notificationsApi = new NotificationApi(http);
@@ -1105,6 +1107,7 @@
       window.addEventListener("online", () => { resumeAfterBackground(true); connectionSupervisor.probeWebsocket(); });
       window.addEventListener("pageshow", refreshVisibleInvitationCards);
       window.addEventListener("focus", refreshVisibleInvitationCards);
+      window.addEventListener("focus", () => { void favoriteCircles.refresh(false); });
 
       function renderMediaPreviews() {
         mediaPreviews.replaceChildren(...activeChannelMedia().map((media) => {
@@ -3297,6 +3300,7 @@
           navigation.bindOwner(currentParticipantId);
           syncRenderedNavigation();
           viewHistory.bindOwner(currentParticipantId);
+          favoriteCircles.bindOwner(currentParticipantId);
           if (changedUser) {
             accountGeneration++;
             viewFocus.clear();
@@ -4905,6 +4909,7 @@
         resumeAfterBackground(false);
         hiddenSince = null;
         sendCommand("list_my_channels");
+        void favoriteCircles.refresh(false);
       });
 
       function pushSystem(text: string): void {
@@ -6170,6 +6175,7 @@
             workItems: workItemsApi,
             appUpdate,
             viewHistory,
+            favorites: favoriteCircles,
             managementTarget: () => managementTarget,
             navigateView,
             openRecentView: target => {

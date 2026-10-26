@@ -74,8 +74,10 @@ Nøklar og kortliva credentials blir aldri del av historikken.
 
 ## Lagring og datavern
 
-- Favorittar og opningsval blir lagra lokalt per konto, med opptil 128
-  kretsoppføringar og 12 favorittar. Bruksteljinga kjem frå eksplisitte val,
+- Favorittar blir lagra som ei privat kontoinnstilling i Sprøyt sin database,
+  med opptil 12 kretsar. Dei følgjer kontoen mellom einingar og nettlesarøkter;
+  dei er ikkje del av den offentlege profilen eller Authentik-attributta.
+  Opningsval og bruksteljing er lokale per konto, med opptil 128 kretsoppføringar. Bruksteljinga kjem frå eksplisitte val,
   ikkje frå å lese eller rendera ei liste.
 - Nylege stader er avgrensa til 30 og 30 dagar. Dei inneheld ressurs-ID-ar og
   små posisjonar, ikkje meldingsinnhald, namn, løyve eller credentials.
@@ -93,9 +95,27 @@ Nøklar og kortliva credentials blir aldri del av historikken.
 - Lagringsavslag skal ikkje hindre lesing og navigasjon. Back/Forward-kontrollar
   blir ikkje annonserte som tilgjengelege dersom historikkopptaket feilar.
 
-Ingen database-, lagringsinfrastruktur- eller autentiseringsmigrasjon er
-føresett. Lokal kontobinding er heller ikkje ei lovnad om synkronisering mellom
-mobil og PC; eventuell kontofelles synkronisering krev ei eiga avgjerd.
+Første navigasjonsleveranse kravde ingen databasemigrasjon. Oppfølginga for
+favorittar legg til `is_favorite` på kretsmedlemskap i migrasjon 0069. Når
+medlemskapet blir fjerna, forsvinn favoritten òg. Opningsval, bruksteljing,
+historikk og utkast blir framleis ikkje synkroniserte mellom mobil og PC.
+
+Favoritt-API-et bruker innlogga identitet og krev dessutan forventa konto i
+`x-sproyt-account`; headeren gjev ingen rettar. Kvar stjerne blir endra med
+ein idempotent PUT/DELETE, ikkje ved å overskrive heile lista. Medlemskap og
+12-grensa blir kontrollerte atomisk. Klienten hentar på innlogging og retur
+til appen, bevarer stadfesta data ved nettfeil og avviser gamle GET-resultat
+etter ei endring. Konto og generasjon bind òg køyrande batchar og øktretry.
+Favorittane er med i personleg dataeksport.
+
+Eldre lokale favorittar blir ikkje automatisk lagde over profilen, sidan det
+kunne gjenoppretta ein favoritt fjerna på ei anna eining. Brukaren får eit
+avgrensa, eksplisitt «Overfør lokale favorittar»-val dersom slike finst.
+Stadfesta overføringar blir fjerna som lokale importkandidatar.
+
+DM-lista har kompakte rader utan mellomstrekar; namn og metadata held éi
+linje med avkorting. Personveljaren bruker same tette rytme. Trykkflater er
+minst 44 px på touch og 36 px med presis peikar.
 
 ## Validering
 

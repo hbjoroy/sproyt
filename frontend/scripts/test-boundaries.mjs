@@ -1,8 +1,9 @@
 import { build } from "esbuild";
+import { spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const outputDirectory = await mkdtemp(path.join(os.tmpdir(), "sproyt-frontend-boundaries-"));
 const outputFile = path.join(outputDirectory, "boundaries.mjs");
@@ -31,7 +32,14 @@ try {
     platform: "node",
     target: "node24"
   });
-  await import(pathToFileURL(outputFile).href);
+  // Import completion does not mean async node:test cases have finished.
+  // Keep their temporary fixtures alive until the test process has exited.
+  const code = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--test", outputFile], { stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  if (code !== 0) process.exitCode = 1;
 } finally {
   await rm(outputDirectory, { recursive: true, force: true });
 }

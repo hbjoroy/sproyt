@@ -386,6 +386,9 @@ pub struct PortableUserExport {
     pub saved_emojis: Vec<String>,
     #[serde(default)]
     pub saved_statuses: Vec<SavedStatus>,
+    /// Private account preference; membership deletion removes the favorite.
+    #[serde(default)]
+    pub favorite_circles: Vec<CircleId>,
     pub circles: Vec<ExportedCircle>,
     pub channels: Vec<ExportedChannel>,
     /// Own agent memory, filtered by current source-channel access in the same

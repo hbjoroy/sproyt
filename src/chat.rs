@@ -13,9 +13,9 @@ use crate::domain::PrincipalKind;
 use crate::domain::{
     AcceptCircleInvitation, AcceptEnrollmentInvitation, AcceptedChatInvitation,
     ActivateEnrollmentInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
-    ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleMembership, CircleRole,
-    CreateChannel, CreateChatInvitation, CreateCircle, CreateCircleInvitation, DeleteCircle,
-    DeleteMessage, DisplayName, EditMessage, EnrollmentInvitation, InvitationPreview,
+    ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle, CircleId, CircleMembership,
+    CircleRole, CreateChannel, CreateChatInvitation, CreateCircle, CreateCircleInvitation,
+    DeleteCircle, DeleteMessage, DisplayName, EditMessage, EnrollmentInvitation, InvitationPreview,
     InvitationTarget, InvitationTokenCommand, IssuedChatInvitation, IssuedEnrollmentInvitation,
     IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
     MediaObject, MediaUpload, MediaVariant, Membership, MessageBody, MessageId, MessageLimit,
@@ -432,6 +432,25 @@ impl ChatEngine {
     ) -> Result<crate::domain::PortableUserExport, ChatError> {
         self.repository
             .export_user_data(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn favorite_circles(&self, actor: UserId) -> Result<Vec<CircleId>, ChatError> {
+        self.repository
+            .favorite_circles(actor)
+            .await
+            .map_err(ChatError::from)
+    }
+
+    pub async fn set_circle_favorite(
+        &self,
+        actor: UserId,
+        circle: CircleId,
+        favorite: bool,
+    ) -> Result<(), ChatError> {
+        self.repository
+            .set_circle_favorite(actor, circle, favorite)
             .await
             .map_err(ChatError::from)
     }
