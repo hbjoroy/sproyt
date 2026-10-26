@@ -69,15 +69,17 @@ internal sealed class NativeMediaPresenter : IDisposable
     private readonly NativeMediaProps _props;
     private readonly DispatcherQueue _dispatcher;
     private readonly CancellationTokenSource _life = new();
-    private readonly Microsoft.UI.Xaml.Controls.Image _image = new() { MaxHeight = 360, MaxWidth = 640, Stretch = Stretch.Uniform };
+    // Keep row geometry when a cached/offscreen bitmap is released.
+    private readonly Microsoft.UI.Xaml.Controls.Image _image = new() { Height = 220, MaxWidth = 640, Stretch = Stretch.Uniform };
     private readonly Microsoft.UI.Xaml.Controls.TextBlock _status;
     private readonly Microsoft.UI.Xaml.Controls.Button _open;
     private readonly Microsoft.UI.Xaml.Controls.Button _load;
     private readonly HyperlinkButton _web;
     private NativePreviewLease? _previewLease;
+    private CancellationTokenSource? _previewCancellation;
     private ContentDialog? _dialog;
     private MediaPlayer? _player;
-    private bool _disposed, _opening, _loading;
+    private bool _disposed, _opening, _loading, _visible, _waitingForCapacity;
     internal StackPanel Root { get; }
     internal NativeMediaPresenter(NativeMediaProps props, DispatcherQueue dispatcher)
     {
@@ -114,44 +116,103 @@ internal sealed class NativeMediaPresenter : IDisposable
         _status.Visibility = Visibility.Collapsed;
         _web = new() { Content = "Opne meldinga i Sprøyt", NavigateUri = props.MessageLink, MinHeight = 44, Padding = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         Root.Children.Add(_web);
-        if (props.Library is not null) props.Library.Invalidated += Invalidated;
-        if (!video) _ = PreviewAsync();
+        if (props.Library is not null)
+        {
+            props.Library.Invalidated += Invalidated;
+            if (!video) props.Library.PreviewSlotAvailable += PreviewSlotAvailable;
+        }
+        if (!video)
+        {
+            Root.EffectiveViewportChanged += ViewportChanged;
+            Root.Unloaded += Unloaded;
+        }
     }
     private bool Current => !_disposed && _props.Library is not null && _props.Scope is not null && _props.Library.Current(_props.Scope);
     private void Status(string text) { _status.Text = text; _status.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible; }
     private bool Post(Action action) => !_disposed && _dispatcher.TryEnqueue(() => { if (!_disposed) action(); });
     private void ReleasePreview() { _image.Source = null; Interlocked.Exchange(ref _previewLease, null)?.Dispose(); }
+    private void ViewportChanged(FrameworkElement sender, EffectiveViewportChangedEventArgs args)
+    {
+        var viewport = args.EffectiveViewport;
+        bool visible = viewport.Width > 0 && viewport.Height > 0 && viewport.X < Root.ActualWidth &&
+            viewport.Y < Root.ActualHeight && viewport.Right > 0 && viewport.Bottom > 0;
+        if (_visible == visible) return;
+        _visible = visible;
+        if (visible) _ = PreviewAsync();
+        else StopPreview();
+    }
+    private void Unloaded(object sender, RoutedEventArgs args) { _visible = false; StopPreview(); }
+    private void StopPreview()
+    {
+        var attempt = _previewCancellation;
+        _previewCancellation = null;
+        attempt?.Cancel();
+        _loading = false; _waitingForCapacity = false;
+        ReleasePreview();
+    }
+    private bool PreviewCurrent(CancellationTokenSource attempt) => Current && _visible &&
+        ReferenceEquals(_previewCancellation, attempt) && !attempt.IsCancellationRequested;
+    private void PreviewSlotAvailable() => Post(() =>
+    {
+        if (_visible && _waitingForCapacity && !_loading) _ = PreviewAsync();
+    });
+    private void FinishPreview(CancellationTokenSource attempt)
+    {
+        if (ReferenceEquals(_previewCancellation, attempt))
+        {
+            _previewCancellation = null; _loading = false; _load.IsEnabled = Current;
+            // A release can race the capacity error before its UI callback runs.
+            if (_visible && _waitingForCapacity && _props.Library!.HasPreviewCapacity) _ = PreviewAsync();
+        }
+        attempt.Dispose();
+    }
     private async Task PreviewAsync()
     {
-        if (!Current) { Status("Logg inn for å hente vedlegget."); return; }
-        if (_loading) return;
+        if (!Current || !_visible || _loading || _image.Source is not null) return;
+        var attempt = CancellationTokenSource.CreateLinkedTokenSource(_life.Token);
+        _previewCancellation = attempt;
+        _waitingForCapacity = false;
         _loading = true; _load.IsEnabled = false;
         Status("Lastar førehandsvising …");
         bool posted = false;
+        NativePreviewLease? downloaded = null;
         try
         {
-            var lease = await _props.Library!.PreviewAsync(_props.Part.MediaId!, _props.Scope!, _life.Token);
-            if (!Current) { lease.Dispose(); return; }
-            Interlocked.Exchange(ref _previewLease, lease)?.Dispose();
-            posted = Post(async () =>
+            var lease = await _props.Library!.PreviewAsync(_props.Part.MediaId!, _props.Scope!, attempt.Token);
+            downloaded = lease;
+            // Resource-owning callbacks must run even if unmounted before dispatch.
+            posted = _dispatcher.TryEnqueue(async () =>
             {
+                bool retained = false;
                 try
                 {
-                    if (!Current || !lease.BeginDecode()) { ReleasePreview(); return; }
+                    if (!PreviewCurrent(attempt) || !lease.BeginDecode()) return;
                     using var data = new MemoryStream(lease.Bytes); using var stream = data.AsRandomAccessStream();
                     var bitmap = new BitmapImage { DecodePixelWidth = 720, DecodePixelHeight = 720 };
-                    await bitmap.SetSourceAsync(stream).AsTask(_life.Token);
-                    if (Current) { _image.Source = bitmap; Status(""); _load.Visibility = Visibility.Collapsed; }
-                    else ReleasePreview();
+                    await bitmap.SetSourceAsync(stream).AsTask(attempt.Token);
+                    if (PreviewCurrent(attempt))
+                    {
+                        _previewLease = lease; retained = true; _image.Source = bitmap;
+                        Status(""); _load.Visibility = Visibility.Collapsed; _web.Visibility = Visibility.Collapsed;
+                    }
                 }
-                catch { ReleasePreview(); if (!_disposed) { Status("Førehandsvisinga kunne ikkje visast. Bruk Opne."); _web.Visibility = Visibility.Visible; } }
-                finally { lease.Decoded(); if (Current) { _loading = false; _load.IsEnabled = true; } }
+                catch (OperationCanceledException) { }
+                catch { if (PreviewCurrent(attempt)) { Status("Førehandsvisinga kunne ikkje visast. Bruk Opne."); _load.Visibility = Visibility.Visible; _web.Visibility = Visibility.Visible; } }
+                finally { lease.Decoded(); if (!retained) lease.Dispose(); FinishPreview(attempt); }
             });
-            if (!posted) Interlocked.Exchange(ref _previewLease, null)?.Dispose();
+            if (posted) downloaded = null;
         }
         catch (OperationCanceledException) { }
-        catch (Exception error) { Post(() => { Status(error is InvalidOperationException ? error.Message : "Fekk ikkje henta biletet. Bruk Opne for å prøve igjen."); _load.Visibility = Visibility.Visible; _web.Visibility = Visibility.Visible; }); }
-        finally { if (!posted) Post(() => { _loading = false; _load.IsEnabled = Current; }); }
+        catch (NativePreviewCapacityException)
+        {
+            Post(() => { if (PreviewCurrent(attempt)) { _waitingForCapacity = true; Status(""); } });
+        }
+        catch (Exception error) { Post(() => { if (PreviewCurrent(attempt)) { Status(error is InvalidOperationException ? error.Message : "Fekk ikkje henta biletet. Bruk Opne for å prøve igjen."); _load.Visibility = Visibility.Visible; _web.Visibility = Visibility.Visible; } }); }
+        finally
+        {
+            downloaded?.Dispose();
+            if (!posted && !_dispatcher.TryEnqueue(() => FinishPreview(attempt))) attempt.Dispose();
+        }
     }
     private async Task OpenAsync()
     {
@@ -197,11 +258,12 @@ internal sealed class NativeMediaPresenter : IDisposable
         catch { if (!_disposed) { Status("Vedlegget kunne ikkje opnast. Du kan opne meldinga i Sprøyt."); _web.Visibility = Visibility.Visible; } }
         finally { if (!_disposed) { _opening = false; _open.IsEnabled = true; } }
     }
-    private void Invalidated() => Post(() => { _life.Cancel(); ReleasePreview(); _player?.Pause(); _dialog?.Hide(); Status("Logg inn på nytt for å hente vedlegget."); _open.IsEnabled = false; _load.IsEnabled = false; });
+    private void Invalidated() => Post(() => { _life.Cancel(); StopPreview(); _player?.Pause(); _dialog?.Hide(); Status("Logg inn på nytt for å hente vedlegget."); _open.IsEnabled = false; _load.IsEnabled = false; });
     public void Dispose()
     {
         if (_disposed) return;
-        _disposed = true; _life.Cancel(); ReleasePreview(); _player?.Pause(); _dialog?.Hide();
-        if (_props.Library is not null) _props.Library.Invalidated -= Invalidated;
+        _disposed = true; _life.Cancel(); StopPreview(); _player?.Pause(); _dialog?.Hide();
+        Root.EffectiveViewportChanged -= ViewportChanged; Root.Unloaded -= Unloaded;
+        if (_props.Library is not null) { _props.Library.Invalidated -= Invalidated; _props.Library.PreviewSlotAvailable -= PreviewSlotAvailable; }
     }
 }

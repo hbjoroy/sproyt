@@ -8,6 +8,7 @@ namespace Sproyt.WindowsProbe;
 internal sealed class NativeMediaViewFixture : IDisposable
 {
     internal const string Id = "c8940bd1-9acf-4108-8e8b-499b02a57482";
+    internal static string GalleryId(int index) => $"c8940bd1-9acf-4108-8e8b-{index:D12}";
     private sealed class Handler(NativeAuthConfig config, string user) : HttpMessageHandler
     {
         private static readonly string Family = new('F', 43);
@@ -23,8 +24,8 @@ internal sealed class NativeMediaViewFixture : IDisposable
             {
                 case "/api/v1/native/info": payload=new {scope=config.Scope,environment=config.Environment,instance_id=config.Instance,issuer=config.Issuer}; break;
                 case "/api/v1/native/session": payload=new {user_id=user,family=Family,generation=0,epoch=0}; break;
-                case "/api/v1/media/"+Id:
-                case "/api/v1/media/"+Id+"/preview":
+                case var path when path == "/api/v1/media/"+Id || path == "/api/v1/media/"+Id+"/preview" ||
+                    Enumerable.Range(0,24).Any(index => path == "/api/v1/media/"+GalleryId(index)+"/preview"):
                     if(request.Headers.Authorization?.Parameter!="sproyt-access."+new string('A',43)) throw new InvalidOperationException("Fixture media is not authorized.");
                     var image=new ByteArrayContent(Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="));
                     image.Headers.ContentType=new("image/gif");
