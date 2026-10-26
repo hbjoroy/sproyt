@@ -19,7 +19,7 @@ test("management directory contains focus, cancels with Escape and does not muta
   page.on("websocket", socket => socket.on("framesent", ({ payload }) => commands.push(JSON.parse(String(payload)).type)));
   const preview = await openPreview(page, "preview-management-cancel");
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast medan menyen er open");
-  const trigger = await openManagement(preview);
+  await openManagement(preview);
   const dialog = preview.getByRole("dialog", { name: "Innstillingar" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Samtalen og utkasta dine blir tekne vare på");
@@ -30,7 +30,8 @@ test("management directory contains focus, cancels with Escape and does not muta
   expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
-  await expect(trigger).toBeFocused();
+  // Navigation closes the toolbar, so focus returns to its visible entry point.
+  await expect(preview.getByRole("button", { name: "Meny", exact: true })).toBeFocused();
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("utkast medan menyen er open");
   expect(commands.filter(command => /^(create_|accept_|enable_|start_)/.test(command))).toEqual([]);
 });
