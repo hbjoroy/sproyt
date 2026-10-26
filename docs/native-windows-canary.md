@@ -79,7 +79,13 @@ opplastingsrettar eller offentlege media-URL-ar blir innførte.
 Klienten har åtte globale preview-leasar og høgst to samtidige hente-/dekode-
 operasjonar. Ein lease varer til bitmapet blir fjerna frå visinga. Preview er
 avgrensa til 8 MiB komprimert og 720×720 dekodepikslar; bytebufferen blir sleppt
-etter dekoding. Fleire kort har ein eksplisitt lasteknapp. Unmount under dekoding
+etter dekoding. Berre synlege biletrader hentar og held førehandsvisingar;
+WinUI kan behalde eldre rader som kontrollar utan at dei får halde bitmapplass.
+Utgang frå viewport avbryt forsøket og slepper bitmapet, medan ei fast
+førehandsvisingshøgd bevarer radgeometrien. Synlege rader prøver automatisk
+igjen når ein plass blir ledig. Kvart forsøk eig si eiga kansellering og
+opprydding, slik at sein ferdigstilling ikkje endrar ei nyare vising.
+Dette avbryt ikkje ei eksplisitt opna originalvising. Unmount under dekoding
 frigjer ikkje pipelineplassen før den gamle dekodinga faktisk er ferdig.
 
 Opne/Spel av hentar originalen med avgrensa buffer til ei mellombels fil før
@@ -99,6 +105,8 @@ bevarer visinga. Opplasting og permanente offline-mediekopiar er ikkje med.
 - Windows-klientkontraktar dekkjer scope, callback, DPAPI og transportopptak
   ved kontobytte. WinUI-fixturen prøver den nye visinga og utkast/sending i
   smalt vindauge; ho blir ikkje rapportert som ekte autentisering/transport.
+  Ei galleriøving med 24 bilete prøver scrolling begge vegar, frigjering av
+  bitmap utanfor viewport, stabil radgeometri og rask utgang/gjeninntreden.
 - Faktisk Edge-forminnsending og Windows mot Canary er eit eige akseptpunkt.
 
 Bruk vanleg PR → CI → testa immutabelt image → GitOps. Canary må oppgradere

@@ -51,6 +51,13 @@ internal sealed class NativeMediaLibrary : IDisposable
     private readonly object _gate = new();
     private bool _disposed;
     internal event Action? Invalidated;
+    internal event Action? PreviewSlotAvailable;
+    internal bool HasPreviewCapacity => _previewSlots.CurrentCount > 0;
+    private void ReleasePreviewSlot()
+    {
+        _previewSlots.Release();
+        PreviewSlotAvailable?.Invoke();
+    }
     internal NativeMediaLibrary(NativeAuthSession owner, string directory)
     {
         _owner = owner;
@@ -116,10 +123,10 @@ internal sealed class NativeMediaLibrary : IDisposable
             while ((count = await input.ReadAsync(buffer, linked.Token)) != 0)
             { if (!Current(scope)) throw new OperationCanceledException(); if (result.Length + count > 8 * 1024 * 1024) throw new IOException("Preview too large."); await result.WriteAsync(buffer.AsMemory(0, count), linked.Token); }
             if (!Current(scope)) throw new OperationCanceledException();
-            var lease = new NativePreviewLease(result.ToArray(), () => _previews.Release(), () => _previewSlots.Release());
+            var lease = new NativePreviewLease(result.ToArray(), () => _previews.Release(), ReleasePreviewSlot);
             handedOff = true; return lease;
         }
-        finally { if (!handedOff) { if (pipeline) _previews.Release(); _previewSlots.Release(); } }
+        finally { if (!handedOff) { if (pipeline) _previews.Release(); ReleasePreviewSlot(); } }
     }
     internal async Task<NativeMediaFile> OriginalAsync(string id, NativeMediaScope scope, IProgress<long>? progress, CancellationToken cancellation)
     {

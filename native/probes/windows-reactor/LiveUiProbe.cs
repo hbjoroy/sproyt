@@ -30,6 +30,14 @@ internal sealed class LiveUiFixture : ILiveApplication
         Changed?.Invoke();
     }
     internal void RenameMedia() { _messages[^1]=_messages[^1] with {Body=_messages[^1].Body.Replace("probe.gif","renamed.gif",StringComparison.Ordinal)}; Changed?.Invoke(); }
+    internal void AddGallery()
+    {
+        _messages.Clear();
+        for (int index=0;index<24;index++)
+            _messages.Add(new(Guid.NewGuid().ToString(),_selected,User,"UI-prøve",
+                "[[media:"+NativeMediaViewFixture.GalleryId(index)+"|image/gif|gallery-"+index+".gif]]",DateTimeOffset.Now,(ulong)index+1));
+        Changed?.Invoke();
+    }
     public Task LogoutAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
     public Task ConfirmPendingSendsAsync(string expectedUser, string expectedStamp) => Task.CompletedTask;
@@ -107,11 +115,31 @@ internal static class LiveUiProbe
             using(var original=await Program.Live.Media!.OriginalAsync(NativeMediaViewFixture.Id,Program.Live.Media.Capture(),null,CancellationToken.None))
             { temporary=original.Path; if(!File.Exists(temporary) || original.ContentType!="image/gif")throw new InvalidOperationException("Original fixture failed."); }
             if(File.Exists(temporary))throw new InvalidOperationException("Media file lease was not cleaned.");
+            // Realized rows can outlive their viewport. More than eight attachments
+            // must not let cached rows starve the visible images of bitmap slots.
+            ((LiveUiFixture)Program.Live).AddGallery();
+            var history=Find<ScrollViewer>(root,"live-history");
+            await Until(() =>
+            {
+                root.UpdateLayout(); history.ChangeView(null,history.ScrollableHeight,null,true);
+                return Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)).Source is not null;
+            });
+            double height=history.ScrollableHeight;
+            history.ChangeView(null,0,null,true);
+            await Until(() => Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(0)).Source is not null);
+            await Until(() => PreviewReleased(root,NativeMediaViewFixture.GalleryId(23)));
+            if(Math.Abs(history.ScrollableHeight-height)>2)throw new InvalidOperationException("Releasing previews changed message geometry.");
+            // Rapidly leave/re-enter while admission/decoding can still be pending.
+            history.ChangeView(null,history.ScrollableHeight,null,true); await Task.Delay(20);
+            history.ChangeView(null,0,null,true); await Task.Delay(20);
+            history.ChangeView(null,history.ScrollableHeight,null,true);
+            await Until(() => Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)).Source is not null);
+            await Until(() => PreviewReleased(root,NativeMediaViewFixture.GalleryId(0)));
             window.SetSize(360,720);
             await Until(() => root.ActualWidth < 800 && Find<TextBox>(root,"live-composer").ActualWidth > 200);
             await Program.PrepareShutdownAsync();
             File.WriteAllText(Path.Combine(folder,"live-ui-result.json"),JsonSerializer.Serialize(new
-            {passed=true,scope="live_chat_view_fixture",actualWinUi=true,channelDrafts=true,sendBinding=true,compactComposer=true,circleGroups=true,decodedMediaPreview=true,boundedPreviewLeases=true,macroCard=true,temporaryOriginalCleanup=true,
+            {passed=true,scope="live_chat_view_fixture",actualWinUi=true,channelDrafts=true,sendBinding=true,compactComposer=true,circleGroups=true,decodedMediaPreview=true,boundedPreviewLeases=true,viewportPreviewGallery=24,viewportRelease=true,stablePreviewGeometry=true,rapidPreviewReentry=true,macroCard=true,temporaryOriginalCleanup=true,
                 productionAuthentication=false,actualTransport=false,storageAcceptance=false}));
             Program.CloseAfterShutdown(window);
         }
@@ -137,5 +165,10 @@ internal static class LiveUiProbe
         for(int index=0;index<VisualTreeHelper.GetChildrenCount(root);index++)
         { try{return Find<T>(VisualTreeHelper.GetChild(root,index),id);}catch(KeyNotFoundException){} }
         throw new KeyNotFoundException(id);
+    }
+    private static bool PreviewReleased(DependencyObject root,string id)
+    {
+        try { return Find<Image>(root,"native-image-"+id).Source is null; }
+        catch(KeyNotFoundException) { return true; } // Fully recycled is also released.
     }
 }
