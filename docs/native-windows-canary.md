@@ -81,8 +81,12 @@ operasjonar. Ein lease varer til bitmapet blir fjerna frå visinga. Preview er
 avgrensa til 8 MiB komprimert og 720×720 dekodepikslar; bytebufferen blir sleppt
 etter dekoding. Berre synlege biletrader hentar og held førehandsvisingar;
 WinUI kan behalde eldre rader som kontrollar utan at dei får halde bitmapplass.
-Utgang frå viewport avbryt forsøket og slepper bitmapet, medan ei fast
-førehandsvisingshøgd bevarer radgeometrien. Synlege rader prøver automatisk
+Utgang frå viewport avbryt forsøket og slepper bitmapet, medan det kjende
+sideforholdet bevarer radgeometrien. Bileta har ei normalbreidd på 320 DIP,
+tilpassa mindre ledig breidd, og høgd etter kjeldeformatet. Dekodinga les
+orienterte kjeldemål og skalerer begge mål proporsjonalt innan pikselbudsjettet;
+ho tvingar ikkje portrett og landskap inn i eit kvadrat. Originalvisaren bruker
+same proporsjonale dekoding med sitt større budsjett. Synlege rader prøver automatisk
 igjen når ein plass blir ledig. Kvart forsøk eig si eiga kansellering og
 opprydding, slik at sein ferdigstilling ikkje endrar ei nyare vising.
 Dette avbryt ikkje ei eksplisitt opna originalvising. Unmount under dekoding
@@ -107,6 +111,8 @@ bevarer visinga. Opplasting og permanente offline-mediekopiar er ikkje med.
   smalt vindauge; ho blir ikkje rapportert som ekte autentisering/transport.
   Ei galleriøving med 24 bilete prøver scrolling begge vegar, frigjering av
   bitmap utanfor viewport, stabil radgeometri og rask utgang/gjeninntreden.
+  Portrett- og landskapskjelder på 1200×2400 og 2400×1200 pikslar kontrollerer
+  dekodemål, visingsproporsjonar, originalvising og tilpassing til smalt vindauge.
 - Faktisk Edge-forminnsending og Windows mot Canary er eit eige akseptpunkt.
 
 Bruk vanleg PR → CI → testa immutabelt image → GitOps. Canary må oppgradere
