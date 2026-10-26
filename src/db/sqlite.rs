@@ -819,6 +819,49 @@ impl ChatRepository for SqliteChatRepository {
             Ok(())
         })
     }
+    fn favorite_circles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<CircleId>> {
+        Box::pin(async move {
+            sqlx::query_scalar::<_, String>("select circle_id from circle_memberships where user_id=? and is_favorite=1 order by circle_id")
+                .bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?
+                .into_iter().map(|id| Uuid::parse_str(&id).map(CircleId::from_uuid).map_err(storage)).collect()
+        })
+    }
+
+    fn set_circle_favorite<'a>(
+        &'a self,
+        actor: UserId,
+        circle: CircleId,
+        favorite: bool,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            if !favorite {
+                sqlx::query(
+                    "update circle_memberships set is_favorite=0 where user_id=? and circle_id=?",
+                )
+                .bind(actor.to_string())
+                .bind(circle.to_string())
+                .execute(&self.pool)
+                .await
+                .map_err(sql_error)?;
+                return Ok(());
+            }
+            // Membership and cap are checked in the same atomic write. SQLite
+            // serializes competing device writes before evaluating the count.
+            let changed = sqlx::query("update circle_memberships set is_favorite=1 where user_id=?1 and circle_id=?2 and (is_favorite=1 or (select count(*) from circle_memberships where user_id=?1 and is_favorite=1)<12)")
+                .bind(actor.to_string()).bind(circle.to_string()).execute(&self.pool).await.map_err(sql_error)?.rows_affected();
+            if changed == 0 {
+                let member: bool = sqlx::query_scalar("select exists(select 1 from circle_memberships where user_id=? and circle_id=?)")
+                    .bind(actor.to_string()).bind(circle.to_string()).fetch_one(&self.pool).await.map_err(sql_error)?;
+                return Err(if member {
+                    RepositoryError::Conflict
+                } else {
+                    RepositoryError::PermissionDenied
+                });
+            }
+            Ok(())
+        })
+    }
+
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
@@ -894,6 +937,9 @@ impl ChatRepository for SqliteChatRepository {
                 .into_iter().map(saved_status_from_row).collect::<Result<Vec<_>, _>>()?;
             let agent_memories =
                 crate::chatbot::memory::repository::export_memory!(transaction, false, actor);
+            let favorite_circles = sqlx::query_scalar::<_, String>("select circle_id from circle_memberships where user_id=? and is_favorite=1 order by circle_id")
+                .bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?
+                .into_iter().map(|id| Uuid::parse_str(&id).map(CircleId::from_uuid).map_err(storage)).collect::<Result<Vec<_>, _>>()?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
@@ -902,6 +948,7 @@ impl ChatRepository for SqliteChatRepository {
                 signup_ordinal,
                 saved_emojis,
                 saved_statuses,
+                favorite_circles,
                 circles,
                 channels,
                 agent_memories,

@@ -972,6 +972,46 @@ impl ChatRepository for PostgresChatRepository {
             Ok(())
         })
     }
+    fn favorite_circles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<CircleId>> {
+        Box::pin(async move {
+            Ok(sqlx::query_scalar::<_, Uuid>("select circle_id from circle_memberships where user_id=$1 and is_favorite order by circle_id")
+                .bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?
+                .into_iter().map(CircleId::from_uuid).collect())
+        })
+    }
+
+    fn set_circle_favorite<'a>(
+        &'a self,
+        actor: UserId,
+        circle: CircleId,
+        favorite: bool,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            // Serialize all devices for this account before reading the cap.
+            sqlx::query("select id from users where id=$1 for update")
+                .bind(*actor.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::PermissionDenied)?;
+            let changed = sqlx::query("update circle_memberships set is_favorite=$3 where user_id=$1 and circle_id=$2 and (not $3 or is_favorite or (select count(*) from circle_memberships where user_id=$1 and is_favorite)<12)")
+                .bind(*actor.as_uuid()).bind(*circle.as_uuid()).bind(favorite)
+                .execute(&mut *tx).await.map_err(sql_error)?.rows_affected();
+            if favorite && changed == 0 {
+                let member: bool = sqlx::query_scalar("select exists(select 1 from circle_memberships where user_id=$1 and circle_id=$2)")
+                    .bind(*actor.as_uuid()).bind(*circle.as_uuid()).fetch_one(&mut *tx).await.map_err(sql_error)?;
+                return Err(if member {
+                    RepositoryError::Conflict
+                } else {
+                    RepositoryError::PermissionDenied
+                });
+            }
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let mut tx = self.pool.begin().await.map_err(sql_error)?;
@@ -1047,6 +1087,9 @@ impl ChatRepository for PostgresChatRepository {
                 .into_iter().map(saved_status_from_row).collect::<Result<Vec<_>, _>>()?;
             let agent_memories =
                 crate::chatbot::memory::repository::export_memory!(tx, true, actor);
+            let favorite_circles = sqlx::query_scalar::<_, Uuid>("select circle_id from circle_memberships where user_id=$1 and is_favorite order by circle_id")
+                .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?
+                .into_iter().map(CircleId::from_uuid).collect();
             tx.commit().await.map_err(sql_error)?;
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
@@ -1055,6 +1098,7 @@ impl ChatRepository for PostgresChatRepository {
                 signup_ordinal,
                 saved_emojis,
                 saved_statuses,
+                favorite_circles,
                 circles,
                 channels,
                 agent_memories,

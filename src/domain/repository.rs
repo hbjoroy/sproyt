@@ -131,6 +131,13 @@ pub trait ChatRepository: Send + Sync + 'static {
         saved: bool,
     ) -> RepositoryFuture<'a, ()>;
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
+    fn favorite_circles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<CircleId>>;
+    fn set_circle_favorite<'a>(
+        &'a self,
+        actor: UserId,
+        circle: CircleId,
+        favorite: bool,
+    ) -> RepositoryFuture<'a, ()>;
     fn create_circle<'a>(&'a self, command: CreateCircle) -> RepositoryFuture<'a, Circle>;
     fn rename_circle<'a>(&'a self, command: RenameCircle) -> RepositoryFuture<'a, Circle>;
     fn circle_member_roles<'a>(
@@ -955,6 +962,51 @@ impl ChatRepository for InMemoryChatRepository {
             Ok(())
         })
     }
+    fn favorite_circles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<CircleId>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let mut favorites = state
+                .favorite_circles
+                .iter()
+                .filter(|(_, user)| user == &actor)
+                .map(|(circle, _)| circle.clone())
+                .collect::<Vec<_>>();
+            favorites.sort_by_key(ToString::to_string);
+            Ok(favorites)
+        })
+    }
+
+    fn set_circle_favorite<'a>(
+        &'a self,
+        actor: UserId,
+        circle: CircleId,
+        favorite: bool,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let key = (circle, actor.clone());
+            if !favorite {
+                state.favorite_circles.remove(&key);
+                return Ok(());
+            }
+            if !state.circle_memberships.contains_key(&key) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if !state.favorite_circles.contains(&key)
+                && state
+                    .favorite_circles
+                    .iter()
+                    .filter(|(_, user)| user == &actor)
+                    .count()
+                    >= 12
+            {
+                return Err(RepositoryError::Conflict);
+            }
+            state.favorite_circles.insert(key);
+            Ok(())
+        })
+    }
+
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let state = self.lock_state()?;
@@ -1026,12 +1078,20 @@ impl ChatRepository for InMemoryChatRepository {
                 })
                 .collect::<Vec<_>>();
             channels.sort_by(|left, right| left.channel.slug.cmp(&right.channel.slug));
+            let mut favorite_circles = state
+                .favorite_circles
+                .iter()
+                .filter(|(_, user)| user == &actor)
+                .map(|(circle, _)| circle.clone())
+                .collect::<Vec<_>>();
+            favorite_circles.sort_by_key(ToString::to_string);
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
                 exported_at: Utc::now(),
                 user,
                 signup_ordinal: state.signup_ordinals.get(&actor).copied(),
                 saved_emojis: state.saved_emojis.get(&actor).cloned().unwrap_or_default(),
+                favorite_circles,
                 saved_statuses: state
                     .saved_statuses
                     .get(&actor)
@@ -1197,6 +1257,9 @@ impl ChatRepository for InMemoryChatRepository {
                 .ok_or(RepositoryError::NotFound)?;
             state.circles_by_slug.remove(&circle.slug);
             state
+                .favorite_circles
+                .retain(|(circle_id, _)| circle_id != &command.circle_id);
+            state
                 .circle_memberships
                 .retain(|(circle_id, _), _| circle_id != &command.circle_id);
             state
@@ -1243,6 +1306,7 @@ impl ChatRepository for InMemoryChatRepository {
                 return Err(RepositoryError::PermissionDenied);
             }
             state.circle_memberships.remove(&membership_key);
+            state.favorite_circles.remove(&membership_key);
             let channel_ids = state
                 .channels
                 .values()
@@ -2283,6 +2347,7 @@ struct RepositoryState {
     circles: HashMap<CircleId, Circle>,
     circles_by_slug: HashMap<super::ChannelSlug, CircleId>,
     circle_memberships: HashMap<(CircleId, UserId), CircleMembership>,
+    favorite_circles: HashSet<(CircleId, UserId)>,
     circle_invitations: HashMap<Vec<u8>, CircleInvitation>,
     enrollment_invitations: HashMap<Vec<u8>, StoredEnrollmentInvitation>,
     channels: HashMap<ChannelId, Channel>,

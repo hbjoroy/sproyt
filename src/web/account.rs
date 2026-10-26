@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    domain::ChannelId,
+    domain::{ChannelId, CircleId},
     notification::{NotificationPreferences, PushSubscriptionInput},
     operations::ClientEvent,
     server::AppState,
@@ -27,6 +27,106 @@ pub(crate) struct SavedEmojiInput {
 pub(crate) struct SavedStatusInput {
     text: String,
     emoji: String,
+}
+
+async fn favorite_account(
+    state: &AppState,
+    query: WsQuery,
+    headers: &HeaderMap,
+) -> Result<crate::auth::AuthenticatedPrincipal, axum::response::Response> {
+    let principal = authenticate_http(state, query, headers)
+        .await
+        .map_err(auth_error_response)?;
+    // This is an account-switch fence, not an authentication mechanism.
+    if headers
+        .get("x-sproyt-account")
+        .and_then(|value| value.to_str().ok())
+        != Some(principal.user.id.to_string().as_str())
+    {
+        return Err((
+            axum::http::StatusCode::CONFLICT,
+            "Kontoen vart endra. Last favorittane på nytt.",
+        )
+            .into_response());
+    }
+    state
+        .chat
+        .ensure_user(principal.user.clone())
+        .await
+        .map_err(chat_error_response)?;
+    Ok(principal)
+}
+
+pub(crate) async fn favorite_circles(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let principal = match favorite_account(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(response) => return response,
+    };
+    match state.chat.favorite_circles(principal.user.id).await {
+        Ok(circles) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Json(
+                circles
+                    .into_iter()
+                    .map(|circle| circle.to_string())
+                    .collect::<Vec<_>>(),
+            ),
+        )
+            .into_response(),
+        Err(error) => chat_error_response(error),
+    }
+}
+
+pub(crate) async fn add_favorite_circle(
+    State(state): State<AppState>,
+    Path(circle): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    change_favorite_circle(state, circle, query, headers, true).await
+}
+
+pub(crate) async fn remove_favorite_circle(
+    State(state): State<AppState>,
+    Path(circle): Path<String>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    change_favorite_circle(state, circle, query, headers, false).await
+}
+
+async fn change_favorite_circle(
+    state: AppState,
+    circle: String,
+    query: WsQuery,
+    headers: HeaderMap,
+    favorite: bool,
+) -> axum::response::Response {
+    let principal = match favorite_account(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(response) => return response,
+    };
+    let circle = match uuid::Uuid::parse_str(&circle) {
+        Ok(circle) => CircleId::from_uuid(circle),
+        Err(_) => return axum::http::StatusCode::BAD_REQUEST.into_response(),
+    };
+    match state
+        .chat
+        .set_circle_favorite(principal.user.id, circle, favorite)
+        .await
+    {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(crate::chat::ChatError::Repository(crate::domain::RepositoryError::Conflict)) => (
+            axum::http::StatusCode::CONFLICT,
+            "Du kan ha høgst 12 favorittkretsar. Fjern ein før du legg til ein ny.",
+        )
+            .into_response(),
+        Err(error) => chat_error_response(error),
+    }
 }
 
 pub(crate) async fn saved_statuses(

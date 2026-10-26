@@ -1,10 +1,14 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { KeyboardEvent } from "react";
-import { Status, TextField } from "@sproyt/ui/react";
+import { Button, Status, TextField } from "@sproyt/ui/react";
 import type { ConversationGroup, ConversationNavigationProps } from "./conversation-view";
 import { conversationPreferenceKey, MAX_PINNED_CIRCLES, partitionNavigationCircles, readConversationPreferences,
   recordCircleSelection, setCircleExpanded, toggleCirclePinned, writeConversationPreferences } from "../../conversation-preferences";
 import type { ConversationPreferences, ConversationPreferenceStorage } from "../../conversation-preferences";
+import { emptyCircleFavorites } from "../../circle-favorites";
+
+const noSubscription = () => () => {};
+const emptyFavoritesSnapshot = () => emptyCircleFavorites;
 
 type NavigationProps = ConversationNavigationProps & {
   readonly ownerId?: string;
@@ -35,7 +39,15 @@ export function ProductConversationNavigation(props: NavigationProps) {
 
 function AccountNavigation(props: NavigationProps) {
   const storage = useRef(browserStorage());
-  const [preferences, setPreferences] = useState(() => readConversationPreferences(storage.current, props.ownerId));
+  const [localPreferences, setPreferences] = useState(() => readConversationPreferences(storage.current, props.ownerId));
+  const saved = useSyncExternalStore(props.favorites?.subscribe ?? noSubscription,
+    props.favorites?.getSnapshot ?? emptyFavoritesSnapshot, emptyFavoritesSnapshot);
+  const profileReady = !props.favorites || (saved.ownerId === props.ownerId && saved.loaded);
+  const pinned = new Set(saved.ownerId === props.ownerId ? saved.ids.map(id => `circle:${id}`) : []);
+  const preferences: ConversationPreferences = props.favorites ? { ...localPreferences, entries: [
+    ...localPreferences.entries.map(entry => ({ ...entry, pinned: pinned.has(entry.id) })),
+    ...[...pinned].filter(id => !localPreferences.entries.some(entry => entry.id === id)).map(id => ({ id, pinned: true, uses: 0 }))
+  ] } : localPreferences;
   const selectedGroup = props.groups.find(group => group.conversations.some(item => item.id === props.selectedId));
   const selectedScope: Scope | undefined = selectedGroup ? selectedGroup.id === directGroupId ? "direct" : "circles" : undefined;
   const [localScope, setScope] = useState<Scope>(() => selectedScope ?? "circles");
@@ -44,6 +56,8 @@ function AccountNavigation(props: NavigationProps) {
   const selection = useRef(props.selectedId);
   const id = useId();
   const searching = props.query.trim().length > 0;
+  const legacyPins = props.favorites && profileReady ? localPreferences.entries.filter(entry => entry.pinned && !pinned.has(entry.id)
+    && props.groups.some(group => group.id === entry.id)).map(entry => entry.id) : [];
   const directGroups = props.groups.filter(group => group.id === directGroupId);
   const sharedGroups = props.groups.filter(group => group.id === "scope:shared");
   const circles = props.groups.filter(group => group.id !== directGroupId && group.id !== "scope:shared");
@@ -68,9 +82,20 @@ function AccountNavigation(props: NavigationProps) {
     return () => window.removeEventListener("storage", changed);
   }, [props.ownerId]);
 
+  useEffect(() => {
+    if (!props.favorites || !profileReady || !localPreferences.entries.some(entry => entry.pinned && pinned.has(entry.id))) return;
+    const local = { ...localPreferences, entries: localPreferences.entries.map(entry => ({ ...entry, pinned: entry.pinned && !pinned.has(entry.id) })) };
+    setPreferences(local);
+    writeConversationPreferences(storage.current, props.ownerId, local);
+  }, [props.favorites, props.ownerId, profileReady, saved.ids, localPreferences]);
+
   function update(next: ConversationPreferences) {
-    setPreferences(next);
-    writeConversationPreferences(storage.current, props.ownerId, next);
+    // Retain untransferred legacy pins; server pins are never written back as
+    // local import candidates, which could resurrect a removal on another device.
+    const local = props.favorites ? { ...next, entries: next.entries.map(entry => ({ ...entry,
+      pinned: localPreferences.entries.some(old => old.id === entry.id && old.pinned) && !pinned.has(entry.id) })) } : next;
+    setPreferences(local);
+    writeConversationPreferences(storage.current, props.ownerId, local);
   }
 
   function select(group: ConversationGroup, channelId: string) {
@@ -103,6 +128,7 @@ function AccountNavigation(props: NavigationProps) {
     const open = searching || revealedGroup === group.id || (preference?.expanded ?? selectedGroup?.id === group.id);
     const panelId = `${id}-group-${encodeURIComponent(group.id)}`;
     const pinLimit = !preference?.pinned && preferences.entries.filter(entry => entry.pinned).length >= MAX_PINNED_CIRCLES;
+    const saving = saved.ownerId === props.ownerId && saved.pending.includes(group.id.slice("circle:".length));
     return <section className="sp-product-nav-group" key={group.id} data-conversation-group={group.id}>
       <div className="sp-product-nav-heading">
         <h2><button type="button" title={group.name} className="sp-product-nav-disclosure" aria-expanded={open} aria-controls={panelId} aria-disabled={searching || undefined}
@@ -112,8 +138,9 @@ function AccountNavigation(props: NavigationProps) {
         </button></h2>
         {isCircle && <button type="button" className="sp-product-nav-pin" aria-pressed={preference?.pinned ?? false}
           aria-label={preference?.pinned ? `Løys ${group.name} frå favorittar` : `Fest ${group.name} som favoritt`}
-          title={pinLimit ? `Du kan feste opptil ${MAX_PINNED_CIRCLES} kretsar` : undefined} disabled={pinLimit}
-          onClick={() => update(toggleCirclePinned(preferences, group.id))}>
+          title={pinLimit ? `Du kan feste opptil ${MAX_PINNED_CIRCLES} kretsar` : undefined} disabled={pinLimit || !profileReady || saving}
+          aria-busy={saving || undefined}
+          onClick={() => props.favorites ? void props.favorites.set(group.id.slice("circle:".length), !preference?.pinned, props.ownerId) : update(toggleCirclePinned(preferences, group.id))}>
           <span aria-hidden="true">{preference?.pinned ? "★" : "☆"}</span>
         </button>}
         {group.actions && <div className="sp-product-nav-group-actions">{group.actions}</div>}
@@ -146,6 +173,13 @@ function AccountNavigation(props: NavigationProps) {
       </button>)}
     </div>
     <div role="tabpanel" id={`${id}-circles-panel`} aria-labelledby={`${id}-circles-tab`} hidden={scope !== "circles"}>
+      {saved.ownerId === props.ownerId && saved.error && <Status tone="error">{saved.error} <button type="button" onClick={() => props.favorites?.retry(props.ownerId)}>Prøv favorittane på nytt</button></Status>}
+      {legacyPins.length > 0 && <details className="sp-product-nav-legacy-pins"><summary>Tidlegare lokale favorittar</summary>
+        <p>Desse vart berre lagra i denne nettlesaren. Du kan overføre dei til kontoen din.</p>
+        <Button variant="quiet" disabled={saved.pending.length > 0} onClick={() => {
+          if (props.ownerId) void props.favorites?.transfer(props.ownerId, legacyPins.map(id => id.slice("circle:".length)));
+        }}>Overfør lokale favorittar</Button>
+      </details>}
       {sharedGroups.map(groupSection)}
       {(foldOthers ? preferred : circles).map(groupSection)}
       {foldOthers && <div className="sp-product-nav-others">

@@ -47,6 +47,7 @@ import type { ShareTarget } from "../../share-target";
 import { AgentLocationSharingDialog } from "./agent-location-sharing";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
+  readonly favorites: import("../../circle-favorites").CircleFavorites;
   readonly viewHistory: ViewHistory;
   readonly managementTarget: () => ManagementTarget | null;
   readonly navigateView: (target: ViewTarget, mode?: "push" | "replace") => void;
@@ -458,6 +459,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view,
     ownerId: owner ?? undefined,
+    favorites: host.favorites,
     directoryScope: historyState.target?.kind === "directory" ? historyState.target.scope : undefined,
     onDirectoryScopeChange: scope => host.navigateView({ kind: "directory", scope }),
     recentChannelIds: historyState.recent.flatMap(item => item.target.kind === "conversation" ? [item.target.channelId] : []),

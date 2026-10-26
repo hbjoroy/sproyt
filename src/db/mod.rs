@@ -275,6 +275,7 @@ where
     verify_media_reads_contract(repository, suffix).await;
     verify_saved_emoji_contract(repository, suffix).await;
     verify_saved_status_history_contract(repository, suffix).await;
+    verify_circle_favorites_contract(repository, suffix).await;
     verify_circle_moderator_contract(repository, suffix).await;
     verify_enrollment_invitation_contract(repository, &format!("{suffix}-enrollment")).await;
     let actor = UserId::named(format!("chat-contract-actor-{suffix}"));
@@ -1341,6 +1342,205 @@ async fn postgres_saved_status_history_contract() {
     repository.migrate().await.unwrap();
     verify_saved_status_history_contract(&repository, &uuid::Uuid::now_v7().simple().to_string())
         .await;
+}
+
+#[cfg(test)]
+async fn verify_circle_favorites_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+    use crate::domain::{
+        AcceptCircleInvitation, ChannelSlug, CircleId, CreateCircle, CreateCircleInvitation,
+        DeleteCircle, DisplayName, LeaveCircle, PrincipalKind, User, UserId,
+    };
+    let owner = UserId::named(format!("favorites-owner-{suffix}"));
+    let other = UserId::named(format!("favorites-other-{suffix}"));
+    for id in [&owner, &other] {
+        repository
+            .upsert_user(User {
+                id: id.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Favorites owner").unwrap(),
+                handle: None,
+                external_provider: None,
+                external_subject: None,
+                created_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+    let mut circles = Vec::new();
+    for index in 0..13 {
+        circles.push(
+            repository
+                .create_circle(CreateCircle {
+                    actor: owner.clone(),
+                    slug: ChannelSlug::new(format!("favorite-{suffix}-{index}")).unwrap(),
+                    name: DisplayName::new(format!("Favorite {index}")).unwrap(),
+                })
+                .await
+                .unwrap(),
+        );
+    }
+    assert!(
+        repository
+            .favorite_circles(owner.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for circle in &circles[..11] {
+        repository
+            .set_circle_favorite(owner.clone(), circle.id.clone(), true)
+            .await
+            .unwrap();
+    }
+    let (first, second) = tokio::join!(
+        repository.set_circle_favorite(owner.clone(), circles[11].id.clone(), true),
+        repository.set_circle_favorite(owner.clone(), circles[12].id.clone(), true)
+    );
+    assert_eq!(
+        [&first, &second]
+            .iter()
+            .filter(|result| result.is_ok())
+            .count(),
+        1
+    );
+    assert_eq!(
+        [first, second]
+            .into_iter()
+            .filter(|result| matches!(result, Err(RepositoryError::Conflict)))
+            .count(),
+        1
+    );
+    repository
+        .set_circle_favorite(owner.clone(), circles[0].id.clone(), true)
+        .await
+        .unwrap();
+    let favorites = repository.favorite_circles(owner.clone()).await.unwrap();
+    assert_eq!(favorites.len(), 12);
+    assert_eq!(
+        repository
+            .set_circle_favorite(other.clone(), circles[0].id.clone(), true)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .set_circle_favorite(owner.clone(), CircleId::generate(), true)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    repository
+        .set_circle_favorite(other.clone(), circles[0].id.clone(), false)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .favorite_circles(other.clone())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let export = repository.export_user_data(owner.clone()).await.unwrap();
+    assert_eq!(export.favorite_circles, favorites);
+    let mut legacy = serde_json::to_value(export).unwrap();
+    legacy.as_object_mut().unwrap().remove("favorite_circles");
+    assert!(
+        serde_json::from_value::<crate::domain::PortableUserExport>(legacy)
+            .unwrap()
+            .favorite_circles
+            .is_empty()
+    );
+    repository
+        .delete_circle(DeleteCircle {
+            actor: owner.clone(),
+            circle_id: circles[0].id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .favorite_circles(owner.clone())
+            .await
+            .unwrap()
+            .len(),
+        11
+    );
+    repository
+        .set_circle_favorite(owner.clone(), circles[0].id.clone(), false)
+        .await
+        .unwrap();
+    for round in 0..2 {
+        let invitation = repository
+            .create_circle_invitation(CreateCircleInvitation {
+                actor: owner.clone(),
+                circle_id: circles[1].id.clone(),
+            })
+            .await
+            .unwrap();
+        repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: other.clone(),
+                token: invitation.token,
+            })
+            .await
+            .unwrap();
+        assert!(
+            repository
+                .favorite_circles(other.clone())
+                .await
+                .unwrap()
+                .is_empty(),
+            "rejoining must not restore a removed preference"
+        );
+        if round == 0 {
+            repository
+                .set_circle_favorite(other.clone(), circles[1].id.clone(), true)
+                .await
+                .unwrap();
+            repository
+                .leave_circle(LeaveCircle {
+                    actor: other.clone(),
+                    circle_id: circles[1].id.clone(),
+                })
+                .await
+                .unwrap();
+            repository
+                .set_circle_favorite(other.clone(), circles[1].id.clone(), false)
+                .await
+                .unwrap();
+        }
+    }
+    assert_eq!(repository.favorite_circles(owner).await.unwrap().len(), 11);
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn memory_circle_favorites_contract() {
+    verify_circle_favorites_contract(
+        &crate::domain::InMemoryChatRepository::default(),
+        "memory-favorites",
+    )
+    .await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn sqlite_circle_favorites_contract() {
+    let repository = SqliteChatRepository::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    repository.migrate().await.unwrap();
+    verify_circle_favorites_contract(&repository, "sqlite-favorites").await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn postgres_circle_favorites_contract() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let repository = PostgresChatRepository::connect(&url).await.unwrap();
+    repository.migrate().await.unwrap();
+    verify_circle_favorites_contract(&repository, &uuid::Uuid::now_v7().simple().to_string()).await;
 }
 
 #[cfg(test)]

@@ -51,31 +51,35 @@ export class HttpClient {
     this.#participant = dependencies.participant ?? (() => null);
   }
 
-  async request(path: string, options: RequestInit = {}): Promise<Response> {
+  async request(path: string, options: RequestInit = {}, admitted: () => boolean = () => true): Promise<Response> {
+    if (!admitted()) throw new Error("Innlogginga vart endra. Prøv igjen på rett konto.");
     const participant = this.#participant();
     const separator = path.includes("?") ? "&" : "?";
     const url = participant ? `${path}${separator}participant=${encodeURIComponent(participant)}` : path;
     const init: RequestInit = { credentials: "same-origin", cache: "no-store", ...options };
     let response = await this.#fetch(url, init);
-    if (response.status === 401 && this.#refreshSession && await this.#refreshSession()) response = await this.#fetch(url, init);
+    if (response.status === 401 && this.#refreshSession && await this.#refreshSession()) {
+      if (!admitted()) throw new Error("Innlogginga vart endra. Prøv igjen på rett konto.");
+      response = await this.#fetch(url, init);
+    }
     return response;
   }
 
-  async json<T>(path: string, decoder: (value: unknown) => T, options: RequestInit = {}): Promise<T> {
+  async json<T>(path: string, decoder: (value: unknown) => T, options: RequestInit = {}, admitted?: () => boolean): Promise<T> {
     const write = options.method !== undefined && !["GET", "HEAD"].includes(options.method.toUpperCase());
     if (write) this.#pendingWrites++;
     try {
-    const response = await this.request(path, options);
+    const response = await this.request(path, options, admitted);
     if (!response.ok) throw await HttpClient.error(response);
     return decoder(await HttpClient.jsonBody(response));
     } finally { if (write) this.#pendingWrites--; }
   }
 
-  async empty(path: string, options: RequestInit = {}): Promise<void> {
+  async empty(path: string, options: RequestInit = {}, admitted?: () => boolean): Promise<void> {
     const write = options.method !== undefined && !["GET", "HEAD"].includes(options.method.toUpperCase());
     if (write) this.#pendingWrites++;
     try {
-    const response = await this.request(path, options);
+    const response = await this.request(path, options, admitted);
     if (!response.ok) throw await HttpClient.error(response);
     } finally { if (write) this.#pendingWrites--; }
   }

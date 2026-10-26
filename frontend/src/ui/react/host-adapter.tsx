@@ -13,6 +13,7 @@ export type TimelineControls = Pick<TimelineProps,
 /** Commands and feature renderers belong to the host. The adapter neither sends
  * messages nor replaces the host's draft, attachment, reaction or modal state. */
 export interface ConversationHostBindings {
+  readonly favorites?: ConversationViewProps["navigation"]["favorites"];
   readonly ownerId?: string;
   readonly directoryScope?: "circles" | "direct";
   readonly onDirectoryScopeChange?: (scope: "circles" | "direct") => void;
@@ -77,6 +78,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
     title: snapshot.title, context,
     contextActions: host.contextActions, onBack: host.onBack,
     navigation: {
+      favorites: host.favorites,
       ownerId: host.ownerId,
       directoryScope: host.directoryScope, onDirectoryScopeChange: host.onDirectoryScopeChange,
       recentChannelIds: host.recentChannelIds,

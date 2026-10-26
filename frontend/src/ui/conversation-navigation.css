@@ -27,3 +27,17 @@
 .sp-theme .sp-product-nav-others > .sp-product-nav-disclosure { color: var(--sp-muted); font-size: .8125rem; }
 .sp-theme .sp-product-nav-direct-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .5rem; }
 .sp-theme .sp-product-nav-direct-actions:empty { display: none; }
+/* Direct conversations are a compact contact list, without channel/group rules. */
+.sp-theme [data-conversation-group="scope:direct"] .sp-conversations { gap: 0; }
+.sp-theme [data-conversation-group="scope:direct"] .sp-conversation-row { margin: 0; border: 0; }
+.sp-theme [data-conversation-group="scope:direct"] .sp-conversation { padding-block: .25rem; }
+.sp-theme [data-conversation-group="scope:direct"] .sp-conversation-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+.sp-theme .sp-community-dialog .sp-direct-people .sp-person { grid-template-columns: 28px minmax(0, 1fr) auto; gap: .5rem; min-height: 44px; padding: 0; border: 0; }
+.sp-theme .sp-direct-people .sp-avatar { width: 28px; height: 28px; font-size: .75rem; }
+.sp-theme .sp-community-dialog .sp-direct-people .sp-person-info { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .875rem; }
+.sp-theme .sp-direct-people .sp-person-info small { display: inline; margin-inline-start: .5rem; font-size: .75rem; }
+@media (pointer: fine) {
+  .sp-theme [data-conversation-group="scope:direct"] .sp-conversation { min-height: 36px; }
+  .sp-theme .sp-community-dialog .sp-direct-people .sp-person { min-height: 36px; }
+  .sp-theme .sp-direct-people .sp-community-direct.sp-button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+}

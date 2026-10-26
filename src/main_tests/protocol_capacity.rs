@@ -4075,6 +4075,178 @@ async fn circle_rename_is_owner_only_and_invalidates_unsubscribed_clients() {
 }
 
 #[tokio::test]
+async fn favorite_circle_http_contract_is_self_only_and_fences_account_changes() {
+    use crate::domain::{ChannelSlug, DisplayName};
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server, state) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    let principal = state
+        .auth
+        .authenticate_request(Some("favorite-http-owner".into()), None)
+        .await
+        .unwrap();
+    let other = state
+        .auth
+        .authenticate_request(Some("favorite-http-other".into()), None)
+        .await
+        .unwrap();
+    state
+        .chat
+        .ensure_user(principal.user.clone())
+        .await
+        .unwrap();
+    let circle = state
+        .chat
+        .create_circle(
+            principal.user.id.clone(),
+            ChannelSlug::new("favorite-http-circle").unwrap(),
+            DisplayName::new("Favorite circle").unwrap(),
+        )
+        .await
+        .unwrap();
+    let client = reqwest::Client::new();
+    let base = format!("http://{address}/api/v1/me/favorite-circles");
+    let own = format!("{base}?participant=favorite-http-owner");
+    let own_item = format!("{base}/{}?participant=favorite-http-owner", circle.id);
+    let other_item = format!("{base}/{}?participant=favorite-http-other", circle.id);
+    let account = principal.user.id.to_string();
+    for request in [
+        client.get(&own),
+        client.put(&own_item),
+        client.delete(&own_item),
+    ] {
+        assert_eq!(
+            request.send().await.unwrap().status(),
+            reqwest::StatusCode::CONFLICT,
+            "expected account header is mandatory"
+        );
+    }
+    assert_eq!(
+        client
+            .put(&own_item)
+            .header("x-sproyt-account", other.user.id.to_string())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::CONFLICT
+    );
+    assert_eq!(
+        client
+            .put(&other_item)
+            .header("x-sproyt-account", &account)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::CONFLICT,
+        "header cannot select or authenticate the account"
+    );
+    assert_eq!(
+        client
+            .put(&other_item)
+            .header("x-sproyt-account", other.user.id.to_string())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            client
+                .put(&own_item)
+                .header("x-sproyt-account", &account)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::NO_CONTENT
+        );
+    }
+    let response = client
+        .get(&own)
+        .header("x-sproyt-account", &account)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()[reqwest::header::CACHE_CONTROL],
+        "no-store"
+    );
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!([circle.id.to_string()])
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}?participant=favorite-http-other"))
+            .header("x-sproyt-account", other.user.id.to_string())
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        serde_json::json!([])
+    );
+    assert_eq!(
+        client
+            .put(format!("{base}/not-a-uuid?participant=favorite-http-owner"))
+            .header("x-sproyt-account", &account)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        client
+            .delete(&other_item)
+            .header("x-sproyt-account", other.user.id.to_string())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        state
+            .chat
+            .favorite_circles(principal.user.id.clone())
+            .await
+            .unwrap(),
+        vec![circle.id.clone()]
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            client
+                .delete(&own_item)
+                .header("x-sproyt-account", &account)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::NO_CONTENT
+        );
+    }
+    assert!(
+        state
+            .chat
+            .favorite_circles(principal.user.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn personal_status_http_contract_is_private_and_delete_preserves_current_profile() {
     let repository = Arc::new(
         SqliteChatRepository::connect("sqlite::memory:")
