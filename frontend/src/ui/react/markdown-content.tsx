@@ -55,8 +55,16 @@ function MermaidDiagram({ source }: { readonly source: string }) {
   </div>;
 }
 
+function appLink(href: string | undefined): boolean {
+  if (!href || typeof window === "undefined") return false;
+  try {
+    const url = new URL(href, window.location.href);
+    return url.origin === window.location.origin && url.pathname === "/"
+      && (url.searchParams.has("channel") || ["settings", "inbox", "circles", "direct"].includes(url.searchParams.get("view") ?? ""));
+  } catch { return false; }
+}
 const components: Components = {
-  a: ({ href, children, ...props }) => <a {...props} href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{children}</a>,
+  a: ({ href, children, ...props }) => <a {...props} href={href} target={appLink(href) ? undefined : "_blank"} rel="noopener noreferrer" referrerPolicy="no-referrer">{children}</a>,
   code: ({ className, children, ...props }) => {
     const language = /(?:^|\s)language-([^\s]+)/u.exec(className ?? "")?.[1]?.toLowerCase();
     if (language === "mermaid") return <MermaidDiagram source={String(children).replace(/\n$/u, "")} />;

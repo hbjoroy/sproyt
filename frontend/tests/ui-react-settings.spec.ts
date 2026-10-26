@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 async function settings(page: Page, label: "Profil og status" | "Varslingsinnstillingar") {
   const preview = page.locator("#sproyt-react-preview");
   await preview.getByRole("button", { name: "Meny", exact: true }).click();
-  await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
   await preview.getByRole("button", { name: label, exact: true }).click();
   return preview.getByRole("dialog", { name: label, exact: true });
 }
@@ -31,7 +31,10 @@ test("profile saves name and status, clears status and retains the chat draft wi
   await dialog.getByRole("button", { name: "Tøm status", exact: true }).click();
   await expect(dialog).toContainText("Statusen er tømd.");
   await expect(dialog.getByLabel("Statusemoji", { exact: true })).toHaveValue("");
-  await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(preview.getByRole("dialog", { name: "Innstillingar", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(preview.getByRole("dialog")).toHaveCount(0);
   await expect(composer).toHaveValue("utkast medan profilen endrast");
   expect(sockets).toBe(1);
   expect(new URL(page.url()).searchParams.get("ui")).toBe("react");

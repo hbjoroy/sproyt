@@ -21,10 +21,106 @@ use serde::Deserialize;
 pub(crate) struct LoginQuery {
     pub(crate) invite: Option<String>,
     pub(crate) enrollment: Option<String>,
+    #[serde(flatten)]
+    pub(crate) view: SafeViewQuery,
+}
+
+/// The only view fields carried through session renewal or OIDC. Unknown query
+/// fields are discarded; every returned value is formatted from a fixed route.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct SafeViewQuery {
     pub(crate) channel: Option<String>,
     pub(crate) message: Option<String>,
     pub(crate) thread: Option<String>,
     pub(crate) sequence: Option<String>,
+    pub(crate) view: Option<String>,
+    pub(crate) inbox: Option<String>,
+    pub(crate) section: Option<String>,
+    pub(crate) circle: Option<String>,
+    pub(crate) task: Option<String>,
+    pub(crate) feature: Option<String>,
+}
+
+impl SafeViewQuery {
+    pub(crate) fn return_to(&self) -> Option<String> {
+        let resource = |value: Option<&str>| uuid::Uuid::parse_str(value?).ok();
+        match self.view.as_deref() {
+            None => safe_chat_return_to(
+                self.channel.as_deref(),
+                self.message.as_deref(),
+                self.thread.as_deref(),
+                self.sequence.as_deref(),
+            ),
+            Some("circles") => Some("/?view=circles".to_owned()),
+            Some("direct") => Some("/?view=direct".to_owned()),
+            Some("inbox") => match self.inbox.as_deref()? {
+                "unread" => Some("/?view=inbox&inbox=unread".to_owned()),
+                "mentions" => Some("/?view=inbox&inbox=mentions".to_owned()),
+                "tasks" => Some("/?view=inbox&inbox=tasks".to_owned()),
+                _ => None,
+            },
+            Some("settings") => {
+                let section = self.section.as_deref().unwrap_or("overview");
+                let path = match section {
+                    "overview" | "profile" | "notifications" => {
+                        format!("/?view=settings&section={section}")
+                    }
+                    "circle" | "chat-agents" | "memory" => format!(
+                        "/?view=settings&section={section}&circle={}",
+                        resource(self.circle.as_deref())?
+                    ),
+                    "community" => {
+                        let task = self.task.as_deref()?;
+                        let base = format!("/?view=settings&section=community&task={task}");
+                        match task {
+                            "people" | "create-circle" | "circles" | "global-channels"
+                            | "global-invite" => base,
+                            "create-channel" => match self.circle.as_deref() {
+                                Some(circle) => {
+                                    format!("{base}&circle={}", resource(Some(circle))?)
+                                }
+                                None => base,
+                            },
+                            "channel" => {
+                                format!("{base}&channel={}", resource(self.channel.as_deref())?)
+                            }
+                            "channels" | "invite" | "rename-circle" | "circle-members" => {
+                                format!("{base}&circle={}", resource(self.circle.as_deref())?)
+                            }
+                            _ => return None,
+                        }
+                    }
+                    "advanced" => {
+                        let feature = self.feature.as_deref()?;
+                        if !matches!(feature, "agent" | "heart") {
+                            return None;
+                        }
+                        let base = format!("/?view=settings&section=advanced&feature={feature}");
+                        match self.channel.as_deref() {
+                            Some(channel) => format!("{base}&channel={}", resource(Some(channel))?),
+                            None => base,
+                        }
+                    }
+                    _ => return None,
+                };
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn login_location(&self) -> Option<String> {
+        if self.view.is_none() {
+            return safe_chat_login_location(
+                self.channel.as_deref(),
+                self.message.as_deref(),
+                self.thread.as_deref(),
+                self.sequence.as_deref(),
+            );
+        }
+        self.return_to()
+            .map(|path| path.replacen("/", "/auth/login", 1))
+    }
 }
 
 pub(crate) fn safe_chat_return_to(
@@ -35,16 +131,19 @@ pub(crate) fn safe_chat_return_to(
 ) -> Option<String> {
     let channel = uuid::Uuid::parse_str(channel?).ok()?;
     let mut path = format!("/?channel={channel}");
-    if let Some(message) = message.and_then(|value| uuid::Uuid::parse_str(value).ok()) {
+    let message = message.and_then(|value| uuid::Uuid::parse_str(value).ok());
+    if let Some(message) = message {
         path.push_str(&format!("&message={message}"));
-        if let Some(thread) = thread.and_then(|value| uuid::Uuid::parse_str(value).ok()) {
-            path.push_str(&format!("&thread={thread}"));
-        }
-        if let Some(sequence) = sequence.and_then(|value| value.parse::<u64>().ok())
-            && sequence > 0
-        {
-            path.push_str(&format!("&sequence={sequence}"));
-        }
+    }
+    if let Some(thread) = thread.and_then(|value| uuid::Uuid::parse_str(value).ok()) {
+        path.push_str(&format!("&thread={thread}"));
+    }
+    if message.is_some()
+        && let Some(sequence) = sequence.and_then(|value| value.parse::<u64>().ok())
+        && sequence > 0
+        && sequence <= 9_007_199_254_740_991
+    {
+        path.push_str(&format!("&sequence={sequence}"));
     }
     Some(path)
 }
@@ -79,14 +178,7 @@ pub(crate) async fn auth_login(
         .invite
         .filter(|token| is_safe_invitation_token(token))
         .map(|token| format!("/?invite={token}"))
-        .or_else(|| {
-            safe_chat_return_to(
-                query.channel.as_deref(),
-                query.message.as_deref(),
-                query.thread.as_deref(),
-                query.sequence.as_deref(),
-            )
-        });
+        .or_else(|| query.view.return_to());
     match state.auth.login(return_to) {
         Ok(login) => redirect_with_cookies(&login.authorization_url, &[login.set_cookie]),
         Err(error) => auth_error_response(error),
@@ -354,6 +446,183 @@ mod tests {
             safe_chat_return_to(Some(&channel), Some("https://evil.test"), None, None),
             Some(format!("/?channel={channel}"))
         );
+    }
+
+    fn assert_view_login_roundtrip(path: &str) {
+        // Exercise both actual flattened Axum query extractors: root URL,
+        // renewal target, login URL, then the sealed OIDC return target.
+        let root = Query::<crate::web::browser::InviteQuery>::try_from_uri(&path.parse().unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(root.view.return_to().as_deref(), Some(path));
+        let login_path = root.view.login_location().unwrap();
+        assert_eq!(login_path, path.replacen("/", "/auth/login", 1));
+        let login = Query::<LoginQuery>::try_from_uri(&login_path.parse().unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(login.view.return_to().as_deref(), Some(path));
+        assert!(root.invite.is_none());
+        assert!(login.invite.is_none());
+        assert!(login.enrollment.is_none());
+    }
+
+    #[test]
+    fn navigation_and_personal_settings_roundtrip_through_cold_login() {
+        for path in [
+            "/?view=circles",
+            "/?view=direct",
+            "/?view=inbox&inbox=unread",
+            "/?view=inbox&inbox=mentions",
+            "/?view=inbox&inbox=tasks",
+            "/?view=settings&section=overview",
+            "/?view=settings&section=profile",
+            "/?view=settings&section=notifications",
+        ] {
+            assert_view_login_roundtrip(path);
+        }
+    }
+
+    #[test]
+    fn scoped_settings_roundtrip_only_known_tasks_and_resource_fields() {
+        let circle = uuid::Uuid::new_v4();
+        let channel = uuid::Uuid::new_v4();
+        for section in ["circle", "chat-agents", "memory"] {
+            assert_view_login_roundtrip(&format!(
+                "/?view=settings&section={section}&circle={circle}"
+            ));
+        }
+        for task in [
+            "people",
+            "create-circle",
+            "circles",
+            "global-channels",
+            "global-invite",
+            "create-channel",
+        ] {
+            assert_view_login_roundtrip(&format!("/?view=settings&section=community&task={task}"));
+        }
+        for task in [
+            "create-channel",
+            "channels",
+            "invite",
+            "rename-circle",
+            "circle-members",
+        ] {
+            assert_view_login_roundtrip(&format!(
+                "/?view=settings&section=community&task={task}&circle={circle}"
+            ));
+        }
+        assert_view_login_roundtrip(&format!(
+            "/?view=settings&section=community&task=channel&channel={channel}"
+        ));
+        for feature in ["agent", "heart"] {
+            assert_view_login_roundtrip(&format!(
+                "/?view=settings&section=advanced&feature={feature}"
+            ));
+            assert_view_login_roundtrip(&format!(
+                "/?view=settings&section=advanced&feature={feature}&channel={channel}"
+            ));
+        }
+    }
+
+    #[test]
+    fn safe_view_queries_drop_unrecognized_fields_and_normalize_identifiers() {
+        let circle = uuid::Uuid::new_v4();
+        let compact = circle.simple().to_string().to_uppercase();
+        let path = format!(
+            "/?view=settings&section=circle&circle={compact}&return_to=https%3A%2F%2Fevil.test&credential=secret&invite=capability&enrollment=another-capability&unknown=value"
+        );
+        let query = Query::<LoginQuery>::try_from_uri(&path.parse().unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(query.invite.as_deref(), Some("capability"));
+        assert_eq!(query.enrollment.as_deref(), Some("another-capability"));
+        assert_eq!(
+            query.view.return_to(),
+            Some(format!("/?view=settings&section=circle&circle={circle}"))
+        );
+        assert_eq!(
+            query.view.login_location(),
+            Some(format!(
+                "/auth/login?view=settings&section=circle&circle={circle}"
+            ))
+        );
+        let default = Query::<SafeViewQuery>::try_from_uri(
+            &"/?view=settings&section=overview&channel=https%3A%2F%2Fevil.test"
+                .parse()
+                .unwrap(),
+        )
+        .unwrap()
+        .0;
+        assert_eq!(
+            default.return_to().as_deref(),
+            Some("/?view=settings&section=overview")
+        );
+    }
+
+    #[test]
+    fn safe_view_queries_reject_unknown_routes_and_invalid_required_uuids() {
+        for path in [
+            "/?view=https%3A%2F%2Fevil.test",
+            "/?view=inbox&inbox=other",
+            "/?view=settings&section=%2F%2Fevil.test",
+            "/?view=settings&section=circle",
+            "/?view=settings&section=chat-agents&circle=not-a-uuid",
+            "/?view=settings&section=memory&circle=https%3A%2F%2Fevil.test",
+            "/?view=settings&section=community&task=unknown",
+            "/?view=settings&section=community&task=channel&channel=bad",
+            "/?view=settings&section=community&task=invite&circle=bad",
+            "/?view=settings&section=community&task=create-channel&circle=bad",
+            "/?view=settings&section=advanced&feature=external",
+            "/?view=settings&section=advanced&feature=agent&channel=bad",
+            "/?return_to=%2F%2Fevil.test&credential=secret",
+        ] {
+            let query = Query::<SafeViewQuery>::try_from_uri(&path.parse().unwrap())
+                .unwrap()
+                .0;
+            assert_eq!(query.return_to(), None, "accepted {path}");
+            assert_eq!(query.login_location(), None, "accepted login {path}");
+        }
+    }
+
+    #[test]
+    fn thread_only_links_and_safe_message_sequences_survive_login() {
+        let channel = uuid::Uuid::new_v4();
+        let thread = uuid::Uuid::new_v4();
+        let message = uuid::Uuid::new_v4();
+        let path = format!("/?channel={channel}&thread={thread}");
+        assert_view_login_roundtrip(&path);
+        assert_eq!(
+            safe_chat_return_to(
+                Some(&channel.to_string()),
+                None,
+                Some(&thread.to_string()),
+                Some("42")
+            ),
+            Some(path)
+        );
+        for sequence in [
+            "0",
+            "-1",
+            "invalid",
+            "9007199254740992",
+            "18446744073709551615",
+        ] {
+            assert_eq!(
+                safe_chat_return_to(
+                    Some(&channel.to_string()),
+                    Some(&message.to_string()),
+                    Some(&thread.to_string()),
+                    Some(sequence)
+                ),
+                Some(format!(
+                    "/?channel={channel}&message={message}&thread={thread}"
+                ))
+            );
+        }
+        assert_view_login_roundtrip(&format!(
+            "/?channel={channel}&message={message}&thread={thread}&sequence=9007199254740991"
+        ));
     }
     use crate::{
         agent::AgentService,

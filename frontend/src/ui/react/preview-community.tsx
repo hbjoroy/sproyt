@@ -6,7 +6,8 @@ import type { Channel, Circle, UserProfile } from "../../types";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import { MarkdownContent } from "./markdown-content";
 
-export type CommunityDestination = { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" } | { kind: "create-channel"; circleId: string | null } | { kind: "channel"; channelId: string } | { kind: "channels" | "invite" | "rename-circle" | "circle-members"; circleId: string };
+import type { CommunityDestination } from "../../application/management-target";
+export type { CommunityDestination } from "../../application/management-target";
 export interface CommunityHost {
   chatAgents?: CircleChatAgentApi;
   agentMemory?: AgentMemoryApi;

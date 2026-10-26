@@ -143,7 +143,10 @@ test("real share worker persists multipart through login, preserves drafts, isol
   try {
     await conversations(page, () => actor ?? "anonymous", sends, acknowledgements);
     await page.goto(url);
-    await page.evaluate(channel => { localStorage.setItem(`sproyt.channel-draft.v1.${channel}`, "Mitt vanlege utkast"); localStorage.setItem("sproyt.active-channel.v1", channel); }, channel);
+    await page.evaluate(channel => {
+      localStorage.setItem(`sproyt.account.v1.actor.sproyt.channel-draft.v1.${channel}`, "Mitt vanlege utkast");
+      localStorage.setItem("sproyt.account.v1.actor.sproyt.active-channel.v1", channel);
+    }, channel);
     await page.reload();
     await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
     const post = async (navigation = false, from = page) => from.evaluate(async navigation => {

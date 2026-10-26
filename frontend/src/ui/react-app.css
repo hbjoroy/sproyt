@@ -439,3 +439,20 @@
 .sp-channel-agent-list { display: grid; gap: 4px; }
 .sp-channel-agent-choice { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--sp-line); padding-block: 6px; }
 .sp-channel-agent-choice small { display: block; color: var(--sp-muted); }
+.sp-theme .sp-view-history { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.sp-theme .sp-view-history > button { min-width: 36px; min-height: 36px; padding: 4px; }
+.sp-theme .sp-recent-views { position: relative; font-size: 14px; }
+.sp-theme .sp-recent-views > summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; padding-inline: 8px; }
+.sp-theme .sp-recent-views-menu { position: fixed; z-index: 1100; width: min(320px, calc(100vw - 32px)); max-height: min(55dvh, 420px); overflow: auto; padding: 8px; background: var(--sp-surface); color: var(--sp-text); border: 1px solid var(--sp-line); }
+.sp-theme .sp-recent-views-menu button { display: block; width: 100%; text-align: left; min-height: 44px; padding: 8px; border: 0; background: transparent; color: inherit; overflow-wrap: anywhere; }
+.sp-theme .sp-recent-views-menu button:hover { background: var(--sp-surface); }
+.sp-theme .sp-recent-views-menu p { margin: 4px; font-size: 14px; }
+.sp-theme .sp-copy-link-notice { font-size: 12px; color: var(--sp-muted); }
+.sp-theme .sp-view-history-in-menu { display: none; }
+@container sp-app (max-width: 800px) {
+  .sp-theme .sp-view-history:not(.sp-view-history-in-menu) > button[aria-label="Fram"],
+  .sp-theme .sp-view-history:not(.sp-view-history-in-menu) > button[aria-label="Tilbake"]:disabled,
+  .sp-theme .sp-view-history:not(.sp-view-history-in-menu) > .sp-recent-views { display: none; }
+  .sp-theme .sp-view-history-in-menu { display: flex; }
+}
+@media (pointer: coarse) { .sp-theme .sp-view-history > button, .sp-theme .sp-recent-views > summary { min-width: 44px; min-height: 44px; } }

@@ -90,7 +90,13 @@ test("one-shot agent location shows consent, accuracy and expiry, supports remov
   expect(writes.map(item => item.method)).toEqual(["PUT", "DELETE"]);
   await dialog.getByRole("button", { name: "Lukk posisjonsdeling", exact: true }).click();
   await expect(composer).toHaveValue("Utkastet blir verande");
-  expect(await page.evaluate(() => Object.keys(localStorage).filter(key => /location|posisjon/i.test(key)))).toEqual([]);
+  const persisted = await page.evaluate(() => Object.keys(localStorage).map(key => ({ key, value: localStorage.getItem(key) })));
+  // The account id itself is "location-user". Examine the feature key after
+  // its documented account prefix rather than misclassifying that identity.
+  const prefix = "sproyt.account.v1.location-user.";
+  expect(persisted.map(({ key }) => key.startsWith(prefix) ? key.slice(prefix.length) : key)
+    .filter(key => /location|posisjon/i.test(key))).toEqual([]);
+  expect(persisted.map(({ value }) => value).join("\n")).not.toMatch(/60\.3913|5\.3221|accuracy_m/);
 });
 
 test("permission denial is recoverable and a late position after close cannot be shared", async ({ page }) => {

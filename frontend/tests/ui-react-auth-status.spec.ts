@@ -15,12 +15,14 @@ test("React preview keeps routine accepted status out of the message rhythm", as
 
 test("React reauthentication action persists channel and thread drafts before login", async ({ page }) => {
   let sockets = 0;
+  let ownerId: string | undefined;
   const rootBody = `reauth rot ${Date.now()}`;
   let rootAccepted = false;
   page.on("websocket", socket => {
     sockets += 1;
     socket.on("framereceived", ({ payload }) => {
       const event = JSON.parse(String(payload));
+      if (event.type === "hello") ownerId = event.payload.participant_id;
       if (event.type === "message_accepted" && event.payload.message.body === rootBody) rootAccepted = true;
     });
   });
@@ -75,12 +77,14 @@ test("React reauthentication action persists channel and thread drafts before lo
   await reauthenticate.click();
   await expect.poll(() => loginRequests).toBe(1);
 
-  const drafts = await page.evaluate((expectedRootId) => {
-    const channelId = localStorage.getItem("sproyt.active-channel.v1");
+  expect(ownerId).toBeTruthy();
+  const drafts = await page.evaluate(({ expectedRootId, owner }) => {
+    const prefix = `sproyt.account.v1.${encodeURIComponent(owner)}.`;
+    const channelId = localStorage.getItem(`${prefix}sproyt.active-channel.v1`);
     return {
-      channel: channelId ? localStorage.getItem(`sproyt.channel-draft.v1.${channelId}`) : null,
-      thread: channelId && expectedRootId ? localStorage.getItem(`sproyt.thread-draft.v1.${channelId}.${expectedRootId}`) : null
+      channel: channelId ? localStorage.getItem(`${prefix}sproyt.channel-draft.v1.${channelId}`) : null,
+      thread: channelId && expectedRootId ? localStorage.getItem(`${prefix}sproyt.thread-draft.v1.${channelId}.${expectedRootId}`) : null
     };
-  }, rootId);
+  }, { expectedRootId: rootId, owner: ownerId! });
   expect(drafts).toEqual({ channel: channelDraft, thread: threadDraft });
 });

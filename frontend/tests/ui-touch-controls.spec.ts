@@ -14,10 +14,10 @@ test("touch controls remain usable after closing dialogs and reloading", async (
     await expect(input).toBeFocused();
     await input.fill("Draft survives dialog");
     await app.getByRole("button", { name: "Meny", exact: true }).tap();
-    await app.getByRole("button", { name: "Meny og innstillingar", exact: true }).tap();
-    const dialog = app.getByRole("dialog", { name: "Meny og innstillingar" });
+    await app.getByRole("button", { name: "Innstillingar", exact: true }).tap();
+    const dialog = app.getByRole("dialog", { name: "Innstillingar" });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Lukk menyen" }).tap();
+    await dialog.getByRole("button", { name: "Lukk innstillingane" }).tap();
     await expect(dialog).toBeHidden();
     await input.tap();
     await expect(input).toBeFocused();

@@ -8,11 +8,18 @@ test("saved statuses survive reload, prefill without publishing, and can be forg
   }));
   const open = async () => {
     const preview = page.locator("#sproyt-react-preview");
+    const profile = preview.getByRole("dialog", { name: "Profil og status", exact: true });
+    if (new URL(page.url()).searchParams.get("section") === "profile") {
+      await expect(profile).toBeVisible();
+      await expect(preview.getByRole("dialog")).toHaveCount(1);
+      return profile;
+    }
     await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15000 });
-    await preview.getByRole("button", { name: "Meny", exact: true }).click();
-    await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
+    const settings = preview.getByRole("button", { name: "Innstillingar", exact: true });
+    if (!await settings.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
+    await settings.click();
     await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
-    return preview.getByRole("dialog", { name: "Profil og status" });
+    return profile;
   };
   await page.goto(`/?participant=${participant}&ui=react`);
   let dialog = await open();

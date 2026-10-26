@@ -280,7 +280,7 @@ test("unrelated messages and reactions preserve focused draft, reading anchor an
   expect(errors).toEqual([]);
 });
 
-test("opening pages to the unread boundary, acknowledges only visible messages and reload uses the saved watermark", async ({ page }) => {
+test("opening pages acknowledges only visible messages; reload restores the view and a fresh tab uses the watermark", async ({ page }) => {
   const server = readingServer(); server.hold(true);
   await server.install(page);
   expect(server.acknowledgements).toHaveLength(0);
@@ -293,11 +293,18 @@ test("opening pages to the unread boundary, acknowledges only visible messages a
   expect(server.reads.get("a")).toBeLessThan(50);
   await expect(viewport(page).getByRole("separator", { name: "Uleste meldingar" })).toBeVisible();
   const persisted = server.reads.get("a")!;
+  const beforeReload = await anchor(page);
   await page.reload();
-  await expect.poll(() => viewport(page).locator(`[data-message-id="a-${persisted + 1}"]`).evaluate(element => {
+  await expectAnchor(page, beforeReload);
+  expect(server.reads.get("a")).toBeGreaterThanOrEqual(persisted);
+  const fresh = await page.context().newPage();
+  const latestRead = server.reads.get("a")!;
+  await server.install(fresh);
+  await expect.poll(() => viewport(fresh).locator(`[data-message-id="a-${latestRead + 1}"]`).evaluate(element => {
     const top = element.getBoundingClientRect().top - element.parentElement!.getBoundingClientRect().top;
     return top > 40 && top < 140;
   })).toBe(true);
+  await fresh.close();
 });
 
 test("loading a hidden thread does not mark replies read and a peer reply preserves the visible thread position", async ({ page }) => {
@@ -374,13 +381,19 @@ test("a second client and late lower read markers update badges without moving t
   await expectAnchor(page, saved);
   server.marker("a", 10);
   await expectAnchor(page, saved);
-  // A new session follows the furthest confirmed marker, not the late lower one.
+  // This entry restores its position; a genuinely new tab uses the furthest marker.
   const persisted = server.reads.get("a")!;
   await page.reload();
-  await expect.poll(() => viewport(page).locator(`[data-message-id="a-${persisted + 1}"]`).evaluate(element => {
+  await expectAnchor(page, saved);
+  expect(server.reads.get("a")).toBeGreaterThanOrEqual(persisted);
+  const fresh = await context.newPage();
+  const latestRead = server.reads.get("a")!;
+  await server.install(fresh);
+  await expect.poll(() => viewport(fresh).locator(`[data-message-id="a-${latestRead + 1}"]`).evaluate(element => {
     const top = element.getBoundingClientRect().top - element.parentElement!.getBoundingClientRect().top;
     return top > 40 && top < 140;
   })).toBe(true);
+  await fresh.close();
   await second.close();
 });
 

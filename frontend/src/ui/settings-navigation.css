@@ -1,0 +1,47 @@
+.sp-theme .sp-settings-page {
+  inline-size: min(100%, 42rem);
+  margin-inline: auto;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.sp-theme .sp-settings-intro,
+.sp-theme .sp-settings-scope {
+  color: var(--sp-muted);
+  margin-block: 0 1.25rem;
+  line-height: 1.5;
+}
+.sp-theme .sp-settings-scope { font-size: .875rem; }
+.sp-theme .sp-settings-group { margin-block: 1.5rem; }
+.sp-theme .sp-settings-group h3 {
+  font-size: .875rem;
+  font-weight: 600;
+  color: var(--sp-muted);
+  margin-block: 0 .5rem;
+}
+.sp-theme .sp-settings-row.sp-button {
+  display: flex;
+  inline-size: 100%;
+  min-block-size: 44px;
+  justify-content: space-between;
+  gap: 1rem;
+  text-align: start;
+  border-block-end: 1px solid var(--sp-line);
+  border-radius: 0;
+  padding: .875rem .25rem;
+}
+.sp-theme .sp-settings-row > span:first-child { min-inline-size: 0; }
+.sp-theme .sp-settings-row strong { font-size: 1rem; font-weight: 500; }
+.sp-theme .sp-settings-detail {
+  display: block;
+  margin-block-start: .25rem;
+  color: var(--sp-muted);
+  font-size: .875rem;
+  line-height: 1.4;
+}
+.sp-theme .sp-settings-invitation { border-block-start: 1px solid var(--sp-line); padding-block: .5rem; }
+.sp-theme .sp-settings-invitation summary { min-block-size: 44px; padding-block: .75rem; cursor: pointer; }
+.sp-theme .sp-settings-invitation form { display: grid; gap: .75rem; padding-block: .5rem; }
+@media (max-width: 500px) {
+  .sp-theme .sp-settings-page { inline-size: 100%; }
+  .sp-theme .sp-settings-row.sp-button { padding-block: .75rem; }
+}

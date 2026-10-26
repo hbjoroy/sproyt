@@ -5,7 +5,7 @@ async function enter(page: Page, enabled = true) {
   // application capabilities and real user/channel memberships underneath.
   if (enabled) await page.route(/\/\?participant=/, async route => {
     const response = await route.fetch();
-    await route.fulfill({ response, body: (await response.text()).replace('class="agent-access" hidden', 'class="agent-access"').replace('class="advanced-tools" hidden', 'class="advanced-tools"') });
+    await route.fulfill({ response, body: (await response.text()).replace(/(<meta name="sproyt-capabilities" content=")[^"]*(")/, "$1agent heart$2").replace('class="agent-access" hidden', 'class="agent-access"').replace('class="advanced-tools" hidden', 'class="advanced-tools"') });
   });
   await page.goto(`/?participant=advanced-${Date.now()}&ui=react`);
   const preview = page.locator("#sproyt-react-preview");
@@ -13,9 +13,9 @@ async function enter(page: Page, enabled = true) {
   return preview;
 }
 async function menu(preview: Locator, label: string) {
-  const menu = preview.getByRole("dialog", { name: "Meny og innstillingar", exact: true });
+  const menu = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
   if (!await menu.isVisible()) {
-    const trigger = preview.getByRole("button", { name: "Meny og innstillingar", exact: true });
+    const trigger = preview.getByRole("button", { name: "Innstillingar", exact: true });
     if (!await trigger.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
     await trigger.click();
   }
@@ -33,8 +33,8 @@ async function owner(preview: Locator) {
 test("feature flags hide agent/Heart and member role hides Grafana", async ({ page }) => {
   const preview = await enter(page, false);
   await preview.getByRole("button", { name: "Meny", exact: true }).click();
-  await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click();
-  await expect(preview.getByRole("button", { name: "Agenttilgang", exact: true })).toHaveCount(0);
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await expect(preview.getByRole("button", { name: "Mellombels tilgang for ekstern agent", exact: true })).toHaveCount(0);
   await expect(preview.getByRole("button", { name: "Heart og planlegging", exact: true })).toHaveCount(0);
   await menu(preview, "Kanaldetaljar, medlemmer og integrasjonar");
   await expect(preview.getByRole("button", { name: "Lag Grafana-nøkkel" })).toHaveCount(0);
@@ -46,14 +46,15 @@ test("real short-lived agent grants both scopes, clears secret on close and reta
   page.on("websocket", () => sockets++);
   page.on("request", request => { if (request.url().includes("/grants")) grants.push(request.postDataJSON()); });
   const preview = await enter(page);
-  await menu(preview, "Agenttilgang");
-  const agent = preview.getByRole("dialog", { name: "Agenttilgang", exact: true });
-  await expect(agent.getByRole("button", { name: "Lag kortliva tilgang" })).toBeDisabled();
+  await menu(preview, "Kanaldetaljar, medlemmer og integrasjonar");
+  await expect(preview.getByRole("button", { name: "Lag kortliva tilgang" })).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(preview.getByRole("button", { name: "Mellombels tilgang for ekstern agent", exact: true })).toHaveCount(0);
+  const agent = preview.getByRole("dialog", { name: "Agenttilgang", exact: true });
   await owner(preview);
   await page.keyboard.press("Escape");
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("agentutkast");
-  await menu(preview, "Agenttilgang");
+  await menu(preview, "Mellombels tilgang for ekstern agent");
   await agent.getByRole("button", { name: "Lag kortliva tilgang" }).click();
   await expect(agent.getByLabel("Agentcredential", { exact: true })).not.toHaveValue("");
   const credential = await agent.getByLabel("Agentcredential", { exact: true }).inputValue();
@@ -61,7 +62,7 @@ test("real short-lived agent grants both scopes, clears secret on close and reta
   expect(grants[0].channel_id).toBe(grants[1].channel_id);
   expect(await page.evaluate(() => JSON.stringify({ local: localStorage, session: sessionStorage }))).not.toContain(credential);
   await page.keyboard.press("Escape");
-  await menu(preview, "Agenttilgang");
+  await menu(preview, "Mellombels tilgang for ekstern agent");
   await expect(agent.getByLabel("Agentcredential", { exact: true })).toHaveCount(0);
   await agent.getByRole("button", { name: "Trekk tilbake", exact: true }).click();
   await expect(agent).toContainText("Agenttilgangen er trekt tilbake.");
@@ -80,7 +81,7 @@ test("failed agent grant rolls back and failed rollback keeps explicit revoke an
     if (failRevoke) { failRevoke = false; return route.fulfill({ status: 503, body: "Tilbakekalling feila" }); }
     return route.continue();
   });
-  const preview = await enter(page); await owner(preview); await menu(preview, "Agenttilgang");
+  const preview = await enter(page); await owner(preview); await menu(preview, "Mellombels tilgang for ekstern agent");
   const agent = preview.getByRole("dialog", { name: "Agenttilgang", exact: true });
   await agent.getByRole("button", { name: "Lag kortliva tilgang" }).click();
   await expect(agent).toContainText("tilbakekalling feila");

@@ -5,6 +5,7 @@ import type { Conversation, ThemeMode } from "@sproyt/ui/react";
 import type { ApplicationRuntime } from "../../application/runtime";
 import type { ConversationTimelineItem } from "../../application/conversation-snapshot";
 import type { ChatMessage } from "../../types";
+import { ProductConversationNavigation } from "./conversation-navigation";
 
 /** IDs belong to the application. Two circles may have the same display name. */
 export interface ConversationGroup {
@@ -15,6 +16,10 @@ export interface ConversationGroup {
 }
 
 export interface ConversationNavigationProps {
+  readonly ownerId?: string;
+  readonly directoryScope?: "circles" | "direct";
+  readonly onDirectoryScopeChange?: (scope: "circles" | "direct") => void;
+  readonly recentChannelIds?: readonly string[];
   readonly groups: readonly ConversationGroup[];
   readonly selectedId: string | null;
   readonly query: string;
@@ -25,28 +30,7 @@ export interface ConversationNavigationProps {
 
 /** Filtering, labels, membership and notification policy remain host-owned. */
 export function ConversationNavigation(props: ConversationNavigationProps) {
-  return <>
-    <TextField label="Finn samtale" type="search" value={props.query}
-      onChange={event => props.onQueryChange(event.currentTarget.value)} />
-    {props.actions}
-    {props.groups.map(group => <section key={group.id} data-conversation-group={group.id}>
-      {group.actions || group.conversations.some(item => item.action) ? <div className="sp-conversations">
-        <div className="sp-navigation-group-heading"><h2 className="sp-group-label sp-kicker">{group.name}</h2>{group.actions}</div>
-        {group.conversations.map(item => <div className="sp-conversation-row" key={item.id}>
-          <button type="button" className="sp-conversation"
-            aria-current={item.id === props.selectedId ? "page" : undefined}
-            onClick={() => props.onSelect(item.id)}>
-            <span className="sp-conversation-name">{item.name}</span>
-            {!!item.unread && <span className="sp-badge" aria-label={`${item.unread} uleste`}>{item.unread}</span>}
-          </button>
-          <div className="sp-conversation-actions">{item.action}</div>
-        </div>)}
-      </div> : <ConversationList items={group.conversations.map(item => ({ ...item, group: group.name }))}
-        selectedId={props.selectedId ?? ""} onSelect={props.onSelect}
-        emptyLabel={`Ingen samtalar i ${group.name}.`} />}
-    </section>)}
-    {props.groups.length === 0 && <Status>Ingen samtalar funne.</Status>}
-  </>;
+  return <ProductConversationNavigation {...props} />;
 }
 
 export interface TimelineProps {

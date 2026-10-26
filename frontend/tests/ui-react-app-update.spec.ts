@@ -104,8 +104,8 @@ test("menu update uses a real new worker and code revision while preserving draf
     const sends = await conversations(page);
     await page.goto(`${url}/seed`);
     await page.evaluate(async ({ channel, otherChannel, requestId }) => {
-      localStorage.setItem(`sproyt.channel-draft.v1.${channel}`, "Utkastet skal stå etter oppdatering");
-      localStorage.setItem("sproyt.active-channel.v1", channel);
+      localStorage.setItem(`sproyt.account.v1.actor.sproyt.channel-draft.v1.${channel}`, "Utkastet skal stå etter oppdatering");
+      localStorage.setItem("sproyt.account.v1.actor.sproyt.active-channel.v1", channel);
       localStorage.setItem("keep-login", "keep");
       sessionStorage.setItem("sproyt-work-item-decision:actor:fixture", JSON.stringify({ id: requestId, revision: 7, payload: "original decision" }));
       const helperUrl = "/fixture-state.js";
@@ -132,12 +132,12 @@ test("menu update uses a real new worker and code revision while preserving draf
     });
     await preview.locator('input[type="file"]').first().setInputFiles({ name: "utkast.png", mimeType: "image/png", buffer: Buffer.from(photo, "base64") });
     await expect(preview.getByRole("button", { name: "Fjern utkast.png", exact: true })).toBeVisible();
-    const openMenu = async () => { await preview.getByRole("button", { name: "Meny", exact: true }).click(); await preview.getByRole("button", { name: "Meny og innstillingar", exact: true }).click(); };
+    const openMenu = async () => { await preview.getByRole("button", { name: "Meny", exact: true }).click(); await preview.getByRole("button", { name: "Innstillingar", exact: true }).click(); };
     await openMenu();
-    const menu = preview.getByRole("dialog", { name: "Meny og innstillingar", exact: true });
+    const menu = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
     await menu.getByRole("button", { name: "Oppdater appen", exact: true }).click();
     await expect(menu).toContainText("Send eller fjern dei valde vedlegga"); expect(navigations).toBe(1);
-    await menu.getByRole("button", { name: "Lukk menyen", exact: true }).click();
+    await menu.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
     await preview.getByRole("button", { name: "Meny", exact: true }).click();
     await preview.getByRole("button", { name: "Fjern utkast.png", exact: true }).click();
     const review = preview.locator(".sp-work-item-task");
@@ -146,7 +146,7 @@ test("menu update uses a real new worker and code revision while preserving draf
     await review.locator(".sp-work-item-task-summary").click();
     await openMenu(); await menu.getByRole("button", { name: "Prøv oppdateringa igjen", exact: true }).click();
     await expect(menu).toContainText("Fullfør redigeringa først"); expect(navigations).toBe(1);
-    await menu.getByRole("button", { name: "Lukk menyen", exact: true }).click();
+    await menu.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
     await preview.getByRole("button", { name: "Meny", exact: true }).click();
     await review.locator(".sp-work-item-task-summary").click();
     await expect(review.getByRole("combobox", { name: "Prioritet", exact: true })).toHaveValue("high");
@@ -178,7 +178,7 @@ test("menu update uses a real new worker and code revision while preserving draf
     const saved = await page.evaluate(async () => {
       const helperUrl = "/fixture-state.js";
       const module = await import(helperUrl); const outbox = module.createDurableOutbox();
-      return { channel: localStorage.getItem("sproyt.active-channel.v1"), login: localStorage.getItem("keep-login"),
+      return { channel: localStorage.getItem("sproyt.account.v1.actor.sproyt.active-channel.v1"), login: localStorage.getItem("keep-login"),
         decision: sessionStorage.getItem("sproyt-work-item-decision:actor:fixture"), pending: await outbox.setUser("actor") };
     });
     expect(saved.channel).toBe(channel); expect(saved.login).toBe("keep"); expect(saved.decision).toContain("original decision");

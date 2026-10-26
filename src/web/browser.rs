@@ -23,10 +23,8 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct InviteQuery {
     pub(crate) invite: Option<String>,
-    pub(crate) channel: Option<String>,
-    pub(crate) message: Option<String>,
-    pub(crate) thread: Option<String>,
-    pub(crate) sequence: Option<String>,
+    #[serde(flatten)]
+    pub(crate) view: crate::web::auth::SafeViewQuery,
 }
 
 pub(crate) async fn index(
@@ -47,14 +45,7 @@ pub(crate) async fn index(
                     .as_deref()
                     .filter(|token| is_safe_invitation_token(token))
                     .map(|token| format!("/?invite={token}"))
-                    .or_else(|| {
-                        crate::web::auth::safe_chat_return_to(
-                            query.channel.as_deref(),
-                            query.message.as_deref(),
-                            query.thread.as_deref(),
-                            query.sequence.as_deref(),
-                        )
-                    })
+                    .or_else(|| query.view.return_to())
                     .unwrap_or_else(|| "/".to_owned());
                 return crate::web::auth::redirect_with_cookies(
                     &return_to,
@@ -66,14 +57,7 @@ pub(crate) async fn index(
                 .as_deref()
                 .filter(|token| is_safe_invitation_token(token))
                 .map(|token| format!("/auth/login?invite={token}"))
-                .or_else(|| {
-                    crate::web::auth::safe_chat_login_location(
-                        query.channel.as_deref(),
-                        query.message.as_deref(),
-                        query.thread.as_deref(),
-                        query.sequence.as_deref(),
-                    )
-                })
+                .or_else(|| query.view.login_location())
                 .unwrap_or_else(|| "/auth/login".to_owned());
             return (axum::http::StatusCode::SEE_OTHER, [(LOCATION, return_to)]).into_response();
         }
@@ -92,6 +76,15 @@ pub(crate) async fn index(
         .replace("{{NONCE}}", &nonce)
         .replace("{{APP_URL}}", &app_url)
         .replace("{{CLIENT_CORE_URL}}", &client_core_url)
+        .replace(
+            "{{CLIENT_CAPABILITIES}}",
+            match (state.agent_ui_enabled, state.advanced_ui_enabled) {
+                (true, true) => "agent heart",
+                (true, false) => "agent",
+                (false, true) => "heart",
+                (false, false) => "",
+            },
+        )
         .replace(
             "{{DISPLAY_NAME}}",
             &escape_html(&principal.user.display_name.to_string()),

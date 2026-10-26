@@ -1,8 +1,13 @@
-import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
+import { expect, test, type Locator, type Page, type WebSocketRoute } from "@playwright/test";
 
 const circleId = "00000000-0000-7000-8000-000000000001";
 const channelId = "00000000-0000-7000-8000-000000000002";
 type Role = "owner" | "moderator" | "member";
+async function showNavigation(preview: Locator) {
+  const back = preview.getByRole("button", { name: "Samtalar", exact: true });
+  if (await back.isVisible()) await back.click();
+  await expect(preview.getByRole("navigation", { name: "Samtalar", exact: true })).toBeVisible();
+}
 async function fixture(page: Page, initialRole: Role, messageId = "peer-message") {
   let role = initialRole;
   let peerRole: Role = "member";
@@ -48,7 +53,7 @@ for (const width of [1280,390]) {
   test(`owner appoints and removes an existing human moderator from compact people rows at ${width}px`,async({page})=>{
     await page.setViewportSize({width,height:844});
     const server=await fixture(page,"owner");
-    if(width===390) await server.preview.getByRole("button",{name:"Samtalar",exact:true}).click();
+    await showNavigation(server.preview);
     await server.preview.getByRole("button",{name:"Val for Testkrets",exact:true}).click();
     const menu=server.preview.getByRole("group",{name:"Val for Testkrets",exact:true});
     expect((await menu.boundingBox())!.height).toBeLessThan(280);
@@ -75,7 +80,7 @@ for (const width of [1280,390]) {
     server.private();
     await expect(message.getByRole("button",{name:"Slett",exact:true})).toHaveCount(0);
     await page.keyboard.press("Escape");
-    if(width===390) await server.preview.getByRole("button",{name:"Samtalar",exact:true}).click();
+    await showNavigation(server.preview);
     await server.preview.getByRole("button",{name:"Val for Testkrets",exact:true}).click();
     await expect(server.preview.getByRole("button",{name:/Endre namn på/})).toHaveCount(0);
     await expect(server.preview.getByRole("button",{name:"Inviter til Testkrets",exact:true})).toBeVisible();
@@ -89,12 +94,16 @@ for (const width of [1280,390]) {
     await expect(server.preview.getByRole("dialog",{name:"Agentar i Testkrets",exact:true})).toBeVisible();
     server.role("member");
     await expect(server.preview.getByRole("dialog",{name:"Agentar i Testkrets",exact:true})).toHaveCount(0);
+    const unavailable = server.preview.getByRole("dialog", { name: "Ikkje tilgjengeleg", exact: true });
+    await expect(unavailable).toContainText("Du har ikkje tilgang til denne sida no.");
+    await unavailable.getByRole("button", { name: "Tilbake", exact: true }).click();
+    await expect(unavailable).toHaveCount(0);
     await server.preview.getByRole("button",{name:"Val for Testkrets",exact:true}).click();
     await expect(server.preview.getByRole("button",{name:"Agentar i Testkrets",exact:true})).toHaveCount(0);
     await page.keyboard.press("Escape");
     await page.reload();
-    await expect(server.preview.getByRole("textbox",{name:"Skriv melding",exact:true})).toBeEnabled();
-    if(width===390) await server.preview.getByRole("button",{name:"Samtalar",exact:true}).click();
+    await expect(server.preview.getByRole("button", { name: "Val for Testkrets", exact: true, includeHidden: true })).toBeAttached();
+    await showNavigation(server.preview);
     await server.preview.getByRole("button",{name:"Val for Testkrets",exact:true}).click();
     await expect(server.preview.getByRole("button",{name:"Agentar i Testkrets",exact:true})).toHaveCount(0);
   });
@@ -109,7 +118,7 @@ for (const width of [1280, 390]) test(`moderator sends scoped email invitations 
     return route.fulfill({ json: { url: "https://auth.example.org/invitation/scoped", expires_at: "2027-01-01T00:00:00Z" } });
   });
   const server = await fixture(page, "moderator");
-  if (width === 390) await server.preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  await showNavigation(server.preview);
   await server.preview.getByRole("button", { name: "Val for Testkrets", exact: true }).click();
   await expect(server.preview.getByRole("button", { name: /Endre namn på/ })).toHaveCount(0);
   await server.preview.getByRole("button", { name: "Inviter til Testkrets", exact: true }).click();
@@ -135,17 +144,28 @@ for (const width of [1280, 390]) test(`moderator sends scoped email invitations 
   expect(server.commands.filter(command => ["rename_circle", "delete_circle", "set_circle_member_role"].includes(command.type))).toHaveLength(0);
 });
 
-test("ordinary members have no empty overflow menu, including thread roots", async ({ page }) => {
+test("ordinary members have useful link-only overflow menus without mutation powers, including thread roots", async ({ page }) => {
   await page.route(/\/work-items\/applications(?:\?|$)/, route => route.fulfill({ json: [] }));
   await page.route(/\/work-items\/source\//, route => route.fulfill({ json: [] }));
   const server = await fixture(page, "member");
   const message = server.preview.locator('[data-message-id="peer-message"]');
   await expect(message.getByRole("button", { name: "Legg til reaksjon", exact: true })).toBeVisible();
-  await expect(message.getByRole("button", { name: "Fleire meldingsval", exact: true })).toHaveCount(0);
+  const expectLinkOnlyMenu = async (entry: Locator) => {
+    await entry.getByRole("button", { name: "Fleire meldingsval", exact: true }).click();
+    const menu = entry.getByRole("dialog", { name: "Meldingsval", exact: true });
+    await expect(menu.getByRole("button", { name: "Kopier lenkje til meldinga", exact: true })).toBeVisible();
+    await expect(menu.getByRole("button", { name: "Rediger", exact: true })).toHaveCount(0);
+    await expect(menu.getByRole("button", { name: "Slett", exact: true })).toHaveCount(0);
+    await expect(menu.getByRole("button", { name: "Arbeidssaker", exact: true })).toHaveCount(0);
+    await expect(menu.locator(".sp-message-menu-dialog").getByRole("button")).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  };
+  await expectLinkOnlyMenu(message);
   await message.getByRole("button", { name: "Svar i tråd", exact: true }).click();
   const parent = server.preview.locator(".sp-thread-parent");
   await expect(parent).toBeVisible();
-  await expect(parent.getByRole("button", { name: "Fleire meldingsval", exact: true })).toHaveCount(0);
+  await expectLinkOnlyMenu(parent);
 });
 
 test("a read-only message with a registered case keeps its meaningful menu after process is disabled", async ({ page }) => {

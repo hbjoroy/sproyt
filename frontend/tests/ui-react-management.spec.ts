@@ -8,7 +8,7 @@ async function openPreview(page: Page, participant: string) {
 }
 
 async function openManagement(preview: Locator) {
-  const trigger = preview.getByRole("button", { name: "Meny og innstillingar" });
+  const trigger = preview.getByRole("button", { name: "Innstillingar" });
   if (!await trigger.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await trigger.click();
   return trigger;
@@ -20,9 +20,12 @@ test("management directory contains focus, cancels with Escape and does not muta
   const preview = await openPreview(page, "preview-management-cancel");
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast medan menyen er open");
   const trigger = await openManagement(preview);
-  const dialog = preview.getByRole("dialog", { name: "Meny og innstillingar" });
+  const dialog = preview.getByRole("dialog", { name: "Innstillingar" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Samtalen og utkasta dine blir tekne vare på");
+  await dialog.getByRole("searchbox", { name: "Søk i innstillingar" }).fill("bjelle");
+  await expect(dialog.getByRole("button", { name: "Varslingsinnstillingar", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Profil og status", exact: true })).toHaveCount(0);
   await page.keyboard.press("Tab");
   expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape");
@@ -35,7 +38,7 @@ test("management directory contains focus, cancels with Escape and does not muta
 for (const [label, title] of [
   ["Personar og ny direktemelding", /Personar og ny direktemelding/],
   ["Kanaldetaljar, medlemmer og integrasjonar", /Kanaldetaljar:/],
-  ["Kretsadministrasjon og invitasjonskode", /Kretsadministrasjon og invitasjonskode/],
+  ["Administrer krets", /Vel krets/],
 ] as const) {
   test(`management opens ${label} in React without reconnecting or losing draft`, async ({ page }) => {
     let sockets = 0;
@@ -46,6 +49,8 @@ for (const [label, title] of [
     await preview.getByRole("button", { name: label, exact: true }).click();
     const dialog = preview.getByRole("dialog", { name: title });
     await expect(dialog).toBeVisible();
+    await expect(preview.getByRole("dialog")).toHaveCount(1);
+    await expect(preview.getByRole("dialog", { name: "Innstillingar", exact: true })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(preview.getByRole("button", { name: label, exact: true })).toBeFocused();
@@ -68,13 +73,17 @@ test("creation, channel membership and enrollment stay in React and retain real 
   await expect(creation).toHaveCount(0);
   preview = await openPreview(page, participant);
   await openManagement(preview);
-  const circle = preview.getByRole("region", { name: "Krets frå React", exact: true });
+  await preview.getByRole("button", { name: "Administrer krets", exact: true }).click();
+  await preview.getByRole("dialog", { name: "Vel krets", exact: true }).getByRole("button", { name: "Krets frå React", exact: true }).click();
+  const circle = preview.getByRole("dialog", { name: "Krets frå React", exact: true });
   await circle.getByRole("button", { name: "Kanalar og medlemskap" }).click();
   await expect(preview.getByRole("dialog", { name: "Kanalar i Krets frå React" })).toBeVisible();
   preview = await openPreview(page, participant);
   await openManagement(preview);
+  await preview.getByRole("button", { name: "Administrer krets", exact: true }).click();
   await preview.getByRole("searchbox", { name: "Finn vennekrets" }).fill("Krets frå React");
-  await preview.getByRole("region", { name: "Krets frå React", exact: true })
+  await preview.getByRole("dialog", { name: "Vel krets", exact: true }).getByRole("button", { name: "Krets frå React", exact: true }).click();
+  await preview.getByRole("dialog", { name: "Krets frå React", exact: true })
     .getByRole("button", { name: "Inviter personar og nye brukarar" }).click();
   const invitation = preview.getByRole("dialog", { name: "Inviter til Krets frå React" });
   await expect(invitation).toBeVisible();
@@ -90,10 +99,11 @@ for (const [label, field] of [
     const preview = await openPreview(page, `preview-management-compact-${label}`);
     await preview.getByRole("textbox", { name: "Skriv melding" }).fill("mobilt utkast");
     await preview.getByRole("button", { name: "Meny", exact: true }).click();
-    await preview.getByRole("button", { name: "Meny og innstillingar" }).click();
+    await preview.getByRole("button", { name: "Innstillingar" }).click();
     await preview.getByRole("button", { name: label, exact: true }).click();
     const dialog = preview.getByRole("dialog", { name: label, exact: true });
     await expect(dialog.getByLabel(field, { exact: true })).toBeVisible();
+    await expect(preview.getByRole("dialog")).toHaveCount(1);
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(preview.getByRole("button", { name: label, exact: true })).toBeFocused();
@@ -128,7 +138,9 @@ test("React management preserves both channel and thread drafts", async ({ page 
   await expect(preview.getByRole("dialog", { name: "Personar og ny direktemelding" })).toBeVisible();
   await expect(page.locator("#thread-panel")).not.toHaveAttribute("open", "");
   await page.keyboard.press("Escape");
+  await expect(preview.getByRole("dialog", { name: "Innstillingar", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(preview.getByRole("dialog")).toHaveCount(0);
   await expect(preview.getByRole("textbox", { name: "Svar i tråden" })).toHaveValue("trådutkast gjennom meny");
   await expect(channelInput).toHaveValue("kanalutkast gjennom meny");
 });

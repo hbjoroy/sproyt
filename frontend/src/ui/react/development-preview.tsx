@@ -1,4 +1,4 @@
-import { Button, Dialog, Status } from "@sproyt/ui/react";
+import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import type { ApplicationRuntime } from "../../application/runtime";
@@ -40,10 +40,21 @@ import { workItemStatusId, workItemTaskId } from "../../work-items";
 import type { AppUpdate, UpdatePosition } from "../../app-update";
 import { AppUpdateNotice } from "./app-update-action";
 import { ReceivedShares } from "./share-target";
+import { ViewHistory, viewHref, type ViewTarget } from "../../view-history";
+import type { ManagementTarget } from "../../application/management-target";
+import { ViewHistoryControls } from "./view-history-controls";
 import type { ShareTarget } from "../../share-target";
 import { AgentLocationSharingDialog } from "./agent-location-sharing";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
+  readonly viewHistory: ViewHistory;
+  readonly managementTarget: () => ManagementTarget | null;
+  readonly navigateView: (target: ViewTarget, mode?: "push" | "replace") => void;
+  readonly openRecentView: (target: ViewTarget) => void;
+  readonly backFromManagement: () => void;
+  readonly navigationNotice: () => string;
+  readonly hasLegacyDraft: () => boolean;
+  readonly recoverLegacyDraft: () => void;
   readonly processPilot: ProcessPilotApi;
   readonly workItems: WorkItemApi;
   readonly processPilotIdentity: () => string;
@@ -276,6 +287,10 @@ function MessageActions({ host, message, threadAction, openReaction }: {
   readonly openReaction: (message: ChatMessage, anchor: HTMLElement) => void;
 }) {
   const [apps, setApps] = useState<readonly WorkApplication[]>([]);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const messageLink = viewHref({ kind: "conversation", channelId: message.channel_id, messageId: message.id,
+    sequence: message.sequence, ...(message.parent_message_id ? { threadId: message.parent_message_id } : {}) }, window.location.href);
   const [issueOpen, setIssueOpen] = useState(false);
   const [hasExistingItems, setHasExistingItems] = useState(false);
   const availabilityAnchor = useRef<HTMLDivElement>(null);
@@ -312,11 +327,21 @@ function MessageActions({ host, message, threadAction, openReaction }: {
   const hasWorkItemAction = canHaveWorkItems && (apps.length > 0 || hasExistingItems);
   return <div ref={availabilityAnchor} style={{ display: "contents" }}>
     <PreviewReactionActions message={message} host={host} open={openReaction} primaryAction={threadAction}
-      overflowActions={hasMutations || hasWorkItemAction ? close => <>
+      overflowActions={close => <>
+        <Button variant="quiet" onClick={() => {
+          close();
+          void navigator.clipboard?.writeText(messageLink).then(() => setLinkCopied(true), () => setLinkOpen(true));
+          if (!navigator.clipboard) setLinkOpen(true);
+        }}>Kopier lenkje til meldinga</Button>
         <PreviewMessageMutations message={message} host={host} />
         {canHaveWorkItems
           && <WorkItemMenuAction host={host} message={message} hasApplications={apps.length > 0} hasExistingItems={hasExistingItems} onOpen={() => { close(); setIssueOpen(true); }} />}
-      </> : undefined} />
+      </>} />
+    {linkCopied && <span className="sp-copy-link-notice" role="status">Lenkja er kopiert.</span>}
+    {linkOpen && <Dialog open title="Lenkje til meldinga" onClose={() => setLinkOpen(false)}>
+      <TextField label="Meldingslenkje" value={messageLink} readOnly onFocus={event => event.currentTarget.select()} />
+      <p>Merk og kopier lenkja. Ho opnar denne meldinga for dei som har tilgang til samtalen.</p>
+    </Dialog>}
     {issueOpen && <WorkItemRegistration api={host.workItems} message={message} open onClose={() => setIssueOpen(false)} />}
   </div>;
 }
@@ -345,14 +370,19 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let unsubscribe = () => {};
   let mounted: ReturnType<typeof mountConversationView> | undefined;
   let resumedThread = false;
+  let renderedOwner = host.community.selfId();
+  let renderedEntry = "";
   const reactionPicker = createPreviewReactionPicker(host);
   const restorePosition = (key: string) => host.appUpdate.resumePosition(host.processPilotIdentity(), key);
-  const channelScroll = createTimelineScrollController({ onNearStart: host.loadOlder, onVisibleMessages: host.acknowledgeVisible, restorePosition });
-  const threadScroll = createTimelineScrollController({ onVisibleMessages: host.acknowledgeVisible, restorePosition });
+  const captureReadingPosition = () => host.viewHistory.capture(captureUpdatePosition());
+  const channelScroll = createTimelineScrollController({ onNearStart: host.loadOlder, onVisibleMessages: host.acknowledgeVisible, restorePosition, onPositionChanged: captureReadingPosition });
+  const threadScroll = createTimelineScrollController({ onVisibleMessages: host.acknowledgeVisible, restorePosition, onPositionChanged: captureReadingPosition });
   const captureUpdatePosition = () => [channelScroll.readingPosition(), threadScroll.readingPosition()].filter((entry): entry is UpdatePosition => entry !== null);
+  window.addEventListener("pagehide", captureReadingPosition);
   const close = (target?: ComposerTarget) => {
     if (disposed) return;
     disposed = true;
+    window.removeEventListener("pagehide", captureReadingPosition);
     reactionPicker.close();
     channelScroll.dispose();
     threadScroll.dispose();
@@ -373,15 +403,32 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   const fullInterface = () => explicitPreview ? <Button onClick={() => close()}>Til fullt grensesnitt</Button> : null;
   const props = () => {
     const snapshot = host.snapshot();
+    const owner = host.community.selfId();
+    if (owner !== renderedOwner) {
+      renderedOwner = owner; channelScroll.reset(); threadScroll.reset(); resumedThread = false; renderedEntry = "";
+      reactionPicker.close();
+    }
+    const historyState = host.viewHistory.getSnapshot();
+    if (historyState.entryId !== renderedEntry) {
+      renderedEntry = historyState.entryId;
+      if (historyState.target?.kind === "directory") view = "list";
+      else if (historyState.target?.kind === "conversation") view = "detail";
+    }
     if (!resumedThread && snapshot.selection.channelId && !snapshot.timeline.loading) {
       resumedThread = true;
       const rootId = host.appUpdate.resumeThread(host.processPilotIdentity(), snapshot.selection.channelId);
-      if (rootId) queueMicrotask(() => { if (!disposed) host.openThread(rootId); });
+      if (rootId && historyState.target?.kind === "conversation" && !historyState.target.messageId && !historyState.target.threadId)
+        queueMicrotask(() => {
+          if (!disposed && host.community.selfId() === owner && host.viewHistory.getSnapshot().entryId === historyState.entryId)
+            host.navigateView({ kind: "conversation", channelId: snapshot.selection.channelId!, threadId: rootId }, "replace");
+        });
     }
     const scrollIntent = host.takeScrollIntent();
     const channelMessages = messagesForTimeline({ ...snapshot.timeline });
     const channelMessageIds = channelMessages.map(message => message.id);
     channelScroll.prepare({
+      restorationId: `${owner}:${historyState.entryId}`,
+      restoredPosition: historyState.positions.find(p => p.key === `channel:${snapshot.selection.channelId}`)?.position,
       key: snapshot.selection.channelId ? `channel:${snapshot.selection.channelId}` : null,
       messageIds: channelMessageIds,
       messageSequences: channelMessages.map(message => message.sequence),
@@ -397,6 +444,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       ? [snapshot.thread.root?.id, ...snapshot.thread.replies.filter(message => !message.deleted_at).map(message => message.id)].filter((id): id is string => Boolean(id))
       : [];
     threadScroll.prepare({
+      restorationId: `${owner}:${historyState.entryId}`,
+      restoredPosition: historyState.positions.find(p => p.key === `thread:${snapshot.thread?.rootMessageId}`)?.position,
       key: snapshot.thread ? `thread:${snapshot.thread.rootMessageId}` : null,
       messageIds: threadMessageIds,
       loading: host.threadLoad().loading,
@@ -405,27 +454,54 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const compactContext = snapshot.activeChannel?.is_direct ? "Direkte" : snapshot.activeChannel?.circle_id
       ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel?.circle_id)?.name ?? "Vennekrets"
       : snapshot.activeChannel ? "Felles" : undefined;
-    const backToConversations = () => { view = "list"; update(); };
+    const backToConversations = () => { host.navigateView({ kind: "directory", scope: snapshot.activeChannel?.is_direct ? "direct" : "circles" }); view = "list"; update(); };
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view,
+    ownerId: owner ?? undefined,
+    directoryScope: historyState.target?.kind === "directory" ? historyState.target.scope : undefined,
+    onDirectoryScopeChange: scope => host.navigateView({ kind: "directory", scope }),
+    recentChannelIds: historyState.recent.flatMap(item => item.target.kind === "conversation" ? [item.target.channelId] : []),
     header: <><AppUpdateNotice update={host.appUpdate} /><ReceivedShares target={host.shares} snapshot={snapshot} />{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
         Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
       </Status>}
-      <HeaderActions primary={<PreviewInboxes state={host.inboxState()} host={host} />}
+      {host.navigationNotice() && <Status tone="error">{host.navigationNotice()}</Status>}
+      {host.hasLegacyDraft() && <Status>Eit eldre lokalt utkast manglar kontomerking. <Button onClick={host.recoverLegacyDraft}>Hent eldre utkast</Button></Status>}
+      <HeaderActions primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
+        onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
+        <PreviewInboxes key={owner ?? "signed-out"} state={host.inboxState()} host={host}
+          activeKind={historyState.target?.kind === "inbox" ? historyState.target.inbox : null}
+          onNavigate={inbox => host.navigateView({ kind: "inbox", inbox })}
+          onBack={() => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.backFromManagement(); }} /></>}
         compactConversation={view === "detail" ? {
           context: compactContext, title: snapshot.title, onBack: backToConversations
         } : undefined}>
       {view === "detail" && <div className="sp-mobile-channel-menu"><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ChannelActions compact snapshot={snapshot} host={host} /></div>}
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
+      <ViewHistoryControls inMenu history={host.viewHistory} snapshot={snapshot}
+        onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
-      <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate} captureUpdatePosition={captureUpdatePosition}
+      <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate} captureUpdatePosition={() => {
+        if (host.community.selfId() !== owner) throw new Error("Kontoen vart endra. Start oppdateringa på nytt.");
+        const positions = captureUpdatePosition(), current = host.snapshot();
+        if (current.selection.channelId) host.navigateView({ kind: "conversation", channelId: current.selection.channelId,
+          ...(current.thread ? { threadId: current.thread.rootMessageId } : {}) }, "replace");
+        return positions;
+      }}
+        target={host.managementTarget()} onNavigate={page => {
+          if (host.viewHistory.getSnapshot().entryId !== historyState.entryId || host.community.selfId() !== owner) return;
+          if (page) host.navigateView({ kind: "management", page }); else host.backFromManagement();
+        }}
+        onBack={() => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.backFromManagement(); }}
+        onSelectChannel={channelId => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.navigateView({ kind: "conversation", channelId }); }}
         community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions></>,
     navigationActions: <NewDirectMessage snapshot={snapshot} host={host.community}
+      onOpen={() => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "people" } } })}
       onStarted={() => { view = "detail"; update(); }} />,
     renderGroupActions: group => group.id === "scope:direct" ? null : <NavigationScopeActions
       key={`${host.community.selfId() ?? ""}:${group.id}`} group={group} snapshot={snapshot} host={host.community}
-      onSelect={channelId => { reactionPicker.close(); host.select(channelId); view = "detail"; update(); }} />,
+      onNavigate={page => host.navigateView({ kind: "management", page })}
+      onSelect={channelId => { reactionPicker.close(); host.navigateView({ kind: "conversation", channelId }); view = "detail"; update(); }} />,
     contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ChannelActions snapshot={snapshot} host={host} /></>,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
@@ -433,7 +509,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       error={conversation.notifications.error} onChange={host.setChannelNotifications} /> : null,
     onBack: backToConversations,
     onQueryChange(query) { host.search(query); update(); },
-    onSelect(channelId) { reactionPicker.close(); host.select(channelId); view = "detail"; update(); },
+    onSelect(channelId) { reactionPicker.close(); host.navigateView({ kind: "conversation", channelId,
+      ...(channelId === snapshot.selection.channelId && snapshot.thread ? { threadId: snapshot.thread.rootMessageId } : {}) }); view = "detail"; update(); },
     onCloseThread() {
       const rootId = snapshot.thread?.rootMessageId;
       reactionPicker.close();
@@ -498,5 +575,5 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     close();
     throw error;
   }
-  return { update, unmount: close };
+  return { update, capturePositions: captureUpdatePosition, unmount: close };
 }
