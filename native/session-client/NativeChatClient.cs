@@ -2,7 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
-internal sealed record NativeChannel(string Id, string Name, string? CircleName = null, string? CircleId = null, string Kind = "private");
+internal sealed record NativeChannel(string Id, string Name, string? CircleName = null, string? CircleId = null, string Kind = "private", bool IsDirect = false);
 internal sealed record NativeMessage(string Id, string ChannelId, string AuthorId, string Author, string Body, DateTimeOffset SentAt, ulong Sequence);
 internal sealed record NativeChatSnapshot(bool Connected, bool Loading, string? Error, IReadOnlyList<NativeChannel> Channels, string? SelectedChannel, IReadOnlyList<NativeMessage> Messages, string? UserId = null);
 
@@ -267,7 +267,9 @@ internal sealed class NativeChatClient : IAsyncDisposable
                 channels = listed.EnumerateArray().Select(channel =>
                 {
                     string? circle = channel.TryGetProperty("circle_id", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() : null;
-                    return new NativeChannel(channel.GetProperty("id").GetString()!, channel.GetProperty("name").GetString()!, circle is not null && circles.TryGetValue(circle, out var name) ? name : null, circle, channel.GetProperty("kind").GetString()!);
+                    bool direct = channel.TryGetProperty("is_direct", out var directValue) && directValue.ValueKind == JsonValueKind.True;
+                    direct |= channel.TryGetProperty("direct_user_id", out var directUser) && directUser.ValueKind == JsonValueKind.String;
+                    return new NativeChannel(channel.GetProperty("id").GetString()!, channel.GetProperty("name").GetString()!, circle is not null && circles.TryGetValue(circle, out var name) ? name : null, circle, channel.GetProperty("kind").GetString()!, direct);
                 }).ToArray();
                 if (selected is not null && !channels.Any(channel => channel.Id == selected)) { selected = null; messages.Clear(); }
             }

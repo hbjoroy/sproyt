@@ -13,6 +13,7 @@ internal interface ILiveApplication : IAsyncDisposable
     NativeAuthSnapshot Authentication { get; }
     NativeChatSnapshot Chat { get; }
     WorkspaceSnapshot? Workspace { get; }
+    NativeMediaLibrary? Media { get; }
     LiveSnapshot Capture();
     Task LoginAsync();
     Task LogoutAsync();
@@ -47,6 +48,7 @@ internal sealed class LiveApplication : ILiveApplication
     public NativeAuthSnapshot Authentication => _authentication.Snapshot;
     public NativeChatSnapshot Chat => _chat.Snapshot;
     public WorkspaceSnapshot? Workspace => _workspace?.State;
+    public NativeMediaLibrary Media { get; }
     internal string? Error => _error ?? Chat.Error ?? Workspace?.ErrorMessage;
     internal bool HasAccount => _workspace is not null && Authentication.UserId == _account;
     internal bool ShowConversation => HasAccount && Authentication.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline;
@@ -64,6 +66,7 @@ internal sealed class LiveApplication : ILiveApplication
     private LiveApplication(string directory, NativeAuthSession owner, NativeAuthConfig config)
     {
         _directory = directory; _authentication = owner;
+        Media = new(owner, directory);
         _instance = config.Instance;
         _login = new(owner, config, Path.Combine(directory, "login"));
         _chat = new(owner);
@@ -202,7 +205,9 @@ internal sealed class LiveApplication : ILiveApplication
                             { _replayConsent.Approve(family); _admittedFamily = family; }
                         _workspace.Changed += ChangedState;
                     }
-                    if (auth.Phase == NativeAuthPhase.Active && _connection is null) _connection = ConnectAsync();
+                    // The transport resumes stored credentials itself. Start it
+                    // for an offline restored session too, before window activation.
+                    if (_connection is null) _connection = ConnectAsync();
                     _workspace!.EnsureChannels(Chat.Channels.Select(item => item.Id));
                     if (Chat.Connected && !Chat.Loading && Chat.SelectedChannel is null && Chat.Channels.FirstOrDefault() is { } first)
                         await _chat.SelectChannelAsync(first.Id, _lifetime.Token);
@@ -267,7 +272,7 @@ internal sealed class LiveApplication : ILiveApplication
     {
         if (_closing) return;
         _closing = true; _lifetime.Cancel();
-        await _login.DisposeAsync(); await _chat.DisposeAsync();
+        Media.Dispose(); await _login.DisposeAsync(); await _chat.DisposeAsync();
         await _pump; await CloseStoreAsync();
         _authentication.Changed -= ChangedState; _login.Changed -= ChangedState; _chat.Changed -= ChangedState;
         _authentication.Dispose(); _lifetime.Dispose();
