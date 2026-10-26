@@ -46,6 +46,11 @@ Kjeldegrunnlaget er `main` på `42cb3b6` ved planlegging. Dette er kodeobservasj
 
 Designkjelda skal innehalde semantiske token, typografiske roller, ikonmeining, leveringsstatusar og dokumenterte handlingar. Native tema blir genererte eller kontrollerte mot denne kjelda. Mobil får éi hovudflate om gongen; store vindauge får samtaleliste, samtale og valfri tråd/detaljflate. Native tilbakeknapp, meny, filveljar, tekstval, snarvegar og skjermlesar blir følgde.
 
+Oppsett og administrasjon er utdjupa i
+[planen for innstillingar](settings-and-administration-plan.md). Han definerer
+felles eigarskap, destinasjonar, agentstatus og lagringsutfall, med native
+presentasjon på kvar plattform. Planen er ikkje ei ny aktivering eller utrulling.
+
 ### 3.2 Ei lita felles Rust-kjerne, med eit reelt stoppunkt
 
 Utvid eksisterande klientkjerne gradvis med deterministisk synkronisering, leveringsreglar, kø og normalisering. Unngå eigne implementasjonar av desse reglane i fem språk.

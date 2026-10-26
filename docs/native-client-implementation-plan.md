@@ -17,6 +17,12 @@ ein avgrensa Windows-Canary, før Android-klienten blir bygd på dette grunnlage
 
 Gjennomføring starta etter uttrykkeleg oppdrag om å bruke tilgjengelege verkty: [N00-verktøybaseline](native-client-tooling-baseline.md) og [ei avgrensa N02-prøve på Windows ARM64](native-client-probe-results.md) er utførte. N00/N02 er berre delvis dekte. [N01a-laboratoriet](../native/probes/identity/README.md) prøver no OIDC og appbunde kodebyte med syntetiske identitetar; produksjonsfunksjonane er ikkje starta.
 
+[Planen for oppsett og innstillingar](settings-and-administration-plan.md)
+styrer den vidare informasjonsarkitekturen på web og native: personlege val,
+eksplisitt krets-/kanalscope, agentoppsett og robuste lagringsutfall. Native
+paritet blir teken etter den første webpakken, utan å krevje fysisk tilgang
+for planlegging og kontraktarbeid.
+
 ## 1. Avklarte produktval
 
 [N01c mot ekte, isolert Authentik](../native/probes/authentik/README.md) har
