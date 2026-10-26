@@ -10,6 +10,7 @@ async function fixture(page: Page, available = true) {
   let policy = { available, revision: 0, target_agent_ids: [] as string[], guidance: "", agent_revision: 3 };
   const updates: Record<string, unknown>[] = [];
   const normalUpdates: Record<string, unknown>[] = [];
+  const sourceReads: number[] = [];
   let fail = true;
   await page.route(/\/api\/v1\/circles\/[^/]+\/chat-agents(?:\/[^?]+)?(?:\?|$)/, async route => {
     const path = new URL(route.request().url()).pathname;
@@ -20,7 +21,11 @@ async function fixture(page: Page, available = true) {
       policy = { ...policy, ...body, revision: policy.revision + 1, agent_revision: policy.agent_revision + 1 };
       return route.fulfill({ json: policy });
     }
-    if (route.request().method() === "GET") return route.fulfill({ json: { agents, worker_available: true } });
+    if (route.request().method() === "GET") {
+      agents[0]!.revision = policy.agent_revision;
+      sourceReads.push(agents[0]!.revision);
+      return route.fulfill({ json: { agents, worker_available: true } });
+    }
     const body = route.request().postDataJSON(); normalUpdates.push(body);
     return route.fulfill({ json: { ...agents[0], ...body, revision: Number(body.revision) + 1 } });
   });
@@ -41,25 +46,27 @@ async function fixture(page: Page, available = true) {
       case "load_recent_messages": reply("messages_loaded", { channel_id: channel, messages: [] }); break;
     }
   }));
-  return { updates, normalUpdates };
+  return { updates, normalUpdates, sourceReads };
 }
 
 async function open(page: Page) {
   await page.goto(`/?participant=handoff-owner&channel=${channel}`);
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  const conversations = preview.getByRole("button", { name: "Samtalar", exact: true });
+  if (await conversations.isVisible()) await conversations.click();
   await preview.getByRole("button", { name: "Val for Agentkrets", exact: true }).click();
   await preview.getByRole("button", { name: "Agentar i Agentkrets", exact: true }).click();
   const dialog = preview.getByRole("dialog", { name: "Agentar i Agentkrets", exact: true });
-  await dialog.getByRole("button", { name: "Videresending frå Verten", exact: true }).click();
+  await dialog.getByRole("button", { name: "Verten", exact: true }).click();
+  await dialog.getByRole("button", { name: "Samarbeid", exact: true }).click();
   return dialog;
 }
 
 test("agent handoff bounds recipients, preserves failed drafts, and refreshes source revision before normal editing", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: "dark" });
-  const { updates, normalUpdates } = await fixture(page);
+  const { updates, normalUpdates, sourceReads } = await fixture(page);
   const dialog = await open(page);
   const policy = dialog.getByRole("region", { name: "Videresending frå Verten", exact: true });
   await expect(policy.getByRole("checkbox")).toHaveCount(5);
@@ -74,15 +81,22 @@ test("agent handoff bounds recipients, preserves failed drafts, and refreshes so
   await expect(policy).toContainText("Oppsettet er endra");
   await expect(guidance).toHaveValue("Spør fagvenen når ein treng eit oppslag.");
   await expect(policy.getByRole("checkbox", { checked: true })).toHaveCount(4);
+  await expect(save).toBeDisabled();
+  await policy.getByRole("button", { name: "Hent lagra oppsett", exact: true }).click();
+  await expect(guidance).toHaveValue("Spør fagvenen når ein treng eit oppslag.");
+  await expect(policy.getByRole("checkbox", { checked: true })).toHaveCount(4);
   await save.click();
   await expect(policy).toHaveCount(0);
   expect(updates).toHaveLength(2);
   expect(updates[0]).toEqual(updates[1]);
   expect(updates[1]).toMatchObject({ revision: 0, target_agent_ids: [id(1), id(2), id(3), id(4)] });
-  const sourceRow = dialog.locator(".sp-circle-agent-row").filter({ hasText: "Verten" });
-  await sourceRow.getByRole("button", { name: "Rediger", exact: true }).click();
-  await dialog.getByRole("button", { name: "Lagre agent", exact: true }).click();
-  expect(normalUpdates[0]).toMatchObject({ revision: 4 });
+  expect(sourceReads).toContain(4);
+  await dialog.getByRole("button", { name: "Oppførsel", exact: true }).click();
+  await dialog.getByRole("textbox", { name: "Stikkord og svarføringar, eitt per linje", exact: true }).fill("Svar kort og presist");
+  await dialog.getByRole("button", { name: "Lagre endringar", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
+  expect(normalUpdates[0]).toMatchObject({ revision: 4, response_phrases: ["Svar kort og presist"] });
+  for (const skill of ["memory_enabled", "vision_enabled", "image_generation", "weather", "sea_temperature", "ferry_port"]) expect(normalUpdates[0]).not.toHaveProperty(skill);
   expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });
 
@@ -93,6 +107,8 @@ test("handoff remains unconfigured when unavailable and leaves ordinary agent ma
   await expect(dialog).toContainText("Videresending er ikkje tilgjengeleg");
   await expect(dialog.getByRole("button", { name: "Lagre videresending", exact: true })).toBeDisabled();
   await dialog.getByRole("button", { name: "Avbryt videresending", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeEnabled();
+  await page.keyboard.press("Escape");
   await expect(dialog.getByRole("button", { name: "Ny agent", exact: true })).toBeEnabled();
   expect(updates).toHaveLength(0);
 });

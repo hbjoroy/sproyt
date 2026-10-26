@@ -11,8 +11,8 @@ export function ChannelChatAgentsDialog({ api, channelId, channelName, privateCh
 }
 
 /** Shared by the channel menu and circle setup; the server remains the access authority. */
-export function ChannelChatAgentsPanel({ api, channelId, privateChannel }: {
-  api: CircleChatAgentApi; channelId: string; privateChannel: boolean;
+export function ChannelChatAgentsPanel({ api, channelId, privateChannel, agentId }: {
+  api: CircleChatAgentApi; channelId: string; privateChannel: boolean; agentId?: string;
 }) {
   const [state, setState] = useState<ChannelChatAgents>();
   const [error, setError] = useState("");
@@ -39,7 +39,7 @@ export function ChannelChatAgentsPanel({ api, channelId, privateChannel }: {
     {state ? <div className="sp-channel-agent-list">
       {!state.selectionAvailable && <><Status>Kanalval blir aktivert når utrullinga er ferdig.</Status><Button onClick={() => setReload(value => value + 1)}>Hent vala på nytt</Button></>}
       {state.agents.length === 0 && <Status>Ingen agentar i kretsen enno.</Status>}
-      {state.agents.map(agent => <label key={agent.agentId} className="sp-channel-agent-choice">
+      {state.agents.filter(agent => !agentId || agent.agentId === agentId).map(agent => <label key={agent.agentId} className="sp-channel-agent-choice">
         <input type="checkbox" checked={agent.enabled} disabled={pending || !!error || !state.selectionAvailable} onChange={event => void select(agent.agentId, event.currentTarget.checked)} />
         <span>{agent.displayName}{!agent.agentEnabled && <small>Avslått i kretsen – må også slåast på under Agentar i kretsmenyen.</small>}</span>
       </label>)}

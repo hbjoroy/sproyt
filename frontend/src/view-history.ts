@@ -1,4 +1,4 @@
-import type { ManagementTarget, CommunityDestination } from "./application/management-target";
+import { validAgentSettingsRoute, type AgentSettingsPanel, type ManagementTarget, type CommunityDestination } from "./application/management-target";
 import type { ReadingPosition } from "./ui/react/timeline-scroll";
 
 export type ViewTarget =
@@ -26,7 +26,13 @@ export function readViewTarget(href: string): ViewTarget | null {
   if (p.get("view") === "settings") {
     const kind = p.get("section") ?? "overview";
     if (kind === "overview" || kind === "profile" || kind === "notifications") return { kind: "management", page: { kind } };
-    if ((kind === "circle" || kind === "chat-agents" || kind === "memory") && id(circleId)) return { kind: "management", page: { kind, circleId } };
+    if ((kind === "circle" || kind === "memory") && id(circleId)) return { kind: "management", page: { kind, circleId } };
+    if (kind === "chat-agents" && id(circleId)) {
+      const agentId = p.get("agent") ?? undefined, panel = p.get("panel") ?? undefined, channel = channelId ?? undefined;
+      return validAgentSettingsRoute(agentId, panel, channel) ? { kind: "management", page: { kind, circleId,
+        ...(agentId !== undefined ? { agentId } : {}), ...(panel !== undefined ? { panel: panel as AgentSettingsPanel } : {}),
+        ...(channel !== undefined ? { channelId: channel } : {}) } } : null;
+    }
     if (kind === "advanced" && (p.get("feature") === "agent" || p.get("feature") === "heart")) {
       return { kind: "management", page: { kind, feature: p.get("feature") as "agent" | "heart", ...(id(channelId) ? { channelId } : {}) } };
     }
@@ -65,6 +71,12 @@ export function viewHref(target: ViewTarget, base: string, internal = false): st
     const page = target.page;
     p.set("view", "settings"); p.set("section", page.kind);
     if ("circleId" in page) p.set("circle", page.circleId);
+    if (page.kind === "chat-agents") {
+      if (!validAgentSettingsRoute(page.agentId, page.panel, page.channelId)) throw new TypeError("Invalid agent settings destination");
+      if (page.agentId !== undefined) p.set("agent", page.agentId);
+      if (page.panel !== undefined) p.set("panel", page.panel);
+      if (page.channelId !== undefined) p.set("channel", page.channelId);
+    }
     if (page.kind === "advanced") { p.set("feature", page.feature); if (page.channelId) p.set("channel", page.channelId); }
     if (page.kind === "community") {
       const d = page.destination; p.set("task", d.kind);

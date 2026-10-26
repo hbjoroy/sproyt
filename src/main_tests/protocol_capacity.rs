@@ -4075,6 +4075,148 @@ async fn circle_rename_is_owner_only_and_invalidates_unsubscribed_clients() {
 }
 
 #[tokio::test]
+async fn chat_agent_http_account_fence_is_optional_and_never_authenticates() {
+    let repository = Arc::new(
+        SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap(),
+    );
+    repository.migrate().await.unwrap();
+    let (address, server, state) =
+        start_test_server_with_state(repository, Duration::from_secs(60)).await;
+    let owner = state
+        .auth
+        .authenticate_request(Some("agent-http-owner".into()), None)
+        .await
+        .unwrap();
+    let other = state
+        .auth
+        .authenticate_request(Some("agent-http-other".into()), None)
+        .await
+        .unwrap();
+    let circle = uuid::Uuid::new_v4();
+    let agent = uuid::Uuid::new_v4();
+    let channel = uuid::Uuid::new_v4();
+    let circle_path = format!("/api/v1/circles/{circle}/chat-agents");
+    let agent_path = format!("{circle_path}/{agent}");
+    let channel_path = format!("/api/v1/channels/{channel}/chat-agents");
+    let agent_input = serde_json::json!({"display_name":"Agent","trigger_words":[],"response_phrases":[],"enabled":false,"revision":1});
+    let client = reqwest::Client::new();
+    for (method, path, body) in [
+        (
+            reqwest::Method::GET,
+            circle_path.clone(),
+            serde_json::Value::Null,
+        ),
+        (reqwest::Method::POST, circle_path, agent_input.clone()),
+        (reqwest::Method::PATCH, agent_path.clone(), agent_input),
+        (
+            reqwest::Method::GET,
+            channel_path.clone(),
+            serde_json::Value::Null,
+        ),
+        (
+            reqwest::Method::PATCH,
+            format!("{channel_path}/{agent}"),
+            serde_json::json!({"enabled":true,"access_revision":1}),
+        ),
+        (
+            reqwest::Method::GET,
+            format!("{agent_path}/handoff"),
+            serde_json::Value::Null,
+        ),
+        (
+            reqwest::Method::PUT,
+            format!("{agent_path}/handoff"),
+            serde_json::json!({"revision":0,"target_agent_ids":[],"guidance":""}),
+        ),
+    ] {
+        let request = |participant: &str| {
+            let request = client.request(
+                method.clone(),
+                format!("http://{address}{path}?participant={participant}"),
+            );
+            if body.is_null() {
+                request
+            } else {
+                request.json(&body)
+            }
+        };
+        for header in [None, Some(owner.user.id.to_string())] {
+            let mut own = request("agent-http-owner");
+            if let Some(header) = header {
+                own = own.header("x-sproyt-account", header);
+            }
+            assert_eq!(
+                own.send().await.unwrap().status(),
+                reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                "optional fence must preserve service admission for {method} {path}"
+            );
+        }
+        for header in [
+            other.user.id.to_string(),
+            "invalid-account".to_owned(),
+            String::new(),
+        ] {
+            assert_eq!(
+                request("agent-http-owner")
+                    .header("x-sproyt-account", header)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                reqwest::StatusCode::CONFLICT
+            );
+        }
+        assert_eq!(
+            request("agent-http-owner")
+                .header(
+                    "x-sproyt-account",
+                    reqwest::header::HeaderValue::from_bytes(b"\xff").unwrap()
+                )
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::CONFLICT,
+            "non-text account header must be rejected"
+        );
+        assert_eq!(
+            request("agent-http-other")
+                .header("x-sproyt-account", owner.user.id.to_string())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::CONFLICT,
+            "header cannot choose the authenticated principal"
+        );
+        assert_eq!(
+            request("")
+                .header("x-sproyt-account", owner.user.id.to_string())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::BAD_REQUEST,
+            "authentication failure must take precedence over the account fence"
+        );
+        assert_eq!(
+            request("agent-http-owner")
+                .header("x-sproyt-account", owner.user.id.to_string())
+                .header("x-sproyt-account", owner.user.id.to_string())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::CONFLICT,
+            "ambiguous account headers must be rejected"
+        );
+    }
+    server.abort();
+}
+
+#[tokio::test]
 async fn favorite_circle_http_contract_is_self_only_and_fences_account_changes() {
     use crate::domain::{ChannelSlug, DisplayName};
     let repository = Arc::new(

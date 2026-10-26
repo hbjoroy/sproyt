@@ -28,10 +28,24 @@ Det er ikkje nok å flytte knappane i den eksisterande hovudmenyen.
 | Adresser | Kanal, melding, tråd, innboks, krets-/DM-oversyn og innstillingssider har eksplisitte mål. Vanlege interne lenkjer går i same app; eksterne lenkjer held trygg eksisterande opning. |
 | Meldingslenkje | Meldingsmenyen kan kopiere ei lenkje til akkurat meldinga, inkludert trådkontekst. Lenkja gjev ikkje tilgang utover medlemskapet mottakaren har. |
 
-Dette er eit første snitt av S1 og S2a, ikkje heile innstillingsplanen.
-Profil, varsel, medlemskap, invitasjonar, prosessar og agentar bruker framleis
-dei eksisterande domenekommandoane. Agentane sine omfattande redigeringsskjema
-og samla tenestestatus er neste arbeidspakke.
+Første snitt av S1 og S2a er implementert. Agentarbeidet i S2b/S2c er
+implementert og under validering, men ikkje utrulla. Andre profil-, skjema- og
+administrasjonsarbeid står att.
+
+Agentflyten er adresserbar frå liste til agent og vidare til éin del:
+Oppførsel, Minne, Bilettolking, Biletskaping, Vêr, Sjøtemperatur, Ferger,
+Samarbeid eller tilgang for vald kanal. Konto/servermerking forklarer eigarskap.
+Kanalstatus viser oppsett og tilgang, ikkje resultatet av ein helseprobe.
+Nye agentar blir oppretta avslått som standard.
+
+Utkast er avgrensa til 24 per eigar i minnet og blir ikkje profilsynkroniserte.
+Back, lukking og før-unload vernar uferdige agentutkast. Små revisjonsbundne
+CAS-oppdateringar bevarer uendra delar; ved timeout blir tilstanden lesen tilbake,
+og ved konflikt kan brukaren behalde utkastet eller velje lagra oppsett.
+
+SettingsContext, SettingsSection, SettingsRow og SettingsSummary er
+appkomposisjonar av eksisterande `@sproyt/ui`, ikkje nye eksportar frå pakken.
+Dei held fast rekkjefølgje, semantiske token og minst 44 px trykkflate.
 
 ## Kanoniske mål
 
@@ -131,6 +145,15 @@ historikkklasse:
 - Ferdig og sein opplasting frå konto A som aldri kan sendast av konto B.
 - Oppdatering med ekte service worker, tekstdraft, leseposisjon og varige køar.
 
+Agentpakken S2b/S2c har lokalt bestått 156 frontend-kontrakttestar og 21
+målretta prøver i kvar av Chromium og iPhone/WebKit. Desse dekkjer delvise lagringar, konflikt/uviss
+lagring, utkast over Back, konto- og rollebyte under pågåande operasjonar,
+gamle GET-svar og privat kanaltilgang. Rust-prøver dekkjer kontobinding på
+alle sju agent-HTTP-rutene og kalde innstillingslenkjer gjennom innlogging.
+Astra har kontrollert dei kritiske kodevegane etter rettingane. Mørk mobil
+på 320/390 px og stor skjerm er visuelt kontrollerte. Endeleg CI og utrulling
+blir førte i release-evidensen; pakken er førebels ikkje utrulla.
+
 Endelege testtal og release-evidens skal førast etter ferdig CI. Syntetisk
 nettlesarakseptanse er ikkje ei fysisk touch-/native-akseptprøve. Brukaren kan
 likevel prøve nettpakken remote i Canary utan å starte Windows-klienten.
@@ -143,12 +166,11 @@ likevel prøve nettpakken remote i Canary utan å starte Windows-klienten.
 2. **Direktemeldingar:** vidareutvikle den eigne oversikta med konsekvente
    person-/gruppetitlar, medlemsvising og betre personval. Bevar eksisterande
    meldingar og kanal-ID-ar; ikkje opprett ein parallell DM-modell.
-3. **Agentoppsett:** S2b/S2c med forståeleg «kan svare her»-status, ferdigheiter
-   og avgrensa skjema. Bootstrap har no eksplisitt funksjonsmetadata; utvid
-   desse med nødvendig, autorisert tenestestatus. Ikkje innfør ein generell rettigheitsmotor.
-4. **Skjemaarbeid:** betre vern av uferdige innstillingsutkast, konfliktvising
-   og feilutfall. Første navigasjonssnitt bevarer eksisterande skjemaoppførsel;
-   dette punktet er ikkje levert gjennom flytting av dialogar åleine.
+3. **Agentoppsett:** fullfør validering av S2b/S2c og følg Canary-løpet før
+   eventuell produksjonspromotering. Autorisert tenestestatus kan vurderast
+   separat; oppsettsstatus er ikkje ein helseprobe.
+4. **Skjemaarbeid:** vidarefør utkastvern og konfliktvising til andre profil- og
+   innstillingsskjema; agentflyten gjer ikkje dette arbeidet ferdig.
 5. **Native:** overfør mål, Back/Forward- og eigarskapskontraktar til Windows og
    Android, med native kontrollar. Dette snittet endrar nettappen, ikkje den
    allereie installerte Windows-pakken.

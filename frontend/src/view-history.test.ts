@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ViewHistory, readViewTarget, viewHref, type ViewTarget } from "./view-history";
 import { NavigationController } from "./navigation";
+import { agentSettingsPanels, managementParent, type ManagementTarget } from "./application/management-target";
 
 function fixture(storage?: Storage) {
   const entries = [{ state: { otherFeature: "keep" } as unknown, href: "https://chat.test/?invite=secret" }];
@@ -21,6 +22,54 @@ function storage(): Storage {
 }
 const channel = (channelId: string): ViewTarget => ({ kind: "conversation", channelId });
 const anchor = (anchorId: string, sequence: number) => [{ key: "channel:a", position: { anchorId, sequence, anchorOffset: -12, distanceFromBottom: 300 } }];
+
+const agentId = "00000000-0000-7000-8000-000000001001";
+const agentChannel = "00000000-0000-7000-8000-000000001002";
+test("agent settings panels and resource context round-trip as independent destinations", () => {
+  const pages: ManagementTarget[] = [
+    { kind: "chat-agents", circleId: "c" },
+    { kind: "chat-agents", circleId: "c", panel: "channels", channelId: agentChannel },
+    { kind: "chat-agents", circleId: "c", agentId: "new" },
+    { kind: "chat-agents", circleId: "c", agentId: "new", panel: "behaviour" },
+    { kind: "chat-agents", circleId: "c", agentId },
+    ...agentSettingsPanels.map(panel => ({ kind: "chat-agents" as const, circleId: "c", agentId, panel, channelId: agentChannel }))
+  ];
+  for (const page of pages) {
+    const target: ViewTarget = { kind: "management", page };
+    const href = viewHref(target, "https://chat.test/?invite=secret&agent=secret&panel=secret&channel=secret");
+    assert.deepEqual(readViewTarget(href), target);
+    assert.ok(!href.includes("secret"));
+  }
+  assert.equal(viewHref({ kind: "management", page: pages[0]! }, "https://chat.test/"), "https://chat.test/?view=settings&section=chat-agents&circle=c");
+});
+
+test("invalid agent destinations are rejected in links and stored history", () => {
+  for (const fields of [
+    { agentId: "bad" }, { agentId: "" }, { agentId, panel: "secret" }, { panel: "skills" },
+    { agentId: "new", panel: "overview" }, { agentId: "new", panel: "channels" },
+    { agentId, channelId: "bad" }, { panel: "channels", channelId: "" }, { panel: "" }
+  ]) {
+    const params = new URLSearchParams({ view: "settings", section: "chat-agents", circle: "c" });
+    for (const [key, value] of Object.entries(fields)) params.set(key === "agentId" ? "agent" : key === "channelId" ? "channel" : key, value);
+    assert.equal(readViewTarget(`https://chat.test/?${params}`), null, params.toString());
+    const f = fixture(); f.history.bindOwner("alice");
+    f.history.navigate({ kind: "management", page: { kind: "chat-agents", circleId: "c", ...fields } } as ViewTarget);
+    assert.equal(f.history.getSnapshot().target, null);
+  }
+});
+
+test("agent settings parents preserve only the relevant resource context", () => {
+  const list: ManagementTarget = { kind: "chat-agents", circleId: "c" };
+  const overview: ManagementTarget = { ...list, agentId, panel: "overview", channelId: agentChannel };
+  for (const panel of agentSettingsPanels.filter(panel => panel !== "overview")) {
+    assert.deepEqual(managementParent({ ...overview, panel }, { channels: [] }), overview);
+  }
+  assert.deepEqual(managementParent(overview, { channels: [] }), list);
+  assert.deepEqual(managementParent({ ...list, agentId }, { channels: [] }), list);
+  assert.deepEqual(managementParent({ ...list, agentId: "new", panel: "behaviour" }, { channels: [] }), list);
+  assert.deepEqual(managementParent({ ...list, panel: "channels", channelId: agentChannel }, { channels: [] }), list);
+  assert.deepEqual(managementParent(list, { channels: [] }), { kind: "circle", circleId: "c" });
+});
 
 test("destinations round-trip without leaking invitation or identity parameters into shared URLs", () => {
   const targets: ViewTarget[] = [channel("a"), { kind: "conversation", channelId: "a", messageId: "reply", sequence: 12, threadId: "root" },

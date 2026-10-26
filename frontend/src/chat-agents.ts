@@ -136,19 +136,36 @@ function decodeAgent(value: unknown): CircleChatAgent {
 }
 
 export class CircleChatAgentApi {
-  constructor(private readonly http: HttpClient) {}
+  constructor(private readonly http: HttpClient, private readonly scope?: { owner: string; admitted: () => boolean }) {}
+
+  forOwner(owner: string, admitted: () => boolean): CircleChatAgentApi {
+    return new CircleChatAgentApi(this.http, { owner, admitted });
+  }
+
+  private async json<T>(path: string, decoder: (value: unknown) => T, options: RequestInit = {}): Promise<T> {
+    let scopedOptions = options;
+    if (this.scope) {
+      const headers = new Headers(options.headers);
+      headers.set("x-sproyt-account", this.scope.owner);
+      scopedOptions = { ...options, headers, signal: options.signal ?? AbortSignal.timeout(20_000) };
+    }
+    const result = await this.http.json(path, decoder, scopedOptions, this.scope?.admitted);
+    if (this.scope && !this.scope.admitted()) throw new Error("Innlogginga vart endra. Prøv igjen på rett konto.");
+    return result;
+  }
 
   listChannel(channelId: string): Promise<ChannelChatAgents> {
-    return this.http.json(`/api/v1/channels/${encodeURIComponent(channelId)}/chat-agents`, decodeChannelAgents);
+    return this.json(`/api/v1/channels/${encodeURIComponent(channelId)}/chat-agents`, decodeChannelAgents);
   }
 
   selectChannel(channelId: string, agentId: string, enabled: boolean, accessRevision: number): Promise<ChannelChatAgents> {
-    return this.http.json(`/api/v1/channels/${encodeURIComponent(channelId)}/chat-agents/${encodeURIComponent(agentId)}`, decodeChannelAgents,
+    return this.json(`/api/v1/channels/${encodeURIComponent(channelId)}/chat-agents/${encodeURIComponent(agentId)}`, decodeChannelAgents,
       { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled, access_revision: accessRevision }) });
   }
 
   async list(circleId: string): Promise<{ agents: CircleChatAgent[]; workerAvailable: boolean; weatherAvailable: boolean; seaTemperatureAvailable: boolean; seaTemperatureLocations: AgentSeaTemperatureLocation[]; ferryAvailable: boolean; visionAvailable: boolean; imageGenerationAvailable: boolean; imageIdentities: AgentImageIdentity[] }> {
-    const response = await this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, value => value);
+    const response = await this.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, value => value);
+    if (this.scope && !this.scope.admitted()) throw new Error("Innlogginga vart endra. Prøv igjen på rett konto.");
     if (!isRecord(response) || !Array.isArray(response.agents) || typeof response.worker_available !== "boolean"
       || (response.weather_available !== undefined && typeof response.weather_available !== "boolean")
       || (response.sea_temperature_available !== undefined && typeof response.sea_temperature_available !== "boolean")
@@ -176,22 +193,22 @@ export class CircleChatAgentApi {
   }
 
   async create(circleId: string, input: CircleChatAgentInput): Promise<CircleChatAgent> {
-    return this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, decodeAgent,
+    return this.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents`, decodeAgent,
       { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(this.body(input)) });
   }
 
   async update(circleId: string, agentId: string, input: CircleChatAgentInput): Promise<CircleChatAgent> {
-    return this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}`, decodeAgent,
+    return this.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}`, decodeAgent,
       { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(this.body(input)) });
   }
 
   handoff(circleId: string, agentId: string): Promise<AgentHandoff> {
-    return this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}/handoff`, decodeHandoff);
+    return this.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}/handoff`, decodeHandoff);
   }
 
   updateHandoff(circleId: string, agentId: string, input: AgentHandoffInput): Promise<AgentHandoff> {
     if (!validAgentHandoff(input) || input.targetAgentIds.some(id => id.toLowerCase() === agentId.toLowerCase())) return Promise.reject(new Error("Vel inntil fire andre agentar og ei gyldig rettleiing."));
-    return this.http.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}/handoff`, decodeHandoff,
+    return this.json(`/api/v1/circles/${encodeURIComponent(circleId)}/chat-agents/${encodeURIComponent(agentId)}/handoff`, decodeHandoff,
       { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({
         revision: input.revision, target_agent_ids: input.targetAgentIds, guidance: input.guidance
       }) });

@@ -62,7 +62,8 @@ async function openCircleAgents(page: Page) {
   await page.goto(`/?participant=channel-agent-manager&channel=${channel}`);
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  await preview.getByRole("button", { name: "Samtalar", exact: true }).click();
+  const conversations = preview.getByRole("button", { name: "Samtalar", exact: true });
+  if (await conversations.isVisible()) await conversations.click();
   await preview.getByRole("button", { name: "Val for Testkrets", exact: true }).click();
   await preview.getByRole("button", { name: "Agentar i Testkrets", exact: true }).click();
   return preview.getByRole("dialog", { name: "Agentar i Testkrets", exact: true });
@@ -73,18 +74,20 @@ test("circle setup exposes the disabled agent and private channel access togethe
   await page.emulateMedia({ colorScheme: "dark" });
   const server = await fixture(page, true);
   const dialog = await openCircleAgents(page);
-  await expect(dialog).toContainText("Avslått – svarar ikkje");
-  await expect(dialog).toContainText("@Kanalhjelpar");
+  await expect(dialog).toContainText(/Avslått\s*[–—-]\s*svarar ikkje/u);
   await dialog.getByRole("button", { name: "Kanaltilgang", exact: true }).click();
   await expect(dialog.getByLabel("Kanal", { exact: true })).toHaveValue(channel);
   await expect(dialog.getByRole("checkbox", { name: /Kanalhjelpar/ })).not.toBeChecked();
   await expect(dialog).toContainText("må også slåast på");
-  await dialog.getByRole("button", { name: "Agentar", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await dialog.getByRole("button", { name: "Kanalhjelpar", exact: true }).click();
+  await expect(dialog).toContainText("@Kanalhjelpar");
   await dialog.getByRole("button", { name: "Slå på Kanalhjelpar", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Slå av Kanalhjelpar", exact: true })).toBeEnabled();
   expect(server.agentUpdates).toEqual([{ display_name: "Kanalhjelpar", trigger_words: ["God morgen"],
     response_phrases: ["Ver venleg"], enabled: true, revision: 1 }]);
-  await dialog.getByRole("button", { name: "Kanaltilgang", exact: true }).click();
+  await expect(dialog).toContainText("Ingen kanaltilgang");
+  await dialog.getByRole("button", { name: "Endre kanaltilgang", exact: true }).click();
   await expect(dialog).not.toContainText("Avslått i kretsen");
   await expect(dialog.getByRole("checkbox", { name: "Kanalhjelpar", exact: true })).not.toBeChecked();
   expect(server.updates).toEqual([]);
@@ -96,9 +99,11 @@ test("failed activation retains confirmed state and can reload a new revision be
   const server = await fixture(page, true);
   server.failToggle();
   const dialog = await openCircleAgents(page);
+  await dialog.getByRole("button", { name: "Kanalhjelpar", exact: true }).click();
   await dialog.getByRole("button", { name: "Slå på Kanalhjelpar", exact: true }).click();
-  await expect(dialog).toContainText("Avslått – svarar ikkje");
-  await dialog.getByRole("button", { name: "Hent agentane på nytt", exact: true }).click();
+  await expect(dialog).toContainText("Avslått i kretsen");
+  await expect(dialog.getByRole("button", { name: "Slå på Kanalhjelpar", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Hent lagra oppsett", exact: true }).click();
   await dialog.getByRole("button", { name: "Slå på Kanalhjelpar", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Slå av Kanalhjelpar", exact: true })).toBeEnabled();
   expect(server.agentUpdates.map(input => input.revision)).toEqual([1, 2]);

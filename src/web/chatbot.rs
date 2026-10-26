@@ -11,15 +11,41 @@ use crate::{
     web::http::{WsQuery, auth_error_response, authenticate_http, repository_response},
 };
 
+// Optional account-switch fence. Authentication and service authorization remain mandatory.
+async fn agent_account(
+    state: &AppState,
+    query: WsQuery,
+    headers: &HeaderMap,
+) -> Result<crate::auth::AuthenticatedPrincipal, axum::response::Response> {
+    let principal = authenticate_http(state, query, headers)
+        .await
+        .map_err(auth_error_response)?;
+    let expected = principal.user.id.to_string();
+    if headers.contains_key("x-sproyt-account")
+        && (headers.get_all("x-sproyt-account").iter().count() != 1
+            || headers
+                .get("x-sproyt-account")
+                .and_then(|value| value.to_str().ok())
+                != Some(expected.as_str()))
+    {
+        return Err((
+            axum::http::StatusCode::CONFLICT,
+            "Kontoen vart endra. Last agentoppsettet på nytt.",
+        )
+            .into_response());
+    }
+    Ok(principal)
+}
+
 pub(crate) async fn list_channel(
     State(state): State<AppState>,
     Path(channel): Path<String>,
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match agent_account(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(response) => return response,
     };
     if uuid::Uuid::parse_str(&channel).is_err() {
         return (axum::http::StatusCode::BAD_REQUEST, "invalid channel id").into_response();
@@ -44,9 +70,9 @@ pub(crate) async fn update_channel(
     headers: HeaderMap,
     Json(input): Json<ChannelAgentInput>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match agent_account(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(response) => return response,
     };
     if uuid::Uuid::parse_str(&channel).is_err() || uuid::Uuid::parse_str(&agent).is_err() {
         return (
@@ -82,9 +108,9 @@ pub(crate) async fn list(
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match agent_account(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(response) => return response,
     };
     if uuid::Uuid::parse_str(&circle).is_err() {
         return (axum::http::StatusCode::BAD_REQUEST, "invalid circle id").into_response();
@@ -108,9 +134,9 @@ pub(crate) async fn create(
     headers: HeaderMap,
     Json(input): Json<AgentInput>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match agent_account(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(response) => return response,
     };
     if uuid::Uuid::parse_str(&circle).is_err() {
         return (axum::http::StatusCode::BAD_REQUEST, "invalid circle id").into_response();
@@ -131,9 +157,9 @@ pub(crate) async fn update(
     headers: HeaderMap,
     Json(input): Json<AgentInput>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match agent_account(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(response) => return response,
     };
     if uuid::Uuid::parse_str(&circle).is_err() || uuid::Uuid::parse_str(&id).is_err() {
         return (
@@ -160,9 +186,9 @@ pub(crate) async fn handoff_get(
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match agent_account(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(response) => return response,
     };
     if uuid::Uuid::parse_str(&circle).is_err() || uuid::Uuid::parse_str(&agent).is_err() {
         return (
@@ -194,9 +220,9 @@ pub(crate) async fn handoff_put(
     headers: HeaderMap,
     Json(input): Json<crate::chatbot::handoffs::HandoffInput>,
 ) -> axum::response::Response {
-    let principal = match authenticate_http(&state, query, &headers).await {
+    let principal = match agent_account(&state, query, &headers).await {
         Ok(value) => value,
-        Err(error) => return auth_error_response(error),
+        Err(response) => return response,
     };
     if uuid::Uuid::parse_str(&circle).is_err() || uuid::Uuid::parse_str(&agent).is_err() {
         return (

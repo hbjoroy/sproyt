@@ -149,14 +149,38 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [focusMemberAction, setFocusMemberAction] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [agentsOpen, setAgentsOpen] = useState(false);
+  type AgentTicket = { owner: string; channelId: string; channelName: string; privateChannel: boolean;
+    key: string; epoch: number; api: CircleChatAgentApi };
+  const [agentTicket, setAgentTicket] = useState<AgentTicket | null>(null);
   const [locationOpen, setLocationOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveError, setLeaveError] = useState("");
   const channel = snapshot.activeChannel;
+  const owner = host.community.selfId();
+  const scopeKey = (current: ConversationSnapshot, account: string | null) => {
+    const selected = current.activeChannel;
+    return JSON.stringify([account, selected?.id, selected?.role, selected?.kind, selected?.circle_id,
+      current.circles.find(circle => circle.id === selected?.circle_id)?.role]);
+  };
+  const agentScope = useRef({ key: "", epoch: 0, live: true });
+  const observeScope = (key: string) => {
+    if (agentScope.current.key !== key) { agentScope.current.key = key; agentScope.current.epoch++; }
+  };
+  observeScope(scopeKey(snapshot, owner));
+  useEffect(() => {
+    agentScope.current.live = true;
+    return () => { agentScope.current.live = false; agentScope.current.epoch++; };
+  }, []);
+  const ticketAdmitted = (ticket: Pick<AgentTicket, "key" | "epoch">) => {
+    observeScope(scopeKey(host.snapshot(), host.community.selfId()));
+    return agentScope.current.live && agentScope.current.key === ticket.key && agentScope.current.epoch === ticket.epoch;
+  };
   const conversation = channel ? snapshot.groups.flatMap(group => group.conversations).find(item => item.id === channel.id) : undefined;
   if (!channel || channel.is_direct) return null;
+  const mayManageAgents = !!owner && !!channel.circle_id && (["owner", "moderator"].includes(channel.role)
+    || (channel.kind !== "private" && channel.role === "member" && snapshot.circles.some(circle =>
+      circle.id === channel.circle_id && ["owner", "moderator"].includes(circle.role))));
   const notifications = conversation?.notifications;
   const openDetails = () => { setFocusMemberAction(false); setOpen(false); requestAnimationFrame(() => setDetailsOpen(true)); };
   return <>
@@ -168,10 +192,14 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
       onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
       <div className="sp-channel-menu-dialog">
         <Button variant="quiet" onClick={openDetails}><ChannelMembersIcon /><span>Medlemmer og kanalomtale</span></Button>
-        {channel.circle_id && (["owner", "moderator"].includes(channel.role)
-          || (channel.kind !== "private" && channel.role === "member" && snapshot.circles.some(circle =>
-            circle.id === channel.circle_id && ["owner", "moderator"].includes(circle.role))))
-          && <Button variant="quiet" onClick={() => { setOpen(false); setAgentsOpen(true); }}>Agentar i kanalen</Button>}
+        {mayManageAgents && <Button variant="quiet" onClick={() => {
+          if (!owner) return;
+          const captured = { key: agentScope.current.key, epoch: agentScope.current.epoch };
+          if (!ticketAdmitted(captured)) return;
+          const ticket = { ...captured, owner, channelId: channel.id, channelName: channel.name, privateChannel: channel.kind === "private",
+            api: host.chatAgents.forOwner(owner, () => ticketAdmitted(captured)) };
+          setOpen(false); setAgentTicket(ticket);
+        }}>Agentar i kanalen</Button>}
         {["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
           setFocusMemberAction(true); setOpen(false); requestAnimationFrame(() => setDetailsOpen(true));
         }}><ChannelMembersIcon /><span>Legg til eller inviter kanalmedlem</span></Button>}
@@ -201,8 +229,10 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
     </Dialog>
     {detailsOpen && <PreviewCommunity destination={{ kind: "channel", channelId: channel.id }} snapshot={snapshot} host={host.community} focusMemberAction={focusMemberAction}
       onNavigate={() => {}} onClose={() => setDetailsOpen(false)} />}
-    {agentsOpen && <ChannelChatAgentsDialog key={channel.id} api={host.chatAgents} channelId={channel.id} channelName={channel.name}
-      privateChannel={channel.kind === "private"} onClose={() => setAgentsOpen(false)} />}
+    {agentTicket && mayManageAgents && agentTicket.key === agentScope.current.key && agentTicket.epoch === agentScope.current.epoch
+      && <ChannelChatAgentsDialog key={`${agentTicket.owner}:${agentTicket.channelId}:${agentTicket.epoch}`} api={agentTicket.api}
+        channelId={agentTicket.channelId} channelName={agentTicket.channelName} privateChannel={agentTicket.privateChannel}
+        onClose={() => { if (ticketAdmitted(agentTicket)) setAgentTicket(null); }} />}
     {locationOpen && <AgentLocationSharingDialog api={host.agentLocations} channelId={channel.id} channelName={channel.name}
       onClose={() => setLocationOpen(false)} />}
     {inviteOpen && channel.circle_id && <PreviewCommunity destination={{ kind: "invite", circleId: channel.circle_id }} snapshot={snapshot} host={host.community}

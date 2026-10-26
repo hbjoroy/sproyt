@@ -12,6 +12,7 @@ import { CircleChatAgentsDialog } from "./circle-chat-agents";
 import { AgentMemoryDialog } from "./agent-memory";
 import type { AppUpdate, UpdatePosition } from "../../app-update";
 import { AppUpdateAction } from "./app-update-action";
+import { AgentSettingsDrafts } from "./agent-settings-drafts";
 
 export type { ManagementTarget } from "../../application/management-target";
 type SettingsRow = { label: string; detail: string; target: ManagementTarget; aliases?: string };
@@ -37,6 +38,40 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
 }) {
   const [localTarget, setLocalTarget] = useState<ManagementTarget | null>(null);
   const selfId = community.selfId();
+  const boundary = useRef({ owner: selfId, generation: 0 });
+  const circleScopes = useRef({ clock: 0, entries: new Map<string, { role: string; epoch: number }>() });
+  const workspace = useRef({ owner: selfId, drafts: new AgentSettingsDrafts() });
+  if (boundary.current.owner !== selfId) {
+    boundary.current = { owner: selfId, generation: boundary.current.generation + 1 };
+    workspace.current.drafts.forget();
+    workspace.current = { owner: selfId, drafts: new AgentSettingsDrafts() };
+  }
+  const generation = boundary.current.generation, agentDrafts = workspace.current.drafts;
+  const nextScopes = new Map<string, { role: string; epoch: number }>();
+  for (const circle of snapshot.circles) {
+    const previous = circleScopes.current.entries.get(circle.id);
+    nextScopes.set(circle.id, previous?.role === circle.role ? previous : { role: circle.role, epoch: ++circleScopes.current.clock });
+  }
+  for (const [circleId, previous] of circleScopes.current.entries) {
+    if (nextScopes.get(circleId)?.epoch !== previous.epoch) agentDrafts.invalidateCircle(circleId, false);
+  }
+  circleScopes.current.entries = nextScopes;
+  const latestSnapshot = useRef(snapshot); latestSnapshot.current = snapshot;
+  const agentScopeCurrent = (circleId: string, accessEpoch: number | undefined) => community.selfId() === selfId && boundary.current.owner === selfId
+    && boundary.current.generation === generation && circleScopes.current.entries.get(circleId)?.epoch === accessEpoch
+    && latestSnapshot.current.circles.some(circle => circle.id === circleId && administrator(circle.role));
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (community.selfId() === selfId && agentDrafts.hasChanges()) { event.preventDefault(); event.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [agentDrafts, selfId, community]);
+  useEffect(() => {
+    // Unknown during reconnect is not evidence that an authored draft should
+    // be deleted. A known revoked role still discards the privileged workspace.
+    agentDrafts.prune(circleId => !snapshot.circles.some(circle => circle.id === circleId && !administrator(circle.role)));
+  }, [snapshot.circles, agentDrafts]);
   const [owner, setOwner] = useState(selfId);
   const [query, setQuery] = useState("");
   const id = useId();
@@ -94,6 +129,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     </Button>;
   };
   const circle = active && "circleId" in active ? snapshot.circles.find(circle => circle.id === active.circleId) : undefined;
+  const accessEpoch = circle ? circleScopes.current.entries.get(circle.id)?.epoch : undefined;
   let available = true;
   if (active && "circleId" in active) {
     available = Boolean(circle) && (active.kind !== "chat-agents" || administrator(circle!.role))
@@ -183,8 +219,10 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
         circles: snapshot.circles.filter(circle => circle.id === snapshot.channels.find(channel => channel.id === active.channelId)?.circle_id) }} onClose={close} />}
     {active?.kind === "memory" && available && circle && community.agentMemory && <AgentMemoryDialog key={`${selfId}:${circle.id}`} api={community.agentMemory} circleId={circle.id} circleName={circle.name}
       channels={snapshot.channels.filter(channel => channel.circle_id === circle.id)} onClose={close} />}
-    {active?.kind === "chat-agents" && available && circle && <CircleChatAgentsDialog key={`${selfId}:${circle.id}`} api={chatAgents} circleId={circle.id} circleName={circle.name}
-      channels={snapshot.channels.filter(channel => channel.circle_id === circle.id)} onClose={close} />}
+    {active?.kind === "chat-agents" && available && circle && <CircleChatAgentsDialog key={`${selfId}:${circle.id}:${accessEpoch}`} api={chatAgents} circleId={circle.id} circleName={circle.name}
+      channels={snapshot.channels.filter(channel => channel.circle_id === circle.id)} preferredChannelId={snapshot.activeChannel?.id}
+      target={active} onNavigate={navigate} ownerId={selfId!} role={circle.role} drafts={agentDrafts}
+      admitted={() => agentScopeCurrent(circle.id, accessEpoch)} onClose={close} />}
     </>, portalHost)}
   </>;
 }

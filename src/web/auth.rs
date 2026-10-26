@@ -39,6 +39,8 @@ pub(crate) struct SafeViewQuery {
     pub(crate) circle: Option<String>,
     pub(crate) task: Option<String>,
     pub(crate) feature: Option<String>,
+    pub(crate) agent: Option<String>,
+    pub(crate) panel: Option<String>,
 }
 
 impl SafeViewQuery {
@@ -65,10 +67,52 @@ impl SafeViewQuery {
                     "overview" | "profile" | "notifications" => {
                         format!("/?view=settings&section={section}")
                     }
-                    "circle" | "chat-agents" | "memory" => format!(
+                    "circle" | "memory" => format!(
                         "/?view=settings&section={section}&circle={}",
                         resource(self.circle.as_deref())?
                     ),
+                    "chat-agents" => {
+                        let panel = self.panel.as_deref();
+                        if panel.is_some_and(|panel| {
+                            !matches!(
+                                panel,
+                                "overview"
+                                    | "behaviour"
+                                    | "skills"
+                                    | "memory"
+                                    | "vision"
+                                    | "images"
+                                    | "weather"
+                                    | "sea"
+                                    | "ferry"
+                                    | "handoff"
+                                    | "channels"
+                            )
+                        }) {
+                            return None;
+                        }
+                        let mut path = format!(
+                            "/?view=settings&section=chat-agents&circle={}",
+                            resource(self.circle.as_deref())?
+                        );
+                        match self.agent.as_deref() {
+                            None if panel.is_none() || panel == Some("channels") => {}
+                            Some("new") if panel.is_none() || panel == Some("behaviour") => {
+                                path.push_str("&agent=new")
+                            }
+                            Some("new") | None => return None,
+                            Some(agent) => {
+                                path.push_str(&format!("&agent={}", resource(Some(agent))?))
+                            }
+                        }
+                        if let Some(panel) = panel {
+                            path.push_str(&format!("&panel={panel}"));
+                        }
+                        if let Some(channel) = self.channel.as_deref() {
+                            path.push_str(&format!("&channel={}", resource(Some(channel))?));
+                        }
+                        path
+                    }
                     "community" => {
                         let task = self.task.as_deref()?;
                         let base = format!("/?view=settings&section=community&task={task}");
@@ -522,6 +566,67 @@ mod tests {
             assert_view_login_roundtrip(&format!(
                 "/?view=settings&section=advanced&feature={feature}&channel={channel}"
             ));
+        }
+    }
+
+    #[test]
+    fn agent_settings_panels_and_context_survive_cold_login() {
+        let circle = uuid::Uuid::new_v4();
+        let agent = uuid::Uuid::new_v4();
+        let channel = uuid::Uuid::new_v4();
+        let base = format!("/?view=settings&section=chat-agents&circle={circle}");
+        assert_view_login_roundtrip(&base);
+        assert_view_login_roundtrip(&format!("{base}&panel=channels&channel={channel}"));
+        assert_view_login_roundtrip(&format!("{base}&agent=new"));
+        assert_view_login_roundtrip(&format!("{base}&agent=new&panel=behaviour"));
+        assert_view_login_roundtrip(&format!("{base}&agent={agent}"));
+        for panel in [
+            "overview",
+            "behaviour",
+            "skills",
+            "memory",
+            "vision",
+            "images",
+            "weather",
+            "sea",
+            "ferry",
+            "handoff",
+            "channels",
+        ] {
+            let path = format!("{base}&agent={agent}&panel={panel}&channel={channel}");
+            assert_view_login_roundtrip(&path);
+            let untrusted =
+                format!("{path}&invite=secret&token=secret&return_to=https%3A%2F%2Fevil.test");
+            let query = Query::<SafeViewQuery>::try_from_uri(&untrusted.parse().unwrap())
+                .unwrap()
+                .0;
+            assert_eq!(query.return_to(), Some(path));
+        }
+    }
+
+    #[test]
+    fn agent_settings_reject_invalid_ids_panels_and_combinations() {
+        let circle = uuid::Uuid::new_v4();
+        let agent = uuid::Uuid::new_v4();
+        let base = format!("/?view=settings&section=chat-agents&circle={circle}");
+        for suffix in [
+            "&agent=bad".to_owned(),
+            "&agent=".to_owned(),
+            "&panel=".to_owned(),
+            "&panel=skills".to_owned(),
+            "&panel=overview".to_owned(),
+            "&agent=new&panel=overview".to_owned(),
+            "&agent=new&panel=channels".to_owned(),
+            "&panel=channels&channel=bad".to_owned(),
+            format!("&agent={agent}&panel=unknown"),
+            format!("&agent={agent}&channel=bad"),
+        ] {
+            let path = format!("{base}{suffix}");
+            let query = Query::<SafeViewQuery>::try_from_uri(&path.parse().unwrap())
+                .unwrap()
+                .0;
+            assert_eq!(query.return_to(), None, "accepted {path}");
+            assert_eq!(query.login_location(), None, "accepted login {path}");
         }
     }
 
