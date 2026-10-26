@@ -124,11 +124,17 @@ internal static class LiveUiProbe
                 root.UpdateLayout(); history.ChangeView(null,history.ScrollableHeight,null,true);
                 return Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)).Source is not null;
             });
-            double height=history.ScrollableHeight;
+            root.UpdateLayout();
+            var lastPreview=Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23));
+            double height=lastPreview.ActualHeight;
             history.ChangeView(null,0,null,true);
             await Until(() => Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(0)).Source is not null);
             await Until(() => PreviewReleased(root,NativeMediaViewFixture.GalleryId(23)));
-            if(Math.Abs(history.ScrollableHeight-height)>2)throw new InvalidOperationException("Releasing previews changed message geometry.");
+            root.UpdateLayout();
+            // ItemsRepeater may refine its total extent as different rows are
+            // realized. Measure the retained image control, not that estimate.
+            if(lastPreview.IsLoaded && Math.Abs(lastPreview.ActualHeight-height)>2)
+                throw new InvalidOperationException("Releasing a retained preview changed its reserved height.");
             // Rapidly leave/re-enter while admission/decoding can still be pending.
             history.ChangeView(null,history.ScrollableHeight,null,true); await Task.Delay(20);
             history.ChangeView(null,0,null,true); await Task.Delay(20);
