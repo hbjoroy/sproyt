@@ -168,7 +168,10 @@ async fn authorised_place_card_is_transient_consent_gated_and_revocable() {
         let agent:String=sqlx::query_scalar("select sender_id from messages where id=?").bind(&reply).fetch_one(&pool).await.unwrap();
         sqlx::query("insert into command_receipts(principal_id,request_id,message_id) values(?,?,?)").bind(agent).bind(request).bind(&reply).execute(&pool).await.unwrap();
         let available=batch(&state,"place-owner",&account,&channel,&reply).await;
-        assert_eq!(body(available).await["message_ids"],serde_json::json!([reply]),"receipt is sufficient before job finish");
+        let availability=body(available).await;
+        assert_eq!(availability["message_ids"],serde_json::json!([reply]),"receipt is sufficient before job finish");
+        assert_eq!(availability["google_message_ids"],serde_json::json!([reply]),"the configured Google source is advertised");
+        assert_eq!(availability["geoapify_message_ids"],serde_json::json!([]),"an unconfigured source remains hidden");
         let changed_account=batch(&state,"place-owner",&other_account,&channel,&reply).await;
         assert_eq!(changed_account.status(),StatusCode::CONFLICT);
         let mut preview_headers=HeaderMap::new();
@@ -214,5 +217,50 @@ async fn authorised_place_card_is_transient_consent_gated_and_revocable() {
         sqlx::query("update messages set edited_at=null where id=?").bind(&source).execute(&pool).await.unwrap();
         sqlx::query("update channels set chat_agent_access_revision=chat_agent_access_revision+1 where id=?").bind(&channel).execute(&pool).await.unwrap();
         assert_eq!(body(batch(&state,"place-owner",&account,&channel,&reply).await).await["message_ids"],serde_json::json!([]));
+    }))).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn geoapify_http_requires_the_source_author_and_explicit_matching_consent() {
+    crate::chatbot::GEOAPIFY_TEST_ENABLED.scope(true, place_lookup::TEST_ENABLED.scope(true, location::TEST_ENABLED.scope(true, async {
+        let auth = crate::auth::AuthService::development();
+        let owner = auth.authenticate_development(Some("place-owner".into())).unwrap().user;
+        let other = auth.authenticate_development(Some("place-other".into())).unwrap().user;
+        let (service, pool, _) = place_lookup::database_tests::fixture().await;
+        let (channel, _, reply, request) = seed(&pool, &owner.id.to_string(), &other.id.to_string()).await;
+        let agent: String = sqlx::query_scalar("select sender_id from messages where id=?").bind(&reply).fetch_one(&pool).await.unwrap();
+        sqlx::query("insert into command_receipts(principal_id,request_id,message_id) values(?,?,?)").bind(agent).bind(request).bind(&reply).execute(&pool).await.unwrap();
+        let mut state = crate::web::native::test_state(auth, None).await;
+        state.chat_agents = Some(service);
+        let headers_for = |id: &str| { let mut headers = HeaderMap::new(); headers.insert("x-sproyt-account", id.parse().unwrap()); headers };
+        let owner_account = owner.id.to_string();
+        let other_account = other.id.to_string();
+        let query_for = |name: &str| Query(WsQuery { participant: Some(name.to_owned()) });
+        let path = || Path((channel.clone(), reply.clone()));
+        let invalid_account = geoapify_preview(State(state.clone()),path(),query_for("place-owner"),headers_for(&other_account)).await;
+        assert_eq!(invalid_account.status(), StatusCode::CONFLICT);
+        assert_eq!(invalid_account.headers()[CACHE_CONTROL], "no-store");
+        let outsider = geoapify_preview(State(state.clone()),path(),query_for("place-other"),headers_for(&other_account)).await;
+        assert_ne!(outsider.status(), StatusCode::OK);
+        let preview = geoapify_preview(State(state.clone()),path(),query_for("place-owner"),headers_for(&owner_account)).await;
+        assert_eq!(preview.status(), StatusCode::OK);
+        assert_eq!(preview.headers()[CACHE_CONTROL], "no-store");
+        let preview = body(preview).await;
+        let binding = preview["preview_binding"].as_str().unwrap().to_owned();
+        let request = |preview_binding: String, allow_shared_location: bool| Json(GeoapifyConsent { preview_binding, allow_shared_location, origin_text: None });
+        let mismatch = geoapify_consent(State(state.clone()),path(),query_for("place-owner"),headers_for(&owner_account),request("wrong".into(),true)).await;
+        assert_ne!(mismatch.status(), StatusCode::OK);
+        let declined = geoapify_consent(State(state.clone()),path(),query_for("place-owner"),headers_for(&owner_account),request(binding.clone(),false)).await;
+        assert_ne!(declined.status(), StatusCode::OK);
+        let pending_count: i64 = sqlx::query_scalar("select count(*) from agent_place_rolls").fetch_one(&pool).await.unwrap();
+        assert_eq!(pending_count, 0, "denied requests must not start a job");
+        let accepted = geoapify_consent(State(state.clone()),path(),query_for("place-owner"),headers_for(&owner_account),request(binding.clone(),true)).await;
+        assert_eq!(accepted.status(), StatusCode::OK);
+        assert_eq!(accepted.headers()[CACHE_CONTROL], "no-store");
+        let id = body(accepted).await["id"].as_str().unwrap().to_owned();
+        let repeated = geoapify_consent(State(state.clone()),path(),query_for("place-owner"),headers_for(&owner_account),request(binding,true)).await;
+        assert_eq!(body(repeated).await["id"], id);
+        let count: i64 = sqlx::query_scalar("select count(*) from agent_place_rolls").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 1, "retry must not create another job");
     }))).await;
 }

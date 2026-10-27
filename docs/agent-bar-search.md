@@ -22,20 +22,25 @@ når søket har eit utgangspunkt. Rutene er beta og kan mangle fortau eller
 gangvegar. Kortliva krypterte rutetoken er bundne til brukar, kanal, melding,
 søk og eventuell posisjonsdeling, og blir ikkje lagra på tenaren.
 
-Google Grounding Lite gir ikkje her eit verifisert utval barar for eit tilfeldig
-terningval, eit kartbilete eller verifiserte Untappd-identitetar. Desse er ikkje
-implementerte. Google-kjelder kan innehalde andre stader enn barar. Ikkje lat
-agenten eller grensesnittet påstå at eit tilfeldig val, kartførehandsvising eller
-direktelenkje til ein Untappd-venue finst før ei eigna kjelde er integrert.
+For terningval nyttar ein ei sjølvstendig kjelde: Geoapify sitt strukturerte
+OpenStreetMap-utval av barar og pubar. Den opphavlege brukaren må godkjenne
+det separate Geoapify-oppslaget, inkludert deling av posisjon der det er
+aktuelt. For namngjevne stader vel brukaren rett startpunkt frå geokodinga.
+Serveren gir agenten kandidatnamn utan startkoordinatar; agenten ber om eit
+ekte `roll_die`-kast med like mange sider som kandidatar. Serveren bind kastet
+til ein bestemt kandidat og lagrar utfallet før idempotent publisering. Etter
+at utfallet er lagra, gjev retry ikkje eit nytt kast. Svaret opplyser radius,
+tal treff og kjelde og har
+lenkje til den valde staden i Google Maps. Utvalet er avgrensa til inntil 100
+returnerte treff innan 1,5 km og kan mangle barar eller vere utdatert. Det er
+ikkje eit tilfeldig val blant alle barar i området.
 
-For eit seinare terningval trengst eit sjølvstendig, strukturert utval som
-faktisk består av barar. Eit mogleg spor er ei separat Places Nearby Search
-etter stad-ID-ar, med eigen nøkkel og Places UI Kit til vising av resultatet.
-Det må først vurderast opp mot den faktiske bruken og avtalevilkåra; ein må
-heller ikkje framstille eit tilfeldig val frå dei returnerte treffa som eit
-val mellom alle barane i området. Ei anna mogleg kjelde er OpenStreetMap med
-ein påliteleg leverandør og eksplisitt posisjonssamtykke. Testar frå klynga
-gav ikkje ein fungerande global Overpass-tenar for København og Malmö.
+Namngjevne geokodingskandidatar, vald stad og arbeidsstatus blir lagra
+mellombels i arbeidsflyten med utløp; kandidatlista og delt startposisjon blir
+ikkje lagra der. Endeleg resultat blir ei ordinær melding i kanalen. Kjelda
+kan ikkje garantere data om til dømes craft-øl, mat, sport eller opningstider.
+Google-resultata er ikkje grunnlag for trekkinga. Kartførehandsvising og
+verifiserte Untappd-venue-lenkjer er ikkje implementerte.
 
 Sjå [Google sine EØS-vilkår for Maps Grounding Lite, punkt 11](https://cloud.google.com/terms/maps-platform/eea/maps-service-terms)
 og [rettleiinga for Places API i EØS](https://developers.google.com/maps/comms/eea/places).
@@ -47,9 +52,14 @@ trengst også `SPROYT_PLACE_ROUTE_SIGNING_KEY`: ein sjølvstendig, tilfeldig
 32-byte nøkkel koda med base64url utan padding, lik på alle replikaer. Helm
 kan lese dei frå eksisterande Kubernetes Secrets via
 `secret.googleMapsExistingSecret`/`googleMapsApiKeyKey` og
-`secret.googleMapsRouteExistingSecret`/`googleMapsRouteKeyKey`. Ingen av desse
+`secret.googleMapsRouteExistingSecret`/`googleMapsRouteKeyKey`. For det
+separate terningoppslaget krevst `SPROYT_GEOAPIFY_API_KEY`, til dømes frå
+`secret.geoapifyExistingSecret`/`geoapifyApiKeyKey`. Ingen av desse nøklane
 skal leggjast i Git eller eksponerast til nettlesaren. Utan kartnøkkelen er
-verktøyet slått av; utan rutenøkkelen fungerer søket utan gangruteknapp.
+Google-verktøyet slått av; utan rutenøkkelen fungerer søket utan gangruteknapp.
+Utan Geoapify-nøkkelen blir terninghandlingen ikkje vist. Geoapify er førebels
+berre testa med simulerte svar; ein reell konto/nøkkel og ende-til-ende-prøve
+trengst før han kan aktiverast.
 
 **Ikkje aktiver dette på delt Canary-database utan ein koordinert plan.**
 Migrasjon 0070 er felles for databasen, og eldre binærar kan avvise ukjende

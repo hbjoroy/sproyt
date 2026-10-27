@@ -16,6 +16,7 @@ import "./chat-agent-images.test";
 import "./agent-memory.test";
 import "./agent-locations.test";
 import "./agent-place-discovery.test";
+import "./agent-geoapify-roll.test";
 import "./agent-place-lookup.test";
 import "./agent-place-results.test";
 import "./app-update.test";

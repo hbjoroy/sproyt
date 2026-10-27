@@ -12,3 +12,26 @@ CREATE TABLE place_lookup_admissions (
  window_started BIGINT NOT NULL,
  calls BIGINT NOT NULL
 );
+
+-- Geoapify consent/resume is isolated from the original neutral reply receipt.
+CREATE TABLE agent_place_rolls (
+ id UUID PRIMARY KEY,
+ source_job_id UUID NOT NULL UNIQUE REFERENCES circle_chat_agent_jobs(id) ON DELETE CASCADE,
+ original_reply_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ descriptor_snapshot TEXT NOT NULL,
+ plan_snapshot TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('geocoding','choose_origin','pending','leased','ready','published','failed','cancelled')),
+ origin_query TEXT,
+ origin_json TEXT,
+ geocodes TEXT,
+ expires_at BIGINT NOT NULL,
+ attempts BIGINT NOT NULL DEFAULT 0,
+ lease_token TEXT,
+ leased_until BIGINT NOT NULL DEFAULT 0,
+ outcome TEXT,
+ reply_body TEXT,
+ result_message_id UUID REFERENCES messages(id),
+ error_code TEXT
+);
+CREATE INDEX agent_place_rolls_ready ON agent_place_rolls(state, leased_until, expires_at);

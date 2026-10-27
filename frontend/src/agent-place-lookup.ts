@@ -10,6 +10,7 @@ export type AgentPlaceLookup = Readonly<{
   walkingAvailable: boolean;
 }>;
 export type AgentPlacePreview = Readonly<{ query: string; originMode: "none" | "named" | "shared"; namedOrigin: string | null; usesSharedLocation: boolean; binding: string }>;
+export type AgentPlaceDiscoveryResult = Readonly<{ messageIds: readonly string[]; googleMessageIds: readonly string[]; geoapifyMessageIds: readonly string[] }>;
 
 function invalid(): Error { return new Error("Ugyldig svar frå stadoppslaget."); }
 function admittedNow(admitted: () => boolean, signal?: AbortSignal): void {
@@ -84,7 +85,7 @@ export class AgentPlaceLookupApi {
       .then(result => { admittedNow(admitted, signal); return result; });
   }
 
-  list(owner: string, channelId: string, messageIds: readonly string[], admitted: () => boolean, signal?: AbortSignal): Promise<readonly string[]> {
+  list(owner: string, channelId: string, messageIds: readonly string[], admitted: () => boolean, signal?: AbortSignal): Promise<AgentPlaceDiscoveryResult> {
     if (!validId(owner) || !validId(channelId) || !messageIds.length || messageIds.length > 30
         || messageIds.some(id => !validId(id)) || new Set(messageIds).size !== messageIds.length) throw invalid();
     admittedNow(admitted, signal);
@@ -97,7 +98,19 @@ export class AgentPlaceLookupApi {
         if (!validId(id) || !requested.has(id) || result.includes(id)) throw invalid();
         result.push(id);
       }
-      return result;
+      if (value.geoapify_message_ids !== undefined && (!Array.isArray(value.geoapify_message_ids) || value.geoapify_message_ids.length > result.length)) throw invalid();
+      const geoapifyMessageIds: string[] = [];
+      for (const id of (value.geoapify_message_ids ?? []) as unknown[]) {
+        if (!validId(id) || !result.includes(id) || geoapifyMessageIds.includes(id)) throw invalid();
+        geoapifyMessageIds.push(id);
+      }
+      if (value.google_message_ids !== undefined && (!Array.isArray(value.google_message_ids) || value.google_message_ids.length > result.length)) throw invalid();
+      const googleMessageIds: string[] = [];
+      for (const id of (value.google_message_ids ?? result) as unknown[]) {
+        if (!validId(id) || !result.includes(id) || googleMessageIds.includes(id)) throw invalid();
+        googleMessageIds.push(id);
+      }
+      return { messageIds: result, googleMessageIds, geoapifyMessageIds };
     }, { method: "POST", headers: { "content-type": "application/json", "x-sproyt-account": owner },
       body: JSON.stringify({ message_ids: messageIds }), signal }, admitted).then(result => { admittedNow(admitted, signal); return result; });
   }

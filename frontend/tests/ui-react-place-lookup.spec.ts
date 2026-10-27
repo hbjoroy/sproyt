@@ -8,10 +8,12 @@ const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, "0")
 const marker = "Opne stadssøket for ferske barforslag.";
 type Command = { type: string; request_id?: string; payload?: { channel_id?: string; root_message_id?: string } };
 
-async function fixture(page: Page) {
+async function fixture(page: Page, geoMode: "named" | "shared" | "forbidden" | "retry" | "geo-only" = "named") {
   const batches: string[][] = [];
   const searches: { id: string; body: unknown; account: string | undefined }[] = [];
   const routes: unknown[] = [];
+  const geoCalls: { method: string; body: unknown }[] = [];
+  let geoState: unknown = geoMode === "retry" ? { id: "roll-1", status: "failed", choices: [], error_code: "geocode_failed", result_message_id: null, origin_text: "Grand Hotel, København", can_retry_geocoding: true } : null;
   const errors: string[] = [];
   let hold = false, pending: (() => Promise<void>) | undefined;
   let socket: WebSocketRoute;
@@ -28,7 +30,8 @@ async function fixture(page: Page) {
     expect(request.headers()["x-sproyt-account"]).toBe(owner);
     const ids = (request.postDataJSON() as { message_ids: string[] }).message_ids;
     batches.push(ids);
-    return route.fulfill({ json: { message_ids: ids.filter(value => value === id(35) || value === id(37)) } });
+    const approved = ids.filter(value => value === id(35) || value === id(37));
+    return route.fulfill({ json: { message_ids: approved, google_message_ids: geoMode === "geo-only" ? [] : approved, geoapify_message_ids: geoMode === "forbidden" ? [] : approved } });
   });
   await page.route("**/api/v1/channels/*/messages/*/place-lookup**", async route => {
     const request = route.request();
@@ -42,6 +45,21 @@ async function fixture(page: Page) {
   await page.route("**/api/v1/channels/*/messages/*/place-route**", route => {
     routes.push(route.request().postDataJSON());
     return route.fulfill({ json: { route: { routes: [{ distanceMeters: 1200, duration: "600s", attribution: { title: "Google Maps", url: "https://www.google.com/maps" } }] }, warning: "Gangruter er i beta." } });
+  });
+  await page.route("**/api/v1/channels/*/messages/*/geoapify-roll**", route => {
+    const request = route.request(), method = request.method();
+    geoCalls.push({ method, body: method === "POST" ? request.postDataJSON() : null });
+    expect(request.headers()["x-sproyt-account"]).toBe(owner);
+    if (method === "GET" && geoMode === "forbidden") return route.fulfill({ status: 403 });
+    if (method === "GET") return route.fulfill({ json: { provider: "geoapify", preview_binding: "a".repeat(64), origin_mode: geoMode === "retry" ? "named" : geoMode, suggested_origin: geoMode === "shared" ? null : "Nørreport", radius_m: 1500,
+      categories: ["catering.bar", "catering.pub"], state: geoState } });
+    geoState = { id: "roll-1", status: "choose_origin", choices: [{ index: 0, label: "Nørreport, København" }], error_code: null, result_message_id: null };
+    return route.fulfill({ json: geoState });
+  });
+  await page.route("**/api/v1/channels/*/messages/*/geoapify-roll/origin**", route => {
+    geoCalls.push({ method: "ORIGIN", body: route.request().postDataJSON() });
+    geoState = { id: "roll-1", status: "published", choices: [], error_code: null, result_message_id: id(40) };
+    return route.fulfill({ json: geoState });
   });
   await page.routeWebSocket(/\/ws(?:\?|$)/, route => {
     socket = route;
@@ -70,13 +88,14 @@ async function fixture(page: Page) {
   await page.goto(`/?participant=place-lookup&ui=react&channel=${channelA}`);
   const app = page.locator("#sproyt-react-preview");
   await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  return { app, batches, searches, routes, errors, hold: () => { hold = true; }, resolve: async () => { await pending?.(); } };
+  return { app, batches, searches, routes, geoCalls, errors, hold: () => { hold = true; }, resolve: async () => { await pending?.(); } };
 }
 
 for (const width of [320, 1280]) test(`place discovery is batched and requires deliberate consent at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   const { app, batches, searches, routes, errors } = await fixture(page);
-  await expect.poll(() => batches.reduce((sum, batch) => sum + batch.length, 0)).toBe(35);
+  await expect.poll(() => batches.reduce((sum, batch) => sum + batch.length, 0)).toBe(1);
+  expect(batches.flat()).toEqual([id(35)]); // Ordinary messages trigger no discovery calls.
   expect(batches.every(batch => batch.length <= 30)).toBe(true);
   expect(searches).toHaveLength(0);
   const root = app.locator(`[data-message-id="${id(35)}"]`);
@@ -125,4 +144,63 @@ test("place lookup discovery also covers newly opened thread replies", async ({ 
   await expect(reply.getByRole("button", { name: "Vis stadssøk" })).toBeVisible();
   expect(batches.flat()).toContain(id(37));
   expect(searches).toHaveLength(0);
+});
+
+test("the requester explicitly authorizes Geoapify and selects an ambiguous origin", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  const { app, searches, geoCalls } = await fixture(page);
+  const root = app.locator(`[data-message-id="${id(35)}"]`);
+  await root.getByRole("button", { name: "La agenten trille via Geoapify" }).click();
+  await expect(root.getByText(/Trefflista blir gitt til agenten/)).toBeVisible();
+  await expect(root.getByLabel("Utgangspunkt")).toHaveValue("Nørreport");
+  expect(geoCalls.map(call => call.method)).toEqual(["GET"]);
+  expect(searches).toHaveLength(0);
+  await root.getByRole("button", { name: "Tillat oppslag og la agenten trille" }).click();
+  await expect(root.getByRole("button", { name: "Nørreport, København" })).toBeVisible();
+  expect(geoCalls[1]?.body).toEqual({ preview_binding: "a".repeat(64), allow_shared_location: false, origin_text: "Nørreport" });
+  await root.getByRole("button", { name: "Nørreport, København" }).click();
+  await expect(root.getByText("Agenten har lagt svaret i samtalen.")).toBeVisible();
+  expect(geoCalls[2]).toEqual({ method: "ORIGIN", body: { roll_id: "roll-1", index: 0 } });
+});
+
+test("shared location is disclosed before consent; other users cannot authorize", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  const { app, geoCalls } = await fixture(page, "shared");
+  const root = app.locator(`[data-message-id="${id(35)}"]`);
+  await root.getByRole("button", { name: "La agenten trille via Geoapify" }).click();
+  await expect(root.getByText(/delte posisjonen din blir send til Geoapify/)).toBeVisible();
+  expect(geoCalls.map(call => call.method)).toEqual(["GET"]);
+  await root.getByRole("button", { name: "Tillat oppslag og la agenten trille" }).click();
+  await expect.poll(() => geoCalls.length).toBe(2);
+  expect(geoCalls[1]?.body).toEqual({ preview_binding: "a".repeat(64), allow_shared_location: true });
+});
+
+test("Geoapify action is hidden when unavailable or the viewer is not the requester", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  const { app, geoCalls } = await fixture(page, "forbidden");
+  const root = app.locator(`[data-message-id="${id(35)}"]`);
+  await expect(root.getByRole("button", { name: "Vis stadssøk" })).toBeVisible();
+  await expect(root.getByRole("button", { name: "La agenten trille via Geoapify" })).toHaveCount(0);
+  expect(geoCalls).toHaveLength(0);
+});
+
+test("Geoapify-only configuration does not offer an unavailable Google search", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  const { app, searches, geoCalls } = await fixture(page, "geo-only");
+  const root = app.locator(`[data-message-id="${id(35)}"]`);
+  await expect(root.getByRole("button", { name: "La agenten trille via Geoapify" })).toBeVisible();
+  await expect(root.getByRole("button", { name: "Vis stadssøk" })).toHaveCount(0);
+  expect(searches).toHaveLength(0);
+  expect(geoCalls).toHaveLength(0);
+});
+
+test("geocoding retry reuses the exact original origin and binding", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  const { app, geoCalls } = await fixture(page, "retry");
+  const root = app.locator(`[data-message-id="${id(35)}"]`);
+  await root.getByRole("button", { name: "La agenten trille via Geoapify" }).click();
+  await expect(root.getByText(/Grand Hotel, København/)).toBeVisible();
+  await root.getByRole("button", { name: "Prøv stadoppslaget igjen" }).click();
+  await expect.poll(() => geoCalls.length).toBe(2);
+  expect(geoCalls[1]?.body).toEqual({ preview_binding: "a".repeat(64), allow_shared_location: false, origin_text: "Grand Hotel, København" });
 });

@@ -71,7 +71,7 @@ test("HTTP requests are account fenced, bounded, encoded and use no-store", asyn
   } });
   const api = new AgentPlaceLookupApi(http);
   const signal = new AbortController().signal;
-  assert.deepEqual(await api.list("alice", "channel/1", ["message/1", "message-2"], () => true, signal), ["message/1"]);
+  assert.deepEqual(await api.list("alice", "channel/1", ["message/1", "message-2"], () => true, signal), { messageIds: ["message/1"], googleMessageIds: ["message/1"], geoapifyMessageIds: [] });
   const result = await api.lookup("alice", "channel/1", "message/1", true, "a".repeat(64), () => true, signal);
   assert.equal(result.state.kind, "ready");
   assert.equal(seen[0]?.url, "/api/v1/channels/channel%2F1/place-lookups");
@@ -93,6 +93,10 @@ test("discovery rejects unsolicited or duplicate message IDs", async () => {
     const api = new AgentPlaceLookupApi(new HttpClient({ fetch: async () => json({ message_ids: ids }) }));
     await assert.rejects(api.list("alice", "channel", ["known", "other"], () => true));
   }
+  const api = new AgentPlaceLookupApi(new HttpClient({ fetch: async () => json({ message_ids: ["known"], geoapify_message_ids: ["other"] }) }));
+  await assert.rejects(api.list("alice", "channel", ["known", "other"], () => true));
+  const googleApi = new AgentPlaceLookupApi(new HttpClient({ fetch: async () => json({ message_ids: ["known"], google_message_ids: ["other"] }) }));
+  await assert.rejects(googleApi.list("alice", "channel", ["known", "other"], () => true));
 });
 
 test("late result and retries cannot cross account/channel or abort boundaries", async () => {

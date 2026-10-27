@@ -470,6 +470,17 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
                 .layer(crate::web::agent_place_lookup::body_limit()),
         )
         .route(
+            "/api/v1/channels/{channel_id}/messages/{message_id}/geoapify-roll",
+            get(crate::web::agent_place_lookup::geoapify_preview)
+                .post(crate::web::agent_place_lookup::geoapify_consent)
+                .layer(crate::web::agent_place_lookup::body_limit()),
+        )
+        .route(
+            "/api/v1/channels/{channel_id}/messages/{message_id}/geoapify-roll/origin",
+            post(crate::web::agent_place_lookup::geoapify_origin)
+                .layer(crate::web::agent_place_lookup::body_limit()),
+        )
+        .route(
             "/api/v1/circles/{id}/chat-agents",
             get(crate::web::chatbot::list).post(crate::web::chatbot::create),
         )

@@ -121,6 +121,13 @@ spec:
                   name: {{ .Values.secret.googleMapsRouteExistingSecret }}
                   key: {{ .Values.secret.googleMapsRouteKeyKey }}
             {{- end }}
+            {{- if .Values.secret.geoapifyExistingSecret }}
+            - name: SPROYT_GEOAPIFY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.geoapifyExistingSecret }}
+                  key: {{ .Values.secret.geoapifyApiKeyKey }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 9010

@@ -35,6 +35,22 @@ pub(crate) struct RouteRequest {
     allow_shared_location: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GeoapifyConsent {
+    preview_binding: String,
+    #[serde(default)]
+    allow_shared_location: bool,
+    origin_text: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GeoapifyOrigin {
+    roll_id: String,
+    index: usize,
+}
+
 fn no_store(mut response: Response) -> Response {
     response.headers_mut().insert(
         CACHE_CONTROL,
@@ -92,17 +108,28 @@ pub(crate) async fn available(
     let Some(service) = &state.chat_agents else {
         return no_store(StatusCode::SERVICE_UNAVAILABLE.into_response());
     };
-    match service
+    let message_ids = match service
         .place_lookup_messages(&principal.user.id, &channel, &input.message_ids)
         .await
     {
-        Ok(message_ids) => (
-            [(CACHE_CONTROL, "no-store")],
-            Json(serde_json::json!({"message_ids":message_ids})),
-        )
-            .into_response(),
-        Err(error) => no_store(repository_response(error)),
-    }
+        Ok(message_ids) => message_ids,
+        Err(error) => return no_store(repository_response(error)),
+    };
+    let geoapify_message_ids = match service
+        .geoapify_roll_messages(&principal.user.id, &channel, &message_ids)
+        .await
+    {
+        Ok(ids) => ids,
+        Err(error) => return no_store(repository_response(error)),
+    };
+    let google_message_ids = match service
+        .google_place_lookup_messages(&principal.user.id, &channel, &message_ids)
+        .await
+    {
+        Ok(ids) => ids,
+        Err(error) => return no_store(repository_response(error)),
+    };
+    no_store(Json(serde_json::json!({"message_ids":message_ids,"geoapify_message_ids":geoapify_message_ids,"google_message_ids":google_message_ids})).into_response())
 }
 
 pub(crate) async fn lookup(
@@ -247,6 +274,109 @@ pub(crate) async fn preview(
             "Stadssøket er ikkje lenger tilgjengeleg.",
         )
             .into_response(),
+        Err(error) => repository_response(error),
+    };
+    no_store(response)
+}
+
+/// Only the person who requested the search can authorize this provider.
+pub(crate) async fn geoapify_preview(
+    State(state): State<AppState>,
+    Path((channel, message)): Path<(String, String)>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let principal = match account(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return no_store(error),
+    };
+    if uuid::Uuid::parse_str(&channel).is_err() || uuid::Uuid::parse_str(&message).is_err() {
+        return no_store(
+            (StatusCode::BAD_REQUEST, "Ugyldig samtale eller melding.").into_response(),
+        );
+    }
+    let Some(service) = &state.chat_agents else {
+        return no_store(StatusCode::SERVICE_UNAVAILABLE.into_response());
+    };
+    let response = match service
+        .geoapify_roll_preview(&principal.user.id, &channel, &message)
+        .await
+    {
+        Ok(preview) => Json(preview).into_response(),
+        Err(error) => repository_response(error),
+    };
+    no_store(response)
+}
+
+pub(crate) async fn geoapify_consent(
+    State(state): State<AppState>,
+    Path((channel, message)): Path<(String, String)>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(input): Json<GeoapifyConsent>,
+) -> Response {
+    let principal = match account(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return no_store(error),
+    };
+    if uuid::Uuid::parse_str(&channel).is_err() || uuid::Uuid::parse_str(&message).is_err() {
+        return no_store(
+            (StatusCode::BAD_REQUEST, "Ugyldig samtale eller melding.").into_response(),
+        );
+    }
+    let Some(service) = &state.chat_agents else {
+        return no_store(StatusCode::SERVICE_UNAVAILABLE.into_response());
+    };
+    let response = match service
+        .consent_geoapify_roll(
+            &principal.user.id,
+            &channel,
+            &message,
+            &input.preview_binding,
+            input.allow_shared_location,
+            input.origin_text.as_deref(),
+        )
+        .await
+    {
+        Ok(view) => Json(view).into_response(),
+        Err(error) => repository_response(error),
+    };
+    no_store(response)
+}
+
+pub(crate) async fn geoapify_origin(
+    State(state): State<AppState>,
+    Path((channel, message)): Path<(String, String)>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(input): Json<GeoapifyOrigin>,
+) -> Response {
+    let principal = match account(&state, query, &headers).await {
+        Ok(value) => value,
+        Err(error) => return no_store(error),
+    };
+    if uuid::Uuid::parse_str(&channel).is_err()
+        || uuid::Uuid::parse_str(&message).is_err()
+        || uuid::Uuid::parse_str(&input.roll_id).is_err()
+    {
+        return no_store(
+            (StatusCode::BAD_REQUEST, "Ugyldig samtale eller oppslag.").into_response(),
+        );
+    }
+    let Some(service) = &state.chat_agents else {
+        return no_store(StatusCode::SERVICE_UNAVAILABLE.into_response());
+    };
+    let response = match service
+        .choose_geoapify_roll_origin(
+            &principal.user.id,
+            &channel,
+            &message,
+            &input.roll_id,
+            input.index,
+        )
+        .await
+    {
+        Ok(view) => Json(view).into_response(),
         Err(error) => repository_response(error),
     };
     no_store(response)

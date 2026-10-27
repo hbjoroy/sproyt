@@ -12,7 +12,9 @@ pub(crate) fn enabled() -> bool {
     if let Ok(value) = TEST_ENABLED.try_with(|value| *value) {
         return value;
     }
-    std::env::var("SPROYT_GOOGLE_MAPS_API_KEY").is_ok_and(|key| !key.trim().is_empty())
+    ["SPROYT_GOOGLE_MAPS_API_KEY", "SPROYT_GEOAPIFY_API_KEY"]
+        .iter()
+        .any(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()))
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -144,7 +146,7 @@ pub(super) fn definition() -> Value {
         "parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":240},"origin_mode":{"type":"string","enum":["none","named","shared"]},"named_origin":{"type":"string","maxLength":240}},"required":["query","origin_mode"],"additionalProperties":false}}})
 }
 
-#[derive(Clone, Serialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct PlaceLookupDescriptor {
     pub job_id: String,
     pub agent_id: String,
@@ -176,7 +178,7 @@ impl PlaceLookupDescriptor {
 impl CircleChatAgents {
     // Receipt creation is atomic with message publication. We deliberately do
     // not depend on the worker's later finish() update surviving a crash.
-    async fn place_lookup_rows(
+    pub(super) async fn place_lookup_rows(
         &self,
         viewer: &UserId,
         channel: &str,
@@ -198,7 +200,7 @@ impl CircleChatAgents {
         };
         let marks = vec!["?uuid"; ids.len()].join(",");
         let query = format!(
-            "select case when l.share_id is not null then 1 else 0 end share_active,cast(reply.id as text) reply_id,cast(j.id as text) job_id,cast(j.agent_id as text) agent_id,cast(j.source_message_id as text) source_id,cast(source.sender_id as text) author_id,cast(j.location_share_id as text) share_id,j.place_lookup_plan,source.body source_body from circle_chat_agent_jobs j join command_receipts receipt on receipt.principal_id=j.agent_id and receipt.request_id='circle-chat-agent:' || cast(j.id as text) join messages reply on reply.id=receipt.message_id join messages source on source.id=j.source_message_id join message_provenance provenance on provenance.message_id=source.id join users author on author.id=source.sender_id join channels c on c.id=j.channel_id join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=a.agent_id left join agent_location_shares l on l.share_id=j.location_share_id and l.user_id=source.sender_id and l.agent_id=j.agent_id and l.channel_id=j.channel_id and {grant_time} where reply.id in ({marks}) and c.id=?uuid and exists(select 1 from channel_memberships cm where cm.channel_id=c.id and cm.user_id=?uuid) and exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=?uuid) and exists(select 1 from channel_memberships cm where cm.channel_id=c.id and cm.user_id=source.sender_id) and exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=source.sender_id) and a.enabled=true and a.revision=j.config_revision and c.chat_agent_access_revision=j.access_revision and a.circle_id=c.circle_id and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and reply.channel_id=c.id and source.channel_id=c.id and reply.sender_id=j.agent_id and reply.body=? and reply.edited_at is null and reply.deleted_at is null and source.edited_at is null and source.deleted_at is null and author.kind='human' and provenance.provenance='human' and j.place_lookup_plan is not null"
+            "select cast(case when l.share_id is not null then 1 else 0 end as bigint) share_active,cast(reply.id as text) reply_id,cast(j.id as text) job_id,cast(j.agent_id as text) agent_id,cast(j.source_message_id as text) source_id,cast(source.sender_id as text) author_id,cast(j.location_share_id as text) share_id,j.place_lookup_plan,source.body source_body from circle_chat_agent_jobs j join command_receipts receipt on receipt.principal_id=j.agent_id and receipt.request_id='circle-chat-agent:' || cast(j.id as text) join messages reply on reply.id=receipt.message_id join messages source on source.id=j.source_message_id join message_provenance provenance on provenance.message_id=source.id join users author on author.id=source.sender_id join channels c on c.id=j.channel_id join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=a.agent_id left join agent_location_shares l on l.share_id=j.location_share_id and l.user_id=source.sender_id and l.agent_id=j.agent_id and l.channel_id=j.channel_id and {grant_time} where reply.id in ({marks}) and c.id=?uuid and exists(select 1 from channel_memberships cm where cm.channel_id=c.id and cm.user_id=?uuid) and exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=?uuid) and exists(select 1 from channel_memberships cm where cm.channel_id=c.id and cm.user_id=source.sender_id) and exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=source.sender_id) and a.enabled=true and a.revision=j.config_revision and c.chat_agent_access_revision=j.access_revision and a.circle_id=c.circle_id and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and reply.channel_id=c.id and source.channel_id=c.id and reply.sender_id=j.agent_id and reply.body=? and reply.edited_at is null and reply.deleted_at is null and source.edited_at is null and source.deleted_at is null and author.kind='human' and provenance.provenance='human' and j.place_lookup_plan is not null"
         );
         let mut args = ids.to_vec();
         args.extend([
@@ -269,6 +271,27 @@ impl CircleChatAgents {
             .into_iter()
             .map(|(id, _)| id)
             .collect())
+    }
+
+    /// Provider-specific availability never exposes a card for an unusable key.
+    /// Keep the generic descriptor list independent so Geoapify still works.
+    pub(crate) async fn google_place_lookup_messages(
+        &self,
+        viewer: &UserId,
+        channel: &str,
+        ids: &[String],
+    ) -> Result<Vec<String>> {
+        #[cfg(test)]
+        if super::maps_lookup::TEST_PROVIDER_CALLS
+            .try_with(|_| ())
+            .is_ok()
+        {
+            return self.place_lookup_messages(viewer, channel, ids).await;
+        }
+        if !matches!(super::maps::MapsService::from_env(), Ok(Some(_))) {
+            return Ok(vec![]);
+        }
+        self.place_lookup_messages(viewer, channel, ids).await
     }
 
     pub(crate) async fn place_lookup_for_message(

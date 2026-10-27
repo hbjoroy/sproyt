@@ -61,6 +61,11 @@ pub(crate) mod agent_images;
 mod channel_access;
 mod ferry;
 mod followup;
+mod geoapify;
+#[cfg(test)]
+pub(crate) use geoapify::TEST_ENABLED as GEOAPIFY_TEST_ENABLED;
+pub(crate) mod geoapify_roll;
+mod geoapify_roll_worker;
 pub(crate) mod handoffs;
 pub(crate) mod location;
 pub(crate) mod maps;
@@ -1445,6 +1450,9 @@ impl CircleChatAgents {
                     Err(error) => {
                         tracing::warn!(error_kind = error.kind(), "chat agent job claim failed")
                     }
+                }
+                if let Err(error) = service.geoapify_roll_tick(&chat).await {
+                    tracing::warn!(error_kind = error.kind(), "place roll worker failed");
                 }
                 if let Err(error) = service.image_tick(&chat).await {
                     tracing::warn!(error_kind = error.kind(), "agent picture worker failed");

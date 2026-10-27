@@ -1,7 +1,7 @@
 import type { AgentPlaceLookupApi } from "../../agent-place-lookup";
 
 type Candidate = Readonly<{ id: string; revision: string }>;
-type Entry = { revision: string; status: "pending" | "yes" | "no" | "error" };
+type Entry = { revision: string; status: "pending" | "yes" | "no" | "error"; googleAvailable: boolean; geoapifyAvailable: boolean };
 
 /** Discovers server-approved cards in bounded batches; never fetches Maps data. */
 export class AgentPlaceDiscovery {
@@ -31,7 +31,7 @@ export class AgentPlaceDiscovery {
     for (const candidate of candidates) {
       const previous = this.entries.get(candidate.id);
       if (!previous || previous.revision !== candidate.revision) {
-        this.entries.set(candidate.id, { revision: candidate.revision, status: "pending" });
+        this.entries.set(candidate.id, { revision: candidate.revision, status: "pending", googleAvailable: false, geoapifyAvailable: false });
         this.queue.push(candidate.id);
       }
     }
@@ -39,6 +39,8 @@ export class AgentPlaceDiscovery {
   }
 
   status(id: string): "pending" | "yes" | "no" | "error" | undefined { return this.entries.get(id)?.status; }
+  googleAvailable(id: string): boolean { return this.entries.get(id)?.googleAvailable ?? false; }
+  geoapifyAvailable(id: string): boolean { return this.entries.get(id)?.geoapifyAvailable ?? false; }
 
   retry(id: string): void {
     const entry = this.entries.get(id);
@@ -67,10 +69,14 @@ export class AgentPlaceDiscovery {
       && this.scope === scope && this.isAdmitted();
     void this.api.list(owner, channel, ids, allowed, controller.signal).then(found => {
       if (!allowed()) return;
-      const approved = new Set(found);
+      const approved = new Set(found.messageIds), google = new Set(found.googleMessageIds), geoapify = new Set(found.geoapifyMessageIds);
       for (const id of ids) {
         const entry = this.entries.get(id);
-        if (entry?.status === "pending" && entry.revision === revisions.get(id)) entry.status = approved.has(id) ? "yes" : "no";
+        if (entry?.status === "pending" && entry.revision === revisions.get(id)) {
+          entry.status = approved.has(id) ? "yes" : "no";
+          entry.googleAvailable = google.has(id);
+          entry.geoapifyAvailable = geoapify.has(id);
+        }
       }
       this.changed();
     }).catch(() => {
