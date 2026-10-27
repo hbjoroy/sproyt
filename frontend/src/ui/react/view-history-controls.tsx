@@ -17,6 +17,7 @@ export function viewTargetLabel(target: ViewTarget, snapshot: ConversationSnapsh
   const page = target.page;
   if ("circleId" in page && !snapshot.circles.some(c => c.id === page.circleId)) return null;
   if (page.kind === "overview") return "Innstillingar";
+  if (page.kind === "welcome") return "Kom i gang";
   if (page.kind === "profile") return "Profil og status";
   if (page.kind === "notifications") return "Varslingsinnstillingar";
   if (page.kind === "circle" || page.kind === "chat-agents" || page.kind === "memory") {

@@ -43,7 +43,7 @@ for (const width of [1280, 390]) test(`new direct message is discoverable before
   await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("ingen treff her");
   await action.focus();
   await page.keyboard.press("Enter");
-  const people = preview.getByRole("dialog", { name: "Personar og ny direktemelding" });
+  const people = preview.getByRole("dialog", { name: "Ny direktemelding" });
   await expect(people.getByRole("searchbox", { name: "Finn person" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(action).toBeFocused();

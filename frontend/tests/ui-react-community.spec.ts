@@ -15,6 +15,24 @@ async function openCircleNavigation(preview: Locator) {
   const tab = preview.getByRole("tab", { name: /^Kretsar/ });
   if (await tab.getAttribute("aria-selected") !== "true") await tab.click();
 }
+async function closeManagedDialog(page: Page) {
+  const preview = page.locator("#sproyt-react-preview");
+  const before = page.url();
+  const dialogs = preview.getByRole("dialog");
+  const previous = await dialogs.count() ? await dialogs.last().elementHandle() : null;
+  // A local popup can sit above a management dialog without changing its URL.
+  const routed = !!previous && new URL(before).searchParams.get("view") === "settings"
+    && await preview.locator("dialog[open]").count() === 1;
+  await page.keyboard.press("Escape");
+  if (routed) await expect.poll(() => page.url()).not.toBe(before);
+  if (previous) await previous.waitForElementState("hidden");
+  if (routed && new URL(page.url()).searchParams.get("view") === "settings") {
+    // URL publication precedes React mounting the parent. Wait for both sides
+    // of Back before a menu helper decides whether it should open the toolbar.
+    await expect(dialogs).toHaveCount(1);
+    await expect(dialogs).toBeVisible();
+  } else if (routed) await expect(dialogs).toHaveCount(0);
+}
 async function menu(preview: Locator, label: string) {
   const menu = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
   // Return through the current destination's real origin before opening a new
@@ -23,9 +41,7 @@ async function menu(preview: Locator, label: string) {
     const dialog = preview.getByRole("dialog");
     if (!await dialog.count()) break;
     await expect(dialog).toHaveCount(1);
-    const title = (await dialog.getByRole("heading").first().textContent())!;
-    await preview.page().keyboard.press("Escape");
-    await expect(preview.getByRole("dialog", { name: title, exact: true })).toHaveCount(0);
+    await closeManagedDialog(preview.page());
   }
   if (!await menu.isVisible()) {
     const trigger = preview.getByRole("button", { name: "Innstillingar", exact: true });
@@ -50,7 +66,20 @@ async function createCircle(preview: Locator, name: string) {
   await dialog.getByLabel("Namn på vennekrets").fill(name);
   await dialog.getByRole("button", { name: "Opprett vennekrets" }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(circleGroup(preview, name)).toHaveCount(1);
+  await selectCreatedPrat(preview, name);
+}
+async function selectCreatedPrat(preview: Locator, name: string) {
+  const settings = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
+  if (await settings.isVisible()) {
+    await settings.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
+    await expect(settings).toHaveCount(0);
+  }
+  await openCircleNavigation(preview);
+  const group = circleGroup(preview, name);
+  await expect(group).toHaveCount(1);
+  const disclosure = group.locator(".sp-product-nav-disclosure");
+  if (await disclosure.getAttribute("aria-expanded") !== "true") await disclosure.click();
+  await group.getByRole("button", { name: "# Prat", exact: true }).click();
 }
 
 for (const width of [1280, 390]) test(`navigation exposes scoped channel and invitation actions at ${width}px without the management menu`, async ({ page }) => {
@@ -60,7 +89,7 @@ for (const width of [1280, 390]) test(`navigation exposes scoped channel and inv
   const preview = await enter(page, `scope-navigation-${width}-${Date.now()}`);
   const circleName = `Navigasjonskrets ${width}`;
   await createCircle(preview, circleName);
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("utkast frå navigasjon");
   if (width === 390) await preview.getByRole("button", { name: /Samtalar/ }).click();
   const scope = circleGroup(preview, circleName);
@@ -76,7 +105,7 @@ for (const width of [1280, 390]) test(`navigation exposes scoped channel and inv
   await preview.getByRole("searchbox", { name: "Finn samtale" }).click();
   await expect(dropdown).toBeHidden();
   await scopeMenu.click();
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await expect(scopeMenu).toBeFocused();
   await scopeMenu.click();
   const create = scope.getByRole("button", { name: `Ny kanal i ${circleName}`, exact: true });
@@ -102,14 +131,14 @@ for (const width of [1280, 390]) test(`navigation exposes scoped channel and inv
   await scopeMenu.click();
   await invite.click();
   await expect(preview.getByRole("dialog", { name: `Inviter til ${circleName}` })).toBeVisible();
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await expect(scopeMenu).toBeFocused();
   await openCircleNavigation(preview);
   const shared = preview.locator('[data-conversation-group="scope:shared"]');
   await shared.getByRole("button", { name: "Val for Felles", exact: true }).click();
   await shared.getByRole("button", { name: "Ny kanal i Felles", exact: true }).click();
   await expect(preview.getByRole("dialog", { name: "Ny kanal i Felles", exact: true })).toBeVisible();
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await shared.getByRole("button", { name: "Val for Felles", exact: true }).click();
   await shared.getByRole("button", { name: "Inviter ny brukar til Sprøyt", exact: true }).click();
   await expect(preview.getByRole("dialog", { name: "Inviter ny brukar til Sprøyt", exact: true })).toBeVisible();
@@ -142,7 +171,7 @@ test("real React circle creates Prat once, creates scoped channel, edits Markdow
   await details.getByRole("button", { name: "Lagre omtale" }).click();
   await expect(details).toContainText("Omtalen er lagra.");
   await expect(details.getByRole("heading", { name: "Planlegg turen" })).toBeVisible();
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await circleSettings(preview, "Reell React krets");
   await circle.getByRole("button", { name: "Kanalar og medlemskap" }).click();
   await channels.getByRole("button", { name: "Slett vennekrets", exact: true }).click();
@@ -188,7 +217,7 @@ test("Felles creates a global channel with a global slug and exposes its members
   await expect(details.getByRole("searchbox", { name: "Finn kanalmedlem" })).toBeVisible();
   await expect(details.getByRole("listitem")).toContainText(participant);
   await expect(details.getByRole("button", { name: "Last personlista på nytt" })).toBeVisible();
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await preview.getByRole("button", { name: "Kanalval", exact: true }).click();
   await preview.getByRole("dialog", { name: "Kanalval: Felles prat" }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
   await expect(details.getByLabel("Vel person", { exact: true })).toBeFocused();
@@ -215,7 +244,7 @@ test("Felles sends a global registration invitation without using a circle endpo
   expect(body).toEqual({ email: "new@example.org", display_name: "Ny på Sprøyt" });
   expect(globalRequests).toBe(1);
   expect(circleRequests).toBe(0);
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   const management = preview.getByRole("dialog", { name: "Innstillingar" });
   await expect(management).toBeVisible();
   await expect(management.getByRole("button", { name: "Inviter ny brukar til Sprøyt" })).toBeFocused();
@@ -227,21 +256,25 @@ test("people search filters self, opens real DM and preserves original draft", a
   await enter(peer, "community-peer-anna");
   const preview = await enter(page, "community-dm-owner");
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("privat kanalutkast");
-  await menu(preview, "Personar og ny direktemelding");
-  const people = preview.getByRole("dialog", { name: "Personar og ny direktemelding" });
+  await menu(preview, "Ny direktemelding");
+  const people = preview.getByRole("dialog", { name: "Ny direktemelding" });
   await people.getByRole("searchbox", { name: "Finn person" }).fill("community-dm-owner");
   await expect(people.getByRole("button", { name: /Start samtale med/ })).toHaveCount(0);
   await people.getByRole("searchbox", { name: "Finn person" }).fill("community-peer-anna");
   const direct = people.getByRole("button", { name: "Start samtale med community-peer-anna" });
-  const info = people.locator(".sp-person-info");
+  const info = direct.locator(".sp-direct-person-copy");
+  await expect(info).toContainText("community-peer-anna");
+  await expect(info.locator(".sp-direct-person-detail")).toContainText("Ny samtale");
   const [directBox, infoBox] = await Promise.all([direct.boundingBox(), info.boundingBox()]);
-  expect(directBox?.width).toBeLessThanOrEqual(48);
   expect(infoBox?.width).toBeGreaterThan(160);
   expect(infoBox?.height).toBeLessThan(80);
+  expect(infoBox!.x).toBeGreaterThanOrEqual(directBox!.x);
+  expect(infoBox!.x + infoBox!.width).toBeLessThanOrEqual(directBox!.x + directBox!.width);
+  expect(await direct.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await direct.click();
   await page.setViewportSize({ width: 1280, height: 720 });
   await expect(people).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toHaveValue("");
   await openCircleNavigation(preview);
   const shared = preview.locator('[data-conversation-group="scope:shared"]');
@@ -305,14 +338,14 @@ test("community rejects keep entered values, member loads retry and enrollment k
   await expect(create.getByLabel("Namn på vennekrets")).toHaveValue("Krets etter retry");
   await create.getByRole("button", { name: "Opprett vennekrets" }).click();
   await expect(create).toHaveCount(0);
-  await expect(preview.getByRole("button", { name: "# Prat", exact: true })).toBeVisible();
+  await selectCreatedPrat(preview, "Krets etter retry");
   await menu(preview, "Kanaldetaljar, medlemmer og integrasjonar");
   const details = preview.getByRole("dialog", { name: "Kanaldetaljar: Prat" });
   await expect(details).toContainText("Mellombels feil, prøv igjen");
   await details.getByRole("button", { name: "Last personlista på nytt" }).click();
   await expect(details.getByText("Mellombels feil, prøv igjen")).toHaveCount(0);
   await expect(details.getByRole("listitem")).toContainText(participant);
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(page);
   await (await circleSettings(preview, "Krets etter retry")).getByRole("button", { name: "Inviter personar og nye brukarar" }).click();
   let body: unknown;
   let endpoint = "";
@@ -331,6 +364,7 @@ test("community rejects keep entered values, member loads retry and enrollment k
 });
 
 test("channel discovery, joining, direct member addition and circle DM invitations use real membership", async ({ page, context }) => {
+  test.setTimeout(90_000); // Two users traverse several real dialogs on mobile WebKit.
   const memberPage = await context.newPage();
   const member = await enter(memberPage, "community-join-peer");
   const preview = await enter(page, `community-members-${Date.now()}`);
@@ -354,8 +388,8 @@ test("channel discovery, joining, direct member addition and circle DM invitatio
   await admin.getByRole("button", { name: "Godta invitasjon" }).click();
   await expect(circleGroup(member, "Medlemskrets")).toHaveCount(1);
   await expect(member.locator(".sp-context")).toContainText("Medlemskrets");
-  await memberPage.keyboard.press("Escape");
-  await page.keyboard.press("Escape");
+  await closeManagedDialog(memberPage);
+  await closeManagedDialog(page);
   const createChannel = async (name: string, kind: string) => {
     await circleSettings(preview, "Medlemskrets");
     await circle.getByRole("button", { name: "Kanalar og medlemskap" }).click();
@@ -386,5 +420,5 @@ test("channel discovery, joining, direct member addition and circle DM invitatio
   await details.getByLabel("Vel person").selectOption({ label: "community-join-peer" });
   await details.getByRole("button", { name: "Legg til", exact: true }).click();
   await expect(details).toContainText("Personen er lagd til.");
-  await expect(details.getByRole("button", { name: "Start samtale med community-join-peer" })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Opne samtale med community-join-peer" })).toBeVisible();
 });

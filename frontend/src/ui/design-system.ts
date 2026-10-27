@@ -4,6 +4,8 @@ import reactAppCss from "./react-app.css";
 import conversationNavigationCss from "./conversation-navigation.css";
 import settingsNavigationCss from "./settings-navigation.css";
 import agentSettingsCss from "./agent-settings.css";
+import gettingStartedCss from "./getting-started.css";
+import directMessagesCss from "./direct-messages.css";
 
 const styleId = "sproyt-editorial-design-system";
 const themeStorageKey = "sproyt.theme.v1";
@@ -15,7 +17,7 @@ export function installSproytStyles(): void {
   if (document.getElementById(styleId)) return;
   const style = document.createElement("style");
   style.id = styleId;
-  style.textContent = `${sproytUiCss}\n${reactAppCss}\n${bridgeCss}\n${conversationNavigationCss}\n${settingsNavigationCss}\n${agentSettingsCss}`;
+  style.textContent = `${sproytUiCss}\n${reactAppCss}\n${bridgeCss}\n${conversationNavigationCss}\n${settingsNavigationCss}\n${agentSettingsCss}\n${gettingStartedCss}\n${directMessagesCss}`;
   document.head.append(style);
 }
 

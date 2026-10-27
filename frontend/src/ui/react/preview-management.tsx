@@ -13,6 +13,7 @@ import { AgentMemoryDialog } from "./agent-memory";
 import type { AppUpdate, UpdatePosition } from "../../app-update";
 import { AppUpdateAction } from "./app-update-action";
 import { AgentSettingsDrafts } from "./agent-settings-drafts";
+import { GettingStarted } from "./getting-started";
 
 export type { ManagementTarget } from "../../application/management-target";
 type SettingsRow = { label: string; detail: string; target: ManagementTarget; aliases?: string };
@@ -22,7 +23,7 @@ const roleName = (role: string) => role === "owner" ? "Eigar" : role === "modera
 
 /** A single controlled destination, with a local fallback for standalone previews.
  * Opening this directory creates no invitation, credential or process. */
-export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition, target, onNavigate, onBack, onSelectChannel }: {
+export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition, target, onNavigate, onBack, onSelectChannel, onRetryDirectory }: {
   snapshot: ConversationSnapshot;
   capabilities: { agent: boolean; heart: boolean };
   settings: PreviewSettingsHost;
@@ -35,6 +36,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   onNavigate?: (target: ManagementTarget | null) => void;
   onBack?: () => void;
   onSelectChannel?: (channelId: string) => void;
+  onRetryDirectory?: () => void;
 }) {
   const [localTarget, setLocalTarget] = useState<ManagementTarget | null>(null);
   const selfId = community.selfId();
@@ -148,7 +150,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     available = capabilities[active.feature] && Boolean(channel)
       && (active.feature !== "agent" || administrator(channel!.role));
   }
-  const isDirectory = active?.kind === "community" && active.destination.kind === "circles";
+  const isDirectory = active?.kind === "community" && (active.destination.kind === "circles" || active.destination.kind === "accept-invitation");
   const groups: { title: string; rows: SettingsRow[] }[] = [
     { title: "Dine innstillingar", rows: [
       { label: "Profil og status", detail: "Namn og status · kontoen din", target: { kind: "profile" }, aliases: "namn emoji" },
@@ -163,7 +165,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
       { label: "Bruk invitasjonskode", detail: "Bli med i ein krets med kode eller lenkje", target: directory }
     ] },
     { title: "Samtalar", rows: [
-      { label: "Personar og ny direktemelding", detail: "Finn ein person og start ei samtale", target: { kind: "community", destination: { kind: "people" } } },
+      { label: "Ny direktemelding", detail: "Finn ein person og start ei samtale", target: { kind: "community", destination: { kind: "people" } } },
       ...(snapshot.activeChannel ? [{ label: "Kanaldetaljar, medlemmer og integrasjonar", detail: `${snapshot.activeChannel.circle_id ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel!.circle_id)?.name ?? "Krets" : "Felles"} / ${snapshot.activeChannel.name}`, target: { kind: "community", destination: { kind: "channel", channelId: snapshot.activeChannel.id } } } as SettingsRow] : [])
     ] },
     { title: "Integrasjonar og prosessar", rows: [
@@ -194,8 +196,13 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
         <TextField label="Søk i innstillingar" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Til dømes varsel, agent eller kretsnamn" />
         {matchedGroups.map(group => <section className="sp-settings-group" aria-label={group.title} key={group.title}><h3>{group.title}</h3>{group.rows.map(row)}</section>)}
         {!matchedGroups.length && <p role="status">Ingen innstillingar passar søket.</p>}
-        {!normalizedQuery && <section className="sp-settings-group" aria-label="Om appen"><h3>Om appen</h3><AppUpdateAction update={appUpdate} capture={captureUpdatePosition} /></section>}
+        {!normalizedQuery && <section className="sp-settings-group" aria-label="Om appen"><h3>Om appen</h3>{row({ label: "Kom i gang", detail: "Finn folk, kretsar og samtalar", target: { kind: "welcome" } })}<AppUpdateAction update={appUpdate} capture={captureUpdatePosition} /></section>}
       </div>
+    </Dialog>}
+    {active?.kind === "welcome" && <Dialog open title="Kom i gang" closeLabel="Tilbake" onClose={close}>
+      <GettingStarted mode="help" onFindChannels={() => navigate(directory)}
+        onNewDirect={() => navigate({ kind: "community", destination: { kind: "people" } })}
+        onInvitation={() => navigate({ kind: "community", destination: { kind: "accept-invitation" } })} onProfile={() => navigate({ kind: "profile" })} />
     </Dialog>}
     {active?.kind === "circle" && available && circle && <Dialog open title={circle.name} closeLabel="Tilbake til kretsane" onClose={close}>
       <div className="sp-settings-page"><p className="sp-settings-scope">Krets / {circle.name} · {roleName(circle.role)}</p>
@@ -210,7 +217,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
         </section>
       </div>
     </Dialog>}
-    {isDirectory && available && <CircleDirectory key={selfId} snapshot={snapshot} host={community} onClose={close} row={row} />}
+    {isDirectory && available && <CircleDirectory key={`${selfId}:${activeKey}`} onRetry={onRetryDirectory} invitationOnly={active?.kind === "community" && active.destination.kind === "accept-invitation"} snapshot={snapshot} host={community} onClose={close} row={row} />}
     {active && available && (active.kind === "profile" || active.kind === "notifications") && <PreviewSettingsDialog key={`${selfId}:${active.kind}`} kind={active.kind} host={settings} onClose={close} />}
     {active?.kind === "community" && !isDirectory && available && <PreviewCommunity key={`${selfId}:${activeKey}`} destination={active.destination} snapshot={snapshot} host={community} onSelectChannel={onSelectChannel}
       onNavigate={destination => navigate({ kind: "community", destination })} onClose={close} />}
@@ -227,7 +234,9 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   </>;
 }
 
-function CircleDirectory({ snapshot, host, onClose, row }: {
+function CircleDirectory({ snapshot, host, onClose, row, invitationOnly = false, onRetry }: {
+  onRetry?: () => void;
+  invitationOnly?: boolean;
   snapshot: ConversationSnapshot; host: CommunityHost; onClose(): void; row(item: SettingsRow): ReactNode;
 }) {
   const [query, setQuery] = useState("");
@@ -238,12 +247,18 @@ function CircleDirectory({ snapshot, host, onClose, row }: {
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const visible = snapshot.circles.filter(circle => circle.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  return <Dialog open title="Vel krets" closeLabel="Tilbake til innstillingar" onClose={onClose}><div className="sp-settings-page">
+  return <Dialog open title={invitationOnly ? "Bruk invitasjon" : "Vel krets"} closeLabel="Tilbake til innstillingar" onClose={onClose}><div className="sp-settings-page">
+    {!invitationOnly && <>
     <p className="sp-settings-intro">Vel kva krets du vil sjå. Du finn medlemmer, kanalar, agentar og ditt eige agentminne inne i kretsen.</p>
+    {!snapshot.directory.ready || snapshot.directory.error ? <><Status tone={snapshot.directory.error ? "error" : "info"}>{snapshot.directory.error || "Hentar kretsane dine …"}</Status>{onRetry && <Button variant="quiet" onClick={onRetry}>Prøv igjen</Button>}</> : <>
     <TextField label="Finn vennekrets" type="search" value={query} onChange={event => setQuery(event.target.value)} />
     <section className="sp-settings-group" aria-label="Vennekretsar">{visible.map(circle => row({ label: circle.name, detail: `Krets · ${roleName(circle.role)}`, target: { kind: "circle", circleId: circle.id } }))}</section>
     {!visible.length && <p role="status">{snapshot.circles.length ? "Ingen kretsar passar søket." : "Du er ikkje med i ein krets enno. Opprett ein krets eller bruk ein invitasjonskode."}</p>}
-    <details className="sp-settings-invitation"><summary>Bruk invitasjonskode</summary>
+    {row({ label: "Kanalar i Felles", detail: "Samtalar utanfor vennekretsane", target: { kind: "community", destination: { kind: "global-channels" } } })}
+    {row({ label: "Ny vennekrets", detail: "Samle folk i din eigen krets", target: { kind: "community", destination: { kind: "create-circle" } } })}
+    </>}
+    </>}
+    <details className="sp-settings-invitation" open={invitationOnly || undefined}><summary>Bruk invitasjonskode</summary>
       <form onSubmit={async event => {
         event.preventDefault(); if (busy) return; setBusy(true); setError(""); setNotice("");
         try { await host.accept(token); if (live.current) { setToken(""); setNotice("Invitasjonen er godteken. Samtalane blir lasta inn."); } }

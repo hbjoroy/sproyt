@@ -2457,7 +2457,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("if (!sendCommand(\"list_users\"))"));
     assert!(BROWSER_CLIENT.contains("if (requestedCommand === \"open_direct_channel\")"));
     assert!(BROWSER_CLIENT.contains("Brukaren finst ikkje lenger. Lukk dialogen og prøv på nytt."));
-    assert!(BROWSER_CLIENT.contains("const peer = activeProfile(channel?.direct_user_id)"));
+    assert!(BROWSER_CLIENT.contains("return directConversationTitle(channel, knownUsers)"));
     assert!(BROWSER_CLIENT.contains("if (knownChannels.length > 0) renderChannels()"));
     assert!(!BROWSER_CLIENT.contains("heading.textContent = \"Andre samtalar\""));
     assert!(BROWSER_CLIENT.contains(

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createChannelViaUi } from "./support/channel-setup";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -11,32 +12,21 @@ for (const width of [320, 390, 1440]) for (const theme of ["light", "dark"]) {
     await mkdir(evidence, { recursive: true });
     await page.setViewportSize({ width, height: width === 320 ? 568 : width === 390 ? 844 : 900 });
     await page.addInitScript(mode => localStorage.setItem("sproyt.theme.v1", mode), theme);
-    await page.addInitScript(() => {
-      const NativeWebSocket = window.WebSocket;
-      window.WebSocket = class extends NativeWebSocket {
-        constructor(url: string | URL, protocols?: string | string[]) {
-          super(url, protocols);
-          (window as unknown as { visualSocket: WebSocket }).visualSocket = this;
-        }
-      };
-    });
     await page.goto(`/?participant=visual-${width}-${theme}`);
     const app = page.locator("#sproyt-react-preview");
     const pane = app.locator(".sp-channel-pane");
     const field = pane.getByRole("textbox", { name: "Skriv melding" });
     await expect(field).toBeEnabled();
-    await page.evaluate(name => (window as unknown as { visualSocket: WebSocket }).visualSocket.send(JSON.stringify({
-      protocol: "sproyt.chat.v1", type: "create_channel", request_id: crypto.randomUUID(),
-      payload: { slug: name, name: "Maritim engineering", kind: "public" }
-    })), `visual-${width}-${theme}`);
+    const name = `Maritim ${width}-${theme}-${Date.now()} engineering`;
+    await createChannelViaUi(page, name);
     if (width <= 800) {
-      await expect(pane.getByRole("heading", { name: "# Maritim engineering", exact: true })).toBeHidden();
+      await expect(pane.getByRole("heading", { name: `# ${name}`, exact: true })).toBeHidden();
       const compactTitle = app.locator(".sp-mobile-conversation-title");
       await expect(compactTitle).toBeVisible();
-      await expect(compactTitle).toHaveAttribute("aria-label", /# Maritim engineering/);
+      await expect(compactTitle).toHaveAttribute("aria-label", new RegExp(`# ${name}`));
       await expect(compactTitle).toContainText("# Maritim…ing");
     } else {
-      await expect(pane.getByRole("heading", { name: "# Maritim engineering", exact: true })).toBeVisible();
+      await expect(pane.getByRole("heading", { name: `# ${name}`, exact: true })).toBeVisible();
     }
     expect(await app.evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(await app.evaluate(element => element.clientWidth));
     for (const body of prose) { await field.fill(body); await field.press("Enter"); await expect(field).toHaveValue(""); }

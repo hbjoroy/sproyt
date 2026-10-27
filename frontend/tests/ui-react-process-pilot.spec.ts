@@ -1,18 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createChannelViaUi } from "./support/channel-setup";
 
 const taskId = "c63ac052-a05a-4b5d-bfff-04429338df90";
 const macro = `[[process-task:${taskId}]]`;
 const parallelTaskIds = [taskId, "c63ac052-a05a-4b5d-bfff-04429338df91", "c63ac052-a05a-4b5d-bfff-04429338df92"];
 
 async function pilot(page: Page, canComplete: boolean, runtimeModel: "v1" | "v2" = "v1") {
-  await page.addInitScript(() => {
-    const NativeSocket = WebSocket;
-    window.WebSocket = class extends NativeSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols); (window as unknown as { testSocket: WebSocket }).testSocket = this;
-      }
-    };
-  });
   const completions: { request_id: string; message_id: string }[] = [];
   let completed = false;
   let completionAccepted = false;
@@ -48,10 +41,7 @@ async function isolatedChannel(page: Page) {
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15000 });
   const name = `Pilot-${Date.now()}`;
-  await page.evaluate(name => (window as unknown as { testSocket: WebSocket }).testSocket.send(JSON.stringify({
-    protocol: "sproyt.chat.v1", type: "create_channel", request_id: crypto.randomUUID(),
-    payload: { name, slug: name.toLowerCase(), kind: "public" }
-  })), name);
+  await createChannelViaUi(page, name);
   await expect(preview.getByRole("region", { name: `# ${name}`, exact: true })).toBeVisible();
 }
 

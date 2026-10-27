@@ -29,7 +29,8 @@ Det er ikkje nok å flytte knappane i den eksisterande hovudmenyen.
 | Meldingslenkje | Meldingsmenyen kan kopiere ei lenkje til akkurat meldinga, inkludert trådkontekst. Lenkja gjev ikkje tilgang utover medlemskapet mottakaren har. |
 
 Første snitt av S1 og S2a er implementert. Agentarbeidet i S2b/S2c er
-implementert og under validering, men ikkje utrulla. Andre profil-, skjema- og
+utrulla i Canary gjennom [PR #304](https://github.com/hbjoroy/sproyt/pull/304)
+og [GitOps #271](https://github.com/hbjoroy/rocket-applications/pull/271). Andre profil-, skjema- og
 administrasjonsarbeid står att.
 
 Agentflyten er adresserbar frå liste til agent og vidare til éin del:
@@ -152,7 +153,35 @@ gamle GET-svar og privat kanaltilgang. Rust-prøver dekkjer kontobinding på
 alle sju agent-HTTP-rutene og kalde innstillingslenkjer gjennom innlogging.
 Astra har kontrollert dei kritiske kodevegane etter rettingane. Mørk mobil
 på 320/390 px og stor skjerm er visuelt kontrollerte. Endeleg CI og utrulling
-blir førte i release-evidensen; pakken er førebels ikkje utrulla.
+er førte i release-evidensen nedanfor.
+
+Agentrelease på `517290ccfbc1e773e8a81ec9f49e88e82d0ff3c1` bestod 233
+Chromium- og 109 WebKit-prøver i CI. Argo og offentleg readiness er verifiserte.
+
+## Førstegongsoppleving og direktemeldingar
+
+Neste pakke er implementert og under validering:
+
+- Tom konto får ei roleg velkomstflate når både kretsar og kanalar er ferdig
+  henta. Lasting, feil og tomt søk blir ikkje framstilte som ein tom konto.
+  «Kom i gang» er òg ein eksplisitt, adresserbar hjelpeinngang for etablerte
+  brukarar. Ingen obligatorisk vegvisar eller nytt profilflagg blir oppretta.
+- Guiden forklarer krets, kanal og direktemelding og opnar eksisterande
+  kanal-/kretsoversikt, personveljar, profil og eit eige invitasjonsskjema.
+  Kalde invitasjonar og meldingslenkjer bevarer prioriteten sin.
+- Personveljaren bruker kompakte rader med namn og brukarnamn, søk, ventestatus
+  og lokal feil/retry. Ei eksisterande 1:1-samtale blir opna med same kanal-ID.
+- Direktemeldingar deler tittelresolvar; grupper får ei lita gruppeindikering.
+  «Om samtalen» viser medlemmer utan vanleg kanaladministrasjon. Medlemmer
+  blir henta for den valde samtalen, ikkje for alle DM-ar ved oppstart.
+- Å omtale ein ny person med @ kan framleis starte ei **ny** gruppesamtale.
+  Historikken og utkastet i opphavleg 1:1 blir ikkje delte med den nye personen.
+- Konto- og sambandsgenerasjon vernar ventande personlesingar, DM-opning,
+  invitasjonslevering og automatisk Prat-oppretting. Nye navigasjonsintensjonar,
+  inkludert trådar og meldingslenkjer, hindrar seine svar i å ta over visinga.
+
+Ingen databaseendring eller nye medlemsreglar. Fysisk touch og brukartesting
+blir tekne i Canary; syntetiske prøver er ikkje ein påstand om slik aksept.
 
 Endelege testtal og release-evidens skal førast etter ferdig CI. Syntetisk
 nettlesarakseptanse er ikkje ei fysisk touch-/native-akseptprøve. Brukaren kan
@@ -160,13 +189,13 @@ likevel prøve nettpakken remote i Canary utan å starte Windows-klienten.
 
 ## Neste små leveransar
 
-1. **Førstegongsoppleving:** avklarte tomtilstandar, kort forklaring av krets,
+1. **Førstegongsoppleving:** fullfør validering og Canary-prøving av tomtilstandar, kort forklaring av krets,
    kanal og DM, og direkte neste handling etter ein invitasjon. Prøv med ein
    heilt ny brukar, ikkje berre administratoren sin konto.
-2. **Direktemeldingar:** vidareutvikle den eigne oversikta med konsekvente
+2. **Direktemeldingar:** fullfør validering og Canary-prøving av den eigne oversikta med konsekvente
    person-/gruppetitlar, medlemsvising og betre personval. Bevar eksisterande
    meldingar og kanal-ID-ar; ikkje opprett ein parallell DM-modell.
-3. **Agentoppsett:** fullfør validering av S2b/S2c og følg Canary-løpet før
+3. **Agentoppsett:** prøv S2b/S2c i Canary før
    eventuell produksjonspromotering. Autorisert tenestestatus kan vurderast
    separat; oppsettsstatus er ikkje ein helseprobe.
 4. **Skjemaarbeid:** vidarefør utkastvern og konfliktvising til andre profil- og

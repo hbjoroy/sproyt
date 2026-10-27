@@ -8,6 +8,8 @@ export type ConversationTimelineItem =
 /** The existing application remains the state owner. This input has no commands,
  * transport, DOM nodes, or presentation-library types. */
 export interface ConversationSnapshotSource {
+  readonly directoryReady?: boolean;
+  readonly directoryError?: string;
   readonly channels: readonly Channel[];
   readonly circles: ReadonlyMap<string, Circle>;
   readonly activeChannelId: string | null;
@@ -133,6 +135,7 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
   }) : null;
 
   return Object.freeze({
+    directory: Object.freeze({ ready: source.directoryReady ?? true, error: source.directoryError ?? "" }),
     channels, circles, groups: Object.freeze(groups), query: source.query,
     selection: Object.freeze({ channelId: source.activeChannelId, circleId: source.activeCircleId,
       rootScope: source.activeRootScope, inboxKind: source.activeInboxKind }),

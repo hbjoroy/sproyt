@@ -30,6 +30,7 @@ import { processTaskId, type ProcessPilotApi } from "../../process-pilot";
 import { ProcessPilotChannelAction, ProcessTaskMessage } from "./process-pilot";
 import { NavigationScopeActions } from "./navigation-scope-actions";
 import { NewDirectMessage } from "./new-direct-message";
+import { GettingStarted } from "./getting-started";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import { ChannelChatAgentsDialog } from "./channel-chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
@@ -78,6 +79,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly closeThread: () => void;
   readonly loadOlder: () => void;
   readonly retryHistory: () => void;
+  readonly retryDirectory: () => void;
   readonly acknowledgeVisible: (key: string, messageIds: readonly string[]) => void;
   readonly isOwnMessage: (message: ChatMessage) => boolean;
   readonly takeScrollIntent: () => Readonly<{
@@ -440,6 +442,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       reactionPicker.close();
     }
     const historyState = host.viewHistory.getSnapshot();
+    if (!snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && historyState.target?.kind !== "conversation") view = "list";
     if (historyState.entryId !== renderedEntry) {
       renderedEntry = historyState.entryId;
       if (historyState.target?.kind === "directory") view = "list";
@@ -482,12 +485,29 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       loading: host.threadLoad().loading,
       revealMessageId: scrollIntent.threadRevealMessageId
     });
-    const compactContext = snapshot.activeChannel?.is_direct ? "Direkte" : snapshot.activeChannel?.circle_id
+    const compactContext = snapshot.activeChannel?.is_direct ? snapshot.activeChannel.direct_user_id ? "Direkte" : "Gruppesamtale" : snapshot.activeChannel?.circle_id
       ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel?.circle_id)?.name ?? "Vennekrets"
       : snapshot.activeChannel ? "Felles" : undefined;
     const backToConversations = () => { host.navigateView({ kind: "directory", scope: snapshot.activeChannel?.is_direct ? "direct" : "circles" }); view = "list"; update(); };
+    const openCommunity = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "circles" } } });
+    const newDirect = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "people" } } });
+    const openInvitation = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "accept-invitation" } } });
+    const directMembers = (compact = false) => snapshot.activeChannel?.is_direct ? <Button variant="quiet"
+      className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"}
+      aria-label={`Medlemmer i ${snapshot.title}`} title="Om samtalen" onClick={() => host.navigateView({ kind: "management",
+        page: { kind: "community", destination: { kind: "channel", channelId: snapshot.activeChannel!.id } } })}>
+      <ChannelMembersIcon />{compact && <span>Om samtalen</span>}</Button> : null;
+    const showWelcome = !snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && !snapshot.directory.error
+      && !new URL(window.location.href).searchParams.has("invite") && historyState.target?.kind !== "conversation";
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view,
+    onFindChannels: openCommunity, onInvitation: openInvitation,
+    onGuide: () => host.navigateView({ kind: "management", page: { kind: "welcome" } }),
+    emptyContent: !snapshot.activeChannel ? showWelcome ? <GettingStarted mode="welcome" onFindChannels={openCommunity}
+      onNewDirect={newDirect} onInvitation={openInvitation} onProfile={() => host.navigateView({ kind: "management", page: { kind: "profile" } })} />
+      : <div className="sp-directory-waiting"><Status tone={snapshot.directory.error ? "error" : "info"}>{snapshot.directory.error || (!snapshot.directory.ready ? "Hentar samtalane dine …" : "Vel ei samtale frå oversikta.")}</Status>
+        {!snapshot.directory.ready && <Button variant="quiet" onClick={host.retryDirectory}>Prøv igjen</Button>}
+        <Button variant="quiet" onClick={backToConversations}>Vis samtalar</Button></div> : undefined,
     ownerId: owner ?? undefined,
     favorites: host.favorites,
     directoryScope: historyState.target?.kind === "directory" ? historyState.target.scope : undefined,
@@ -498,22 +518,22 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       </Status>}
       {host.navigationNotice() && <Status tone="error">{host.navigationNotice()}</Status>}
       {host.hasLegacyDraft() && <Status>Eit eldre lokalt utkast manglar kontomerking. <Button onClick={host.recoverLegacyDraft}>Hent eldre utkast</Button></Status>}
-      <HeaderActions primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
+      <HeaderActions navigationKey={historyState.entryId} primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
         onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
         <PreviewInboxes key={owner ?? "signed-out"} state={host.inboxState()} host={host}
           activeKind={historyState.target?.kind === "inbox" ? historyState.target.inbox : null}
           onNavigate={inbox => host.navigateView({ kind: "inbox", inbox })}
           onBack={() => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.backFromManagement(); }} /></>}
-        compactConversation={view === "detail" ? {
+        compactConversation={view === "detail" && snapshot.activeChannel ? {
           context: compactContext, title: snapshot.title, onBack: backToConversations
         } : undefined}>
-      {view === "detail" && <div className="sp-mobile-channel-menu"><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ChannelActions compact snapshot={snapshot} host={host} /></div>}
+      {view === "detail" && <div className="sp-mobile-channel-menu"><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button>{directMembers(true)}<ChannelActions compact snapshot={snapshot} host={host} /></div>}
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
       <ViewHistoryControls inMenu history={host.viewHistory} snapshot={snapshot}
         onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
       <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
-      <PreviewManagement snapshot={snapshot} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate} captureUpdatePosition={() => {
+      <PreviewManagement snapshot={snapshot} onRetryDirectory={host.retryDirectory} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate} captureUpdatePosition={() => {
         if (host.community.selfId() !== owner) throw new Error("Kontoen vart endra. Start oppdateringa på nytt.");
         const positions = captureUpdatePosition(), current = host.snapshot();
         if (current.selection.channelId) host.navigateView({ kind: "conversation", channelId: current.selection.channelId,
@@ -534,7 +554,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       key={`${host.community.selfId() ?? ""}:${group.id}`} group={group} snapshot={snapshot} host={host.community}
       onNavigate={page => host.navigateView({ kind: "management", page })}
       onSelect={channelId => { reactionPicker.close(); host.navigateView({ kind: "conversation", channelId }); view = "detail"; update(); }} />,
-    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ChannelActions snapshot={snapshot} host={host} /></>,
+    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button>{directMembers()}<ChannelActions snapshot={snapshot} host={host} /></>,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}
