@@ -197,6 +197,19 @@
 }
 .sp-composer-symbol.sp-button:hover, .sp-composer-symbol.sp-button:focus-visible,
 .sp-message-symbol.sp-button:hover, .sp-message-symbol.sp-button:focus-visible { background: var(--sp-wash); color: var(--sp-text); }
+.sp-thread-icon { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.sp-theme .sp-thread-summary.sp-button {
+  display: inline-flex; align-items: center; gap: .35rem; min-height: 30px; max-width: 100%;
+  margin-top: .3rem; padding: .2rem .35rem; border: 0; background: transparent;
+  color: var(--sp-muted); font-size: .8125rem; line-height: 1.25; white-space: normal;
+}
+.sp-theme .sp-thread-summary.sp-button:hover, .sp-theme .sp-thread-summary.sp-button:focus-visible,
+.sp-theme .sp-thread-summary.sp-button[aria-expanded="true"] { background: var(--sp-wash); color: var(--sp-text); }
+.sp-thread-unread { color: var(--sp-text); font-weight: 600; }
+.sp-thread-unread::before { content: "·"; margin-right: .35rem; }
+.sp-thread-deleted-root { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; color: var(--sp-muted); font-size: .875rem; }
+.sp-thread-deleted-root .sp-thread-summary.sp-button { margin-top: 0; }
+@media (pointer: coarse) { .sp-theme .sp-thread-summary.sp-button { min-width: 44px; min-height: 44px; } }
 .sp-message-menu-dialog { display: grid; min-width: min(18rem, 72vw); gap: .25rem; }
 .sp-message-menu-dialog > .sp-button { justify-content: flex-start; }
 .sp-work-item-form { display: grid; gap: .75rem; min-width: min(24rem, 82vw); max-width: 100%; }

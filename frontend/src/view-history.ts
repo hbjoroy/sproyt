@@ -46,6 +46,7 @@ export function readViewTarget(href: string): ViewTarget | null {
         if (channelSection !== null && !validChannelSettingsSection(channelSection)) return null;
         destination = { kind: task, channelId, ...(channelSection !== null ? { channelSection } : {}) };
       }
+      if (task === "channel-threads" && id(channelId)) destination = { kind: task, channelId };
       if ((task === "channels" || task === "invite" || task === "rename-circle" || task === "circle-members") && id(circleId)) destination = { kind: task, circleId };
       return destination ? { kind: "management", page: { kind, destination } } : null;
     }

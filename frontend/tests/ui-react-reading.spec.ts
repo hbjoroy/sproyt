@@ -434,7 +434,7 @@ test("loading a hidden thread does not mark replies read and a peer reply preser
   });
   server.appendReply();
   await expect(thread.locator('[data-message-id="reply-20"]')).toHaveCount(1);
-  await expect(viewport(page).getByRole("button", { name: "21 svar i tråd", exact: true, includeHidden: true })).toHaveCount(1);
+  await expect(viewport(page).locator('[data-message-id="a-41"]').getByRole("button", { name: /^Opne tråd/, includeHidden: true })).toHaveCount(1);
   await expect.poll(async () => Math.abs(await thread.locator(`[data-message-id="${saved.id}"]`).evaluate(element =>
     element.getBoundingClientRect().top - element.closest(".sp-thread-replies")!.getBoundingClientRect().top) - saved.offset)).toBeLessThan(3);
   expect(server.threadAcknowledgements.at(-1)).toBe(180);

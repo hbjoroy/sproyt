@@ -68,6 +68,8 @@ export interface TimelineProps {
   readonly renderContent: (message: ChatMessage) => ReactNode;
   /** Permission checks, replies, reaction counts, edit and delete stay with the host. */
   readonly renderActions?: (message: ChatMessage, context?: { readonly threadParent: boolean }) => ReactNode;
+  /** A compact link below a root message, when a thread exists. */
+  readonly renderThreadSummary?: (message: ChatMessage) => ReactNode;
   readonly messageStatus?: (message: ChatMessage) => string | undefined;
   readonly onReactionRequest?: (message: ChatMessage, anchor: HTMLElement) => void;
 }
@@ -109,7 +111,7 @@ export function ConversationTimeline(props: TimelineProps) {
   </div>;
 }
 
-export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderAuthorStatus" | "renderContent" | "renderActions" | "messageStatus" | "onReactionRequest">;
+export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderAuthorStatus" | "renderContent" | "renderActions" | "renderThreadSummary" | "messageStatus" | "onReactionRequest">;
 
 export function formatMessageDateTime(sentAt: string): string {
   return new Date(sentAt).toLocaleString(["nn-NO", "nb-NO"], { dateStyle: "full", timeStyle: "medium" });
@@ -237,8 +239,9 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   if (message.deleted_at && !props.threadParent) return <>
     {props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
     {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
-    <div data-message-id={message.id} data-message-sequence={message.sequence}>
-      {props.renderActions?.(message, { threadParent: false })}
+    <div className="sp-thread-deleted-root" data-message-id={message.id} data-message-sequence={message.sequence}>
+      <span>Meldinga er sletta.</span>
+      {props.renderThreadSummary?.(message) ?? props.renderActions?.(message, { threadParent: false })}
     </div>
   </>;
   return <>{props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
@@ -254,6 +257,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
         actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}>
         {message.deleted_at ? <p>Meldinga er sletta.</p> : props.renderContent(message)}
+        {!props.threadParent && props.renderThreadSummary?.(message)}
     </Message>
     <span id={timestampTooltipId} className="sp-message-time-tooltip" role="tooltip">{fullTimestamp}</span>
     {earlyAdopter && <span id={earlyAdopterTooltipId} className="sp-early-adopter-tooltip" role="tooltip">Blant dei første 50 på Sprøyt</span>}

@@ -1,0 +1,14 @@
+.sp-theme .sp-thread-directory { max-width: 52rem; padding: 0 1rem 2rem; }
+.sp-theme .sp-thread-directory-context { color: var(--sp-muted); margin: 0 0 .8rem; }
+.sp-theme .sp-thread-directory-list { list-style: none; padding: 0; margin: 0; }
+.sp-theme .sp-thread-directory-list li { border-bottom: 1px solid var(--sp-line); }
+.sp-theme .sp-thread-directory-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem .8rem;
+  width: 100%; min-height: 44px; padding: .65rem .25rem; border: 0;
+  background: transparent; color: var(--sp-text); text-align: left; font: inherit; cursor: pointer;
+}
+.sp-theme .sp-thread-directory-item:hover, .sp-theme .sp-thread-directory-item:focus-visible { background: var(--sp-wash); }
+.sp-theme .sp-thread-directory-author { font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.sp-theme .sp-thread-directory-preview { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.sp-theme .sp-thread-directory-meta { grid-column: 1 / -1; color: var(--sp-muted); font-size: .875rem; }
+@media (pointer: coarse) { .sp-theme .sp-thread-directory-item { min-height: 48px; } }

@@ -2081,9 +2081,67 @@ impl ChatRepository for SqliteChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select r.parent_message_id,count(*) as reply_count,sum(case when r.sequence>coalesce(trm.last_read_sequence,0) and r.sender_id<>? then 1 else 0 end) as unread_count,max(r.sequence) as latest_sequence from messages r left join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=? where r.channel_id=? and r.parent_message_id is not null group by r.parent_message_id order by max(r.sequence)")
+            let rows = sqlx::query("select r.parent_message_id,sum(case when r.deleted_at is null then 1 else 0 end) as reply_count,sum(case when r.deleted_at is null and r.sequence>coalesce(trm.last_read_sequence,0) and r.sender_id<>? then 1 else 0 end) as unread_count,max(r.sequence) as latest_sequence from messages r left join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=? where r.channel_id=? and r.parent_message_id is not null group by r.parent_message_id order by max(r.sequence)")
                 .bind(actor.to_string()).bind(actor.to_string()).bind(channel_id.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(thread_summary_sqlite).collect()
+        })
+    }
+
+    fn thread_root_previews<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        root_ids: Vec<MessageId>,
+    ) -> RepositoryFuture<'a, Vec<crate::domain::ThreadRootPreview>> {
+        Box::pin(async move {
+            if root_ids.len() > crate::domain::THREAD_ROOT_PREVIEW_BATCH_MAX {
+                return Err(RepositoryError::Conflict);
+            }
+            let allowed = sqlx::query_scalar::<_, i64>(
+                "select 1 from channel_memberships where channel_id=? and user_id=?",
+            )
+            .bind(channel_id.to_string())
+            .bind(actor.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if root_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "select m.id, case when m.deleted_at is null then m.sender_display_name end as author, case when m.deleted_at is null then substr(m.body,1,512) end as preview_body, case when m.deleted_at is null then m.created_at end as sent_at, (m.deleted_at is not null) as deleted from messages m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=",
+            );
+            query
+                .push_bind(actor.to_string())
+                .push(" where m.channel_id=")
+                .push_bind(channel_id.to_string());
+            query.push(" and m.parent_message_id is null and exists (select 1 from messages r where r.parent_message_id=m.id and r.channel_id=m.channel_id) and m.id in (");
+            let mut ids = query.separated(", ");
+            for id in root_ids {
+                ids.push_bind(id.as_uuid().to_string());
+            }
+            ids.push_unseparated(")");
+            let rows = query
+                .build()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            rows.into_iter()
+                .map(|row| {
+                    let id: String = row.try_get("id").map_err(storage)?;
+                    let deleted = row.try_get::<i64, _>("deleted").map_err(storage)? != 0;
+                    Ok(crate::domain::ThreadRootPreview::from_parts(
+                        MessageId::from_uuid(uuid::Uuid::parse_str(&id).map_err(storage)?),
+                        row.try_get("author").map_err(storage)?,
+                        row.try_get("preview_body").map_err(storage)?,
+                        row.try_get("sent_at").map_err(storage)?,
+                        deleted,
+                    ))
+                })
+                .collect()
         })
     }
 
@@ -2104,7 +2162,7 @@ impl ChatRepository for SqliteChatRepository {
             }
             sqlx::query("insert into thread_read_markers(root_message_id,user_id,last_read_sequence,updated_at) values(?,?,?,?) on conflict(root_message_id,user_id) do update set last_read_sequence=max(thread_read_markers.last_read_sequence,excluded.last_read_sequence),updated_at=excluded.updated_at")
                 .bind(root_message_id.as_uuid().to_string()).bind(actor.to_string()).bind(requested).bind(persisted_now()).execute(&mut *tx).await.map_err(sql_error)?;
-            let row = sqlx::query("select r.parent_message_id,count(*) as reply_count,sum(case when r.sequence>trm.last_read_sequence and r.sender_id<>? then 1 else 0 end) as unread_count,max(r.sequence) as latest_sequence from messages r join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=? where r.parent_message_id=? group by r.parent_message_id,trm.last_read_sequence")
+            let row = sqlx::query("select r.parent_message_id,sum(case when r.deleted_at is null then 1 else 0 end) as reply_count,sum(case when r.deleted_at is null and r.sequence>trm.last_read_sequence and r.sender_id<>? then 1 else 0 end) as unread_count,max(r.sequence) as latest_sequence from messages r join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=? where r.parent_message_id=? group by r.parent_message_id,trm.last_read_sequence")
                 .bind(actor.to_string()).bind(actor.to_string()).bind(root_message_id.as_uuid().to_string()).fetch_one(&mut *tx).await.map_err(sql_error)?;
             let summary = thread_summary_sqlite(row)?;
             tx.commit().await.map_err(sql_error)?;

@@ -311,8 +311,10 @@ test("preview threads keep root and reply drafts separate, load replies, and res
   await expect(thread.getByText(answer, { exact: true })).toBeVisible();
   await expect(channel.getByText(answer, { exact: true })).toHaveCount(0);
   await thread.getByRole("button", { name: "Lukk tråden" }).click();
-  await expect(rootMessage.getByRole("button", { name: "1 svar" })).toBeFocused();
-  await rootMessage.getByRole("button", { name: "1 svar" }).click();
+  await expect(trigger).toBeFocused();
+  const threadLink = rootMessage.getByRole("button", { name: /^Opne tråd/ });
+  await expect(threadLink).toBeVisible();
+  await threadLink.click();
   await expect(thread.getByText(answer, { exact: true })).toBeVisible();
   expect(sends.filter(command => command.body === answer)).toEqual([expect.objectContaining({ parent_message_id: rootId, body: answer })]);
   expect(sockets).toBe(1);

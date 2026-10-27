@@ -2260,9 +2260,50 @@ impl ChatRepository for PostgresChatRepository {
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select r.parent_message_id,count(*) as reply_count,count(*) filter(where r.sequence>coalesce(trm.last_read_sequence,0) and r.sender_id<>$1) as unread_count,max(r.sequence) as latest_sequence from messages r left join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=$1 where r.channel_id=$2 and r.parent_message_id is not null group by r.parent_message_id order by max(r.sequence)")
+            let rows = sqlx::query("select r.parent_message_id,count(*) filter(where r.deleted_at is null) as reply_count,count(*) filter(where r.deleted_at is null and r.sequence>coalesce(trm.last_read_sequence,0) and r.sender_id<>$1) as unread_count,max(r.sequence) as latest_sequence from messages r left join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=$1 where r.channel_id=$2 and r.parent_message_id is not null group by r.parent_message_id order by max(r.sequence)")
                 .bind(*actor.as_uuid()).bind(*channel_id.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             rows.into_iter().map(thread_summary_postgres).collect()
+        })
+    }
+
+    fn thread_root_previews<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        root_ids: Vec<MessageId>,
+    ) -> RepositoryFuture<'a, Vec<crate::domain::ThreadRootPreview>> {
+        Box::pin(async move {
+            if root_ids.len() > crate::domain::THREAD_ROOT_PREVIEW_BATCH_MAX {
+                return Err(RepositoryError::Conflict);
+            }
+            let allowed = sqlx::query_scalar::<_, i32>(
+                "select 1 from channel_memberships where channel_id=$1 and user_id=$2",
+            )
+            .bind(*channel_id.as_uuid())
+            .bind(*actor.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            if allowed.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if root_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let ids: Vec<_> = root_ids.iter().map(|id| *id.as_uuid()).collect();
+            let rows = sqlx::query("select m.id, case when m.deleted_at is null then m.sender_display_name end as author, case when m.deleted_at is null then left(m.body,512) end as preview_body, case when m.deleted_at is null then m.created_at end as sent_at, (m.deleted_at is not null) as deleted from messages m join channel_memberships cm on cm.channel_id=m.channel_id and cm.user_id=$1 where m.channel_id=$2 and m.id=any($3) and m.parent_message_id is null and exists (select 1 from messages r where r.parent_message_id=m.id and r.channel_id=m.channel_id)")
+                .bind(*actor.as_uuid()).bind(*channel_id.as_uuid()).bind(ids).fetch_all(&self.pool).await.map_err(sql_error)?;
+            rows.into_iter()
+                .map(|row| {
+                    Ok(crate::domain::ThreadRootPreview::from_parts(
+                        MessageId::from_uuid(row.try_get("id").map_err(storage)?),
+                        row.try_get("author").map_err(storage)?,
+                        row.try_get("preview_body").map_err(storage)?,
+                        row.try_get("sent_at").map_err(storage)?,
+                        row.try_get("deleted").map_err(storage)?,
+                    ))
+                })
+                .collect()
         })
     }
 
@@ -2283,7 +2324,7 @@ impl ChatRepository for PostgresChatRepository {
             }
             sqlx::query("insert into thread_read_markers(root_message_id,user_id,last_read_sequence) values($1,$2,$3) on conflict(root_message_id,user_id) do update set last_read_sequence=greatest(thread_read_markers.last_read_sequence,excluded.last_read_sequence),updated_at=now()")
                 .bind(*root_message_id.as_uuid()).bind(*actor.as_uuid()).bind(requested).execute(&mut *tx).await.map_err(sql_error)?;
-            let row = sqlx::query("select r.parent_message_id,count(*) as reply_count,count(*) filter(where r.sequence>trm.last_read_sequence and r.sender_id<>$1) as unread_count,max(r.sequence) as latest_sequence from messages r join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=$1 where r.parent_message_id=$2 group by r.parent_message_id,trm.last_read_sequence")
+            let row = sqlx::query("select r.parent_message_id,count(*) filter(where r.deleted_at is null) as reply_count,count(*) filter(where r.deleted_at is null and r.sequence>trm.last_read_sequence and r.sender_id<>$1) as unread_count,max(r.sequence) as latest_sequence from messages r join thread_read_markers trm on trm.root_message_id=r.parent_message_id and trm.user_id=$1 where r.parent_message_id=$2 group by r.parent_message_id,trm.last_read_sequence")
                 .bind(*actor.as_uuid()).bind(*root_message_id.as_uuid()).fetch_one(&mut *tx).await.map_err(sql_error)?;
             let summary = thread_summary_postgres(row)?;
             tx.commit().await.map_err(sql_error)?;

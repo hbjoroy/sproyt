@@ -84,6 +84,21 @@ test("channel sections survive links and history without accepting unknown panel
   assert.equal(readViewTarget(`https://chat.test/?view=settings&section=community&task=channel&channel=${agentChannel}&panel=bad`), null);
 });
 
+test("channel thread overview round-trips through URL and account-scoped history", () => {
+  const target: ViewTarget = { kind: "management", page: { kind: "community", destination: { kind: "channel-threads", channelId: agentChannel } } };
+  const href = viewHref(target, "https://chat.test/?invite=secret&participant=alice&code=secret");
+  assert.equal(href, `https://chat.test/?view=settings&section=community&task=channel-threads&channel=${agentChannel}`);
+  assert.deepEqual(readViewTarget(href), target);
+  const f = fixture(); f.history.bindOwner("alice"); f.history.navigate(channel("other")); f.history.navigate(target);
+  assert.deepEqual(f.history.getSnapshot().target, target);
+  f.history.back(); assert.deepEqual(f.history.restore(f.port.history.state), channel("other"));
+  f.port.history.forward(); assert.deepEqual(f.history.restore(f.port.history.state), target);
+  for (const bad of ["", "\u0001", "x".repeat(129)]) {
+    const params = new URLSearchParams({ view: "settings", section: "community", task: "channel-threads", channel: bad });
+    assert.equal(readViewTarget(`https://chat.test/?${params}`), null);
+  }
+});
+
 test("destinations round-trip without leaking invitation or identity parameters into shared URLs", () => {
   const targets: ViewTarget[] = [channel("a"), { kind: "conversation", channelId: "a", messageId: "reply", sequence: 12, threadId: "root" },
     { kind: "directory", scope: "direct" }, { kind: "inbox", inbox: "mentions" },

@@ -282,6 +282,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             axum::routing::put(enable_channel_notifications).delete(disable_channel_notifications),
         )
         .route(
+            "/api/v1/channels/{id}/thread-root-previews",
+            post(crate::web::thread_previews::list).layer(DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/v1/circles/{id}/enrollment-invitations",
             post(create_enrollment_invitation),
         )

@@ -15,6 +15,8 @@ import type { AppUpdate, UpdatePosition } from "../../app-update";
 import { AppUpdateAction } from "./app-update-action";
 import { AgentSettingsDrafts } from "./agent-settings-drafts";
 import { GettingStarted } from "./getting-started";
+import { ThreadDirectory } from "./thread-directory";
+import type { ThreadPreviewApi } from "../../thread-previews";
 
 export type { ManagementTarget } from "../../application/management-target";
 type SettingsRow = { label: string; detail: string; target: ManagementTarget; aliases?: string };
@@ -24,7 +26,7 @@ const roleName = (role: string) => role === "owner" ? "Eigar" : role === "modera
 
 /** A single controlled destination, with a local fallback for standalone previews.
  * Opening this directory creates no invitation, credential or process. */
-export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition, target, onNavigate, onBack, onSelectChannel, onRetryDirectory, appearanceContent, helpContent, hideTrigger = false, focusMemberAction = false, channelNotificationsFor }: {
+export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition, target, onNavigate, onBack, onSelectChannel, onRetryDirectory, appearanceContent, helpContent, hideTrigger = false, focusMemberAction = false, channelNotificationsFor, threadPreviews, onRetryThreadSummaries, onOpenThread }: {
   snapshot: ConversationSnapshot;
   capabilities: { agent: boolean; heart: boolean };
   settings: PreviewSettingsHost;
@@ -43,6 +45,9 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   hideTrigger?: boolean;
   focusMemberAction?: boolean;
   channelNotificationsFor?: (channelId: string) => ChannelNotifications | undefined;
+  threadPreviews?: ThreadPreviewApi;
+  onRetryThreadSummaries?: () => void;
+  onOpenThread?: (channelId: string, rootId: string) => void;
 }) {
   const [localTarget, setLocalTarget] = useState<ManagementTarget | null>(null);
   const selfId = community.selfId();
@@ -152,6 +157,8 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     </Button>;
   };
   const circle = active && "circleId" in active ? snapshot.circles.find(circle => circle.id === active.circleId) : undefined;
+  const threadChannelId = active?.kind === "community" && active.destination.kind === "channel-threads"
+    ? active.destination.channelId : null;
   const accessEpoch = circle ? circleScopes.current.entries.get(circle.id)?.epoch : undefined;
   let available = true;
   if (active && "circleId" in active) {
@@ -163,7 +170,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
       const scopedCircle = snapshot.circles.find(circle => circle.id === destination.circleId);
       available = Boolean(scopedCircle) && (destination.kind !== "invite" || administrator(scopedCircle!.role))
         && (destination.kind !== "rename-circle" || scopedCircle!.role === "owner");
-    } else if (destination.kind === "channel") {
+    } else if (destination.kind === "channel" || destination.kind === "channel-threads") {
       available = snapshot.channels.some(channel => channel.id === destination.channelId);
     }
   } else if (active?.kind === "advanced") {
@@ -229,7 +236,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     {hideTrigger ? <button ref={trigger} type="button" hidden tabIndex={-1} aria-hidden="true" /> : <Button ref={trigger} onClick={event => {
       event.currentTarget.focus({ preventScroll: true }); openedFromTrigger.current = true; setQuery(""); navigate({ kind: "overview" });
     }}>Innstillingar</Button>}
-    {portalHost && createPortal(<DestinationNavigation navigation={active?.kind === "advanced" || active?.kind === "chat-agents" || (active?.kind === "community" && active.destination.kind === "channel") ? null : settingsNavigation} overview={active?.kind === "overview"}>
+    {portalHost && createPortal(<DestinationNavigation navigation={active?.kind === "advanced" || active?.kind === "chat-agents" || (active?.kind === "community" && (active.destination.kind === "channel" || active.destination.kind === "channel-threads")) ? null : settingsNavigation} overview={active?.kind === "overview"}>
     {active && !available && <DestinationPage open title="Ikkje tilgjengeleg" closeLabel="Tilbake" onClose={close}>
       <div className="sp-settings-page"><Status>Du har ikkje tilgang til denne sida no. Kretsen, kanalen eller rettane dine kan ha endra seg.</Status><Button onClick={() => navigate({ kind: "overview" })}>Til innstillingar</Button></div>
     </DestinationPage>}
@@ -266,7 +273,18 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     </DestinationPage>}
     {isDirectory && available && <CircleDirectory key={`${selfId}:${activeKey}`} onRetry={onRetryDirectory} invitationOnly={active?.kind === "community" && active.destination.kind === "accept-invitation"} snapshot={snapshot} host={community} onClose={close} row={row} />}
     {active && available && (active.kind === "profile" || active.kind === "notifications") && <PreviewSettingsDialog key={`${selfId}:${active.kind}`} kind={active.kind} host={settings} onClose={close} />}
-    {active?.kind === "community" && !isDirectory && available && <PreviewCommunity key={active.destination.kind === "channel" ? `${selfId}:channel:${active.destination.channelId}` : `${selfId}:${activeKey}`} destination={active.destination} snapshot={snapshot} host={community} onSelectChannel={onSelectChannel}
+    {threadChannelId && available && threadPreviews && selfId &&
+      <ThreadDirectory key={`${selfId}:${threadChannelId}`} owner={selfId} channelId={threadChannelId}
+        channelName={snapshot.channels.find(channel => channel.id === threadChannelId)?.name ?? "Samtale"}
+        summaries={snapshot.activeChannel?.id === threadChannelId ? snapshot.threadSummaries : []}
+        status={snapshot.activeChannel?.id === threadChannelId ? snapshot.threadSummaryStatus : { ready: false, loading: true, error: "" }}
+        previewGeneration={snapshot.threadPreviewGeneration} api={threadPreviews}
+        admitted={() => community.selfId() === selfId && boundary.current.owner === selfId && boundary.current.generation === generation
+          && latestSnapshot.current.activeChannel?.id === threadChannelId
+          && latestSnapshot.current.channels.some(channel => channel.id === threadChannelId)}
+        onRetrySummaries={() => onRetryThreadSummaries?.()}
+        onOpen={rootId => onOpenThread?.(threadChannelId, rootId)} onClose={close} />}
+    {active?.kind === "community" && active.destination.kind !== "channel-threads" && !isDirectory && available && <PreviewCommunity key={active.destination.kind === "channel" ? `${selfId}:channel:${active.destination.channelId}` : `${selfId}:${activeKey}`} destination={active.destination} snapshot={snapshot} host={community} onSelectChannel={onSelectChannel}
       focusMemberAction={active.destination.kind === "channel" && focusMemberAction}
       initialSection={active.destination.kind === "channel" ? active.destination.channelSection : undefined}
       channelNotifications={active.destination.kind === "channel" ? channelNotificationsFor?.(active.destination.channelId) : undefined}
