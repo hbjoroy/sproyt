@@ -1,7 +1,10 @@
 # Plan: ryddig oppsett og innstillingar i Sprøyt
 
-Dato: 26. oktober 2026. Status: navigasjonsleveransen og S2b/S2c er i Canary.
-Førstegongsoppleving og neste DM-pakke er implementerte og under validering.
+Dato: 26. oktober 2026. Avstemt mot kode og leveransar 27. oktober 2026.
+Status: navigasjonsleveransen, S2b/S2c og førstegongsoppleving/DM er i Canary.
+Den synlege omlegginga av hovudmeny, innboks og innstillingssider er
+implementert i [PR #306](https://github.com/hbjoroy/sproyt/pull/306).
+CI-, utrullings- og akseptstatus for denne pakka blir førte i PR-en.
 Grunnlag: `main` på `44bc12c9a0d000f87c82dec07a88d19b0371c9bb`.
 
 Gjennomføring er starta etter nytt oppdrag 26. oktober. Det første snittet
@@ -47,6 +50,110 @@ nøklar, invitasjonar eller prosessar.
 Dette er vår designvurdering basert på kjeldene. Dei ulike plattformene er
 ikkje samde om alle detaljar, som plassering av konto og appinformasjon. Vi
 vel ei sams produktinndeling og bruker native presentasjon på kvar plattform.
+
+## 2a. Avstemming og ny kjeldekontroll – 27. oktober
+
+Dette vidarefører planen frå 26. oktober. Det erstattar ikkje vedtaka med
+ein ny plan for å flytte symbol. Status er kontrollert mot kode og PR-ar;
+vurderingane nedanfor er tilrådingar for den attståande gjennomføringa.
+Astra har gjort ein ny, avgrensa gjennomgang av plan og presentasjonskode.
+
+Tabellen og kodeobservasjonane i denne avstemminga skildrar utgangspunktet
+`4ab7e8d` før gjennomføringa av PR #306. Pakka implementerer dei ordinære
+sidene, funksjonsplasseringane, innbokskontrakten og sambandsvisinga nedanfor.
+Ho gjer ikkje heile S3–S5 eller alle framtidige skjemaforbetringar ferdige.
+
+| Del av planen | Faktisk status | Det som står att |
+| --- | --- | --- |
+| S0: handlingskart og skisser | Delvis. Kjeldemønster og målarkitektur er dokumenterte. | Full sporbar plassering av eksisterande handlingar og tre konkrete flytar. |
+| S1a: navigasjonsgrunnlag | Levert til Canary. | Bevare adresser, historikk, utkast og eigarskap når presentasjonen blir bytt. |
+| S1b: personlege sider | Delvis. Søk og grupper finst. | Vanlege sider; hovudinngangen blandar framleis personlege val og administrasjon. |
+| S2a: krets og kanal | Delvis. Kontekstsnarvegar og eksplisitte mål finst. | Fullføre eigne ressursflater og fjerne avhengigheit av aktiv samtale i global meny. |
+| S2b/S2c: agentoppsett | Canary, PR #304 / GitOps #271. | Brukaraksept og eventuell seinare produksjonspromotering. |
+| Førstegongsoppleving og DM | Canary, PR #305 / GitOps #272. | Brukarprøving; ikkje ein uferdig implementasjonsetappe. |
+| S3/S4/S5 | Framleis attståande. | Prioriter synleg fullføring av S1b/S2a og relevant menyopprydding før breiare prosess-/native-arbeid. |
+
+Konkret kodegrunnlag: `HeaderActions` er framleis ein panelmeny med knappar;
+`PreviewManagement` blandar personlege val, ny DM, Felles, kanaloppsett og
+prosess-/integrasjonsval. Oversikt og mange detaljflater bruker `Dialog`.
+At berre éin modal er aktiv, oppfyller ikkje vedtaket om vanlege sider.
+`PreviewInboxes` legg uleste meldingar, uleste omtalar og opne personlege
+oppgåver saman i eitt merke. Det er tre ulike storleikar, og omtalar kan
+overlappe med ulesttalet. `ConnectionIndicator` viser eit passivt symbol og
+utleier gjenoppretting frå statustekst; han tilbyr inga manuell handling.
+
+### Mønster som er undersøkte på nytt
+
+Primærkjeldene er lesne 27. oktober. Dette er dokumenterte produktmønster,
+ikkje påstandar om at alle klientversjonar har identisk plassering.
+
+| Kjelde | Dokumentert mønster | Vår vurdering for Sprøyt |
+| --- | --- | --- |
+| [Slack Activity](https://slack.com/intl/en-gb/help/articles/19693583638803-Get-your-work-done-from-the-Activity-view) | Eiga aktivitetsflate, uleste varsel som merke, filter og tett/detaljert presentasjon. | Fast inngang og kompakte rader. Sprøyt skal ikkje få eit nytt sett uavhengige lesemarkørar eller ei brei feed utan datagrunnlag. |
+| [Teams Activity](https://support.microsoft.com/en-us/teams/notifications-settings/explore-the-activity-feed-in-microsoft-teams) og [personlege innstillingar](https://support.microsoft.com/en-us/teams/personal/get-started/getting-to-know-microsoft-teams-personal) | Aktivitet og profil/innstillingar er forskjellige inngangar. | Skil det som krev merksemd frå korleis brukaren konfigurerer appen. |
+| [Teams kanal-/kretsadministrasjon](https://support.microsoft.com/en-gb/teams/teams-channels/create-a-standard-private-or-shared-channel-in-microsoft-teams) | Medlemmer og kanalval blir opna ved den aktuelle gruppa/kanalen. | Vidarefør våre eksisterande ressursmenyar og rettar; ikkje kopier Microsoft sin organisasjonsmodell. |
+| [Discord Inbox](https://support.discord.com/hc/en-us/articles/360045027712-Inbox-FAQ) | Desktop/nett skil uleste frå omtalar og tilbyr hopp til kjeldesamtalen. | Bevar skiljet og presis tilbakeveg. Ordet «Innboks» er ikkje i seg sjølv feil; innhald og oppførsel må avklarast før omdøyping. |
+| [Slack tilkoplingsfeil](https://slack.com/help/articles/205138367-Troubleshoot-connection-issues) | Synlege feilmeldingar, banner ved WebSocket-problem og handling for omstart ved tilkoplingssvikt. | Diskret normaltilstand; forståeleg tekst og relevant handling ved avvik. Logoen kan supplere dette, men skal ikkje vere einaste forklaring eller skjult reparasjonsknapp. |
+
+### Neste levering: fullfør den eksisterande arkitekturen
+
+1. **Spor kvar handling før flytting.** Bruk tabellen under som startkart og
+   kontroller mot kode/testar. Lag tre klikkbare flytar: personlege val,
+   krets/kanaladministrasjon og innboks → kjeldemelding → tilbake. Vis mobil
+   og stor skjerm før detaljane i toppfeltet blir låste.
+2. **Felles sideskall for S1b/S2a.** Innstillingar og innboks får ordinære,
+   adresserbare sider med overskrift, Back og liste/detalj. Bevar samtale,
+   tråd, utkast, vedlegg og leseposisjon i bakgrunnen. Korte val og
+   stadfestingar kan framleis vere dialogar. Gjenbruk eksisterande mål og
+   host-/serverkontraktar; inga ny rettigheits- eller prosessløysing.
+3. **Fullfør plasseringa, deretter fjern overgangsmenyen.** Personlege sider
+   viser personlege val. Krets og kanal viser si administrasjon. Ny DM,
+   kanaloppdaging og historikk blir verande ved samtalenavigasjonen.
+   På stor skjerm kan innstillingar/hjelp få fast plass i sidefeltet; på
+   mobil skal den faste inngangen vere tilgjengeleg utan ei ny permanent
+   verktøylinje som tek unødig plass frå meldingane.
+4. **Rydd innboks og teljing.** Bevar dei eksisterande visingane Uleste,
+   Omtalar og personlege Oppgåver med eigne, forklarte tal. Tilråding for
+   første snitt: hovudmerket tel stadfesta uleste omtalar og blir omtala som
+   nettopp det. Uleste-visinga viser til dømes «12 uleste meldingar i 3
+   samtalar», medan personlege Oppgåver viser tal på opne oppgåver. Tomt og
+   enno ikkje henta er forskjellige tilstandar. Prosessarbeid blir i kanalane
+   sine; eksisterande personlege oppgåver med prosesslenkje blir bevarte.
+   Ingen ny generell arbeidskø eller ny lesemarkør blir laga.
+   Behald «Innboks» inntil innhaldsavgjerda er prøvd; «Aktivitet» er aktuelt
+   dersom vi seinare faktisk har fleire personlege hendingstypar å vise.
+5. **Gjer sambandet forståeleg og mogleg å gjenopprette.** Logoen kan vise
+   diskret tilstand med form, ikkje berre farge. På mobil er han framleis
+   Samtalar-knapp. Ved vedvarande brot viser vi kort tekst og «Kopla til att»;
+   utløpt økt tilbyr rett innloggingshandling. Ei fungerande SSE-tilkopling
+   er tilkopla, også medan ein usynleg WS-probe går. Bruk eksisterande
+   samband-/økttilstand og gjenopprettingsveg, ikkje nye helseprober eller
+   nye parallelle transportar. Manuelt forsøk får ventestatus og vern mot
+   gjentekne klikk. «Last inn på nytt» er ein reserveveg som sikrar bevarbare
+   utkast og handsamar pågåande vedlegg/ufullførte skjema før reload.
+
+| Handling i dagens overgangsmeny | Fast heim i målarkitekturen |
+| --- | --- |
+| Profil/status, varsling, personvern og eige agentminne | Personlege innstillingar; kretsval for minne opnar same personlege mål. |
+| Byt tema og rå/formaterte meldingar | Utsjånad og bruk, med korrekt klient-/kontomerking. |
+| Logg ut | Konto / kort personleg meny. Ingen ny øktadministrasjon. |
+| Ny DM og finn person | Direktemeldingsoversikta. |
+| Finn/opprett krets, bruk invitasjon og finn kanalar | Samtaleoversikta med tydelege neste handlingar. |
+| Medlemmer, invitasjonar, kanalar og agentar i ein krets | Den namngjevne kretsen; «Administrer krets» kan stå som kort snarveg. |
+| Felles-kanalar og global invitasjon | Felles med eksisterande tilgangsreglar. |
+| Kanaldetaljar, medlemmer, kanalvarsel og integrasjonar | Den namngjevne kanalen eller «Om samtalen» for DM. |
+| Mellombels ekstern agenttilgang og prosessoppsett | Integrasjonar/prosessoppsett ved vald kanal. Teknisk inspeksjon under Drift berre ved eksisterande rett. |
+| Gå til siste, Back/Forward og Nyleg | Samtale-/historikknavigasjon. |
+| Kom i gang, versjon, oppdatering og sambandsdetaljar | Hjelp / Om Sprøyt. Avvik med nødvendig handling blir òg synlege ved chatten. |
+| Uleste, omtalar og personlege oppgåver | Innboks med tydelege visingar; prosessoppgåver blir verande i kanalen. |
+| Til fullt grensesnitt | Berre den eksplisitte utviklarførehandsvisinga; ingen ordinær produktinngang. |
+
+Dette er ei presentasjons- og navigasjonslevering. Ho krev ikkje ny database,
+fleire prober eller ombygging av alle skjema. Før gamle inngangar blir
+fjerna, skal handlingskartet vise at kvar eksisterande funksjon har ein
+testa heim. Aksepten omfattar dei tre komplette flytane, korrekt teljing,
+offline/reauth/SSE, mobil/tastatur, kontobyte og bevarte utkast. Ny kode og
+Canary-utrulling blir ei eiga gjennomføring etter denne planavstemminga.
 
 ## 3. Informasjonsarkitektur
 

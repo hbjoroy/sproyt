@@ -1,4 +1,5 @@
-import { Button, Dialog, Status } from "@sproyt/ui/react";
+import { DestinationPage } from "./workspace-page";
+import { Button, Status } from "@sproyt/ui/react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CircleChatAgent, CircleChatAgentApi, ChannelChatAgents } from "../../chat-agents";
 import type { Channel } from "../../types";
@@ -193,14 +194,14 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, channels = [
     <SettingsRow label="Kanaltilgang" detail="Vel kanal og kontroller kva agentar som har tilgang" onClick={() => navigate({ kind: "chat-agents", circleId, panel: "channels",
       ...(managedChannels.some(channel => channel.id === preferredChannelId) ? { channelId: preferredChannelId } : {}) })} />
   </>;
-  return <Dialog open title={`Agentar i ${circleName}`} closeLabel="Lukk agentar" onClose={onClose}>
+  return <DestinationPage open title={`Agentar i ${circleName}`} closeLabel="Lukk agentar" onClose={onClose}>
     <div className="sp-agent-settings">
       <SettingsContext scope={`${circleName} / Agentar${agent ? ` / ${agent.displayName}` : ""}`} role={role === "owner" ? "Eigar" : "Moderator"} />
       {view.agentId && <Button variant="quiet" aria-label="Til agentlista" onClick={() => navigate({ kind: "chat-agents", circleId })}>← Agentar</Button>}
       {agent && <h3 className="sp-agent-detail-heading">{agent.displayName}</h3>}
       {content}
     </div>
-  </Dialog>;
+  </DestinationPage>;
 }
 
 function AgentChannelStatus({ api, channel, agent, modelConfigured, admitted, onAccess }: {

@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test } from "@playwright/test";
 
 test("touch controls remain usable after closing dialogs and reloading", async ({ browser, baseURL }) => {
@@ -13,9 +14,9 @@ test("touch controls remain usable after closing dialogs and reloading", async (
     await input.tap();
     await expect(input).toBeFocused();
     await input.fill("Draft survives dialog");
-    await app.getByRole("button", { name: "Meny", exact: true }).tap();
+
     await app.getByRole("button", { name: "Innstillingar", exact: true }).tap();
-    const dialog = app.getByRole("dialog", { name: "Innstillingar" });
+    const dialog = destinationSurface(app, "Innstillingar", false);
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Lukk innstillingane" }).tap();
     await expect(dialog).toBeHidden();

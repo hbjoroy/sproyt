@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function enter(page: Page, enabled = true) {
@@ -15,7 +16,7 @@ async function enter(page: Page, enabled = true) {
 async function closeManagedDialog(page: Page) {
   const preview = page.locator("#sproyt-react-preview");
   const before = page.url();
-  const dialogs = preview.getByRole("dialog");
+  const dialogs = preview.locator("[data-workspace-page], dialog[open]");
   const previous = await dialogs.count() ? await dialogs.last().elementHandle() : null;
   // A local popup can sit above a management dialog without changing its URL.
   const routed = !!previous && new URL(before).searchParams.get("view") === "settings"
@@ -31,28 +32,30 @@ async function closeManagedDialog(page: Page) {
   } else if (routed) await expect(dialogs).toHaveCount(0);
 }
 async function menu(preview: Locator, label: string) {
-  const menu = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
+  const menu = destinationSurface(preview, "Innstillingar", true);
   for (let depth = 0; depth < 4 && !await menu.isVisible(); depth++) {
-    const dialogs = preview.getByRole("dialog");
+    const dialogs = preview.locator("[data-workspace-page], dialog[open]");
     if (!await dialogs.count()) break;
     await expect(dialogs).toHaveCount(1);
     await closeManagedDialog(preview.page());
   }
   if (!await menu.isVisible()) {
     const trigger = preview.getByRole("button", { name: "Innstillingar", exact: true });
-    if (!await trigger.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
+
     await trigger.click();
   }
-  await menu.getByRole("button", { name: label, exact: true }).click();
+  const action = menu.getByRole("button", { name: label, exact: true });
+  if (!await action.isVisible()) await menu.getByRole("searchbox", { name: "Søk i innstillingar" }).fill(label);
+  await action.click();
 }
 async function owner(preview: Locator) {
   await menu(preview, "Ny vennekrets");
-  const dialog = preview.getByRole("dialog", { name: "Ny vennekrets", exact: true });
+  const dialog = destinationSurface(preview, "Ny vennekrets", true);
   const name = `Avanserte funksjonar ${Date.now()}`;
   await dialog.getByLabel("Namn på vennekrets").fill(name);
   await dialog.getByRole("button", { name: "Opprett vennekrets" }).click();
   await expect(dialog).toHaveCount(0);
-  const settings = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
+  const settings = destinationSurface(preview, "Innstillingar", true);
   if (await settings.isVisible()) {
     await settings.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
     await expect(settings).toHaveCount(0);
@@ -70,7 +73,7 @@ async function owner(preview: Locator) {
 
 test("feature flags hide agent/Heart and member role hides Grafana", async ({ page }) => {
   const preview = await enter(page, false);
-  await preview.getByRole("button", { name: "Meny", exact: true }).click();
+
   await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
   await expect(preview.getByRole("button", { name: "Mellombels tilgang for ekstern agent", exact: true })).toHaveCount(0);
   await expect(preview.getByRole("button", { name: "Heart og planlegging", exact: true })).toHaveCount(0);
@@ -88,7 +91,7 @@ test("real short-lived agent grants both scopes, clears secret on close and reta
   await expect(preview.getByRole("button", { name: "Lag kortliva tilgang" })).toHaveCount(0);
   await closeManagedDialog(page);
   await expect(preview.getByRole("button", { name: "Mellombels tilgang for ekstern agent", exact: true })).toHaveCount(0);
-  const agent = preview.getByRole("dialog", { name: "Agenttilgang", exact: true });
+  const agent = destinationSurface(preview, "Agenttilgang", true);
   await owner(preview);
   await closeManagedDialog(page);
   await preview.getByRole("textbox", { name: "Skriv melding" }).fill("agentutkast");
@@ -120,7 +123,7 @@ test("failed agent grant rolls back and failed rollback keeps explicit revoke an
     return route.continue();
   });
   const preview = await enter(page); await owner(preview); await menu(preview, "Mellombels tilgang for ekstern agent");
-  const agent = preview.getByRole("dialog", { name: "Agenttilgang", exact: true });
+  const agent = destinationSurface(preview, "Agenttilgang", true);
   await agent.getByRole("button", { name: "Lag kortliva tilgang" }).click();
   await expect(agent).toContainText("tilbakekalling feila");
   await expect(agent.getByLabel("Agentcredential", { exact: true })).toHaveCount(0);
@@ -139,7 +142,7 @@ test("Grafana creation retries, exposes token once and clears it on details clos
   });
   const preview = await enter(page); await owner(preview);
   await menu(preview, "Kanaldetaljar, medlemmer og integrasjonar");
-  const dialog = preview.getByRole("dialog", { name: "Kanaldetaljar: Prat", exact: true });
+  const dialog = destinationSurface(preview, "Kanaldetaljar: Prat", true);
   await dialog.getByRole("button", { name: "Lag Grafana-nøkkel" }).click();
   await expect(dialog).toContainText("Grafana er mellombels utilgjengeleg");
   await dialog.getByRole("button", { name: "Lag Grafana-nøkkel" }).click();
@@ -169,7 +172,7 @@ test("Heart enables feature, starts scoped process, retries status and sends ins
     return route.fulfill({ status: 204 });
   });
   const preview = await enter(page); await owner(preview); await menu(preview, "Heart og planlegging");
-  const dialog = preview.getByRole("dialog", { name: "Heart og planlegging", exact: true });
+  const dialog = destinationSurface(preview, "Heart og planlegging", true);
   await dialog.getByRole("button", { name: "Slå på event-planlegging" }).click();
   await expect(dialog).toContainText("Event-planlegging er slått på");
   await dialog.getByLabel("Tittel på planlegging").fill("Felles middag");

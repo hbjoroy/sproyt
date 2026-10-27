@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page } from "@playwright/test";
 
 async function poisonLegacyComposer(page: Page) {
@@ -46,20 +47,18 @@ test("React draft state and sends survive poisoned hidden controls, channel chan
   await expect(composer).toHaveValue("");
   await composer.fill("kanalutkast utan skjult felt");
 
-  if (!await preview.getByRole("button", { name: "Innstillingar", exact: true }).isVisible()) {
-    await preview.getByRole("button", { name: "Meny", exact: true }).click();
-  }
+
   await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
-  await preview.getByRole("dialog", { name: "Innstillingar" }).getByRole("button", { name: "Kanalar i Felles", exact: true }).click();
-  const channels = preview.getByRole("dialog", { name: "Kanalar i Felles" });
+  await destinationSurface(preview, "Innstillingar", false).getByRole("searchbox", { name: "Søk i innstillingar" }).fill("Kanalar i Felles");
+  await destinationSurface(preview, "Innstillingar", false).getByRole("button", { name: "Kanalar i Felles", exact: true }).click();
+  const channels = destinationSurface(preview, "Kanalar i Felles", false);
   const channelName = `Modellkanal ${Date.now()}`;
   await channels.getByRole("button", { name: "Ny kanal i Felles", exact: true }).click();
-  const create = preview.getByRole("dialog", { name: "Ny kanal i Felles", exact: true });
+  const create = destinationSurface(preview, "Ny kanal i Felles", true);
   await create.getByLabel("Kanalnamn").fill(channelName);
   await create.getByLabel("Kanaltype").selectOption("public");
   await create.getByRole("button", { name: "Opprett kanal" }).click();
-  await expect(channels).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await expect(create).toHaveCount(0);
   await expect(composer).toHaveValue("");
   await composer.fill("anna kanalutkast");
   const shared = preview.locator('[data-conversation-group="scope:shared"]');

@@ -46,6 +46,7 @@ import type { ManagementTarget } from "../../application/management-target";
 import { ViewHistoryControls } from "./view-history-controls";
 import type { ShareTarget } from "../../share-target";
 import { AgentLocationSharingDialog } from "./agent-location-sharing";
+import { ConnectionHealth, type ConnectionHealthState } from "./connection-health";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly favorites: import("../../circle-favorites").CircleFavorites;
@@ -80,6 +81,8 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly loadOlder: () => void;
   readonly retryHistory: () => void;
   readonly retryDirectory: () => void;
+  readonly retryConnection: () => Promise<void>;
+  readonly connectionHealth: () => ConnectionHealthState;
   readonly acknowledgeVisible: (key: string, messageIds: readonly string[]) => void;
   readonly isOwnMessage: (message: ChatMessage) => boolean;
   readonly takeScrollIntent: () => Readonly<{
@@ -146,10 +149,9 @@ function ChannelMembersIcon() {
   </svg>;
 }
 
-function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean }) {
+function ChannelActions({ snapshot, host, compact = false, onDetails }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean;
+  readonly onDetails: (channelId: string, focusMemberAction: boolean) => void }) {
   const [open, setOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [focusMemberAction, setFocusMemberAction] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   type AgentTicket = { owner: string; channelId: string; channelName: string; privateChannel: boolean;
     key: string; epoch: number; api: CircleChatAgentApi };
@@ -184,16 +186,16 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
     || (channel.kind !== "private" && channel.role === "member" && snapshot.circles.some(circle =>
       circle.id === channel.circle_id && ["owner", "moderator"].includes(circle.role))));
   const notifications = conversation?.notifications;
-  const openDetails = () => { setFocusMemberAction(false); setOpen(false); requestAnimationFrame(() => setDetailsOpen(true)); };
+  const openDetails = (focusMemberAction = false) => { setOpen(false); onDetails(channel.id, focusMemberAction); };
   return <>
     {!compact && <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
-      aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={openDetails}><ChannelMembersIcon /></Button>
+      aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={() => openDetails()}><ChannelMembersIcon /></Button>
     }<Button className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"} variant="quiet"
       aria-label="Kanalval" title="Kanalval" onClick={() => setOpen(true)}><span aria-hidden="true">⋯</span>{compact && <span>Kanalval</span>}</Button>
     <Dialog open={open} title={`Kanalval: ${channel.name}`} closeLabel="Lukk kanalvala"
       onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
       <div className="sp-channel-menu-dialog">
-        <Button variant="quiet" onClick={openDetails}><ChannelMembersIcon /><span>Medlemmer og kanalomtale</span></Button>
+        <Button variant="quiet" onClick={() => openDetails()}><ChannelMembersIcon /><span>Medlemmer og kanalomtale</span></Button>
         {mayManageAgents && <Button variant="quiet" onClick={() => {
           if (!owner) return;
           const captured = { key: agentScope.current.key, epoch: agentScope.current.epoch };
@@ -203,7 +205,7 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
           setOpen(false); setAgentTicket(ticket);
         }}>Agentar i kanalen</Button>}
         {["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
-          setFocusMemberAction(true); setOpen(false); requestAnimationFrame(() => setDetailsOpen(true));
+          openDetails(true);
         }}><ChannelMembersIcon /><span>Legg til eller inviter kanalmedlem</span></Button>}
         {snapshot.circles.some(circle => circle.id === channel.circle_id && circle.role === "owner") && <Button variant="quiet"
           onClick={() => { setOpen(false); setInviteOpen(true); }}>Inviter til kretsen</Button>}
@@ -213,6 +215,12 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
         </Button>}
         {notifications?.error && <Status tone="error">{notifications.error}</Status>}
         {open && <ProcessPilotChannelAction key={`${host.processPilotIdentity()}:${channel.id}`} api={host.processPilot} channelId={channel.id} />}
+        {host.managementCapabilities().agent && ["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
+          setOpen(false); host.navigateView({ kind: "management", page: { kind: "advanced", feature: "agent", channelId: channel.id } });
+        }}>Mellombels tilgang for ekstern agent</Button>}
+        {host.managementCapabilities().heart && <Button variant="quiet" onClick={() => {
+          setOpen(false); host.navigateView({ kind: "management", page: { kind: "advanced", feature: "heart", channelId: channel.id } });
+        }}>Prosessoppsett</Button>}
         <Button variant="quiet" onClick={() => { setOpen(false); setLocationOpen(true); }}><span aria-hidden="true">⌖</span><span>Del posisjon med agent</span></Button>
         {!confirmLeave ? <Button variant="danger" onClick={() => setConfirmLeave(true)}>Forlat kanalen</Button>
           : <div className="sp-leave-confirm" role="group" aria-label="Stadfest at du vil forlate kanalen">
@@ -229,8 +237,6 @@ function ChannelActions({ snapshot, host, compact = false }: { readonly snapshot
         {leaveError && <Status tone="error">{leaveError}</Status>}
       </div>
     </Dialog>
-    {detailsOpen && <PreviewCommunity destination={{ kind: "channel", channelId: channel.id }} snapshot={snapshot} host={host.community} focusMemberAction={focusMemberAction}
-      onNavigate={() => {}} onClose={() => setDetailsOpen(false)} />}
     {agentTicket && mayManageAgents && agentTicket.key === agentScope.current.key && agentTicket.epoch === agentScope.current.epoch
       && <ChannelChatAgentsDialog key={`${agentTicket.owner}:${agentTicket.channelId}:${agentTicket.epoch}`} api={agentTicket.api}
         channelId={agentTicket.channelId} channelName={agentTicket.channelName} privateChannel={agentTicket.privateChannel}
@@ -404,7 +410,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let mounted: ReturnType<typeof mountConversationView> | undefined;
   let resumedThread = false;
   let renderedOwner = host.community.selfId();
+  let renderedOwnerEpoch = 0;
   let renderedEntry = "";
+  let memberFocus: { owner: string; channelId: string; historyEntryId: string } | null = null;
   const reactionPicker = createPreviewReactionPicker(host);
   const restorePosition = (key: string) => host.appUpdate.resumePosition(host.processPilotIdentity(), key);
   const captureReadingPosition = () => host.viewHistory.capture(captureUpdatePosition());
@@ -438,10 +446,19 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const snapshot = host.snapshot();
     const owner = host.community.selfId();
     if (owner !== renderedOwner) {
+      renderedOwnerEpoch++; memberFocus = null;
       renderedOwner = owner; channelScroll.reset(); threadScroll.reset(); resumedThread = false; renderedEntry = "";
       reactionPicker.close();
     }
     const historyState = host.viewHistory.getSnapshot();
+    const ownerEpoch = renderedOwnerEpoch;
+    if (memberFocus && (memberFocus.owner !== owner || memberFocus.historyEntryId !== historyState.entryId
+      || historyState.target?.kind !== "management" || historyState.target.page.kind !== "community"
+      || historyState.target.page.destination.kind !== "channel" || historyState.target.page.destination.channelId !== memberFocus.channelId)) memberFocus = null;
+    const pageKey = owner && (historyState.target?.kind === "management" || historyState.target?.kind === "inbox")
+      ? `${owner}:${historyState.entryId}` : undefined;
+    channelScroll.setPaused(Boolean(pageKey));
+    threadScroll.setPaused(Boolean(pageKey));
     if (!snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && historyState.target?.kind !== "conversation") view = "list";
     if (historyState.entryId !== renderedEntry) {
       renderedEntry = historyState.entryId;
@@ -488,19 +505,35 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const compactContext = snapshot.activeChannel?.is_direct ? snapshot.activeChannel.direct_user_id ? "Direkte" : "Gruppesamtale" : snapshot.activeChannel?.circle_id
       ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel?.circle_id)?.name ?? "Vennekrets"
       : snapshot.activeChannel ? "Felles" : undefined;
-    const backToConversations = () => { host.navigateView({ kind: "directory", scope: snapshot.activeChannel?.is_direct ? "direct" : "circles" }); view = "list"; update(); };
+    const backToConversations = () => {
+      const scope = snapshot.activeChannel?.is_direct ? "direct" : "circles";
+      if (historyState.target?.kind !== "directory" || historyState.target.scope !== scope) host.navigateView({ kind: "directory", scope });
+      view = "list"; update();
+    };
     const openCommunity = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "circles" } } });
     const newDirect = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "people" } } });
     const openInvitation = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "accept-invitation" } } });
+    const openDetails = (channelId: string, focusMemberAction: boolean) => {
+      const admitted = () => !disposed && !!owner && host.community.selfId() === owner && renderedOwnerEpoch === ownerEpoch;
+      if (!admitted() || host.viewHistory.getSnapshot().entryId !== historyState.entryId
+        || host.snapshot().activeChannel?.id !== channelId) return;
+      host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "channel", channelId } } });
+      const opened = host.viewHistory.getSnapshot();
+      if (!admitted() || opened.target?.kind !== "management" || opened.target.page.kind !== "community"
+        || opened.target.page.destination.kind !== "channel" || opened.target.page.destination.channelId !== channelId) return;
+      memberFocus = focusMemberAction ? { owner: owner!, channelId, historyEntryId: opened.entryId } : null;
+      update();
+    };
     const directMembers = (compact = false) => snapshot.activeChannel?.is_direct ? <Button variant="quiet"
       className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"}
-      aria-label={`Medlemmer i ${snapshot.title}`} title="Om samtalen" onClick={() => host.navigateView({ kind: "management",
-        page: { kind: "community", destination: { kind: "channel", channelId: snapshot.activeChannel!.id } } })}>
+      aria-label={`Medlemmer i ${snapshot.title}`} title="Om samtalen" onClick={() => openDetails(snapshot.activeChannel!.id, false)}>
       <ChannelMembersIcon />{compact && <span>Om samtalen</span>}</Button> : null;
     const showWelcome = !snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && !snapshot.directory.error
       && !new URL(window.location.href).searchParams.has("invite") && historyState.target?.kind !== "conversation";
     return createConversationViewProps(snapshot, {
-    runtime: host.runtime, theme: host.theme(), view,
+    runtime: host.runtime, theme: host.theme(), view, pageKey,
+    navigationFooter: <ViewHistoryControls inMenu history={host.viewHistory} snapshot={snapshot}
+      onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />,
     onFindChannels: openCommunity, onInvitation: openInvitation,
     onGuide: () => host.navigateView({ kind: "management", page: { kind: "welcome" } }),
     emptyContent: !snapshot.activeChannel ? showWelcome ? <GettingStarted mode="welcome" onFindChannels={openCommunity}
@@ -513,27 +546,35 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     directoryScope: historyState.target?.kind === "directory" ? historyState.target.scope : undefined,
     onDirectoryScopeChange: scope => host.navigateView({ kind: "directory", scope }),
     recentChannelIds: historyState.recent.flatMap(item => item.target.kind === "conversation" ? [item.target.channelId] : []),
-    header: <><AppUpdateNotice update={host.appUpdate} /><ReceivedShares target={host.shares} snapshot={snapshot} />{host.runtime.getSnapshot().session.reauthenticationRequired && <Status tone="error">
-        Økta må stadfestast før Sprøyt kan halde fram. Utkasta dine blir lagra først. <Button onClick={host.reauthenticateNow}>Logg inn på nytt</Button>
-      </Status>}
+    header: <><AppUpdateNotice update={host.appUpdate} /><ReceivedShares target={host.shares} snapshot={snapshot} />
       {host.navigationNotice() && <Status tone="error">{host.navigationNotice()}</Status>}
       {host.hasLegacyDraft() && <Status>Eit eldre lokalt utkast manglar kontomerking. <Button onClick={host.recoverLegacyDraft}>Hent eldre utkast</Button></Status>}
-      <HeaderActions navigationKey={historyState.entryId} primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
+      <HeaderActions navigationKey={historyState.entryId} connection={host.connectionHealth()}
+        onConversations={backToConversations}
+        onLatest={channelScroll.goToLatest}
+        onSettings={() => host.navigateView({ kind: "management", page: { kind: "overview" } })}
+        primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
         onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
+        {view === "detail" && !pageKey && <div className="sp-mobile-header-channel-actions">{snapshot.activeChannel?.is_direct
+          ? directMembers(true) : <ChannelActions compact snapshot={snapshot} host={host} onDetails={openDetails} />}</div>}
         <PreviewInboxes key={owner ?? "signed-out"} state={host.inboxState()} host={host}
           activeKind={historyState.target?.kind === "inbox" ? historyState.target.inbox : null}
           onNavigate={inbox => host.navigateView({ kind: "inbox", inbox })}
           onBack={() => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.backFromManagement(); }} /></>}
-        compactConversation={view === "detail" && snapshot.activeChannel ? {
+        compactConversation={view === "detail" && snapshot.activeChannel && !pageKey ? {
           context: compactContext, title: snapshot.title, onBack: backToConversations
         } : undefined}>
-      {view === "detail" && <div className="sp-mobile-channel-menu"><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button>{directMembers(true)}<ChannelActions compact snapshot={snapshot} host={host} /></div>}
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
-      <Button onClick={host.cycleTheme}>Byt tema</Button><a href="/auth/logout">Logg ut</a>{fullInterface()}
-      <ViewHistoryControls inMenu history={host.viewHistory} snapshot={snapshot}
-        onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
-      <Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button>
-      <PreviewManagement snapshot={snapshot} onRetryDirectory={host.retryDirectory} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate} captureUpdatePosition={() => {
+      <PreviewManagement hideTrigger snapshot={snapshot} onRetryDirectory={host.retryDirectory} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate}
+        focusMemberAction={!!memberFocus && memberFocus.owner === owner && memberFocus.historyEntryId === historyState.entryId
+          && historyState.target?.kind === "management" && historyState.target.page.kind === "community"
+          && historyState.target.page.destination.kind === "channel" && historyState.target.page.destination.channelId === memberFocus.channelId}
+        appearanceContent={<><p className="sp-help">Desse visingsvala gjeld denne nettlesaren.</p>
+          <section className="sp-settings-group"><h2>Tema</h2><p>Gjeldande tema: {host.theme() === "system" ? "Følg systemet" : host.theme() === "dark" ? "Mørkt" : "Lyst"}.</p><Button onClick={host.cycleTheme}>Byt tema</Button></section>
+          <section className="sp-settings-group"><h2>Meldingsvising</h2><Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button></section></>}
+        helpContent={<><ConnectionHealth key={owner ?? "signed-out"} details state={host.connectionHealth()} onRetry={host.retryConnection}
+          onLogin={host.reauthenticateNow} onReload={() => { void host.appUpdate.run(captureUpdatePosition); }} />{explicitPreview && <section><h2>Utviklarførehandsvising</h2>{fullInterface()}</section>}</>}
+        captureUpdatePosition={() => {
         if (host.community.selfId() !== owner) throw new Error("Kontoen vart endra. Start oppdateringa på nytt.");
         const positions = captureUpdatePosition(), current = host.snapshot();
         if (current.selection.channelId) host.navigateView({ kind: "conversation", channelId: current.selection.channelId,
@@ -546,7 +587,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         }}
         onBack={() => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.backFromManagement(); }}
         onSelectChannel={channelId => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.navigateView({ kind: "conversation", channelId }); }}
-        community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions></>,
+        community={{ ...host.community, renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions>
+      {!(historyState.target?.kind === "management" && historyState.target.page.kind === "help") && <ConnectionHealth key={`health:${owner ?? "signed-out"}`} state={host.connectionHealth()}
+        onRetry={host.retryConnection} onLogin={host.reauthenticateNow} onReload={() => { void host.appUpdate.run(captureUpdatePosition); }} />}</>,
     navigationActions: <NewDirectMessage snapshot={snapshot} host={host.community}
       onOpen={() => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "people" } } })}
       onStarted={() => { view = "detail"; update(); }} />,
@@ -554,7 +597,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       key={`${host.community.selfId() ?? ""}:${group.id}`} group={group} snapshot={snapshot} host={host.community}
       onNavigate={page => host.navigateView({ kind: "management", page })}
       onSelect={channelId => { reactionPicker.close(); host.navigateView({ kind: "conversation", channelId }); view = "detail"; update(); }} />,
-    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button>{directMembers()}<ChannelActions snapshot={snapshot} host={host} /></>,
+    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button>{directMembers()}<ChannelActions snapshot={snapshot} host={host} onDetails={openDetails} /></>,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}

@@ -2174,7 +2174,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         "window.addEventListener(\"pageshow\", (event) => resumeAfterBackground(event.persisted))"
     ));
     assert!(
-        BROWSER_CLIENT.contains("window.addEventListener(\"online\", () => { resumeAfterBackground(true); connectionSupervisor.probeWebsocket(); })")
+        BROWSER_CLIENT.contains("window.addEventListener(\"online\", () => { resumeAfterBackground(true); connectionSupervisor.probeWebsocket(); refreshDevelopmentPreview(); })")
     );
     assert!(
         BROWSER_CLIENT

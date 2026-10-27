@@ -1,6 +1,6 @@
 # Produktnavigasjon: første leveranse og vidare arbeid
 
-Dato: 26. oktober 2026. Gjennomføring av
+Dato: 26. oktober 2026, status avstemt 27. oktober. Gjennomføring av
 [innstillingsplanen](settings-and-administration-plan.md), utvida etter
 brukaren sitt oppdrag om eit meir profesjonelt og lettbrukt produkt.
 Dette dokumentet gjev ikkje mandat til produksjonspromotering.
@@ -160,7 +160,8 @@ Chromium- og 109 WebKit-prøver i CI. Argo og offentleg readiness er verifiserte
 
 ## Førstegongsoppleving og direktemeldingar
 
-Neste pakke er implementert og under validering:
+Pakka er i Canary gjennom [PR #305](https://github.com/hbjoroy/sproyt/pull/305)
+og [GitOps #272](https://github.com/hbjoroy/rocket-applications/pull/272):
 
 - Tom konto får ei roleg velkomstflate når både kretsar og kanalar er ferdig
   henta. Lasting, feil og tomt søk blir ikkje framstilte som ein tom konto.
@@ -183,24 +184,62 @@ Neste pakke er implementert og under validering:
 Ingen databaseendring eller nye medlemsreglar. Fysisk touch og brukartesting
 blir tekne i Canary; syntetiske prøver er ikkje ein påstand om slik aksept.
 
-Endelege testtal og release-evidens skal førast etter ferdig CI. Syntetisk
-nettlesarakseptanse er ikkje ei fysisk touch-/native-akseptprøve. Brukaren kan
-likevel prøve nettpakken remote i Canary utan å starte Windows-klienten.
+[Full PR-CI](https://github.com/hbjoroy/sproyt/actions/runs/40421222722)
+bestod med 247 Chromium- og 123 iPhone/WebKit-prøver, Rust og ekte
+PostgreSQL-kontrakt. [Release-CI](https://github.com/hbjoroy/sproyt/actions/runs/40425395648)
+publiserte revisjon `4ab7e8d3f4af01e3aa7251264d5076137ba7637f` med app-image
+`sha256:b7cf4d255e6ccb595cd4a3fdd914a484193892f3be39600dcd08cf41b1728d63`.
+Testa checkout, PR-head og mergd main hadde identisk tre før browser-baseline
+vart gjenbrukt. Argo og offentleg versjon/readiness er verifiserte;
+produksjon er uendra. Syntetisk nettlesarakseptanse er ikkje fysisk
+touch-/native-aksept. Nettpakken kan prøvast remote utan Windows-klienten.
 
-## Neste små leveransar
+## Ordinære sider, innboks og samband
 
-1. **Førstegongsoppleving:** fullfør validering og Canary-prøving av tomtilstandar, kort forklaring av krets,
-   kanal og DM, og direkte neste handling etter ein invitasjon. Prøv med ein
-   heilt ny brukar, ikkje berre administratoren sin konto.
-2. **Direktemeldingar:** fullfør validering og Canary-prøving av den eigne oversikta med konsekvente
-   person-/gruppetitlar, medlemsvising og betre personval. Bevar eksisterande
-   meldingar og kanal-ID-ar; ikkje opprett ein parallell DM-modell.
-3. **Agentoppsett:** prøv S2b/S2c i Canary før
+[PR #306](https://github.com/hbjoroy/sproyt/pull/306) implementerer neste
+synlege snitt av hovudplanen:
+
+- Innstillingar, krets-/kanaldetaljar, agentoppsett og innboks har eit felles
+  sideskall i main. Samtale og tråd blir verande monterte, men skjulte/inaktive.
+  Leseposisjonen blir lagra før skjuling; skjult innhald blir ikkje kvittert
+  som lese. Korte val og stadfestingar kan framleis bruke native dialog.
+- Eit fast innstillingssymbol opnar personlege val. Kanalvala ligg ved
+  kanalen; kretsval ved kretsen. Ny DM, kanaloppdaging og Nyleg finst ved
+  samtalenavigasjonen. Gamle ressursbundne snarvegar er framleis søkbare.
+- Utsjånad og bruk samlar eksisterande tema-/meldingsvising. Hjelp/Om samlar
+  Kom i gang, oppdatering og sambandsdetaljar. Dei to nye sidemåla blir
+  bevarte gjennom kald innlogging med den eksisterande kvitelistekontrakten.
+- Innboksmerket tel stadfesta uleste omtalar og opnar desse ved nye omtalar.
+  Uleste meldingar/samtalar og personlege oppgåver har eigne tal. Ukjent,
+  lasting, feil og stadfesta tomt er skilde. Listesvar er bundne til siste
+  førespurnad og konto/generasjon; kontobyte fjernar den gamle kontoen sine
+  omtalar/oppgåver. Prosessarbeid og eksisterande personlege prosesslenkjer
+  blir bevarte.
+- Logoen supplerer ei forståeleg sambandsvising og er framleis Samtalar på
+  mobil. Manuell gjenoppretting brukar eksisterande recovery og er
+  singleflight. Ei frisk SSE-tilkopling blir ikkje framstilt som broten
+  under WS-probing. Kandidatar får ikkje ta over utan same stadfesta konto;
+  kontoavvik pensjonerer begge gamle transportar før ein fersk bootstrap.
+- Reload brukar eksisterande vern av utkast/vedlegg og resume-kvittering.
+  Dersom native beforeunload blir avbroten, blir oppdateringslåsen sleppt
+  slik at brukaren kan prøve igjen utan å miste kvitteringa.
+
+Ingen databasemigrasjon, ny rollemodell, helseprobe eller transportteneste.
+Dei endelege CI- og Canary-kvitteringane høyrer til PR #306. Automatiske
+prøver av dei tre komplette flytane og lys/mørk mobil-/desktopkontroll kjem
+i tillegg til den vidare brukaraksepten.
+
+## Vidare etter denne pakka
+
+1. **Canary-brukaraksept:** prøv førstegongsflyten med ein ny brukar,
+   DM-personval/medlemmer og S2b/S2c-agentoppsettet før
    eventuell produksjonspromotering. Autorisert tenestestatus kan vurderast
    separat; oppsettsstatus er ikkje ein helseprobe.
-4. **Skjemaarbeid:** vidarefør utkastvern og konfliktvising til andre profil- og
+2. **Skjemaarbeid:** vidarefør utkastvern og konfliktvising til andre profil- og
    innstillingsskjema; agentflyten gjer ikkje dette arbeidet ferdig.
-5. **Native:** overfør mål, Back/Forward- og eigarskapskontraktar til Windows og
+3. **Prosessar og integrasjonar:** fullfør attståande S3 etter hovudplanen;
+   nye sider åleine gjer ikkje prosessoppsett, oppgåvearbeid og inspeksjon ferdig.
+4. **Native:** overfør mål, Back/Forward- og eigarskapskontraktar til Windows og
    Android, med native kontrollar. Dette snittet endrar nettappen, ikkje den
    allereie installerte Windows-pakken.
 

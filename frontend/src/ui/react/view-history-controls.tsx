@@ -18,6 +18,8 @@ export function viewTargetLabel(target: ViewTarget, snapshot: ConversationSnapsh
   if ("circleId" in page && !snapshot.circles.some(c => c.id === page.circleId)) return null;
   if (page.kind === "overview") return "Innstillingar";
   if (page.kind === "welcome") return "Kom i gang";
+  if (page.kind === "appearance") return "Utsjånad og bruk";
+  if (page.kind === "help") return "Hjelp og om Sprøyt";
   if (page.kind === "profile") return "Profil og status";
   if (page.kind === "notifications") return "Varslingsinnstillingar";
   if (page.kind === "circle" || page.kind === "chat-agents" || page.kind === "memory") {

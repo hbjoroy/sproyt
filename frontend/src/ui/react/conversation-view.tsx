@@ -6,6 +6,7 @@ import type { ApplicationRuntime } from "../../application/runtime";
 import type { ConversationTimelineItem } from "../../application/conversation-snapshot";
 import type { ChatMessage } from "../../types";
 import { ProductConversationNavigation } from "./conversation-navigation";
+import { WorkspacePageOutlet, WorkspacePageProvider } from "./workspace-page";
 
 /** IDs belong to the application. Two circles may have the same display name. */
 export interface ConversationGroup {
@@ -32,6 +33,7 @@ export interface ConversationNavigationProps {
   readonly onQueryChange: (query: string) => void;
   readonly onSelect: (id: string) => void;
   readonly actions?: ReactNode;
+  readonly footer?: ReactNode;
 }
 
 /** Filtering, labels, membership and notification policy remain host-owned. */
@@ -275,24 +277,18 @@ export interface ConversationViewProps {
   readonly thread?: ReactNode;
   readonly overlays?: ReactNode;
   readonly emptyContent?: ReactNode;
-}
-
-function ConnectionIndicator({ connected, status }: { readonly connected: boolean; readonly status: string }) {
-  const reconnecting = !connected && /^(Fornyar økta|Gjenopprettar samtalen|Koplar til)/.test(status);
-  const state = connected ? "connected" : reconnecting ? "reconnecting" : "disconnected";
-  const symbol = connected ? "●" : reconnecting ? "◐" : "○";
-  return <div className="sp-connection-status" data-connected={connected} data-state={state}
-    role="status" aria-label={`Sambandsstatus: ${status}`} title={status}>
-    <span aria-hidden="true">{symbol}</span><span className="sp-sr">{status}</span>
-  </div>;
+  readonly pageKey?: string;
 }
 
 export function ConversationView(props: ConversationViewProps) {
   const snapshot = useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
-    <AppShell view={props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
-      header={<>{props.header}{snapshot.connection.status && <ConnectionIndicator {...snapshot.connection} />}</>}>
-      <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}>
+    <WorkspacePageProvider pageKey={props.pageKey}>
+    <AppShell view={props.pageKey ? "detail" : props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
+      header={<>{props.header}<span className="sp-sr" role="status" aria-atomic="true">{snapshot.connection.status}</span></>}>
+      <WorkspacePageOutlet />
+      <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
+        hidden={!!props.pageKey} inert={!!props.pageKey} aria-hidden={props.pageKey ? true : undefined}>
         <section className="sp-channel-pane" aria-label={props.title}>
           {!props.emptyContent && <header className="sp-context">
             <Button className="sp-only-compact" onClick={props.onBack}>← Samtalar</Button>
@@ -305,5 +301,6 @@ export function ConversationView(props: ConversationViewProps) {
       </div>
     </AppShell>
     {props.overlays}
+    </WorkspacePageProvider>
   </Theme>;
 }

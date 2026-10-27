@@ -127,7 +127,8 @@ test("local React preview follows the existing runtime and returns without recon
   await expect(preview.getByRole("tabpanel", { name: /^Kretsar/ })).toContainText("Ingen kretsar eller kanalar passar søket.");
   await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("");
   await expect(preview.getByRole("button", { name: /# general/i })).toBeVisible();
-  await preview.getByRole("button", { name: "Meny", exact: true }).click();
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Hjelp og om Sprøyt", exact: true }).click();
   await preview.getByRole("button", { name: "Til fullt grensesnitt" }).first().click();
   await expect(preview).toHaveCount(0);
   await expect(page.locator("#body")).toHaveValue("utkast bevart gjennom førehandsvisinga");
@@ -436,7 +437,8 @@ test("preview thread switching keeps each draft and full interface handoff prese
   await trigger(1).click();
   await expect(reply).toHaveValue("utkast til andre tråd");
   await composer.fill("hovudutkast");
-  await preview.getByRole("button", { name: "Meny", exact: true }).click();
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Hjelp og om Sprøyt", exact: true }).click();
   await preview.getByRole("button", { name: "Til fullt grensesnitt", exact: true }).click();
   await expect(preview).toHaveCount(0);
   await expect(page.locator("#thread-panel")).toBeVisible();

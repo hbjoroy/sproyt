@@ -22,7 +22,7 @@ export function validAgentSettingsRoute(agentId: unknown, panel: unknown, channe
 }
 
 export type ManagementTarget =
-  | { kind: "overview" | "profile" | "notifications" | "welcome" }
+  | { kind: "overview" | "profile" | "notifications" | "welcome" | "appearance" | "help" }
   | { kind: "circle" | "memory"; circleId: string }
   | { kind: "chat-agents"; circleId: string; agentId?: string; panel?: AgentSettingsPanel; channelId?: string }
   | { kind: "community"; destination: CommunityDestination }

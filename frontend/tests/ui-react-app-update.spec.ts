@@ -51,11 +51,13 @@ test("menu update uses a real new worker and code revision while preserving draf
   const source = await page.request.get(`${baseURL}/?participant=update-fixture`);
   expect(source.ok()).toBe(true);
   const template = await source.text();
+  expect(template).toMatch(/\/assets\/app\/[^/]+\/app\.js/);
   const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
   const worker = await readFile(new URL("../../assets/service-worker.js", import.meta.url), "utf8");
   const helper = await build({ stdin: { contents: 'export { createDurableOutbox } from "./src/durable-outbox";', resolveDir: fileURLToPath(new URL("..", import.meta.url)) },
     bundle: true, write: false, format: "esm", platform: "browser", target: "es2022" });
   let revision = "old", failCheck = false, navigations = 0, workerReads = 0, decided = false, pilotCompleted = false;
+  const proxyController = new AbortController();
   const server = createServer(async (request, response) => {
     try {
       const path = new URL(request.url!, "http://fixture").pathname;
@@ -90,11 +92,16 @@ test("menu update uses a real new worker and code revision while preserving draf
         response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store", "content-security-policy": source.headers()["content-security-policy"] });
         response.end(template.replace(/\/assets\/app\/[^/]+\/app\.js/g, `/assets/app/${revision}/app.js`));
       } else {
-        const proxied = await fetch(`${baseURL}${request.url}`);
+        const proxied = await fetch(`${baseURL}${request.url}`, { signal: proxyController.signal });
         response.writeHead(proxied.status, { "content-type": proxied.headers.get("content-type") ?? "application/octet-stream" });
         response.end(Buffer.from(await proxied.arrayBuffer()));
       }
-    } catch { response.writeHead(500); response.end("Fixture error"); }
+    } catch {
+      if (!response.destroyed && !response.writableEnded) {
+        if (!response.headersSent) response.writeHead(500);
+        response.end("Fixture error");
+      }
+    }
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -132,13 +139,24 @@ test("menu update uses a real new worker and code revision while preserving draf
     });
     await preview.locator('input[type="file"]').first().setInputFiles({ name: "utkast.png", mimeType: "image/png", buffer: Buffer.from(photo, "base64") });
     await expect(preview.getByRole("button", { name: "Fjern utkast.png", exact: true })).toBeVisible();
-    const openMenu = async () => { await preview.getByRole("button", { name: "Meny", exact: true }).click(); await preview.getByRole("button", { name: "Innstillingar", exact: true }).click(); };
+    const menu = preview.getByRole("region", { name: "Hjelp og om Sprøyt", exact: true })
+      .and(preview.locator(".sp-main [data-workspace-page]"));
+    const openMenu = async () => {
+      await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+      const settings = preview.locator(".sp-main [data-workspace-page]");
+      await settings.getByRole("button", { name: "Hjelp og om Sprøyt", exact: true }).click();
+      await expect(menu).toBeVisible();
+      await expect(preview.locator("dialog[open]")).toHaveCount(0);
+    };
+    const closeMenu = async () => {
+      await menu.getByRole("button", { name: "Tilbake til innstillingar", exact: true }).click();
+      await preview.locator(".sp-main [data-workspace-page]").getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
+      await expect(composer).toBeVisible();
+    };
     await openMenu();
-    const menu = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
     await menu.getByRole("button", { name: "Oppdater appen", exact: true }).click();
     await expect(menu).toContainText("Send eller fjern dei valde vedlegga"); expect(navigations).toBe(1);
-    await menu.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
-    await preview.getByRole("button", { name: "Meny", exact: true }).click();
+    await closeMenu();
     await preview.getByRole("button", { name: "Fjern utkast.png", exact: true }).click();
     const review = preview.locator(".sp-work-item-task");
     await review.locator(".sp-work-item-task-summary").click();
@@ -146,8 +164,7 @@ test("menu update uses a real new worker and code revision while preserving draf
     await review.locator(".sp-work-item-task-summary").click();
     await openMenu(); await menu.getByRole("button", { name: "Prøv oppdateringa igjen", exact: true }).click();
     await expect(menu).toContainText("Fullfør redigeringa først"); expect(navigations).toBe(1);
-    await menu.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
-    await preview.getByRole("button", { name: "Meny", exact: true }).click();
+    await closeMenu();
     await review.locator(".sp-work-item-task-summary").click();
     await expect(review.getByRole("combobox", { name: "Prioritet", exact: true })).toHaveValue("high");
     await review.getByRole("button", { name: "Lagre avgjerd", exact: true }).click();
@@ -162,16 +179,20 @@ test("menu update uses a real new worker and code revision while preserving draf
     await pilot.getByRole("button", { name: "Fullfør oppgåva", exact: true }).click();
     await expect(pilot).toHaveAttribute("data-task-status", "completed");
     await pilot.locator("summary").click();
+    // Capture real visible geometry before the ordinary page hides the chat.
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const anchor = await captureAnchor();
     await openMenu(); failCheck = true;
     await menu.getByRole("button", { name: "Prøv oppdateringa igjen", exact: true }).click();
     await expect(menu).toContainText("Kunne ikkje hente appversjonen"); expect(navigations).toBe(1);
-    const anchor = await captureAnchor();
     failCheck = false; revision = "new";
     await menu.getByRole("button", { name: "Prøv oppdateringa igjen", exact: true }).click();
     await expect(composer).toHaveValue("Utkastet skal stå etter oppdatering");
     await expect(preview).toContainText("Appen er oppdatert");
     expect(await page.evaluate(() => (globalThis as any).fixtureCodeRevision)).toBe("new");
     expect(navigations).toBe(2); expect(workerReads).toBeGreaterThanOrEqual(2);
+    await expect(composer).toBeVisible();
+    await expect(preview.locator(".sp-main [data-workspace-page]")).toHaveCount(0);
     await expect.poll(() => timeline.locator(`[data-message-id="${anchor.id}"]`).evaluate((element, offset) => {
       const viewport = element.closest(".sp-timeline")!; return Math.abs(element.getBoundingClientRect().top - viewport.getBoundingClientRect().top - offset);
     }, anchor.offset)).toBeLessThan(2);
@@ -185,6 +206,15 @@ test("menu update uses a real new worker and code revision while preserving draf
     expect(saved.pending.map((entry: any) => entry.requestId)).toEqual([requestId]); expect(sends).toEqual([]);
     await openMenu(); await menu.getByRole("button", { name: "Oppdater appen", exact: true }).click();
     await expect.poll(() => navigations).toBe(3); await expect(preview).toContainText("Appen er oppdatert");
-    await page.waitForTimeout(250); expect(navigations).toBe(3);
-  } finally { await page.goto("about:blank"); await new Promise<void>(resolve => server.close(() => resolve())); }
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(navigations).toBe(3);
+  } finally {
+    // Test timeouts may already have closed the page. Stop the fixture without
+    // navigating that page or waiting for browser keep-alive/proxy connections.
+    proxyController.abort();
+    await new Promise<void>(resolve => {
+      server.close(() => resolve());
+      server.closeAllConnections();
+    });
+  }
 });

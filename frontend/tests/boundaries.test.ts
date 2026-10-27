@@ -19,6 +19,8 @@ import "./share-target.test";
 import "../src/process-pilot.test";
 import "../src/work-items.test";
 import "../src/view-history.test";
+import "../src/connection-presentation.test";
+import "./inbox-counts.test";
 import "../src/circle-favorites.test";
 import { runConversationPreferenceTests } from "../src/conversation-preferences.test";
 runConversationPreferenceTests();
@@ -354,6 +356,7 @@ test("socket handoff keeps active acknowledgements routed and settles candidate 
   const candidate = sockets[1]; assert.notEqual(candidate, undefined); if (!candidate) return;
   candidate.readyState = WebSocket.OPEN; candidate.emit("open", new Event("open"));
   assert.equal(JSON.parse(candidate.sent[0] ?? "{}").type, "hello");
+  candidate.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId, request_id: "handoff-4", type: "hello", payload: { participant_id: "u1" } }) }));
   candidate.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId, request_id: "handoff-5", type: "subscription_started", payload: { channel_id: "c1", history: [] } }) }));
   assert.equal(active.readyState, WebSocket.OPEN);
   active.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId, request_id: "handoff-3", type: "message_accepted", payload: { message: { id: "m1", channel_id: "c1", sender_id: "u1", sender_display_name: "Ada", body: "main", sequence: 1, sent_at: "2026-08-20T08:00:00Z" } } }) }));
@@ -499,6 +502,111 @@ test("clearing an inaccessible channel lets a refresh handoff commit on hello", 
   assert.equal(controller.snapshot().handoffActive, false);
   assert.equal(controller.snapshot().subscribedChannelId, null);
   assert.equal(active.readyState, WebSocket.CLOSED);
+});
+
+test("candidate account changes retire both transports before exposing the new account or bootstrapping", () => {
+  for (const previousParticipant of ["alice", undefined]) {
+    const sockets: FakeSocket[] = [];
+    const delivered: string[] = [];
+    const lost: string[] = [];
+    const telemetry: string[] = [];
+    let request = 0, disconnected = 0;
+    const controller = createConnectionController({
+      websocketUrl: () => "ws://chat.example.test/ws",
+      createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+      createRequestId: () => `identity-${++request}`, onCommandSent: () => {}, onBeforeConnect: () => {},
+      onOpen: send => { send("hello"); send("subscribe_channel", { channel_id: "c1" }); },
+      onEvent: event => {
+        if (event.type === "hello") {
+          delivered.push(event.payload.participant_id);
+          // Model the app's changedUser bootstrap through its ordinary sender.
+          if (event.payload.participant_id === "bob") controller.send("list_mentions");
+        }
+      },
+      onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {},
+      onSocketError: () => {}, onConnectionLost: () => { disconnected++; }, onRequestsLost: ids => lost.push(...ids),
+      onAuthenticationFailure: async () => {}, recover: async () => {}, onHandoffFallback: () => {},
+      reportClientEvent: event => telemetry.push(event),
+      setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {}
+    });
+    const emit = (socket: FakeSocket, type: string, payload: unknown) => {
+      const commandType = type === "subscription_started" ? "subscribe_channel" : "hello";
+      const command = socket.sent.map(frame => JSON.parse(frame)).find(frame => frame.type === commandType);
+      socket.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId,
+        request_id: command.request_id, type, payload }) }));
+    };
+    controller.start();
+    const active = sockets[0]!;
+    active.readyState = WebSocket.OPEN; active.emit("open", new Event("open"));
+    if (previousParticipant) emit(active, "hello", { participant_id: previousParticipant });
+    emit(active, "subscription_started", { channel_id: "c1", history: [] });
+    const pendingRead = controller.send("list_mentions")!;
+    controller.replaceAfterSessionRefresh();
+    const candidate = sockets[1]!;
+    candidate.readyState = WebSocket.OPEN; candidate.emit("open", new Event("open"));
+    const sentBefore = [...active.sent];
+    const deliveredBefore = [...delivered];
+    emit(candidate, "hello", { participant_id: "bob" });
+    assert.deepEqual(delivered, deliveredBefore, "candidate identity is never published over the old account transport");
+    assert.deepEqual(active.sent, sentBefore, "Bob's bootstrap cannot be sent through Alice's socket");
+    assert.equal(active.readyState, WebSocket.CLOSED);
+    assert.equal(candidate.readyState, WebSocket.CLOSED);
+    assert.equal(controller.snapshot().handoffActive, false);
+    assert.equal(controller.snapshot().subscribedChannelId, null);
+    assert.equal(disconnected, 1);
+    assert.ok(lost.includes(pendingRead));
+    assert.deepEqual(telemetry, ["resume_recovery"]);
+    assert.equal(sockets.length, 3, "the existing recovery path creates one fresh authenticated connection");
+    emit(candidate, "subscription_started", { channel_id: "c1", history: [] });
+    emit(active, "hello", { participant_id: "alice" });
+    assert.deepEqual(delivered, deliveredBefore, "retired transports cannot restore an old identity");
+    const fresh = sockets[2]!;
+    fresh.readyState = WebSocket.OPEN; fresh.emit("open", new Event("open"));
+    emit(fresh, "hello", { participant_id: "bob" });
+    assert.equal(delivered.at(-1), "bob");
+    assert.ok(fresh.sent.some(frame => JSON.parse(frame).type === "list_mentions"));
+    assert.deepEqual(active.sent, sentBefore);
+  }
+});
+
+test("candidate subscription cannot commit before matching hello, and same-account handoff still succeeds", () => {
+  const sockets: FakeSocket[] = [];
+  const subscriptions: string[] = [];
+  let request = 0, disconnected = 0;
+  const controller = createConnectionController({
+    websocketUrl: () => "ws://chat.example.test/ws",
+    createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
+    createRequestId: () => `hello-order-${++request}`, onCommandSent: () => {}, onBeforeConnect: () => {},
+    onOpen: send => { send("hello"); send("subscribe_channel", { channel_id: "c1" }); },
+    onEvent: event => { if (event.type === "subscription_started") subscriptions.push(event.payload.channel_id); },
+    onUnsupportedProtocol: () => {}, onStatus: () => {}, onConnected: () => {}, onDisconnected: () => {},
+    onSocketError: () => {}, onConnectionLost: () => { disconnected++; }, onRequestsLost: () => {},
+    onAuthenticationFailure: async () => {}, recover: async () => {}, onHandoffFallback: () => {},
+    setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {}
+  });
+  const emit = (socket: FakeSocket, type: "hello" | "subscription_started") => {
+    const command = socket.sent.map(frame => JSON.parse(frame)).find(frame => frame.type === (type === "hello" ? "hello" : "subscribe_channel"));
+    socket.emit("message", new MessageEvent("message", { data: JSON.stringify({ protocol: protocolId, request_id: command.request_id,
+      type, payload: type === "hello" ? { participant_id: "alice" } : { channel_id: "c1", history: [] } }) }));
+  };
+  controller.start();
+  const active = sockets[0]!;
+  active.readyState = WebSocket.OPEN; active.emit("open", new Event("open"));
+  emit(active, "hello"); emit(active, "subscription_started");
+  controller.replaceAfterSessionRefresh();
+  const candidate = sockets[1]!;
+  candidate.readyState = WebSocket.OPEN; candidate.emit("open", new Event("open"));
+  emit(candidate, "subscription_started");
+  assert.equal(active.readyState, WebSocket.OPEN);
+  assert.equal(controller.snapshot().handoffActive, true);
+  assert.deepEqual(subscriptions, ["c1"]);
+  emit(candidate, "hello");
+  assert.equal(active.readyState, WebSocket.CLOSED);
+  assert.equal(controller.snapshot().handoffActive, false);
+  assert.equal(controller.snapshot().subscribedChannelId, "c1");
+  assert.deepEqual(subscriptions, ["c1", "c1"]);
+  assert.equal(disconnected, 0);
+  assert.equal(sockets.length, 2);
 });
 
 test("disconnect unlocks history and settles invitation requests before clearing correlation state", () => {

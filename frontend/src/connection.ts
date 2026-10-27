@@ -33,7 +33,7 @@ interface ConnectionState {
   probeOnOpen: boolean;
   lastProbeAt: number;
 }
-export interface ConnectionSnapshot { readonly connected: boolean; readonly closing: boolean; readonly handoffActive: boolean; readonly subscribedChannelId: string | null; readonly transport: "websocket" | "sse" | null; }
+export interface ConnectionSnapshot { readonly connected: boolean; readonly closing: boolean; readonly connecting?: boolean; readonly handoffActive: boolean; readonly subscribedChannelId: string | null; readonly transport: "websocket" | "sse" | null; }
 export interface ConnectionController {
   start(): void;
   connect(silent?: boolean, replaceCurrent?: boolean): void;
@@ -187,6 +187,7 @@ export function createConnectionController(dependencies: ConnectionDependencies)
   const pendingBySocket = new Map<ConnectionSocket, Set<string>>();
   const connectTimeouts = new Map<ConnectionSocket, number>();
   const lastServerActivity = new WeakMap<ConnectionSocket, number>();
+  const socketParticipants = new WeakMap<ConnectionSocket, string>();
   const clearReconnect = (): void => { if (state.reconnectTimer !== null) dependencies.clearTimeout(state.reconnectTimer); state.reconnectTimer = null; };
   const clearHeartbeat = (): void => { if (state.heartbeatTimer !== null) dependencies.clearInterval(state.heartbeatTimer); state.heartbeatTimer = null; };
   const clearConnectTimeout = (socket: ConnectionSocket): void => { const timer = connectTimeouts.get(socket); if (timer !== undefined) dependencies.clearTimeout(timer); connectTimeouts.delete(socket); };
@@ -307,6 +308,10 @@ export function createConnectionController(dependencies: ConnectionDependencies)
   const tryCommitHandoff = (): Extract<ServerEvent, Readonly<{ type: "subscription_started" }>> | null => {
     const handoff = state.socketHandoff;
     if (handoff === null || !handoff.ready || handoff.expectedChannelId !== state.desiredChannelId || handoff.expectedGeneration !== state.subscriptionGeneration || (pendingBySocket.get(handoff.previousSocket)?.size ?? 0) > 0) return null;
+    const participant = socketParticipants.get(handoff.previousSocket);
+    // Subscription readiness alone cannot authorize a candidate to replace the
+    // active account, even if its acknowledgement arrives before hello.
+    if (!participant || socketParticipants.get(handoff.nextSocket) !== participant) return null;
     if (handoff.timeoutId !== null) dependencies.clearTimeout(handoff.timeoutId);
     state.socketHandoff = null;
     state.socket = handoff.nextSocket;
@@ -390,6 +395,18 @@ export function createConnectionController(dependencies: ConnectionDependencies)
       }
       const handoff = state.socketHandoff;
       const isCandidate = handoff?.nextSocket === nextSocket;
+      if (serverEvent.type === "hello") {
+        if (isCandidate) {
+          const participant = socketParticipants.get(handoff.previousSocket);
+          if (!participant || participant !== serverEvent.payload.participant_id) {
+            // Do not bind B in the app while ordinary sends still use A. Retire
+            // both transports and let a fresh authenticated connection bootstrap.
+            controller.recoverAfterResume();
+            return;
+          }
+        }
+        socketParticipants.set(nextSocket, serverEvent.payload.participant_id);
+      }
       if (serverEvent.type === "subscription_started") {
         if (isCandidate) {
           const matchesExpectedSubscription = serverEvent.payload.channel_id === handoff.expectedChannelId
@@ -460,7 +477,7 @@ export function createConnectionController(dependencies: ConnectionDependencies)
   controller = Object.freeze({
     start: (): void => connectSocket(),
     connect: (silent = false, replaceCurrent = false): void => connectSocket(silent, replaceCurrent && state.socket?.readyState === WebSocket.OPEN ? state.socket : null),
-    snapshot: (): ConnectionSnapshot => Object.freeze({ connected: state.socket?.readyState === WebSocket.OPEN, closing: state.socket?.readyState === WebSocket.CLOSING, handoffActive: state.socketHandoff !== null, subscribedChannelId: state.subscribedChannelId, transport: state.socket === null ? null : fallbackSockets.has(state.socket) ? "sse" : "websocket" }),
+    snapshot: (): ConnectionSnapshot => Object.freeze({ connected: state.socket?.readyState === WebSocket.OPEN, closing: state.socket?.readyState === WebSocket.CLOSING, connecting: state.socket?.readyState === WebSocket.CONNECTING || state.recoveryPromise !== null, handoffActive: state.socketHandoff !== null, subscribedChannelId: state.subscribedChannelId, transport: state.socket === null ? null : fallbackSockets.has(state.socket) ? "sse" : "websocket" }),
     recover: async (operation: (snapshot: ConnectionSnapshot) => Promise<void>): Promise<void> => { if (state.recoveryPromise !== null) return state.recoveryPromise; state.recoveryPromise = operation(controller.snapshot()); try { await state.recoveryPromise; } finally { state.recoveryPromise = null; } },
     setSubscribedChannel: (channelId: string): void => {
       state.subscribedChannelId = channelId;

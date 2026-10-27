@@ -12,7 +12,7 @@ export function DraftComposer({ value, onChange, onSend, label, leading, tools,
   const [toolsOpen, setToolsOpen] = useState(false);
   const resize = () => {
     const element = field.current;
-    if (!element) return;
+    if (!element || !element.clientWidth || !element.getClientRects().length) return;
     const available = window.visualViewport?.height ?? window.innerHeight;
     element.style.height = "0px";
     element.style.height = `${Math.min(Math.max(44, element.scrollHeight), Math.max(76, Math.min(240, available * .32)))}px`;
@@ -22,13 +22,27 @@ export function DraftComposer({ value, onChange, onSend, label, leading, tools,
     const element = field.current;
     if (!element) return;
     let width = -1;
+    let frame = 0;
+    const scheduleResize = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; resize(); });
+    };
     const observer = new ResizeObserver(entries => {
       const next = entries[0]?.contentRect.width ?? 0;
-      if (next !== width) { width = next; resize(); }
+      if (next !== width) {
+        width = next;
+        // Do not change the observed textarea in its notification callback.
+        // Remember hidden width so showing a preserved draft measures it again.
+        if (next > 0) scheduleResize();
+      }
     });
     observer.observe(element);
-    window.visualViewport?.addEventListener("resize", resize);
-    return () => { observer.disconnect(); window.visualViewport?.removeEventListener("resize", resize); };
+    window.visualViewport?.addEventListener("resize", scheduleResize);
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+      window.visualViewport?.removeEventListener("resize", scheduleResize);
+    };
   }, []);
   // The tool tray is an intentional expansion. Once its draft has been sent
   // or cleared, return the compact, one-line composer without hiding any

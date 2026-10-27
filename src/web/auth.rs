@@ -64,7 +64,8 @@ impl SafeViewQuery {
             Some("settings") => {
                 let section = self.section.as_deref().unwrap_or("overview");
                 let path = match section {
-                    "overview" | "profile" | "notifications" | "welcome" => {
+                    "overview" | "profile" | "notifications" | "welcome" | "appearance"
+                    | "help" => {
                         format!("/?view=settings&section={section}")
                     }
                     "circle" | "memory" => format!(
@@ -522,6 +523,8 @@ mod tests {
             "/?view=settings&section=profile",
             "/?view=settings&section=notifications",
             "/?view=settings&section=welcome",
+            "/?view=settings&section=appearance",
+            "/?view=settings&section=help",
         ] {
             assert_view_login_roundtrip(path);
         }

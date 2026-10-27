@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page, type WebSocketRoute } from "@playwright/test";
 import type { ChatMessage } from "../src/types";
 
@@ -138,7 +139,7 @@ async function expectRevealed(page: Page, sequence: number) {
 }
 async function openSettings(app: Locator) {
   const trigger = app.getByRole("button", { name: "Innstillingar", exact: true });
-  if (!await trigger.isVisible()) await app.getByRole("button", { name: "Meny", exact: true }).click();
+
   await trigger.click();
 }
 
@@ -191,19 +192,19 @@ test("browser thread traversal restores the channel position and both unsent dra
 test("canonical circle settings survive reload with one modal and no mutation", async ({ page }) => {
   const { app, commands, errors } = await fixture(page);
   await openSettings(app);
-  await app.getByRole("dialog", { name: "Innstillingar", exact: true }).getByRole("button", { name: "Administrer krets", exact: true }).click();
-  await app.getByRole("dialog", { name: "Vel krets", exact: true }).getByRole("button", { name: "Paros", exact: true }).click();
+  await destinationSurface(app, "Innstillingar", true).getByRole("button", { name: "Administrer krets", exact: true }).click();
+  await destinationSurface(app, "Vel krets", true).getByRole("button", { name: "Paros", exact: true }).click();
   const canonical = page.url();
   expect(new URL(canonical).searchParams.get("view")).toBe("settings");
   expect(new URL(canonical).searchParams.get("section")).toBe("circle");
   expect(new URL(canonical).searchParams.get("circle")).toBe(circleId);
   await page.reload();
-  await expect(app.getByRole("dialog", { name: "Paros", exact: true })).toBeVisible();
-  await expect(app.getByRole("dialog")).toHaveCount(1);
+  await expect(destinationSurface(app, "Paros", true)).toBeVisible();
+  await expect(app.locator("[data-workspace-page], dialog[open]")).toHaveCount(1);
   await expect(page).toHaveURL(canonical);
   await page.keyboard.press("Escape");
-  await expect(app.getByRole("dialog", { name: "Vel krets", exact: true })).toBeVisible();
-  await expect(app.getByRole("dialog")).toHaveCount(1);
+  await expect(destinationSurface(app, "Vel krets", true)).toBeVisible();
+  await expect(app.locator("[data-workspace-page], dialog[open]")).toHaveCount(1);
   expect(commands.filter(command => /^(create_|accept_|enable_|start_)/.test(command.type))).toEqual([]);
   expect(errors).toEqual([]);
 });
@@ -213,9 +214,11 @@ test("inbox source navigation and browser return preserve the conversation draft
   await composer.fill("Ikkje mist innboksutkastet");
   await readingAt(page, 95);
   const saved = await anchor(timeline(page));
-  await app.getByRole("button", { name: /^Innboks og oppgåver/ }).click();
-  const inbox = app.getByRole("dialog", { name: "Innboks og oppgåver", exact: true });
+  await app.getByRole("button", { name: /^Innboks,/ }).click();
+  const inbox = destinationSurface(app, "Innboks", true);
   await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe("inbox");
+  await expect.poll(() => new URL(page.url()).searchParams.get("inbox")).toBe("mentions");
+  await inbox.getByRole("button", { name: /^Uleste/ }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("inbox")).toBe("unread");
   await inbox.getByRole("button", { name: /^Omtalar/ }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("inbox")).toBe("mentions");
@@ -231,6 +234,9 @@ test("inbox source navigation and browser return preserve the conversation draft
   await page.keyboard.press("Escape");
   await expect.poll(() => new URL(page.url()).searchParams.get("inbox")).toBe("unread");
   await expect(inbox.getByRole("button", { name: /^Uleste/ })).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+  await expect.poll(() => new URL(page.url()).searchParams.get("inbox")).toBe("mentions");
+  await expect(inbox.getByRole("button", { name: /^Omtalar/ })).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press("Escape");
   await expect(inbox).toHaveCount(0);
   await expectAnchor(timeline(page), saved);

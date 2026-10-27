@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page, type WebSocketRoute } from "@playwright/test";
 
 test.setTimeout(45_000);
@@ -152,7 +153,7 @@ for (const width of [1280, 320]) test(`direct directory has its own URL, new-mes
   await nav.getByRole("searchbox", { name: "Finn samtale" }).fill("ingen samtalar passar");
   await expect(create).toBeVisible();
   await create.click();
-  const people = app.getByRole("dialog", { name: "Ny direktemelding", exact: true });
+  const people = destinationSurface(app, "Ny direktemelding", true);
   await expect(people.getByRole("searchbox", { name: "Finn person" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(create).toBeFocused();

@@ -12,6 +12,7 @@
       import { AgentLocationApi } from "./agent-locations";
       import { installViewportDiagnostics } from "./ui/viewport-diagnostics";
       import { createApplicationRuntime } from "./application/runtime";
+      import { connectionPresentation, createManualConnectionRecovery } from "./connection-presentation";
       import { createCommunityRequests } from "./application/community-requests";
       import { createCommunityHost } from "./application/community-host";
       import { directConversationTitle } from "./direct-conversation";
@@ -326,9 +327,18 @@
           }
           if (command.type === "list_my_channels") latestChannelListRequestId = requestId;
           if (command.type === "list_my_circles") latestCircleListRequestId = requestId;
+          if (command.type === "list_mentions") {
+            latestMentionListTicket = { requestId, accountGeneration }; mentionsError = "";
+          }
+          if (command.type === "list_tasks") {
+            latestTaskListTicket = { requestId, accountGeneration }; tasksError = "";
+          }
           if (command.type === "subscribe_channel") latestSubscriptionRequestId = requestId;
         },
         onBeforeConnect: () => {
+          // A WebSocket probe/session handoff can run beside a healthy SSE
+          // transport. Its failure must not retire that transport's reads.
+          if (!connectionSupervisor.snapshot().connected) resetInboxReadStatus();
           catchUpTargets.clear();
           if (activeChannelId && messagesEl.childElementCount > 0) reconnectScrollOffset = Math.max(0, messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight);
           if (!activeChannelId) requestedChannelSlug = (channelInput.value.trim() || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
@@ -336,7 +346,12 @@
         onOpen: (send) => {
           reportClientEvent("websocket_connected");
           if (connectionSupervisor.snapshot().handoffActive && activeChannelId) setConnectionStatus("Gjenopprettar samtalen …");
-          send("hello"); send("list_users"); send("list_my_channels"); send("list_my_circles"); send("list_mentions"); send("list_tasks");
+          send("hello");
+          // Candidate bootstrap must not supersede private list tickets owned
+          // by the still-active transport before the handoff has succeeded.
+          if (!connectionSupervisor.snapshot().handoffActive) {
+            send("list_users"); send("list_my_channels"); send("list_my_circles"); send("list_mentions"); send("list_tasks");
+          }
           if (activeChannelId) send("subscribe_channel", { channel_id: activeChannelId });
         },
         onEvent: (event) => serverEventMailbox.enqueue(event),
@@ -656,6 +671,22 @@
       const channelNotificationErrors = new Map<string, string>();
       let knownMentions: Mention[] = [];
       let knownTasks: UserTask[] = [];
+      type InboxReadTicket = { requestId: string; accountGeneration: number };
+      let latestMentionListTicket: InboxReadTicket | null = null;
+      let latestTaskListTicket: InboxReadTicket | null = null;
+      let mentionsReady = false, mentionsError = "";
+      let tasksReady = false, tasksError = "";
+      function resetInboxReadStatus(): void {
+        latestMentionListTicket = null; latestTaskListTicket = null;
+        mentionsReady = false; mentionsError = ""; tasksReady = false; tasksError = "";
+        for (const [requestId, request] of previewInboxRequests) {
+          if (request.expected === "mentions_listed" || request.expected === "tasks_listed")
+            failPreviewInboxRequest(requestId, "Innboksen må hentast på nytt.");
+        }
+      }
+      function currentInboxRead(requestId: string | undefined, ticket: InboxReadTicket | null): boolean {
+        return Boolean(ticket && ticket.requestId === requestId && ticket.accountGeneration === accountGeneration);
+      }
       const knownCircles = new Map<string, Circle>();
       let conversationQuery = conversationSearch.value;
       let temporaryAgentId: string | null = null;
@@ -1099,6 +1130,13 @@
         });
       }
 
+      let manualRecoveryPending = false;
+      const retryConnection = createManualConnectionRecovery({
+        authenticationRequired: () => applicationStore.snapshot.session.reauthenticationRequired,
+        recover: () => recoverConnection(true),
+        onPending: pending => { manualRecoveryPending = pending; refreshDevelopmentPreview(); }
+      });
+
       function resumeAfterBackground(force = false) {
         if (document.visibilityState === "hidden") return;
         const now = Date.now();
@@ -1124,7 +1162,8 @@
 
       window.addEventListener("pageshow", (event) => resumeAfterBackground(event.persisted));
       window.addEventListener("focus", () => { resumeAfterBackground(false); connectionSupervisor.probeWebsocket(); });
-      window.addEventListener("online", () => { resumeAfterBackground(true); connectionSupervisor.probeWebsocket(); });
+      window.addEventListener("online", () => { resumeAfterBackground(true); connectionSupervisor.probeWebsocket(); refreshDevelopmentPreview(); });
+      window.addEventListener("offline", () => refreshDevelopmentPreview());
       window.addEventListener("pageshow", refreshVisibleInvitationCards);
       window.addEventListener("focus", refreshVisibleInvitationCards);
       window.addEventListener("focus", () => { void favoriteCircles.refresh(false); });
@@ -3285,6 +3324,11 @@
           return;
         }
         if (event.type === "pong") return;
+        // These are private list replies, never unsolicited broadcasts. The
+        // initial bootstrap is bound to generation zero before the first hello.
+        if (event.type === "mentions_listed" && !currentInboxRead(event.request_id, latestMentionListTicket)) return;
+        if (event.type === "tasks_listed" && !currentInboxRead(event.request_id, latestTaskListTicket)) return;
+        let inboxReadFailed = false;
         const creationIntent = event.request_id ? creationIntents.get(event.request_id) : undefined;
         const requestedCreation = event.request_id ? pendingCommands.get(event.request_id) : undefined;
         if (event.type === "circle_created" || event.type === "channel_created"
@@ -3299,6 +3343,16 @@
         }
         if (event.type === "error" && event.request_id) {
           directIntents.delete(event.request_id);
+          if (currentInboxRead(event.request_id, latestMentionListTicket)) {
+            latestMentionListTicket = null;
+            mentionsError = "Omtalane kunne ikkje hentast. Prøv igjen.";
+            inboxReadFailed = true;
+          }
+          if (currentInboxRead(event.request_id, latestTaskListTicket)) {
+            latestTaskListTicket = null;
+            tasksError = "Oppgåvene kunne ikkje hentast. Prøv igjen.";
+            inboxReadFailed = true;
+          }
           if (event.request_id === latestChannelListRequestId || event.request_id === latestCircleListRequestId)
             directoryError = "Samtalane kunne ikkje hentast. Prøv igjen.";
         }
@@ -3324,6 +3378,7 @@
           if (event.type === "error") previewInboxRequest.reject(new Error(event.payload.message || "Handlinga feila. Prøv igjen."));
           else previewInboxRequest.resolve();
         }
+        if (inboxReadFailed) { refreshDevelopmentPreview(); return; }
         const {
           requestedCommand, pendingInvitation, inspectedInvitationToken, invitationRecipient,
           circleInvitationRecipient, circleShareInvitation, directInvitationMessage,
@@ -3344,6 +3399,8 @@
             directIntents.clear();
             creationIntents.clear();
             directoryChannelsLoaded = false; directoryCirclesLoaded = false; directoryError = "";
+            resetInboxReadStatus(); knownMentions = []; knownTasks = [];
+            renderPrimaryNavigation(); renderMentionInbox(); renderTaskInbox();
             viewFocus.clear();
             deliveryDirectRequests.clear();
             managementTarget = null; pendingViewTarget = null; pendingMessageLink = null;
@@ -3357,6 +3414,7 @@
             shares.clear();
             pendingMessages.clear(); uncertainMessages.clear(); pendingThreadReplies.clear(); uncertainThreadReplies.clear(); retriedUncertainRequests.clear();
             sendCommand("list_my_channels"); sendCommand("list_my_circles"); sendCommand("list_users");
+            sendCommand("list_mentions"); sendCommand("list_tasks");
           }
           durableJournalReady = durableOutbox.setUser(currentParticipantId).then(async entries => {
             await shares.refresh(); return entries;
@@ -3443,6 +3501,7 @@
         }
 
         if (event.type === "mentions_listed") {
+          latestMentionListTicket = null; mentionsReady = true; mentionsError = "";
           knownMentions = event.payload.mentions;
           renderPrimaryNavigation();
           renderMentionInbox();
@@ -3460,6 +3519,7 @@
         }
 
         if (event.type === "tasks_listed") {
+          latestTaskListTicket = null; tasksReady = true; tasksError = "";
           knownTasks = event.payload.tasks;
           renderPrimaryNavigation();
           renderTaskInbox();
@@ -6288,8 +6348,11 @@
             }),
             inboxState: () => ({
               channels: knownChannels,
+              directoryReady: directoryChannelsLoaded, directoryError,
               mentions: knownMentions,
+              mentionsReady, mentionsError,
               tasks: knownTasks,
+              tasksReady, tasksError,
               participantId: currentParticipantId,
               circleNames: Object.fromEntries([...knownCircles].map(([id, circle]) => [id, circle.name]))
             }),
@@ -6330,6 +6393,14 @@
             loadOlder: loadOlderHistory,
             retryHistory,
             retryDirectory: () => { directoryError = ""; sendCommand("list_my_channels"); sendCommand("list_my_circles"); refreshDevelopmentPreview(); },
+            retryConnection,
+            connectionHealth: () => {
+              const connection = connectionSupervisor.snapshot();
+              return connectionPresentation({ ...connection, connected: connection.connected && applicationStore.snapshot.connection.connected }, {
+                online: navigator.onLine, authenticationRequired: applicationStore.snapshot.session.reauthenticationRequired,
+                retrying: manualRecoveryPending, detail: applicationStore.snapshot.connection.status
+              });
+            },
             acknowledgeVisible,
             isOwnMessage: (message) => message.sender_id === currentParticipantId,
             takeScrollIntent: () => {

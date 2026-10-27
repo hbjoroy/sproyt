@@ -361,7 +361,7 @@ test("returning across two channels restores an older message and offset, includ
   await expectAnchor(page, saved);
   expect(server.reads.get("a")).toBe(before);
   const latest = page.getByRole("button", { name: "Gå til siste", exact: true }).filter({ visible: true });
-  if (!await latest.count()) await page.getByRole("button", { name: "Meny", exact: true }).click();
+  if (!await latest.count()) await page.locator(".sp-mobile-conversation-title").click();
   await latest.click();
   await expect.poll(() => server.reads.get("a")).toBe(161);
   server.append("a");
@@ -439,9 +439,9 @@ test("channel return waits for a media-clamped anchor instead of following the t
   await viewport(page).evaluate(element => element.querySelectorAll<HTMLElement>("[data-message-id]").forEach(message => { message.style.paddingBottom = ""; }));
   await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
   const theme = page.getByRole("button", { name: "Byt tema", exact: true });
-  if (!await theme.isVisible()) await page.getByRole("button", { name: "Meny", exact: true }).click();
+  await page.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await page.getByRole("button", { name: "Utsjånad og bruk", exact: true }).click();
   await expect(theme).toBeVisible();
-  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
   // Theme changes publish synchronously through the real host. A publication
   // before ResizeObserver must not save this temporary distance from bottom.
   await theme.evaluate(button => {
@@ -449,9 +449,9 @@ test("channel return waits for a media-clamped anchor instead of following the t
     [...timeline.querySelectorAll<HTMLElement>("[data-message-id]")].at(-1)!.style.paddingBottom = "160px";
     (button as HTMLButtonElement).click();
   });
-  await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
   await viewport(page).evaluate(element => element.querySelectorAll<HTMLElement>("[data-message-id]").forEach(message => { message.style.paddingBottom = ""; }));
-  if (await theme.isVisible()) await page.getByRole("button", { name: "Meny", exact: true }).click();
+  await page.getByRole("button", { name: "Tilbake til innstillingar", exact: true }).click();
+  await page.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
   await expect.poll(() => viewport(page).evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
   if (isMobile) {
     await viewport(page).evaluate(async element => {

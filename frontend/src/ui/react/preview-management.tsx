@@ -1,4 +1,5 @@
-import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
+import { DestinationPage } from "./workspace-page";
+import { Button, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
@@ -23,7 +24,7 @@ const roleName = (role: string) => role === "owner" ? "Eigar" : role === "modera
 
 /** A single controlled destination, with a local fallback for standalone previews.
  * Opening this directory creates no invitation, credential or process. */
-export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition, target, onNavigate, onBack, onSelectChannel, onRetryDirectory }: {
+export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition, target, onNavigate, onBack, onSelectChannel, onRetryDirectory, appearanceContent, helpContent, hideTrigger = false, focusMemberAction = false }: {
   snapshot: ConversationSnapshot;
   capabilities: { agent: boolean; heart: boolean };
   settings: PreviewSettingsHost;
@@ -37,6 +38,10 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   onBack?: () => void;
   onSelectChannel?: (channelId: string) => void;
   onRetryDirectory?: () => void;
+  appearanceContent?: ReactNode;
+  helpContent?: ReactNode;
+  hideTrigger?: boolean;
+  focusMemberAction?: boolean;
 }) {
   const [localTarget, setLocalTarget] = useState<ManagementTarget | null>(null);
   const selfId = community.selfId();
@@ -107,12 +112,12 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
       const button = focusKey ? rows.current.get(focusKey) : undefined;
       if (button?.isConnected) { button.focus({ preventScroll: true }); returnFocus.current = undefined; }
       else if (!active && previous !== "null") {
-        if (openedFromTrigger.current) trigger.current?.focus({ preventScroll: true });
+        if (openedFromTrigger.current && !hideTrigger) trigger.current?.focus({ preventScroll: true });
         openedFromTrigger.current = false;
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [activeKey]);
+  }, [activeKey, hideTrigger]);
   const close = () => {
     if (!active) return;
     returnFocus.current = entries.current.get(JSON.stringify(active));
@@ -155,10 +160,20 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     { title: "Dine innstillingar", rows: [
       { label: "Profil og status", detail: "Namn og status · kontoen din", target: { kind: "profile" }, aliases: "namn emoji" },
       { label: "Varslingsinnstillingar", detail: "Varsel og push · kontoen din og denne eininga", target: { kind: "notifications" }, aliases: "bjelle varsling push" },
+      { label: "Utsjånad og bruk", detail: "Tema og korleis samtalane blir viste", target: { kind: "appearance" }, aliases: "tema mørk lys råtekst utsjånad" },
       ...(community.agentMemory ? [{ label: "Personvern og mitt agentminne", detail: "Vel krets for å sjå og styre ditt eige minne", target: directory, aliases: "minne samtykke personvern" }] : [])
     ] },
+    { title: "Kretsadministrasjon", rows: [
+      { label: "Administrer krets", detail: "Vel krets for medlemmer, kanalar og agentar", target: directory, aliases: "kretsadministrasjon bot agent invitere" }
+    ] },
+    { title: "Hjelp", rows: [
+      { label: "Hjelp og om Sprøyt", detail: "Kom i gang, versjon, oppdatering og tilkopling", target: { kind: "help" }, aliases: "hjelp help om versjon oppdatering samband tilkopling" }
+    ] }
+  ];
+  // Preserve old entry points as searchable, resource-bound destinations. The
+  // normal overview stays personal; this index creates no operations on render.
+  const shortcuts: { title: string; rows: SettingsRow[] }[] = [
     { title: "Kretsar og Felles", rows: [
-      { label: "Administrer krets", detail: "Vel krets · medlemmer, kanalar, invitasjonar og agentar", target: directory, aliases: "kretsadministrasjon bot agent invitere" },
       { label: "Kanalar i Felles", detail: "Finn og opprett kanalar i fellesområdet", target: { kind: "community", destination: { kind: "global-channels" } } },
       { label: "Inviter ny brukar til Sprøyt", detail: "Registreringsinvitasjon til Sprøyt og Felles", target: { kind: "community", destination: { kind: "global-invite" } }, aliases: "invitere" },
       { label: "Ny vennekrets", detail: "Opprett ein krets for ei gruppe du kjenner", target: { kind: "community", destination: { kind: "create-circle" } } },
@@ -171,6 +186,9 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     { title: "Integrasjonar og prosessar", rows: [
       ...(capabilities.agent && snapshot.activeChannel && administrator(snapshot.activeChannel.role) ? [{ label: "Mellombels tilgang for ekstern agent", detail: `Kortliva tilgang til ${snapshot.activeChannel.name}`, target: { kind: "advanced", feature: "agent", channelId: snapshot.activeChannel.id }, aliases: "agenttilgang credential" } as SettingsRow] : []),
       ...(capabilities.heart && snapshot.activeChannel ? [{ label: "Heart og planlegging", detail: `Prosessar i ${snapshot.activeChannel.name}`, target: { kind: "advanced", feature: "heart", channelId: snapshot.activeChannel.id }, aliases: "prosess event" } as SettingsRow] : [])
+    ] },
+    { title: "Snarvegar", rows: [
+      { label: "Kom i gang", detail: "Finn folk, kretsar og samtalar", target: { kind: "welcome" }, aliases: "hjelp guide" }
     ] }
   ];
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -181,30 +199,40 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     ...(community.agentMemory ? [{ label: `Mitt agentminne i ${circle.name}`, detail: "Personleg · berre ditt eige minne", target: { kind: "memory", circleId: circle.id }, aliases: "minne personvern samtykke" } as SettingsRow] : [])
   ]) : [];
   const matches = (item: SettingsRow) => `${item.label} ${item.detail} ${item.aliases ?? ""}`.toLocaleLowerCase().includes(normalizedQuery);
-  const matchedGroups = [...groups, { title: "I kretsane dine", rows: scopedResults }].map(group => ({ ...group, rows: group.rows.filter(matches) })).filter(group => group.rows.length);
+  const matchedGroups = (normalizedQuery ? [...groups, ...shortcuts, { title: "I kretsane dine", rows: scopedResults }] : groups).map(group => ({ ...group, rows: group.rows.filter(matches) })).filter(group => group.rows.length);
   return <>
-    <Button ref={trigger} onClick={event => {
+    {hideTrigger ? <button ref={trigger} type="button" hidden tabIndex={-1} aria-hidden="true" /> : <Button ref={trigger} onClick={event => {
       event.currentTarget.focus({ preventScroll: true }); openedFromTrigger.current = true; setQuery(""); navigate({ kind: "overview" });
-    }}>Innstillingar</Button>
+    }}>Innstillingar</Button>}
     {portalHost && createPortal(<>
-    {active && !available && <Dialog open title="Ikkje tilgjengeleg" closeLabel="Tilbake" onClose={close}>
+    {active && !available && <DestinationPage open title="Ikkje tilgjengeleg" closeLabel="Tilbake" onClose={close}>
       <div className="sp-settings-page"><Status>Du har ikkje tilgang til denne sida no. Kretsen, kanalen eller rettane dine kan ha endra seg.</Status><Button onClick={() => navigate({ kind: "overview" })}>Til innstillingar</Button></div>
-    </Dialog>}
-    {active?.kind === "overview" && <Dialog open title="Innstillingar" closeLabel="Lukk innstillingane" onClose={close}>
+    </DestinationPage>}
+    {active?.kind === "overview" && <DestinationPage open title="Innstillingar" closeLabel="Lukk innstillingane" onClose={close}>
       <div className="sp-settings-page">
-        <p className="sp-settings-intro">Dine val og administrasjon av kretsane dine. Samtalen og utkasta dine blir tekne vare på.</p>
-        <TextField label="Søk i innstillingar" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Til dømes varsel, agent eller kretsnamn" />
+        <p className="sp-settings-intro">Dine personlege val. Samtalen og utkasta dine blir tekne vare på medan du er her.</p>
+        <TextField label="Søk i innstillingar" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Til dømes varsel, tema eller hjelp" />
         {matchedGroups.map(group => <section className="sp-settings-group" aria-label={group.title} key={group.title}><h3>{group.title}</h3>{group.rows.map(row)}</section>)}
         {!matchedGroups.length && <p role="status">Ingen innstillingar passar søket.</p>}
-        {!normalizedQuery && <section className="sp-settings-group" aria-label="Om appen"><h3>Om appen</h3>{row({ label: "Kom i gang", detail: "Finn folk, kretsar og samtalar", target: { kind: "welcome" } })}<AppUpdateAction update={appUpdate} capture={captureUpdatePosition} /></section>}
+        {!normalizedQuery && <section className="sp-settings-group" aria-label="Konto"><h3>Konto</h3><a href="/auth/logout">Logg ut</a></section>}
       </div>
-    </Dialog>}
-    {active?.kind === "welcome" && <Dialog open title="Kom i gang" closeLabel="Tilbake" onClose={close}>
+    </DestinationPage>}
+    {active?.kind === "appearance" && <DestinationPage open title="Utsjånad og bruk" closeLabel="Tilbake til innstillingar" onClose={close}>
+      <div className="sp-settings-page">{appearanceContent}</div>
+    </DestinationPage>}
+    {active?.kind === "help" && <DestinationPage open title="Hjelp og om Sprøyt" closeLabel="Tilbake til innstillingar" onClose={close}>
+      <div className="sp-settings-page">
+        {helpContent}
+        <section className="sp-settings-group" aria-label="Kom i gang"><h3>Kom i gang</h3>{row({ label: "Kom i gang", detail: "Finn folk, kretsar og samtalar", target: { kind: "welcome" } })}</section>
+        <section className="sp-settings-group" aria-label="Versjon og oppdatering"><h3>Versjon og oppdatering</h3><AppUpdateAction update={appUpdate} capture={captureUpdatePosition} /></section>
+      </div>
+    </DestinationPage>}
+    {active?.kind === "welcome" && <DestinationPage open title="Kom i gang" closeLabel="Tilbake" onClose={close}>
       <GettingStarted mode="help" onFindChannels={() => navigate(directory)}
         onNewDirect={() => navigate({ kind: "community", destination: { kind: "people" } })}
         onInvitation={() => navigate({ kind: "community", destination: { kind: "accept-invitation" } })} onProfile={() => navigate({ kind: "profile" })} />
-    </Dialog>}
-    {active?.kind === "circle" && available && circle && <Dialog open title={circle.name} closeLabel="Tilbake til kretsane" onClose={close}>
+    </DestinationPage>}
+    {active?.kind === "circle" && available && circle && <DestinationPage open title={circle.name} closeLabel="Tilbake til kretsane" onClose={close}>
       <div className="sp-settings-page"><p className="sp-settings-scope">Krets / {circle.name} · {roleName(circle.role)}</p>
         <p>Endringar her gjeld denne kretsen. Mitt agentminne er personleg.</p>
         <section className="sp-settings-group" aria-label="Kretsinnstillingar">
@@ -216,10 +244,11 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
           {circle.role === "owner" && row({ label: "Endre kretsnamn", detail: "Namnet alle medlemmene ser", target: { kind: "community", destination: { kind: "rename-circle", circleId: circle.id } } })}
         </section>
       </div>
-    </Dialog>}
+    </DestinationPage>}
     {isDirectory && available && <CircleDirectory key={`${selfId}:${activeKey}`} onRetry={onRetryDirectory} invitationOnly={active?.kind === "community" && active.destination.kind === "accept-invitation"} snapshot={snapshot} host={community} onClose={close} row={row} />}
     {active && available && (active.kind === "profile" || active.kind === "notifications") && <PreviewSettingsDialog key={`${selfId}:${active.kind}`} kind={active.kind} host={settings} onClose={close} />}
     {active?.kind === "community" && !isDirectory && available && <PreviewCommunity key={`${selfId}:${activeKey}`} destination={active.destination} snapshot={snapshot} host={community} onSelectChannel={onSelectChannel}
+      focusMemberAction={active.destination.kind === "channel" && focusMemberAction}
       onNavigate={destination => navigate({ kind: "community", destination })} onClose={close} />}
     {active?.kind === "advanced" && available && <PreviewAdvanced key={`${selfId}:${activeKey}`} kind={active.feature} host={advanced}
       snapshot={{ ...snapshot, activeChannel: snapshot.channels.find(channel => channel.id === active.channelId) ?? null,
@@ -247,7 +276,7 @@ function CircleDirectory({ snapshot, host, onClose, row, invitationOnly = false,
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const visible = snapshot.circles.filter(circle => circle.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  return <Dialog open title={invitationOnly ? "Bruk invitasjon" : "Vel krets"} closeLabel="Tilbake til innstillingar" onClose={onClose}><div className="sp-settings-page">
+  return <DestinationPage open title={invitationOnly ? "Bruk invitasjon" : "Vel krets"} closeLabel="Tilbake til innstillingar" onClose={onClose}><div className="sp-settings-page">
     {!invitationOnly && <>
     <p className="sp-settings-intro">Vel kva krets du vil sjå. Du finn medlemmer, kanalar, agentar og ditt eige agentminne inne i kretsen.</p>
     {!snapshot.directory.ready || snapshot.directory.error ? <><Status tone={snapshot.directory.error ? "error" : "info"}>{snapshot.directory.error || "Hentar kretsane dine …"}</Status>{onRetry && <Button variant="quiet" onClick={onRetry}>Prøv igjen</Button>}</> : <>
@@ -269,5 +298,5 @@ function CircleDirectory({ snapshot, host, onClose, row, invitationOnly = false,
       </form>
       {error && <Status tone="error">{error}</Status>}{notice && <Status>{notice}</Status>}
     </details>
-  </div></Dialog>;
+  </div></DestinationPage>;
 }

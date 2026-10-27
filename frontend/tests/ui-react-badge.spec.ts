@@ -1,14 +1,13 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator } from "@playwright/test";
 
 async function returnFromProfile(preview: Locator) {
-  await preview.getByRole("dialog", { name: "Profil og status", exact: true })
+  await destinationSurface(preview, "Profil og status", true)
     .getByRole("button", { name: "Tilbake til menyen", exact: true }).click();
-  const settings = preview.getByRole("dialog", { name: "Innstillingar", exact: true });
+  const settings = destinationSurface(preview, "Innstillingar", true);
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
   await expect(settings).toHaveCount(0);
-  const toolbar = preview.getByRole("button", { name: "Meny", exact: true });
-  if (await toolbar.isVisible() && await toolbar.getAttribute("aria-expanded") === "true") await toolbar.click();
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeVisible();
 }
 
@@ -19,10 +18,9 @@ test("first-50 badge is visible on the profile and compact beside chat authors",
   await expect(composer).toBeEnabled({ timeout: 15000 });
   await expect(preview.locator(".sp-header-early-adopter")).toHaveCount(0);
 
-  await preview.getByRole("button", { name: "Meny", exact: true }).click();
   await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
   await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
-  await expect(preview.getByRole("dialog", { name: "Profil og status" })).toContainText("Første 50 på Sprøyt");
+  await expect(destinationSurface(preview, "Profil og status", false)).toContainText("Første 50 på Sprøyt");
   await returnFromProfile(preview);
 
   await composer.fill("Merket skal følgje meldinga");
@@ -44,10 +42,10 @@ for (const touch of [false, true]) {
       const preview = page.locator("#sproyt-react-preview");
       const composer = preview.getByRole("textbox", { name: "Skriv melding" });
       await expect(composer).toBeEnabled({ timeout: 15000 });
-      await preview.getByRole("button", { name: "Meny", exact: true }).click();
+
       await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
       await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
-      const dialog = preview.getByRole("dialog", { name: "Profil og status" });
+      const dialog = destinationSurface(preview, "Profil og status", false);
       await dialog.getByLabel("Statusemoji", { exact: true }).fill("☀️");
       await dialog.getByLabel("Statusmelding", { exact: true }).fill("Ute i sola");
       await dialog.getByRole("button", { name: "Lagre status", exact: true }).click();

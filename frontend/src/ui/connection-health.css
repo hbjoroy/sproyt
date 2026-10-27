@@ -1,0 +1,9 @@
+.sp-theme .sp-connection-health { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; padding: 4px 12px; border-bottom: 1px solid var(--sp-line); color: var(--sp-text); background: var(--sp-surface); font-size: .875rem; }
+.sp-theme .sp-connection-health-copy { flex: 1 1 10rem; min-width: 0; overflow-wrap: anywhere; }
+.sp-theme .sp-connection-health-copy strong { font-weight: 500; }
+.sp-theme .sp-connection-health-copy p { margin: 4px 0 0; color: var(--sp-muted); line-height: 1.4; }
+.sp-theme .sp-connection-health-actions { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.sp-theme .sp-connection-health-actions .sp-button { min-height: 44px; font-size: .875rem; }
+.sp-theme .sp-connection-health-error { flex-basis: 100%; margin: 0; color: var(--sp-error); overflow-wrap: anywhere; }
+.sp-theme .sp-connection-logo-mark { width: 16px; height: 16px; flex: none; color: var(--sp-text); }
+.sp-theme .sp-connection-health-details { padding: 12px 0; align-items: flex-start; }

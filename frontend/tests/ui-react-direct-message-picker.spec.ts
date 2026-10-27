@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page } from "@playwright/test";
 
 const owner = "dm-picker-owner", ada = "dm-picker-ada", grace = "dm-picker-grace";
@@ -131,7 +132,7 @@ async function picker(page: Page) {
   if (await back.isVisible()) await back.click();
   await app.getByRole("tab", { name: /^Direktemeldingar/ }).click();
   await app.getByRole("button", { name: "Ny direktemelding", exact: true }).click();
-  return app.getByRole("dialog", { name: "Ny direktemelding", exact: true });
+  return destinationSurface(app, "Ny direktemelding", true);
 }
 
 test("the compact picker focuses search and opens an existing person conversation without creating another channel", async ({ page }, testInfo) => {
@@ -179,7 +180,7 @@ for (const group of [false, true]) test(`${group ? "group" : "one-to-one"} detai
   const server = await fixture(page);
   const selected = group ? groupId : directId;
   await page.goto(`/?participant=${owner}&view=settings&section=community&task=channel&channel=${selected}`);
-  const dialog = page.getByRole("dialog", { name: "Om samtalen", exact: true });
+  const dialog = destinationSurface(page, "Om samtalen", true);
   await expect(dialog.getByRole("heading", { name: group ? "Ada Lovelace, Grace Hopper og meg" : "Ada Lovelace", exact: true })).toBeVisible();
   await expect(dialog).toContainText(group ? "Gruppesamtale" : "Direktemelding");
   await expect(dialog).toContainText("Vanlege kanaltypar og kanalroller gjeld ikkje her");
@@ -224,12 +225,12 @@ test("the sidebar guide is addressable and a short invitation error never report
   const back = app.getByRole("button", { name: "Samtalar", exact: true });
   if (await back.isVisible()) await back.click();
   await app.getByRole("navigation", { name: "Samtalar", exact: true }).getByRole("button", { name: "Kom i gang", exact: true }).click();
-  const guide = app.getByRole("dialog", { name: "Kom i gang", exact: true });
+  const guide = destinationSurface(app, "Kom i gang", true);
   await expect(guide.getByRole("heading", { name: "Kom i gang med Sprøyt", exact: true })).toBeVisible();
   expect(new URL(page.url()).searchParams.get("section")).toBe("welcome");
   await page.screenshot({ path: testInfo.outputPath("getting-started-1280-light.png"), fullPage: true });
   await guide.getByRole("button", { name: "Bruk invitasjonslenkje eller kode", exact: true }).click();
-  const invitation = app.getByRole("dialog", { name: "Bruk invitasjon", exact: true });
+  const invitation = destinationSurface(app, "Bruk invitasjon", true);
   const token = invitation.getByRole("textbox", { name: "Invitasjonskode eller lenkje", exact: true });
   await token.fill("kort"); await invitation.getByRole("button", { name: "Godta invitasjon", exact: true }).click();
   await expect(invitation).toContainText(/gyldig invitasjonskode|Invitasjonen er ikkje gyldig/);
@@ -304,10 +305,8 @@ test("the direct conversation header exposes its scoped member details without l
   await expect.poll(() => server.commands.filter(command => command.type === "list_channel_users").length).toBeGreaterThanOrEqual(1);
   const before = server.commands.filter(command => command.type === "list_channel_users").length;
   expect(server.commands.filter(command => command.type === "list_channel_users").every(command => command.payload?.channel_id === directId)).toBe(true);
-  if (!await app.getByRole("button", { name: "Medlemmer i Ada Lovelace", exact: true }).isVisible())
-    await app.getByRole("button", { name: "Meny", exact: true }).click();
   await app.getByRole("button", { name: "Medlemmer i Ada Lovelace", exact: true }).click();
-  const details = app.getByRole("dialog", { name: "Om samtalen", exact: true });
+  const details = destinationSurface(app, "Om samtalen", true);
   await expect(details.getByRole("heading", { name: "Ada Lovelace", exact: true })).toBeVisible();
   const reads = server.commands.filter(command => command.type === "list_channel_users");
   expect(reads).toHaveLength(before + 1); expect(reads.every(command => command.payload?.channel_id === directId)).toBe(true);
@@ -343,9 +342,9 @@ for (const navigation of ["account-A-B-A", "Back"] as const) test(`a held automa
   const back = app.getByRole("button", { name: "Samtalar", exact: true });
   if (await back.isVisible()) await back.click();
   await app.getByRole("navigation", { name: "Samtalar", exact: true }).getByRole("button", { name: "Kom i gang", exact: true }).click();
-  await app.getByRole("dialog", { name: "Kom i gang", exact: true }).getByRole("button", { name: "Finn kretsar og kanalar", exact: true }).click();
-  await app.getByRole("dialog", { name: "Vel krets", exact: true }).getByRole("button", { name: "Ny vennekrets", exact: true }).click();
-  const creation = app.getByRole("dialog", { name: "Ny vennekrets", exact: true });
+  await destinationSurface(app, "Kom i gang", true).getByRole("button", { name: "Finn kretsar og kanalar", exact: true }).click();
+  await destinationSurface(app, "Vel krets", true).getByRole("button", { name: "Ny vennekrets", exact: true }).click();
+  const creation = destinationSurface(app, "Ny vennekrets", true);
   await creation.getByRole("textbox", { name: "Namn på vennekrets", exact: true }).fill("Krets frå første A");
   server.holdNextPrat(); await creation.getByRole("button", { name: "Opprett vennekrets", exact: true }).click();
   await expect.poll(() => server.commands.filter(command => command.type === "create_channel").length).toBe(1);
@@ -358,11 +357,11 @@ for (const navigation of ["account-A-B-A", "Back"] as const) test(`a held automa
     server.switchAccount(owner);
     await expect.poll(() => server.commands.filter(command => command.type === "list_my_channels").length).toBeGreaterThan(reads);
   } else {
-    for (let step = 0; step < 5 && await app.getByRole("dialog").count(); step++) {
+    for (let step = 0; step < 5 && await app.locator("[data-workspace-page], dialog[open]").count(); step++) {
       const previous = page.url(); await page.goBack(); await expect.poll(() => page.url()).not.toBe(previous);
     }
   }
-  await expect(app.getByRole("dialog")).toHaveCount(0);
+  await expect(app.locator("[data-workspace-page], dialog[open]")).toHaveCount(0);
   if (await back.isVisible()) await back.click();
   await app.getByRole("tab", { name: /^Direktemeldingar/ }).click();
   await app.getByRole("button", { name: /Ada Lovelace, Grace Hopper og meg/ }).click();

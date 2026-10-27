@@ -67,6 +67,9 @@ export function createAppUpdate(options: {
         if (options.storage.getItem(receiptKey) !== receipt) throw new Error("Utkasta kunne ikkje vernast før oppdatering. Prøv igjen når lagring er tilgjengeleg.");
         publish({ busy: true, error: false, message: "Lastar appen og samtalane på nytt …" });
         options.reload();
+        // beforeunload cancellation does not throw. A surviving document must
+        // permit another deliberate attempt; retain the receipt for real reloads.
+        publish({ busy: false, error: false, message: "Innlastinga er førebudd. Du kan prøve igjen dersom du avbraut." });
       } catch (error) {
         publish({ busy: false, error: true, message: error instanceof Error ? error.message : "Oppdateringa feila. Prøv igjen." });
       }

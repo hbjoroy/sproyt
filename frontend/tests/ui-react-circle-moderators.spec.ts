@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page, type WebSocketRoute } from "@playwright/test";
 
 const circleId = "00000000-0000-7000-8000-000000000001";
@@ -59,7 +60,7 @@ for (const width of [1280,390]) {
     expect((await menu.boundingBox())!.height).toBeLessThan(280);
     for(const action of await menu.getByRole("button").all()) expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await server.preview.getByRole("button",{name:"Medlemmer og roller i Testkrets",exact:true}).click();
-    const dialog=server.preview.getByRole("dialog",{name:"Kretsmedlemmer og roller",exact:true});
+    const dialog=destinationSurface(server.preview, "Kretsmedlemmer og roller", true);
     await expect(dialog).toContainText("Eigaren");
     await expect(dialog.getByRole("button",{name:/Eigaren/})).toHaveCount(0);
     await dialog.getByRole("button",{name:"Gjer Kari til moderator",exact:true}).click();
@@ -85,16 +86,16 @@ for (const width of [1280,390]) {
     await expect(server.preview.getByRole("button",{name:/Endre namn på/})).toHaveCount(0);
     await expect(server.preview.getByRole("button",{name:"Inviter til Testkrets",exact:true})).toBeVisible();
     await server.preview.getByRole("button",{name:"Medlemmer og roller i Testkrets",exact:true}).click();
-    const people=server.preview.getByRole("dialog",{name:"Kretsmedlemmer og roller",exact:true});
+    const people=destinationSurface(server.preview, "Kretsmedlemmer og roller", true);
     await expect(people).toContainText("Kari");
     await expect(people.getByRole("button",{name:/Gjer.*moderator|Fjern moderator/})).toHaveCount(0);
     await page.keyboard.press("Escape");
     await server.preview.getByRole("button",{name:"Val for Testkrets",exact:true}).click();
     await server.preview.getByRole("button",{name:"Agentar i Testkrets",exact:true}).click();
-    await expect(server.preview.getByRole("dialog",{name:"Agentar i Testkrets",exact:true})).toBeVisible();
+    await expect(destinationSurface(server.preview, "Agentar i Testkrets", true)).toBeVisible();
     server.role("member");
-    await expect(server.preview.getByRole("dialog",{name:"Agentar i Testkrets",exact:true})).toHaveCount(0);
-    const unavailable = server.preview.getByRole("dialog", { name: "Ikkje tilgjengeleg", exact: true });
+    await expect(destinationSurface(server.preview, "Agentar i Testkrets", true)).toHaveCount(0);
+    const unavailable = destinationSurface(server.preview, "Ikkje tilgjengeleg", true);
     await expect(unavailable).toContainText("Du har ikkje tilgang til denne sida no.");
     await unavailable.getByRole("button", { name: "Tilbake", exact: true }).click();
     await expect(unavailable).toHaveCount(0);
@@ -122,7 +123,7 @@ for (const width of [1280, 390]) test(`moderator sends scoped email invitations 
   await server.preview.getByRole("button", { name: "Val for Testkrets", exact: true }).click();
   await expect(server.preview.getByRole("button", { name: /Endre namn på/ })).toHaveCount(0);
   await server.preview.getByRole("button", { name: "Inviter til Testkrets", exact: true }).click();
-  const invite = server.preview.getByRole("dialog", { name: "Inviter til Testkrets", exact: true });
+  const invite = destinationSurface(server.preview, "Inviter til Testkrets", true);
   await expect(invite.getByRole("heading", { name: "Inviter på e-post", exact: true })).toBeVisible();
   await invite.getByLabel("E-postadresse", { exact: true }).fill("existing@example.org");
   // Existing users do not need a new display name or account.

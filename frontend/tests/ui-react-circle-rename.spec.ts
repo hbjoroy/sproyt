@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
 
 test.setTimeout(45_000);
@@ -60,7 +61,7 @@ for (const width of [1280, 390]) test(`owner circle rename is prefilled, cancell
     await preview.getByRole("button", { name: `Endre namn på ${name}`, exact: true }).click();
   };
   await open();
-  const dialog = preview.getByRole("dialog", { name: "Endre kretsnamn", exact: true });
+  const dialog = destinationSurface(preview, "Endre kretsnamn", true);
   const field = dialog.getByRole("textbox", { name: "Kretsnamn", exact: true });
   await expect(field).toHaveValue("Før namnebyte"); await expect(field).toBeFocused();
   await field.fill("Avbryte"); await page.keyboard.press("Escape");

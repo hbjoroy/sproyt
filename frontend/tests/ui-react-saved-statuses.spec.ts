@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test } from "@playwright/test";
 
 test("saved statuses survive reload, prefill without publishing, and can be forgotten independently", async ({ page }) => {
@@ -8,15 +9,15 @@ test("saved statuses survive reload, prefill without publishing, and can be forg
   }));
   const open = async () => {
     const preview = page.locator("#sproyt-react-preview");
-    const profile = preview.getByRole("dialog", { name: "Profil og status", exact: true });
+    const profile = destinationSurface(preview, "Profil og status", true);
     if (new URL(page.url()).searchParams.get("section") === "profile") {
       await expect(profile).toBeVisible();
-      await expect(preview.getByRole("dialog")).toHaveCount(1);
+      await expect(preview.locator("[data-workspace-page], dialog[open]")).toHaveCount(1);
       return profile;
     }
     await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15000 });
     const settings = preview.getByRole("button", { name: "Innstillingar", exact: true });
-    if (!await settings.isVisible()) await preview.getByRole("button", { name: "Meny", exact: true }).click();
+
     await settings.click();
     await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
     return profile;

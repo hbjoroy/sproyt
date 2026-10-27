@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function enterDirect(page: Page, participant: string) {
@@ -43,7 +44,7 @@ for (const width of [1280, 390]) test(`new direct message is discoverable before
   await preview.getByRole("searchbox", { name: "Finn samtale" }).fill("ingen treff her");
   await action.focus();
   await page.keyboard.press("Enter");
-  const people = preview.getByRole("dialog", { name: "Ny direktemelding" });
+  const people = destinationSurface(preview, "Ny direktemelding", false);
   await expect(people.getByRole("searchbox", { name: "Finn person" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(action).toBeFocused();
@@ -86,13 +87,13 @@ test("touch navigation exposes Felles actions, restores modal focus and preserve
     await scopeMenu.tap();
     const create = navigation.getByRole("button", { name: "Ny kanal i Felles", exact: true });
     await create.tap();
-    const dialog = app.getByRole("dialog", { name: "Ny kanal i Felles", exact: true });
+    const dialog = destinationSurface(app, "Ny kanal i Felles", true);
     await expect(dialog.getByLabel("Kanalnamn")).toBeFocused();
     await dialog.getByRole("button", { name: "Lukk", exact: true }).tap();
     await expect(scopeMenu).toBeFocused();
     await scopeMenu.tap();
     await navigation.getByRole("button", { name: "Finn kanalar i Felles", exact: true }).tap();
-    await app.getByRole("dialog", { name: "Kanalar i Felles", exact: true }).getByRole("button", { name: /^# general Gå inn$/i }).tap();
+    await destinationSurface(app, "Kanalar i Felles", true).getByRole("button", { name: /^# general Gå inn$/i }).tap();
     await expect(composer).toHaveValue("utkast etter kanaloversikt");
   } finally { await context.close(); }
 });
@@ -195,18 +196,13 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await expect(app.locator(".sp-mobile-conversation-name")).toBeVisible();
   await composer.fill("Bevar mobilutkastet");
   const height = (await channel.locator(".sp-timeline").boundingBox())!.height;
-  const menu = app.getByRole("button", { name: "Meny", exact: true });
-  await menu.click();
-  await expect(app.locator(".sp-mobile-conversation-name")).toBeHidden();
-  await expect(menu).toHaveAttribute("aria-expanded", "true");
   await expect(app.getByRole("button", { name: "Kanalval", exact: true })).toBeVisible();
-  await app.getByRole("button", { name: "Byt tema", exact: true }).click();
   await app.getByRole("button", { name: "Innstillingar", exact: true }).click();
-  const dialog = app.getByRole("dialog", { name: "Innstillingar" });
-  await expect(dialog).toBeVisible();
+  await app.getByRole("button", { name: "Utsjånad og bruk", exact: true }).click();
+  await app.getByRole("button", { name: "Byt tema", exact: true }).click();
+  await app.getByRole("button", { name: "Tilbake til innstillingar", exact: true }).click();
+  const dialog = destinationSurface(app, "Innstillingar", false);
   await dialog.getByRole("button", { name: "Lukk innstillingane" }).click();
-  await page.keyboard.press("Escape");
-  await expect(menu).toHaveAttribute("aria-expanded", "false");
   await expect(composer).toHaveValue("Bevar mobilutkastet");
   expect((await channel.locator(".sp-timeline").boundingBox())!.height).toBeGreaterThanOrEqual(height - 1);
   await composer.click();
@@ -365,9 +361,6 @@ test("channel overflow keeps notification and confirmed leave actions together",
   await page.goto("/?participant=preview-channel-overflow&ui=react");
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15_000 });
-  if (await preview.locator(".sp-mobile-conversation-context").isVisible()) {
-    await preview.getByRole("button", { name: "Meny", exact: true }).click();
-  }
   await preview.getByRole("button", { name: "Kanalval" }).click();
   const menu = preview.getByRole("dialog", { name: /Kanalval:/ });
   await expect(menu.getByRole("button", { name: /Varsel (på|av)/ })).toBeVisible();

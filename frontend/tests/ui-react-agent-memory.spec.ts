@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
 
 test.setTimeout(45_000);
@@ -73,7 +74,7 @@ async function open(page: Page) {
   if (await back.isVisible()) await back.click();
   await preview.getByRole("button", { name: "Val for Testkrets", exact: true }).click();
   await preview.getByRole("button", { name: "Mitt agentminne i Testkrets", exact: true }).click();
-  return preview.getByRole("dialog", { name: "Mitt agentminne", exact: true });
+  return destinationSurface(preview, "Mitt agentminne", true);
 }
 test("ordinary member controls memory with conflict recovery and compact themed layout", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -120,8 +121,12 @@ test("ordinary member controls memory with conflict recovery and compact themed 
   await expect(dialog).not.toContainText("2 notat er utilgjengelege");
   await dialog.getByRole("button", { name: "Lukk", exact: true }).click();
   await expect(page.getByRole("button", { name: "Val for Testkrets", exact: true })).toBeFocused();
-  await page.locator("#sproyt-react-preview").getByRole("button", { name: "Meny", exact: true }).click();
-  await page.locator("#sproyt-react-preview").getByRole("button", { name: "Byt tema", exact: true }).click();
+  const preview = page.locator("#sproyt-react-preview");
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Utsjånad og bruk", exact: true }).click();
+  await preview.getByRole("button", { name: "Byt tema", exact: true }).click();
+  await preview.getByRole("button", { name: "Tilbake til innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
   const darkDialog = await open(page);
   await expect(darkDialog).toContainText("Ingen synlege minnenotat");
   await page.screenshot({ path: testInfo.outputPath("memory-mobile-dark.png") });

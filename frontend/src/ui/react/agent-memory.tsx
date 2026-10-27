@@ -1,4 +1,5 @@
-import { Button, Dialog, Status } from "@sproyt/ui/react";
+import { DestinationPage } from "./workspace-page";
+import { Button, Status } from "@sproyt/ui/react";
 import { useEffect, useRef, useState } from "react";
 import { HttpError } from "../../api";
 import { memoryTextBytes, validMemoryText, type AgentMemory, type AgentMemoryApi, type MemoryAction, type MemoryAgent } from "../../agent-memory";
@@ -123,7 +124,7 @@ export function AgentMemoryDialog({ api, circleId, circleName, channels, onClose
     return () => { live = false; controller.abort(); };
   }, [api, circleId, attempt]);
   const agent = agents.find(item => item.agentId === selected);
-  return <Dialog open title="Mitt agentminne" closeLabel="Lukk" onClose={onClose}>
+  return <DestinationPage open title="Mitt agentminne" closeLabel="Lukk" onClose={onClose}>
     <div className="sp-memory-meta">{circleName}</div>
     <p>Dette er agenten sitt minne om deg i denne kretsen. Andre medlemmer og moderatorar kan ikkje opne det.</p>
     <p>Minne frå opne kanalar kan brukast i andre kanalar i kretsen, også private. Minne frå ein privat kanal blir berre brukt i den same kanalen.</p>
@@ -134,5 +135,5 @@ export function AgentMemoryDialog({ api, circleId, circleName, channels, onClose
       <select id="memory-agent" value={selected} onChange={event => setSelected(event.target.value)}>{agents.map(item => <option key={item.agentId} value={item.agentId}>{item.displayName}</option>)}</select>
       {agent && <MemoryPanel key={agent.agentId} api={api} circleId={circleId} agent={agent} channels={channels} />}
     </div>}
-  </Dialog>;
+  </DestinationPage>;
 }
