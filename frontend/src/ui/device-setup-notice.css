@@ -1,10 +1,16 @@
 .sp-theme .sp-device-notice {
   flex: 1 0 100%;
+  order: 1;
   min-width: 0;
   color: var(--sp-text);
   background: var(--sp-surface);
   border-bottom: 1px solid var(--sp-line);
   font-size: .875rem;
+}
+/* Compact mastheads normally do not wrap. The notice needs its own row,
+   otherwise its full-width flex basis pushes the navigation off-screen. */
+#sproyt-react-preview .sp-masthead:has(> .sp-device-notice) {
+  flex-wrap: wrap;
 }
 .sp-theme .sp-device-notice-row {
   display: flex;

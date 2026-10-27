@@ -196,3 +196,46 @@ test("the browser installation prompt is opened only by the install action", asy
   // the synthetic native event has been consumed.
   await expect(install.getByRole("button", { name: "Installer appen" })).toHaveCount(0);
 });
+
+for (const width of [320, 390]) {
+  test(`device reminders leave mobile navigation and composer reachable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 700 });
+    await setup(page, { install: true });
+    const preview = await openApp(page);
+    const header = preview.locator(".sp-header-actions");
+    const composer = preview.getByRole("textbox", { name: "Skriv melding" });
+    const controls = [
+      header.getByRole("button", { name: "Samtalar", exact: true }),
+      header.getByRole("button", { name: /^Innboks/ }),
+      header.getByRole("button", { name: "Innstillingar", exact: true }),
+      composer
+    ];
+    const assertReachable = async (notice: ReturnType<typeof preview.getByRole>) => {
+      await expect(notice).toBeVisible();
+      const navigationBounds = await header.boundingBox();
+      const noticeBounds = await notice.boundingBox();
+      const timelineBounds = await preview.locator(".sp-channel-pane .sp-timeline").boundingBox();
+      expect(navigationBounds).not.toBeNull(); expect(noticeBounds).not.toBeNull(); expect(timelineBounds).not.toBeNull();
+      expect(navigationBounds!.y + navigationBounds!.height).toBeLessThanOrEqual(noticeBounds!.y + 1);
+      expect(noticeBounds!.y + noticeBounds!.height).toBeLessThanOrEqual(timelineBounds!.y + 1);
+      for (const control of controls) {
+        await expect(control).toBeVisible();
+        const rect = await control.boundingBox();
+        expect(rect).not.toBeNull();
+        expect(rect!.x).toBeGreaterThanOrEqual(0);
+        expect(rect!.x + rect!.width).toBeLessThanOrEqual(width);
+        expect(await control.evaluate(element => {
+          const r = element.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return !!hit && (hit === element || element.contains(hit));
+        })).toBe(true);
+      }
+    };
+    const notifications = preview.getByRole("region", { name: "Påminning om varsel" });
+    await assertReachable(notifications);
+    await notifications.getByRole("button", { name: "Lukk påminning om varsel" }).click();
+    await assertReachable(preview.getByRole("region", { name: "Påminning om Sprøyt som app" }));
+    await header.getByRole("button", { name: "Innstillingar", exact: true }).click();
+    await expect(preview.getByRole("heading", { name: "Innstillingar", exact: true })).toBeVisible();
+  });
+}

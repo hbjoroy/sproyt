@@ -36,7 +36,7 @@ export function DeviceSetupNotice({ notification, install, installError, dismiss
     <div className="sp-device-notice-row">
       <p className="sp-device-notice-copy">{kind === "notifications"
         ? notification === "blocked" ? "Varsel er blokkerte i nettlesaren." : "Få varsel på denne eininga."
-        : installError ? "Kunne ikkje installere appen." : "Legg Sprøyt på heimskjermen for rask tilgang."}</p>
+        : installError ? "Kunne ikkje installere appen." : "Legg Sprøyt på heimskjermen."}</p>
       {kind === "notifications" ? <Button variant="quiet" className="sp-device-notice-action" aria-label="Opne varslingsinnstillingar" onClick={onOpenNotifications}>Innstillingar</Button>
         : ios ? <Button variant="quiet" className="sp-device-notice-action" aria-expanded={instructionsOpen}
           aria-controls={instructionsId} onClick={() => setInstructionsOpen(open => !open)}>Slik gjer du</Button>
