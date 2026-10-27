@@ -51,6 +51,7 @@ async function fixture(page: Page, options: { holdMentions?: boolean } = {}) {
           break;
         case "list_tasks": reply("tasks_listed", { tasks: Array.from({ length: 8 }, (_, index) => ({ id: `task-${index}`, source_message_id: messageId(20), channel_id: channelId,
           channel_name: "Prat", assignee_id: owner, created_by: "peer", process_link_id: null, title: `Oppgåve ${index}`, status: "open", created_at: profile.created_at, completed_at: null })) }); break;
+        case "accept_invitation": reply("error", { code: "invalid_token", message: "Invitasjonen er ikkje gyldig" }); break;
         case "subscribe_channel": reply("subscription_started", { channel_id: channel, history: channel === channelId ? messages : [] }); break;
         case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: [] }); break;
         case "list_channel_reactions": reply("channel_reactions_listed", { channel_id: channel, reactions: [] }); break;
@@ -147,6 +148,40 @@ test("inbox distinguishes held and failed reads and fences old account generatio
   f.replyMentions(returnedRead);
   await expect(region.getByRole("heading", { name: "Ingen omtalar", exact: true })).toBeVisible();
   expect(f.errors).toEqual([]);
+});
+
+test("delayed page heading focus preserves an invitation field already being edited", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const { app, errors } = await fixture(page);
+  await app.getByRole("navigation", { name: "Samtalar", exact: true }).getByRole("button", { name: "Kom i gang", exact: true }).click();
+  const guide = await ordinaryPage(page, "Kom i gang");
+  await expect(guide.getByRole("heading", { name: "Kom i gang", exact: true, level: 1 })).toBeFocused();
+  // Hold the page's pending frames so input can deterministically arrive before
+  // the navigation focus callback, rather than depending on runner timing.
+  await page.evaluate(() => {
+    const original = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+    const pending = new Map<number, FrameRequestCallback>();
+    let id = -1;
+    window.requestAnimationFrame = callback => { pending.set(id, callback); return id--; };
+    window.cancelAnimationFrame = handle => { if (!pending.delete(handle)) cancel.call(window, handle); };
+    (window as typeof window & { __flushPageFocusFrames?: () => void }).__flushPageFocusFrames = () => {
+      window.requestAnimationFrame = original; window.cancelAnimationFrame = cancel;
+      for (const callback of pending.values()) callback(performance.now());
+      pending.clear();
+    };
+  });
+  await guide.getByRole("button", { name: "Bruk invitasjonslenkje eller kode", exact: true }).evaluate(button => (button as HTMLButtonElement).click());
+  const invitation = await ordinaryPage(page, "Bruk invitasjon");
+  const token = invitation.getByRole("textbox", { name: "Invitasjonskode eller lenkje", exact: true });
+  await token.focus(); // focusin, without pointerdown or keydown
+  await token.fill("kort");
+  await page.evaluate(() => (window as typeof window & { __flushPageFocusFrames?: () => void }).__flushPageFocusFrames?.());
+  await expect(token).toBeFocused();
+  await expect(token).toHaveValue("kort");
+  await invitation.getByRole("button", { name: "Godta invitasjon", exact: true }).click();
+  await expect(invitation).toContainText(/gyldig invitasjonskode|Invitasjonen er ikkje gyldig/);
+  await expect(invitation).not.toContainText("Invitasjonen er godteken");
+  expect(errors).toEqual([]);
 });
 
 for (const width of [1280, 390]) {

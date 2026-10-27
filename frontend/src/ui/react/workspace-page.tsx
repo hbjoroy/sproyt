@@ -35,8 +35,24 @@ export function DestinationPage({ open, title, closeLabel = "Tilbake", onClose, 
   const pageKey = context?.pageKey, outlet = context?.outlet;
   useLayoutEffect(() => {
     if (!open || !pageKey || !outlet || !focusHeading) return;
-    const frame = requestAnimationFrame(() => heading.current?.focus({ preventScroll: true }));
-    return () => cancelAnimationFrame(frame);
+    const page = heading.current?.closest("[data-workspace-page]");
+    let interacted = false;
+    const interaction = () => { interacted = true; };
+    const removeListeners = () => {
+      document.removeEventListener("pointerdown", interaction, true);
+      document.removeEventListener("keydown", interaction, true);
+      document.removeEventListener("focusin", interaction, true);
+    };
+    document.addEventListener("pointerdown", interaction, true);
+    document.addEventListener("keydown", interaction, true);
+    document.addEventListener("focusin", interaction, true);
+    const frame = requestAnimationFrame(() => {
+      removeListeners();
+      // Navigation announces its heading only until the user starts working.
+      // In WebKit, moving focus during input insertion can discard the input.
+      if (!interacted && !page?.contains(document.activeElement)) heading.current?.focus({ preventScroll: true });
+    });
+    return () => { removeListeners(); cancelAnimationFrame(frame); };
   }, [open, pageKey, outlet, focusHeading]);
   useEffect(() => {
     if (!open || !pageKey || !outlet) return;
