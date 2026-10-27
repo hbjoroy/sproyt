@@ -472,6 +472,7 @@
 .sp-theme .sp-recent-views-menu p { margin: 4px; font-size: 14px; }
 .sp-theme .sp-copy-link-notice { font-size: 12px; color: var(--sp-muted); }
 .sp-theme .sp-view-history-in-menu { display: none; }
+.sp-theme .sp-view-history-in-menu > button { display: none; }
 @container sp-app (max-width: 800px) {
   .sp-theme .sp-view-history:not(.sp-view-history-in-menu) > button[aria-label="Fram"],
   .sp-theme .sp-view-history:not(.sp-view-history-in-menu) > button[aria-label="Tilbake"]:disabled,
@@ -479,3 +480,7 @@
   .sp-theme .sp-view-history-in-menu { display: flex; }
 }
 @media (pointer: coarse) { .sp-theme .sp-view-history > button, .sp-theme .sp-recent-views > summary { min-width: 44px; min-height: 44px; } }
+@container sp-app (max-width: 360px) {
+  .sp-header-actions:has(.sp-mobile-conversation-context) .sp-header-primary > .sp-view-history:not(.sp-view-history-in-menu) { display: none; }
+  .sp-theme .sp-view-history-in-menu > button { display: inline-flex; min-width: 44px; min-height: 44px; }
+}

@@ -1,15 +1,25 @@
 import { expect, test } from "@playwright/test";
 
-for (const compact of [true, false]) {
-  test.describe(compact ? "mobile" : "desktop", () => {
+for (const width of [320, 390, 1500]) {
+  const compact = width < 500;
+  test.describe(`${width}px`, () => {
   test.use({ hasTouch: compact, isMobile: compact });
   test("thread actions and replies are discoverable", async ({ page }) => {
-    await page.setViewportSize({ width: compact ? 390 : 1500, height: 900 });
-    await page.goto(`/?participant=thread-discovery-${compact}&ui=react`);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/?participant=thread-discovery-${width}&ui=react`);
     const app = page.locator("#sproyt-react-preview");
     const channel = app.locator(".sp-channel-pane");
     const composer = channel.getByRole("textbox", { name: "Skriv melding" });
     await expect(composer).toBeEnabled({ timeout: 15_000 });
+    if (compact) {
+      const name = app.locator(".sp-mobile-conversation-short-name");
+      await expect(name).toBeVisible();
+      expect((await name.boundingBox())!.width).toBeGreaterThanOrEqual(25);
+      const directory = app.getByRole("button", { name: /Trådar i samtalen/ });
+      const bounds = await directory.boundingBox();
+      expect(bounds!.width).toBeGreaterThanOrEqual(44);
+      expect(bounds!.height).toBeGreaterThanOrEqual(44);
+    }
     const text = `Ei melding som får tråd ${Date.now()}`;
     await composer.fill(text); await channel.getByRole("button", { name: "Send ↑", exact: true }).click();
     const root = channel.locator("[data-message-id]").filter({ hasText: text });
@@ -41,6 +51,16 @@ for (const compact of [true, false]) {
     await thread.getByRole("button", { name: "Lukk tråden" }).click();
     await expect(threadLink).toBeFocused();
     await expect(composer).toHaveValue("Utkast i kanalen");
+    if (width === 320) {
+      await app.getByRole("button", { name: "Samtalar", exact: true }).click();
+      const history = app.locator(".sp-product-nav-footer .sp-view-history-in-menu");
+      const back = history.getByRole("button", { name: "Tilbake", exact: true });
+      await expect(back).toBeVisible();
+      await expect(back).toBeEnabled();
+      const before = page.url();
+      await back.click();
+      await expect.poll(() => page.url()).not.toBe(before);
+    }
   });
   });
 }
