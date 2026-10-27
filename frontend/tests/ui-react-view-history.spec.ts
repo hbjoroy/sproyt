@@ -23,12 +23,13 @@ function root(sequence: number, channel = channelA): ChatMessage {
 /** A real application/DOM fixture. The socket exposes only this account's two
  * member channels; history pages, thread data and read receipts use real wire
  * messages. Layout and reading offsets are never replaced by fake geometry. */
-async function fixture(page: Page, start = `channel=${channelA}`) {
+async function fixture(page: Page, start = `channel=${channelA}`, options: { waitForComposer?: boolean; threadRoot?: boolean } = {}) {
   await page.setViewportSize({ width: 1440, height: 900 });
   const messages = new Map([channelA, channelB].map(channel => [channel, Array.from({ length: 100 }, (_, index) => root(index + 1, channel))]));
   const reads = new Map([[channelA, 100], [channelB, 100]]);
   const commands: Command[] = [];
   const errors: string[] = [];
+  const previewRequests: { url: string; account: string | undefined; body: unknown }[] = [];
   let socket: WebSocketRoute;
   const emit = (type: string, payload: unknown = {}, request_id?: string) => socket.send(JSON.stringify({ protocol: "sproyt.chat.v1", type, payload, request_id }));
   const channels = () => [...messages].map(([id, list]) => ({ id, slug: id, name: id === channelA ? "Prat" : "Tur",
@@ -39,6 +40,11 @@ async function fixture(page: Page, start = `channel=${channelA}`) {
     enabled: false, subscriptions: 0, public_key: null, channel_ids: [],
     preferences: { mode: "instant", direct_messages: true, mentions: true }
   } }));
+  await page.route("**/api/v1/channels/*/thread-root-previews**", route => {
+    const request = route.request();
+    previewRequests.push({ url: request.url(), account: request.headers()["x-sproyt-account"], body: request.postDataJSON() });
+    return route.fulfill({ json: { roots: [{ id: messageId(1, channelB), author: "Ada", preview: "Trådrot for Tur", sent_at: "2026-01-01T12:00:00Z", deleted: false }] } });
+  });
   await page.routeWebSocket(/\/ws(?:\?|$)/, route => {
     socket = route;
     socket.onMessage(data => {
@@ -61,7 +67,9 @@ async function fixture(page: Page, start = `channel=${channelA}`) {
           if (!list) throw new Error(`Fixture denies channel ${channel}`);
           reply("subscription_started", { channel_id: channel, history: list.slice(-50) }); break;
         }
-        case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: [] }); break;
+        case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: options.threadRoot && channel === channelB ? [{
+          root_message_id: messageId(1, channelB), reply_count: 2, unread_count: 1, latest_sequence: 120
+        }] : [] }); break;
         case "list_channel_reactions": reply("channel_reactions_listed", { channel_id: channel, reactions: [] }); break;
         case "load_recent_messages": {
           const list = messages.get(channel);
@@ -88,8 +96,8 @@ async function fixture(page: Page, start = `channel=${channelA}`) {
   await page.goto(`/?participant=view-history&ui=react&${start}`);
   const app = page.locator("#sproyt-react-preview");
   const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
-  await expect(composer).toBeEnabled();
-  return { app, composer, commands, errors,
+  if (options.waitForComposer !== false) await expect(composer).toBeEnabled();
+  return { app, composer, commands, errors, previewRequests,
     append(channel = channelA) {
       const list = messages.get(channel)!;
       const message = root(list.at(-1)!.sequence + 1, channel); list.push(message);
@@ -269,4 +277,29 @@ test("incoming events, channel refresh and reload do not add browser history ent
   await expectAnchor(timeline(page), saved);
   expect(await page.evaluate(() => ({ length: history.length, id: history.state?.sproytView?.id, href: location.href }))).toEqual(before);
   expect(server.errors).toEqual([]);
+});
+
+
+test("cold channel-thread link subscribes to the requested member channel and loads its roots", async ({ page }) => {
+  const route = `view=settings&section=community&task=channel-threads&channel=${channelB}`;
+  const { app, commands, previewRequests, errors } = await fixture(page, route, { waitForComposer: false, threadRoot: true });
+  await expect.poll(() => commands.filter(command => command.type === "list_thread_summaries").map(command => command.payload?.channel_id)).toContain(channelB);
+  await expect.poll(() => previewRequests.length).toBe(1);
+  expect(commands.filter(command => command.type === "subscribe_channel").map(command => command.payload?.channel_id)).toEqual([channelB]);
+  expect(previewRequests[0]).toMatchObject({ account: owner, body: { root_ids: [messageId(1, channelB)] } });
+  expect(new URL(previewRequests[0]!.url).pathname).toBe(`/api/v1/channels/${channelB}/thread-root-previews`);
+  await expect(app.getByText("Trådrot for Tur", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("task")).toBe("channel-threads");
+  expect(errors).toEqual([]);
+});
+
+test("cold channel-thread link for a non-member never subscribes or requests root data", async ({ page }) => {
+  const forbidden = "00000000-0000-7000-8000-000000008103";
+  const route = `view=settings&section=community&task=channel-threads&channel=${forbidden}`;
+  const { app, commands, previewRequests, errors } = await fixture(page, route, { waitForComposer: false, threadRoot: true });
+  await expect(app.getByText("Denne samtalen er ikkje tilgjengeleg for kontoen din. Vel ei anna samtale.", { exact: true })).toBeVisible();
+  expect(commands.filter(command => command.type === "subscribe_channel")).toEqual([]);
+  expect(commands.filter(command => command.type === "list_thread_summaries")).toEqual([]);
+  expect(previewRequests).toEqual([]);
+  expect(errors).toEqual([]);
 });

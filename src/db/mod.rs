@@ -784,7 +784,7 @@ where
         repository
             .leave_channel(LeaveChannel {
                 actor: thread_reader.clone(),
-                channel_id: default_channel.id,
+                channel_id: default_channel.id.clone(),
             })
             .await,
         Err(RepositoryError::PermissionDenied),
@@ -807,6 +807,86 @@ where
     assert_eq!(summary.reply_count, 1);
     assert_eq!(summary.unread_count, 1);
     assert_eq!(summary.latest_sequence, reply.sequence);
+    let roots = repository
+        .thread_root_previews(
+            thread_reader.clone(),
+            channel.id.clone(),
+            vec![second.id, reply.id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].id, second.id);
+    assert_eq!(roots[0].preview, "second");
+    assert_eq!(
+        roots[0].author.as_deref(),
+        Some(second.sender_display_name.as_str())
+    );
+    assert_eq!(
+        repository
+            .thread_root_previews(
+                thread_reader.clone(),
+                default_channel.id.clone(),
+                vec![second.id]
+            )
+            .await
+            .unwrap(),
+        vec![]
+    );
+    assert_eq!(
+        repository
+            .thread_root_previews(
+                UserId::named(format!("{suffix}-other")),
+                channel.id.clone(),
+                vec![second.id]
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .thread_root_previews(
+                thread_reader.clone(),
+                channel.id.clone(),
+                vec![second.id; 31]
+            )
+            .await,
+        Err(RepositoryError::Conflict)
+    );
+    assert_eq!(
+        repository
+            .thread_root_previews(
+                thread_reader.clone(),
+                channel.id.clone(),
+                vec![second.id; 30]
+            )
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    repository
+        .delete_message(DeleteMessage {
+            actor: actor.clone(),
+            message_id: reply.id,
+        })
+        .await
+        .unwrap();
+    let summary = repository
+        .list_thread_summaries(thread_reader.clone(), channel.id.clone())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.root_message_id == second.id)
+        .unwrap();
+    assert_eq!(
+        (
+            summary.reply_count,
+            summary.unread_count,
+            summary.latest_sequence
+        ),
+        (0, 0, reply.sequence)
+    );
     let read = repository
         .mark_thread_read(thread_reader.clone(), second.id, reply.sequence)
         .await
@@ -814,12 +894,40 @@ where
     assert_eq!(read.unread_count, 0);
     assert_eq!(
         repository
-            .mark_thread_read(thread_reader, second.id, ChannelSequence::new(0))
+            .mark_thread_read(thread_reader.clone(), second.id, ChannelSequence::new(0))
             .await
             .unwrap()
             .unread_count,
         0
     );
+    let summary = repository
+        .mark_thread_read(thread_reader.clone(), second.id, reply.sequence)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            summary.reply_count,
+            summary.unread_count,
+            summary.latest_sequence
+        ),
+        (0, 0, reply.sequence)
+    );
+    repository
+        .delete_message(DeleteMessage {
+            actor: actor.clone(),
+            message_id: second.id,
+        })
+        .await
+        .unwrap();
+    let roots = repository
+        .thread_root_previews(thread_reader, channel.id.clone(), vec![second.id])
+        .await
+        .unwrap();
+    assert_eq!(roots.len(), 1);
+    assert!(roots[0].deleted);
+    assert_eq!(roots[0].preview, "Meldinga er sletta");
+    assert_eq!(roots[0].author, None);
+    assert_eq!(roots[0].sent_at, None);
 
     let circle = repository
         .create_circle(CreateCircle {

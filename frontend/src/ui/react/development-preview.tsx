@@ -50,8 +50,11 @@ import { ConnectionHealth, type ConnectionHealthState } from "./connection-healt
 import { DeviceSetupReminders } from "./device-setup-reminders";
 import type { deviceInstall } from "../../device-install";
 import type { DevicePushStatus } from "../../device-push";
+import type { ThreadPreviewApi } from "../../thread-previews";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
+  readonly retryThreadSummaries: () => void;
+  readonly threadPreviews: ThreadPreviewApi;
   readonly deviceInstall: typeof deviceInstall;
   readonly checkDevicePush: (owner: string, admitted: () => boolean) => Promise<DevicePushStatus>;
   readonly favorites: import("../../circle-favorites").CircleFavorites;
@@ -151,6 +154,29 @@ function ChannelMembersIcon() {
   return <svg className="sp-channel-members-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <circle cx="9" cy="8" r="3" /><circle cx="17" cy="10" r="2.25" />
     <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M14 20c0-2.5 1.6-4.6 4-5.4" />
+  </svg>;
+}
+
+function ThreadDirectoryTrigger({ snapshot, onOpen, compact = false }: {
+  snapshot: ConversationSnapshot; onOpen: () => void; compact?: boolean;
+}) {
+  if (!snapshot.activeChannel) return null;
+  const unread = snapshot.threadSummaryStatus.ready
+    ? snapshot.threadSummaries.reduce((sum, item) => sum + item.unread_count, 0) : 0;
+  const label = unread ? `Trådar i samtalen, ${unread} uleste svar` : "Trådar i samtalen";
+  return <Button variant="quiet" className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"}
+    aria-label={label} title={label} onClick={onOpen}>
+    <svg aria-hidden="true" viewBox="0 0 24 24" style={{ width: "1.2rem", height: "1.2rem", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" }}>
+      <path d="M4 4h13a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3a2 2 0 0 1-2-2V6a2 2 0 0 1 1-2Z" />
+      <path d="M8 9h7M8 12h5" />
+    </svg>{unread > 0 && <span aria-hidden="true">{unread > 99 ? "99+" : unread}</span>}
+  </Button>;
+}
+
+function ThreadIcon() {
+  return <svg className="sp-thread-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M4 5.5h16v11H9l-5 3v-14Z" />
+    <path d="M8 9h8M8 12.5h5" />
   </svg>;
 }
 
@@ -372,9 +398,11 @@ function WorkItemMenuAction({ host, message, hasApplications, hasExistingItems, 
   return <span ref={anchor}>{(hasApplications || hasExistingItems || hasItems) && <Button onClick={onOpen}>Arbeidssaker</Button>}</span>;
 }
 
-function MessageActions({ host, message, threadAction, openReaction }: {
+function MessageActions({ host, message, threadAction, openThread, threadHasReplies, openReaction }: {
   readonly host: DevelopmentPreviewHost; readonly message: ChatMessage;
   readonly threadAction: React.ReactNode;
+  readonly openThread?: () => void;
+  readonly threadHasReplies: boolean;
   readonly openReaction: (message: ChatMessage, anchor: HTMLElement) => void;
 }) {
   const [apps, setApps] = useState<readonly WorkApplication[]>([]);
@@ -419,6 +447,7 @@ function MessageActions({ host, message, threadAction, openReaction }: {
   return <div ref={availabilityAnchor} style={{ display: "contents" }}>
     <PreviewReactionActions message={message} host={host} open={openReaction} primaryAction={threadAction}
       overflowActions={close => <>
+        {openThread && <Button variant="quiet" onClick={() => { close(); openThread(); }}>{threadHasReplies ? "Svar i tråd" : "Start tråd"}</Button>}
         <Button variant="quiet" onClick={() => {
           close();
           void navigator.clipboard?.writeText(messageLink).then(() => setLinkCopied(true), () => setLinkOpen(true));
@@ -465,6 +494,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let renderedOwnerEpoch = 0;
   let renderedEntry = "";
   let memberFocus: { owner: string; channelId: string; historyEntryId: string } | null = null;
+  let threadFocus: { owner: string | null; messageId: string; element: HTMLElement } | null = null;
   const reactionPicker = createPreviewReactionPicker(host);
   const restorePosition = (key: string) => host.appUpdate.resumePosition(host.processPilotIdentity(), key);
   const captureReadingPosition = () => host.viewHistory.capture(captureUpdatePosition());
@@ -565,6 +595,17 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const openCommunity = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "circles" } } });
     const newDirect = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "people" } } });
     const openInvitation = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "accept-invitation" } } });
+    const openThreadDirectory = () => {
+      const channelId = snapshot.activeChannel?.id;
+      if (!channelId || !owner || disposed || host.community.selfId() !== owner
+        || host.viewHistory.getSnapshot().entryId !== historyState.entryId || host.snapshot().activeChannel?.id !== channelId) return;
+      host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "channel-threads", channelId } } });
+    };
+    const openMessageThread = (messageId: string, element?: HTMLElement) => {
+      if (disposed || host.community.selfId() !== owner || host.snapshot().selection.channelId !== snapshot.selection.channelId) return;
+      threadFocus = element ? { owner, messageId, element } : null;
+      host.openThread(messageId); update();
+    };
     const openDetails = (channelId: string, focusMemberAction: boolean, section: "about" | "members" | "agents" | "notifications" = "about") => {
       const admitted = () => !disposed && !!owner && host.community.selfId() === owner && renderedOwnerEpoch === ownerEpoch;
       if (!admitted() || host.viewHistory.getSnapshot().entryId !== historyState.entryId
@@ -632,7 +673,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         onSettings={() => host.navigateView({ kind: "management", page: { kind: "overview" } })}
         primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
         onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
-        {view === "detail" && !pageKey && <div className="sp-mobile-header-channel-actions">{snapshot.activeChannel?.is_direct
+        {view === "detail" && !pageKey && <div className="sp-mobile-header-channel-actions"><ThreadDirectoryTrigger compact snapshot={snapshot} onOpen={openThreadDirectory} />{snapshot.activeChannel?.is_direct
           ? directMembers(true) : <ChannelActions compact snapshot={snapshot} host={host} onDetails={openDetails} />}</div>}
         <PreviewInboxes key={owner ?? "signed-out"} state={host.inboxState()} host={host}
           activeKind={historyState.target?.kind === "inbox" ? historyState.target.inbox : null}
@@ -643,6 +684,12 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         } : undefined}>
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <PreviewManagement channelNotificationsFor={channelNotificationsFor} hideTrigger snapshot={snapshot} onRetryDirectory={host.retryDirectory} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate}
+        threadPreviews={host.threadPreviews} onRetryThreadSummaries={host.retryThreadSummaries}
+        onOpenThread={(channelId, rootId) => {
+          if (disposed || !owner || host.community.selfId() !== owner || host.viewHistory.getSnapshot().entryId !== historyState.entryId
+            || host.snapshot().activeChannel?.id !== channelId) return;
+          host.navigateView({ kind: "conversation", channelId, threadId: rootId });
+        }}
         focusMemberAction={!!memberFocus && memberFocus.owner === owner && memberFocus.historyEntryId === historyState.entryId
           && historyState.target?.kind === "management" && historyState.target.page.kind === "community"
           && historyState.target.page.destination.kind === "channel" && historyState.target.page.destination.channelId === memberFocus.channelId}
@@ -674,7 +721,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       key={`${host.community.selfId() ?? ""}:${group.id}`} group={group} snapshot={snapshot} host={host.community}
       onNavigate={page => host.navigateView({ kind: "management", page })}
       onSelect={channelId => { reactionPicker.close(); host.navigateView({ kind: "conversation", channelId }); view = "detail"; update(); }} />,
-    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button>{directMembers()}<ChannelActions snapshot={snapshot} host={host} onDetails={openDetails} /></>,
+    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ThreadDirectoryTrigger snapshot={snapshot} onOpen={openThreadDirectory} />{directMembers()}<ChannelActions snapshot={snapshot} host={host} onDetails={openDetails} /></>,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}
@@ -689,7 +736,12 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       host.closeThread();
       update();
       requestAnimationFrame(() => {
-        if (!disposed && rootId) container.querySelector<HTMLElement>(`.sp-channel-pane [data-thread-trigger="${CSS.escape(rootId)}"]`)?.focus({ preventScroll: true });
+        if (disposed || !rootId || host.community.selfId() !== owner) return;
+        const previous = threadFocus?.owner === owner && threadFocus.messageId === rootId ? threadFocus.element : null;
+        const target = previous?.isConnected && previous.getClientRects().length ? previous
+          : container.querySelector<HTMLElement>(`.sp-channel-pane [data-thread-trigger="${CSS.escape(rootId)}"]`);
+        target?.focus({ preventScroll: true });
+        threadFocus = null;
       });
     },
     threadTimeline: {
@@ -714,16 +766,32 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       onReactionRequest: reactionPicker.open,
       renderActions: (message, context) => {
         if (message.deleted_at) return !context?.threadParent && snapshot.timeline.retainedDeletedRootIds.includes(message.id)
-          ? <Button variant="quiet" data-thread-trigger={message.id} onClick={() => { host.openThread(message.id); update(); }}>Opne tråd</Button>
+          ? <Button variant="quiet" data-thread-trigger={message.id} onClick={event => openMessageThread(message.id, event.currentTarget)}>Opne tråd</Button>
           : null;
         const replies = snapshot.threadSummaries.find(summary => summary.root_message_id === message.id)?.reply_count ?? 0;
-        const threadAction = message.parent_message_id === null && !context?.threadParent ? <Button className="sp-message-symbol" variant="quiet"
-          aria-label={replies ? `${replies} svar i tråd` : "Svar i tråd"} title={replies ? `${replies} svar i tråd` : "Svar i tråd"}
+        const isRoot = message.parent_message_id === null && !context?.threadParent;
+        const threadAction = isRoot ? <Button className="sp-message-symbol" variant="quiet"
+          aria-label="Svar i tråd" title="Svar i tråd"
           data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
           onPointerDown={event => { if (event.pointerType === "mouse" && event.button === 0) event.preventDefault(); }}
-          onClick={() => { host.openThread(message.id); update(); }}><span aria-hidden="true">↩</span>{replies > 0 && <span>{replies}</span>}</Button> : null;
+          onClick={event => openMessageThread(message.id, event.currentTarget)}><ThreadIcon /></Button> : null;
         return <MessageActions message={message} host={host} openReaction={reactionPicker.open}
-          threadAction={threadAction} />;
+          threadAction={threadAction} threadHasReplies={replies > 0} openThread={isRoot ? () => openMessageThread(message.id) : undefined} />;
+      },
+      renderThreadSummary: message => {
+        if (message.parent_message_id !== null) return null;
+        const summary = snapshot.threadSummaries.find(item => item.root_message_id === message.id);
+        if (!summary?.reply_count) return null;
+        // Refreshing after a deletion temporarily invalidates the old counts.
+        const ready = snapshot.threadSummaryStatus.ready;
+        const countLabel = summary.reply_count === 1 ? "1 svar" : `${summary.reply_count} svar`;
+        const unreadLabel = summary.unread_count === 1 ? "1 ulest" : `${summary.unread_count} uleste`;
+        const label = ready ? `Opne tråd, ${countLabel}${summary.unread_count ? `, ${unreadLabel}` : ""}` : "Opne tråd";
+        return <Button className="sp-thread-summary" variant="quiet" data-thread-trigger={message.deleted_at ? message.id : undefined}
+          aria-label={label} aria-expanded={snapshot.thread?.rootMessageId === message.id}
+          onPointerDown={event => { if (event.pointerType === "mouse" && event.button === 0) event.preventDefault(); }}
+          onClick={event => openMessageThread(message.id, event.currentTarget)}><ThreadIcon /><span>{ready ? countLabel : "Opne tråd"}</span>
+          {ready && summary.unread_count > 0 && <span className="sp-thread-unread">{unreadLabel}</span>}</Button>;
       },
       // React owns all visible message content, including Markdown, Mermaid,
       // media and invitation cards. The host supplies state and commands only.

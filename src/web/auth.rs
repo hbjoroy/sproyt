@@ -142,6 +142,9 @@ impl SafeViewQuery {
                                 }
                                 path
                             }
+                            "channel-threads" => {
+                                format!("{base}&channel={}", resource(self.channel.as_deref())?)
+                            }
                             "channels" | "invite" | "rename-circle" | "circle-members" => {
                                 format!("{base}&circle={}", resource(self.circle.as_deref())?)
                             }
@@ -596,6 +599,29 @@ mod tests {
             assert_view_login_roundtrip(&format!(
                 "/?view=settings&section=advanced&feature={feature}&channel={channel}"
             ));
+        }
+    }
+
+    #[test]
+    fn channel_thread_overview_survives_cold_login_without_secrets_or_open_redirects() {
+        let channel = uuid::Uuid::new_v4();
+        let path =
+            format!("/?view=settings&section=community&task=channel-threads&channel={channel}");
+        assert_view_login_roundtrip(&path);
+        let untrusted =
+            format!("{path}&invite=secret&token=secret&return_to=https%3A%2F%2Fevil.test");
+        let query = Query::<SafeViewQuery>::try_from_uri(&untrusted.parse().unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(query.return_to(), Some(path));
+        for invalid in ["", "not-a-uuid", "https%3A%2F%2Fevil.test"] {
+            let path =
+                format!("/?view=settings&section=community&task=channel-threads&channel={invalid}");
+            let query = Query::<SafeViewQuery>::try_from_uri(&path.parse().unwrap())
+                .unwrap()
+                .0;
+            assert_eq!(query.return_to(), None, "accepted {path}");
+            assert_eq!(query.login_location(), None, "accepted {path}");
         }
     }
 

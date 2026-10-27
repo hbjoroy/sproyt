@@ -68,8 +68,8 @@ export function ViewHistoryControls({ history, snapshot, onCapture, onOpen, inMe
   const recent = state.recent.filter(item => viewHref(item.target, "https://navigation.invalid/") !== currentKey)
     .map(item => ({ ...item, label: viewTargetLabel(item.target, snapshot) })).filter(item => item.label).slice(0, 12);
   return <div className={`sp-view-history${inMenu ? " sp-view-history-in-menu" : ""}`} aria-label="Navigasjonshistorikk">
-    {!inMenu && <Button variant="symbol" aria-label="Tilbake" title="Tilbake" disabled={!state.canBack} onClick={() => { onCapture(); history.back(); }}><span aria-hidden="true">←</span></Button>}
-    {!inMenu && <Button variant="symbol" aria-label="Fram" title="Fram" disabled={!state.canForward} onClick={() => { onCapture(); history.forward(); }}><span aria-hidden="true">→</span></Button>}
+    <Button variant="symbol" aria-label="Tilbake" title="Tilbake" disabled={!state.canBack} onClick={() => { onCapture(); history.back(); }}><span aria-hidden="true">←</span></Button>
+    <Button variant="symbol" aria-label="Fram" title="Fram" disabled={!state.canForward} onClick={() => { onCapture(); history.forward(); }}><span aria-hidden="true">→</span></Button>
     <details ref={menu} className="sp-recent-views" onToggle={() => {
       const panel = menu.current?.querySelector<HTMLElement>(".sp-recent-views-menu");
       if (!menu.current?.open || !panel) return;

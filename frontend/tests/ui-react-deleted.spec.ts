@@ -83,9 +83,9 @@ test("deleted roots retain only usable thread navigation and deleted replies sta
   const replies = [message(16, false, "deleted-10"), message(17, true, "deleted-10")];
   const fixture = await server(page, messages, "", replies);
   const root = timeline(page).locator('[data-message-id="deleted-10"]');
-  await expect(root.getByRole("button", { name: "Opne tråd", exact: true })).toBeVisible();
-  await expect(root).not.toContainText("Meldinga er sletta");
-  await root.getByRole("button", { name: "Opne tråd", exact: true }).click();
+  await expect(root.getByRole("button", { name: /^Opne tråd/ })).toBeVisible();
+  await expect(root).toContainText("Meldinga er sletta");
+  await root.getByRole("button", { name: /^Opne tråd/ }).click();
   const thread = page.locator("#sproyt-react-preview .sp-thread-pane");
   await expect(thread).toContainText("Meldinga er sletta");
   await expect(thread.locator('[data-message-id="deleted-16"]')).toHaveCount(1);

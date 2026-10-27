@@ -1081,6 +1081,18 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn thread_root_previews(
+        &self,
+        actor: UserId,
+        channel_id: ChannelId,
+        root_ids: Vec<MessageId>,
+    ) -> Result<Vec<crate::domain::ThreadRootPreview>, ChatError> {
+        self.repository
+            .thread_root_previews(actor, channel_id, root_ids)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn mark_thread_read(
         &self,
         actor: UserId,

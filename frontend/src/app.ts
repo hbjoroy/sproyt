@@ -1,6 +1,7 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
       import { uploadMediaChunks } from "./media-upload";
       import { ProcessPilotApi } from "./process-pilot";
+      import { ThreadPreviewApi } from "./thread-previews";
       import { WorkItemApi } from "./work-items";
       import { appVersion, createAppUpdate, latestAppVersion, updateAppWorker } from "./app-update";
       import { createShareTarget, shareInbox } from "./share-target";
@@ -22,6 +23,7 @@
       import { hasThreadContext, projectConversationSnapshot, type ConversationTimelineItem as TimelineItem } from "./application/conversation-snapshot";
       import { historyPage } from "./application/history-pagination";
       import { createVisibleReadPolicy, readSequencePastDeleted } from "./application/visible-read";
+      import { createThreadSummaryState } from "./application/thread-summary-state";
       import { createTimelineScrollController } from "./ui/react/timeline-scroll";
       import { createPendingRequests, type PendingMessage } from "./application/pending-requests";
       import { createInvitationCards, type Invitation } from "./application/invitation-cards";
@@ -40,7 +42,7 @@
       import { createSendAdmissionPolicy } from "./send-admission-wasm";
       import { createSessionController, fetchWithTimeout, sessionRefreshAfterSeconds, type SessionController } from "./session";
       import { isJsonObject, isRecord, mediaFromUpload } from "./types";
-      import type { Channel, ChatMessage, Circle, ClientCommand, ClientCommandArguments, JsonObject, MediaObject, Mention, MermaidApi, ThreadComposerState, ThreadSummary, UploadResponse, UserProfile, UserTask, WireEvent } from "./types";
+      import type { Channel, ChatMessage, Circle, ClientCommand, ClientCommandArguments, JsonObject, MediaObject, Mention, MermaidApi, ThreadComposerState, UploadResponse, UserProfile, UserTask, WireEvent } from "./types";
 
       type InvitationCache =
         | Readonly<{ status: "pending" }>
@@ -364,6 +366,7 @@
         onSocketError: () => reportClientEvent("websocket_error"),
         onConnectionLost: () => {
           visibleRead.disconnect();
+          disconnectThreadSummaries();
           if (developmentThreadLoad?.loading) {
             developmentThreadLoad.loading = false;
             developmentThreadLoad.error = "Sambandet vart brote. Prøv å laste tråden igjen.";
@@ -401,6 +404,7 @@
           for (const requestId of requestIds) {
             creationIntents.delete(requestId);
             visibleRead.fail(requestId);
+            failThreadSummaryRequest(requestId, "Sambandet vart brote. Prøv å hente trådane igjen.");
             failPreviewInboxRequest(requestId, "Sambandet vart brote. Prøv igjen.");
             finishPendingProfileUpdate("Sambandet vart brote. Namnet er ikkje lagra – prøv igjen.", requestId);
             if (pendingMessages.has(requestId)) failPendingMessage(requestId, "sambandet vart brote; kontroller samtalen før du prøver igjen");
@@ -491,7 +495,15 @@
         managementTarget = target.kind === "management" ? target.page : null;
         navigationNotice = "";
         quietlyNavigate(() => {
-          if (target.kind === "management") return;
+          if (target.kind === "management") {
+            if (target.page.kind === "community" && target.page.destination.kind === "channel-threads") {
+              const channelId = target.page.destination.channelId;
+              const channel = knownChannels.find(item => item.id === channelId);
+              if (!channel) { navigationNotice = "Denne samtalen er ikkje tilgjengeleg for kontoen din. Vel ei anna samtale."; return; }
+              selectChannel(channel);
+            }
+            return;
+          }
           if (target.kind === "directory") return;
           if (target.kind === "inbox") { if (!developmentPreviewActive) showInbox(target.inbox); return; }
           const channel = knownChannels.find(channel => channel.id === target.channelId);
@@ -621,7 +633,8 @@
       const timeline: TimelineItem[] = [];
       const threadReplies = new Map<string, ChatMessage[]>();
       const threadRoots = new Map<string, ChatMessage>();
-      const threadSummaries = new Map<string, ThreadSummary>();
+      const threadSummaryState = createThreadSummaryState();
+      const threadSummaries = threadSummaryState.summaries;
       const pendingRequests = createPendingRequests();
       const {
         pendingThreadReplies, pendingCommands, pendingInvitationResponses, pendingInvitationInspections,
@@ -651,7 +664,47 @@
       const historyPageSize = 50;
       let historyHasMore = false;
       let historyLoading = false;
-      const visibleRead = createVisibleReadPolicy();
+      let visibleRead = createVisibleReadPolicy();
+      let threadPreviewGeneration = 0;
+      let threadSummaryReady = false, threadSummaryLoading = false, threadSummaryError = "";
+      let threadSummaryRequestId: string | null = null;
+      let threadSummaryTimer: ReturnType<typeof setTimeout> | null = null;
+      function clearThreadSummaryTimer() {
+        if (threadSummaryTimer !== null) clearTimeout(threadSummaryTimer);
+        threadSummaryTimer = null;
+      }
+      function resetThreadSummaries() {
+        threadPreviewGeneration++;
+        clearThreadSummaryTimer(); threadSummaryRequestId = null;
+        threadSummaryReady = false; threadSummaryLoading = false; threadSummaryError = "";
+        threadSummaryState.reset(); visibleRead.disconnect();
+      }
+      function failThreadSummaryRequest(requestId: string, message: string) {
+        threadSummaryState.fail(requestId);
+        if (requestId !== threadSummaryRequestId) return;
+        clearThreadSummaryTimer(); threadSummaryRequestId = null; threadSummaryLoading = false; threadSummaryError = message;
+        refreshDevelopmentPreview();
+      }
+      function disconnectThreadSummaries() {
+        threadSummaryState.disconnect();
+        // Roots may change while offline, even when reply counts do not.
+        // Hide cached previews immediately and request fresh data on resume.
+        threadPreviewGeneration++;
+        threadSummaryReady = false;
+        clearThreadSummaryTimer(); threadSummaryRequestId = null; threadSummaryLoading = false;
+        threadSummaryError = "Sambandet vart brote. Prøv å hente trådane igjen.";
+        refreshDevelopmentPreview();
+      }
+      function requestThreadSummaries(channelId: string | null = activeChannelId) {
+        if (!channelId || channelId !== activeChannelId || !currentParticipantId) return;
+        clearThreadSummaryTimer();
+        const requestId = sendCommand("list_thread_summaries", { channel_id: channelId });
+        threadSummaryState.beginList(requestId);
+        threadSummaryRequestId = requestId; threadSummaryLoading = !!requestId;
+        threadSummaryError = requestId ? "" : "Ikkje tilkopla. Prøv å hente trådane igjen.";
+        if (requestId) threadSummaryTimer = setTimeout(() => failThreadSummaryRequest(requestId, "Trådane kunne ikkje hentast. Prøv igjen."), 20_000);
+        refreshDevelopmentPreview();
+      }
       const legacyChannelScroll = createTimelineScrollController({ onNearStart: loadOlderHistory, onVisibleMessages: acknowledgeVisible });
       const legacyThreadScroll = createTimelineScrollController({ onVisibleMessages: acknowledgeVisible });
       legacyChannelScroll.viewportRef(messagesEl);
@@ -728,7 +781,8 @@
           channels: knownChannels, circles: knownCircles,
           activeChannelId, activeCircleId, activeRootScope, activeInboxKind,
           query: conversationQuery, timeline, threadReplies, threadRoots,
-          threadSummaries, activeThreadRootId, historyLoading, historyHasMore, historyError,
+          threadSummaries, threadPreviewGeneration, threadSummaryStatus: { ready: threadSummaryReady, loading: threadSummaryLoading, error: threadSummaryError },
+          activeThreadRootId, historyLoading, historyHasMore, historyError,
           waitingForMessageLink: pendingMessageLink !== null,
           connection: applicationStore.snapshot.connection,
           channelNotificationIds, pendingChannelNotificationIds, channelNotificationErrors, directChannelLabel,
@@ -788,6 +842,7 @@
         }
       });
       const favoriteCircles = new CircleFavorites(new ProfileCircleFavoritesApi(http), () => currentParticipantId);
+      const threadPreviews = new ThreadPreviewApi(http);
       const savedEmojisApi = new SavedEmojiApi(http);
       const savedStatusesApi = new SavedStatusApi(http);
       const notificationsApi = new NotificationApi(http);
@@ -3422,7 +3477,7 @@
             channelComposer.draft = ""; threadComposerStates.clear();
             knownChannels = []; knownCircles.clear(); knownUsers = [];
             knownCircleUsers.clear(); knownChannelUsers.clear();
-            timeline.length = 0; threadReplies.clear(); threadRoots.clear(); threadSummaries.clear(); activeThreadRootId = null;
+            timeline.length = 0; threadReplies.clear(); threadRoots.clear(); resetThreadSummaries(); visibleRead = createVisibleReadPolicy(); activeThreadRootId = null;
             shares.clear();
             pendingMessages.clear(); uncertainMessages.clear(); pendingThreadReplies.clear(); uncertainThreadReplies.clear(); retriedUncertainRequests.clear();
             sendCommand("list_my_channels"); sendCommand("list_my_circles"); sendCommand("list_users");
@@ -3746,7 +3801,8 @@
           if (pendingViewTarget && !invited) {
             const target = pendingViewTarget; pendingViewTarget = null;
             // Settings/inbox URLs may still retain a conversation underneath.
-            if (target.kind === "management" && next) quietlyNavigate(() => selectChannel(next));
+            if (target.kind === "management" && next && !(target.page.kind === "community" && target.page.destination.kind === "channel-threads"))
+              quietlyNavigate(() => selectChannel(next));
             const resumed = viewHistory.getSnapshot().target !== null && viewHistory.getSnapshot().positions.length > 0;
             viewHistory.navigate(target, "replace"); applyView(target, resumed);
             return;
@@ -3864,6 +3920,10 @@
           }
           if (event.request_id !== latestSubscriptionRequestId) return;
           latestSubscriptionRequestId = null;
+          // A fresh authoritative subscription can follow an offline period or
+          // transport handoff during which root edits were not observed.
+          threadPreviewGeneration++;
+          threadSummaryReady = false;
           connectionSupervisor.setSubscribedChannel(event.payload.channel_id);
           // Direct-message mentions offer expansion only after the actual
           // membership is known, including after reload/reconnection.
@@ -3874,7 +3934,7 @@
           renderConversationIdentity();
           event.payload.history.forEach(message => appendTimelineMessage(message));
           reconcileUncertainDeliveries(event.payload.channel_id, event.payload.history);
-          sendCommand("list_thread_summaries", { channel_id: event.payload.channel_id });
+          requestThreadSummaries(event.payload.channel_id);
           const page = historyPage(event.payload.history, historyPageSize);
           // A reconnect returns the latest page. Retain a cursor already advanced
           // through older pages, rather than skipping back across loaded history.
@@ -3931,8 +3991,12 @@
 
         if (event.type === "thread_summaries_listed") {
           if (event.payload.channel_id !== activeChannelId) return;
-          threadSummaries.clear();
-          for (const summary of event.payload.summaries) threadSummaries.set(summary.root_message_id, summary);
+          const result = threadSummaryState.receiveList(event.request_id, event.payload.summaries,
+            rootId => threadReplies.get(rootId) ?? [], currentParticipantId);
+          if (result === "ignored") return;
+          clearThreadSummaryTimer(); threadSummaryRequestId = null; threadSummaryLoading = false;
+          if (result === "retry") { requestThreadSummaries(event.payload.channel_id); return; }
+          threadSummaryReady = true; threadSummaryError = "";
           renderTimeline({ preserveScroll: true });
           return;
         }
@@ -3941,7 +4005,14 @@
           if (developmentThreadLoad?.requestId !== event.request_id) return;
           if (developmentThreadLoad?.rootId === event.payload.root_message_id) developmentThreadLoad.loading = false;
           const root = event.payload.messages.find((message) => message.id === event.payload.root_message_id);
-          const replies = event.payload.messages.filter((message) => message.parent_message_id === event.payload.root_message_id);
+          const loadedReplies = event.payload.messages.filter((message) => message.parent_message_id === event.payload.root_message_id);
+          // The load can finish after a live event. Preserve those replies and
+          // locally observed tombstones rather than restoring stale content.
+          const repliesById = new Map(loadedReplies.map(message => [message.id, message]));
+          for (const existing of threadReplies.get(event.payload.root_message_id) ?? []) {
+            if (!repliesById.has(existing.id) || existing.deleted_at) repliesById.set(existing.id, existing);
+          }
+          const replies = [...repliesById.values()].sort((a, b) => a.sequence - b.sequence);
           if (root) threadRoots.set(event.payload.root_message_id, root);
           threadReplies.set(event.payload.root_message_id, replies);
           const threadChannelId = root?.channel_id ?? replies[0]?.channel_id;
@@ -3962,8 +4033,12 @@
         }
 
         if (event.type === "thread_read_updated") {
+          const result = threadSummaryState.receiveRead(event.request_id, event.payload.summary,
+            threadReplies.get(event.payload.summary.root_message_id) ?? [], currentParticipantId);
+          if (result === "ignored") return;
           visibleRead.complete(event.request_id);
-          threadSummaries.set(event.payload.summary.root_message_id, event.payload.summary);
+          if (result === "stale") return;
+          if (result === "retry") { threadSummaryReady = false; requestThreadSummaries(); return; }
           renderTimeline({ preserveScroll: true });
           return;
         }
@@ -3992,12 +4067,15 @@
           } else if (chatEvent.type === "message_edited") {
             if (chatEvent.message.channel_id === activeChannelId) {
               replaceTimelineMessage(chatEvent.message);
+              if (!chatEvent.message.parent_message_id) threadPreviewGeneration++;
               renderTimeline({ preserveScroll: true });
             }
           } else if (chatEvent.type === "message_deleted") {
             messageReactions.delete(chatEvent.message.id);
             if (chatEvent.message.channel_id === activeChannelId) {
               replaceTimelineMessage(chatEvent.message);
+              if (!chatEvent.message.parent_message_id) threadPreviewGeneration++;
+              if (chatEvent.message.parent_message_id) { threadSummaryState.deleteReply(chatEvent.message); threadSummaryReady = false; requestThreadSummaries(); }
               renderTimeline({ preserveScroll: true });
             }
           } else if (chatEvent.type === "message_reaction_changed") {
@@ -4028,6 +4106,7 @@
         if (event.type === "message_edited") {
           if (event.payload.message.channel_id === activeChannelId) {
             replaceTimelineMessage(event.payload.message);
+            if (!event.payload.message.parent_message_id) threadPreviewGeneration++;
             renderTimeline({ preserveScroll: true });
           }
           return;
@@ -4037,6 +4116,8 @@
           messageReactions.delete(event.payload.message.id);
           if (event.payload.message.channel_id === activeChannelId) {
             replaceTimelineMessage(event.payload.message);
+            if (!event.payload.message.parent_message_id) threadPreviewGeneration++;
+            if (event.payload.message.parent_message_id) { threadSummaryState.deleteReply(event.payload.message); threadSummaryReady = false; requestThreadSummaries(); }
             renderTimeline({ preserveScroll: true });
           }
           return;
@@ -4107,7 +4188,10 @@
         }
 
         if (event.type === "error") {
-          if (event.request_id) visibleRead.fail(event.request_id);
+          if (event.request_id) {
+            visibleRead.fail(event.request_id);
+            failThreadSummaryRequest(event.request_id, event.payload.message || "Trådane kunne ikkje hentast. Prøv igjen.");
+          }
           if (messageLinkHistoryRequestIds.delete(event.request_id ?? "")) {
             if (event.request_id !== messageLinkHistoryRequestId) return;
             messageLinkHistoryRequestId = null;
@@ -4723,7 +4807,7 @@
         timeline.length = 0;
         threadReplies.clear();
         threadRoots.clear();
-        threadSummaries.clear();
+        resetThreadSummaries();
         if (threadPanel.open) threadPanel.close();
         messageReactions.clear();
         seenMessageIds.clear();
@@ -4910,7 +4994,7 @@
         timeline.length = 0;
         threadReplies.clear();
         threadRoots.clear();
-        threadSummaries.clear();
+        resetThreadSummaries();
         if (threadPanel.open) threadPanel.close();
         seenMessageIds.clear();
         resetHistory();
@@ -5028,8 +5112,12 @@
           () => sendCommand("mark_read", { channel_id: activeChannelId!, sequence }));
         if (thread) {
           const replySequence = Math.max(0, ...visible.filter(message => message.parent_message_id === activeThreadRootId).map(message => message.sequence));
-          visibleRead.acknowledge(key, replySequence,
-            () => sendCommand("mark_thread_read", { root_message_id: activeThreadRootId!, sequence: replySequence }));
+          visibleRead.acknowledge(key, replySequence, () => {
+            const rootId = activeThreadRootId!;
+            const requestId = sendCommand("mark_thread_read", { root_message_id: rootId, sequence: replySequence });
+            threadSummaryState.trackRead(requestId, rootId, replySequence);
+            return requestId;
+          });
         }
       }
 
@@ -5259,13 +5347,7 @@
           replies.push(message);
           replies.sort((left, right) => left.sequence - right.sequence);
           threadReplies.set(message.parent_message_id, replies);
-          const previous = threadSummaries.get(message.parent_message_id);
-          if (live) threadSummaries.set(message.parent_message_id, {
-            root_message_id: message.parent_message_id,
-            reply_count: (previous?.reply_count || 0) + 1,
-            unread_count: (previous?.unread_count || 0) + 1,
-            latest_sequence: message.sequence
-          });
+          if (live) threadSummaryState.addReply(message, currentParticipantId);
           if (activeThreadRootId === message.parent_message_id) {
             const localReply = message.sender_id === currentParticipantId && [...pendingThreadReplies.values()]
               .some(pending => pending.rootId === message.parent_message_id && pending.body === message.body);
@@ -6300,6 +6382,7 @@
             imageGeneration,
             chatAgents: circleChatAgentsApi,
             agentLocations: agentLocationApi,
+            threadPreviews,
             processPilot: processPilotApi,
             workItems: workItemsApi,
             appUpdate,
@@ -6329,6 +6412,7 @@
             legacyContainer: sproytApp,
             runtime: applicationRuntime,
             snapshot: getConversationSnapshot,
+            retryThreadSummaries: () => requestThreadSummaries(),
             theme: () => themeMode,
             cycleTheme: cycleThemeMode,
             renderMode: () => renderMode,

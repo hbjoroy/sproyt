@@ -20,4 +20,5 @@ pub(crate) mod processes;
 pub(crate) mod socket;
 pub(crate) mod stream;
 pub(crate) mod system;
+pub(crate) mod thread_previews;
 pub(crate) mod work_items;

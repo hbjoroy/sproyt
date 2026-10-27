@@ -45,6 +45,99 @@ pub type RepositoryFuture<'a, T> =
 /// Maximum bytes returned by one media read, regardless of original size.
 pub const MEDIA_READ_BLOCK_BYTES: usize = 1024 * 1024;
 
+pub const THREAD_ROOT_PREVIEW_BATCH_MAX: usize = 30;
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct ThreadRootPreview {
+    pub id: MessageId,
+    pub author: Option<String>,
+    pub preview: String,
+    pub sent_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub deleted: bool,
+}
+
+impl ThreadRootPreview {
+    pub(crate) fn from_parts(
+        id: MessageId,
+        author: Option<String>,
+        body: Option<String>,
+        sent_at: Option<chrono::DateTime<chrono::Utc>>,
+        deleted: bool,
+    ) -> Self {
+        if deleted {
+            return Self {
+                id,
+                author: None,
+                preview: "Meldinga er sletta".to_owned(),
+                sent_at: None,
+                deleted,
+            };
+        }
+        let mut input = body.as_deref().unwrap_or("");
+        let mut text = String::new();
+        while let Some(start) = input.find("[[") {
+            text.push_str(&input[..start]);
+            let tail = &input[start + 2..];
+            text.push_str(if tail.starts_with("media:") {
+                " Vedlegg "
+            } else {
+                " Innhald "
+            });
+            input = match tail.find("]]") {
+                Some(end) => &tail[end + 2..],
+                None => "",
+            };
+        }
+        text.push_str(input);
+        let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut chars = normalized.chars();
+        let mut preview: String = chars.by_ref().take(180).collect();
+        if chars.next().is_some() {
+            preview.push('…');
+        }
+        if preview.is_empty() {
+            preview = "Innhald".to_owned();
+        }
+        Self {
+            id,
+            author,
+            preview,
+            sent_at,
+            deleted,
+        }
+    }
+}
+
+#[cfg(test)]
+mod thread_root_preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_handles_compound_empty_and_deleted_content() {
+        let id = MessageId::from_uuid(Uuid::now_v7());
+        let make = |body: &str| {
+            ThreadRootPreview::from_parts(id, None, Some(body.to_owned()), None, false).preview
+        };
+        assert_eq!(make(" \n "), "Innhald");
+        assert_eq!(
+            make("Sjå [[media:abcdef|image|fil.jpg]] no"),
+            "Sjå Vedlegg no"
+        );
+        assert_eq!(make("[[other:private payload]]"), "Innhald");
+        assert_eq!(make("[[media:incomplete private payload"), "Vedlegg");
+        assert_eq!(make(&"a".repeat(181)).chars().count(), 181);
+        let deleted = ThreadRootPreview::from_parts(
+            id,
+            Some("private".into()),
+            Some("secret".into()),
+            Some(chrono::Utc::now()),
+            true,
+        );
+        assert_eq!(deleted.preview, "Meldinga er sletta");
+        assert!(deleted.author.is_none() && deleted.sent_at.is_none());
+    }
+}
+
 pub trait ChatRepository: Send + Sync + 'static {
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
@@ -250,6 +343,12 @@ pub trait ChatRepository: Send + Sync + 'static {
         actor: UserId,
         channel_id: ChannelId,
     ) -> RepositoryFuture<'a, Vec<ThreadSummary>>;
+    fn thread_root_previews<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        root_ids: Vec<MessageId>,
+    ) -> RepositoryFuture<'a, Vec<ThreadRootPreview>>;
     fn mark_thread_read<'a>(
         &'a self,
         actor: UserId,
@@ -2120,11 +2219,16 @@ impl ChatRepository for InMemoryChatRepository {
                         .unwrap_or(ChannelSequence::new(0));
                     ThreadSummary {
                         root_message_id,
-                        reply_count: replies.len() as u32,
+                        reply_count: replies
+                            .iter()
+                            .filter(|message| message.deleted_at.is_none())
+                            .count() as u32,
                         unread_count: replies
                             .iter()
                             .filter(|message| {
-                                message.sequence > last_read && message.sender_id != actor
+                                message.deleted_at.is_none()
+                                    && message.sequence > last_read
+                                    && message.sender_id != actor
                             })
                             .count() as u32,
                         latest_sequence: replies.last().expect("thread has replies").sequence,
@@ -2133,6 +2237,51 @@ impl ChatRepository for InMemoryChatRepository {
                 .collect::<Vec<_>>();
             summaries.sort_by_key(|summary| summary.latest_sequence);
             Ok(summaries)
+        })
+    }
+
+    fn thread_root_previews<'a>(
+        &'a self,
+        actor: UserId,
+        channel_id: ChannelId,
+        root_ids: Vec<MessageId>,
+    ) -> RepositoryFuture<'a, Vec<ThreadRootPreview>> {
+        Box::pin(async move {
+            if root_ids.len() > THREAD_ROOT_PREVIEW_BATCH_MAX {
+                return Err(RepositoryError::Conflict);
+            }
+            let state = self.lock_state()?;
+            if !state.memberships.contains_key(&(channel_id.clone(), actor)) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let messages = state
+                .messages
+                .get(&channel_id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let requested: HashSet<_> = root_ids.into_iter().collect();
+            let roots_with_replies: HashSet<_> = messages
+                .iter()
+                .filter_map(|m| m.parent_message_id)
+                .collect();
+            Ok(messages
+                .iter()
+                .filter(|m| {
+                    m.parent_message_id.is_none()
+                        && requested.contains(&m.id)
+                        && roots_with_replies.contains(&m.id)
+                })
+                .map(|m| {
+                    let deleted = m.deleted_at.is_some();
+                    ThreadRootPreview::from_parts(
+                        m.id,
+                        (!deleted).then(|| m.sender_display_name.to_string()),
+                        (!deleted).then(|| m.body.as_str().to_owned()),
+                        (!deleted).then_some(m.sent_at),
+                        deleted,
+                    )
+                })
+                .collect())
         })
     }
 
@@ -2165,11 +2314,17 @@ impl ChatRepository for InMemoryChatRepository {
                 .into_iter()
                 .flatten()
                 .filter(|message| message.parent_message_id == Some(root_message_id))
-                .map(|message| (message.sequence, message.sender_id.clone()))
+                .map(|message| {
+                    (
+                        message.sequence,
+                        message.sender_id.clone(),
+                        message.deleted_at.is_some(),
+                    )
+                })
                 .collect::<Vec<_>>();
             let latest = replies
                 .last()
-                .map(|(sequence, _)| *sequence)
+                .map(|(sequence, _, _)| *sequence)
                 .ok_or(RepositoryError::NotFound)?;
             if sequence > latest {
                 return Err(RepositoryError::NotFound);
@@ -2183,10 +2338,12 @@ impl ChatRepository for InMemoryChatRepository {
             }
             Ok(ThreadSummary {
                 root_message_id,
-                reply_count: replies.len() as u32,
+                reply_count: replies.iter().filter(|(_, _, deleted)| !deleted).count() as u32,
                 unread_count: replies
                     .iter()
-                    .filter(|(sequence, sender_id)| *sequence > *marker && sender_id != &actor)
+                    .filter(|(sequence, sender_id, deleted)| {
+                        !deleted && *sequence > *marker && sender_id != &actor
+                    })
                     .count() as u32,
                 latest_sequence: latest,
             })

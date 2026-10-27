@@ -21,6 +21,8 @@ export interface ConversationSnapshotSource {
   readonly threadReplies: ReadonlyMap<string, readonly ChatMessage[]>;
   readonly threadRoots: ReadonlyMap<string, ChatMessage>;
   readonly threadSummaries: ReadonlyMap<string, ThreadSummary>;
+  readonly threadPreviewGeneration?: number;
+  readonly threadSummaryStatus?: Readonly<{ ready: boolean; loading: boolean; error: string }>;
   readonly activeThreadRootId: string | null;
   readonly historyLoading: boolean;
   readonly historyHasMore: boolean;
@@ -150,6 +152,9 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
       waitingForMessageLink: source.waitingForMessageLink ?? false }),
     thread,
     threadSummaries: Object.freeze([...source.threadSummaries.values()].map(summary => Object.freeze({ ...summary }))),
+    threadPreviewGeneration: source.threadPreviewGeneration ?? 0,
+    threadSummaryStatus: Object.freeze({ ready: source.threadSummaryStatus?.ready ?? false,
+      loading: source.threadSummaryStatus?.loading ?? false, error: source.threadSummaryStatus?.error ?? "" }),
     connection: Object.freeze({ ...source.connection })
   });
 }

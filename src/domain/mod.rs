@@ -13,4 +13,5 @@ pub use policy::Policy;
 pub use repository::InMemoryChatRepository;
 pub use repository::MEDIA_READ_BLOCK_BYTES;
 pub use repository::{ChatRepository, PresenceLease, RepositoryError, RepositoryFuture};
+pub use repository::{THREAD_ROOT_PREVIEW_BATCH_MAX, ThreadRootPreview};
 pub use sproyt_protocol::*;

@@ -2,6 +2,7 @@ import { uploadMediaChunks } from "../src/media-upload";
 import assert from "node:assert/strict";
 import "./conversation-snapshot.test";
 import "./visible-read.test";
+import "./thread-summary-state.test";
 import "./saved-emojis.test";
 import "./imagegen-draft.test";
 import "./saved-statuses.test";

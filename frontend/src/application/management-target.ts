@@ -5,6 +5,7 @@ export type CommunityDestination =
   | { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" | "accept-invitation" }
   | { kind: "create-channel"; circleId: string | null }
   | { kind: "channel"; channelId: string; channelSection?: ChannelSettingsSection }
+  | { kind: "channel-threads"; channelId: string }
   | { kind: "channels" | "invite" | "rename-circle" | "circle-members"; circleId: string };
 
 export type AgentSettingsPanel = "overview" | "behaviour" | "skills" | "memory" | "vision" | "images" | "weather" | "sea" | "ferry" | "handoff" | "channels";
@@ -47,6 +48,7 @@ export function managementParent(target: ManagementTarget, snapshot: Pick<Conver
   if (target.kind === "memory") return { kind: "circle", circleId: target.circleId };
   if (target.kind === "community") {
     const destination = target.destination;
+    if (destination.kind === "channel-threads") return null;
     if ("circleId" in destination && destination.circleId) return { kind: "circle", circleId: destination.circleId };
     if (destination.kind === "channel") {
       const channel = snapshot.channels.find(channel => channel.id === destination.channelId);
