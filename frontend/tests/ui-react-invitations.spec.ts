@@ -156,6 +156,7 @@ test("React invitation completes a real server decline and acceptance, and refre
 
     await trigger.click();
   }
+  await settings.getByRole("searchbox", { name: "Søk i innstillingar" }).fill("");
   await settings.getByRole("button", { name: "Administrer krets", exact: true }).click();
   const directory = destinationSurface(owner, "Vel krets", true);
   await directory.getByRole("searchbox", { name: "Finn vennekrets" }).fill(circleName);

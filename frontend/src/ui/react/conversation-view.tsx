@@ -281,11 +281,11 @@ export interface ConversationViewProps {
 }
 
 export function ConversationView(props: ConversationViewProps) {
-  useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
+  const snapshot = useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
     <WorkspacePageProvider pageKey={props.pageKey}>
     <AppShell view={props.pageKey ? "detail" : props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
-      header={props.header}>
+      header={<>{props.header}<span className="sp-sr" role="status" aria-atomic="true">{snapshot.connection.status}</span></>}>
       <WorkspacePageOutlet />
       <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
         hidden={!!props.pageKey} inert={!!props.pageKey} aria-hidden={props.pageKey ? true : undefined}>

@@ -32,6 +32,7 @@ export function ConnectionHealth({ state, onRetry, onLogin, onReload, details = 
     <style>{connectionCss}</style>
     <div className="sp-connection-health-copy" role="status">
       <strong>{state.label}</strong>
+      {state.phase === "authentication" && <p>Utkasta dine blir lagra først når du går vidare til innlogging.</p>}
       {details && <><p>{state.detail}</p><p>{transport}</p></>}
     </div>
     <div className="sp-connection-health-actions">

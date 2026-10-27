@@ -49,6 +49,7 @@ test("React draft state and sends survive poisoned hidden controls, channel chan
 
 
   await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await destinationSurface(preview, "Innstillingar", false).getByRole("searchbox", { name: "Søk i innstillingar" }).fill("Kanalar i Felles");
   await destinationSurface(preview, "Innstillingar", false).getByRole("button", { name: "Kanalar i Felles", exact: true }).click();
   const channels = destinationSurface(preview, "Kanalar i Felles", false);
   const channelName = `Modellkanal ${Date.now()}`;
@@ -57,8 +58,7 @@ test("React draft state and sends survive poisoned hidden controls, channel chan
   await create.getByLabel("Kanalnamn").fill(channelName);
   await create.getByLabel("Kanaltype").selectOption("public");
   await create.getByRole("button", { name: "Opprett kanal" }).click();
-  await expect(channels).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await expect(create).toHaveCount(0);
   await expect(composer).toHaveValue("");
   await composer.fill("anna kanalutkast");
   const shared = preview.locator('[data-conversation-group="scope:shared"]');
