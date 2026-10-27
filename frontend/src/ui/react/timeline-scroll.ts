@@ -62,6 +62,9 @@ export function createTimelineScrollController(options: TimelineScrollController
   let scrollIntent = false;
   let scrollIntentTop = 0;
   let scrollIntentGeneration = 0;
+  let inlinePointer: { id: number; viewport: HTMLElement; key: string | null; restorationId?: string;
+    lastTop: number; lastHeight: number; lastViewportHeight: number; movedUp: boolean; movedDown: boolean;
+    appended: boolean; ending: boolean } | null = null;
   let followBottom = true;
   let revealMessageId: string | null = null;
   let requestedOlderAt: string | null = null;
@@ -182,7 +185,8 @@ export function createTimelineScrollController(options: TimelineScrollController
   const reconcile = () => {
     if (paused) { scheduled = false; return; }
     scheduled = false;
-    if (!viewport || !model.key || scrollIntent) return;
+    if (!viewport || !model.key || scrollIntent
+      || (inlinePointer?.viewport === viewport && inlinePointer.key === model.key && inlinePointer.restorationId === model.restorationId)) return;
     const bounds = viewport.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
     // Concurrent React publications can precede the matching DOM commit.
@@ -271,6 +275,22 @@ export function createTimelineScrollController(options: TimelineScrollController
     for (const message of viewport.querySelectorAll<HTMLElement>("[data-message-id]")) resizeObserver.observe(message);
   };
 
+  const recordInlineScroll = (gesture: NonNullable<typeof inlinePointer>, element: HTMLElement) => {
+    // A shorter message or a taller viewport can clamp scrollTop even when the
+    // reader has not moved. Only the part beyond that clamp is upward intent.
+    const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+    if (element.scrollTop < Math.min(gesture.lastTop, maximum) - 0.5) {
+      gesture.movedUp = true;
+      gesture.movedDown = false;
+    } else if (element.scrollTop > gesture.lastTop + 0.5 && element.scrollHeight === gesture.lastHeight
+      && element.clientHeight === gesture.lastViewportHeight) {
+      gesture.movedDown = true;
+    }
+    gesture.lastTop = element.scrollTop;
+    gesture.lastHeight = element.scrollHeight;
+    gesture.lastViewportHeight = element.clientHeight;
+  };
+
   const retainScrollIntent = () => {
     scrollIntent = true;
     const generation = ++scrollIntentGeneration;
@@ -285,7 +305,12 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const onScroll = () => {
-    if (paused || !viewport || pending || viewport.scrollTop === appliedScrollTop) return;
+    if (paused || !viewport) return;
+    if (inlinePointer?.viewport === viewport && inlinePointer.key === model.key && inlinePointer.restorationId === model.restorationId) {
+      recordInlineScroll(inlinePointer, viewport);
+      return;
+    }
+    if (pending || viewport.scrollTop === appliedScrollTop) return;
     // WebKit can deliver layout-induced scroll before ResizeObserver. Media
     // growth is not evidence that the reader stopped following the bottom.
     if (!scrollIntent && geometryChanged()) {
@@ -341,11 +366,49 @@ export function createTimelineScrollController(options: TimelineScrollController
     scheduleReconcile();
   };
 
+  // WebKit can move an inline control between pointerdown and pointerup if a
+  // resize reconciliation races the browser's own scroll-into-view. Defer
+  // only that short interaction, not focus or ordinary timeline scrolling.
+  const onInlinePointerDown = (event: PointerEvent) => {
+    if (paused || !viewport || event.button !== 0 || !(event.target instanceof Element)) return;
+    const control = event.target.closest("button, input, textarea, select, summary, a[href], label, [role='button'], [role='link'], [contenteditable]:not([contenteditable='false'])");
+    if (!control || !viewport.contains(control)) return;
+    inlinePointer = { id: event.pointerId, viewport, key: model.key, restorationId: model.restorationId,
+      lastTop: viewport.scrollTop, lastHeight: viewport.scrollHeight, lastViewportHeight: viewport.clientHeight,
+      movedUp: false, movedDown: false, appended: false, ending: false };
+  };
+  const finishInlinePointer = (event?: PointerEvent) => {
+    const gesture = inlinePointer;
+    if (!gesture || gesture.ending || (event && event.pointerId !== gesture.id)) return;
+    gesture.ending = true;
+    // The native click follows pointerup. Keep its coordinates stable through
+    // that dispatch and one rendering step, including a release outside.
+    requestAnimationFrame(() => {
+      if (inlinePointer !== gesture) return;
+      inlinePointer = null;
+      if (viewport === gesture.viewport && model.key === gesture.key && model.restorationId === gesture.restorationId
+        && !opening && !pending?.keyChanged && !pending?.revealMessageId && !revealMessageId) {
+        recordInlineScroll(gesture, viewport);
+        if (gesture.movedUp || gesture.movedDown) followBottom = gesture.movedDown
+          && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= nearEdge;
+        const position = save();
+        rememberGeometry();
+        // Keep the browser's position for ordinary layout publications. New
+        // messages still follow the bottom after the click when appropriate.
+        if (!gesture.appended || !followBottom) pending = { keyChanged: false, position, forceBottom: false, revealMessageId: null };
+      }
+      scheduleReconcile();
+    });
+  };
+  const onInlinePointerEnd = (event: PointerEvent) => finishInlinePointer(event);
+  const onInlineBlur = () => finishInlinePointer();
+
   const detachScrollIntent = () => {
     viewport?.removeEventListener("wheel", onScrollIntent);
     viewport?.removeEventListener("touchstart", onScrollIntent);
     viewport?.removeEventListener("keydown", onScrollIntent);
     viewport?.removeEventListener("pointerdown", onScrollIntent);
+    viewport?.removeEventListener("pointerdown", onInlinePointerDown);
   };
 
   const viewportRef = (element: HTMLElement | null) => {
@@ -363,6 +426,7 @@ export function createTimelineScrollController(options: TimelineScrollController
     viewport.addEventListener("touchstart", onScrollIntent, { passive: true });
     viewport.addEventListener("keydown", onScrollIntent);
     viewport.addEventListener("pointerdown", onScrollIntent);
+    viewport.addEventListener("pointerdown", onInlinePointerDown);
     mutationObserver = new MutationObserver(() => {
       observeMessages();
       scheduleReconcile();
@@ -373,6 +437,12 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const prepare = (next: TimelineScrollModel) => {
+    if (inlinePointer && inlinePointer.key === model.key && next.key === model.key
+      && inlinePointer.restorationId === model.restorationId && next.restorationId === model.restorationId) {
+      const previousLast = model.messageIds.at(-1);
+      if (next.messageIds.length > model.messageIds.length && next.messageIds.at(-1) !== previousLast
+        && (!previousLast || next.messageIds.includes(previousLast))) inlinePointer.appended = true;
+    }
     // A resize/mutation reconciliation may still be queued after a React commit.
     // Its DOM geometry is not yet the reader's restored position.
     const previous = (pending || scheduled || applying || (!scrollIntent && geometryChanged())) && model.key
@@ -428,6 +498,10 @@ export function createTimelineScrollController(options: TimelineScrollController
   const dispose = () => {
     window.removeEventListener("focus", scheduleReconcile);
     document.removeEventListener("visibilitychange", scheduleReconcile);
+    document.removeEventListener("pointerup", onInlinePointerEnd, true);
+    document.removeEventListener("pointercancel", onInlinePointerEnd, true);
+    window.removeEventListener("blur", onInlineBlur);
+    inlinePointer = null;
     mutationObserver?.disconnect();
     resizeObserver?.disconnect();
     detachScrollIntent();
@@ -436,6 +510,9 @@ export function createTimelineScrollController(options: TimelineScrollController
 
   window.addEventListener("focus", scheduleReconcile);
   document.addEventListener("visibilitychange", scheduleReconcile);
+  document.addEventListener("pointerup", onInlinePointerEnd, true);
+  document.addEventListener("pointercancel", onInlinePointerEnd, true);
+  window.addEventListener("blur", onInlineBlur);
   const goToLatest = () => {
     opening = null; pending = null; clampedAnchor = false; revealMessageId = null; followBottom = true;
     scrollToBottom(); save(); rememberGeometry(); reportVisible();
@@ -452,7 +529,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   const reset = () => {
     positions.clear(); openingReadSequences.clear(); pending = null; opening = null;
     revealMessageId = null; requestedOlderAt = null; clampedAnchor = false; geometry = null;
-    openingPages = 0; appliedScrollTop = null; scrollIntent = false; scrollIntentGeneration++; reportedBottomAt = null;
+    openingPages = 0; appliedScrollTop = null; scrollIntent = false; scrollIntentGeneration++; inlinePointer = null; reportedBottomAt = null;
     model = { key: null, messageIds: [] }; followBottom = true;
   };
   return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, readingPosition, setPaused, reset, dispose });

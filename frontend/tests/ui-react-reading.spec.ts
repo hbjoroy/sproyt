@@ -77,6 +77,109 @@ test("coalesced host publications retain bottom following until the DOM commit",
   expect(result.inputOffsets.every(offset => offset < 2)).toBe(true);
 });
 
+test("inline pointer interaction defers reconciliation without losing native scroll or new-message following", async ({ page }) => {
+  await page.setContent('<div id="timeline" style="height:400px;width:400px;overflow:auto"><div data-message-id="first" style="height:1000px"><button>Send</button></div></div>');
+  await page.addScriptTag({ content: transformSync(readFileSync(new URL("../src/ui/react/timeline-scroll.ts", import.meta.url), "utf8"),
+    { loader: "ts", format: "iife", globalName: "ReadingController" }).code });
+  const result = await page.evaluate(async () => {
+    const api = (window as unknown as { ReadingController: typeof import("../src/ui/react/timeline-scroll") }).ReadingController;
+    const controller = api.createTimelineScrollController();
+    const timeline = document.getElementById("timeline")!;
+    const first = timeline.querySelector<HTMLElement>('[data-message-id="first"]')!;
+    const button = first.querySelector("button")!;
+    const frame = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const pointer = (name: string, target: EventTarget) => target.dispatchEvent(new PointerEvent(name, { bubbles: true, pointerId: 7, button: 0 }));
+    const distance = () => timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    controller.prepare({ key: "channel:a", messageIds: ["first"] }); controller.viewportRef(timeline); await frame();
+    // Model a browser scrolling an inline submit button into view as the
+    // expanded message grows, before the pending resize is reconciled.
+    first.style.height = "1200px"; timeline.scrollTop = 735; controller.onScroll();
+    pointer("pointerdown", button);
+    const beforeClick = timeline.scrollTop;
+    controller.prepare({ key: "channel:a", messageIds: ["first", "last"] });
+    const last = document.createElement("div"); last.dataset.messageId = "last"; last.style.height = "200px"; timeline.append(last);
+    await frame();
+    const duringClick = timeline.scrollTop;
+    pointer("pointerup", document.body); // release outside the timeline
+    await frame();
+    const followedAfterRelease = distance();
+
+    // Shrinking an inline form at the bottom clamps the browser's scrollTop;
+    // this is not a choice to stop following later messages.
+    controller.goToLatest(); await frame();
+    pointer("pointerdown", button);
+    last.style.height = "80px"; controller.onScroll();
+    const clampedDistance = distance();
+    pointer("pointerup", document.body); await frame();
+    const extra = document.createElement("div"); extra.dataset.messageId = "extra"; extra.style.height = "100px";
+    controller.prepare({ key: "channel:a", messageIds: ["first", "last", "extra"] }); timeline.append(extra); await frame();
+    const followedAfterClamp = distance();
+
+    // Genuine upward movement mixed with a layout clamp still wins.
+    controller.goToLatest(); await frame();
+    pointer("pointerdown", button);
+    first.style.height = "1100px";
+    timeline.scrollTop -= 120; controller.onScroll();
+    const readerTop = timeline.scrollTop;
+    pointer("pointercancel", document.body); await frame();
+    const next = document.createElement("div"); next.dataset.messageId = "next"; next.style.height = "400px";
+    controller.prepare({ key: "channel:a", messageIds: ["first", "last", "extra", "next"] }); timeline.append(next); await frame();
+    const readerOffset = Math.abs(timeline.scrollTop - readerTop);
+
+    // Starting away from the bottom and scrolling directly back down also
+    // resumes following when a subsequent message arrives.
+    pointer("pointerdown", button);
+    timeline.scrollTop = timeline.scrollHeight - timeline.clientHeight; controller.onScroll();
+    pointer("pointerup", document.body); await frame();
+    const down = document.createElement("div"); down.dataset.messageId = "down"; down.style.height = "100px";
+    controller.prepare({ key: "channel:a", messageIds: ["first", "last", "extra", "next", "down"] }); timeline.append(down); await frame();
+    const followedAfterDown = distance();
+
+    // Scrolling up and then back to the bottom during one gesture resumes
+    // following, just as ordinary timeline scroll events do.
+    controller.goToLatest(); await frame();
+    pointer("pointerdown", button);
+    timeline.scrollTop -= 120; controller.onScroll();
+    timeline.scrollTop = timeline.scrollHeight - timeline.clientHeight; controller.onScroll();
+    pointer("pointerup", document.body); await frame();
+    const returned = document.createElement("div"); returned.dataset.messageId = "returned"; returned.style.height = "100px";
+    controller.prepare({ key: "channel:a", messageIds: ["first", "last", "extra", "next", "down", "returned"] }); timeline.append(returned); await frame();
+    const followedAfterReturn = distance();
+
+    // An explicit message reveal remains pending until the gesture is over.
+    const beforeReveal = timeline.scrollTop;
+    pointer("pointerdown", button);
+    controller.prepare({ key: "channel:a", messageIds: ["first", "last", "extra", "next", "down", "returned"], revealMessageId: "last" });
+    await frame();
+    const heldReveal = Math.abs(timeline.scrollTop - beforeReveal);
+    pointer("pointerup", document.body); await frame();
+    const revealed = Math.abs(last.getBoundingClientRect().top - timeline.getBoundingClientRect().top - 24);
+
+    // A channel switch must not be blocked by the old channel's pointer.
+    pointer("pointerdown", button);
+    controller.prepare({ key: "channel:b", messageIds: ["other"] });
+    const other = document.createElement("div"); other.dataset.messageId = "other"; other.style.height = "900px";
+    timeline.replaceChildren(other); await frame();
+    const switchedBottom = distance();
+    pointer("pointerup", document.body); await frame();
+    const afterOldRelease = distance();
+    controller.dispose();
+    return { beforeClick, duringClick, followedAfterRelease, clampedDistance, followedAfterClamp, readerOffset, followedAfterDown, followedAfterReturn, heldReveal, revealed, switchedBottom, afterOldRelease };
+  });
+  expect(result.beforeClick).toBe(735);
+  expect(result.duringClick).toBe(result.beforeClick);
+  expect(result.followedAfterRelease).toBeLessThan(2);
+  expect(result.clampedDistance).toBeLessThan(2);
+  expect(result.followedAfterClamp).toBeLessThan(2);
+  expect(result.readerOffset).toBeLessThan(2);
+  expect(result.followedAfterDown).toBeLessThan(2);
+  expect(result.followedAfterReturn).toBeLessThan(2);
+  expect(result.heldReveal).toBeLessThan(2);
+  expect(result.revealed).toBeLessThan(2);
+  expect(result.switchedBottom).toBeLessThan(2);
+  expect(result.afterOldRelease).toBeLessThan(2);
+});
+
 type Command = { type: string; request_id: string; payload: { channel_id?: string; before?: number; limit?: number; sequence?: number; root_message_id?: string } };
 const root = (channel: string, sequence: number): ChatMessage => ({ id: `${channel}-${sequence}`, channel_id: channel,
   parent_message_id: null, sender_id: "reader", sender_display_name: "Lesar", body: `Melding ${sequence} ${"kontekst ".repeat(55)}`,
