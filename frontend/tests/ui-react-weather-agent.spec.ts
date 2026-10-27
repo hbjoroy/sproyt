@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page, type Locator } from "@playwright/test";
 
 const circle = "00000000-0000-7000-8000-000000002121";
@@ -58,7 +59,7 @@ async function openAgents(page: Page) {
   if (await conversations.isVisible()) await conversations.click();
   await preview.getByRole("button", { name: "Val for Vêrkrets", exact: true }).click();
   await preview.getByRole("button", { name: "Agentar i Vêrkrets", exact: true }).click();
-  const dialog = preview.getByRole("dialog", { name: "Agentar i Vêrkrets", exact: true });
+  const dialog = destinationSurface(preview, "Agentar i Vêrkrets", true);
   await dialog.getByRole("button", { name: "Vêrven", exact: true }).click();
   return dialog;
 }

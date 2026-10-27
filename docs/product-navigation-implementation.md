@@ -194,25 +194,52 @@ vart gjenbrukt. Argo og offentleg versjon/readiness er verifiserte;
 produksjon er uendra. Syntetisk nettlesarakseptanse er ikkje fysisk
 touch-/native-aksept. Nettpakken kan prøvast remote utan Windows-klienten.
 
-## Neste små leveransar
+## Ordinære sider, innboks og samband
 
-Prioritert neste gjennomføring er den synlege fullføringa av S1b/S2a og
-menyoppryddinga, spesifisert i [avstemminga av hovudplanen](settings-and-administration-plan.md#2a-avstemming-og-ny-kjeldekontroll--27-oktober):
+[PR #306](https://github.com/hbjoroy/sproyt/pull/306) implementerer neste
+synlege snitt av hovudplanen:
 
-1. **Handlingskart og konkrete flytar:** fullfør dei tre avtalte skissene og
-   spor kvar funksjon frå overgangsmenyen til fast heim. Bruk eksisterande
-   adresser og innsynsgrenser.
-2. **Sider, innboks og toppfelt:** ordinære sider for innstillingar/innboks,
-   klart skilje mellom personlege og ressursbundne val, eintydig teljing og
-   forståeleg samband med manuell gjenoppretting. Å lukke menyen ved
-   navigasjon eller byte eit symbol gjer ikkje denne etappen ferdig.
-3. **Canary-brukaraksept:** prøv førstegongsflyten med ein ny brukar,
+- Innstillingar, krets-/kanaldetaljar, agentoppsett og innboks har eit felles
+  sideskall i main. Samtale og tråd blir verande monterte, men skjulte/inaktive.
+  Leseposisjonen blir lagra før skjuling; skjult innhald blir ikkje kvittert
+  som lese. Korte val og stadfestingar kan framleis bruke native dialog.
+- Eit fast innstillingssymbol opnar personlege val. Kanalvala ligg ved
+  kanalen; kretsval ved kretsen. Ny DM, kanaloppdaging og Nyleg finst ved
+  samtalenavigasjonen. Gamle ressursbundne snarvegar er framleis søkbare.
+- Utsjånad og bruk samlar eksisterande tema-/meldingsvising. Hjelp/Om samlar
+  Kom i gang, oppdatering og sambandsdetaljar. Dei to nye sidemåla blir
+  bevarte gjennom kald innlogging med den eksisterande kvitelistekontrakten.
+- Innboksmerket tel stadfesta uleste omtalar og opnar desse ved nye omtalar.
+  Uleste meldingar/samtalar og personlege oppgåver har eigne tal. Ukjent,
+  lasting, feil og stadfesta tomt er skilde. Listesvar er bundne til siste
+  førespurnad og konto/generasjon; kontobyte fjernar den gamle kontoen sine
+  omtalar/oppgåver. Prosessarbeid og eksisterande personlege prosesslenkjer
+  blir bevarte.
+- Logoen supplerer ei forståeleg sambandsvising og er framleis Samtalar på
+  mobil. Manuell gjenoppretting brukar eksisterande recovery og er
+  singleflight. Ei frisk SSE-tilkopling blir ikkje framstilt som broten
+  under WS-probing. Kandidatar får ikkje ta over utan same stadfesta konto;
+  kontoavvik pensjonerer begge gamle transportar før ein fersk bootstrap.
+- Reload brukar eksisterande vern av utkast/vedlegg og resume-kvittering.
+  Dersom native beforeunload blir avbroten, blir oppdateringslåsen sleppt
+  slik at brukaren kan prøve igjen utan å miste kvitteringa.
+
+Ingen databasemigrasjon, ny rollemodell, helseprobe eller transportteneste.
+Dei endelege CI- og Canary-kvitteringane høyrer til PR #306. Automatiske
+prøver av dei tre komplette flytane og lys/mørk mobil-/desktopkontroll kjem
+i tillegg til den vidare brukaraksepten.
+
+## Vidare etter denne pakka
+
+1. **Canary-brukaraksept:** prøv førstegongsflyten med ein ny brukar,
    DM-personval/medlemmer og S2b/S2c-agentoppsettet før
    eventuell produksjonspromotering. Autorisert tenestestatus kan vurderast
    separat; oppsettsstatus er ikkje ein helseprobe.
-4. **Skjemaarbeid:** vidarefør utkastvern og konfliktvising til andre profil- og
+2. **Skjemaarbeid:** vidarefør utkastvern og konfliktvising til andre profil- og
    innstillingsskjema; agentflyten gjer ikkje dette arbeidet ferdig.
-5. **Native:** overfør mål, Back/Forward- og eigarskapskontraktar til Windows og
+3. **Prosessar og integrasjonar:** fullfør attståande S3 etter hovudplanen;
+   nye sider åleine gjer ikkje prosessoppsett, oppgåvearbeid og inspeksjon ferdig.
+4. **Native:** overfør mål, Back/Forward- og eigarskapskontraktar til Windows og
    Android, med native kontrollar. Dette snittet endrar nettappen, ikkje den
    allereie installerte Windows-pakken.
 

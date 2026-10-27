@@ -2,7 +2,9 @@
 
 Dato: 26. oktober 2026. Avstemt mot kode og leveransar 27. oktober 2026.
 Status: navigasjonsleveransen, S2b/S2c og førstegongsoppleving/DM er i Canary.
-Den synlege omlegginga av hovudmeny, innboks og innstillingssider står att.
+Den synlege omlegginga av hovudmeny, innboks og innstillingssider er
+implementert i [PR #306](https://github.com/hbjoroy/sproyt/pull/306).
+CI-, utrullings- og akseptstatus for denne pakka blir førte i PR-en.
 Grunnlag: `main` på `44bc12c9a0d000f87c82dec07a88d19b0371c9bb`.
 
 Gjennomføring er starta etter nytt oppdrag 26. oktober. Det første snittet
@@ -55,6 +57,11 @@ Dette vidarefører planen frå 26. oktober. Det erstattar ikkje vedtaka med
 ein ny plan for å flytte symbol. Status er kontrollert mot kode og PR-ar;
 vurderingane nedanfor er tilrådingar for den attståande gjennomføringa.
 Astra har gjort ein ny, avgrensa gjennomgang av plan og presentasjonskode.
+
+Tabellen og kodeobservasjonane i denne avstemminga skildrar utgangspunktet
+`4ab7e8d` før gjennomføringa av PR #306. Pakka implementerer dei ordinære
+sidene, funksjonsplasseringane, innbokskontrakten og sambandsvisinga nedanfor.
+Ho gjer ikkje heile S3–S5 eller alle framtidige skjemaforbetringar ferdige.
 
 | Del av planen | Faktisk status | Det som står att |
 | --- | --- | --- |

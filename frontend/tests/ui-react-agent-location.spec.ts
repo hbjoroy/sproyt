@@ -30,9 +30,7 @@ async function openFromChannelMenu(page: Page) {
   const desktopChannelMenu = preview.getByRole("button", { name: "Kanalval", exact: true });
   if (await desktopChannelMenu.isVisible()) await desktopChannelMenu.click();
   else {
-    const menu = preview.getByRole("button", { name: "Meny", exact: true });
-    if (await menu.getAttribute("aria-expanded") !== "true") await menu.click();
-    await preview.locator(".sp-mobile-channel-menu")
+    await preview.locator(".sp-mobile-header-channel-actions")
       .getByRole("button", { name: "Kanalval", exact: true }).click();
   }
   await preview.getByRole("dialog", { name: "Kanalval: Turprat", exact: true })

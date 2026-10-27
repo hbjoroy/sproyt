@@ -1,6 +1,8 @@
-import { Button, Dialog, Message, Status, TextField } from "@sproyt/ui/react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Button, Status, TextField } from "@sproyt/ui/react";
+import { useEffect, useRef, useState } from "react";
+import { DestinationPage } from "./workspace-page";
+import { inboxCounts, approximateCount } from "./inbox-counts";
+import inboxCss from "../preview-inboxes.css";
 import type { Channel, Mention, UserTask } from "../../types";
 
 export type PreviewInboxKind = "unread" | "mentions" | "tasks";
@@ -11,10 +13,17 @@ export interface PreviewInboxState {
   readonly tasks: readonly UserTask[];
   readonly participantId: string | null;
   readonly circleNames: Readonly<Record<string, string>>;
+  readonly directoryReady?: boolean;
+  readonly directoryError?: string;
+  readonly mentionsReady?: boolean;
+  readonly mentionsError?: string;
+  readonly tasksReady?: boolean;
+  readonly tasksError?: string;
 }
 
 export interface PreviewInboxHost {
   load(kind: "mentions" | "tasks"): Promise<void>;
+  retryDirectory?(): void;
   openChannel(channelId: string): void;
   openMentionSource(mention: Mention): void;
   openTaskSource(task: UserTask): void;
@@ -24,13 +33,13 @@ export interface PreviewInboxHost {
 }
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const approximateCount = (count: number) => count < 25 ? String(count) : count < 50 ? "25+" : count < 100 ? "50+" : "100+";
 
-function MentionRow({ mention, host, onTaskCreated, onOpenSource }: {
+function MentionRow({ mention, host, onTaskCreated, onOpenSource, context }: {
   readonly mention: Mention;
   readonly host: PreviewInboxHost;
   readonly onTaskCreated: () => void;
   readonly onOpenSource?: () => void;
+  readonly context: string;
 }) {
   const [editingTask, setEditingTask] = useState(false);
   const [title, setTitle] = useState(() => mention.message.body.replace(/@\S+/gu, "").trim());
@@ -44,16 +53,15 @@ function MentionRow({ mention, host, onTaskCreated, onOpenSource }: {
     catch (error) { setError(errorText(error)); }
     finally { setBusy(undefined); }
   };
-  return <Message author={`${mention.message.sender_display_name} i ${mention.channel_name}`}
-    time={new Date(mention.message.sent_at).toLocaleString("nn-NO")}
-    status={mention.read ? "Lesen" : "Ulest"}
-    actions={<>
-      <Button onClick={onOpenSource ?? (() => host.openMentionSource(mention))}>Opne kjelda</Button>
-      {!mention.read && <Button busy={busy === "read"}
+  return <article className="sp-inbox-entry">
+    <p className="sp-inbox-entry-meta">{context} · {mention.message.sender_display_name} · {new Date(mention.message.sent_at).toLocaleString("nn-NO", { dateStyle: "short", timeStyle: "short" })} · {mention.read ? "Lesen" : "Ulest"}</p>
+    <p className="sp-inbox-excerpt">{mention.message.body}</p>
+    <div className="sp-inbox-entry-actions">
+      <Button variant="quiet" onClick={onOpenSource ?? (() => host.openMentionSource(mention))}>Opne kjelda</Button>
+      {!mention.read && <Button variant="quiet" busy={busy === "read"}
         onClick={() => void run("read", () => host.markMentionRead(mention.message.id))}>Marker lesen</Button>}
-      <Button aria-expanded={editingTask} onClick={() => setEditingTask(value => !value)}>Lag oppgåve</Button>
-    </>}>
-    <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{mention.message.body}</p>
+      <Button variant="quiet" aria-expanded={editingTask} onClick={() => setEditingTask(value => !value)}>Lag oppgåve</Button>
+    </div>
     {editingTask && <form aria-label={`Ny oppgåve frå omtale i ${mention.channel_name}`} onSubmit={event => {
       event.preventDefault();
       const trimmed = title.trim();
@@ -71,22 +79,22 @@ function MentionRow({ mention, host, onTaskCreated, onOpenSource }: {
         <Button disabled={Boolean(busy)} onClick={() => setEditingTask(false)}>Avbryt</Button></div>
     </form>}
     {error && <Status tone="error">{error}</Status>}
-  </Message>;
+  </article>;
 }
 
-function TaskRow({ task, host, onOpenSource }: { readonly task: UserTask; readonly host: PreviewInboxHost; readonly onOpenSource: () => void }) {
+function TaskRow({ task, host, onOpenSource, context }: { readonly task: UserTask; readonly host: PreviewInboxHost; readonly onOpenSource: () => void; readonly context: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const done = task.status === "done";
-  return <article className="sp-inbox-row" data-done={done || undefined}>
+  return <article className="sp-inbox-entry" data-done={done || undefined}>
     <h3>{task.title}</h3>
-    <p>{task.channel_name}{task.process_link_id ? ` · Heart ${task.process_link_id}` : ""}</p>
-    <Button busy={busy} onClick={() => {
+    <p className="sp-inbox-entry-meta">{context}{task.process_link_id ? ` · Heart ${task.process_link_id}` : ""}</p>
+    <div className="sp-inbox-entry-actions"><Button variant="quiet" busy={busy} onClick={() => {
       if (busy) return;
       setBusy(true); setError("");
       void host.setTaskDone(task.id, !done).catch(error => setError(errorText(error))).finally(() => setBusy(false));
     }}>{done ? "Opne igjen" : "Ferdig"}</Button>
-    <Button onClick={onOpenSource}>Opne kjelda</Button>
+    <Button variant="quiet" onClick={onOpenSource}>Opne kjelda</Button></div>
     {error && <Status tone="error">{error}</Status>}
   </article>;
 }
@@ -109,8 +117,6 @@ export function PreviewInboxes({ state, host, activeKind, onNavigate, onBack }: 
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
-  const [portalHost, setPortalHost] = useState<Element | null>(null);
-  useLayoutEffect(() => { setPortalHost(trigger.current?.closest(".sp-theme") ?? null); }, []);
   const latestHost = useRef(host); latestHost.current = host;
   const scope = `${state.participantId}:${open ? kind : "closed"}`;
   const currentScope = useRef({ key: scope, generation: 0 });
@@ -131,9 +137,25 @@ export function PreviewInboxes({ state, host, activeKind, onNavigate, onBack }: 
     .filter(item => item.count > 0)
     .sort((left, right) => right.count - left.count);
   const unreadTotal = unread.reduce((total, item) => total + item.count, 0);
-  const mentionCount = state.mentions.filter(mention => !mention.read).length;
-  const taskCount = state.tasks.filter(task => task.status !== "done").length;
-  const attentionCount = unreadTotal + mentionCount + taskCount;
+  const { mentionCount, taskCount } = inboxCounts(state.mentions, state.tasks);
+  const mentionsReady = state.mentionsReady !== false && !state.mentionsError;
+  const tasksReady = state.tasksReady !== false && !state.tasksError;
+  const ready = kind === "unread" ? state.directoryReady !== false : kind === "mentions" ? mentionsReady : tasksReady;
+  const stateError = kind === "unread" ? state.directoryError : kind === "mentions" ? state.mentionsError : state.tasksError;
+  const previousReadiness = useRef({ owner: state.participantId, mentions: state.mentionsReady, tasks: state.tasksReady });
+  useEffect(() => {
+    const previous = previousReadiness.current;
+    if (previous.owner === state.participantId && ((kind === "mentions" && previous.mentions === false && state.mentionsReady === true && !state.mentionsError)
+      || (kind === "tasks" && previous.tasks === false && state.tasksReady === true && !state.tasksError))) setError("");
+    previousReadiness.current = { owner: state.participantId, mentions: state.mentionsReady, tasks: state.tasksReady };
+  }, [kind, state.participantId, state.mentionsReady, state.mentionsError, state.tasksReady, state.tasksError]);
+  const visibleError = error || stateError;
+  const waiting = !visibleError && (loading || !ready);
+  const contextFor = (channelId: string, name: string) => {
+    const channel = state.channels.find(item => item.id === channelId);
+    const scope = channel?.circle_id ? state.circleNames[channel.circle_id] || "Vennekrets" : channel?.is_direct ? "Direktemelding" : "Felles";
+    return `${scope} / ${name}`;
+  };
   const select = (next: PreviewInboxKind) => {
     setLocalKind(next);
     if (!controlled) setLocalOpen(true);
@@ -147,25 +169,27 @@ export function PreviewInboxes({ state, host, activeKind, onNavigate, onBack }: 
     if (!controlled) setLocalOpen(false);
   };
   return <>
-    <Button ref={trigger} variant="quiet" className="sp-inbox-trigger" data-has-items={attentionCount > 0 || undefined} onClick={() => select(kind)}
-      aria-label={`Innboks og oppgåver${attentionCount ? `, ${attentionCount} nye eller opne element` : ""}`}
-      title={attentionCount ? `Innboks: ${attentionCount} nye eller opne` : "Innboks og oppgåver"}>
-      <span aria-hidden="true">▤</span><span className="sp-inbox-label">Innboks</span>
-      {attentionCount > 0 && <span className="sp-badge" aria-hidden="true">{approximateCount(attentionCount)}</span>}
+    <style>{inboxCss}</style>
+    <Button ref={trigger} variant="quiet" className="sp-inbox-trigger" data-has-items={mentionsReady && mentionCount > 0 || undefined} onClick={() => { if (!open) select(mentionsReady && mentionCount > 0 ? "mentions" : "unread"); }}
+      aria-label={mentionsReady ? `Innboks, ${mentionCount} uleste omtalar` : "Innboks"} title={mentionsReady ? `Innboks: ${mentionCount} uleste omtalar` : "Innboks"}>
+      <svg className="sp-inbox-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16l2 10v6H2v-6L4 4Z"/><path d="M2 14h6l2 3h4l2-3h6"/></svg><span className="sp-inbox-label">Innboks</span>
+      {mentionsReady && mentionCount > 0 && <span className="sp-badge" aria-hidden="true">{approximateCount(mentionCount)}</span>}
     </Button>
-    {portalHost && createPortal(<Dialog open={open} title="Innboks og oppgåver" closeLabel="Tilbake til samtalen" onClose={close}>
+    <DestinationPage open={open} title="Innboks" closeLabel="Tilbake til samtalen" onClose={close}>
       {open && <>
-      <nav aria-label="Innboksvising" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Button aria-pressed={kind === "unread"} onClick={() => select("unread")}>Uleste{unreadTotal ? ` (${approximateCount(unreadTotal)})` : ""}</Button>
-        <Button aria-pressed={kind === "mentions"} onClick={() => select("mentions")}>Omtalar{mentionCount ? ` (${approximateCount(mentionCount)})` : ""}</Button>
-        <Button aria-pressed={kind === "tasks"} onClick={() => select("tasks")}>Oppgåver{taskCount ? ` (${approximateCount(taskCount)})` : ""}</Button>
+      <nav className="sp-inbox-nav" aria-label="Innboksvising">
+        <Button aria-pressed={kind === "unread"} onClick={() => select("unread")}>Uleste{state.directoryReady !== false && !state.directoryError && unreadTotal ? ` (${approximateCount(unreadTotal)})` : ""}</Button>
+        <Button aria-pressed={kind === "mentions"} onClick={() => select("mentions")}>Omtalar{mentionsReady && mentionCount ? ` (${approximateCount(mentionCount)})` : ""}</Button>
+        <Button aria-pressed={kind === "tasks"} onClick={() => select("tasks")}>Personlege oppgåver{tasksReady && taskCount ? ` (${approximateCount(taskCount)})` : ""}</Button>
       </nav>
-      {loading && <Status>Lastar {kind === "mentions" ? "omtalar" : "oppgåver"} …</Status>}
-      {error && <Status tone="error">{error} <Button disabled={loading} onClick={() => setAttempt(value => value + 1)}>Prøv igjen</Button></Status>}
-      {!loading && !error && kind === "unread" && <section aria-label="Uleste meldingar">
+      {waiting && <Status>Lastar {kind === "unread" ? "samtalar" : kind === "mentions" ? "omtalar" : "oppgåver"}.</Status>}
+      {visibleError && <Status tone="error">{visibleError} {kind === "unread"
+        ? host.retryDirectory && <Button onClick={() => host.retryDirectory?.()}>Prøv igjen</Button>
+        : <Button disabled={loading} onClick={() => setAttempt(value => value + 1)}>Prøv igjen</Button>}</Status>}
+      {!waiting && !visibleError && ready && kind === "unread" && <section aria-label="Uleste meldingar">
         {unread.length === 0 ? <><h3>Alt er lese</h3><p>Du har ingen uleste meldingar akkurat no.</p></>
           : <><p>{unreadTotal} uleste meldingar i {unread.length} {unread.length === 1 ? "samtale" : "samtalar"}</p>
-            <div style={{ display: "grid", gap: 8 }}>{unread.map(({ channel, count }) => <Button key={channel.id}
+            <div className="sp-inbox-list">{unread.map(({ channel, count }) => <Button className="sp-inbox-channel" variant="quiet" key={channel.id}
               aria-label={`${channel.is_direct ? channel.name : `# ${channel.name}`}, ${count} uleste meldingar`}
               onClick={() => openSource(() => host.openChannel(channel.id))}>
               <span>{channel.is_direct ? channel.name : `# ${channel.name}`}</span>
@@ -173,18 +197,18 @@ export function PreviewInboxes({ state, host, activeKind, onNavigate, onBack }: 
               <span className="sp-badge" aria-hidden="true">{approximateCount(count)}</span>
             </Button>)}</div></>}
       </section>}
-      {!loading && !error && kind === "mentions" && <section aria-label="Omtalar">
+      {!waiting && !visibleError && ready && kind === "mentions" && <section aria-label="Omtalar">
         {state.mentions.length === 0 ? <><h3>Ingen omtalar</h3><p>Når nokon skriv @namnet-ditt, kjem meldinga hit.</p></>
-          : state.mentions.map(mention => <MentionRow key={mention.message.id} mention={mention} host={host}
+          : state.mentions.map(mention => <MentionRow key={mention.message.id} mention={mention} host={host} context={contextFor(mention.message.channel_id, mention.channel_name)}
             onOpenSource={() => openSource(() => host.openMentionSource(mention))}
             onTaskCreated={() => { if (currentScope.current.generation === generation) select("tasks"); }} />)}
       </section>}
-      {!loading && !error && kind === "tasks" && <section aria-label="Oppgåver">
+      {!waiting && !visibleError && ready && kind === "tasks" && <section aria-label="Oppgåver">
         {state.tasks.length === 0 ? <><h3>Ingen oppgåver</h3><p>Du kan gjere ei @omtale om til ei oppgåve.</p></>
-          : state.tasks.map(task => <TaskRow key={task.id} task={task} host={host}
+          : state.tasks.map(task => <TaskRow key={task.id} task={task} host={host} context={contextFor(task.channel_id, task.channel_name)}
             onOpenSource={() => openSource(() => host.openTaskSource(task))} />)}
       </section>}
       </>}
-    </Dialog>, portalHost)}
+    </DestinationPage>
   </>;
 }

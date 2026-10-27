@@ -1,11 +1,12 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page } from "@playwright/test";
 
 async function settings(page: Page, label: "Profil og status" | "Varslingsinnstillingar") {
   const preview = page.locator("#sproyt-react-preview");
-  await preview.getByRole("button", { name: "Meny", exact: true }).click();
+
   await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
   await preview.getByRole("button", { name: label, exact: true }).click();
-  return preview.getByRole("dialog", { name: label, exact: true });
+  return destinationSurface(preview, label, true);
 }
 
 test("profile saves name and status, clears status and retains the chat draft without reconnecting", async ({ page }) => {
@@ -32,9 +33,9 @@ test("profile saves name and status, clears status and retains the chat draft wi
   await expect(dialog).toContainText("Statusen er tømd.");
   await expect(dialog.getByLabel("Statusemoji", { exact: true })).toHaveValue("");
   await page.keyboard.press("Escape");
-  await expect(preview.getByRole("dialog", { name: "Innstillingar", exact: true })).toBeVisible();
+  await expect(destinationSurface(preview, "Innstillingar", true)).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(preview.getByRole("dialog")).toHaveCount(0);
+  await expect(preview.locator("[data-workspace-page], dialog[open]")).toHaveCount(0);
   await expect(composer).toHaveValue("utkast medan profilen endrast");
   expect(sockets).toBe(1);
   expect(new URL(page.url()).searchParams.get("ui")).toBe("react");
@@ -106,11 +107,18 @@ test("raw text toggle retains markdown source and returns to safe formatted cont
   await input.fill(source); await input.press("Enter");
   const message = preview.locator("[data-message-id]").filter({ hasText: /råtekst/ }).last();
   await expect(message.locator(".sp-message-content strong")).toHaveText(/råtekst/);
-  await preview.getByRole("button", { name: "Meny", exact: true }).click();
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Utsjånad og bruk", exact: true }).click();
   await preview.getByRole("button", { name: "Vis råtekst", exact: true }).click();
+  await preview.getByRole("button", { name: "Tilbake til innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
   await expect(message.locator("pre")).toHaveText(source);
   await expect(message.locator("script")).toHaveCount(0);
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Utsjånad og bruk", exact: true }).click();
   await preview.getByRole("button", { name: "Vis formatert", exact: true }).click();
+  await preview.getByRole("button", { name: "Tilbake til innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Lukk innstillingane", exact: true }).click();
   await expect(message.locator(".sp-message-content strong")).toHaveText(/råtekst/);
 });
 

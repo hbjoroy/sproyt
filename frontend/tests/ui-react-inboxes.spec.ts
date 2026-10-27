@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page } from "@playwright/test";
 
 async function installInboxFixture(page: Page) {
@@ -93,27 +94,30 @@ test("React inbox handles unread, mentions and tasks while preserving the conver
   const preview = page.locator("#sproyt-react-preview");
   const composer = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(composer).toBeEnabled({ timeout: 15_000 });
-  await composer.fill("Kjeldemelding for omtale"); await composer.press("Enter");
+  await composer.fill("Kjeldemelding for omtale"); await preview.locator(".sp-channel-pane").getByRole("button", { name: "Send ↑", exact: true }).click();
   await expect(preview.locator("[data-message-id]").filter({ hasText: "Kjeldemelding for omtale" })).toBeVisible();
   for (let index = 0; index < 12; index += 1) {
-    await composer.fill(`Seinare melding ${index}`); await composer.press("Enter");
+    await composer.fill(`Seinare melding ${index}`); await preview.locator(".sp-channel-pane").getByRole("button", { name: "Send ↑", exact: true }).click();
   }
   await expect(preview.locator("[data-message-id]").filter({ hasText: "Seinare melding 11" })).toBeVisible();
   await composer.fill("utkastet skal overleve innboksen");
   await page.evaluate(() => (window as typeof window & { __inboxFixture: { activate(): void } }).__inboxFixture.activate());
 
-  const trigger = preview.getByRole("button", { name: /^Innboks og oppgåver/ });
-  await expect(trigger).toHaveAttribute("aria-label", /3 nye eller opne element/);
-  await expect(trigger.locator(".sp-badge")).toHaveText("3");
+  const trigger = preview.locator(".sp-inbox-trigger");
   await trigger.click();
-  let dialog = preview.getByRole("dialog", { name: "Innboks og oppgåver" });
+  let dialog = destinationSurface(preview, "Innboks", false);
+  await dialog.getByRole("button", { name: "Omtalar" }).click();
+  await expect(dialog.getByRole("article").filter({ hasText: "Kjeldemelding for omtale" })).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-label", /1 uleste omtalar/);
+  await expect(trigger.locator(".sp-badge")).toHaveText("1");
+  await dialog.getByRole("button", { name: "Uleste" }).click();
   await expect(dialog.getByText("3 uleste meldingar i 1 samtale")).toBeVisible();
   await dialog.getByRole("button", { name: "# general, 3 uleste meldingar" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(composer).toHaveValue("utkastet skal overleve innboksen");
 
-  await preview.getByRole("button", { name: /^Innboks og oppgåver/ }).click();
-  dialog = preview.getByRole("dialog", { name: "Innboks og oppgåver" });
+  await preview.getByRole("button", { name: /^Innboks,/ }).click();
+  dialog = destinationSurface(preview, "Innboks", false);
   await dialog.getByRole("button", { name: "Omtalar" }).click();
   const mention = dialog.getByRole("article").filter({ hasText: "Kjeldemelding for omtale" });
   await expect(mention).toContainText("Ulest");
@@ -128,11 +132,11 @@ test("React inbox handles unread, mentions and tasks while preserving the conver
   await mention.getByRole("button", { name: "Lagre oppgåve" }).click();
   const task = dialog.getByRole("article").filter({ hasText: "Følg opp omtalen" });
   await expect(task).toContainText("Heart prosess-42");
-  await expect(trigger).toHaveAttribute("aria-label", /4 nye eller opne element/);
-  await expect(trigger.locator(".sp-badge")).toHaveText("4");
+  await expect(trigger).toHaveAttribute("aria-label", /0 uleste omtalar/);
+  await expect(trigger.locator(".sp-badge")).toHaveCount(0);
   await task.getByRole("button", { name: "Ferdig" }).click();
   await expect(task.getByRole("button", { name: "Opne igjen" })).toBeVisible();
-  await expect(trigger).toHaveAttribute("aria-label", /3 nye eller opne element/);
+  await expect(trigger).toHaveAttribute("aria-label", /0 uleste omtalar/);
   await task.getByRole("button", { name: "Opne igjen" }).click();
   await expect(task.getByRole("button", { name: "Ferdig" })).toBeVisible();
 
@@ -168,12 +172,12 @@ test("closing the React inbox restores focus and keeps an open thread draft", as
   const preview = page.locator("#sproyt-react-preview");
   const composer = preview.getByRole("textbox", { name: "Skriv melding" });
   await expect(composer).toBeEnabled({ timeout: 15_000 });
-  await composer.fill("Kjeldemelding med tråd"); await composer.press("Enter");
+  await composer.fill("Kjeldemelding med tråd"); await preview.locator(".sp-channel-pane").getByRole("button", { name: "Send ↑", exact: true }).click();
   const root = preview.locator("[data-message-id]").filter({ hasText: "Kjeldemelding med tråd" });
   await root.getByRole("button", { name: "Svar i tråd" }).click();
   const reply = preview.locator(".sp-thread-pane").getByRole("textbox", { name: "Svar i tråden" });
   await reply.fill("eit usendt trådutkast");
-  const trigger = preview.getByRole("button", { name: /^Innboks og oppgåver/ });
+  const trigger = preview.getByRole("button", { name: /^Innboks,/ });
   await trigger.click();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();

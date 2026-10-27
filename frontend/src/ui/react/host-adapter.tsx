@@ -21,6 +21,7 @@ export interface ConversationHostBindings {
   readonly runtime: ConversationViewProps["runtime"];
   readonly theme: ConversationViewProps["theme"];
   readonly view: ConversationViewProps["view"];
+  readonly pageKey?: string;
   readonly header: ReactNode;
   readonly onBack: () => void;
   readonly onQueryChange: (query: string) => void;
@@ -28,6 +29,7 @@ export interface ConversationHostBindings {
   readonly onCloseThread: () => void;
   /** Scope/inbox/create/discover commands remain available outside channel rows. */
   readonly navigationActions: ReactNode;
+  readonly navigationFooter?: ReactNode;
   /** Includes circle membership and each channel's notification controls. */
   readonly renderGroupActions?: (group: ConversationSnapshotGroup) => ReactNode;
   readonly renderConversationAction?: (conversation: ConversationSnapshotGroup["conversations"][number]) => ReactNode;
@@ -78,7 +80,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
   const thread = snapshot.thread;
   const threadVisible = thread !== null && channelId !== null && thread.channelId === channelId;
   return {
-    runtime: host.runtime, theme: host.theme, view: host.view, header: host.header,
+    runtime: host.runtime, theme: host.theme, view: host.view, pageKey: host.pageKey, header: host.header,
     title: snapshot.title, context, emptyContent: host.emptyContent,
     contextActions: host.contextActions, onBack: host.onBack,
     navigation: {
@@ -98,7 +100,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
         actions: host.renderGroupActions?.(group)
       })),
       selectedId: channelId, query: snapshot.query, onQueryChange: host.onQueryChange,
-      onSelect: host.onSelect, actions: host.navigationActions
+      onSelect: host.onSelect, actions: host.navigationActions, footer: host.navigationFooter
     },
     timeline: {
       ...host.message, ...host.timeline,

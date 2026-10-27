@@ -1,4 +1,5 @@
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
+import { DestinationPage } from "./workspace-page";
 import { useEffect, useRef, useState } from "react";
 import type { NotificationPreferences, NotificationSettings } from "../../api";
 import type { UserProfile } from "../../types";
@@ -179,9 +180,10 @@ export function PreviewNotifications({ host }: { host: PreviewSettingsHost }) {
 export function PreviewSettingsDialog({ kind, host, onClose, focusStatus = false }: {
   kind: "profile" | "notifications"; host: PreviewSettingsHost; onClose(): void; focusStatus?: boolean;
 }) {
-  return <Dialog open title={kind === "profile" ? "Profil og status" : "Varslingsinnstillingar"} closeLabel={focusStatus ? "Lukk status" : "Tilbake til menyen"} onClose={onClose}>
+  const Container = focusStatus ? Dialog : DestinationPage;
+  return <Container open title={kind === "profile" ? "Profil og status" : "Varslingsinnstillingar"} closeLabel={focusStatus ? "Lukk status" : "Tilbake til menyen"} onClose={onClose}>
     {kind === "profile" ? <PreviewProfile host={host} focusStatus={focusStatus} /> : <PreviewNotifications host={host} />}
-  </Dialog>;
+  </Container>;
 }
 
 /** Other members' statuses are informational; only your own opens the editor. */

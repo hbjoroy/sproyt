@@ -209,5 +209,7 @@ function AccountNavigation(props: NavigationProps) {
       </>}
     </div>
     {props.onGuide && <Button variant="quiet" className="sp-product-nav-guide" onClick={props.onGuide}>Kom i gang</Button>}
+    {props.onFindChannels && <Button variant="quiet" className="sp-product-nav-guide" onClick={props.onFindChannels}>Finn kretsar og kanalar</Button>}
+    {props.footer && <div className="sp-product-nav-footer">{props.footer}</div>}
   </div>;
 }

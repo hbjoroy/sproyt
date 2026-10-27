@@ -1,4 +1,5 @@
-import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
+import { DestinationPage } from "./workspace-page";
+import { Button, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AdvancedHost } from "../../application/advanced-host";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
@@ -109,7 +110,7 @@ function Heart({ host, snapshot }: { host: AdvancedHost; snapshot: ConversationS
 }
 
 export function PreviewAdvanced({ kind, host, snapshot, onClose }: { kind: "agent" | "heart"; host: AdvancedHost; snapshot: ConversationSnapshot; onClose(): void }) {
-  return <Dialog open title={kind === "agent" ? "Agenttilgang" : "Heart og planlegging"} closeLabel="Lukk" onClose={onClose}>
+  return <DestinationPage open title={kind === "agent" ? "Agenttilgang" : "Heart og planlegging"} closeLabel="Lukk" onClose={onClose}>
     {kind === "agent" ? <Agent host={host} snapshot={snapshot} /> : <Heart host={host} snapshot={snapshot} />}
-  </Dialog>;
+  </DestinationPage>;
 }

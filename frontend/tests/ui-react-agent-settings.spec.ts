@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const circle = "00000000-0000-7000-8000-000000009001";
@@ -7,7 +8,7 @@ const hiddenPrivateChannel = "00000000-0000-7000-8000-000000009004";
 const unknownChannel = "00000000-0000-7000-8000-000000009005";
 const agentId = "00000000-0000-7000-8000-000000009011";
 const secondAgentId = "00000000-0000-7000-8000-000000009012";
-const dialogFor = (page: Page) => page.getByRole("dialog", { name: "Agentar i Testkrets", exact: true });
+const dialogFor = (page: Page) => destinationSurface(page, "Agentar i Testkrets", true);
 const destination = (channel = privateChannel) => `/?participant=agent-settings-owner&view=settings&section=chat-agents&circle=${circle}&agent=${agentId}&panel=overview&channel=${channel}`;
 
 type FixtureOptions = { enabled?: boolean; channelEnabled?: boolean; modelConfigured?: boolean; optionalOutage?: boolean; circleRole?: "owner" | "member" };
@@ -294,7 +295,7 @@ test("the channel-menu entry fences pending reads across two administrators and 
   await page.goto(`/?participant=agent-settings-owner&channel=${privateChannel}`);
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  const access = preview.getByRole("dialog", { name: "Agentar i Privat arbeid", exact: true });
+  const access = destinationSurface(preview, "Agentar i Privat arbeid", true);
   const openAccess = async () => {
     if (!await preview.getByRole("textbox", { name: "Skriv melding", exact: true }).isVisible()) {
       const nav = preview.getByRole("navigation", { name: "Samtalar", exact: true });
@@ -308,9 +309,7 @@ test("the channel-menu entry fences pending reads across two administrators and 
       if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
       await group.getByRole("button", { name: "# Privat arbeid", exact: true }).click();
     }
-    const menu = preview.getByRole("button", { name: "Meny", exact: true });
-    if (await menu.getAttribute("aria-expanded") !== "true") await menu.click();
-    await preview.locator(".sp-mobile-channel-menu").getByRole("button", { name: "Kanalval", exact: true }).click();
+    await preview.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: "Kanalval", exact: true }).click();
     await preview.getByRole("dialog", { name: "Kanalval: Privat arbeid", exact: true })
       .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
   };

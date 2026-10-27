@@ -1,4 +1,5 @@
-import { Button, Dialog, PersonList, Status, TextField } from "@sproyt/ui/react";
+import { DestinationPage } from "./workspace-page";
+import { Button, PersonList, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import type { AgentMemoryApi } from "../../agent-memory";
@@ -284,7 +285,7 @@ export function PreviewCommunity({ destination, snapshot, host, onClose, onNavig
   const circle = "circleId" in destination ? snapshot.circles.find(item => item.id === destination.circleId) : undefined;
   const channel = destination.kind === "channel" ? snapshot.channels.find(item => item.id === destination.channelId) : undefined;
   const title = destination.kind === "circle-members" ? "Kretsmedlemmer og roller" : destination.kind === "rename-circle" ? "Endre kretsnamn" : destination.kind === "create-channel" ? `Ny kanal i ${circle?.name ?? "Felles"}` : destination.kind === "people" ? "Ny direktemelding" : destination.kind === "channel" ? channel?.is_direct ? "Om samtalen" : `Kanaldetaljar: ${channel?.name ?? "Kanal"}` : destination.kind === "create-circle" ? "Ny vennekrets" : destination.kind === "circles" ? "Kretsadministrasjon og invitasjonskode" : destination.kind === "global-channels" ? "Kanalar i Felles" : destination.kind === "global-invite" ? "Inviter ny brukar til Sprøyt" : destination.kind === "channels" ? `Kanalar i ${circle?.name ?? "vennekretsen"}` : `Inviter til ${circle?.name ?? "vennekretsen"}`;
-  return <Dialog open title={title} closeLabel="Lukk" onClose={onClose}>
+  return <DestinationPage open title={title} closeLabel="Lukk" onClose={onClose} focusHeading={!focusMemberAction}>
     <div className="sp-community-dialog">
       {destination.kind === "people" && <DirectMessagePicker key={host.selfId()} host={host} snapshot={snapshot} onClose={onClose} onSelectChannel={onSelectChannel} />}
       {destination.kind === "channel" && (channel ? <ChannelPeople key={`${host.selfId()}:${channel.id}:${channel.role}:${channel.kind}:${channel.is_direct}`} host={host} channel={channel} snapshot={snapshot} onClose={onClose} onSelectChannel={onSelectChannel} focusMemberAction={focusMemberAction} /> : <Status>Kanalen er ikkje lenger tilgjengeleg.</Status>)}
@@ -298,5 +299,5 @@ export function PreviewCommunity({ destination, snapshot, host, onClose, onNavig
       {destination.kind === "channels" && circle && <ScopeChannels host={host} circle={circle} channels={snapshot.channels} onClose={onClose} onNavigate={onNavigate} onSelectChannel={onSelectChannel} />}
       {destination.kind === "invite" && circle && <Invite host={host} circle={circle} />}
     </div>
-  </Dialog>;
+  </DestinationPage>;
 }

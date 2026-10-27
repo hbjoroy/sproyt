@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page } from "@playwright/test";
 
 const circle = "00000000-0000-7000-8000-000000002051";
@@ -66,7 +67,7 @@ async function openCircleAgents(page: Page) {
   if (await conversations.isVisible()) await conversations.click();
   await preview.getByRole("button", { name: "Val for Testkrets", exact: true }).click();
   await preview.getByRole("button", { name: "Agentar i Testkrets", exact: true }).click();
-  return preview.getByRole("dialog", { name: "Agentar i Testkrets", exact: true });
+  return destinationSurface(preview, "Agentar i Testkrets", true);
 }
 
 test("circle setup exposes the disabled agent and private channel access together without silently granting access", async ({ page }) => {
@@ -111,12 +112,10 @@ test("failed activation retains confirmed state and can reload a new revision be
 
 async function openAgents(page: Page) {
   const preview = page.locator("#sproyt-react-preview");
-  const menu = preview.getByRole("button", { name: "Meny", exact: true });
-  if (await menu.getAttribute("aria-expanded") !== "true") await menu.click();
-  await preview.locator(".sp-mobile-channel-menu").getByRole("button", { name: "Kanalval", exact: true }).click();
+  await preview.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: "Kanalval", exact: true }).click();
   await preview.getByRole("dialog", { name: "Kanalval: Privat arbeid", exact: true })
     .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
-  return preview.getByRole("dialog", { name: "Agentar i Privat arbeid", exact: true });
+  return destinationSurface(preview, "Agentar i Privat arbeid", true);
 }
 
 test("private channel selection keeps confirmed checkbox state during errors, reloads current choices and honours rollout gate at narrow width", async ({ page }) => {

@@ -48,6 +48,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   const openingReadSequences = new Map<string, number>();
   let opening: { position: ReadingPosition | null; readSequence: number; unreadLimit?: number } | null = null;
   let viewport: HTMLElement | null = null;
+  let paused = false;
   let model: TimelineScrollModel = { key: null, messageIds: [] };
   let pending: PendingRestore | null = null;
   let mutationObserver: MutationObserver | null = null;
@@ -89,6 +90,7 @@ export function createTimelineScrollController(options: TimelineScrollController
 
   const save = () => {
     if (!model.key) return null;
+    if (paused) return positions.get(model.key) ?? null;
     const position = capture();
     if (position?.anchorId && !opening) {
       positions.set(model.key, position);
@@ -143,6 +145,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const reportBottom = () => {
+    if (paused) return;
     if (!viewport || !model.key) return;
     const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
     if (distance > nearEdge) return;
@@ -153,6 +156,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const reportVisible = () => {
+    if (paused) return;
     if (!viewport || !model.key || opening || model.waitingForLink || model.loading
       || document.visibilityState === "hidden" || !document.hasFocus()
       || (document.querySelector("dialog[open]") && !viewport.closest("dialog[open]"))) return;
@@ -176,6 +180,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const reconcile = () => {
+    if (paused) { scheduled = false; return; }
     scheduled = false;
     if (!viewport || !model.key || scrollIntent) return;
     const bounds = viewport.getBoundingClientRect();
@@ -253,7 +258,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const scheduleReconcile = () => {
-    if (scheduled) return;
+    if (scheduled || paused) return;
     scheduled = true;
     requestAnimationFrame(reconcile);
   };
@@ -280,7 +285,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const onScroll = () => {
-    if (!viewport || pending || viewport.scrollTop === appliedScrollTop) return;
+    if (paused || !viewport || pending || viewport.scrollTop === appliedScrollTop) return;
     // WebKit can deliver layout-induced scroll before ResizeObserver. Media
     // growth is not evidence that the reader stopped following the bottom.
     if (!scrollIntent && geometryChanged()) {
@@ -312,7 +317,7 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
 
   const onScrollIntent = (event: Event) => {
-    if (!viewport) return;
+    if (paused || !viewport) return;
     if (event instanceof KeyboardEvent && !["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
     if (event.type === "pointerdown" && event.target !== viewport) return;
     scrollIntentTop = viewport.scrollTop;
@@ -438,13 +443,19 @@ export function createTimelineScrollController(options: TimelineScrollController
   };
   const unreadAfterSequence = () => model.key ? openingReadSequences.get(model.key) : undefined;
   const readingPosition = () => { const position = save(); return model.key && position ? { key: model.key, position } : null; };
+  const setPaused = (value: boolean) => {
+    if (value === paused) return;
+    if (value) save();
+    paused = value;
+    if (!paused) scheduleReconcile();
+  };
   const reset = () => {
     positions.clear(); openingReadSequences.clear(); pending = null; opening = null;
     revealMessageId = null; requestedOlderAt = null; clampedAnchor = false; geometry = null;
     openingPages = 0; appliedScrollTop = null; scrollIntent = false; scrollIntentGeneration++; reportedBottomAt = null;
     model = { key: null, messageIds: [] }; followBottom = true;
   };
-  return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, readingPosition, reset, dispose });
+  return Object.freeze({ prepare, viewportRef, onScroll, goToLatest, unreadAfterSequence, readingPosition, setPaused, reset, dispose });
 }
 
 export type TimelineScrollController = ReturnType<typeof createTimelineScrollController>;

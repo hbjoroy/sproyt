@@ -21,13 +21,26 @@ test("manual update reloads once and verifies code on return without clearing dr
   const dependencies = { storage, latestVersion: async () => version("new"), updateWorker: async () => { worker++; },
     prepare: async () => { checks++; return { owner: "user", positions: [] }; }, reload: () => { reloads++; } };
   const old = createAppUpdate({ ...dependencies, currentVersion: version("old") });
-  await old.run(() => [anchor]); await old.run();
+  await Promise.all([old.run(() => [anchor]), old.run()]);
   assert.equal(reloads, 1); assert.equal(checks, 2); assert.equal(worker, 1);
   const next = createAppUpdate({ ...dependencies, currentVersion: version("new") });
   assert.equal(next.getSnapshot().error, false); assert.match(next.getSnapshot().message, /oppdatert/);
   assert.deepEqual(next.resumePosition("user", "channel:one"), anchor.position);
   assert.equal(next.resumePosition("other-user", "channel:one"), null);
   assert.equal(reloads, 1); assert.equal(storage.getItem("draft"), "Utkast"); assert.equal(storage.getItem("protocol-journal"), "original-request-id");
+});
+
+test("a cancelled unload permits another deliberate reload while retaining its protected drafts and resume receipt", async () => {
+  const storage = new MemoryStorage(); storage.setItem("draft", "Uferdig tekst");
+  let reloads = 0;
+  const options = { storage, currentVersion: version("old"), latestVersion: async () => version("new"), updateWorker: async () => {},
+    prepare: async () => ({ owner: "user", positions: [anchor] }), reload: () => { reloads++; } };
+  const update = createAppUpdate(options);
+  await update.run(); assert.equal(update.getSnapshot().busy, false);
+  await update.run(); assert.equal(reloads, 2);
+  const resumed = createAppUpdate({ ...options, currentVersion: version("new") });
+  assert.deepEqual(resumed.resumePosition("user", "channel:one"), anchor.position);
+  assert.equal(storage.getItem("draft"), "Uferdig tekst");
 });
 
 test("same code refreshes data deliberately, mismatched code reports failure without a reload loop", async () => {

@@ -1,3 +1,4 @@
+import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page } from "@playwright/test";
 
 async function enter(page: Page, participant: string) {
@@ -16,14 +17,14 @@ test("profile stars persist across isolated browsers and removal is visible in a
     const names = [`Favoritt A ${Date.now()}`, `Favoritt B ${Date.now()}`];
     for (const name of names) {
       const settings = app.getByRole("button", { name: "Innstillingar", exact: true });
-      if (!await settings.isVisible()) await app.getByRole("button", { name: "Meny", exact: true }).click();
-      await settings.click(); await app.getByRole("dialog", { name: "Innstillingar", exact: true }).getByRole("button", { name: "Ny vennekrets", exact: true }).click();
-      const create = app.getByRole("dialog", { name: "Ny vennekrets", exact: true });
+
+      await settings.click(); await destinationSurface(app, "Innstillingar", true).getByRole("searchbox", { name: "Søk i innstillingar" }).fill("Ny vennekrets"); await destinationSurface(app, "Innstillingar", true).getByRole("button", { name: "Ny vennekrets", exact: true }).click();
+      const create = destinationSurface(app, "Ny vennekrets", true);
       await create.getByLabel("Namn på vennekrets").fill(name); await create.getByRole("button", { name: "Opprett vennekrets", exact: true }).click();
       await expect(create).toHaveCount(0);
-      for (let depth = 0; depth < 4 && await app.getByRole("dialog").count(); depth++) {
-        const title = (await app.getByRole("dialog").getByRole("heading").first().textContent())!;
-        await first.keyboard.press("Escape"); await expect(app.getByRole("dialog", { name: title, exact: true })).toHaveCount(0);
+      for (let depth = 0; depth < 4 && await app.locator("[data-workspace-page], dialog[open]").count(); depth++) {
+        const title = (await app.locator("[data-workspace-page], dialog[open]").getByRole("heading").first().textContent())!;
+        await first.keyboard.press("Escape"); await expect(destinationSurface(app, title, true)).toHaveCount(0);
       }
     }
     const group = app.locator("[data-conversation-group]").filter({ has: first.getByRole("heading", { name: names[0], exact: true }) });
@@ -66,7 +67,7 @@ for (const touch of [false, true]) test(`new-DM people rows stay compact without
     const app = await enter(page, "people-compact");
     const back = app.getByRole("button", { name: "Samtalar", exact: true }); if (await back.isVisible()) await back.click();
     await app.getByRole("tab", { name: /^Direktemeldingar/ }).click(); await app.getByRole("button", { name: "Ny direktemelding", exact: true }).click();
-    const dialog = app.getByRole("dialog", { name: "Ny direktemelding", exact: true });
+    const dialog = destinationSurface(app, "Ny direktemelding", true);
     await expect(dialog.locator(".sp-direct-person")).toHaveCount(names.length);
     const rows = await dialog.locator(".sp-direct-person").evaluateAll(elements => elements.map(element => ({
       height: element.getBoundingClientRect().height, border: getComputedStyle(element).borderBottomWidth,

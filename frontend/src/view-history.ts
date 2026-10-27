@@ -25,7 +25,7 @@ export function readViewTarget(href: string): ViewTarget | null {
   }
   if (p.get("view") === "settings") {
     const kind = p.get("section") ?? "overview";
-    if (kind === "overview" || kind === "profile" || kind === "notifications" || kind === "welcome") return { kind: "management", page: { kind } };
+    if (kind === "overview" || kind === "profile" || kind === "notifications" || kind === "welcome" || kind === "appearance" || kind === "help") return { kind: "management", page: { kind } };
     if ((kind === "circle" || kind === "memory") && id(circleId)) return { kind: "management", page: { kind, circleId } };
     if (kind === "chat-agents" && id(circleId)) {
       const agentId = p.get("agent") ?? undefined, panel = p.get("panel") ?? undefined, channel = channelId ?? undefined;
