@@ -218,7 +218,7 @@ test("Felles creates a global channel with a global slug and exposes its members
   await expect(details.getByRole("button", { name: "Last personlista på nytt" })).toBeVisible();
   await closeManagedDialog(page);
   await preview.getByRole("button", { name: "Kanalval", exact: true }).click();
-  await preview.getByRole("dialog", { name: "Kanalval: Felles prat" }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
+  await preview.getByRole("group", { name: "Kanalval: Felles prat" }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
   await expect(details.getByLabel("Vel person", { exact: true })).toBeFocused();
 });
 
@@ -340,6 +340,7 @@ test("community rejects keep entered values, member loads retry and enrollment k
   await selectCreatedPrat(preview, "Krets etter retry");
   await menu(preview, "Kanaldetaljar, medlemmer og integrasjonar");
   const details = destinationSurface(preview, "Kanaldetaljar: Prat", false);
+  await details.getByRole("tab", { name: "Medlemmer", exact: true }).click();
   await expect(details).toContainText("Mellombels feil, prøv igjen");
   await details.getByRole("button", { name: "Last personlista på nytt" }).click();
   await expect(details.getByText("Mellombels feil, prøv igjen")).toHaveCount(0);
@@ -408,14 +409,17 @@ test("channel discovery, joining, direct member addition and circle DM invitatio
   await expect(discover).toHaveCount(0);
   await menu(member, "Kanaldetaljar, medlemmer og integrasjonar");
   const memberDetails = destinationSurface(member, "Kanaldetaljar: Open tur", false);
+  await memberDetails.getByRole("tab", { name: "Medlemmer", exact: true }).click();
   await expect(memberDetails.getByLabel("Kanalomtale (Markdown)")).toHaveCount(0);
   await expect(memberDetails.getByRole("region", { name: "Legg til kanalmedlem" })).toHaveCount(0);
+  await memberDetails.getByRole("tab", { name: "Om", exact: true }).click();
   await memberDetails.getByRole("button", { name: "Forlat kanalen", exact: true }).click();
   await memberDetails.getByRole("button", { name: "Ja, forlat kanalen" }).click();
   await expect(memberDetails).toHaveCount(0);
   await createChannel("Privat tur", "private");
   await menu(preview, "Kanaldetaljar, medlemmer og integrasjonar");
   const details = destinationSurface(preview, "Kanaldetaljar: Privat tur", false);
+  await details.getByRole("tab", { name: "Medlemmer", exact: true }).click();
   await details.getByLabel("Vel person").selectOption({ label: "community-join-peer" });
   await details.getByRole("button", { name: "Legg til", exact: true }).click();
   await expect(details).toContainText("Personen er lagd til.");

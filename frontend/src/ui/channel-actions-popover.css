@@ -1,0 +1,9 @@
+.sp-theme .sp-channel-actions-popover { position: fixed; inset: auto; margin: 0; max-height: min(620px, calc(100dvh - 16px)); overflow-y: auto; overscroll-behavior: contain; padding: 8px; color: var(--sp-text); background: var(--sp-surface); border: 1px solid var(--sp-rule); border-radius: 2px; box-sizing: border-box; }
+.sp-theme .sp-channel-actions-popover:popover-open { display: grid; gap: 4px; }
+.sp-theme .sp-channel-actions-popover .sp-button { width: 100%; min-height: 36px; height: auto; justify-content: flex-start; text-align: start; white-space: normal; padding: 8px 10px; }
+.sp-theme .sp-channel-actions-popover .sp-button:focus-visible, .sp-theme .sp-channel-actions-more summary:focus-visible { outline: 2px solid var(--sp-text); outline-offset: -2px; }
+.sp-theme .sp-channel-actions-more { border-top: 1px solid var(--sp-line); margin-top: 4px; }
+.sp-theme .sp-channel-actions-more summary { display: flex; align-items: center; min-height: 36px; padding: 8px 10px; cursor: pointer; list-style: none; }
+.sp-theme .sp-channel-actions-more summary::after { content: "›"; margin-inline-start: auto; }
+.sp-theme .sp-channel-actions-more[open] summary::after { content: "⌄"; }
+@media (pointer: coarse) { .sp-theme .sp-channel-actions-popover .sp-button, .sp-theme .sp-channel-actions-more summary { min-height: 44px; } }

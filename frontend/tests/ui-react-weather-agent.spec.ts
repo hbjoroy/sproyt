@@ -64,9 +64,6 @@ async function openAgents(page: Page) {
   return dialog;
 }
 async function skill(dialog: Locator, name: string) {
-  const overview = dialog.getByRole("button", { name: "Ferdigheiter", exact: true });
-  await expect(overview.or(dialog.getByRole("button", { name, exact: true }))).toBeVisible();
-  if (await overview.isVisible()) await overview.click();
   await dialog.getByRole("button", { name, exact: true }).click();
 }
 async function backToList(_page: Page, dialog: Locator) {
@@ -110,7 +107,7 @@ test("agent image opt-in requires identity, preserves a failed save and can be d
   await dialog.getByRole("button", { name: "Hent lagra oppsett", exact: true }).click();
   await expect(identity).toHaveValue("maria-v1"); await expect(occasional).toBeChecked();
   await save.click();
-  await expect(dialog.getByRole("button", { name: "Ferdigheiter", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
   expect(updates[0]).toEqual(updates[1]);
   expect(updates[1]).toMatchObject({ image_generation: { identity_id: "maria-v1", enabled: true, occasional: true }, revision: 3 });
   onlyPart(updates[1], "image_generation");
@@ -122,7 +119,7 @@ test("agent image opt-in requires identity, preserves a failed save and can be d
   await expect(enabled).toBeEnabled(); await expect(occasional).toBeDisabled();
   await expect(identity).toBeDisabled();
   await enabled.uncheck(); await save.click();
-  await expect(dialog.getByRole("button", { name: "Ferdigheiter", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
   expect(updates[2]).toMatchObject({ image_generation: { identity_id: "maria-v1", enabled: false, occasional: false }, revision: 4 });
   onlyPart(updates[2], "image_generation");
   await createAgent(page, dialog);
@@ -156,7 +153,7 @@ test("fixed weather settings preserve edits through failure, reject invalid coor
   await dialog.getByRole("button", { name: "Hent lagra oppsett", exact: true }).click();
   await expect(location).toHaveValue("  Parikia  "); await expect(latitude).toHaveValue("37.085");
   await save.click();
-  await expect(dialog.getByRole("button", { name: "Ferdigheiter", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
   expect(updates).toHaveLength(2); expect(updates[0]).toEqual(updates[1]);
   expect(updates[1]).toMatchObject({ weather: { location: "Parikia", latitude: 37.085, longitude: 25.148 }, revision: 3, enabled: false });
   onlyPart(updates[1], "weather");
@@ -165,7 +162,7 @@ test("fixed weather settings preserve edits through failure, reject invalid coor
   await dialog.getByRole("button", { name: "Tilbake", exact: true }).click();
   await skill(dialog, "Bilettolking");
   await expect(vision).not.toBeChecked(); await vision.check(); await save.click();
-  await expect(dialog.getByRole("button", { name: "Ferdigheiter", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
   expect(updates[2]).toMatchObject({ vision_enabled: true, revision: 4, enabled: false });
   onlyPart(updates[2], "vision_enabled");
   await createAgent(page, dialog);
@@ -186,7 +183,7 @@ test("fixed weather settings preserve edits through failure, reject invalid coor
   await expect(vision).toBeChecked(); await expect(vision).toBeEnabled();
   await expect(dialog).toContainText("Bilettolking er ikkje tilgjengeleg i dette oppsettet");
   await vision.uncheck(); await expect(vision).toBeDisabled(); await save.click();
-  await expect(dialog.getByRole("button", { name: "Ferdigheiter", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
   expect(updates[3]).toMatchObject({ vision_enabled: false, revision: 5 });
   onlyPart(updates[3], "vision_enabled");
 });

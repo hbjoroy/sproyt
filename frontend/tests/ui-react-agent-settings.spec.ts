@@ -133,9 +133,6 @@ async function openList(page: Page) {
   return dialog;
 }
 async function part(dialog: Locator, name: string) {
-  const overview = dialog.getByRole("button", { name: "Ferdigheiter", exact: true });
-  await expect(overview.or(dialog.getByRole("button", { name, exact: true }))).toBeVisible();
-  if (await overview.isVisible()) await overview.click();
   await dialog.getByRole("button", { name, exact: true }).click();
 }
 function expectOnlyOptional(body: Record<string, unknown>, optional?: string) {
@@ -280,10 +277,13 @@ test("dark settings remain inside the viewport at 320px, phone and desktop width
   await dialog.getByRole("button", { name: "Maria", exact: true }).click();
   await expect(dialog).toContainText("Ingen kanaltilgang");
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(dialog.getByRole("button", { name: "Til agentlista", exact: true })).toBeHidden();
+  await expect(dialog.locator(".sp-workspace-page-header").getByRole("button")).toBeVisible();
   await capture("agent-overview-390-dark.png", 390);
   await part(dialog, "Vêr");
   await dialog.getByRole("checkbox", { name: "Vêrdata", exact: true }).check();
   await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(dialog.getByRole("button", { name: "Til agentlista", exact: true })).toBeVisible();
   await capture("agent-weather-1280-dark.png", 1280);
   expect(server.mutations).toEqual([]);
 });
@@ -295,7 +295,7 @@ test("the channel-menu entry fences pending reads across two administrators and 
   await page.goto(`/?participant=agent-settings-owner&channel=${privateChannel}`);
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  const access = destinationSurface(preview, "Agentar i Privat arbeid", true);
+  const access = destinationSurface(preview, "Kanaldetaljar: Privat arbeid", true).locator(".sp-agent-channel-access");
   const openAccess = async () => {
     if (!await preview.getByRole("textbox", { name: "Skriv melding", exact: true }).isVisible()) {
       const nav = preview.getByRole("navigation", { name: "Samtalar", exact: true });
@@ -310,7 +310,7 @@ test("the channel-menu entry fences pending reads across two administrators and 
       await group.getByRole("button", { name: "# Privat arbeid", exact: true }).click();
     }
     await preview.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: "Kanalval", exact: true }).click();
-    await preview.getByRole("dialog", { name: "Kanalval: Privat arbeid", exact: true })
+    await preview.getByRole("group", { name: "Kanalval: Privat arbeid", exact: true })
       .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
   };
   server.holdNextChannelRead(); await openAccess();
@@ -322,16 +322,16 @@ test("the channel-menu entry fences pending reads across two administrators and 
   await openAccess();
   await expect(access.getByRole("checkbox", { name: "Maria", exact: true })).not.toBeChecked();
   expect(server.channelOwners).toEqual(["agent-settings-owner", "agent-settings-other-owner"]);
-  await access.getByRole("button", { name: "Lukk kanalagentar", exact: true }).click();
+  await destinationSurface(preview, "Kanaldetaljar: Privat arbeid", true).getByRole("button", { name: "Lukk", exact: true }).click();
   server.holdNextChannelRead(); await openAccess();
   await expect(access).toContainText("Hentar agentval");
   await expect.poll(() => server.channelOwners.length).toBe(3);
   server.setChannelRole("member");
   await expect(access).toHaveCount(0);
   server.setChannelRole("moderator");
+  await expect.poll(() => server.channelOwners.length).toBe(4);
+  await expect(access.getByRole("checkbox", { name: "Maria", exact: true })).not.toBeChecked();
   await server.releaseChannelRead();
-  await expect(access).toHaveCount(0);
-  await openAccess();
   await expect(access.getByRole("checkbox", { name: "Maria", exact: true })).not.toBeChecked();
   expect(server.channelOwners).toEqual(["agent-settings-owner", "agent-settings-other-owner", "agent-settings-other-owner", "agent-settings-other-owner"]);
   expect(server.mutations).toEqual([]);

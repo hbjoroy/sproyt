@@ -55,13 +55,16 @@ test("v2 pilot requires explicit setup/start; assigned task is collapsed, retrya
   expect(state.configured()).toBe(false);
   expect(state.starts).toHaveLength(0);
   await preview.getByRole("button", { name: "Kanalval", exact: true }).filter({ visible: true }).click();
-  const dialog = preview.getByRole("dialog", { name: /^Kanalval:/ });
+  const menu = preview.getByRole("group", { name: /^Kanalval:/ });
+  await menu.locator("summary", { hasText: "Fleire val" }).click();
+  await menu.getByRole("button", { name: "Prosesspilot", exact: true }).click();
+  const dialog = preview.getByRole("dialog", { name: /^Prosesspilot:/ });
   await dialog.getByRole("button", { name: "Aktiver prosesspilot for meg" }).click();
   await expect(dialog.getByRole("button", { name: "Start parallell prosessgjennomgang", exact: true })).toBeEnabled();
   expect(state.starts).toHaveLength(0);
   await dialog.getByRole("button", { name: "Start parallell prosessgjennomgang", exact: true }).click();
   await expect(dialog).toContainText("Prosessen er starta");
-  await dialog.getByRole("button", { name: "Lukk kanalvala" }).click();
+  await dialog.getByRole("button", { name: "Lukk prosesspilot" }).click();
   await input.fill(macro); await input.press("Enter");
   const task = preview.locator(".sp-process-task").last();
   await expect(task.locator("summary")).toContainText("Oppgåve 1");

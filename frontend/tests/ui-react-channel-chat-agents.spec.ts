@@ -113,9 +113,9 @@ test("failed activation retains confirmed state and can reload a new revision be
 async function openAgents(page: Page) {
   const preview = page.locator("#sproyt-react-preview");
   await preview.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: "Kanalval", exact: true }).click();
-  await preview.getByRole("dialog", { name: "Kanalval: Privat arbeid", exact: true })
+  await preview.getByRole("group", { name: "Kanalval: Privat arbeid", exact: true })
     .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
-  return destinationSurface(preview, "Agentar i Privat arbeid", true);
+  return destinationSurface(preview, "Kanaldetaljar: Privat arbeid", true);
 }
 
 test("private channel selection keeps confirmed checkbox state during errors, reloads current choices and honours rollout gate at narrow width", async ({ page }) => {
@@ -147,13 +147,13 @@ test("private channel selection keeps confirmed checkbox state during errors, re
   await expect(choice).toBeEnabled();
   await expect(choice).not.toBeChecked();
   expect(server.updates).toEqual([{ enabled: true, access_revision: 1 }, { enabled: false, access_revision: 2 }]);
-  await dialog.getByRole("button", { name: "Lukk kanalagentar", exact: true }).click();
+  await dialog.getByRole("button", { name: "Lukk", exact: true }).click();
   await expect(composer).toHaveValue("Utkastet skal stå");
   await page.reload();
   await expect(composer).toBeEnabled();
   dialog = await openAgents(page);
   await expect(choice).not.toBeChecked();
-  await dialog.getByRole("button", { name: "Lukk kanalagentar", exact: true }).click();
+  await dialog.getByRole("button", { name: "Lukk", exact: true }).click();
   server.gateOff();
   dialog = await openAgents(page);
   await expect(choice).toBeDisabled();

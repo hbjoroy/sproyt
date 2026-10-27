@@ -33,8 +33,10 @@ async function openFromChannelMenu(page: Page) {
     await preview.locator(".sp-mobile-header-channel-actions")
       .getByRole("button", { name: "Kanalval", exact: true }).click();
   }
-  await preview.getByRole("dialog", { name: "Kanalval: Turprat", exact: true })
-    .getByRole("button", { name: "Del posisjon med agent", exact: true }).click();
+  const menu = preview.getByRole("group", { name: "Kanalval: Turprat", exact: true });
+  const more = menu.locator("details").filter({ hasText: "Fleire val" });
+  if (await more.getAttribute("open") === null) await more.locator("summary").click();
+  await menu.getByRole("button", { name: "Del posisjon med agent", exact: true }).click();
   return preview.getByRole("dialog", { name: "Del posisjon med agent", exact: true });
 }
 

@@ -1,0 +1,21 @@
+.sp-theme .sp-channel-section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-block: 8px;
+  border-block-end: 1px solid var(--sp-line);
+}
+.sp-theme .sp-community-dialog section[role="tabpanel"] {
+  scroll-margin-block: 16px;
+}
+.sp-theme .sp-community-dialog section[role="tabpanel"]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}
+.sp-theme .sp-channel-section-nav [aria-selected="true"] {
+  font-weight: 700;
+  border-block-end: 3px solid currentColor;
+}
+.sp-theme .sp-community-dialog [hidden] {
+  display: none !important;
+}
