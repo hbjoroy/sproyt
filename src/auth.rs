@@ -1871,6 +1871,31 @@ mod tests {
         server.abort();
     }
     #[tokio::test]
+    async fn push_subscription_check_requires_oidc_session() {
+        let (config, _provider, provider_server) = test_oidc_provider().await;
+        let auth = AuthService::oidc(&config).await.unwrap();
+        let state = crate::web::native::test_state(auth, None).await;
+        let app = crate::server::build_router(state.clone(), state.operations.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        for query in ["", "?participant=someone-else"] {
+            let response = client
+                .post(format!(
+                    "http://{address}/api/v1/me/push-subscriptions/check{query}"
+                ))
+                .json(&serde_json::json!({"endpoint": "https://fcm.googleapis.com/test-device"}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        }
+        server.abort();
+        provider_server.abort();
+    }
+
+    #[tokio::test]
     async fn native_http_callback_and_same_origin_account_confirmation() {
         let (config, provider, provider_server) = test_oidc_provider().await;
         let auth = AuthService::oidc(&config).await.unwrap();

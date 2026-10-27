@@ -4,6 +4,8 @@
       import { WorkItemApi } from "./work-items";
       import { appVersion, createAppUpdate, latestAppVersion, updateAppWorker } from "./app-update";
       import { createShareTarget, shareInbox } from "./share-target";
+      import { deviceInstall } from "./device-install";
+      import { devicePushStatus } from "./device-push";
       import { SavedEmojiApi } from "./saved-emojis";
       import { CircleFavorites, ProfileCircleFavoritesApi } from "./circle-favorites";
       import { SavedStatusApi } from "./saved-statuses";
@@ -26,7 +28,7 @@
       import { createComposerController, type ComposerTarget, type ComposerSnapshot } from "./application/composer-controller";
       import { installSproytDesignSystem, setSproytTheme, type SproytThemeMode } from "./ui/design-system";
       import { shouldMountReactInterface } from "./ui/react/development-selector";
-      import { AgentApi, EnrollmentApi, HttpClient, IntegrationApi, NotificationApi, ProcessApi, isEnrollmentNotConfigured, type CreatedAgent, type ProcessView } from "./api";
+      import { AgentApi, EnrollmentApi, HttpClient, HttpError, IntegrationApi, NotificationApi, ProcessApi, isEnrollmentNotConfigured, type CreatedAgent, type ProcessView } from "./api";
       import { requireElement, requireElements } from "./dom";
       import { createConnectionController, resetTransientRequestsAfterDisconnect, shouldForceResume } from "./connection";
       import { createSseSocketFactory } from "./sse-socket";
@@ -2102,6 +2104,7 @@
       }
 
       async function registerBrowserPush(publicKey: string): Promise<void> {
+        try {
         if (!("Notification" in window) || !("PushManager" in window)) throw new Error("Nettlesaren støttar ikkje push-varsel.");
         const registration = await serviceWorkerReady;
         if (!registration) throw new Error("Service worker er ikkje tilgjengeleg");
@@ -2112,7 +2115,15 @@
           if (!publicKey) throw new Error("Serveren manglar offentleg Push-nøkkel");
           subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyBytes(publicKey) });
         }
-        await notificationsApi.registerPush(subscription.toJSON());
+        try { await notificationsApi.registerPush(subscription.toJSON()); }
+        catch (error) {
+          if (error instanceof HttpError && error.status === 409)
+            throw new Error("Kunne ikkje registrere varsel på denne eininga. Abonnementet kan vere knytt til ein annan konto. Sjekk kontoen og prøv igjen.");
+          throw error;
+        }
+        } finally {
+          window.dispatchEvent(new Event("sproyt:push-settings-changed"));
+        }
       }
 
       async function loadNotificationSettings() {
@@ -2163,6 +2174,7 @@
         try {
           if (notificationMode.value !== "instant" && notificationMode.value !== "weekly" && notificationMode.value !== "muted") throw new Error("Ugyldig varselmodus.");
           await notificationsApi.save({ mode: notificationMode.value, directMessages: notificationDirect.checked, mentions: notificationMentions.checked });
+          window.dispatchEvent(new Event("sproyt:push-settings-changed"));
           notificationNotice.textContent = "Varselinnstillingane er lagra.";
           void loadNotificationSettings();
         } catch (error) {
@@ -6329,8 +6341,27 @@
               loadStatuses: () => savedStatusesApi.list(),
               removeStatus: status => savedStatusesApi.remove(status),
               loadNotifications: () => notificationsApi.get(),
-              saveNotifications: async preferences => { await notificationsApi.save(preferences); await loadNotificationSettings(); },
+              saveNotifications: async preferences => { await notificationsApi.save(preferences); await loadNotificationSettings(); window.dispatchEvent(new Event("sproyt:push-settings-changed")); },
               enablePush: async publicKey => { await registerBrowserPush(publicKey); await loadNotificationSettings(); }
+            },
+            deviceInstall,
+            checkDevicePush: (owner, isCurrent) => {
+              const admitted = () => isCurrent() && currentParticipantId === owner;
+              const supported = "Notification" in window && "PushManager" in window && "serviceWorker" in navigator;
+              return devicePushStatus({ supported, permission: supported ? Notification.permission : "unsupported", admitted,
+                settings: () => notificationsApi.get(admitted),
+                subscription: async () => {
+                  let timer: ReturnType<typeof setTimeout> | undefined;
+                  try {
+                    const registration = await Promise.race([serviceWorkerReady, new Promise<never>((_, reject) => {
+                      timer = setTimeout(() => reject(new Error("Service worker er ikkje klar")), 5000);
+                    })]);
+                    if (!registration?.pushManager) throw new Error("Push er ikkje tilgjengeleg");
+                    return await registration.pushManager.getSubscription();
+                  } finally { if (timer) clearTimeout(timer); }
+                },
+                registered: endpoint => notificationsApi.checkPush(endpoint, admitted)
+              });
             },
             community: createCommunityHost({
               requests: communityRequests, send: sendCommand, openDirect: openDirectChannel,

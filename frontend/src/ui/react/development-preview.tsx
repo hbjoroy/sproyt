@@ -47,8 +47,13 @@ import { ViewHistoryControls } from "./view-history-controls";
 import type { ShareTarget } from "../../share-target";
 import { AgentLocationSharingDialog } from "./agent-location-sharing";
 import { ConnectionHealth, type ConnectionHealthState } from "./connection-health";
+import { DeviceSetupReminders } from "./device-setup-reminders";
+import type { deviceInstall } from "../../device-install";
+import type { DevicePushStatus } from "../../device-push";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
+  readonly deviceInstall: typeof deviceInstall;
+  readonly checkDevicePush: (owner: string, admitted: () => boolean) => Promise<DevicePushStatus>;
   readonly favorites: import("../../circle-favorites").CircleFavorites;
   readonly viewHistory: ViewHistory;
   readonly managementTarget: () => ManagementTarget | null;
@@ -612,6 +617,13 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     onDirectoryScopeChange: scope => host.navigateView({ kind: "directory", scope }),
     recentChannelIds: historyState.recent.flatMap(item => item.target.kind === "conversation" ? [item.target.channelId] : []),
     header: <><AppUpdateNotice update={host.appUpdate} /><ReceivedShares target={host.shares} snapshot={snapshot} />
+      {owner && <DeviceSetupReminders key={owner} owner={owner}
+        active={!pageKey && !host.appUpdate.getSnapshot().message && !host.navigationNotice()}
+        connected={host.connectionHealth().phase === "connected"} install={host.deviceInstall} checkPush={host.checkDevicePush}
+        openNotifications={() => {
+          if (!disposed && host.community.selfId() === owner && host.viewHistory.getSnapshot().entryId === historyState.entryId)
+            host.navigateView({ kind: "management", page: { kind: "notifications" } });
+        }} />}
       {host.navigationNotice() && <Status tone="error">{host.navigationNotice()}</Status>}
       {host.hasLegacyDraft() && <Status>Eit eldre lokalt utkast manglar kontomerking. <Button onClick={host.recoverLegacyDraft}>Hent eldre utkast</Button></Status>}
       <HeaderActions navigationKey={historyState.entryId} connection={host.connectionHealth()}

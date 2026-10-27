@@ -15,6 +15,8 @@ import "./chat-agent-images.test";
 import "./agent-memory.test";
 import "./agent-locations.test";
 import "./app-update.test";
+import "./device-install.test";
+import "./device-push.test";
 import "./share-target.test";
 import "../src/process-pilot.test";
 import "../src/work-items.test";

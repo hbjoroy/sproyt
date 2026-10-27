@@ -437,6 +437,36 @@ pub(crate) async fn subscribe_push(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PushCheck {
+    endpoint: String,
+}
+
+pub(crate) async fn check_push_subscription(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(input): Json<PushCheck>,
+) -> axum::response::Response {
+    let principal = match authenticate_http(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(error) => return auth_error_response(error),
+    };
+    match state
+        .notifications
+        .has_subscription(principal.user.id, &input.endpoint)
+        .await
+    {
+        Ok(registered) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Json(serde_json::json!({ "registered": registered })),
+        )
+            .into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+#[derive(Deserialize)]
 pub(crate) struct PushUnsubscribe {
     endpoint: String,
 }
