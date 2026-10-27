@@ -9,7 +9,7 @@ async function showNavigation(preview: Locator) {
   if (await back.isVisible()) await back.click();
   await expect(preview.getByRole("navigation", { name: "Samtalar", exact: true })).toBeVisible();
 }
-async function fixture(page: Page, initialRole: Role, messageId = "peer-message") {
+async function fixture(page: Page, initialRole: Role, messageId = "peer-message", hasThreadReplies = false) {
   let role = initialRole;
   let peerRole: Role = "member";
   let socket: WebSocketRoute;
@@ -38,7 +38,11 @@ async function fixture(page: Page, initialRole: Role, messageId = "peer-message"
         case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
         case "list_my_channels": reply("channels_listed",channels()); break;
         case "subscribe_channel": reply("subscription_started",{channel_id:channelId,history:[{id:messageId,channel_id:channelId,sequence:1,sender_id:"peer",sender_display_name:"Kari",body:"Melding frå Kari",sent_at:"2026-01-01T00:00:00Z"}]}); break;
-        case "list_thread_summaries": reply("thread_summaries_listed",{channel_id:channelId,summaries:[]});break;
+        case "list_thread_summaries": reply("thread_summaries_listed",{channel_id:channelId,summaries:hasThreadReplies ? [{root_message_id:messageId,reply_count:1,unread_count:0,latest_sequence:2}] : []});break;
+        case "load_thread": reply("thread_loaded", {root_message_id:messageId,messages:[
+          {id:messageId,channel_id:channelId,sequence:1,sender_id:"peer",sender_display_name:"Kari",body:"Melding frå Kari",sent_at:"2026-01-01T00:00:00Z",parent_message_id:null},
+          {id:"peer-reply",channel_id:channelId,sequence:2,sender_id:"peer",sender_display_name:"Kari",body:"Svar frå Kari",sent_at:"2026-01-01T00:01:00Z",parent_message_id:messageId}
+        ]});break;
         case "list_channel_reactions": reply("channel_reactions_listed",{channel_id:channelId,reactions:[]});break;
         case "load_recent_messages": reply("messages_loaded",{channel_id:channelId,messages:[]});break;
       }
@@ -145,28 +149,39 @@ for (const width of [1280, 390]) test(`moderator sends scoped email invitations 
   expect(server.commands.filter(command => ["rename_circle", "delete_circle", "set_circle_member_role"].includes(command.type))).toHaveLength(0);
 });
 
-test("ordinary members have useful link-only overflow menus without mutation powers, including thread roots", async ({ page }) => {
+for (const hasReplies of [false, true]) test(`ordinary members have useful overflow menus without mutation powers (${hasReplies ? "existing thread" : "new thread"})`, async ({ page }) => {
   await page.route(/\/work-items\/applications(?:\?|$)/, route => route.fulfill({ json: [] }));
   await page.route(/\/work-items\/source\//, route => route.fulfill({ json: [] }));
-  const server = await fixture(page, "member");
+  const server = await fixture(page, "member", "peer-message", hasReplies);
   const message = server.preview.locator('[data-message-id="peer-message"]');
   await expect(message.getByRole("button", { name: "Legg til reaksjon", exact: true })).toBeVisible();
-  const expectLinkOnlyMenu = async (entry: Locator) => {
+  const expectMenu = async (entry: Locator, threadAction?: string) => {
     await entry.getByRole("button", { name: "Fleire meldingsval", exact: true }).click();
     const menu = entry.getByRole("dialog", { name: "Meldingsval", exact: true });
     await expect(menu.getByRole("button", { name: "Kopier lenkje til meldinga", exact: true })).toBeVisible();
     await expect(menu.getByRole("button", { name: "Rediger", exact: true })).toHaveCount(0);
     await expect(menu.getByRole("button", { name: "Slett", exact: true })).toHaveCount(0);
     await expect(menu.getByRole("button", { name: "Arbeidssaker", exact: true })).toHaveCount(0);
-    await expect(menu.locator(".sp-message-menu-dialog").getByRole("button")).toHaveCount(1);
+    const buttons = menu.locator(".sp-message-menu-dialog").getByRole("button");
+    await expect(buttons).toHaveCount(threadAction ? 2 : 1);
+    if (threadAction) await expect(menu.getByRole("button", { name: threadAction, exact: true })).toBeVisible();
+    else {
+      await expect(menu.getByRole("button", { name: "Start tråd", exact: true })).toHaveCount(0);
+      await expect(menu.getByRole("button", { name: "Svar i tråd", exact: true })).toHaveCount(0);
+    }
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
   };
-  await expectLinkOnlyMenu(message);
+  await expectMenu(message, hasReplies ? "Svar i tråd" : "Start tråd");
   await message.getByRole("button", { name: "Svar i tråd", exact: true }).click();
   const parent = server.preview.locator(".sp-thread-parent");
   await expect(parent).toBeVisible();
-  await expectLinkOnlyMenu(parent);
+  await expectMenu(parent);
+  // Escape can also close the thread pane after dismissing the parent's menu.
+  if (!await parent.isVisible()) await message.getByRole("button", { name: "Svar i tråd", exact: true }).click();
+  const reply = server.preview.locator('[data-message-id="peer-reply"]');
+  await expect(reply).toBeVisible();
+  await expectMenu(reply);
 });
 
 test("a read-only message with a registered case keeps its meaningful menu after process is disabled", async ({ page }) => {
