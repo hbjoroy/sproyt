@@ -62,8 +62,9 @@ berre testa med simulerte svar; ein reell konto/nøkkel og ende-til-ende-prøve
 trengst før han kan aktiverast.
 
 **Ikkje aktiver dette på delt Canary-database utan ein koordinert plan.**
-Migrasjon 0070 er felles for databasen, og eldre binærar kan avvise ukjende
-migrasjonar ved omstart. Produksjon og Canary deler i tillegg agentjobbkø, så
+Migrasjon 0070 er felles for databasen, og migreringsjobbar med eldre binærar
+kan avvise ukjende migrasjonar ved seinare synkronisering eller rollback.
+Produksjon og Canary deler i tillegg agentjobbkø, så
 det å setje ein nøkkel berre på Canary avgrensar ikkje effekten til
 Canary-brukarar. Prøv funksjonen mot ei isolert database og kø, eller lag og
 verifiser ei bakoverkompatibel, koordinert utrulling før migrasjon og aktivering.
