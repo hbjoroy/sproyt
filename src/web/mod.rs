@@ -1,6 +1,7 @@
 pub(crate) mod account;
 pub(crate) mod agent_location;
 pub(crate) mod agent_memory;
+pub(crate) mod agent_place_lookup;
 pub(crate) mod agents;
 pub(crate) mod assets;
 pub(crate) mod auth;

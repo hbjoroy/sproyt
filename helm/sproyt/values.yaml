@@ -130,6 +130,12 @@ heart:
 secret:
   vllmExistingSecret: ""
   vllmApiKeyKey: api-key
+  # Optional server-side Maps Grounding Lite credential; never expose to clients.
+  googleMapsExistingSecret: ""
+  googleMapsApiKeyKey: apiKey
+  # Base64url-encoded 32-byte key for short-lived route capabilities.
+  googleMapsRouteExistingSecret: ""
+  googleMapsRouteKeyKey: route-key
   existingSecret: sproyt
   databaseUrlKey: DATABASE_URL
   oidcClientSecretKey: SPROYT_OIDC_CLIENT_SECRET

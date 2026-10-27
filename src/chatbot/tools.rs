@@ -3,6 +3,7 @@
 use super::*;
 
 pub(super) struct ReadTools<'a> {
+    pub place_lookup: Option<super::place_lookup::PlaceLookupPlan>,
     pub weather_service: Option<&'a weather::WeatherService>,
     pub sea_temperature_service: Option<&'a sea_temperature::SeaTemperatureService>,
     pub sea_temperature_config: Option<sea_temperature::SeaTemperatureConfig>,
@@ -62,6 +63,7 @@ pub(super) fn validate_arguments(
         return Err("model_invalid_tool");
     }
     match name {
+        "find_bars" => super::place_lookup::parse_plan(arguments).map(|_| ()),
         "lookup_sea_temperature" => sea_arguments(arguments).map(|_| ()),
         "lookup_weather" => {
             let args: WeatherArgs =
@@ -113,6 +115,9 @@ impl ReadTools<'_> {
     }
     pub fn definitions(&self) -> Vec<Value> {
         let mut tools = Vec::new();
+        if super::place_lookup::enabled() {
+            tools.push(super::place_lookup::definition());
+        }
         if let Some(config) = &self.sea_temperature_config {
             let catalogue = sea_temperature::locations()
                 .into_iter()
@@ -153,6 +158,10 @@ impl ReadTools<'_> {
             return Err("model_invalid_tool");
         }
         let mut result = match name {
+            "find_bars" if super::place_lookup::enabled() => {
+                self.place_lookup = Some(super::place_lookup::parse_plan(arguments)?);
+                return Ok(json!({"status":"lookup_planned"}));
+            }
             "lookup_sea_temperature" if self.sea_temperature_config.is_some() => {
                 let args = sea_arguments(arguments)?;
                 let config = self
@@ -266,6 +275,7 @@ mod tests {
     #[tokio::test]
     async fn marine_capability_is_independent_and_authorized_before_io() {
         let mut tools = ReadTools {
+            place_lookup: None,
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: Some(sea_temperature::SeaTemperatureConfig {
@@ -324,6 +334,7 @@ mod tests {
     #[tokio::test]
     async fn capabilities_and_strict_arguments_bound_tool_execution() {
         let mut tools = ReadTools {
+            place_lookup: None,
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -373,6 +384,7 @@ mod tests {
         let expiry = Utc::now().timestamp() + 10;
         let default = json!({"configured_location":"Parikia","current":{"temperature_c":22},"valid_until_epoch":expiry});
         let mut tools = ReadTools {
+            place_lookup: None,
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -396,6 +408,13 @@ mod tests {
     async fn model_exchange(
         agent: &str,
         calls: Value,
+    ) -> (std::result::Result<String, &'static str>, Vec<Value>) {
+        model_exchange_body(agent, calls, "vis dagslista").await
+    }
+    async fn model_exchange_body(
+        agent: &str,
+        calls: Value,
+        body: &str,
     ) -> (std::result::Result<String, &'static str>, Vec<Value>) {
         use axum::{
             Json, Router,
@@ -433,6 +452,7 @@ mod tests {
         let weather =
             json!({"configured_location":"Parikia","valid_until_epoch":Utc::now().timestamp()+300});
         let mut tools = ReadTools {
+            place_lookup: None,
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -445,7 +465,7 @@ mod tests {
             source: None,
             id: "target".into(),
             author: "Kari".into(),
-            body: format!("@{agent} vis dagslista"),
+            body: format!("@{agent} {body}"),
         }];
         let result = model
             .reply_with_tools(
@@ -467,6 +487,26 @@ mod tests {
         let requests = captured.lock().await.clone();
         server.abort();
         (result, requests)
+    }
+
+    #[tokio::test]
+    async fn place_lookup_model_selection_never_gets_a_result_or_second_round() {
+        super::super::place_lookup::TEST_ENABLED.scope(true, async {
+            let call=json!({"id":"maps-1","type":"function","function":{"name":"find_bars","arguments":r#"{"query":"bars in Bergen","origin_mode":"none"}"#}});
+            let (reply,requests)=model_exchange_body("Maria",json!([call.clone()]), "bars in Bergen").await;
+            assert_eq!(reply.unwrap(),super::super::place_lookup::NEUTRAL_REPLY);
+            assert_eq!(requests.len(),1);
+            let (reply,requests)=model_exchange("Maria",json!([call.clone()])).await;
+            assert_eq!(reply.unwrap(),super::super::place_lookup::CLARIFICATION_REPLY);
+            assert_eq!(requests.len(),1);
+            let extra=json!({"id":"ferry-1","type":"function","function":{"name":"ferry_calls","arguments":"{}"}});
+            let (reply,requests)=model_exchange("Maria",json!([call,extra])).await;
+            assert_eq!(reply,Err("model_invalid_tool"));
+            assert_eq!(requests.len(),1);
+            let (reply,requests)=model_exchange("Maria",json!([{"id":"maps-1","type":"function","function":{"name":"find_bars","arguments":r#"{"query":"bars","origin_mode":"shared"}"#}}])).await;
+            assert_eq!(reply,Err("model_invalid_tool"));
+            assert_eq!(requests.len(),1);
+        }).await;
     }
 
     #[tokio::test]
@@ -549,6 +589,7 @@ mod tests {
                 body: format!("@{agent} {question}"),
             }];
             let mut tools = ReadTools {
+                place_lookup: None,
                 weather_service: Some(&weather_service),
                 sea_temperature_service: None,
                 sea_temperature_config: None,

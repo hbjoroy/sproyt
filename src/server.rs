@@ -454,6 +454,22 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
                 .delete(crate::web::agent_location::delete),
         )
         .route(
+            "/api/v1/channels/{channel_id}/place-lookups",
+            post(crate::web::agent_place_lookup::available)
+                .layer(crate::web::agent_place_lookup::body_limit()),
+        )
+        .route(
+            "/api/v1/channels/{channel_id}/messages/{message_id}/place-lookup",
+            get(crate::web::agent_place_lookup::preview)
+                .post(crate::web::agent_place_lookup::lookup)
+                .layer(crate::web::agent_place_lookup::body_limit()),
+        )
+        .route(
+            "/api/v1/channels/{channel_id}/messages/{message_id}/place-route",
+            post(crate::web::agent_place_lookup::route)
+                .layer(crate::web::agent_place_lookup::body_limit()),
+        )
+        .route(
             "/api/v1/circles/{id}/chat-agents",
             get(crate::web::chatbot::list).post(crate::web::chatbot::create),
         )

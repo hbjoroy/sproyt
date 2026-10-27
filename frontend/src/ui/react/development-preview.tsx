@@ -51,10 +51,15 @@ import { DeviceSetupReminders } from "./device-setup-reminders";
 import type { deviceInstall } from "../../device-install";
 import type { DevicePushStatus } from "../../device-push";
 import type { ThreadPreviewApi } from "../../thread-previews";
+import type { AgentPlaceLookupApi } from "../../agent-place-lookup";
+import { AgentPlaceDiscovery } from "./agent-place-discovery";
+import { AgentPlaceCard } from "./agent-place-card";
 
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly retryThreadSummaries: () => void;
   readonly threadPreviews: ThreadPreviewApi;
+  readonly agentPlaceLookup: AgentPlaceLookupApi;
+  readonly accountEpoch: () => number;
   readonly deviceInstall: typeof deviceInstall;
   readonly checkDevicePush: (owner: string, admitted: () => boolean) => Promise<DevicePushStatus>;
   readonly favorites: import("../../circle-favorites").CircleFavorites;
@@ -326,7 +331,8 @@ function ChannelActions({ snapshot, host, compact = false, onDetails }: { readon
       onNavigate={() => {}} onClose={() => setInviteOpen(false)} />}
   </>;
 }
-function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
+function PreviewMessageContent({ host, message, place }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage;
+  readonly place?: { status: "pending" | "yes" | "no" | "error"; owner: string; epoch: number; channelId: string; admitted: () => boolean; retry: () => void } }) {
   const workTask = workItemTaskId(message.body);
   if (workTask) return <WorkItemTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${workTask}`} api={host.workItems} taskId={workTask} messageId={message.id} />;
   const workStatus = workItemStatusId(message.body);
@@ -336,6 +342,9 @@ function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPr
   return <div className="sp-message-content">
     <MarkdownContent source={markdownTextFromMessage(message.body)} />
     {invitationTokensFromMessage(message.body).map((token, index) => <InvitationCard key={`${token}-${index}`} token={token} host={host.invitations} />)}
+    {place?.status === "yes" && <AgentPlaceCard key={`${place.epoch}:${place.owner}:${place.channelId}:${message.id}:${message.body}:${message.edited_at ?? ""}`}
+      api={host.agentPlaceLookup} owner={place.owner} channelId={place.channelId} messageId={message.id} admitted={place.admitted} />}
+    {place?.status === "error" && message.body === "Opne stadssøket for ferske barforslag." && <Button variant="quiet" onClick={place.retry}>Prøv å hente stadssøket</Button>}
   </div>;
 }
 
@@ -496,6 +505,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let memberFocus: { owner: string; channelId: string; historyEntryId: string } | null = null;
   let threadFocus: { owner: string | null; messageId: string; element: HTMLElement } | null = null;
   const reactionPicker = createPreviewReactionPicker(host);
+  const placeDiscovery = new AgentPlaceDiscovery(host.agentPlaceLookup, () => update());
   const restorePosition = (key: string) => host.appUpdate.resumePosition(host.processPilotIdentity(), key);
   const captureReadingPosition = () => host.viewHistory.capture(captureUpdatePosition());
   const channelScroll = createTimelineScrollController({ onNearStart: host.loadOlder, onVisibleMessages: host.acknowledgeVisible, restorePosition, onPositionChanged: captureReadingPosition });
@@ -507,6 +517,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     disposed = true;
     window.removeEventListener("pagehide", captureReadingPosition);
     reactionPicker.close();
+    placeDiscovery.dispose();
     channelScroll.dispose();
     threadScroll.dispose();
     unsubscribe();
@@ -539,6 +550,14 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       || historyState.target.page.destination.kind !== "channel" || historyState.target.page.destination.channelId !== memberFocus.channelId)) memberFocus = null;
     const pageKey = owner && (historyState.target?.kind === "management" || historyState.target?.kind === "inbox")
       ? `${owner}:${historyState.entryId}` : undefined;
+    const channelId = snapshot.activeChannel?.id ?? null;
+    const accountEpoch = host.accountEpoch();
+    const placeAdmitted = () => !disposed && Boolean(owner && channelId) && host.community.selfId() === owner
+      && host.accountEpoch() === accountEpoch && host.snapshot().activeChannel?.id === channelId
+      && host.snapshot().channels.some(channel => channel.id === channelId)
+      && !["management", "inbox", "directory"].includes(host.viewHistory.getSnapshot().target?.kind ?? "");
+    const placeCandidates = [...snapshot.timeline.messages, ...(snapshot.thread?.root ? [snapshot.thread.root] : []), ...(snapshot.thread?.replies ?? [])]
+      .filter(message => !message.deleted_at).map(message => ({ id: message.id, revision: JSON.stringify([message.body, message.edited_at ?? null]) }));
     channelScroll.setPaused(Boolean(pageKey));
     threadScroll.setPaused(Boolean(pageKey));
     if (!snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && historyState.target?.kind !== "conversation") view = "list";
@@ -547,6 +566,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       if (historyState.target?.kind === "directory") view = "list";
       else if (historyState.target?.kind === "conversation") view = "detail";
     }
+    placeDiscovery.sync(!pageKey && view === "detail" ? owner : null, !pageKey && view === "detail" ? channelId : null,
+      accountEpoch, placeCandidates, placeAdmitted);
     if (!resumedThread && snapshot.selection.channelId && !snapshot.timeline.loading) {
       resumedThread = true;
       const rootId = host.appUpdate.resumeThread(host.processPilotIdentity(), snapshot.selection.channelId);
@@ -797,7 +818,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       // media and invitation cards. The host supplies state and commands only.
       renderContent: message => host.renderMode() === "raw"
         ? <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.body}</pre>
-        : <><PreviewMessageContent host={host} message={message} /><PreviewMediaContent body={message.body} mediaOnly /></>
+        : <><PreviewMessageContent host={host} message={message} place={owner && channelId && !pageKey && view === "detail"
+          ? { status: placeDiscovery.status(message.id) ?? "pending", owner, epoch: accountEpoch, channelId,
+            admitted: placeAdmitted, retry: () => placeDiscovery.retry(message.id) } : undefined} /><PreviewMediaContent body={message.body} mediaOnly /></>
     },
     renderComposer: target => <div className="sp-composer-dock" key={`${target.channelId}:${target.parentMessageId ?? ""}`}>
       {Boolean(target.parentMessageId) === Boolean(snapshot.thread) && <PreviewImageGeneration owner={host.imageGeneration} channelId={snapshot.selection.channelId} />}
