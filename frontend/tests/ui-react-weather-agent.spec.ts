@@ -66,11 +66,20 @@ async function openAgents(page: Page) {
 async function skill(dialog: Locator, name: string) {
   await dialog.getByRole("button", { name, exact: true }).click();
 }
-async function backToList(_page: Page, dialog: Locator) {
-  if (!await dialog.getByRole("button", { name: "Ny agent", exact: true }).isVisible())
-    await dialog.getByRole("button", { name: "Til agentlista", exact: true }).click();
-  await expect(dialog.getByRole("button", { name: "Ny agent", exact: true })).toBeVisible();
+async function backToList(page: Page, dialog: Locator) {
+  const newAgent = dialog.getByRole("button", { name: "Ny agent", exact: true });
+  if (!await newAgent.isVisible()) {
+    // Internal skill edits replace the current agent entry. One visible Back
+    // from its overview must return to the original list after any saves.
+    await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("channel")).toBe(channel);
+    await dialog.locator(".sp-workspace-page-header").getByRole("button").click();
+  }
+  await expect(newAgent).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("agent")).toBeNull();
+  expect(new URL(page.url()).searchParams.get("circle")).toBe(circle);
 }
+
 async function createAgent(page: Page, dialog: Locator) {
   await backToList(page, dialog);
   await dialog.getByRole("button", { name: "Ny agent", exact: true }).click();
