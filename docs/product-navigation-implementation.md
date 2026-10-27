@@ -1,6 +1,6 @@
 # Produktnavigasjon: første leveranse og vidare arbeid
 
-Dato: 26. oktober 2026. Gjennomføring av
+Dato: 26. oktober 2026, status avstemt 27. oktober. Gjennomføring av
 [innstillingsplanen](settings-and-administration-plan.md), utvida etter
 brukaren sitt oppdrag om eit meir profesjonelt og lettbrukt produkt.
 Dette dokumentet gjev ikkje mandat til produksjonspromotering.
@@ -160,7 +160,8 @@ Chromium- og 109 WebKit-prøver i CI. Argo og offentleg readiness er verifiserte
 
 ## Førstegongsoppleving og direktemeldingar
 
-Neste pakke er implementert og under validering:
+Pakka er i Canary gjennom [PR #305](https://github.com/hbjoroy/sproyt/pull/305)
+og [GitOps #272](https://github.com/hbjoroy/rocket-applications/pull/272):
 
 - Tom konto får ei roleg velkomstflate når både kretsar og kanalar er ferdig
   henta. Lasting, feil og tomt søk blir ikkje framstilte som ein tom konto.
@@ -183,19 +184,30 @@ Neste pakke er implementert og under validering:
 Ingen databaseendring eller nye medlemsreglar. Fysisk touch og brukartesting
 blir tekne i Canary; syntetiske prøver er ikkje ein påstand om slik aksept.
 
-Endelege testtal og release-evidens skal førast etter ferdig CI. Syntetisk
-nettlesarakseptanse er ikkje ei fysisk touch-/native-akseptprøve. Brukaren kan
-likevel prøve nettpakken remote i Canary utan å starte Windows-klienten.
+[Full PR-CI](https://github.com/hbjoroy/sproyt/actions/runs/40421222722)
+bestod med 247 Chromium- og 123 iPhone/WebKit-prøver, Rust og ekte
+PostgreSQL-kontrakt. [Release-CI](https://github.com/hbjoroy/sproyt/actions/runs/40425395648)
+publiserte revisjon `4ab7e8d3f4af01e3aa7251264d5076137ba7637f` med app-image
+`sha256:b7cf4d255e6ccb595cd4a3fdd914a484193892f3be39600dcd08cf41b1728d63`.
+Testa checkout, PR-head og mergd main hadde identisk tre før browser-baseline
+vart gjenbrukt. Argo og offentleg versjon/readiness er verifiserte;
+produksjon er uendra. Syntetisk nettlesarakseptanse er ikkje fysisk
+touch-/native-aksept. Nettpakken kan prøvast remote utan Windows-klienten.
 
 ## Neste små leveransar
 
-1. **Førstegongsoppleving:** fullfør validering og Canary-prøving av tomtilstandar, kort forklaring av krets,
-   kanal og DM, og direkte neste handling etter ein invitasjon. Prøv med ein
-   heilt ny brukar, ikkje berre administratoren sin konto.
-2. **Direktemeldingar:** fullfør validering og Canary-prøving av den eigne oversikta med konsekvente
-   person-/gruppetitlar, medlemsvising og betre personval. Bevar eksisterande
-   meldingar og kanal-ID-ar; ikkje opprett ein parallell DM-modell.
-3. **Agentoppsett:** prøv S2b/S2c i Canary før
+Prioritert neste gjennomføring er den synlege fullføringa av S1b/S2a og
+menyoppryddinga, spesifisert i [avstemminga av hovudplanen](settings-and-administration-plan.md#2a-avstemming-og-ny-kjeldekontroll--27-oktober):
+
+1. **Handlingskart og konkrete flytar:** fullfør dei tre avtalte skissene og
+   spor kvar funksjon frå overgangsmenyen til fast heim. Bruk eksisterande
+   adresser og innsynsgrenser.
+2. **Sider, innboks og toppfelt:** ordinære sider for innstillingar/innboks,
+   klart skilje mellom personlege og ressursbundne val, eintydig teljing og
+   forståeleg samband med manuell gjenoppretting. Å lukke menyen ved
+   navigasjon eller byte eit symbol gjer ikkje denne etappen ferdig.
+3. **Canary-brukaraksept:** prøv førstegongsflyten med ein ny brukar,
+   DM-personval/medlemmer og S2b/S2c-agentoppsettet før
    eventuell produksjonspromotering. Autorisert tenestestatus kan vurderast
    separat; oppsettsstatus er ikkje ein helseprobe.
 4. **Skjemaarbeid:** vidarefør utkastvern og konfliktvising til andre profil- og
