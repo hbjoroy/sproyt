@@ -100,7 +100,7 @@ export class HttpClient {
 
 export class NotificationApi {
   constructor(private readonly http: HttpClient) {}
-  get(): Promise<NotificationSettings> { return this.http.json("/api/v1/me/notifications", decodeNotificationSettings, { headers: { accept: "application/json" } }); }
+  get(admitted?: () => boolean): Promise<NotificationSettings> { return this.http.json("/api/v1/me/notifications", decodeNotificationSettings, { headers: { accept: "application/json" } }, admitted); }
   save(preferences: NotificationPreferences): Promise<void> {
     return this.http.empty("/api/v1/me/notifications", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ mode: preferences.mode, direct_messages: preferences.directMessages, mentions: preferences.mentions, weekly_weekday: 1 }) });
   }
@@ -108,6 +108,12 @@ export class NotificationApi {
     const serialized = JSON.stringify(subscription);
     if (serialized === undefined) throw new Error("Ugyldig Push-abonnement");
     return this.http.empty("/api/v1/me/push-subscriptions", { method: "POST", headers: jsonHeaders(), body: serialized });
+  }
+  checkPush(endpoint: string, admitted: () => boolean): Promise<boolean> {
+    return this.http.json("/api/v1/me/push-subscriptions/check", value => {
+      if (!isRecord(value) || typeof value.registered !== "boolean") throw new Error("Ugyldig push-status");
+      return value.registered;
+    }, jsonPost({ endpoint }), admitted);
   }
   setChannel(channelId: string, enabled: boolean): Promise<void> {
     return this.http.empty(`/api/v1/channels/${encodeURIComponent(channelId)}/notifications`, { method: enabled ? "PUT" : "DELETE" });

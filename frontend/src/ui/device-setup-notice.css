@@ -1,0 +1,45 @@
+.sp-theme .sp-device-notice {
+  flex: 1 0 100%;
+  min-width: 0;
+  color: var(--sp-text);
+  background: var(--sp-surface);
+  border-bottom: 1px solid var(--sp-line);
+  font-size: .875rem;
+}
+.sp-theme .sp-device-notice-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  padding-inline: 8px;
+}
+.sp-theme .sp-device-notice-copy {
+  flex: 1 1 7rem;
+  min-width: 0;
+  margin: 4px 0;
+  line-height: 1.35;
+}
+.sp-theme .sp-device-notice-action.sp-button {
+  padding-inline: 6px;
+  min-height: 44px;
+  font-size: .875rem;
+}
+.sp-theme .sp-device-notice-dismiss.sp-button {
+  min-width: 44px;
+  min-height: 44px;
+  margin-left: auto;
+  font-size: 1.35rem;
+}
+.sp-theme .sp-device-notice-instructions {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--sp-muted);
+  line-height: 1.4;
+}
+.sp-theme .sp-device-notice-error {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--sp-error);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}

@@ -358,15 +358,44 @@ impl NotificationService {
         // across pods and avoids timestamp precision gaps (SQLite's database
         // clock is second-granular).
         let id = Uuid::now_v7();
-        match &self.store {
+        let affected = match &self.store {
             NotificationStore::Postgres(pool) => {
-                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id,thread_notification_after_message_id) values($1,$2,$3,$4,$5,$6,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid),coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid)) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id).bind(user_id.as_uuid()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
+                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id,thread_notification_after_message_id) values($1,$2,$3,$4,$5,$6,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid),coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'::uuid)) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id).bind(user_id.as_uuid()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?.rows_affected()
             }
             NotificationStore::Sqlite(pool) => {
-                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id,thread_notification_after_message_id) values(?,?,?,?,?,?,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'),coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000')) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id.to_string()).bind(user_id.to_string()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?;
+                sqlx::query("insert into push_subscriptions(id,user_id,endpoint,p256dh,auth,user_agent,notification_after_message_id,thread_notification_after_message_id) values(?,?,?,?,?,?,coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000'),coalesce((select id from messages order by id desc limit 1),'00000000-0000-7000-8000-000000000000')) on conflict(endpoint) do update set p256dh=excluded.p256dh,auth=excluded.auth,user_agent=excluded.user_agent where push_subscriptions.user_id=excluded.user_id").bind(id.to_string()).bind(user_id.to_string()).bind(input.endpoint).bind(input.keys.p256dh).bind(input.keys.auth).bind(user_agent).execute(pool).await.map_err(storage)?.rows_affected()
             }
+        };
+        if affected != 1 {
+            return Err(RepositoryError::Conflict);
         }
         Ok(())
+    }
+
+    pub async fn has_subscription(
+        &self,
+        user_id: UserId,
+        endpoint: &str,
+    ) -> Result<bool, RepositoryError> {
+        validate_endpoint(endpoint)?;
+        match &self.store {
+            NotificationStore::Postgres(pool) => sqlx::query_scalar::<_, bool>(
+                "select exists(select 1 from push_subscriptions where user_id=$1 and endpoint=$2)",
+            )
+            .bind(user_id.as_uuid())
+            .bind(endpoint)
+            .fetch_one(pool)
+            .await
+            .map_err(storage),
+            NotificationStore::Sqlite(pool) => sqlx::query_scalar::<_, bool>(
+                "select exists(select 1 from push_subscriptions where user_id=? and endpoint=?)",
+            )
+            .bind(user_id.to_string())
+            .bind(endpoint)
+            .fetch_one(pool)
+            .await
+            .map_err(storage),
+        }
     }
 
     pub async fn unsubscribe(
@@ -727,7 +756,27 @@ impl PushSender {
 }
 
 fn validate_subscription(input: &PushSubscriptionInput) -> Result<(), RepositoryError> {
-    let endpoint = reqwest::Url::parse(&input.endpoint).map_err(|_| RepositoryError::Conflict)?;
+    validate_endpoint(&input.endpoint)?;
+    let public_key = URL_SAFE_NO_PAD
+        .decode(&input.keys.p256dh)
+        .map_err(|_| RepositoryError::Conflict)?;
+    let auth = URL_SAFE_NO_PAD
+        .decode(&input.keys.auth)
+        .map_err(|_| RepositoryError::Conflict)?;
+    if public_key.len() != 65
+        || PublicKey::from_sec1_bytes(&public_key).is_err()
+        || auth.len() != 16
+    {
+        return Err(RepositoryError::Conflict);
+    }
+    Ok(())
+}
+
+fn validate_endpoint(value: &str) -> Result<(), RepositoryError> {
+    if value.len() > 4096 {
+        return Err(RepositoryError::Conflict);
+    }
+    let endpoint = reqwest::Url::parse(value).map_err(|_| RepositoryError::Conflict)?;
     let host = endpoint.host_str().ok_or(RepositoryError::Conflict)?;
     let allowed_host = [
         "googleapis.com",
@@ -739,19 +788,9 @@ fn validate_subscription(input: &PushSubscriptionInput) -> Result<(), Repository
     ]
     .iter()
     .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")));
-    let public_key = URL_SAFE_NO_PAD
-        .decode(&input.keys.p256dh)
-        .map_err(|_| RepositoryError::Conflict)?;
-    let auth = URL_SAFE_NO_PAD
-        .decode(&input.keys.auth)
-        .map_err(|_| RepositoryError::Conflict)?;
     if endpoint.scheme() != "https"
         || endpoint.port_or_known_default() != Some(443)
         || !allowed_host
-        || input.endpoint.len() > 4096
-        || public_key.len() != 65
-        || PublicKey::from_sec1_bytes(&public_key).is_err()
-        || auth.len() != 16
     {
         return Err(RepositoryError::Conflict);
     }
@@ -873,6 +912,10 @@ mod tests {
         let repository = PostgresChatRepository::connect_with_pool(&url, pool.clone())
             .await
             .expect("repository connects with shared pool");
+        repository
+            .migrate()
+            .await
+            .expect("PostgreSQL schema is ready");
         let config = DatabaseConfig::new(url).unwrap();
         let notifications = NotificationService::connect(&config, Some(&pool))
             .await
@@ -898,6 +941,75 @@ mod tests {
             1
         );
         assert_eq!(pool.size(), 1);
+        let alice = UserId::from_uuid(Uuid::now_v7());
+        let bob = UserId::from_uuid(Uuid::now_v7());
+        for user in [&alice, &bob] {
+            sqlx::query(
+                "insert into users(id,kind,display_name) values($1, 'human', 'Push contract')",
+            )
+            .bind(user.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let input = PushSubscriptionInput {
+            endpoint: format!("https://fcm.googleapis.com/contract-{}", Uuid::now_v7()),
+            keys: PushSubscriptionKeys {
+                p256dh: "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU".into(),
+                auth: "AAECAwQFBgcICQoLDA0ODw".into(),
+            },
+        };
+        assert!(
+            !notifications
+                .has_subscription(alice.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        notifications
+            .subscribe(alice.clone(), input.clone(), None)
+            .await
+            .unwrap();
+        assert!(
+            notifications
+                .has_subscription(alice.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !notifications
+                .has_subscription(bob.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            notifications
+                .subscribe(bob.clone(), input.clone(), None)
+                .await,
+            Err(RepositoryError::Conflict)
+        );
+        assert!(
+            notifications
+                .has_subscription(alice.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        notifications
+            .unsubscribe(alice.clone(), input.endpoint.clone())
+            .await
+            .unwrap();
+        assert!(
+            !notifications
+                .has_subscription(alice.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        for user in [&alice, &bob] {
+            sqlx::query("delete from users where id=$1")
+                .bind(user.as_uuid())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
     }
 
     async fn service() -> NotificationService {
@@ -953,6 +1065,200 @@ mod tests {
             },
         };
         assert!(validate_subscription(&input).is_err());
+    }
+
+    #[tokio::test]
+    async fn push_subscription_status_and_conflicts_are_scoped_to_the_account() {
+        let service = service().await;
+        let NotificationStore::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        let alice = UserId::named("push-check-alice");
+        let bob = UserId::named("push-check-bob");
+        for user in [&alice, &bob] {
+            sqlx::query("insert into users(id,kind,display_name) values(?, 'human', 'Test')")
+                .bind(user.to_string())
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        let input = PushSubscriptionInput {
+            endpoint: "https://fcm.googleapis.com/device-token".into(),
+            keys: PushSubscriptionKeys {
+                p256dh: "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU".into(),
+                auth: "AAECAwQFBgcICQoLDA0ODw".into(),
+            },
+        };
+        assert!(
+            !service
+                .has_subscription(alice.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        service
+            .subscribe(alice.clone(), input.clone(), None)
+            .await
+            .unwrap();
+        assert!(
+            service
+                .has_subscription(alice.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !service
+                .has_subscription(bob.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            service.subscribe(bob.clone(), input.clone(), None).await,
+            Err(RepositoryError::Conflict)
+        );
+        assert!(
+            service
+                .has_subscription(alice.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !service
+                .has_subscription(bob.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
+        service
+            .subscribe(alice.clone(), input.clone(), None)
+            .await
+            .unwrap();
+        service
+            .unsubscribe(alice.clone(), input.endpoint.clone())
+            .await
+            .unwrap();
+        assert!(
+            !service
+                .has_subscription(alice, &input.endpoint)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            service
+                .has_subscription(bob, "http://localhost/private")
+                .await,
+            Err(RepositoryError::Conflict)
+        );
+    }
+
+    #[tokio::test]
+    async fn push_subscription_check_http_is_private_and_does_not_register() {
+        let service = service().await;
+        let NotificationStore::Sqlite(pool) = &service.store else {
+            unreachable!()
+        };
+        let auth = crate::auth::AuthService::development();
+        for name in ["check-http-alice", "check-http-bob"] {
+            let principal = auth.authenticate_development(Some(name.into())).unwrap();
+            sqlx::query("insert into users(id,kind,display_name) values(?, 'human', 'Test')")
+                .bind(principal.user.id.to_string())
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        let mut state = crate::web::native::test_state(auth, None).await;
+        state.notifications = service;
+        let app = crate::server::build_router(state.clone(), state.operations.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        let endpoint = "https://fcm.googleapis.com/check-device";
+        let input = serde_json::json!({"endpoint":endpoint,"keys":{
+            "p256dh":"BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+            "auth":"AAECAwQFBgcICQoLDA0ODw"
+        }});
+        let base = format!("http://{address}/api/v1/me/push-subscriptions");
+        let alice = format!("{base}?participant=check-http-alice");
+        let bob = format!("{base}?participant=check-http-bob");
+        let check = |name: &str| format!("{base}/check?participant={name}");
+        let body = serde_json::json!({"endpoint":endpoint});
+        let response = client
+            .post(check("check-http-alice"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap(),
+            serde_json::json!({"registered":false})
+        );
+        assert_eq!(
+            client
+                .post(&alice)
+                .json(&input)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            204
+        );
+        for (name, registered) in [("check-http-alice", true), ("check-http-bob", false)] {
+            let response = client.post(check(name)).json(&body).send().await.unwrap();
+            assert_eq!(
+                response.json::<serde_json::Value>().await.unwrap(),
+                serde_json::json!({"registered":registered})
+            );
+        }
+        assert_eq!(
+            client
+                .post(&bob)
+                .json(&input)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            409
+        );
+        assert_eq!(
+            client
+                .delete(&alice)
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            204
+        );
+        assert_eq!(
+            client
+                .post(check("check-http-alice"))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap(),
+            serde_json::json!({"registered":false})
+        );
+        assert_eq!(
+            client
+                .post(check("check-http-bob"))
+                .json(&serde_json::json!({"endpoint":"https://untrusted.invalid/"}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            409
+        );
+        assert_eq!(
+            client.post(check("check-http-bob"))
+                .json(&serde_json::json!({"endpoint":format!("https://fcm.googleapis.com/{}", "a".repeat(9000))}))
+                .send().await.unwrap().status(),
+            413
+        );
+        server.abort();
     }
 
     #[tokio::test]

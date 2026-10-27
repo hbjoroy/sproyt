@@ -26,11 +26,11 @@ use crate::{
     operations::{OperationalState, healthz, metrics, record_metrics},
     process::{HeartGateway, ProcessService, SharedProcessGateway},
     web::account::{
-        add_favorite_circle, add_saved_emoji, disable_channel_notifications,
-        enable_channel_notifications, export_my_data, favorite_circles, notification_settings,
-        record_client_event, remove_favorite_circle, remove_saved_emoji, remove_saved_status,
-        save_notification_preferences, saved_emojis, saved_statuses, subscribe_push,
-        unsubscribe_push,
+        add_favorite_circle, add_saved_emoji, check_push_subscription,
+        disable_channel_notifications, enable_channel_notifications, export_my_data,
+        favorite_circles, notification_settings, record_client_event, remove_favorite_circle,
+        remove_saved_emoji, remove_saved_status, save_notification_preferences, saved_emojis,
+        saved_statuses, subscribe_push, unsubscribe_push,
     },
     web::agents::{
         approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
@@ -272,6 +272,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route(
             "/api/v1/me/push-subscriptions",
             post(subscribe_push).delete(unsubscribe_push),
+        )
+        .route(
+            "/api/v1/me/push-subscriptions/check",
+            post(check_push_subscription).layer(DefaultBodyLimit::max(8 * 1024)),
         )
         .route(
             "/api/v1/channels/{id}/notifications",
