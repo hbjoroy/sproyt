@@ -1,3 +1,4 @@
+import settingsWorkspaceCss from "../settings-workspace.css";
 import { Button, Dialog } from "@sproyt/ui/react";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -7,12 +8,17 @@ type WorkspacePageContext = {
   outlet: HTMLDivElement | null;
   attach: (element: HTMLDivElement | null) => void;
 };
+const NavigationContext = createContext<{ content: ReactNode; overview: boolean } | null>(null);
+export function DestinationNavigation({ children, navigation, overview }: { children: ReactNode; navigation: ReactNode; overview: boolean }) {
+  return <NavigationContext.Provider value={navigation ? { content: navigation, overview } : null}>{children}</NavigationContext.Provider>;
+}
+
 const PageContext = createContext<WorkspacePageContext | null>(null);
 
 /** Presentation only: the host still owns routing, authorization and operation tickets. */
 export function WorkspacePageProvider({ pageKey, children }: { pageKey?: string; children: ReactNode }) {
   const [outlet, attach] = useState<HTMLDivElement | null>(null);
-  return <PageContext.Provider value={{ pageKey, outlet, attach }}>{children}</PageContext.Provider>;
+  return <PageContext.Provider value={{ pageKey, outlet, attach }}><style>{settingsWorkspaceCss}</style>{children}</PageContext.Provider>;
 }
 
 /** Keep this sibling outside the preserved conversation's hidden/inert subtree. */
@@ -29,6 +35,7 @@ export type DestinationPageProps = {
  * the native modal contract when no host-owned page destination is active. */
 export function DestinationPage({ open, title, closeLabel = "Tilbake", onClose, children, focusHeading = true }: DestinationPageProps) {
   const context = useContext(PageContext);
+  const navigation = useContext(NavigationContext);
   const heading = useRef<HTMLHeadingElement>(null);
   const titleId = useId();
   const close = useRef(onClose); close.current = onClose;
@@ -66,13 +73,16 @@ export function DestinationPage({ open, title, closeLabel = "Tilbake", onClose, 
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
   }, [open, pageKey, outlet]);
-  if (!pageKey) return <Dialog open={open} title={title} closeLabel={closeLabel} onClose={onClose}>{children}</Dialog>;
+  if (!pageKey) return <Dialog open={open} title={title} closeLabel={closeLabel} onClose={onClose}>{navigation?.overview ? navigation.content : children}</Dialog>;
   if (!open || !outlet) return null;
-  return createPortal(<section className="sp-workspace-page" role="region" aria-labelledby={titleId} data-workspace-page={pageKey}>
+  return createPortal(<section className={`sp-workspace-page${navigation ? ` sp-settings-workspace${navigation.overview ? " sp-settings-workspace-overview" : ""}` : ""}`} role="region" aria-labelledby={titleId} data-workspace-page={pageKey}>
     <header className="sp-workspace-page-header">
       <Button variant="quiet" aria-label={closeLabel} onClick={onClose}><span aria-hidden="true">←</span> Tilbake</Button>
       <h1 ref={heading} id={titleId} tabIndex={-1}>{title}</h1>
     </header>
-    <div className="sp-workspace-page-body">{children}</div>
+    <div className="sp-settings-workspace-layout">
+      {navigation && <nav className="sp-settings-workspace-navigation" aria-label="Innstillingskategoriar">{navigation.content}</nav>}
+      <div className="sp-workspace-page-body">{children}</div>
+    </div>
   </section>, outlet);
 }

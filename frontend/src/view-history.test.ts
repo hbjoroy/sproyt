@@ -64,11 +64,24 @@ test("agent settings parents preserve only the relevant resource context", () =>
   for (const panel of agentSettingsPanels.filter(panel => panel !== "overview")) {
     assert.deepEqual(managementParent({ ...overview, panel }, { channels: [] }), overview);
   }
-  assert.deepEqual(managementParent(overview, { channels: [] }), list);
+  assert.deepEqual(managementParent(overview, { channels: [] }), { ...list, channelId: agentChannel });
   assert.deepEqual(managementParent({ ...list, agentId }, { channels: [] }), list);
   assert.deepEqual(managementParent({ ...list, agentId: "new", panel: "behaviour" }, { channels: [] }), list);
-  assert.deepEqual(managementParent({ ...list, panel: "channels", channelId: agentChannel }, { channels: [] }), list);
+  assert.deepEqual(managementParent({ ...list, panel: "channels", channelId: agentChannel }, { channels: [] }), { ...list, channelId: agentChannel });
   assert.deepEqual(managementParent(list, { channels: [] }), { kind: "circle", circleId: "c" });
+});
+
+test("channel sections survive links and history without accepting unknown panels", () => {
+  const f = fixture(); f.history.bindOwner("alice");
+  for (const channelSection of ["about", "members", "agents", "notifications"] as const) {
+    const target: ViewTarget = { kind: "management", page: { kind: "community", destination: { kind: "channel", channelId: agentChannel, channelSection } } };
+    const href = viewHref(target, "https://chat.test/?invite=secret");
+    assert.deepEqual(readViewTarget(href), target);
+    assert.ok(!href.includes("secret"));
+    f.history.navigate(target, "replace");
+    assert.deepEqual(f.history.getSnapshot().target, target);
+  }
+  assert.equal(readViewTarget(`https://chat.test/?view=settings&section=community&task=channel&channel=${agentChannel}&panel=bad`), null);
 });
 
 test("destinations round-trip without leaking invitation or identity parameters into shared URLs", () => {

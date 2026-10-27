@@ -1,0 +1,16 @@
+.sp-theme .sp-workspace-outlet { container-type: inline-size; }
+.sp-theme .sp-settings-workspace-navigation { display: none; min-width: 0; }
+.sp-theme .sp-settings-workspace-overview .sp-settings-workspace-navigation { display: block; }
+.sp-theme .sp-settings-workspace-overview .sp-workspace-page-body { display: none; }
+.sp-theme .sp-settings-workspace-layout { width: 100%; min-width: 0; }
+.sp-theme .sp-settings-workspace-navigation .sp-settings-page { display: grid; gap: 16px; }
+.sp-theme .sp-settings-workspace-navigation .sp-settings-row { width: 100%; text-align: start; }
+.sp-theme .sp-settings-workspace-navigation .sp-settings-row[aria-current="page"] { border-inline-start: 3px solid var(--sp-text); background: var(--sp-surface); }
+.sp-theme .sp-settings-overview h2 { margin-top: 0; }
+@container (min-width: 900px) {
+  .sp-theme .sp-settings-workspace .sp-workspace-page-header { max-width: 1200px; }
+  .sp-theme .sp-settings-workspace .sp-settings-workspace-layout { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 32px; max-width: 1200px; margin-inline: auto; align-items: start; }
+  .sp-theme .sp-settings-workspace .sp-settings-workspace-navigation { display: block; padding-top: 16px; border-top: 1px solid var(--sp-line); }
+  .sp-theme .sp-settings-workspace .sp-workspace-page-body { display: grid; max-width: none; border-inline-start: 1px solid var(--sp-line); padding-inline-start: 32px; }
+  .sp-theme .sp-settings-workspace-navigation .sp-settings-intro { font-size: 14px; }
+}

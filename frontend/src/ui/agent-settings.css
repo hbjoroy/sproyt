@@ -14,6 +14,12 @@
 .sp-theme .sp-agent-detail-heading { min-width: 0; overflow-wrap: anywhere; }
 .sp-theme .sp-agent-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .sp-theme .sp-agent-overview-list, .sp-theme .sp-agent-skill-list { display: grid; gap: 0; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.sp-theme .sp-agent-skill-shortcuts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 0 .75rem; min-width: 0; }
+.sp-theme .sp-channel-agent-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-width: 0; border-bottom: 1px solid var(--sp-line); }
+.sp-theme .sp-channel-agent-row .sp-channel-agent-choice { flex: 1 1 auto; min-width: 0; border: 0; }
+.sp-theme .sp-channel-agent-row[data-linked="true"] .sp-channel-agent-choice { flex: 0 0 44px; justify-content: center; }
+.sp-theme .sp-channel-agent-open.sp-button { flex: 1 1 auto; justify-content: space-between; max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.sp-theme .sp-channel-agent-row > small { flex: 1 0 100%; color: var(--sp-muted); }
 .sp-theme .sp-agent-editor-footer { position: sticky; bottom: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0 max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--sp-line); background: var(--sp-surface); }
 .sp-theme .sp-agent-status-explanation { margin: 0; color: var(--sp-muted); font-size: .875rem; line-height: 1.4; overflow-wrap: anywhere; }
 .sp-theme .sp-agent-activation { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
@@ -25,3 +31,11 @@
 .sp-theme .sp-agent-editor-comparison { display: grid; gap: 8px; }
 .sp-theme .sp-agent-editor-comparison dt { font-weight: 600; }
 .sp-theme .sp-agent-editor-comparison dd { display: grid; gap: 4px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The workspace header supplies the compact back action. */
+@container (max-width: 650px) {
+  .sp-theme .sp-workspace-page .sp-agent-list-return { display: none; }
+}
+@media (max-width: 650px) {
+  .sp-theme .sp-agent-list-return { display: none; }
+}

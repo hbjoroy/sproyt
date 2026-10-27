@@ -127,7 +127,20 @@ impl SafeViewQuery {
                                 None => base,
                             },
                             "channel" => {
-                                format!("{base}&channel={}", resource(self.channel.as_deref())?)
+                                let mut path = format!(
+                                    "{base}&channel={}",
+                                    resource(self.channel.as_deref())?
+                                );
+                                if let Some(panel) = self.panel.as_deref() {
+                                    if !matches!(
+                                        panel,
+                                        "about" | "members" | "agents" | "notifications"
+                                    ) {
+                                        return None;
+                                    }
+                                    path.push_str(&format!("&panel={panel}"));
+                                }
+                                path
                             }
                             "channels" | "invite" | "rename-circle" | "circle-members" => {
                                 format!("{base}&circle={}", resource(self.circle.as_deref())?)
@@ -564,6 +577,18 @@ mod tests {
         assert_view_login_roundtrip(&format!(
             "/?view=settings&section=community&task=channel&channel={channel}"
         ));
+        for panel in ["about", "members", "agents", "notifications"] {
+            assert_view_login_roundtrip(&format!(
+                "/?view=settings&section=community&task=channel&channel={channel}&panel={panel}"
+            ));
+        }
+        let invalid = format!(
+            "/?view=settings&section=community&task=channel&channel={channel}&panel=unknown"
+        );
+        let query = Query::<SafeViewQuery>::try_from_uri(&invalid.parse().unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(query.return_to(), None);
         for feature in ["agent", "heart"] {
             assert_view_login_roundtrip(&format!(
                 "/?view=settings&section=advanced&feature={feature}"

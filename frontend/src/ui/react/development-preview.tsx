@@ -1,5 +1,6 @@
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import channelActionsCss from "../channel-actions-popover.css";
+import { useEffect, useId, useRef, useState, type PointerEvent } from "react";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import type { ApplicationRuntime } from "../../application/runtime";
 import { installSproytStyles, type SproytThemeMode } from "../design-system";
@@ -32,7 +33,6 @@ import { NavigationScopeActions } from "./navigation-scope-actions";
 import { NewDirectMessage } from "./new-direct-message";
 import { GettingStarted } from "./getting-started";
 import type { CircleChatAgentApi } from "../../chat-agents";
-import { ChannelChatAgentsDialog } from "./channel-chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
 import { WorkItemRegistration } from "./work-item-registration";
 import { WorkItemTaskMessage } from "./work-item-task";
@@ -149,17 +149,34 @@ function ChannelMembersIcon() {
   </svg>;
 }
 
+function ProcessPilotMenuEntry({ api, channelId, onOpen }: { api: ProcessPilotApi; channelId: string; onOpen(): void }) {
+  const [available, setAvailable] = useState(false);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setAvailable(false); setError(false);
+    void api.configuration(channelId, controller.signal).then(configuration => {
+      if (!controller.signal.aborted) setAvailable(configuration.can_configure || configuration.can_start);
+    }).catch(() => { if (!controller.signal.aborted) setError(true); });
+    return () => controller.abort();
+  }, [api, channelId, attempt]);
+  return available ? <Button variant="quiet" onClick={onOpen}>Prosesspilot</Button>
+    : error ? <Button variant="quiet" onClick={() => setAttempt(value => value + 1)}>Prøv å hente prosessval igjen</Button> : null;
+}
+
 function ChannelActions({ snapshot, host, compact = false, onDetails }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean;
-  readonly onDetails: (channelId: string, focusMemberAction: boolean) => void }) {
+  readonly onDetails: (channelId: string, focusMemberAction: boolean, section?: "about" | "members" | "agents" | "notifications") => void }) {
   const [open, setOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  type AgentTicket = { owner: string; channelId: string; channelName: string; privateChannel: boolean;
-    key: string; epoch: number; api: CircleChatAgentApi };
-  const [agentTicket, setAgentTicket] = useState<AgentTicket | null>(null);
   const [locationOpen, setLocationOpen] = useState(false);
+  const [processOpen, setProcessOpen] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveError, setLeaveError] = useState("");
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const id = useId();
   const channel = snapshot.activeChannel;
   const owner = host.community.selfId();
   const scopeKey = (current: ConversationSnapshot, account: string | null) => {
@@ -167,87 +184,117 @@ function ChannelActions({ snapshot, host, compact = false, onDetails }: { readon
     return JSON.stringify([account, selected?.id, selected?.role, selected?.kind, selected?.circle_id,
       current.circles.find(circle => circle.id === selected?.circle_id)?.role]);
   };
-  const agentScope = useRef({ key: "", epoch: 0, live: true });
-  const observeScope = (key: string) => {
-    if (agentScope.current.key !== key) { agentScope.current.key = key; agentScope.current.epoch++; }
-  };
-  observeScope(scopeKey(snapshot, owner));
+  const access = useRef({ key: "", epoch: 0, live: true });
+  const observe = (key: string) => { if (access.current.key !== key) { access.current.key = key; access.current.epoch++; } };
+  observe(scopeKey(snapshot, owner));
+  useEffect(() => { access.current.live = true; return () => { access.current.live = false; access.current.epoch++; }; }, []);
+  const hideMenu = () => { if (panel.current?.matches(":popover-open")) panel.current.hidePopover(); };
   useEffect(() => {
-    agentScope.current.live = true;
-    return () => { agentScope.current.live = false; agentScope.current.epoch++; };
-  }, []);
-  const ticketAdmitted = (ticket: Pick<AgentTicket, "key" | "epoch">) => {
-    observeScope(scopeKey(host.snapshot(), host.community.selfId()));
-    return agentScope.current.live && agentScope.current.key === ticket.key && agentScope.current.epoch === ticket.epoch;
+    hideMenu();
+    setInviteOpen(false); setLocationOpen(false); setProcessOpen(false); setConfirmLeave(false); setLeaving(false); setLeaveError("");
+  }, [owner, channel?.id, channel?.role]);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: Event) => {
+      if (event.type === "scroll" && panel.current?.contains(event.target as Node)) return;
+      hideMenu();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !panel.current?.matches(":popover-open")) return;
+      event.preventDefault(); event.stopPropagation();
+      panel.current.hidePopover(); trigger.current?.focus({ preventScroll: true });
+    };
+    document.addEventListener("scroll", dismiss, true);
+    document.addEventListener("keydown", escape, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      document.removeEventListener("scroll", dismiss, true);
+      document.removeEventListener("keydown", escape, true);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [open]);
+  const dismiss = () => { hideMenu(); trigger.current?.focus({ preventScroll: true }); };
+  const toggle = () => {
+    const button = trigger.current, menu = panel.current;
+    if (!button || !menu) return;
+    button.focus({ preventScroll: true });
+    if (menu.matches(":popover-open")) { menu.hidePopover(); return; }
+    const anchor = button.getBoundingClientRect();
+    const width = Math.min(300, window.innerWidth - 16);
+    menu.style.width = `${width}px`;
+    menu.style.left = `${Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8))}px`;
+    menu.showPopover();
+    menu.style.top = `${Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - menu.getBoundingClientRect().height - 8))}px`;
+    menu.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
   };
   const conversation = channel ? snapshot.groups.flatMap(group => group.conversations).find(item => item.id === channel.id) : undefined;
   if (!channel || channel.is_direct) return null;
   const mayManageAgents = !!owner && !!channel.circle_id && (["owner", "moderator"].includes(channel.role)
     || (channel.kind !== "private" && channel.role === "member" && snapshot.circles.some(circle =>
       circle.id === channel.circle_id && ["owner", "moderator"].includes(circle.role))));
-  const notifications = conversation?.notifications;
-  const openDetails = (focusMemberAction = false) => { setOpen(false); onDetails(channel.id, focusMemberAction); };
+  const openDetails = (section: "about" | "members" | "agents" | "notifications" = "about", focusMemberAction = false) => {
+    dismiss(); onDetails(channel.id, focusMemberAction, section);
+  };
   return <>
+    <style>{channelActionsCss}</style>
     {!compact && <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
-      aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={() => openDetails()}><ChannelMembersIcon /></Button>
-    }<Button className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"} variant="quiet"
-      aria-label="Kanalval" title="Kanalval" onClick={() => setOpen(true)}><span aria-hidden="true">⋯</span>{compact && <span>Kanalval</span>}</Button>
-    <Dialog open={open} title={`Kanalval: ${channel.name}`} closeLabel="Lukk kanalvala"
-      onClose={() => { setOpen(false); setConfirmLeave(false); setLeaveError(""); }}>
-      <div className="sp-channel-menu-dialog">
-        <Button variant="quiet" onClick={() => openDetails()}><ChannelMembersIcon /><span>Medlemmer og kanalomtale</span></Button>
-        {mayManageAgents && <Button variant="quiet" onClick={() => {
-          if (!owner) return;
-          const captured = { key: agentScope.current.key, epoch: agentScope.current.epoch };
-          if (!ticketAdmitted(captured)) return;
-          const ticket = { ...captured, owner, channelId: channel.id, channelName: channel.name, privateChannel: channel.kind === "private",
-            api: host.chatAgents.forOwner(owner, () => ticketAdmitted(captured)) };
-          setOpen(false); setAgentTicket(ticket);
-        }}>Agentar i kanalen</Button>}
-        {["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
-          openDetails(true);
-        }}><ChannelMembersIcon /><span>Legg til eller inviter kanalmedlem</span></Button>}
-        {snapshot.circles.some(circle => circle.id === channel.circle_id && circle.role === "owner") && <Button variant="quiet"
-          onClick={() => { setOpen(false); setInviteOpen(true); }}>Inviter til kretsen</Button>}
-        {notifications && <Button variant="quiet" disabled={notifications.pending} aria-pressed={notifications.enabled}
-          onClick={() => host.setChannelNotifications(channel.id, !notifications.enabled)}>
-          <BellIcon muted={!notifications.enabled} /><span>Varsel {notifications.enabled ? "på" : "av"}</span>
-        </Button>}
-        {notifications?.error && <Status tone="error">{notifications.error}</Status>}
-        {open && <ProcessPilotChannelAction key={`${host.processPilotIdentity()}:${channel.id}`} api={host.processPilot} channelId={channel.id} />}
-        {host.managementCapabilities().agent && ["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
-          setOpen(false); host.navigateView({ kind: "management", page: { kind: "advanced", feature: "agent", channelId: channel.id } });
-        }}>Mellombels tilgang for ekstern agent</Button>}
-        {host.managementCapabilities().heart && <Button variant="quiet" onClick={() => {
-          setOpen(false); host.navigateView({ kind: "management", page: { kind: "advanced", feature: "heart", channelId: channel.id } });
-        }}>Prosessoppsett</Button>}
-        <Button variant="quiet" onClick={() => { setOpen(false); setLocationOpen(true); }}><span aria-hidden="true">⌖</span><span>Del posisjon med agent</span></Button>
-        {!confirmLeave ? <Button variant="danger" onClick={() => setConfirmLeave(true)}>Forlat kanalen</Button>
-          : <div className="sp-leave-confirm" role="group" aria-label="Stadfest at du vil forlate kanalen">
-            <p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p>
-            <div className="sp-row"><Button onClick={() => setConfirmLeave(false)}>Avbryt</Button>
-              <Button variant="danger" busy={leaving} onClick={() => {
-                if (leaving) return;
-                setLeaving(true); setLeaveError("");
-                void host.community.leaveChannel(channel.id).then(() => setOpen(false)).catch(error => {
-                  setLeaveError(error instanceof Error ? error.message : "Kunne ikkje forlate kanalen.");
-                }).finally(() => setLeaving(false));
-              }}>Ja, forlat kanalen</Button></div>
-          </div>}
-        {leaveError && <Status tone="error">{leaveError}</Status>}
-      </div>
-    </Dialog>
-    {agentTicket && mayManageAgents && agentTicket.key === agentScope.current.key && agentTicket.epoch === agentScope.current.epoch
-      && <ChannelChatAgentsDialog key={`${agentTicket.owner}:${agentTicket.channelId}:${agentTicket.epoch}`} api={agentTicket.api}
-        channelId={agentTicket.channelId} channelName={agentTicket.channelName} privateChannel={agentTicket.privateChannel}
-        onClose={() => { if (ticketAdmitted(agentTicket)) setAgentTicket(null); }} />}
+      aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={() => openDetails("members")}><ChannelMembersIcon /></Button>
+    }<Button ref={trigger} className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"} variant="quiet"
+      aria-label="Kanalval" title="Kanalval" aria-expanded={open} aria-controls={id} onClick={toggle}><span aria-hidden="true">⋮</span>{compact && <span>Kanalval</span>}</Button>
+    <div ref={panel} id={id} popover="auto" className="sp-channel-actions-popover" role="group" aria-label={`Kanalval: ${channel.name}`}
+      onToggle={event => {
+        const visible = event.newState === "open";
+        setOpen(visible);
+        if (!visible) { const more = panel.current?.querySelector("details"); if (more) more.open = false; }
+      }}>
+      <Button variant="quiet" onClick={() => openDetails("about")}><ChannelMembersIcon /><span>Kanaldetaljar</span></Button>
+      {mayManageAgents && <Button variant="quiet" onClick={() => openDetails("agents")}>Agentar i kanalen</Button>}
+      {["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => openDetails("members", true)}>
+        <ChannelMembersIcon /><span>Legg til eller inviter kanalmedlem</span></Button>}
+      {conversation?.notifications && <Button variant="quiet" onClick={() => openDetails("notifications")}>
+        <BellIcon muted={!conversation.notifications.enabled} /><span>Kanalvarsling</span></Button>}
+      <details className="sp-channel-actions-more"><summary>Fleire val</summary>
+      {snapshot.circles.some(circle => circle.id === channel.circle_id && circle.role === "owner") && <Button variant="quiet"
+        onClick={() => { dismiss(); setInviteOpen(true); }}>Inviter til kretsen</Button>}
+      {open && <ProcessPilotMenuEntry key={`${owner}:${channel.id}:${channel.role}:${snapshot.circles.find(circle => circle.id === channel.circle_id)?.role}`}
+        api={host.processPilot} channelId={channel.id} onOpen={() => { dismiss(); setProcessOpen(true); }} />}
+      {host.managementCapabilities().agent && ["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
+        dismiss(); host.navigateView({ kind: "management", page: { kind: "advanced", feature: "agent", channelId: channel.id } });
+      }}>Mellombels tilgang for ekstern agent</Button>}
+      {host.managementCapabilities().heart && <Button variant="quiet" onClick={() => {
+        dismiss(); host.navigateView({ kind: "management", page: { kind: "advanced", feature: "heart", channelId: channel.id } });
+      }}>Prosessoppsett</Button>}
+      <Button variant="quiet" onClick={() => { dismiss(); setLocationOpen(true); }}>Del posisjon med agent</Button>
+      <Button variant="danger" onClick={() => { dismiss(); setLeaveError(""); setConfirmLeave(true); }}>Forlat kanalen</Button>
+      </details>
+    </div>
+    {processOpen && <Dialog open title={`Prosesspilot: ${channel.name}`} closeLabel="Lukk prosesspilot" onClose={() => setProcessOpen(false)}>
+      <ProcessPilotChannelAction key={`${host.processPilotIdentity()}:${channel.id}`} api={host.processPilot} channelId={channel.id} />
+    </Dialog>}
+    {confirmLeave && <Dialog open title="Forlat kanalen" closeLabel="Lukk stadfestinga" onClose={() => setConfirmLeave(false)}>
+      <p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p>
+      <div className="sp-row"><Button onClick={() => setConfirmLeave(false)}>Avbryt</Button>
+        <Button variant="danger" busy={leaving} onClick={() => {
+          if (leaving || host.community.selfId() !== owner || host.snapshot().activeChannel?.id !== channel.id) return;
+          const ticket = { key: access.current.key, epoch: access.current.epoch };
+          const admitted = () => {
+            observe(scopeKey(host.snapshot(), host.community.selfId()));
+            return access.current.live && access.current.key === ticket.key && access.current.epoch === ticket.epoch;
+          };
+          if (!admitted()) return;
+          setLeaving(true); setLeaveError("");
+          void host.community.leaveChannel(channel.id).then(() => { if (admitted()) setConfirmLeave(false); }).catch(error => {
+            if (admitted()) setLeaveError(error instanceof Error ? error.message : "Kunne ikkje forlate kanalen.");
+          }).finally(() => { if (admitted()) setLeaving(false); });
+        }}>Ja, forlat kanalen</Button></div>
+      {leaveError && <Status tone="error">{leaveError}</Status>}
+    </Dialog>}
     {locationOpen && <AgentLocationSharingDialog api={host.agentLocations} channelId={channel.id} channelName={channel.name}
       onClose={() => setLocationOpen(false)} />}
     {inviteOpen && channel.circle_id && <PreviewCommunity destination={{ kind: "invite", circleId: channel.circle_id }} snapshot={snapshot} host={host.community}
       onNavigate={() => {}} onClose={() => setInviteOpen(false)} />}
   </>;
 }
-
 function PreviewMessageContent({ host, message }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage }) {
   const workTask = workItemTaskId(message.body);
   if (workTask) return <WorkItemTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${workTask}`} api={host.workItems} taskId={workTask} messageId={message.id} />;
@@ -513,20 +560,38 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const openCommunity = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "circles" } } });
     const newDirect = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "people" } } });
     const openInvitation = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "accept-invitation" } } });
-    const openDetails = (channelId: string, focusMemberAction: boolean) => {
+    const openDetails = (channelId: string, focusMemberAction: boolean, section: "about" | "members" | "agents" | "notifications" = "about") => {
       const admitted = () => !disposed && !!owner && host.community.selfId() === owner && renderedOwnerEpoch === ownerEpoch;
       if (!admitted() || host.viewHistory.getSnapshot().entryId !== historyState.entryId
         || host.snapshot().activeChannel?.id !== channelId) return;
-      host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "channel", channelId } } });
+      host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "channel", channelId, channelSection: section } } });
       const opened = host.viewHistory.getSnapshot();
       if (!admitted() || opened.target?.kind !== "management" || opened.target.page.kind !== "community"
         || opened.target.page.destination.kind !== "channel" || opened.target.page.destination.channelId !== channelId) return;
       memberFocus = focusMemberAction ? { owner: owner!, channelId, historyEntryId: opened.entryId } : null;
       update();
     };
+    const channelNotificationsFor = (channelId: string) => {
+      const admitted = () => {
+        const currentRoute = host.viewHistory.getSnapshot();
+        return !disposed && !!owner && host.community.selfId() === owner && renderedOwnerEpoch === ownerEpoch
+          && currentRoute.entryId === historyState.entryId && currentRoute.target?.kind === "management"
+          && currentRoute.target.page.kind === "community" && currentRoute.target.page.destination.kind === "channel"
+          && currentRoute.target.page.destination.channelId === channelId;
+      };
+      if (!admitted()) return undefined;
+      const notifications = snapshot.groups.flatMap(group => group.conversations).find(item => item.id === channelId)?.notifications;
+      if (!notifications) return undefined;
+      return { enabled: notifications.enabled, busy: notifications.pending, error: notifications.error, toggle: () => {
+        if (!admitted()) return;
+        const current = host.snapshot().groups.flatMap(group => group.conversations).find(item => item.id === channelId)?.notifications;
+        if (!current || current.pending || !admitted()) return;
+        host.setChannelNotifications(channelId, !current.enabled);
+      } };
+    };
     const directMembers = (compact = false) => snapshot.activeChannel?.is_direct ? <Button variant="quiet"
       className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"}
-      aria-label={`Medlemmer i ${snapshot.title}`} title="Om samtalen" onClick={() => openDetails(snapshot.activeChannel!.id, false)}>
+      aria-label={`Medlemmer i ${snapshot.title}`} title="Om samtalen" onClick={() => openDetails(snapshot.activeChannel!.id, false, "members")}>
       <ChannelMembersIcon />{compact && <span>Om samtalen</span>}</Button> : null;
     const showWelcome = !snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && !snapshot.directory.error
       && !new URL(window.location.href).searchParams.has("invite") && historyState.target?.kind !== "conversation";
@@ -565,7 +630,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
           context: compactContext, title: snapshot.title, onBack: backToConversations
         } : undefined}>
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
-      <PreviewManagement hideTrigger snapshot={snapshot} onRetryDirectory={host.retryDirectory} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate}
+      <PreviewManagement channelNotificationsFor={channelNotificationsFor} hideTrigger snapshot={snapshot} onRetryDirectory={host.retryDirectory} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate}
         focusMemberAction={!!memberFocus && memberFocus.owner === owner && memberFocus.historyEntryId === historyState.entryId
           && historyState.target?.kind === "management" && historyState.target.page.kind === "community"
           && historyState.target.page.destination.kind === "channel" && historyState.target.page.destination.channelId === memberFocus.channelId}
@@ -581,9 +646,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
           ...(current.thread ? { threadId: current.thread.rootMessageId } : {}) }, "replace");
         return positions;
       }}
-        target={host.managementTarget()} onNavigate={page => {
+        target={host.managementTarget()} onNavigate={(page, mode) => {
           if (host.viewHistory.getSnapshot().entryId !== historyState.entryId || host.community.selfId() !== owner) return;
-          if (page) host.navigateView({ kind: "management", page }); else host.backFromManagement();
+          if (page) host.navigateView({ kind: "management", page }, mode); else host.backFromManagement();
         }}
         onBack={() => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.backFromManagement(); }}
         onSelectChannel={channelId => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.navigateView({ kind: "conversation", channelId }); }}

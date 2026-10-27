@@ -1,4 +1,4 @@
-import { validAgentSettingsRoute, type AgentSettingsPanel, type ManagementTarget, type CommunityDestination } from "./application/management-target";
+import { validAgentSettingsRoute, validChannelSettingsSection, type AgentSettingsPanel, type ManagementTarget, type CommunityDestination } from "./application/management-target";
 import type { ReadingPosition } from "./ui/react/timeline-scroll";
 
 export type ViewTarget =
@@ -41,7 +41,11 @@ export function readViewTarget(href: string): ViewTarget | null {
       let destination: CommunityDestination | null = null;
       if (task === "people" || task === "create-circle" || task === "circles" || task === "global-channels" || task === "global-invite" || task === "accept-invitation") destination = { kind: task };
       if (task === "create-channel" && (circleId === null || id(circleId))) destination = { kind: task, circleId };
-      if (task === "channel" && id(channelId)) destination = { kind: task, channelId };
+      if (task === "channel" && id(channelId)) {
+        const channelSection = p.get("panel");
+        if (channelSection !== null && !validChannelSettingsSection(channelSection)) return null;
+        destination = { kind: task, channelId, ...(channelSection !== null ? { channelSection } : {}) };
+      }
       if ((task === "channels" || task === "invite" || task === "rename-circle" || task === "circle-members") && id(circleId)) destination = { kind: task, circleId };
       return destination ? { kind: "management", page: { kind, destination } } : null;
     }
@@ -82,6 +86,10 @@ export function viewHref(target: ViewTarget, base: string, internal = false): st
       const d = page.destination; p.set("task", d.kind);
       if ("circleId" in d && d.circleId) p.set("circle", d.circleId);
       if ("channelId" in d) p.set("channel", d.channelId);
+      if (d.kind === "channel" && d.channelSection !== undefined) {
+        if (!validChannelSettingsSection(d.channelSection)) throw new TypeError("Invalid channel settings section");
+        p.set("panel", d.channelSection);
+      }
     }
   }
   return url.href;

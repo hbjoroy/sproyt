@@ -133,9 +133,6 @@ async function openList(page: Page) {
   return dialog;
 }
 async function part(dialog: Locator, name: string) {
-  const overview = dialog.getByRole("button", { name: "Ferdigheiter", exact: true });
-  await expect(overview.or(dialog.getByRole("button", { name, exact: true }))).toBeVisible();
-  if (await overview.isVisible()) await overview.click();
   await dialog.getByRole("button", { name, exact: true }).click();
 }
 function expectOnlyOptional(body: Record<string, unknown>, optional?: string) {
@@ -183,16 +180,20 @@ test("private channel checks fetch one chosen channel at a time and refuse inacc
 
 test("behaviour and skill drafts survive Escape and browser Back while each save sends only its own fields", async ({ page }) => {
   const server = await fixture(page);
-  await page.goto(destination());
-  const dialog = dialogFor(page);
+  const dialog = await openList(page);
+  await dialog.getByRole("button", { name: "Maria", exact: true }).click();
   await dialog.getByRole("button", { name: "Oppførsel", exact: true }).click();
   const name = dialog.getByRole("textbox", { name: "Namn", exact: true });
   await name.fill("Maria lokalt");
   await page.keyboard.press("Escape");
   await expect(dialog).toContainText("uferdig utkast");
-  await page.goForward();
+  await dialog.getByRole("button", { name: "Oppførsel", exact: true }).click();
   await expect(name).toHaveValue("Maria lokalt");
   await page.goBack();
+  await expect(dialog.getByRole("button", { name: "Ny agent", exact: true })).toBeVisible();
+  await page.goForward();
+  await expect(name).toHaveValue("Maria lokalt");
+  await page.keyboard.press("Escape");
   await expect(dialog.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
   await part(dialog, "Bilettolking");
   await dialog.getByRole("checkbox", { name: "Tolk bilete i meldingar", exact: true }).check();
@@ -280,10 +281,13 @@ test("dark settings remain inside the viewport at 320px, phone and desktop width
   await dialog.getByRole("button", { name: "Maria", exact: true }).click();
   await expect(dialog).toContainText("Ingen kanaltilgang");
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(dialog.getByRole("button", { name: "Til agentlista", exact: true })).toBeHidden();
+  await expect(dialog.locator(".sp-workspace-page-header").getByRole("button")).toBeVisible();
   await capture("agent-overview-390-dark.png", 390);
   await part(dialog, "Vêr");
   await dialog.getByRole("checkbox", { name: "Vêrdata", exact: true }).check();
   await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(dialog.getByRole("button", { name: "Til agentlista", exact: true })).toBeVisible();
   await capture("agent-weather-1280-dark.png", 1280);
   expect(server.mutations).toEqual([]);
 });
@@ -295,7 +299,7 @@ test("the channel-menu entry fences pending reads across two administrators and 
   await page.goto(`/?participant=agent-settings-owner&channel=${privateChannel}`);
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  const access = destinationSurface(preview, "Agentar i Privat arbeid", true);
+  const access = destinationSurface(preview, "Kanaldetaljar: Privat arbeid", true).locator(".sp-agent-channel-access");
   const openAccess = async () => {
     if (!await preview.getByRole("textbox", { name: "Skriv melding", exact: true }).isVisible()) {
       const nav = preview.getByRole("navigation", { name: "Samtalar", exact: true });
@@ -310,7 +314,7 @@ test("the channel-menu entry fences pending reads across two administrators and 
       await group.getByRole("button", { name: "# Privat arbeid", exact: true }).click();
     }
     await preview.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: "Kanalval", exact: true }).click();
-    await preview.getByRole("dialog", { name: "Kanalval: Privat arbeid", exact: true })
+    await preview.getByRole("group", { name: "Kanalval: Privat arbeid", exact: true })
       .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
   };
   server.holdNextChannelRead(); await openAccess();
@@ -322,16 +326,16 @@ test("the channel-menu entry fences pending reads across two administrators and 
   await openAccess();
   await expect(access.getByRole("checkbox", { name: "Maria", exact: true })).not.toBeChecked();
   expect(server.channelOwners).toEqual(["agent-settings-owner", "agent-settings-other-owner"]);
-  await access.getByRole("button", { name: "Lukk kanalagentar", exact: true }).click();
+  await destinationSurface(preview, "Kanaldetaljar: Privat arbeid", true).getByRole("button", { name: "Lukk", exact: true }).click();
   server.holdNextChannelRead(); await openAccess();
   await expect(access).toContainText("Hentar agentval");
   await expect.poll(() => server.channelOwners.length).toBe(3);
   server.setChannelRole("member");
   await expect(access).toHaveCount(0);
   server.setChannelRole("moderator");
+  await expect.poll(() => server.channelOwners.length).toBe(4);
+  await expect(access.getByRole("checkbox", { name: "Maria", exact: true })).not.toBeChecked();
   await server.releaseChannelRead();
-  await expect(access).toHaveCount(0);
-  await openAccess();
   await expect(access.getByRole("checkbox", { name: "Maria", exact: true })).not.toBeChecked();
   expect(server.channelOwners).toEqual(["agent-settings-owner", "agent-settings-other-owner", "agent-settings-other-owner", "agent-settings-other-owner"]);
   expect(server.mutations).toEqual([]);
@@ -426,4 +430,30 @@ for (const transition of ["moderator", "absent"] as const) test(`pending drafts 
   await expect(name).toBeEnabled(); await expect(save).toBeEnabled();
   await expect(dialog).not.toContainText("Endringa er lagra");
   expect(server.mutations).toHaveLength(1);
+});
+
+test("agent internal edits return to their overview and one Back restores the originating channel", async ({ page }) => {
+  const server = await fixture(page);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto(`/?participant=agent-settings-owner&channel=${privateChannel}`);
+  const preview = page.locator("#sproyt-react-preview");
+  await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
+  await preview.getByRole("button", { name: "Kanalval", exact: true }).filter({ visible: true }).click();
+  await preview.getByRole("group", { name: "Kanalval: Privat arbeid", exact: true })
+    .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
+  const channelPage = destinationSurface(preview, "Kanaldetaljar: Privat arbeid", true);
+  await channelPage.getByRole("button", { name: "Opne agentoppsett for Maria", exact: true }).click();
+  const agentPage = dialogFor(page);
+  await agentPage.getByRole("button", { name: "Oppførsel", exact: true }).click();
+  const name = agentPage.getByRole("textbox", { name: "Namn", exact: true });
+  await name.fill("Utkast frå kanalen");
+  await agentPage.locator(".sp-workspace-page-header").getByRole("button").click();
+  await expect(agentPage.getByRole("button", { name: "Oppførsel", exact: true })).toBeVisible();
+  await agentPage.locator(".sp-workspace-page-header").getByRole("button").click();
+  await expect(channelPage.getByRole("tab", { name: "Agentar", exact: true })).toHaveAttribute("aria-selected", "true");
+  expect(new URL(page.url()).searchParams.get("channel")).toBe(privateChannel);
+  await channelPage.getByRole("button", { name: "Opne agentoppsett for Maria", exact: true }).click();
+  await agentPage.getByRole("button", { name: "Oppførsel", exact: true }).click();
+  await expect(name).toHaveValue("Utkast frå kanalen");
+  expect(server.mutations).toEqual([]);
 });

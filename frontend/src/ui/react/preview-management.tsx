@@ -1,11 +1,11 @@
-import { DestinationPage } from "./workspace-page";
+import { DestinationNavigation, DestinationPage } from "./workspace-page";
 import { Button, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import { managementParent, type ManagementTarget } from "../../application/management-target";
 import { PreviewSettingsDialog, type PreviewSettingsHost } from "./preview-settings";
-import { PreviewCommunity, type CommunityHost } from "./preview-community";
+import { PreviewCommunity, type CommunityHost, type ChannelNotifications } from "./preview-community";
 import { PreviewAdvanced } from "./preview-advanced";
 import type { AdvancedHost } from "../../application/advanced-host";
 import type { CircleChatAgentApi } from "../../chat-agents";
@@ -24,7 +24,7 @@ const roleName = (role: string) => role === "owner" ? "Eigar" : role === "modera
 
 /** A single controlled destination, with a local fallback for standalone previews.
  * Opening this directory creates no invitation, credential or process. */
-export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition, target, onNavigate, onBack, onSelectChannel, onRetryDirectory, appearanceContent, helpContent, hideTrigger = false, focusMemberAction = false }: {
+export function PreviewManagement({ snapshot, capabilities, settings, community, advanced, chatAgents, appUpdate, captureUpdatePosition, target, onNavigate, onBack, onSelectChannel, onRetryDirectory, appearanceContent, helpContent, hideTrigger = false, focusMemberAction = false, channelNotificationsFor }: {
   snapshot: ConversationSnapshot;
   capabilities: { agent: boolean; heart: boolean };
   settings: PreviewSettingsHost;
@@ -34,7 +34,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   appUpdate: AppUpdate;
   captureUpdatePosition: () => readonly UpdatePosition[];
   target?: ManagementTarget | null;
-  onNavigate?: (target: ManagementTarget | null) => void;
+  onNavigate?: (target: ManagementTarget | null, mode?: "push" | "replace") => void;
   onBack?: () => void;
   onSelectChannel?: (channelId: string) => void;
   onRetryDirectory?: () => void;
@@ -42,6 +42,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   helpContent?: ReactNode;
   hideTrigger?: boolean;
   focusMemberAction?: boolean;
+  channelNotificationsFor?: (channelId: string) => ChannelNotifications | undefined;
 }) {
   const [localTarget, setLocalTarget] = useState<ManagementTarget | null>(null);
   const selfId = community.selfId();
@@ -92,9 +93,9 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   const current = target === undefined ? localTarget : target;
   // Gate immediately: the old account's form must not survive until an effect.
   const active = owner === selfId && selfId ? current : null;
-  const navigate = (next: ManagementTarget | null) => {
+  const navigate = (next: ManagementTarget | null, mode?: "push" | "replace") => {
     if (target === undefined) setLocalTarget(next);
-    onNavigate?.(next);
+    onNavigate?.(next, mode);
   };
   useEffect(() => {
     if (owner === selfId) return;
@@ -108,9 +109,10 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     const previous = previousTarget.current;
     previousTarget.current = activeKey;
     const frame = requestAnimationFrame(() => {
-      const focusKey = returnFocus.current ?? entries.current.get(previous);
+      const isReturn = previous !== "null" && JSON.stringify(managementParent(JSON.parse(previous) as ManagementTarget, snapshot)) === activeKey;
+      const focusKey = returnFocus.current ?? (isReturn ? entries.current.get(previous) : undefined);
       const button = focusKey ? rows.current.get(focusKey) : undefined;
-      if (button?.isConnected) { button.focus({ preventScroll: true }); returnFocus.current = undefined; }
+      if (button?.isConnected && button.getClientRects().length) { button.focus({ preventScroll: true }); returnFocus.current = undefined; }
       else if (!active && previous !== "null") {
         if (openedFromTrigger.current && !hideTrigger) trigger.current?.focus({ preventScroll: true });
         openedFromTrigger.current = false;
@@ -124,14 +126,28 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     if (onBack) onBack();
     else navigate(managementParent(active, snapshot));
   };
-  const row = ({ label, detail, target: destination }: SettingsRow) => {
+  const row = ({ label, detail, target: destination }: SettingsRow, scope = "content") => {
     const key = JSON.stringify(destination);
-    const entryKey = `${key}:${label}`;
+    const entryKey = `${scope}:${key}:${label}`;
     const detailId = `${id}-${encodeURIComponent(entryKey)}`;
+    const circleAdministration = active?.kind === "circle" || active?.kind === "memory" || active?.kind === "chat-agents"
+      || (active?.kind === "community" && (active.destination.kind === "circles" || "circleId" in active.destination && Boolean(active.destination.circleId)));
+    const selected = label === "Administrer krets" ? circleAdministration
+      : JSON.stringify(destination) === JSON.stringify(directory) ? false : JSON.stringify(active) === key;
     return <Button key={entryKey} variant="quiet" className="sp-settings-row"
-      aria-label={label} aria-describedby={detailId}
+      aria-label={label} aria-describedby={detailId} aria-current={selected ? "page" : undefined}
       ref={element => { if (element) rows.current.set(entryKey, element); else rows.current.delete(entryKey); }}
-      onClick={event => { event.currentTarget.focus({ preventScroll: true }); entries.current.set(key, entryKey); navigate(destination); }}>
+      onClick={event => {
+        event.currentTarget.focus({ preventScroll: true }); entries.current.set(key, entryKey);
+        const layout = event.currentTarget.closest(".sp-settings-workspace-layout");
+        const navigation = layout?.querySelector<HTMLElement>(".sp-settings-workspace-navigation");
+        const content = layout?.querySelector<HTMLElement>(".sp-workspace-page-body");
+        // Peer categories share a desktop detail slot. Preserve the overview's
+        // history entry, and keep compact overview-to-detail navigation pushed.
+        const replace = scope === "navigation" && active?.kind !== "overview"
+          && !!navigation?.getClientRects().length && !!content?.getClientRects().length;
+        navigate(destination, replace ? "replace" : "push");
+      }}>
       <span><strong>{label}</strong><span id={detailId} className="sp-settings-detail">{detail}</span></span><span aria-hidden="true">›</span>
     </Button>;
   };
@@ -200,22 +216,25 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   ]) : [];
   const matches = (item: SettingsRow) => `${item.label} ${item.detail} ${item.aliases ?? ""}`.toLocaleLowerCase().includes(normalizedQuery);
   const matchedGroups = (normalizedQuery ? [...groups, ...shortcuts, { title: "I kretsane dine", rows: scopedResults }] : groups).map(group => ({ ...group, rows: group.rows.filter(matches) })).filter(group => group.rows.length);
+  const settingsNavigation = (
+      <div className="sp-settings-page">
+        <p className="sp-settings-intro">Dine personlege val. Samtalen og utkasta dine blir tekne vare på medan du er her.</p>
+        <TextField label="Søk i innstillingar" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Til dømes varsel, tema eller hjelp" />
+        {matchedGroups.map(group => <section className="sp-settings-group" aria-label={group.title} key={group.title}><h3>{group.title}</h3>{group.rows.map(item => row(item, "navigation"))}</section>)}
+        {!matchedGroups.length && <p role="status">Ingen innstillingar passar søket.</p>}
+        {!normalizedQuery && <section className="sp-settings-group" aria-label="Konto"><h3>Konto</h3><a href="/auth/logout">Logg ut</a></section>}
+      </div>
+  );
   return <>
     {hideTrigger ? <button ref={trigger} type="button" hidden tabIndex={-1} aria-hidden="true" /> : <Button ref={trigger} onClick={event => {
       event.currentTarget.focus({ preventScroll: true }); openedFromTrigger.current = true; setQuery(""); navigate({ kind: "overview" });
     }}>Innstillingar</Button>}
-    {portalHost && createPortal(<>
+    {portalHost && createPortal(<DestinationNavigation navigation={active?.kind === "advanced" || active?.kind === "chat-agents" || (active?.kind === "community" && active.destination.kind === "channel") ? null : settingsNavigation} overview={active?.kind === "overview"}>
     {active && !available && <DestinationPage open title="Ikkje tilgjengeleg" closeLabel="Tilbake" onClose={close}>
       <div className="sp-settings-page"><Status>Du har ikkje tilgang til denne sida no. Kretsen, kanalen eller rettane dine kan ha endra seg.</Status><Button onClick={() => navigate({ kind: "overview" })}>Til innstillingar</Button></div>
     </DestinationPage>}
     {active?.kind === "overview" && <DestinationPage open title="Innstillingar" closeLabel="Lukk innstillingane" onClose={close}>
-      <div className="sp-settings-page">
-        <p className="sp-settings-intro">Dine personlege val. Samtalen og utkasta dine blir tekne vare på medan du er her.</p>
-        <TextField label="Søk i innstillingar" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Til dømes varsel, tema eller hjelp" />
-        {matchedGroups.map(group => <section className="sp-settings-group" aria-label={group.title} key={group.title}><h3>{group.title}</h3>{group.rows.map(row)}</section>)}
-        {!matchedGroups.length && <p role="status">Ingen innstillingar passar søket.</p>}
-        {!normalizedQuery && <section className="sp-settings-group" aria-label="Konto"><h3>Konto</h3><a href="/auth/logout">Logg ut</a></section>}
-      </div>
+      <div className="sp-settings-overview"><h2>Vel ei innstilling</h2><p>Vel ein kategori til venstre for å sjå og endre innstillingane dine.</p></div>
     </DestinationPage>}
     {active?.kind === "appearance" && <DestinationPage open title="Utsjånad og bruk" closeLabel="Tilbake til innstillingar" onClose={close}>
       <div className="sp-settings-page">{appearanceContent}</div>
@@ -247,8 +266,22 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
     </DestinationPage>}
     {isDirectory && available && <CircleDirectory key={`${selfId}:${activeKey}`} onRetry={onRetryDirectory} invitationOnly={active?.kind === "community" && active.destination.kind === "accept-invitation"} snapshot={snapshot} host={community} onClose={close} row={row} />}
     {active && available && (active.kind === "profile" || active.kind === "notifications") && <PreviewSettingsDialog key={`${selfId}:${active.kind}`} kind={active.kind} host={settings} onClose={close} />}
-    {active?.kind === "community" && !isDirectory && available && <PreviewCommunity key={`${selfId}:${activeKey}`} destination={active.destination} snapshot={snapshot} host={community} onSelectChannel={onSelectChannel}
+    {active?.kind === "community" && !isDirectory && available && <PreviewCommunity key={active.destination.kind === "channel" ? `${selfId}:channel:${active.destination.channelId}` : `${selfId}:${activeKey}`} destination={active.destination} snapshot={snapshot} host={community} onSelectChannel={onSelectChannel}
       focusMemberAction={active.destination.kind === "channel" && focusMemberAction}
+      initialSection={active.destination.kind === "channel" ? active.destination.channelSection : undefined}
+      channelNotifications={active.destination.kind === "channel" ? channelNotificationsFor?.(active.destination.channelId) : undefined}
+      onSectionChange={section => {
+        if (active.destination.kind === "channel") navigate({ kind: "community", destination: { ...active.destination, channelSection: section } }, "replace");
+      }}
+      onOpenChannelAgents={(channelId, agentId) => {
+        if (active.destination.kind !== "channel" || active.destination.channelId !== channelId || community.selfId() !== selfId) return;
+        const channel = latestSnapshot.current.channels.find(item => item.id === channelId);
+        const circle = latestSnapshot.current.circles.find(item => item.id === channel?.circle_id);
+        if (!channel || !circle || !administrator(circle.role) || channel.is_direct
+          || !(administrator(channel.role) || (channel.kind !== "private" && channel.role === "member"))) return;
+        navigate({ kind: "chat-agents", circleId: circle.id, channelId,
+          ...(agentId ? { agentId, panel: "overview" as const } : {}) });
+      }}
       onNavigate={destination => navigate({ kind: "community", destination })} onClose={close} />}
     {active?.kind === "advanced" && available && <PreviewAdvanced key={`${selfId}:${activeKey}`} kind={active.feature} host={advanced}
       snapshot={{ ...snapshot, activeChannel: snapshot.channels.find(channel => channel.id === active.channelId) ?? null,
@@ -259,7 +292,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
       channels={snapshot.channels.filter(channel => channel.circle_id === circle.id)} preferredChannelId={snapshot.activeChannel?.id}
       target={active} onNavigate={navigate} ownerId={selfId!} role={circle.role} drafts={agentDrafts}
       admitted={() => agentScopeCurrent(circle.id, accessEpoch)} onClose={close} />}
-    </>, portalHost)}
+    </DestinationNavigation>, portalHost)}
   </>;
 }
 

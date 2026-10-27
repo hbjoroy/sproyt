@@ -4,10 +4,13 @@ import type { ConversationSnapshot } from "./conversation-snapshot";
 export type CommunityDestination =
   | { kind: "people" | "create-circle" | "circles" | "global-channels" | "global-invite" | "accept-invitation" }
   | { kind: "create-channel"; circleId: string | null }
-  | { kind: "channel"; channelId: string }
+  | { kind: "channel"; channelId: string; channelSection?: ChannelSettingsSection }
   | { kind: "channels" | "invite" | "rename-circle" | "circle-members"; circleId: string };
 
 export type AgentSettingsPanel = "overview" | "behaviour" | "skills" | "memory" | "vision" | "images" | "weather" | "sea" | "ferry" | "handoff" | "channels";
+export type ChannelSettingsSection = "about" | "members" | "agents" | "notifications";
+export const validChannelSettingsSection = (value: unknown): value is ChannelSettingsSection =>
+  value === "about" || value === "members" || value === "agents" || value === "notifications";
 
 export const agentSettingsPanels: readonly AgentSettingsPanel[] = ["overview", "behaviour", "skills", "memory", "vision", "images", "weather", "sea", "ferry", "handoff", "channels"];
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -37,7 +40,8 @@ export function managementParent(target: ManagementTarget, snapshot: Pick<Conver
       return { kind: "chat-agents", circleId: target.circleId, agentId: target.agentId, panel: "overview",
         ...(target.channelId ? { channelId: target.channelId } : {}) };
     }
-    if (target.agentId || target.panel === "channels") return { kind: "chat-agents", circleId: target.circleId };
+    if (target.agentId || target.panel === "channels") return { kind: "chat-agents", circleId: target.circleId,
+      ...(target.channelId ? { channelId: target.channelId } : {}) };
     return { kind: "circle", circleId: target.circleId };
   }
   if (target.kind === "memory") return { kind: "circle", circleId: target.circleId };

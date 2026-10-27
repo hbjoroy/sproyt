@@ -19,10 +19,11 @@ const editorParts = Object.keys(agentPartTitles) as AgentEditorPart[];
 export function CircleChatAgentsDialog({ api, circleId, circleName, channels = [], target, onNavigate, onClose,
   drafts: providedDrafts, ownerId, admitted = () => true, role = "owner", preferredChannelId }: {
   api: CircleChatAgentApi; circleId: string; circleName: string; channels?: readonly Channel[];
-  target?: AgentTarget; onNavigate?: (target: AgentTarget) => void; onClose(): void;
+  target?: AgentTarget; onNavigate?: (target: AgentTarget, mode?: "push" | "replace") => void; onClose(): void;
   drafts?: AgentSettingsDrafts; ownerId?: string; admitted?: () => boolean; role?: string; preferredChannelId?: string;
 }) {
   const [localTarget, setLocalTarget] = useState<AgentTarget>({ kind: "chat-agents", circleId });
+  const [channelChoiceTouched, setChannelChoiceTouched] = useState(false);
   const [localDrafts] = useState(() => new AgentSettingsDrafts());
   const drafts = providedDrafts ?? localDrafts;
   useSyncExternalStore(drafts.subscribe, drafts.getSnapshot);
@@ -41,7 +42,7 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, channels = [
     const confirmed = drafts.get(circleId, agent.agentId)?.baseline;
     return confirmed && confirmed.revision > agent.revision ? confirmed : agent;
   }) };
-  const navigate = (next: AgentTarget) => { if (!guard.current()) return; if (!target) setLocalTarget(next); onNavigate?.(next); };
+  const navigate = (next: AgentTarget, mode: "push" | "replace" = "push") => { if (!guard.current()) return; if (!target) setLocalTarget(next); onNavigate?.(next, mode); };
   const updateAgent = (saved: CircleChatAgent) => setCatalogue(previous => previous ? { ...previous,
     agents: [...previous.agents.filter(agent => agent.agentId !== saved.agentId), saved].sort((a, b) => a.displayName.localeCompare(b.displayName)) } : previous);
   const refresh = async () => {
@@ -65,17 +66,19 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, channels = [
 
   const managedChannels = channels.filter(channel => channel.circle_id === circleId && !channel.is_direct
     && (["owner", "moderator"].includes(channel.role) || (channel.kind !== "private" && channel.role === "member")));
-  const selectedChannel = managedChannels.find(channel => channel.id === view.channelId);
+  const selectedChannel = managedChannels.find(channel => channel.id === (view.channelId ?? (!channelChoiceTouched ? preferredChannelId : undefined)));
   const agent = catalogue?.agents.find(agent => agent.agentId === view.agentId) ?? null;
   const draft = view.agentId ? drafts.get(circleId, view.agentId) : undefined;
   const pending = !!draft?.pending || !!draft?.handoff?.pending;
-  const openAgent = (agentId: string, next: AgentSettingsPanel = "overview") => {
+  const openAgent = (agentId: string, next: AgentSettingsPanel = "overview", mode: "push" | "replace" = "push") => {
     if (agentId === "new" && drafts.get(circleId, "new")?.baseline) drafts.remove(circleId, "new");
-    const channelId = managedChannels.find(channel => channel.id === preferredChannelId)?.id;
-    navigate({ kind: "chat-agents", circleId, agentId, panel: next, ...(channelId ? { channelId } : {}) });
+    const channelId = selectedChannel?.id;
+    navigate({ kind: "chat-agents", circleId, agentId, panel: next, ...(channelId ? { channelId } : {}) }, mode);
   };
-  const openPart = (next: AgentSettingsPanel) => navigate({ ...view, panel: next });
-  const chooseChannel = (channelId: string) => navigate({ ...view, channelId: channelId || undefined });
+  const agentList = (): AgentTarget => ({ kind: "chat-agents", circleId, ...(selectedChannel ? { channelId: selectedChannel.id } : {}) });
+  const openPart = (next: AgentSettingsPanel) => navigate({ ...view, panel: next }, "replace");
+  const back = () => { if (view.agentId && view.agentId !== "new" && panel !== "overview") openPart("overview"); else onClose(); };
+  const chooseChannel = (channelId: string) => { setChannelChoiceTouched(true); navigate({ ...view, channelId: channelId || undefined }, "replace"); };
   const canActivate = (item: CircleChatAgent) => !!catalogue?.workerAvailable && item.workerAvailable
     && (!item.weather || catalogue.weatherAvailable) && (!item.seaTemperature || catalogue.seaTemperatureAvailable)
     && (!item.ferryPort || catalogue.ferryAvailable) && (!item.visionEnabled || item.visionAvailable)
@@ -121,21 +124,21 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, channels = [
   let content;
   if (loading && !catalogue) content = <Status>Lastar agentar …</Status>;
   else if (!catalogue) content = <><Status tone="error">{error || "Oppsettet er ikkje tilgjengeleg."}</Status><Button onClick={() => void refresh()}>Hent agentane på nytt</Button></>;
-  else if (view.agentId === "new" && draft?.baseline) content = <><Status>Agenten {draft.baseline.displayName} er oppretta. Ingen ny agent blir oppretta frå dette utkastet.</Status><Button onClick={() => openAgent(draft.baseline!.agentId)}>Opne agenten</Button><Button onClick={() => navigate({ kind: "chat-agents", circleId })}>Til agentlista</Button></>;
+  else if (view.agentId === "new" && draft?.baseline) content = <><Status>Agenten {draft.baseline.displayName} er oppretta. Ingen ny agent blir oppretta frå dette utkastet.</Status><Button onClick={() => openAgent(draft.baseline!.agentId, "overview", "replace")}>Opne agenten</Button><Button onClick={() => navigate(agentList(), "replace")}>Til agentlista</Button></>;
   else if (view.agentId === "new") content = <AgentSettingsEditor key="new" api={scopedApi} circleId={circleId} agentId="new" agent={null} part="behaviour"
-    catalogue={catalogue} drafts={drafts} admitted={() => guard.current()} onBack={onClose}
-    onReload={async () => { await refresh(); if (guard.current() && live.current && viewRef.current === key) navigate({ kind: "chat-agents", circleId }); }}
-    onSaved={saved => { if (live.current) updateAgent(saved); if (live.current && viewRef.current === key) openAgent(saved.agentId); }} />;
-  else if (view.agentId && !agent) content = <><Status>Agenten finst ikkje her, eller du har ikkje tilgang til han.</Status><Button onClick={() => navigate({ kind: "chat-agents", circleId })}>Til agentlista</Button></>;
+    catalogue={catalogue} drafts={drafts} admitted={() => guard.current()} onBack={back}
+    onReload={async () => { await refresh(); if (guard.current() && live.current && viewRef.current === key) navigate(agentList(), "replace"); }}
+    onSaved={saved => { if (live.current) updateAgent(saved); if (live.current && viewRef.current === key) openAgent(saved.agentId, "overview", "replace"); }} />;
+  else if (view.agentId && !agent) content = <><Status>Agenten finst ikkje her, eller du har ikkje tilgang til han.</Status><Button onClick={() => navigate(agentList(), "replace")}>Til agentlista</Button></>;
   else if (agent && editorParts.includes(panel as AgentEditorPart)) content = <AgentSettingsEditor key={`${agent.agentId}:${panel}`} api={scopedApi}
     circleId={circleId} agentId={agent.agentId} agent={agent} part={panel as AgentEditorPart} catalogue={catalogue} drafts={drafts}
-    admitted={() => guard.current()} onBack={onClose} onReload={refresh}
+    admitted={() => guard.current()} onBack={back} onReload={refresh}
     onSaved={saved => { if (live.current) updateAgent(saved); if (live.current && viewRef.current === key) openPart("overview"); }} />;
   else if (agent && panel === "handoff") {
     let entry;
     try { entry = drafts.start(circleId, agent.agentId, agent); } catch { /* Report a bounded workspace, rather than discard another draft. */ }
     content = entry ? <AgentHandoff key={agent.agentId} api={scopedApi} circleId={circleId} source={agent} agents={catalogue.agents}
-      initialDraft={entry.handoff} admitted={() => guard.current()} onClose={onClose}
+      initialDraft={entry.handoff} admitted={() => guard.current()} onClose={back}
       onDraftChange={(value, expected) => {
         if (!guard.current()) return false;
         const current = drafts.get(circleId, agent.agentId);
@@ -177,8 +180,11 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, channels = [
       </SettingsSection>
       <SettingsSection title="Oppsett">
         <SettingsRow label="Oppførsel" detail={`@${agent.displayName} · ${agent.triggerWords.length} triggerfrasar`} onClick={() => openPart("behaviour")} />
-        <SettingsRow label="Ferdigheiter" detail="Minne, bilete, vêr, sjøtemperatur og ferger" onClick={() => openPart("skills")} />
         <SettingsRow label="Samarbeid" detail="Videresending til andre agentar" onClick={() => openPart("handoff")} />
+      </SettingsSection>
+      <SettingsSection title="Ferdigheiter" description="Vel ei ferdigheit for å endre oppsettet for heile kretsen.">
+        <div className="sp-agent-skill-shortcuts">{editorParts.filter(part => part !== "behaviour").map(part => <SettingsRow key={part}
+          label={agentPartTitles[part]} detail={skillDetail(agent, part)} onClick={() => openPart(part)} />)}</div>
       </SettingsSection>
       {drafts.isDirty(circleId, agent.agentId) && <Status>Du har eit uferdig utkast for denne agenten. Det blir teke vare på medan du navigerer i appen.</Status>}
     </>;
@@ -192,13 +198,14 @@ export function CircleChatAgentsDialog({ api, circleId, circleName, channels = [
       <Button onClick={() => openAgent("new", "behaviour")}>Ny agent</Button>
     </SettingsSection>
     <SettingsRow label="Kanaltilgang" detail="Vel kanal og kontroller kva agentar som har tilgang" onClick={() => navigate({ kind: "chat-agents", circleId, panel: "channels",
-      ...(managedChannels.some(channel => channel.id === preferredChannelId) ? { channelId: preferredChannelId } : {}) })} />
+      ...(selectedChannel ? { channelId: selectedChannel.id } : {}) })} />
   </>;
-  return <DestinationPage open title={`Agentar i ${circleName}`} closeLabel="Lukk agentar" onClose={onClose}>
+  return <DestinationPage open title={`Agentar i ${circleName}`} closeLabel="Lukk agentar" onClose={back}>
     <div className="sp-agent-settings">
       <SettingsContext scope={`${circleName} / Agentar${agent ? ` / ${agent.displayName}` : ""}`} role={role === "owner" ? "Eigar" : "Moderator"} />
-      {view.agentId && <Button variant="quiet" aria-label="Til agentlista" onClick={() => navigate({ kind: "chat-agents", circleId })}>← Agentar</Button>}
+      {view.agentId && <Button className="sp-agent-list-return" variant="quiet" aria-label="Til agentlista" onClick={() => navigate(agentList(), "replace")}>← Agentar</Button>}
       {agent && <h3 className="sp-agent-detail-heading">{agent.displayName}</h3>}
+      {agent && <p className="sp-agent-status-explanation">Oppsettet for {agent.displayName} gjeld heile {circleName}. Kanaltilgang gjeld berre den valde kanalen.</p>}
       {content}
     </div>
   </DestinationPage>;
