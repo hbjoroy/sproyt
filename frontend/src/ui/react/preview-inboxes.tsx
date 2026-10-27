@@ -122,6 +122,52 @@ export function PreviewInboxes({ state, host, activeKind, onNavigate, onBack }: 
   const currentScope = useRef({ key: scope, generation: 0 });
   if (currentScope.current.key !== scope) currentScope.current = { key: scope, generation: currentScope.current.generation + 1 };
   const generation = currentScope.current.generation;
+  const focusKey = JSON.stringify([state.participantId, state.channels.map(channel =>
+    [channel.id, channel.role, channel.kind, channel.circle_id]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
+  const focusScope = useRef({ key: focusKey, epoch: 0 });
+  if (focusScope.current.key !== focusKey) focusScope.current = { key: focusKey, epoch: focusScope.current.epoch + 1 };
+  const focusEpoch = focusScope.current.epoch;
+  const activity = useRef(0);
+  const suppressSourceReturn = useRef(false);
+  const focusTicket = useRef<{ owner: string | null; generation: number; epoch: number; activity: number } | null>(null);
+  const previousOpen = useRef({ owner: state.participantId, open, generation, epoch: focusEpoch });
+  useEffect(() => {
+    const interacted = () => { activity.current++; };
+    document.addEventListener("pointerdown", interacted, true);
+    document.addEventListener("keydown", interacted, true);
+    return () => {
+      document.removeEventListener("pointerdown", interacted, true);
+      document.removeEventListener("keydown", interacted, true);
+    };
+  }, []);
+  useEffect(() => {
+    const previous = previousOpen.current;
+    previousOpen.current = { owner: state.participantId, open, generation, epoch: focusEpoch };
+    if (open || !previous.open || previous.owner !== state.participantId || previous.epoch !== focusEpoch) {
+      focusTicket.current = null;
+      suppressSourceReturn.current = false;
+      return;
+    }
+    // Browser Back also closes the controlled page. Source navigation owns its
+    // destination focus and deliberately opts out of this return path.
+    const ticket = focusTicket.current ?? { owner: previous.owner, generation: previous.generation, epoch: previous.epoch, activity: activity.current };
+    focusTicket.current = null;
+    if (suppressSourceReturn.current) { suppressSourceReturn.current = false; return; }
+    if (ticket.owner !== state.participantId || ticket.generation !== previous.generation || ticket.epoch !== focusEpoch) return;
+    const frame = requestAnimationFrame(() => {
+      const button = trigger.current;
+      if (currentScope.current.generation !== generation || focusScope.current.epoch !== ticket.epoch
+        || activity.current !== ticket.activity || !button?.isConnected || !button.getClientRects().length
+        || document.querySelector("[data-workspace-page], dialog[open]")) return;
+      const active = document.activeElement;
+      // The header's gear is only its generic navigation fallback. A newly
+      // focused composer or another visible control keeps the user's focus.
+      if (active !== document.body && active instanceof HTMLElement && active.getClientRects().length
+        && !active.matches(".sp-header-toggle")) return;
+      button.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, state.participantId, generation, focusEpoch]);
   useEffect(() => {
     setError("");
     if (!open || kind === "unread") { setLoading(false); return; }
@@ -161,10 +207,15 @@ export function PreviewInboxes({ state, host, activeKind, onNavigate, onBack }: 
     if (!controlled) setLocalOpen(true);
     onNavigate?.(next);
   };
-  const close = () => { if (controlled) onBack?.(); else setLocalOpen(false); };
+  const close = () => {
+    if (currentScope.current.generation !== generation || focusScope.current.epoch !== focusEpoch) return;
+    focusTicket.current = { owner: state.participantId, generation, epoch: focusEpoch, activity: activity.current };
+    if (controlled) onBack?.(); else setLocalOpen(false);
+  };
   // Source commands own their next route. Closing the old controlled route
   // afterwards would traverse history and undo the source navigation.
   const openSource = (action: () => void) => {
+    focusTicket.current = null; suppressSourceReturn.current = true;
     action();
     if (!controlled) setLocalOpen(false);
   };
