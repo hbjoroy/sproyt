@@ -96,3 +96,10 @@ Dette dokumentet er arbeidsrekkefølgja; designreglane er dei varige kontraktane
 - Canary-utrullinga skal bruke CI/CD med `bb02cb1` som sist verifiserte baseline.
   Produksjon skal halde fram med denne baselinen. Fysisk mobil med reelt
   skjermtastatur er ikkje stadfesta av nettlesaremuleringa.
+
+- WebKit fann at native dialogar ikkje vart synlege under den lukka
+  mobilmenyen. Desse dialogane blir no renderte i den synlege temarota,
+  med uendra komponenteigar og tilgangskontroll. Sol reviderte rettinga.
+  Alle dei 42 målretta WebKit-scenarioa er no dekte av grøne testar (37 i
+  første runde; seks i den målretta retesten, inkludert dei fem som feila).
+  CI inkluderer no også dei nye layoutkontraktane og badge-/menytestane i WebKit.

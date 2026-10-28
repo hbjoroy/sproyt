@@ -1,4 +1,5 @@
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
+import { createPortal } from "react-dom";
 import channelActionsCss from "../channel-actions-popover.css";
 import { useEffect, useId, useRef, useState, type PointerEvent } from "react";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
@@ -218,6 +219,12 @@ function ChannelActions({ snapshot, host, compact = false, inlineOpen, onInlineC
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const id = useId();
+  useEffect(() => {
+    if (inlineOpen === false) {
+      const more = panel.current?.querySelector("details");
+      if (more) more.open = false;
+    }
+  }, [inlineOpen]);
   const channel = snapshot.activeChannel;
   const owner = host.community.selfId();
   const scopeKey = (current: ConversationSnapshot, account: string | null) => {
@@ -276,6 +283,36 @@ function ChannelActions({ snapshot, host, compact = false, inlineOpen, onInlineC
   const openDetails = (section: "about" | "members" | "agents" | "notifications" = "about", focusMemberAction = false) => {
     dismiss(); onDetails(channel.id, focusMemberAction, section);
   };
+  // WebKit suppresses native dialogs below hidden ancestors. Keep dialogs in
+  // the visible theme root when their compact disclosure closes or changes size.
+  const dialogHost = inlineOpen !== undefined ? panel.current?.closest(".sp-theme") : null;
+  const dialogs = <>
+    {processOpen && <Dialog open title={`Prosesspilot: ${channel.name}`} closeLabel="Lukk prosesspilot" onClose={() => setProcessOpen(false)}>
+      <ProcessPilotChannelAction key={`${host.processPilotIdentity()}:${channel.id}`} api={host.processPilot} channelId={channel.id} />
+    </Dialog>}
+    {confirmLeave && <Dialog open title="Forlat kanalen" closeLabel="Lukk stadfestinga" onClose={() => setConfirmLeave(false)}>
+      <p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p>
+      <div className="sp-row"><Button onClick={() => setConfirmLeave(false)}>Avbryt</Button>
+        <Button variant="danger" busy={leaving} onClick={() => {
+          if (leaving || host.community.selfId() !== owner || host.snapshot().activeChannel?.id !== channel.id) return;
+          const ticket = { key: access.current.key, epoch: access.current.epoch };
+          const admitted = () => {
+            observe(scopeKey(host.snapshot(), host.community.selfId()));
+            return access.current.live && access.current.key === ticket.key && access.current.epoch === ticket.epoch;
+          };
+          if (!admitted()) return;
+          setLeaving(true); setLeaveError("");
+          void host.community.leaveChannel(channel.id).then(() => { if (admitted()) setConfirmLeave(false); }).catch(error => {
+            if (admitted()) setLeaveError(error instanceof Error ? error.message : "Kunne ikkje forlate kanalen.");
+          }).finally(() => { if (admitted()) setLeaving(false); });
+        }}>Ja, forlat kanalen</Button></div>
+      {leaveError && <Status tone="error">{leaveError}</Status>}
+    </Dialog>}
+    {locationOpen && <AgentLocationSharingDialog api={host.agentLocations} channelId={channel.id} channelName={channel.name}
+      onClose={() => setLocationOpen(false)} />}
+    {inviteOpen && channel.circle_id && <PreviewCommunity destination={{ kind: "invite", circleId: channel.circle_id }} snapshot={snapshot} host={host.community}
+      onNavigate={() => {}} onClose={() => setInviteOpen(false)} />}
+  </>;
   return <>
     <style>{channelActionsCss}</style>
     {!compact && <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
@@ -309,31 +346,7 @@ function ChannelActions({ snapshot, host, compact = false, inlineOpen, onInlineC
       <Button variant="danger" onClick={() => { dismiss(); setLeaveError(""); setConfirmLeave(true); }}>Forlat kanalen</Button>
       </details>
     </div>
-    {processOpen && <Dialog open title={`Prosesspilot: ${channel.name}`} closeLabel="Lukk prosesspilot" onClose={() => setProcessOpen(false)}>
-      <ProcessPilotChannelAction key={`${host.processPilotIdentity()}:${channel.id}`} api={host.processPilot} channelId={channel.id} />
-    </Dialog>}
-    {confirmLeave && <Dialog open title="Forlat kanalen" closeLabel="Lukk stadfestinga" onClose={() => setConfirmLeave(false)}>
-      <p>Vil du forlate {channel.name}? Meldingane dine blir ståande.</p>
-      <div className="sp-row"><Button onClick={() => setConfirmLeave(false)}>Avbryt</Button>
-        <Button variant="danger" busy={leaving} onClick={() => {
-          if (leaving || host.community.selfId() !== owner || host.snapshot().activeChannel?.id !== channel.id) return;
-          const ticket = { key: access.current.key, epoch: access.current.epoch };
-          const admitted = () => {
-            observe(scopeKey(host.snapshot(), host.community.selfId()));
-            return access.current.live && access.current.key === ticket.key && access.current.epoch === ticket.epoch;
-          };
-          if (!admitted()) return;
-          setLeaving(true); setLeaveError("");
-          void host.community.leaveChannel(channel.id).then(() => { if (admitted()) setConfirmLeave(false); }).catch(error => {
-            if (admitted()) setLeaveError(error instanceof Error ? error.message : "Kunne ikkje forlate kanalen.");
-          }).finally(() => { if (admitted()) setLeaving(false); });
-        }}>Ja, forlat kanalen</Button></div>
-      {leaveError && <Status tone="error">{leaveError}</Status>}
-    </Dialog>}
-    {locationOpen && <AgentLocationSharingDialog api={host.agentLocations} channelId={channel.id} channelName={channel.name}
-      onClose={() => setLocationOpen(false)} />}
-    {inviteOpen && channel.circle_id && <PreviewCommunity destination={{ kind: "invite", circleId: channel.circle_id }} snapshot={snapshot} host={host.community}
-      onNavigate={() => {}} onClose={() => setInviteOpen(false)} />}
+    {dialogHost ? createPortal(dialogs, dialogHost) : dialogs}
   </>;
 }
 function PreviewMessageContent({ host, message, place }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage;
