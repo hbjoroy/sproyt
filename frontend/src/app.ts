@@ -661,6 +661,7 @@
           command === "accept_invitation" ? "Godtek invitasjonen …" : "Avviser invitasjonen …")
       });
       let latestChannelListRequestId: string | null = null;
+      let directActivityRefreshTimer: ReturnType<typeof setTimeout> | null = null;
       let latestCircleListRequestId: string | null = null;
       let directoryChannelsLoaded = false, directoryCirclesLoaded = false, directoryError = "";
       const historyPageSize = 50;
@@ -3479,6 +3480,8 @@
             pendingMedia = []; channelUploads.clear();
             composerScopeGeneration++; threadScopeGeneration++;
             channelComposer.draft = ""; threadComposerStates.clear();
+            if (directActivityRefreshTimer !== null) clearTimeout(directActivityRefreshTimer);
+            directActivityRefreshTimer = null;
             knownChannels = []; knownCircles.clear(); knownUsers = [];
             knownCircleUsers.clear(); knownChannelUsers.clear();
             timeline.length = 0; threadReplies.clear(); threadRoots.clear(); resetThreadSummaries(); visibleRead = createVisibleReadPolicy(); activeThreadRootId = null;
@@ -3788,7 +3791,11 @@
           directoryChannelsLoaded = true; if (directoryCirclesLoaded) directoryError = "";
           knownChannels = event.payload.channels.map(channel => {
             const previous = knownChannels.find(item => item.id === channel.id);
-            return { ...channel, last_read_sequence: Math.max(channel.last_read_sequence, previous?.last_read_sequence ?? 0),
+            return { ...channel,
+              direct_activity: previous && previous.latest_sequence > channel.latest_sequence && previous.direct_activity
+                ? { ...(channel.direct_activity ?? previous.direct_activity), last_message_at: previous.direct_activity.last_message_at }
+                : channel.direct_activity,
+              last_read_sequence: Math.max(channel.last_read_sequence, previous?.last_read_sequence ?? 0),
               latest_sequence: Math.max(channel.latest_sequence, previous?.latest_sequence ?? 0) };
           });
           renderChannels();
@@ -4061,6 +4068,7 @@
             renderChannels();
           } else if (chatEvent.type === "message_accepted") {
             updateLatestSequence(chatEvent.message.channel_id, chatEvent.message.sequence);
+            updateDirectActivity(chatEvent.message);
             if (chatEvent.message.channel_id === activeChannelId) {
               const revealOwnMessage = pendingMessageToReveal(chatEvent.message);
               appendTimelineMessage(chatEvent.message, true);
@@ -4075,6 +4083,7 @@
               renderTimeline({ preserveScroll: true });
             }
           } else if (chatEvent.type === "message_deleted") {
+            updateDirectActivity(chatEvent.message);
             messageReactions.delete(chatEvent.message.id);
             if (chatEvent.message.channel_id === activeChannelId) {
               replaceTimelineMessage(chatEvent.message);
@@ -4095,6 +4104,7 @@
 
         if (event.type === "message_accepted") {
           updateLatestSequence(event.payload.message.channel_id, event.payload.message.sequence);
+          updateDirectActivity(event.payload.message);
           if (event.payload.message.channel_id === activeChannelId) {
             const revealOwnMessage = pendingMessageToReveal(event.payload.message, event.request_id);
             appendTimelineMessage(event.payload.message, true);
@@ -4117,6 +4127,7 @@
         }
 
         if (event.type === "message_deleted") {
+          updateDirectActivity(event.payload.message);
           messageReactions.delete(event.payload.message.id);
           if (event.payload.message.channel_id === activeChannelId) {
             replaceTimelineMessage(event.payload.message);
@@ -5093,6 +5104,24 @@
           revokeAgentAccessButton.disabled = false;
           agentAccessNotice.textContent = `Kunne ikkje trekkje tilbake agenttilgangen: ${error instanceof Error ? error.message : "ukjend feil"}`;
         }
+      }
+
+      function updateDirectActivity(message: ChatMessage): void {
+        const channel = knownChannels.find(item => item.id === message.channel_id);
+        if (!channel?.is_direct) return;
+        const previous = channel.direct_activity;
+        if (!message.deleted_at && (!previous?.last_message_at || Date.parse(message.sent_at) > Date.parse(previous.last_message_at))) {
+          channel.direct_activity = { score: previous?.score ?? 0,
+            calculated_at: previous?.calculated_at ?? new Date().toISOString(), last_message_at: message.sent_at };
+        }
+        // Coalesce acknowledgements + broadcasts. Historical scoring stays on
+        // the server; no per-message history download or local usage counters.
+        if (directActivityRefreshTimer !== null) return;
+        const owner = currentParticipantId;
+        directActivityRefreshTimer = setTimeout(() => {
+          directActivityRefreshTimer = null;
+          if (currentParticipantId === owner) sendCommand("list_my_channels");
+        }, 15_000);
       }
 
       function updateLatestSequence(channelId: string, sequence: number): void {

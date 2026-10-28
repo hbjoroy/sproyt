@@ -12,7 +12,7 @@ import { WorkspacePageOutlet, WorkspacePageProvider } from "./workspace-page";
 export interface ConversationGroup {
   readonly id: string;
   readonly name: string;
-  readonly conversations: readonly (Omit<Conversation, "group"> & { readonly action?: ReactNode; readonly directGroup?: boolean })[];
+  readonly conversations: readonly (Omit<Conversation, "group"> & { readonly action?: ReactNode; readonly directActivity?: import("../../types").DirectActivity | null; readonly directGroup?: boolean })[];
   readonly actions?: ReactNode;
 }
 

@@ -1140,6 +1140,7 @@ impl ChatRepository for InMemoryChatRepository {
                     let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
                     Some(ExportedChannel {
                         channel: ChannelSummary {
+                            direct_activity: None,
                             id: channel.id.clone(),
                             slug: channel.slug.clone(),
                             name: channel.name.clone(),
@@ -1810,6 +1811,7 @@ impl ChatRepository for InMemoryChatRepository {
                 .filter_map(|membership| {
                     let channel = state.channels.get(&membership.channel_id)?;
                     Some(ChannelSummary {
+                        direct_activity: None,
                         id: channel.id.clone(),
                         slug: channel.slug.clone(),
                         name: channel.name.clone(),
@@ -1846,6 +1848,49 @@ impl ChatRepository for InMemoryChatRepository {
                     })
                 })
                 .collect::<Vec<_>>();
+            let now = Utc::now();
+            for channel in &mut channels {
+                if !channel.is_direct {
+                    continue;
+                }
+                let mut activity = super::direct_activity::empty(now);
+                let mut days = std::collections::BTreeMap::new();
+                for message in state
+                    .messages
+                    .get(&channel.id)
+                    .into_iter()
+                    .flatten()
+                    .filter(|m| m.deleted_at.is_none())
+                {
+                    let day = days.entry(message.sent_at.date_naive()).or_insert((
+                        message.sent_at,
+                        false,
+                        false,
+                    ));
+                    day.0 = day.0.max(message.sent_at);
+                    if state
+                        .users
+                        .get(&message.sender_id)
+                        .is_some_and(|u| u.kind == super::PrincipalKind::Human)
+                    {
+                        if message.sender_id == actor {
+                            day.1 = true;
+                        } else {
+                            day.2 = true;
+                        }
+                    }
+                }
+                for (day, (latest, actor_sent, others_sent)) in days {
+                    super::direct_activity::add_day(
+                        &mut activity,
+                        day,
+                        latest,
+                        actor_sent,
+                        others_sent,
+                    );
+                }
+                channel.direct_activity = Some(activity);
+            }
             channels.sort_by(|left, right| left.slug.cmp(&right.slug));
             Ok(channels)
         })
@@ -2708,6 +2753,54 @@ mod tests {
         );
         let export = repository.export_user_data(first).await.unwrap();
         assert_eq!(export.signup_ordinal, Some(1));
+    }
+
+    #[tokio::test]
+    async fn memory_direct_activity_counts_days_not_volume() {
+        let repository = InMemoryChatRepository::default();
+        let alice = add_human(&repository, "activity alice").await;
+        let bob = add_human(&repository, "activity bob").await;
+        let outsider = add_human(&repository, "activity outsider").await;
+        let direct = repository
+            .open_direct_channel(alice.clone(), bob.clone())
+            .await
+            .unwrap();
+        let hidden = repository
+            .open_direct_channel(bob.clone(), outsider.clone())
+            .await
+            .unwrap();
+        for sender in [alice.clone(), alice.clone(), bob] {
+            repository
+                .append_message(SendMessage {
+                    actor: sender,
+                    channel_id: direct.id.clone(),
+                    parent_message_id: None,
+                    body: crate::domain::MessageBody::new("hello").unwrap(),
+                })
+                .await
+                .unwrap();
+        }
+        let listed = repository.list_channels_for_user(alice).await.unwrap();
+        assert!(!listed.iter().any(|c| c.id == hidden.id));
+        let activity = listed
+            .iter()
+            .find(|c| c.id == direct.id)
+            .unwrap()
+            .direct_activity
+            .as_ref()
+            .unwrap();
+        assert!(activity.score > 1.95 && activity.score <= 2.0);
+        assert!(activity.last_message_at.is_some());
+        let empty = repository.list_channels_for_user(outsider).await.unwrap();
+        let activity = empty
+            .iter()
+            .find(|c| c.id == hidden.id)
+            .unwrap()
+            .direct_activity
+            .as_ref()
+            .unwrap();
+        assert_eq!(activity.score, 0.0);
+        assert_eq!(activity.last_message_at, None);
     }
 
     #[tokio::test]

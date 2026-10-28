@@ -1787,7 +1787,38 @@ impl ChatRepository for PostgresChatRepository {
                 .fetch_all(&self.pool)
                 .await
                 .map_err(sql_error)?;
-            rows.into_iter().map(channel_summary).collect()
+            let mut channels = rows
+                .into_iter()
+                .map(channel_summary)
+                .collect::<Result<Vec<_>, _>>()?;
+            let now = chrono::Utc::now();
+            let mut activities = std::collections::HashMap::new();
+            for channel in channels.iter().filter(|c| c.is_direct) {
+                activities.insert(
+                    channel.id.clone(),
+                    crate::domain::direct_activity::empty(now),
+                );
+            }
+            if !activities.is_empty() {
+                let days = sqlx::query("select msg.channel_id, (msg.created_at at time zone 'UTC')::date as activity_day, max(msg.created_at) as latest, max(case when u.kind='human' and msg.sender_id=$1 then 1 else 0 end) as actor_sent, max(case when u.kind='human' and msg.sender_id<>$1 then 1 else 0 end) as others_sent from channel_memberships membership join messages msg on msg.channel_id=membership.channel_id join users u on u.id=msg.sender_id where membership.user_id=$1 and msg.deleted_at is null and (exists(select 1 from direct_conversations d where d.channel_id=msg.channel_id) or exists(select 1 from direct_group_conversations g where g.channel_id=msg.channel_id)) group by msg.channel_id, (msg.created_at at time zone 'UTC')::date order by msg.channel_id, activity_day")
+                    .bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+                for row in days {
+                    let id = ChannelId::from_uuid(row.try_get("channel_id").map_err(storage)?);
+                    if let Some(activity) = activities.get_mut(&id) {
+                        crate::domain::direct_activity::add_day(
+                            activity,
+                            row.try_get("activity_day").map_err(storage)?,
+                            row.try_get("latest").map_err(storage)?,
+                            row.try_get::<i32, _>("actor_sent").map_err(storage)? != 0,
+                            row.try_get::<i32, _>("others_sent").map_err(storage)? != 0,
+                        );
+                    }
+                }
+            }
+            for channel in &mut channels {
+                channel.direct_activity = activities.remove(&channel.id);
+            }
+            Ok(channels)
         })
     }
 
@@ -3573,6 +3604,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
+        direct_activity: None,
         id: ChannelId::from_uuid(id),
         slug: ChannelSlug::new(slug).map_err(storage)?,
         name: DisplayName::new(name).map_err(storage)?,

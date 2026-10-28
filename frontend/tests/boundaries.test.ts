@@ -1257,3 +1257,4 @@ test("chunk upload retries committed requests with truncated bodies and never re
     assert.deepEqual(slices,[1024*1024,13]);
   } finally { globalThis.fetch = previousFetch; }
 });
+import "../src/direct-activity.test";
