@@ -503,6 +503,7 @@
 @media (pointer: coarse) { #sproyt-react-preview .sp-message-primary-actions > .sp-button { min-width: 44px; min-height: 44px; } }
 #sproyt-react-preview .sp-channel-pane > .sp-context { justify-content: flex-start; padding: .65rem 1rem; gap: .5rem; }
 #sproyt-react-preview .sp-conversation-title { margin-inline-end: .5rem; }
+.sp-conversation-toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: .25rem; max-width: 100%; }
 #sproyt-react-preview .sp-timeline { padding-inline: 1rem; }
 #sproyt-react-preview .sp-composer { margin-inline: 1rem; }
 #sproyt-react-preview .sp-draft-composer .sp-textarea:focus-visible { outline: 2px solid var(--sp-text); outline-offset: -2px; }

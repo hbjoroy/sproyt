@@ -300,7 +300,7 @@ export function ConversationView(props: ConversationViewProps) {
           {!props.emptyContent && <header className="sp-context">
             <Button className="sp-only-compact" onClick={props.onBack}>← Samtalar</Button>
             <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 className="sp-heading">{props.title}</h1></div>
-            {props.contextActions}
+            <div className="sp-conversation-toolbar">{props.contextActions}</div>
           </header>}
           {props.emptyContent ?? <><ConversationTimeline {...props.timeline} />{props.composer}</>}
         </section>
