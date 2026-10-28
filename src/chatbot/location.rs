@@ -20,7 +20,7 @@ const MAX_FUTURE_SECONDS: i64 = 30;
 static LAST_CLEANUP: AtomicI64 = AtomicI64::new(0);
 #[cfg(test)]
 tokio::task_local! {
-    static TEST_ENABLED: bool;
+    pub(crate) static TEST_ENABLED: bool;
 }
 
 pub(crate) fn enabled() -> bool {

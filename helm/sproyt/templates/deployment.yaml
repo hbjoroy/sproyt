@@ -107,6 +107,27 @@ spec:
                   name: {{ .Values.secret.vllmExistingSecret }}
                   key: {{ .Values.secret.vllmApiKeyKey }}
             {{- end }}
+            {{- if .Values.secret.googleMapsExistingSecret }}
+            - name: SPROYT_GOOGLE_MAPS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.googleMapsExistingSecret }}
+                  key: {{ .Values.secret.googleMapsApiKeyKey }}
+            {{- end }}
+            {{- if .Values.secret.googleMapsRouteExistingSecret }}
+            - name: SPROYT_PLACE_ROUTE_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.googleMapsRouteExistingSecret }}
+                  key: {{ .Values.secret.googleMapsRouteKeyKey }}
+            {{- end }}
+            {{- if .Values.secret.geoapifyExistingSecret }}
+            - name: SPROYT_GEOAPIFY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.geoapifyExistingSecret }}
+                  key: {{ .Values.secret.geoapifyApiKeyKey }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 9010

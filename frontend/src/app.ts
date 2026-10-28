@@ -2,6 +2,8 @@
       import { uploadMediaChunks } from "./media-upload";
       import { ProcessPilotApi } from "./process-pilot";
       import { ThreadPreviewApi } from "./thread-previews";
+      import { AgentPlaceLookupApi } from "./agent-place-lookup";
+      import { AgentGeoapifyRollApi } from "./agent-geoapify-roll";
       import { WorkItemApi } from "./work-items";
       import { appVersion, createAppUpdate, latestAppVersion, updateAppWorker } from "./app-update";
       import { createShareTarget, shareInbox } from "./share-target";
@@ -843,6 +845,8 @@
       });
       const favoriteCircles = new CircleFavorites(new ProfileCircleFavoritesApi(http), () => currentParticipantId);
       const threadPreviews = new ThreadPreviewApi(http);
+      const agentPlaceLookup = new AgentPlaceLookupApi(http);
+      const agentGeoapifyRoll = new AgentGeoapifyRollApi(http);
       const savedEmojisApi = new SavedEmojiApi(http);
       const savedStatusesApi = new SavedStatusApi(http);
       const notificationsApi = new NotificationApi(http);
@@ -6383,6 +6387,9 @@
             chatAgents: circleChatAgentsApi,
             agentLocations: agentLocationApi,
             threadPreviews,
+            agentPlaceLookup,
+            agentGeoapifyRoll,
+            accountEpoch: () => accountGeneration,
             processPilot: processPilotApi,
             workItems: workItemsApi,
             appUpdate,

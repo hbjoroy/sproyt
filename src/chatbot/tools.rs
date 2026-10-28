@@ -3,6 +3,7 @@
 use super::*;
 
 pub(super) struct ReadTools<'a> {
+    pub place_lookup: Option<super::place_lookup::PlaceLookupPlan>,
     pub weather_service: Option<&'a weather::WeatherService>,
     pub sea_temperature_service: Option<&'a sea_temperature::SeaTemperatureService>,
     pub sea_temperature_config: Option<sea_temperature::SeaTemperatureConfig>,
@@ -28,6 +29,53 @@ struct FerryArgs {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmptyArgs {}
+
+const MAX_DIE_SIDES: u32 = 10_000;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DieArgs {
+    sides: u32,
+}
+
+fn die_arguments(arguments: &str) -> std::result::Result<DieArgs, &'static str> {
+    let args: DieArgs = serde_json::from_str(arguments).map_err(|_| "model_invalid_tool")?;
+    if !(1..=MAX_DIE_SIDES).contains(&args.sides) {
+        return Err("model_invalid_tool");
+    }
+    Ok(args)
+}
+
+// Rejection sampling avoids modulo bias. The injected source makes boundary
+// cases testable without relying on statistical tests of operating-system RNG.
+fn unbiased_die(
+    mut next: impl FnMut() -> std::result::Result<u64, &'static str>,
+    sides: u32,
+) -> std::result::Result<u32, &'static str> {
+    if !(1..=MAX_DIE_SIDES).contains(&sides) {
+        return Err("model_invalid_tool");
+    }
+    let n = u64::from(sides);
+    let threshold = n.wrapping_neg() % n;
+    for _ in 0..128 {
+        let value = next()?;
+        if value >= threshold {
+            return Ok((value % n) as u32 + 1);
+        }
+    }
+    Err("random_unavailable")
+}
+
+pub(super) fn roll_die(sides: u32) -> std::result::Result<u32, &'static str> {
+    unbiased_die(
+        || {
+            let mut bytes = [0; 8];
+            getrandom::fill(&mut bytes).map_err(|_| "random_unavailable")?;
+            Ok(u64::from_le_bytes(bytes))
+        },
+        sides,
+    )
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,6 +110,8 @@ pub(super) fn validate_arguments(
         return Err("model_invalid_tool");
     }
     match name {
+        "roll_die" => die_arguments(arguments).map(|_| ()),
+        "find_bars" => super::place_lookup::parse_plan(arguments).map(|_| ()),
         "lookup_sea_temperature" => sea_arguments(arguments).map(|_| ()),
         "lookup_weather" => {
             let args: WeatherArgs =
@@ -113,6 +163,12 @@ impl ReadTools<'_> {
     }
     pub fn definitions(&self) -> Vec<Value> {
         let mut tools = Vec::new();
+        tools.push(json!({"type":"function","function":{
+            "name":"roll_die","description":"Roll one real random die with the requested number of sides. Use the returned value; never invent a roll. For a random choice among N known options, request N sides and use the resulting 1-based index.",
+            "parameters":{"type":"object","properties":{"sides":{"type":"integer","minimum":1,"maximum":MAX_DIE_SIDES}},"required":["sides"],"additionalProperties":false}}}));
+        if super::place_lookup::enabled() {
+            tools.push(super::place_lookup::definition());
+        }
         if let Some(config) = &self.sea_temperature_config {
             let catalogue = sea_temperature::locations()
                 .into_iter()
@@ -153,6 +209,14 @@ impl ReadTools<'_> {
             return Err("model_invalid_tool");
         }
         let mut result = match name {
+            "roll_die" => {
+                let args = die_arguments(arguments)?;
+                json!({"sides": args.sides, "value": roll_die(args.sides)?})
+            }
+            "find_bars" if super::place_lookup::enabled() => {
+                self.place_lookup = Some(super::place_lookup::parse_plan(arguments)?);
+                return Ok(json!({"status":"lookup_planned"}));
+            }
             "lookup_sea_temperature" if self.sea_temperature_config.is_some() => {
                 let args = sea_arguments(arguments)?;
                 let config = self
@@ -263,9 +327,67 @@ fn folded(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn die_rejects_bias_boundaries_and_rng_failure() {
+        // For six sides the first four u64 values are rejected: 2^64 % 6 = 4.
+        let mut values = [0, 1, 2, 3, 4].into_iter();
+        assert_eq!(unbiased_die(|| Ok(values.next().unwrap()), 6).unwrap(), 5);
+        assert_eq!(unbiased_die(|| Ok(u64::MAX), 1).unwrap(), 1);
+        assert_eq!(unbiased_die(|| Ok(u64::MAX), 0), Err("model_invalid_tool"));
+        assert_eq!(
+            unbiased_die(|| Ok(0), MAX_DIE_SIDES + 1),
+            Err("model_invalid_tool")
+        );
+        assert_eq!(
+            unbiased_die(|| Err("random_unavailable"), 6),
+            Err("random_unavailable")
+        );
+        assert_eq!(unbiased_die(|| Ok(0), 6), Err("random_unavailable"));
+    }
+
+    #[tokio::test]
+    async fn real_die_tool_is_bounded_strict_and_available_to_all_agents() {
+        let mut tools = ReadTools {
+            place_lookup: None,
+            weather_service: None,
+            sea_temperature_service: None,
+            sea_temperature_config: None,
+            sea_temperature: None,
+            weather: None,
+            ferry: None,
+            observations: None,
+        };
+        assert!(
+            tools
+                .definitions()
+                .iter()
+                .any(|item| item["function"]["name"] == "roll_die")
+        );
+        for invalid in [
+            "{}",
+            r#"{"sides":0}"#,
+            r#"{"sides":10001}"#,
+            r#"{"sides":-1}"#,
+            r#"{"sides":1.5}"#,
+            r#"{"sides":6,"extra":1}"#,
+        ] {
+            assert!(tools.validate_call("roll_die", invalid).is_err());
+            assert!(tools.execute("roll_die", invalid).await.is_err());
+        }
+        for sides in [1, 2, 6, MAX_DIE_SIDES] {
+            let result = tools
+                .execute("roll_die", &json!({"sides":sides}).to_string())
+                .await
+                .unwrap();
+            assert_eq!(result["sides"], sides);
+            assert!((1..=u64::from(sides)).contains(&result["value"].as_u64().unwrap()));
+        }
+    }
+
     #[tokio::test]
     async fn marine_capability_is_independent_and_authorized_before_io() {
         let mut tools = ReadTools {
+            place_lookup: None,
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: Some(sea_temperature::SeaTemperatureConfig {
@@ -278,8 +400,16 @@ mod tests {
             observations: None,
         };
         let definitions = tools.definitions();
-        assert_eq!(definitions.len(), 1);
-        assert_eq!(definitions[0]["function"]["name"], "lookup_sea_temperature");
+        assert!(
+            definitions
+                .iter()
+                .any(|item| item["function"]["name"] == "lookup_sea_temperature")
+        );
+        assert!(
+            definitions
+                .iter()
+                .any(|item| item["function"]["name"] == "roll_die")
+        );
         assert!(tools.validate_call("lookup_sea_temperature", "{}").is_ok());
         assert!(
             tools
@@ -317,13 +447,19 @@ mod tests {
             "sea_temperature_disabled"
         );
         tools.sea_temperature_config = None;
-        assert!(tools.definitions().is_empty());
+        assert!(
+            !tools
+                .definitions()
+                .iter()
+                .any(|item| item["function"]["name"] == "lookup_sea_temperature")
+        );
         assert!(tools.validate_call("lookup_sea_temperature", "{}").is_err());
     }
 
     #[tokio::test]
     async fn capabilities_and_strict_arguments_bound_tool_execution() {
         let mut tools = ReadTools {
+            place_lookup: None,
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -332,7 +468,12 @@ mod tests {
             ferry: None,
             observations: None,
         };
-        assert!(tools.definitions().is_empty());
+        assert!(
+            tools
+                .definitions()
+                .iter()
+                .any(|item| item["function"]["name"] == "roll_die")
+        );
         assert!(
             tools
                 .execute("lookup_weather", r#"{"location":"Athens"}"#)
@@ -373,6 +514,7 @@ mod tests {
         let expiry = Utc::now().timestamp() + 10;
         let default = json!({"configured_location":"Parikia","current":{"temperature_c":22},"valid_until_epoch":expiry});
         let mut tools = ReadTools {
+            place_lookup: None,
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -396,6 +538,13 @@ mod tests {
     async fn model_exchange(
         agent: &str,
         calls: Value,
+    ) -> (std::result::Result<String, &'static str>, Vec<Value>) {
+        model_exchange_body(agent, calls, "vis dagslista").await
+    }
+    async fn model_exchange_body(
+        agent: &str,
+        calls: Value,
+        body: &str,
     ) -> (std::result::Result<String, &'static str>, Vec<Value>) {
         use axum::{
             Json, Router,
@@ -433,6 +582,7 @@ mod tests {
         let weather =
             json!({"configured_location":"Parikia","valid_until_epoch":Utc::now().timestamp()+300});
         let mut tools = ReadTools {
+            place_lookup: None,
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -445,7 +595,7 @@ mod tests {
             source: None,
             id: "target".into(),
             author: "Kari".into(),
-            body: format!("@{agent} vis dagslista"),
+            body: format!("@{agent} {body}"),
         }];
         let result = model
             .reply_with_tools(
@@ -470,12 +620,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_receives_real_die_result_in_the_tool_round() {
+        let calls = json!([{"id":"die-1","type":"function","function":{"name":"roll_die","arguments":r#"{"sides":6}"#}}]);
+        let (reply, requests) = model_exchange_body("Maria", calls, "Trill ein terning").await;
+        assert!(reply.is_ok());
+        assert_eq!(requests.len(), 2);
+        let result = requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "tool" && message["tool_call_id"] == "die-1")
+            .unwrap();
+        let result: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+        assert_eq!(result["sides"], 6);
+        assert!((1..=6).contains(&result["value"].as_u64().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn place_lookup_model_selection_never_gets_a_result_or_second_round() {
+        super::super::place_lookup::TEST_ENABLED.scope(true, async {
+            let call=json!({"id":"maps-1","type":"function","function":{"name":"find_bars","arguments":r#"{"query":"bars in Bergen","origin_mode":"none"}"#}});
+            let (reply,requests)=model_exchange_body("Maria",json!([call.clone()]), "bars in Bergen").await;
+            assert_eq!(reply.unwrap(),super::super::place_lookup::NEUTRAL_REPLY);
+            assert_eq!(requests.len(),1);
+            let (reply,requests)=model_exchange("Maria",json!([call.clone()])).await;
+            assert_eq!(reply.unwrap(),super::super::place_lookup::CLARIFICATION_REPLY);
+            assert_eq!(requests.len(),1);
+            let extra=json!({"id":"ferry-1","type":"function","function":{"name":"ferry_calls","arguments":"{}"}});
+            let (reply,requests)=model_exchange("Maria",json!([call,extra])).await;
+            assert_eq!(reply,Err("model_invalid_tool"));
+            assert_eq!(requests.len(),1);
+            let (reply,requests)=model_exchange("Maria",json!([{"id":"maps-1","type":"function","function":{"name":"find_bars","arguments":r#"{"query":"bars","origin_mode":"shared"}"#}}])).await;
+            assert_eq!(reply,Err("model_invalid_tool"));
+            assert_eq!(requests.len(),1);
+        }).await;
+    }
+
+    #[tokio::test]
     async fn native_tools_are_shared_and_preserve_full_port_call_facts() {
         for agent in ["Maria", "Fogd"] {
             let (reply, requests) = model_exchange(agent,json!([{"id":"call-1","type":"function","function":{"name":"ferry_calls","arguments":"{}"}}])).await;
             assert!(reply.is_ok());
             assert_eq!(requests.len(), 2);
-            assert_eq!(requests[0]["tools"].as_array().unwrap().len(), 2);
+            assert!(
+                requests[0]["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|tool| tool["function"]["name"] == "roll_die")
+            );
             let system = requests[0]["messages"][0]["content"].as_str().unwrap();
             assert!(!system.contains("You have no tools"));
             assert!(!system.contains("data covers only the configured coordinates"));
@@ -549,6 +742,7 @@ mod tests {
                 body: format!("@{agent} {question}"),
             }];
             let mut tools = ReadTools {
+                place_lookup: None,
                 weather_service: Some(&weather_service),
                 sea_temperature_service: None,
                 sea_temperature_config: None,

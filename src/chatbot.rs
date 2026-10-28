@@ -61,14 +61,23 @@ pub(crate) mod agent_images;
 mod channel_access;
 mod ferry;
 mod followup;
+mod geoapify;
+#[cfg(test)]
+pub(crate) use geoapify::TEST_ENABLED as GEOAPIFY_TEST_ENABLED;
+pub(crate) mod geoapify_roll;
+mod geoapify_roll_worker;
 pub(crate) mod handoffs;
 pub(crate) mod location;
+pub(crate) mod maps;
+pub(crate) mod maps_lookup;
 pub(crate) mod memory;
 mod mention;
 mod observations;
 mod operators;
+pub(crate) mod place_lookup;
 mod sea_temperature;
 mod tools;
+pub(crate) use maps_lookup::MapsLookupError;
 mod vision;
 mod weather;
 pub(crate) use channel_access::ChannelAgentInput;
@@ -964,6 +973,10 @@ impl VllmChat {
             || Value::String(content.clone()),
             |vision| vision.content(content.clone()),
         );
+        let target_body = messages
+            .iter()
+            .find(|message| message.id == target)
+            .map(|message| message.body.clone());
         let mut messages = vec![
             json!({"role":"system","content":system}),
             json!({"role":"user","content":content}),
@@ -1018,6 +1031,30 @@ impl VllmChat {
                                 .as_str()
                                 .ok_or("model_invalid_tool")?,
                         )?;
+                }
+                if calls
+                    .iter()
+                    .any(|call| call["function"]["name"] == "find_bars")
+                {
+                    if calls.len() != 1 {
+                        return Err("model_invalid_tool");
+                    }
+                    let args = calls[0]["function"]["arguments"]
+                        .as_str()
+                        .ok_or("model_invalid_tool")?;
+                    let plan = place_lookup::parse_plan(args)?;
+                    if plan.origin_mode == "shared" && shared_location.is_none() {
+                        return Err("model_invalid_tool");
+                    }
+                    if target_body
+                        .as_deref()
+                        .is_none_or(|body| !place_lookup::grounded_in_source(&plan, body))
+                    {
+                        return Ok(place_lookup::CLARIFICATION_REPLY.to_owned());
+                    }
+                    let runtime = read_tools.as_mut().ok_or("model_invalid_tool")?;
+                    runtime.execute("find_bars", args).await?;
+                    return Ok(place_lookup::NEUTRAL_REPLY.to_owned());
                 }
                 messages.push(
                     json!({"role":"assistant","content":draft["content"],"tool_calls":calls}),
@@ -1414,6 +1451,9 @@ impl CircleChatAgents {
                         tracing::warn!(error_kind = error.kind(), "chat agent job claim failed")
                     }
                 }
+                if let Err(error) = service.geoapify_roll_tick(&chat).await {
+                    tracing::warn!(error_kind = error.kind(), "place roll worker failed");
+                }
                 if let Err(error) = service.image_tick(&chat).await {
                     tracing::warn!(error_kind = error.kind(), "agent picture worker failed");
                 }
@@ -1762,6 +1802,7 @@ impl CircleChatAgents {
                 return Err("location_changed");
             }
             let mut read_tools = tools::ReadTools {
+                place_lookup: None,
                 weather_service: self.weather.as_deref(),
                 sea_temperature_service: self.sea_temperature.as_deref(),
                 sea_temperature_config: if sea_temperature_enabled() {
@@ -1813,6 +1854,13 @@ impl CircleChatAgents {
             self.location_for_job(job)
                 .await
                 .map_err(|_| "location_changed")?;
+            let place_lookup_plan = read_tools
+                .place_lookup
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|_| "place_lookup_plan")?
+                .unwrap_or_default();
             let sea_snapshot = read_tools.sea_temperature;
             let sea_valid_until = sea_snapshot
                 .as_ref()
@@ -1858,7 +1906,7 @@ impl CircleChatAgents {
                 .transpose()
                 .map_err(|_| "observations_invalid")?
                 .unwrap_or_default();
-            let changed = self.store.execute("update circle_chat_agent_jobs set reply_body=?,weather_snapshot=nullif(?,'null'),weather_valid_until=?int,ferry_snapshot=nullif(?,'null'),ferry_valid_until=?int,observation_snapshot=nullif(?,''),observation_valid_until=cast(nullif(?,'') as bigint),sea_temperature_snapshot=nullif(?,''),sea_temperature_valid_until=cast(nullif(?,'') as bigint) where id=?uuid and lease_token=?uuid and status='leased' and reply_body is null", &[answer.clone(),snapshot,valid_until.to_string(),ferry_snapshot,ferry_valid_until.to_string(),observation_snapshot,observation_valid_until,sea_snapshot,sea_valid_until,job.id.clone(),job.lease_token.clone()]).await.map_err(|_| "reply_store")?;
+            let changed = self.store.execute("update circle_chat_agent_jobs set reply_body=?,place_lookup_plan=nullif(?,''),weather_snapshot=nullif(?,'null'),weather_valid_until=?int,ferry_snapshot=nullif(?,'null'),ferry_valid_until=?int,observation_snapshot=nullif(?,''),observation_valid_until=cast(nullif(?,'') as bigint),sea_temperature_snapshot=nullif(?,''),sea_temperature_valid_until=cast(nullif(?,'') as bigint) where id=?uuid and lease_token=?uuid and status='leased' and reply_body is null", &[answer.clone(),place_lookup_plan,snapshot,valid_until.to_string(),ferry_snapshot,ferry_valid_until.to_string(),observation_snapshot,observation_valid_until,sea_snapshot,sea_valid_until,job.id.clone(),job.lease_token.clone()]).await.map_err(|_| "reply_store")?;
             if changed != 1 {
                 return Err("lease_lost");
             }

@@ -2109,6 +2109,13 @@ impl ChatRepository for PostgresChatRepository {
                     &request_id,
                 )
                 .await?;
+            } else if request_id.starts_with("circle-place-roll:") {
+                crate::chatbot::geoapify_roll::authorize_postgres(
+                    &mut transaction,
+                    &command,
+                    &request_id,
+                )
+                .await?;
             } else if request_id.starts_with("circle-chat-agent:") {
                 crate::chatbot::authorize_reply_postgres(&mut transaction, &command, &request_id)
                     .await?;

@@ -833,6 +833,7 @@ mod tests {
                 body: format!("@Maria {question}"),
             }];
             let mut tools = ReadTools {
+                place_lookup: None,
                 weather_service: None,
                 sea_temperature_service: Some(&service),
                 sea_temperature_config: Some(config.clone()),

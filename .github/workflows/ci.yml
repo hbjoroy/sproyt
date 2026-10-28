@@ -262,6 +262,7 @@ jobs:
           cargo test postgres_ferry_agent_contract --locked
           cargo test postgres_vision_attachment_contract --locked
           cargo test postgres_agent_image_publication_contract --locked
+          cargo test postgres_geoapify_roll_contract --locked -- --test-threads=1
           cargo test postgres_two_replica_realtime_and_restart_catch_up_gate --locked
           cargo test chatbot::tests::postgres_ --locked -- --test-threads=1
           cargo test postgres_handoff_admission_contract --locked -- --test-threads=1
