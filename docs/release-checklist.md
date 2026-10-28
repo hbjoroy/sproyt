@@ -8,10 +8,11 @@ commit with `publish_image` enabled, or push its reviewed `v*` release tag.
 Manual publish dispatches from other refs are rejected. The publish job waits
 for all selected checks and publishes the tested ARM64 image under the
 immutable commit tag. Record the digest from the
-`registry-evidence-<commit>` artifact. Normal pull requests and `main` pushes
-deliberately run only the fast quality and PostgreSQL gates; the full
-ARM64/SBOM/recovery gate also runs weekly as a regression sentinel without
-publishing an image.
+`registry-evidence-<commit>` artifact. Pull requests select checks from the
+changed areas. Merging does not start a duplicate `main` push run: the canonical
+publish dispatch validates the exact merged revision before publishing. A direct
+push to `main` is therefore not release evidence. Weekly and explicitly forced
+runs retain full regression without publishing an image.
 
 ## Choose checks from the change
 
@@ -28,8 +29,17 @@ revision. CI examines **all** changes between that ancestor and the release:
   browser suite unless shared HTTP/UI/protocol contracts changed.
 - Imagegen frontend changes run imagegen, media-draft and composer-validation
   browser contracts, including the original `/imagegen` validation behavior.
-- Shared frontend, HTTP, protocol and legacy HTML changes run full Chromium and
-  WebKit contracts.
+- CSS changes run layout, navigation, composer and message interaction contracts
+  in Chromium and WebKit. Bounded frontend features (DM, reactions, Markdown,
+  device setup, place lookup and thread directory) run their declared contracts
+  plus core smoke tests. Changed browser specs are included explicitly.
+- Shared/unclassified frontend logic, HTTP, protocol and legacy HTML changes run
+  full Chromium and the maintained mobile WebKit suite. Full regression is split
+  across four Chromium and two WebKit jobs, each with a separate database/server.
+- Frontend-only changes still build and exercise the real backend binary but do
+  not rerun unchanged Rust unit/Clippy/PostgreSQL or codec tests. Backend or
+  unknown changes retain those checks. UI skill archives are documentation,
+  not database changes.
 - Database, migrations, domain persistence, runtime operations, dependencies,
   build/configuration and unclassified changes retain the backup/restore drill.
   Ordinary imagegen or frontend changes do not need that drill.
@@ -39,11 +49,13 @@ revision. CI examines **all** changes between that ancestor and the release:
   workflow validation; they do not require application UI or database restore
   testing. Mixing policy changes with application code retains the full gate.
 
-Every published image still passes compilation, lint, unit/PostgreSQL tests,
-Helm delivery validation, ARM64 identity checks, SBOM and vulnerability scanning.
-The workflow summary records selected checks. Publication accepts a skipped
-recovery job only when scope selection explicitly says it was unnecessary;
-failed or cancelled checks never permit publication.
+Every published image still passes ARM64 compilation, Helm delivery validation,
+identity checks, SBOM and vulnerability scanning. Lint/unit/PostgreSQL and browser
+checks follow the complete change range. The workflow summary records selected
+checks. Publication accepts skipped PostgreSQL/recovery/browser jobs only when
+scope selection explicitly says they were unnecessary; failed or cancelled
+selected checks never permit publication. Heart publication also waits for the
+selected browser gate. See [CI iteration strategy](ci-iteration-strategy.md).
 
 ```powershell
 gh workflow run ci.yml --ref main -f publish_image=true -f base_revision=<last-verified-40-character-revision>

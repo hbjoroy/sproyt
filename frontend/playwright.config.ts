@@ -15,7 +15,8 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   failOnFlakyTests: true,
-  reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
+  reporter: process.env.CI ? [["github"], ["html", { open: "never" }],
+    ["json", { outputFile: "test-results/results.json" }]] : "list",
   use: { baseURL, serviceWorkers: "block", trace: "retain-on-failure" },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },

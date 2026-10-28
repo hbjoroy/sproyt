@@ -27,8 +27,12 @@ function requireEnvironment(): { runDirectory: string; port: number; databaseUrl
   return { runDirectory, port, databaseUrl };
 }
 
-function cargoCommand(): string {
-  return process.platform === "win32" ? "cargo.exe" : "cargo";
+function serverCommand(migrate = false): [string, string[]] {
+  // CI builds this once, then each shard runs its own process and database.
+  const binary = process.env.SPROYT_E2E_SERVER_BINARY;
+  if (binary) return [binary, migrate ? ["migrate"] : []];
+  return [process.platform === "win32" ? "cargo.exe" : "cargo",
+    ["run", "--quiet", "--locked", ...(migrate ? ["--", "migrate"] : [])]];
 }
 
 function commandEnvironment(port: number, databaseUrl: string): NodeJS.ProcessEnv {
@@ -45,7 +49,8 @@ function commandEnvironment(port: number, databaseUrl: string): NodeJS.ProcessEn
 
 async function runMigration(environment: NodeJS.ProcessEnv): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(cargoCommand(), ["run", "--quiet", "--", "migrate"], {
+    const [command, args] = serverCommand(true);
+    const child = spawn(command, args, {
       cwd: repositoryRoot,
       env: environment,
       stdio: "inherit"
@@ -106,7 +111,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const isolated = requireEnvironment();
   const environment = commandEnvironment(isolated.port, isolated.databaseUrl);
   await runMigration(environment);
-  const child = spawn(cargoCommand(), ["run", "--quiet"], {
+  const [command, args] = serverCommand();
+  const child = spawn(command, args, {
     cwd: repositoryRoot,
     env: environment,
     stdio: "inherit",
