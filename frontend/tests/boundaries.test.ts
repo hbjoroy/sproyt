@@ -1,3 +1,4 @@
+import "./dice-roll.test";
 import { uploadMediaChunks } from "../src/media-upload";
 import assert from "node:assert/strict";
 import "./conversation-snapshot.test";

@@ -834,6 +834,7 @@ mod tests {
             }];
             let mut tools = ReadTools {
                 place_lookup: None,
+                dice: Vec::new(),
                 weather_service: None,
                 sea_temperature_service: Some(&service),
                 sea_temperature_config: Some(config.clone()),

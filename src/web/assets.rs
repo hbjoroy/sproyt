@@ -163,3 +163,58 @@ fn static_asset(content_type: &'static str, content: &'static [u8]) -> axum::res
     )
         .into_response()
 }
+
+/// Versioned local sprites; no uploaded/user-supplied path is ever opened.
+pub(crate) async fn dice_sprite(Path(file): Path<String>) -> axum::response::Response {
+    let bytes: &[u8] = match file.as_str() {
+        "1-a.png" => include_bytes!("../../assets/dice/1-a.png"),
+        "1-b.png" => include_bytes!("../../assets/dice/1-b.png"),
+        "2-a.png" => include_bytes!("../../assets/dice/2-a.png"),
+        "2-b.png" => include_bytes!("../../assets/dice/2-b.png"),
+        "3-a.png" => include_bytes!("../../assets/dice/3-a.png"),
+        "3-b.png" => include_bytes!("../../assets/dice/3-b.png"),
+        "4-a.png" => include_bytes!("../../assets/dice/4-a.png"),
+        "4-b.png" => include_bytes!("../../assets/dice/4-b.png"),
+        "5-a.png" => include_bytes!("../../assets/dice/5-a.png"),
+        "5-b.png" => include_bytes!("../../assets/dice/5-b.png"),
+        "6-a.png" => include_bytes!("../../assets/dice/6-a.png"),
+        "6-b.png" => include_bytes!("../../assets/dice/6-b.png"),
+        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
+    };
+    (
+        [
+            (CONTENT_TYPE, "image/png"),
+            (CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+#[tokio::test]
+async fn dice_sprites_are_versioned_transparent_pngs_and_unknown_paths_are_rejected() {
+    for face in 1..=6 {
+        for variant in ['a', 'b'] {
+            let response = dice_sprite(Path(format!("{face}-{variant}.png"))).await;
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            assert_eq!(response.headers()[CONTENT_TYPE], "image/png");
+            assert!(
+                response.headers()[CACHE_CONTROL]
+                    .to_str()
+                    .unwrap()
+                    .contains("immutable")
+            );
+            let bytes = axum::body::to_bytes(response.into_body(), 256 * 1024)
+                .await
+                .unwrap();
+            let image = image::load_from_memory(&bytes).unwrap().to_rgba8();
+            assert_eq!(image.dimensions(), (256, 256));
+            assert_eq!(image.get_pixel(0, 0)[3], 0);
+            assert!(image.get_pixel(128, 128)[3] > 0);
+        }
+    }
+    assert_eq!(
+        dice_sprite(Path("../secret".into())).await.status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+}

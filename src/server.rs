@@ -36,7 +36,7 @@ use crate::{
         approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
     },
     web::assets::{
-        app_bundle, client_core_wasm, client_store, client_store_legacy, offline_page,
+        app_bundle, client_core_wasm, client_store, client_store_legacy, dice_sprite, offline_page,
         pwa_manifest, service_worker, wave_logo_192, wave_logo_512,
     },
     web::auth::{
@@ -226,6 +226,7 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         )
         .route("/service-worker.js", get(service_worker))
         .route("/offline", get(offline_page))
+        .route("/assets/dice/v1/{file}", get(dice_sprite))
         .route("/assets/sproyt-wave-icon-192.png", get(wave_logo_192))
         .route("/assets/sproyt-wave-icon-512.png", get(wave_logo_512))
         .route("/metrics", get(metrics))

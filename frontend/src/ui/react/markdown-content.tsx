@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { isValidElement, useEffect, useId, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -63,10 +63,23 @@ function appLink(href: string | undefined): boolean {
       && (url.searchParams.has("channel") || ["settings", "inbox", "circles", "direct"].includes(url.searchParams.get("view") ?? ""));
   } catch { return false; }
 }
+function DiceRoll({ source }: { readonly source: string }) {
+  const trimmed=source.trim();
+  if (!/^[1-6](?:,[1-6]){0,9}$/u.test(trimmed)) return <code>{source}</code>;
+  const values=trimmed.split(",").map(Number);
+  return <div role="img" aria-label={`Terningkast: ${values.join(" og ")}`} style={{display:"flex",flexWrap:"wrap",gap:4}}>
+    {values.map((value,index)=><img key={index} src={`/assets/dice/v1/${value}-${index % 2 === 0 ? "a" : "b"}.png`}
+      width={96} height={96} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.hidden=true;}} style={{objectFit:"contain"}} />)}
+  </div>;
+}
+
 const components: Components = {
+  pre: ({children,...props}) => isValidElement<{className?:string}>(children) && children.props.className === "language-dice"
+    ? <>{children}</> : <pre {...props}>{children}</pre>,
   a: ({ href, children, ...props }) => <a {...props} href={href} target={appLink(href) ? undefined : "_blank"} rel="noopener noreferrer" referrerPolicy="no-referrer">{children}</a>,
   code: ({ className, children, ...props }) => {
     const language = /(?:^|\s)language-([^\s]+)/u.exec(className ?? "")?.[1]?.toLowerCase();
+    if (language === "dice") return <DiceRoll source={String(children)} />;
     if (language === "mermaid") return <MermaidDiagram source={String(children).replace(/\n$/u, "")} />;
     return <code {...props} className={className}>{children}</code>;
   },

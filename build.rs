@@ -25,6 +25,8 @@ fn main() {
     let client_store = output_dir.join("client-store.js");
     build_client_core_wasm(&manifest_dir, &client_core_wasm);
     if env::var_os("SPROYT_FRONTEND_PREBUILT").is_some() {
+        println!("cargo:rerun-if-changed=frontend/dist/app.js");
+        println!("cargo:rerun-if-changed=frontend/dist/client-store.js");
         let generated_app = frontend_dir.join("dist/app.js");
         let generated_client_store = frontend_dir.join("dist/client-store.js");
         assert!(
