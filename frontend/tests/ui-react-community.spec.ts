@@ -1,3 +1,4 @@
+import { openChannelMenu } from "./support/channel-menu";
 import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page, type Locator } from "@playwright/test";
 
@@ -217,7 +218,7 @@ test("Felles creates a global channel with a global slug and exposes its members
   await expect(details.getByRole("listitem")).toContainText(participant);
   await expect(details.getByRole("button", { name: "Last personlista på nytt" })).toBeVisible();
   await closeManagedDialog(page);
-  await preview.getByRole("button", { name: "Kanalval", exact: true }).click();
+  await openChannelMenu(preview);
   await preview.getByRole("group", { name: "Kanalval: Felles prat" }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
   await expect(details.getByLabel("Vel person", { exact: true })).toBeFocused();
 });

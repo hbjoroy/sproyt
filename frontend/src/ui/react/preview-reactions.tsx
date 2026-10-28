@@ -62,21 +62,21 @@ function ReactionBadge({ reaction, onToggle, onPointerDown }: {
   </span>;
 }
 
+// An empty Composer collapses its tool row on blur. Keep pointerdown from
+// moving focus until click, so reflow cannot move the target before pointerup.
+// Keyboard focus and touch scrolling remain native.
+function keepPointerTarget(event: ReactPointerEvent<HTMLElement>): void {
+  if (event.pointerType === "mouse" && event.button === 0) event.preventDefault();
+}
+
 /** Presentation only: all counts, identities and mutations remain host-owned. */
-export function PreviewReactionActions({ message, host, open, primaryAction, overflowActions }: {
+export function PreviewReactionActions({ message, open, primaryAction, overflowActions }: {
   message: ChatMessage; host: PreviewReactionHost; open: (message: ChatMessage, anchor: HTMLElement) => void;
   primaryAction?: ReactNode; overflowActions?: (close: () => void) => ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const hasOverflow = Boolean(overflowActions);
   useEffect(() => { if (!hasOverflow) setMenuOpen(false); }, [hasOverflow]);
-  const reactions = host.reactions(message.id).filter(reaction => reaction.count > 0);
-  // An empty Composer collapses its tool row on blur. Keep pointerdown from
-  // moving focus until click, so that reflow cannot move a message action out
-  // from under pointerup. Keyboard focus and touch scrolling remain native.
-  const keepPointerTarget = (event: ReactPointerEvent<HTMLElement>) => {
-    if (event.pointerType === "mouse" && event.button === 0) event.preventDefault();
-  };
   if (message.deleted_at) return null;
   return <>
     <div className="sp-message-primary-actions">
@@ -91,12 +91,22 @@ export function PreviewReactionActions({ message, host, open, primaryAction, ove
         </div>
       </Dialog>
     </div>
-    <div className="sp-message-reaction-row">
-      {reactions.map(reaction => <ReactionBadge key={reaction.emoji} reaction={reaction}
-        onPointerDown={keepPointerTarget} onToggle={() => host.toggleReaction(message.id, reaction.emoji)} />)}
-      {host.reactionError(message.id) && <Status tone="error">{host.reactionError(message.id)}</Status>}
-    </div>
   </>;
+}
+
+/** Reaction counts, participant details and failures remain host-owned. */
+export function PreviewMessageReactions({ message, host }: {
+  message: ChatMessage; host: PreviewReactionHost;
+}) {
+  if (message.deleted_at) return null;
+  const reactions = host.reactions(message.id).filter(reaction => reaction.count > 0);
+  const error = host.reactionError(message.id);
+  if (!reactions.length && !error) return null;
+  return <div className="sp-message-reaction-row">
+    {reactions.map(reaction => <ReactionBadge key={reaction.emoji} reaction={reaction}
+      onPointerDown={keepPointerTarget} onToggle={() => host.toggleReaction(message.id, reaction.emoji)} />)}
+    {error && <Status tone="error">{error}</Status>}
+  </div>;
 }
 
 export function createPreviewReactionPicker(host: PreviewReactionHost) {

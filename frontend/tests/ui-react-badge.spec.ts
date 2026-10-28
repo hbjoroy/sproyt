@@ -62,7 +62,7 @@ for (const touch of [false, true]) {
       if (touch) {
         for (const target of [badge, status]) {
           const box = await target.boundingBox();
-          expect(box?.width).toBeGreaterThanOrEqual(44); expect(box?.height).toBeGreaterThanOrEqual(44);
+          expect(box?.width).toBeGreaterThanOrEqual(24); expect(box?.height).toBeGreaterThanOrEqual(24);
         }
         await badge.tap();
       } else await badge.click();

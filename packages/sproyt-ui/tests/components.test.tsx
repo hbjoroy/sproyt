@@ -23,6 +23,17 @@ describe('React controls',()=>{
   expect(status).toHaveBeenCalledTimes(1);expect(badge).not.toHaveBeenCalled();
   fireEvent.click(r.getByRole('button',{name:'Badge'}));expect(badge).toHaveBeenCalledTimes(1);
  });
+ it('keeps optional reactions below the body and independent from primary actions',()=>{
+  const react=vi.fn(),action=vi.fn();
+  const r=render(<Message author="Anne" time="12:00" actions={<button onClick={action}>Reply</button>} reactions={<button onClick={react}>Like 2</button>}>Hello</Message>);
+  const article=r.container.querySelector('.sp-message')!;
+  expect(Array.from(article.children).map(node=>node.className)).toEqual(['sp-message-meta','sp-message-body','sp-message-actions','sp-message-reactions']);
+  expect(article.querySelector('.sp-message-actions')?.tagName).toBe('DIV');
+  expect(article.querySelector('.sp-message-reactions')?.tagName).toBe('FOOTER');
+  fireEvent.click(r.getByRole('button',{name:'Like 2'}));expect(react).toHaveBeenCalledTimes(1);expect(action).not.toHaveBeenCalled();
+  r.rerender(<Message author="Anne" time="12:00">Hello</Message>);
+  expect(r.container.querySelector('.sp-message-actions')).toBeNull();expect(r.container.querySelector('.sp-message-reactions')).toBeNull();
+ });
  it('keeps a draft controlled, trims submitted text and ignores IME Enter',()=>{const send=vi.fn();const change=vi.fn();const r=render(<Composer label="Message" value="  Hello  " onChange={change} onSend={send}/>);const input=r.getByLabelText('Message');fireEvent.keyDown(input,{key:'Enter',ctrlKey:true,isComposing:true});expect(send).not.toHaveBeenCalled();fireEvent.keyDown(input,{key:'Enter',ctrlKey:true});expect(send).toHaveBeenCalledExactlyOnceWith('Hello');expect((input as HTMLTextAreaElement).value).toBe('  Hello  ');});
  it('does not submit an empty or busy composer',()=>{const send=vi.fn();const r=render(<Composer label="Message" value=" " onChange={()=>{}} onSend={send}/>);fireEvent.submit(r.container.querySelector('form')!);expect(send).not.toHaveBeenCalled();r.rerender(<Composer label="Message" value="Hello" busy onChange={()=>{}} onSend={send}/>);fireEvent.submit(r.container.querySelector('form')!);expect(send).not.toHaveBeenCalled();});
  it('uses unique field IDs and connects validation text',()=>{const r=render(<><TextField label="First" error="Required"/><TextField label="Second"/></>);const first=r.getByLabelText('First');expect(first.id).not.toBe(r.getByLabelText('Second').id);expect(document.getElementById(first.getAttribute('aria-describedby')!)?.textContent).toBe('Required');});
@@ -43,6 +54,18 @@ describe('Vue controls',()=>{
   const r=renderVue(Vue.Message,{props:{author:'Anne',time:'12:00'},slots:{default:'Hello',author:()=>[h('strong','Anne'),h('button',{onClick:badge},'Badge'),h('button',{onClick:status},'Edit status')]}});
   await fireEvent.click(r.getByRole('button',{name:'Edit status'}));expect(status).toHaveBeenCalledTimes(1);expect(badge).not.toHaveBeenCalled();
   await fireEvent.click(r.getByRole('button',{name:'Badge'}));expect(badge).toHaveBeenCalledTimes(1);
+ });
+ it('keeps optional reaction slots separate from message actions',async()=>{
+  const react=vi.fn(),action=vi.fn();
+  const r=renderVue(Vue.Message,{props:{author:'Anne',time:'12:00'},slots:{default:'Hello',actions:()=>h('button',{onClick:action},'Reply'),reactions:()=>h('button',{onClick:react},'Like 2')}});
+  const article=r.container.querySelector('.sp-message')!;
+  expect(Array.from(article.children).map(node=>node.className)).toEqual(['sp-message-meta','sp-message-body','sp-message-actions','sp-message-reactions']);
+  expect(article.querySelector('.sp-message-actions')?.tagName).toBe('DIV');
+  expect(article.querySelector('.sp-message-reactions')?.tagName).toBe('FOOTER');
+  await fireEvent.click(r.getByRole('button',{name:'Like 2'}));expect(react).toHaveBeenCalledTimes(1);expect(action).not.toHaveBeenCalled();
+  r.unmount();
+  const plain=renderVue(Vue.Message,{props:{author:'Anne',time:'12:00'},slots:{default:'Hello'}});
+  expect(plain.container.querySelector('.sp-message-actions')).toBeNull();expect(plain.container.querySelector('.sp-message-reactions')).toBeNull();
  });
  it('renders Theme content and emits a trimmed composer send',async()=>{const r=renderVue(Vue.Composer,{props:{label:'Message',modelValue:'  Hello  '}});await fireEvent.submit(r.container.querySelector('form')!);expect(r.emitted().send).toEqual([['Hello']]);expect((r.getByLabelText('Message') as HTMLTextAreaElement).value).toBe('  Hello  ');const theme=renderVue(Vue.Theme,{props:{mode:'dark'},slots:{default:'Theme content'}});expect(theme.getByText('Theme content')).toBeTruthy();});
  it('forwards field attributes and emits model updates',async()=>{const r=renderVue(Vue.TextField,{props:{label:'Name',modelValue:'',error:'Required'},attrs:{autocomplete:'name'}});const input=r.getByLabelText('Name');expect(input.getAttribute('autocomplete')).toBe('name');await fireEvent.input(input,{target:{value:'Anne'}});expect(r.emitted()['update:modelValue']).toEqual([['Anne']]);expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe('Required');});

@@ -6,18 +6,14 @@ export interface CompactConversationHeader {
   readonly context?: string;
   readonly title: string;
   readonly onBack: () => void;
-}
-
-function shortenMiddle(value: string, maximum = 14): { readonly head: string; readonly tail?: string } {
-  if (value.length <= maximum) return { head: value };
-  const tail = 3;
-  return { head: value.slice(0, maximum - tail - 1).trimEnd(), tail: value.slice(-tail) };
+  readonly unreadThreadReplies?: number;
 }
 
 /** Keep the same controls and open dialogs mounted across compact/list layouts. */
-export function HeaderActions({ children, primary, compactConversation, navigationKey, onSettings, onConversations, onLatest, connection }: {
+export function HeaderActions({ children, primary, compactActions, compactConversation, navigationKey, onSettings, onConversations, onLatest, connection }: {
   readonly children: ReactNode;
   readonly primary?: ReactNode;
+  readonly compactActions?: (open: boolean, close: () => void) => ReactNode;
   readonly compactConversation?: CompactConversationHeader;
   readonly navigationKey?: string;
   readonly onSettings: () => void;
@@ -56,9 +52,12 @@ export function HeaderActions({ children, primary, compactConversation, navigati
     };
     document.addEventListener("pointerdown", dismiss);
     document.addEventListener("keydown", dismiss);
+    const resized = () => setConversationOpen(false);
+    window.addEventListener("resize", resized);
     return () => {
       document.removeEventListener("pointerdown", dismiss);
       document.removeEventListener("keydown", dismiss);
+      window.removeEventListener("resize", resized);
     };
   }, [conversationOpen]);
   return <div className="sp-header-actions" ref={container}>
@@ -76,21 +75,22 @@ export function HeaderActions({ children, primary, compactConversation, navigati
     {compactConversation && <div className="sp-mobile-conversation-context">
       <button ref={conversationTrigger} type="button" className="sp-mobile-conversation-title"
         aria-expanded={conversationOpen} aria-controls={`${id}-conversation-name`}
-        aria-label={`${compactConversation.context ? `${compactConversation.context}, ` : ""}${compactConversation.title}. Vis fullt namn.`}
+        aria-label={`${compactConversation.context ? `${compactConversation.context}, ` : ""}${compactConversation.title}. Vis fullt namn og samtaleval.${compactConversation.unreadThreadReplies ? ` ${compactConversation.unreadThreadReplies} uleste svar i trådar.` : ""}`}
         title={[compactConversation.context, compactConversation.title].filter(Boolean).join(" · ")}
         onClick={() => setConversationOpen(value => !value)}>
-        {compactConversation.context && <span className="sp-mobile-context-initial" aria-hidden="true">{compactConversation.context.trim().slice(0, 1).toLocaleUpperCase()}</span>}
-        {(() => {
-          const shortened = shortenMiddle(compactConversation.title);
-          return <span className="sp-mobile-conversation-short-name" aria-hidden="true">
-            <span>{shortened.head}</span>{shortened.tail && <><span>…</span><span>{shortened.tail}</span></>}
-          </span>;
-        })()}
+        <span className="sp-mobile-conversation-identity">
+          {compactConversation.context && <span className="sp-mobile-context-name">{compactConversation.context}</span>}
+          <span className="sp-mobile-conversation-short-name">{compactConversation.title}</span>
+        </span>
+        <span className="sp-conversation-disclosure-mark" aria-hidden="true">⌄</span>
+        {!!compactConversation.unreadThreadReplies && <span className="sp-conversation-thread-indicator"
+          aria-label={`${compactConversation.unreadThreadReplies} uleste svar i trådar`}>{compactConversation.unreadThreadReplies > 99 ? "99+" : compactConversation.unreadThreadReplies}</span>}
       </button>
       <div id={`${id}-conversation-name`} className="sp-mobile-conversation-name" role="group" aria-label="Samtaleinformasjon" hidden={!conversationOpen}>
         {compactConversation.context && <span>{compactConversation.context}</span>}
         <strong>{compactConversation.title}</strong>
         <Button variant="quiet" onClick={() => { setConversationOpen(false); onLatest(); }}>Gå til siste</Button>
+        {compactActions?.(conversationOpen, () => { setConversationOpen(false); conversationTrigger.current?.focus({ preventScroll: true }); })}
       </div>
     </div>}
     <span id={`${id}-connection`} className="sp-sr" role="status">{connection.label}</span>

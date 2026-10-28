@@ -19,12 +19,12 @@ for (const width of [320, 390, 1440]) for (const theme of ["light", "dark"]) {
     await expect(field).toBeEnabled();
     const name = `Maritim ${width}-${theme}-${Date.now()} engineering`;
     await createChannelViaUi(page, name);
-    if (width <= 800) {
+    if (width <= 900) {
       await expect(pane.getByRole("heading", { name: `# ${name}`, exact: true })).toBeHidden();
       const compactTitle = app.locator(".sp-mobile-conversation-title");
       await expect(compactTitle).toBeVisible();
       await expect(compactTitle).toHaveAttribute("aria-label", new RegExp(`# ${name}`));
-      await expect(compactTitle).toContainText("# Maritim…ing");
+      await expect(compactTitle).toContainText(`# ${name}`);
     } else {
       await expect(pane.getByRole("heading", { name: `# ${name}`, exact: true })).toBeVisible();
     }

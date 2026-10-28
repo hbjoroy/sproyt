@@ -77,3 +77,22 @@ allereie omtrent 55px høgt og er ikkje hovudkjelda til plassproblemet.
 
 Designreglane ligg i packages/sproyt-ui/docs/design.md og er spegla i skillen.
 Dette dokumentet er arbeidsrekkefølgja; designreglane er dei varige kontraktane.
+
+## Gjennomføring 28. oktober
+
+- Før UI-implementeringa vart #314 og #315 merga og publiserte som
+  `bb02cb1672d159f1fd6a07f398551ac6a6ae4ff2` gjennom
+  [release 40724888225](https://github.com/hbjoroy/sproyt/actions/runs/40724888225)
+  og [GitOps #285](https://github.com/hbjoroy/rocket-applications/pull/285).
+  Produksjon (2/2) og Canary (1/1) vart stadfesta Healthy/Synced med rett digest,
+  offentleg readiness og revisjon før UI-koden vart endra.
+- U1–U3 er implementerte. Kanalval ligg direkte i den eksisterande
+  samtaleinformasjonen på mobil; namnet er ikkje lenger manuelt forkorta.
+  Reaksjonar har eigen komponentplass under innhaldet i React og Vue.
+- U4: pakke og skill-bundle er oppdaterte til 0.1.3. Sol har kontrollert planen,
+  komponentgrensene, diffen og skjermbilete. 21 pakketestar, 207 frontendtestar
+  og 31 målretta Chromium-scenario har passert, inkludert 320–1440 px,
+  begge tema, touch, forstørra tekst, badge, reaksjonar og trådoversikt.
+- Canary-utrullinga skal bruke CI/CD med `bb02cb1` som sist verifiserte baseline.
+  Produksjon skal halde fram med denne baselinen. Fysisk mobil med reelt
+  skjermtastatur er ikkje stadfesta av nettlesaremuleringa.

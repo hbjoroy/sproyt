@@ -8,7 +8,7 @@ import { createConversationViewProps } from "./host-adapter";
 import { messagesForTimeline } from "./conversation-view";
 import type { ComposerTarget } from "./host-adapter";
 import { mountConversationView } from "./mount";
-import { createPreviewReactionPicker, PreviewReactionActions } from "./preview-reactions";
+import { createPreviewReactionPicker, PreviewMessageReactions, PreviewReactionActions } from "./preview-reactions";
 import type { PreviewReactionHost } from "./preview-reactions";
 import { PreviewComposer, type PreviewComposerHost } from "./preview-composer";
 import { PreviewMediaContent } from "./preview-media";
@@ -179,7 +179,7 @@ function ThreadDirectoryTrigger({ snapshot, onOpen, compact = false }: {
     <svg aria-hidden="true" viewBox="0 0 24 24" style={{ width: "1.2rem", height: "1.2rem", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" }}>
       <path d="M4 4h13a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3a2 2 0 0 1-2-2V6a2 2 0 0 1 1-2Z" />
       <path d="M8 9h7M8 12h5" />
-    </svg>{unread > 0 && <span aria-hidden="true">{unread > 99 ? "99+" : unread}</span>}
+    </svg>{compact && <span>Trådar i samtalen</span>}{unread > 0 && <span aria-hidden="true">{unread > 99 ? "99+" : unread}</span>}
   </Button>;
 }
 
@@ -206,7 +206,7 @@ function ProcessPilotMenuEntry({ api, channelId, onOpen }: { api: ProcessPilotAp
     : error ? <Button variant="quiet" onClick={() => setAttempt(value => value + 1)}>Prøv å hente prosessval igjen</Button> : null;
 }
 
-function ChannelActions({ snapshot, host, compact = false, onDetails }: { readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean;
+function ChannelActions({ snapshot, host, compact = false, inlineOpen, onInlineClose, onDetails }: { readonly inlineOpen?: boolean; readonly onInlineClose?: () => void; readonly snapshot: ConversationSnapshot; readonly host: DevelopmentPreviewHost; readonly compact?: boolean;
   readonly onDetails: (channelId: string, focusMemberAction: boolean, section?: "about" | "members" | "agents" | "notifications") => void }) {
   const [open, setOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -254,7 +254,7 @@ function ChannelActions({ snapshot, host, compact = false, onDetails }: { readon
       window.removeEventListener("resize", dismiss);
     };
   }, [open]);
-  const dismiss = () => { hideMenu(); trigger.current?.focus({ preventScroll: true }); };
+  const dismiss = () => { if (inlineOpen !== undefined) onInlineClose?.(); else { hideMenu(); trigger.current?.focus({ preventScroll: true }); } };
   const toggle = () => {
     const button = trigger.current, menu = panel.current;
     if (!button || !menu) return;
@@ -280,9 +280,9 @@ function ChannelActions({ snapshot, host, compact = false, onDetails }: { readon
     <style>{channelActionsCss}</style>
     {!compact && <Button className="sp-context-menu-trigger sp-message-symbol" variant="quiet"
       aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={() => openDetails("members")}><ChannelMembersIcon /></Button>
-    }<Button ref={trigger} className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"} variant="quiet"
-      aria-label="Kanalval" title="Kanalval" aria-expanded={open} aria-controls={id} onClick={toggle}><span aria-hidden="true">⋮</span>{compact && <span>Kanalval</span>}</Button>
-    <div ref={panel} id={id} popover="auto" className="sp-channel-actions-popover" role="group" aria-label={`Kanalval: ${channel.name}`}
+    }{inlineOpen === undefined && <Button ref={trigger} className={compact ? "sp-mobile-channel-menu-entry" : "sp-context-menu-trigger sp-message-symbol"} variant="quiet"
+      aria-label="Kanalval" title="Kanalval" aria-expanded={open} aria-controls={id} onClick={toggle}><span aria-hidden="true">⋮</span>{compact && <span>Kanalval</span>}</Button>}
+    <div ref={panel} id={id} popover={inlineOpen === undefined ? "auto" : undefined} className={inlineOpen === undefined ? "sp-channel-actions-popover" : "sp-channel-actions-inline"} role="group" aria-label={`Kanalval: ${channel.name}`}
       onToggle={event => {
         const visible = event.newState === "open";
         setOpen(visible);
@@ -297,7 +297,7 @@ function ChannelActions({ snapshot, host, compact = false, onDetails }: { readon
       <details className="sp-channel-actions-more"><summary>Fleire val</summary>
       {snapshot.circles.some(circle => circle.id === channel.circle_id && circle.role === "owner") && <Button variant="quiet"
         onClick={() => { dismiss(); setInviteOpen(true); }}>Inviter til kretsen</Button>}
-      {open && <ProcessPilotMenuEntry key={`${owner}:${channel.id}:${channel.role}:${snapshot.circles.find(circle => circle.id === channel.circle_id)?.role}`}
+      {(inlineOpen ?? open) && <ProcessPilotMenuEntry key={`${owner}:${channel.id}:${channel.role}:${snapshot.circles.find(circle => circle.id === channel.circle_id)?.role}`}
         api={host.processPilot} channelId={channel.id} onOpen={() => { dismiss(); setProcessOpen(true); }} />}
       {host.managementCapabilities().agent && ["owner", "moderator"].includes(channel.role) && <Button variant="quiet" onClick={() => {
         dismiss(); host.navigateView({ kind: "management", page: { kind: "advanced", feature: "agent", channelId: channel.id } });
@@ -424,6 +424,11 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
   const [apps, setApps] = useState<readonly WorkApplication[]>([]);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  useEffect(() => {
+    if (!linkCopied) return;
+    const timer = window.setTimeout(() => setLinkCopied(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [linkCopied]);
   const messageLink = viewHref({ kind: "conversation", channelId: message.channel_id, messageId: message.id,
     sequence: message.sequence, ...(message.parent_message_id ? { threadId: message.parent_message_id } : {}) }, window.location.href);
   const [issueOpen, setIssueOpen] = useState(false);
@@ -460,7 +465,7 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
     return () => { active = false; observer?.disconnect(); };
   }, [host.workItems, canHaveWorkItems, hasMutations, message.channel_id, message.id]);
   const hasWorkItemAction = canHaveWorkItems && (apps.length > 0 || hasExistingItems);
-  return <div ref={availabilityAnchor} style={{ display: "contents" }}>
+  return <div ref={availabilityAnchor} className="sp-message-action-host">
     <PreviewReactionActions message={message} host={host} open={openReaction} primaryAction={threadAction}
       overflowActions={close => <>
         {openThread && <Button variant="quiet" onClick={() => { close(); openThread(); }}>{threadHasReplies ? "Svar i tråd" : "Start tråd"}</Button>}
@@ -701,14 +706,18 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         onSettings={() => host.navigateView({ kind: "management", page: { kind: "overview" } })}
         primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
         onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
-        {view === "detail" && !pageKey && <div className="sp-mobile-header-channel-actions"><ThreadDirectoryTrigger compact snapshot={snapshot} onOpen={openThreadDirectory} />{snapshot.activeChannel?.is_direct
-          ? directMembers(true) : <ChannelActions compact snapshot={snapshot} host={host} onDetails={openDetails} />}</div>}
         <PreviewInboxes key={owner ?? "signed-out"} state={host.inboxState()} host={host}
           activeKind={historyState.target?.kind === "inbox" ? historyState.target.inbox : null}
           onNavigate={inbox => host.navigateView({ kind: "inbox", inbox })}
           onBack={() => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.backFromManagement(); }} /></>}
+        compactActions={(open, close) => <>
+          <ThreadDirectoryTrigger compact snapshot={snapshot} onOpen={() => { close(); openThreadDirectory(); }} />
+          {snapshot.activeChannel?.is_direct ? directMembers(true) : <ChannelActions compact inlineOpen={open} onInlineClose={close}
+            snapshot={snapshot} host={host} onDetails={openDetails} />}
+        </>}
         compactConversation={view === "detail" && snapshot.activeChannel && !pageKey ? {
-          context: compactContext, title: snapshot.title, onBack: backToConversations
+          context: compactContext, title: snapshot.title, onBack: backToConversations,
+          unreadThreadReplies: snapshot.threadSummaryStatus.ready ? snapshot.threadSummaries.reduce((sum, item) => sum + item.unread_count, 0) : 0
         } : undefined}>
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
       <PreviewManagement channelNotificationsFor={channelNotificationsFor} hideTrigger snapshot={snapshot} onRetryDirectory={host.retryDirectory} capabilities={host.managementCapabilities()} settings={host.settings} advanced={host.advanced} chatAgents={host.chatAgents} appUpdate={host.appUpdate}
@@ -791,6 +800,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       earlyAdopter: message => Boolean(host.settings.profileFor?.(message.sender_id)?.early_adopter),
       renderAuthorStatus: message => <MessageProfileStatus host={host.settings} userId={message.sender_id} own={host.isOwnMessage(message)} />,
       messageStatus: host.messageStatus,
+      renderReactions: message => <PreviewMessageReactions message={message} host={host} />,
       onReactionRequest: reactionPicker.open,
       renderActions: (message, context) => {
         if (message.deleted_at) return !context?.threadParent && snapshot.timeline.retainedDeletedRootIds.includes(message.id)

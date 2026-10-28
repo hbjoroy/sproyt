@@ -1,3 +1,4 @@
+import { openChannelMenu } from "./support/channel-menu";
 import { expect, test, type Page } from "@playwright/test";
 import { createChannelViaUi } from "./support/channel-setup";
 
@@ -54,7 +55,7 @@ test("v2 pilot requires explicit setup/start; assigned task is collapsed, retrya
   await expect(input).toBeEnabled({ timeout: 15000 });
   expect(state.configured()).toBe(false);
   expect(state.starts).toHaveLength(0);
-  await preview.getByRole("button", { name: "Kanalval", exact: true }).filter({ visible: true }).click();
+  await openChannelMenu(preview);
   const menu = preview.getByRole("group", { name: /^Kanalval:/ });
   await menu.locator("summary", { hasText: "Fleire val" }).click();
   await menu.getByRole("button", { name: "Prosesspilot", exact: true }).click();

@@ -1,3 +1,4 @@
+import { openChannelMenu } from "./support/channel-menu";
 import { expect, test, type Page } from "@playwright/test";
 import { destinationSurface } from "./support/destination-surface";
 
@@ -34,7 +35,7 @@ async function setup(page: Page, channelRole: string, circleRole: string, withAg
   await page.goto(`/?participant=channel-settings-owner&channel=${channelId}&ui=react`);
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  await preview.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: "Kanalval", exact: true }).click();
+  await openChannelMenu(preview);
   await preview.getByRole("group", { name: "Kanalval: Privat kanalflate", exact: true })
     .getByRole("button", { name: "Kanaldetaljar", exact: true }).click();
   return { surface: destinationSurface(preview, "Kanaldetaljar: Privat kanalflate", true), reads: () => reads, writes };

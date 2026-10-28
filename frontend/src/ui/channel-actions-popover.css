@@ -7,3 +7,8 @@
 .sp-theme .sp-channel-actions-more summary::after { content: "›"; margin-inline-start: auto; }
 .sp-theme .sp-channel-actions-more[open] summary::after { content: "⌄"; }
 @media (pointer: coarse) { .sp-theme .sp-channel-actions-popover .sp-button, .sp-theme .sp-channel-actions-more summary { min-height: 44px; } }
+
+.sp-theme .sp-channel-actions-inline { display: grid; gap: 2px; }
+.sp-theme :is(.sp-channel-actions-popover, .sp-channel-actions-inline) .sp-button { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); column-gap: .6rem; width: 100%; min-height: 44px; height: auto; text-align: start; white-space: normal; padding: 8px 10px; }
+.sp-theme :is(.sp-channel-actions-popover, .sp-channel-actions-inline) .sp-button:not(:has(> svg))::before { content: ""; width: 1.25rem; }
+.sp-theme :is(.sp-channel-actions-popover, .sp-channel-actions-inline) .sp-button > svg { width: 1.25rem; height: 1.25rem; }

@@ -7,11 +7,11 @@ Package exports: `@sproyt/ui/react`, `@sproyt/ui/vue`, `@sproyt/ui/styles.css`, 
 | Component | Props and composition |
 |---|---|
 | Theme | `mode: light/dark/system`, `accent: citron/periwinkle`, `density: comfortable/compact`; children/default slot |
-| Button | `variant: primary/secondary/quiet/danger`, `busy`, `disabled`; native button attributes/events. Default type is button; submit explicitly. |
+| Button | `variant: primary/secondary/quiet/symbol/danger`, `busy`, `disabled`; native button attributes/events. Default type is button; submit explicitly. `symbol` keeps pressed controls visually quiet: provide an accessible name and distinguish state with icon shape plus `aria-pressed`. |
 | TextField | `label`, `hint`, `error`, `id`, native input attributes. React forwards a ref; Vue forwards attributes to the input. |
 | AppShell | `view: list/detail`, `navigationLabel`; React `header`, `navigation`, children; Vue named header/navigation and default slots |
 | ConversationList | `items: {id,name,group,unread?,muted?}[]`, `selectedId`, `emptyLabel`; selection callback/event |
-| Message | `author`, `time`, `dateTime?`, `status?`; body children/default slot; React `actions`, Vue actions slot |
+| Message | `author`, `time`, `dateTime?`, `status?`; body children/default slot; React `actions`, Vue actions slot for the primary toolbar; optional React `reactions`, Vue reactions slot below the body; optional React `authorContent` / Vue author slot replaces the default strong author label |
 | Composer | controlled text, `label`, `placeholder`, `sendLabel`, `hint`, `disabled`, `busy`, `error`, `sendOnEnter`; React `leading` and `tools`, Vue leading/tools slots; `toolsLabel` labels the disclosure button |
 | ThreadPane | `title`, `context`, `closeLabel`; React `parent`, `composer`, children, `onClose`; Vue parent/composer/default slots, `@close`. Escape closes; host restores focus. |
 | EventCard | `title`, `when`, `where?`, controlled RSVP, `summary`, `label`, `options`, `disabled`; RSVP `yes/maybe/no` |

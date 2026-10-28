@@ -1,3 +1,4 @@
+import { openChannelMenu } from "./support/channel-menu";
 import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Page } from "@playwright/test";
 
@@ -112,7 +113,7 @@ test("failed activation retains confirmed state and can reload a new revision be
 
 async function openAgents(page: Page) {
   const preview = page.locator("#sproyt-react-preview");
-  await preview.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: "Kanalval", exact: true }).click();
+  await openChannelMenu(preview);
   await preview.getByRole("group", { name: "Kanalval: Privat arbeid", exact: true })
     .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
   return destinationSurface(preview, "Kanaldetaljar: Privat arbeid", true);

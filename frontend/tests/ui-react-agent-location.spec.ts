@@ -1,3 +1,4 @@
+import { openChannelMenu } from "./support/channel-menu";
 import { expect, test, type Page } from "@playwright/test";
 
 const circle = "00000000-0000-7000-8000-000000002401";
@@ -27,13 +28,7 @@ async function conversation(page: Page) {
 
 async function openFromChannelMenu(page: Page) {
   const preview = page.locator("#sproyt-react-preview");
-  const desktopChannelMenu = preview.getByRole("button", { name: "Kanalval", exact: true });
-  if (await desktopChannelMenu.isVisible()) await desktopChannelMenu.click();
-  else {
-    await preview.locator(".sp-mobile-header-channel-actions")
-      .getByRole("button", { name: "Kanalval", exact: true }).click();
-  }
-  const menu = preview.getByRole("group", { name: "Kanalval: Turprat", exact: true });
+  const menu = await openChannelMenu(preview);
   const more = menu.locator("details").filter({ hasText: "Fleire val" });
   if (await more.getAttribute("open") === null) await more.locator("summary").click();
   await menu.getByRole("button", { name: "Del posisjon med agent", exact: true }).click();

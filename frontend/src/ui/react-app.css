@@ -31,18 +31,15 @@
 #sproyt-react-preview .sp-main {
   padding: 0; border: 0; border-radius: 0; background: var(--sp-canvas); box-shadow: none;
 }
-#sproyt-react-preview [data-message-id] .sp-message-meta {
-  display: contents;
-}
 #sproyt-react-preview [data-message-id] { position: relative; }
-#sproyt-react-preview [data-message-id] .sp-message { display: flex; flex-wrap: wrap; align-items: center; column-gap: .5rem; position: relative; width: 100%; max-width: 860px; }
+#sproyt-react-preview [data-message-id] .sp-message { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .5rem; position: relative; width: 100%; max-width: 860px; }
 #sproyt-react-preview [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message { margin-top: .5rem; }
 #sproyt-react-preview [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message::before {
   content: ""; position: absolute; left: 0; top: -4px; width: 3.5rem; height: 1px;
   background: var(--sp-line); opacity: .35;
 }
-#sproyt-react-preview [data-message-id] .sp-message-body { flex-basis: 100%; order: 1; }
-#sproyt-react-preview [data-message-id] .sp-message-meta strong { min-width: 0; max-width: calc(100% - 12rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sproyt-react-preview [data-message-id] .sp-message-body { grid-column: 1 / -1; grid-row: 2; }
+#sproyt-react-preview [data-message-id] .sp-message-meta strong { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 #sproyt-react-preview .sp-time { white-space: nowrap; cursor: help; outline-offset: 3px; }
 #sproyt-react-preview .sp-message-time-tooltip {
   display: none; position: absolute; z-index: 8; top: 1.45rem; left: 0;
@@ -69,7 +66,7 @@
   cursor: pointer; line-height: 1.25; outline-offset: 3px;
 }
 .sp-message-early-adopter { cursor: help; }
-.sp-message-profile-status { min-width: 0; max-width: min(24rem, 50%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; }
+.sp-message-profile-status { order: 2; flex-basis: 100%; min-width: 0; max-width: 100%; text-align: start; white-space: normal; overflow-wrap: anywhere; font-size: .75rem; color: var(--sp-muted); }
 .sp-profile-early-adopter {
   width: fit-content; margin: 0; padding: .3rem .55rem;
   border: 1px solid var(--sp-rule); background: var(--sp-wash);
@@ -232,8 +229,8 @@
 .sp-custom-reaction form label { min-width: 0; }
 .sp-custom-reaction form .sp-input { margin: 0; min-height: 44px; font-size: 1.25rem; }
 .sp-custom-reaction form .sp-button { width: 44px; height: 44px; padding: 0; font-size: 1.1rem; }
-#sproyt-react-preview .sp-message-actions:has(.sp-message-primary-actions) { display: contents; }
-.sp-message-primary-actions { grid-column: 2; grid-row: 1; display: flex; align-items: flex-end; justify-self: start; gap: .1rem; }
+.sp-message-action-host { position: relative; }
+.sp-message-primary-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: .1rem; }
 .sp-message-primary-actions .sp-message-symbol { align-items: center; min-height: 28px; }
 .sp-message-reaction-row { flex-basis: 100%; order: 2; display: flex; flex-wrap: wrap; gap: .25rem; min-width: 0; }
 .sp-message-reaction-row:empty { display: none; }
@@ -323,7 +320,7 @@
 .sp-message-content .mermaid-shell svg { display: block; max-width: 100%; height: auto; }
 .sp-markdown-image-placeholder { color: var(--sp-muted); font-style: italic; }
 
-@container sp-app (max-width: 800px) {
+@container sp-app (max-width: 900px) {
   #sproyt-react-preview .sp-shell { min-width: 0; grid-template-columns: minmax(0, 1fr); }
   #sproyt-react-preview .sp-masthead {
     gap: .15rem; padding: .2rem .45rem; flex-wrap: nowrap; border-bottom-width: 1px;
@@ -343,27 +340,26 @@
   .sp-sproyt-brand-action.sp-button { display: inline-flex; min-width: 44px; width: 44px; min-height: 44px; padding: 0; }
   .sp-header-toggle.sp-button { min-width: 44px; width: 44px; min-height: 44px; padding: 0; font-size: 1.2rem; }
   .sp-mobile-conversation-title {
-    flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: .35rem;
-    padding: 0 .25rem; overflow: hidden; border: 0; background: transparent; color: var(--sp-text);
-    font: inherit; font-weight: 760; white-space: nowrap; text-overflow: ellipsis; cursor: pointer;
+    flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: .2rem;
+    padding: .15rem .25rem; border: 0; background: transparent; color: var(--sp-text);
+    font: inherit; text-align: start; cursor: pointer;
   }
-  .sp-mobile-conversation-short-name { min-width: 0; display: flex; overflow: hidden; }
-  .sp-mobile-conversation-short-name > span:first-child { min-width: 0; overflow: hidden; white-space: nowrap; }
-  .sp-mobile-conversation-short-name > span:not(:first-child) { flex: 0 0 auto; }
-  .sp-mobile-context-initial {
-    flex: 0 0 auto; display: grid; place-items: center; width: 1.5rem; height: 1.5rem;
-    border: 1px solid var(--sp-rule); background: var(--sp-wash); font: 700 .72rem/1 var(--sp-meta-font, monospace);
-  }
+  .sp-mobile-conversation-identity { display: grid; min-width: 0; flex: 1; gap: 1px; }
+  .sp-mobile-context-name { font-size: .75rem; line-height: 1.15; color: var(--sp-muted); overflow-wrap: anywhere; }
+  .sp-mobile-conversation-short-name { min-width: 0; font-size: .9375rem; font-weight: 760; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; }
+  .sp-conversation-disclosure-mark { flex-shrink: 0; color: var(--sp-muted); font-size: .75rem; }
+  .sp-conversation-thread-indicator { align-self: start; font-size: .7rem; padding-inline: 3px; background: var(--sp-accent); color: var(--sp-on-accent); }
   .sp-mobile-conversation-name {
     position: absolute; z-index: 15; top: calc(100% + .2rem); left: 0; right: 0; width: auto;
-    max-width: none; display: grid; gap: .1rem; padding: .45rem .6rem;
+    max-width: none; max-height: min(70dvh, 36rem); overflow-y: auto; display: grid; gap: .1rem; padding: .45rem .6rem;
     border: 1px solid var(--sp-rule); background: var(--sp-surface); color: var(--sp-text); box-shadow: 0 6px 18px #0002;
     font-size: .78rem; line-height: 1.3; white-space: normal; overflow-wrap: anywhere;
   }
   .sp-mobile-conversation-name[hidden] { display: none; }
   .sp-mobile-conversation-name > span { color: var(--sp-muted); font-family: var(--sp-meta-font, monospace); text-transform: uppercase; letter-spacing: .08em; }
   .sp-header-primary { flex: 0 0 auto; gap: 0; }
-  .sp-mobile-header-channel-actions { display: flex; }
+  .sp-header-actions:has(.sp-mobile-conversation-context) .sp-header-primary > .sp-view-history { display: none; }
+  .sp-mobile-header-channel-actions { display: none; }
   .sp-mobile-header-channel-actions .sp-mobile-channel-menu-entry.sp-button { min-width: 44px; width: 44px; min-height: 44px; padding: 0; }
   .sp-mobile-header-channel-actions .sp-mobile-channel-menu-entry > span:not([aria-hidden]), .sp-mobile-header-channel-actions .sp-mobile-channel-menu-entry > svg + span { display: none; }
   .sp-header-panel { inset-inline: .5rem; width: auto; }
@@ -481,10 +477,10 @@
 .sp-theme .sp-recent-views-menu button { display: block; width: 100%; text-align: left; min-height: 44px; padding: 8px; border: 0; background: transparent; color: inherit; overflow-wrap: anywhere; }
 .sp-theme .sp-recent-views-menu button:hover { background: var(--sp-surface); }
 .sp-theme .sp-recent-views-menu p { margin: 4px; font-size: 14px; }
-.sp-theme .sp-copy-link-notice { font-size: 12px; color: var(--sp-muted); }
+.sp-theme .sp-copy-link-notice { position: absolute; z-index: 8; top: 100%; right: 0; width: max-content; max-width: 16rem; padding: .35rem .5rem; border: 1px solid var(--sp-line); background: var(--sp-surface); font-size: 12px; color: var(--sp-muted); }
 .sp-theme .sp-view-history-in-menu { display: none; }
 .sp-theme .sp-view-history-in-menu > button { display: none; }
-@container sp-app (max-width: 800px) {
+@container sp-app (max-width: 900px) {
   .sp-theme .sp-view-history:not(.sp-view-history-in-menu) > button[aria-label="Fram"],
   .sp-theme .sp-view-history:not(.sp-view-history-in-menu) > button[aria-label="Tilbake"]:disabled,
   .sp-theme .sp-view-history:not(.sp-view-history-in-menu) > .sp-recent-views { display: none; }
@@ -495,3 +491,27 @@
   .sp-header-actions:has(.sp-mobile-conversation-context) .sp-header-primary > .sp-view-history:not(.sp-view-history-in-menu) { display: none; }
   .sp-theme .sp-view-history-in-menu > button { display: inline-flex; min-width: 44px; min-height: 44px; }
 }
+
+/* Identity and controls keep their own space; rich content owns its whitespace. */
+#sproyt-react-preview .sp-message-content { white-space: normal; }
+#sproyt-react-preview .sp-message-content pre { white-space: pre; }
+#sproyt-react-preview .sp-message-content p + p { margin-block-start: .5rem; }
+#sproyt-react-preview .sp-message-content p:has(+ p) { margin-block-end: .5rem; }
+#sproyt-react-preview .sp-message-meta .sp-help { font-size: .75rem; }
+#sproyt-react-preview .sp-message-meta :is(.sp-time, .sp-message-early-adopter, .sp-message-status-edit) { min-width: 24px; min-height: 24px; display: inline-flex; align-items: center; }
+#sproyt-react-preview .sp-message-primary-actions > .sp-button { min-width: 32px; min-height: 32px; padding-inline: .25rem; }
+@media (pointer: coarse) { #sproyt-react-preview .sp-message-primary-actions > .sp-button { min-width: 44px; min-height: 44px; } }
+#sproyt-react-preview .sp-channel-pane > .sp-context { justify-content: flex-start; padding: .65rem 1rem; gap: .5rem; }
+#sproyt-react-preview .sp-conversation-title { margin-inline-end: .5rem; }
+#sproyt-react-preview .sp-timeline { padding-inline: 1rem; }
+#sproyt-react-preview .sp-composer { margin-inline: 1rem; }
+#sproyt-react-preview .sp-draft-composer .sp-textarea:focus-visible { outline: 2px solid var(--sp-text); outline-offset: -2px; }
+@container sp-app (max-width: 900px) {
+  #sproyt-react-preview .sp-timeline { padding-inline: .5rem; }
+  #sproyt-react-preview .sp-composer { margin-inline: .5rem; }
+  .sp-theme .sp-view-history-in-menu > button { display: inline-flex; min-width: 44px; min-height: 44px; }
+  .sp-mobile-conversation-name > .sp-button { min-height: 44px; justify-content: flex-start; text-align: start; }
+}
+
+.sp-scope-menu-action.sp-button { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); column-gap: .65rem; }
+.sp-scope-menu-action.sp-button:not(:has(> .sp-scope-menu-symbol, > svg))::before { content: ""; width: 1.25rem; }

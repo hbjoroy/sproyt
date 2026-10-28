@@ -83,8 +83,9 @@ for (const mobile of [false, true]) {
     test.use({ hasTouch: mobile, isMobile: mobile, viewport: { width: mobile ? 390 : 1440, height: 900 } });
     test("fetches 30 then 5 older roots without marking them read, and opens an older thread", async ({ page }) => {
       const { app, batches, commands, errors } = await fixture(page);
+      if (mobile) await app.locator(".sp-mobile-conversation-title").tap();
       const trigger = mobile
-        ? app.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: /^Trådar i samtalen/ })
+        ? app.locator(".sp-mobile-conversation-name").getByRole("button", { name: /^Trådar i samtalen/ })
         : app.locator(".sp-context").getByRole("button", { name: /^Trådar i samtalen/ });
       await expect(trigger).toBeVisible();
       if (mobile) await trigger.tap(); else await trigger.click();
