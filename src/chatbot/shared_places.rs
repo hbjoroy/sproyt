@@ -15,6 +15,7 @@ fn words(value: &str) -> Vec<String> {
         .flat_map(char::to_lowercase)
         .map(|ch| if ch == 'ø' { 'o' } else { ch })
         .collect();
+    let folded = folded.replace('æ', "ae");
     folded
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|word| !word.is_empty())
@@ -81,11 +82,30 @@ fn grounded_text(plan: &PlaceLookupPlan, body: &str) -> bool {
         .filter(|word| !word.starts_with('@'))
         .collect::<Vec<_>>()
         .join(" ");
-    if plan.origin_mode == "shared" {
-        return place_lookup::grounded_in_source(plan, &plain);
-    }
     let source = words(&plain);
     let query = words(&plan.query);
+    if plan.origin_mode == "shared" {
+        let phrase = format!(" {} ", source.join(" "));
+        let explicit = [
+            "naer meg",
+            "i naerleiken av meg",
+            "i naerheten av meg",
+            "her eg er",
+            "her jeg er",
+            "near me",
+            "around me",
+            "naera mig",
+        ]
+        .iter()
+        .any(|near| phrase.contains(&format!(" {near} ")));
+        return explicit
+            && !query.is_empty()
+            && query.iter().all(|word| {
+                bar_word(word)
+                    || matches!(word.as_str(), "me" | "meg" | "mig")
+                    || source.contains(word)
+            });
+    }
     if query.is_empty()
         || !query
             .iter()
@@ -482,6 +502,15 @@ mod tests {
         assert!(!grounded_text(&invented, body));
         let missing = place_lookup::parse_plan(r#"{"query":"bars","origin_mode":"none"}"#).unwrap();
         assert!(!grounded_text(&missing, "find bars"));
+    }
+
+    #[test]
+    fn generated_near_me_query_still_requires_explicit_target_location_intent() {
+        let shared =
+            place_lookup::parse_plan(r#"{"query":"beer bars near me","origin_mode":"shared"}"#)
+                .unwrap();
+        assert!(grounded_text(&shared, "Finn ølbarar nær meg"));
+        assert!(!grounded_text(&shared, "Finn ølbarar i Malmö"));
     }
 
     #[test]
