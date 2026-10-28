@@ -1662,7 +1662,44 @@ impl ChatRepository for SqliteChatRepository {
                 .fetch_all(&self.pool)
                 .await
                 .map_err(sql_error)?;
-            rows.into_iter().map(channel_summary).collect()
+            let mut channels = rows
+                .into_iter()
+                .map(channel_summary)
+                .collect::<Result<Vec<_>, _>>()?;
+            let now = chrono::Utc::now();
+            let mut activities = std::collections::HashMap::new();
+            for channel in channels.iter().filter(|c| c.is_direct) {
+                activities.insert(
+                    channel.id.clone(),
+                    crate::domain::direct_activity::empty(now),
+                );
+            }
+            if !activities.is_empty() {
+                let days = sqlx::query("with activity_messages as (select msg.channel_id,msg.sender_id,msg.created_at,u.kind,row_number() over(partition by msg.channel_id,date(msg.created_at) order by julianday(msg.created_at) desc) as latest_in_day from channel_memberships membership join messages msg on msg.channel_id=membership.channel_id join users u on u.id=msg.sender_id where membership.user_id=?1 and msg.deleted_at is null and (exists(select 1 from direct_conversations d where d.channel_id=msg.channel_id) or exists(select 1 from direct_group_conversations g where g.channel_id=msg.channel_id))) select channel_id,date(created_at) as activity_day,max(case when latest_in_day=1 then created_at end) as latest,max(case when kind='human' and sender_id=?1 then 1 else 0 end) as actor_sent,max(case when kind='human' and sender_id<>?1 then 1 else 0 end) as others_sent from activity_messages group by channel_id,date(created_at) order by channel_id,activity_day")
+                    .bind(actor.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+                for row in days {
+                    let id =
+                        ChannelId::new(row.try_get::<String, _>("channel_id").map_err(storage)?)
+                            .map_err(storage)?;
+                    if let Some(activity) = activities.get_mut(&id) {
+                        crate::domain::direct_activity::add_day(
+                            activity,
+                            chrono::NaiveDate::parse_from_str(
+                                &row.try_get::<String, _>("activity_day").map_err(storage)?,
+                                "%Y-%m-%d",
+                            )
+                            .map_err(storage)?,
+                            row.try_get("latest").map_err(storage)?,
+                            row.try_get::<i64, _>("actor_sent").map_err(storage)? != 0,
+                            row.try_get::<i64, _>("others_sent").map_err(storage)? != 0,
+                        );
+                    }
+                }
+            }
+            for channel in &mut channels {
+                channel.direct_activity = activities.remove(&channel.id);
+            }
+            Ok(channels)
         })
     }
 
@@ -3367,6 +3404,7 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
+        direct_activity: None,
         id: ChannelId::new(id).map_err(storage)?,
         slug: ChannelSlug::new(slug).map_err(storage)?,
         name: DisplayName::new(name).map_err(storage)?,
@@ -4117,6 +4155,93 @@ mod tests {
         assert!(listed.iter().any(|summary| summary.id == group.id
             && summary.is_direct
             && summary.direct_user_id.is_none()));
+    }
+
+    #[tokio::test]
+    async fn sqlite_direct_activity_aggregates_history_and_scopes_membership() {
+        let repository = SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        repository.migrate().await.unwrap();
+        let alice = UserId::named("activity-alice");
+        let bob = UserId::named("activity-bob");
+        let outsider = UserId::named("activity-outsider");
+        let agent = UserId::named("activity-agent");
+        for (id, kind) in [
+            (alice.clone(), PrincipalKind::Human),
+            (bob.clone(), PrincipalKind::Human),
+            (outsider.clone(), PrincipalKind::Human),
+            (agent.clone(), PrincipalKind::Agent),
+        ] {
+            repository
+                .upsert_user(User {
+                    id,
+                    kind,
+                    display_name: DisplayName::new("Activity").unwrap(),
+                    handle: None,
+                    external_provider: None,
+                    external_subject: None,
+                    created_at: Utc::now(),
+                })
+                .await
+                .unwrap();
+        }
+        sqlx::query("insert into agent_profiles(agent_id,owner_id,invited_by,provider,service_identity,purpose,rate_limit_per_minute,created_at) values(?,?,?,'test','activity','test',10,?)")
+            .bind(agent.to_string()).bind(alice.to_string()).bind(alice.to_string()).bind(Utc::now()).execute(&repository.pool).await.unwrap();
+        let direct = repository
+            .open_direct_channel(alice.clone(), bob.clone())
+            .await
+            .unwrap();
+        let group = repository
+            .expand_direct_channel(alice.clone(), direct.id.clone(), outsider.clone())
+            .await
+            .unwrap();
+        let hidden = repository
+            .open_direct_channel(bob.clone(), outsider.clone())
+            .await
+            .unwrap();
+        for (channel, sender, timestamp, deleted) in [
+            (&direct.id, &alice, "2026-09-29T00:00:00+02:00", false),
+            (&direct.id, &alice, "2026-09-28T22:00:00Z", false),
+            (&direct.id, &bob, "2026-09-28T22:30:00Z", false),
+            (&direct.id, &bob, "2026-10-27T00:00:00Z", true),
+            (&group.id, &alice, "2026-09-28T00:00:00Z", false),
+            (&group.id, &agent, "2026-09-28T00:00:01Z", false),
+            (&hidden.id, &bob, "2026-10-27T00:00:00Z", false),
+        ] {
+            sqlx::query("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body,created_at,deleted_at) values(?,?,?,'Activity',(select coalesce(max(sequence),0)+1 from messages where channel_id=?),'body',?,?)")
+                .bind(Uuid::now_v7().to_string()).bind(channel.to_string()).bind(sender.to_string()).bind(channel.to_string()).bind(timestamp).bind(deleted.then_some(timestamp)).execute(&repository.pool).await.unwrap();
+        }
+        let channels = repository.list_channels_for_user(alice).await.unwrap();
+        assert!(!channels.iter().any(|c| c.id == hidden.id));
+        let activity = channels
+            .iter()
+            .find(|c| c.id == direct.id)
+            .unwrap()
+            .direct_activity
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            activity.last_message_at.unwrap().to_rfc3339(),
+            "2026-09-28T22:30:00+00:00"
+        );
+        let group_activity = channels
+            .iter()
+            .find(|c| c.id == group.id)
+            .unwrap()
+            .direct_activity
+            .as_ref()
+            .unwrap();
+        assert!((activity.score - 2.0 * group_activity.score).abs() < 1e-10);
+        assert!(activity.score > 0.0);
+        let serialized = serde_json::to_value(&channels).unwrap();
+        assert!(
+            serialized
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["direct_activity"]["score"].is_number())
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

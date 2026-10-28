@@ -126,12 +126,12 @@ export function runConversationPreferenceTests() {
     assert.ok(search.includes('aria-label="søkjetreff"'));
   });
 
-  test("explicit directory scope and host recency control direct presentation while preserving all conversations", () => {
+  test("explicit directory scope uses server activity rather than local visits while preserving all conversations", () => {
     const html = renderToStaticMarkup(createElement(ProductConversationNavigation, {
       groups: [{ id: "scope:direct", name: "Direkte", conversations: [
-        { id: "first", name: "Først frå verten" }, { id: "recent", name: "Sist brukt" }, { id: "last", name: "Siste frå verten" }
+        { id: "first", name: "Først frå verten" }, { id: "recent", name: "Sist brukt", directActivity: { last_message_at: new Date().toISOString(), score: 0, calculated_at: new Date().toISOString() } }, { id: "last", name: "Siste frå verten" }
       ] }], selectedId: null, query: "", onQueryChange() {}, onSelect() {},
-      directoryScope: "direct", recentChannelIds: ["missing", "recent", "recent"]
+      directoryScope: "direct", recentChannelIds: ["last", "first"]
     }));
     assert.match(html, /data-scope="direct" aria-selected="true"/);
     assert.ok(html.indexOf("Sist brukt") < html.indexOf("Først frå verten"));

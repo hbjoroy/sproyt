@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { KeyboardEvent } from "react";
 import { Button, Status, TextField } from "@sproyt/ui/react";
 import type { ConversationGroup, ConversationNavigationProps } from "./conversation-view";
@@ -6,6 +6,7 @@ import { conversationPreferenceKey, MAX_PINNED_CIRCLES, partitionNavigationCircl
   recordCircleSelection, setCircleExpanded, toggleCirclePinned, writeConversationPreferences } from "../../conversation-preferences";
 import type { ConversationPreferences, ConversationPreferenceStorage } from "../../conversation-preferences";
 import { emptyCircleFavorites } from "../../circle-favorites";
+import { rankDirectConversations, retainDirectOrder } from "../../direct-activity";
 import { DirectoryEmptyState } from "./getting-started";
 
 const noSubscription = () => () => {};
@@ -13,7 +14,7 @@ const emptyFavoritesSnapshot = () => emptyCircleFavorites;
 
 type NavigationProps = ConversationNavigationProps & {
   readonly ownerId?: string;
-  /** Host-owned recency, newest first. Remaining direct conversations stay visible. */
+  /** Legacy navigation history; deliberately does not influence DM ranking. */
   readonly recentChannelIds?: readonly string[];
 };
 type Scope = "circles" | "direct";
@@ -39,6 +40,49 @@ export function ProductConversationNavigation(props: NavigationProps) {
 }
 
 function AccountNavigation(props: NavigationProps) {
+  const navigation = useRef<HTMLDivElement>(null);
+  const [, setRankingClock] = useState(Date.now);
+  const rankingClock = Date.now();
+  const [directOrder, setDirectOrder] = useState<readonly string[]>([]);
+  const rankedDirects = rankDirectConversations(props.groups.filter(group => group.id === directGroupId).flatMap(group => group.conversations), rankingClock);
+  const rankKey = JSON.stringify(rankedDirects.map(item => item.id));
+  useLayoutEffect(() => {
+    setDirectOrder(previous => {
+      const next = retainDirectOrder(rankedDirects, previous).map(item => item.id);
+      return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
+    });
+  }, [rankKey]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setRankingClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const apply = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const active = document.activeElement;
+        // Do not move a pointer/keyboard target, or distract someone composing.
+        const composing = active instanceof HTMLTextAreaElement ? active.value.length > 0
+          : active instanceof HTMLElement && active.isContentEditable && !!active.textContent;
+        if (navigation.current?.matches(":hover") || (active && navigation.current?.contains(active)) || composing) return;
+        setDirectOrder(previous => JSON.stringify(previous) === rankKey ? previous : JSON.parse(rankKey) as string[]);
+      }, 250);
+    };
+    const nav = navigation.current;
+    apply();
+    nav?.addEventListener("pointerleave", apply);
+    document.addEventListener("focusout", apply);
+    document.addEventListener("keyup", apply);
+    document.addEventListener("pointerup", apply);
+    return () => {
+      clearTimeout(timer);
+      nav?.removeEventListener("pointerleave", apply);
+      document.removeEventListener("focusout", apply);
+      document.removeEventListener("keyup", apply);
+      document.removeEventListener("pointerup", apply);
+    };
+  }, [rankKey]);
   const storage = useRef(browserStorage());
   const [localPreferences, setPreferences] = useState(() => readConversationPreferences(storage.current, props.ownerId));
   const saved = useSyncExternalStore(props.favorites?.subscribe ?? noSubscription,
@@ -105,13 +149,9 @@ function AccountNavigation(props: NavigationProps) {
   }
 
   function rows(group: ConversationGroup) {
-    const recent = new Map<string, number>();
-    if (group.id === directGroupId) for (const channelId of props.recentChannelIds ?? []) {
-      if (!recent.has(channelId)) recent.set(channelId, recent.size);
-    }
-    const conversations = recent.size ? group.conversations.map((item, index) => ({ item, index }))
-      .sort((a, b) => (recent.get(a.item.id) ?? Number.MAX_SAFE_INTEGER) - (recent.get(b.item.id) ?? Number.MAX_SAFE_INTEGER) || a.index - b.index)
-      .map(({ item }) => item) : group.conversations;
+    const conversations = group.id === directGroupId
+      ? retainDirectOrder(rankDirectConversations(group.conversations, rankingClock), directOrder)
+      : group.conversations;
     return conversations.length ? <div className="sp-conversations">
       {conversations.map(item => <div className="sp-conversation-row" key={item.id}>
         <button type="button" className="sp-conversation" aria-current={item.id === props.selectedId ? "page" : undefined}
@@ -160,7 +200,7 @@ function AccountNavigation(props: NavigationProps) {
     event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-scope="${next}"]`)?.focus();
   }
 
-  return <div className="sp-product-navigation">
+  return <div ref={navigation} className="sp-product-navigation">
     <TextField label="Finn samtale" type="search" value={props.query}
       onChange={event => props.onQueryChange(event.currentTarget.value)} />
     <div className="sp-product-nav-tabs" role="tablist" aria-label="Samtalar">

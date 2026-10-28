@@ -8,7 +8,7 @@ const directId = "00000000-0000-7000-8000-000000007301";
 const otherDirectId = "00000000-0000-7000-8000-000000007302";
 type Command = { type: string; request_id?: string; payload?: { channel_id?: string; circle_id?: string; sequence?: number } };
 
-async function fixture(page: Page, start = `channel=${channelId(29)}`) {
+async function fixture(page: Page, start = `channel=${channelId(29)}`, ranked = false) {
   let socket: WebSocketRoute;
   let identity = "navigation-owner";
   const commands: Command[] = [];
@@ -32,7 +32,10 @@ async function fixture(page: Page, start = `channel=${channelId(29)}`) {
     { id: directId, slug: "direct-ada", name: "Ada", direct_user_id: "ada" },
     { id: otherDirectId, slug: "direct-bert", name: "Bert", direct_user_id: "bert" }
   ].map(channel => ({ ...channel, kind: "private", circle_id: null, is_direct: true, description: "",
-    role: "member", last_read_sequence: 0, latest_sequence: 0 }));
+    role: "member", last_read_sequence: 0, latest_sequence: 0,
+    ...(ranked ? { direct_activity: { score: channel.id === directId ? 20 : 0,
+      calculated_at: new Date().toISOString(),
+      last_message_at: new Date(Date.now() - (channel.id === directId ? 72 : 1) * 3_600_000).toISOString() } } : {}) }));
   const emit = (type: string, payload: unknown = {}, request_id?: string) => socket.send(JSON.stringify({
     protocol: "sproyt.chat.v1", type, payload, ...(request_id ? { request_id } : {})
   }));
@@ -62,7 +65,7 @@ async function fixture(page: Page, start = `channel=${channelId(29)}`) {
   await page.goto(`/?participant=product-navigation&${start}`);
   const app = page.locator("#sproyt-react-preview");
   await expect(app.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled();
-  return { app, commands, switchAccount: (next: string) => { identity = next; emit("hello", { participant_id: identity }); } };
+  return { app, commands, emit, switchAccount: (next: string) => { identity = next; emit("hello", { participant_id: identity }); } };
 }
 
 async function navigation(app: Locator) {
@@ -180,4 +183,38 @@ test("a direct-channel deep link selects the direct tab and retains both direct 
   await expect(nav.getByRole("tab", { name: /^Direktemeldingar/ })).toHaveAttribute("aria-selected", "true");
   await expect(nav.getByRole("button", { name: "Ada", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(nav.getByRole("button", { name: "Bert", exact: true })).toBeVisible();
+});
+
+
+test("direct conversations rank server activity and defer movement during keyboard interaction", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  const { app, emit } = await fixture(page, `channel=${directId}`, true);
+  const nav = await navigation(app);
+  const rows = nav.locator('[data-conversation-group="scope:direct"] .sp-conversation-name');
+  await expect(rows).toHaveText(["Bert", "Ada"]);
+  await nav.getByRole("button", { name: "Bert", exact: true }).focus();
+  emit("chat", { event: { type: "message_accepted", message: {
+    id: "00000000-0000-7000-8000-000000009999", channel_id: directId, sender_id: "ada",
+    sender_display_name: "Ada", body: "Hei", sequence: 1, sent_at: new Date().toISOString(),
+    parent_message_id: null, edited_at: null, deleted_at: null
+  } } });
+  await expect(nav.getByRole("button", { name: "Ada 1 uleste", exact: true }).getByLabel("1 uleste")).toBeVisible();
+  await page.waitForTimeout(350);
+  await expect(rows).toHaveText(["Bert", "Ada"]);
+  await page.mouse.move(1200, 10);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await expect(rows).toHaveText(["Ada", "Bert"]);
+  const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
+  await composer.fill("Uferdig melding");
+  emit("chat", { event: { type: "message_accepted", message: {
+    id: "00000000-0000-7000-8000-000000009998", channel_id: otherDirectId, sender_id: "bert",
+    sender_display_name: "Bert", body: "Hei igjen", sequence: 1, sent_at: new Date().toISOString(),
+    parent_message_id: null, edited_at: null, deleted_at: null
+  } } });
+  await expect(nav.getByRole("button", { name: "Bert 1 uleste", exact: true })).toBeVisible();
+  await page.waitForTimeout(350);
+  await expect(rows).toHaveText(["Ada", "Bert"]);
+  await composer.fill("");
+  await composer.press("ArrowLeft");
+  await expect(rows).toHaveText(["Bert", "Ada"]);
 });

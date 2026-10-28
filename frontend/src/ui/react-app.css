@@ -302,6 +302,17 @@
   text-align: start; white-space: nowrap;
 }
 .sp-message-content th { background: var(--sp-wash); font-weight: 750; }
+.sp-message-content .sp-bar-results { max-width: 100%; min-width: 0; white-space: normal; }
+.sp-message-content .sp-bar-results > p { margin-block: .25rem; }
+.sp-message-content .sp-bar-results > p:last-of-type { font-size: .75rem; color: var(--sp-muted); }
+.sp-message-content .sp-bar-results table { display: table; width: 100%; table-layout: fixed; margin-block: .35rem; }
+.sp-message-content .sp-bar-results th,
+.sp-message-content .sp-bar-results td { white-space: normal; overflow-wrap: anywhere; padding: .3rem .4rem; line-height: 1.35; }
+.sp-message-content .sp-bar-results th:first-child,
+.sp-message-content .sp-bar-results td:first-child { width: 2rem; color: var(--sp-muted); }
+.sp-message-content .sp-bar-results td a { display: inline-block; padding-block: .25rem; color: var(--sp-text); text-underline-offset: .15em; }
+.sp-message-content .sp-bar-results details { margin-block-start: .25rem; font-size: .9em; }
+.sp-message-content .sp-bar-results summary { cursor: pointer; color: var(--sp-muted); padding-block: .35rem; }
 .sp-message-content del { color: var(--sp-muted); }
 .sp-message-content blockquote {
   margin-inline: 0; padding-inline-start: .75rem;

@@ -132,7 +132,7 @@ async fn search_publishes_for_two_users_and_followup_roll_needs_no_model_or_prov
         assert_eq!(model_calls.load(Ordering::SeqCst),1); assert_eq!(provider_calls.load(Ordering::SeqCst),1);
         for user in [owner,other] {
             let messages=chat.load_messages(UserId::from_uuid(user),channel_id.clone(),MessageLimit::new(20),None,None).await.unwrap();
-            assert!(messages.iter().any(|m| m.body.as_str().contains("1. [Pub A]")));
+            assert!(messages.iter().any(|m| m.body.as_str().contains("| 1 | [Pub A]")));
         }
         let (body,plan,status):(String,Option<String>,String)=sqlx::query_as("select reply_body,place_lookup_plan,status from circle_chat_agent_jobs where id=?").bind(&job.id).fetch_one(&pool).await.unwrap();
         assert!(plan.is_none()); assert_eq!(status,"completed"); assert!(!body.contains("NEVER-PERSIST")); assert!(!body.contains("secret-a"));

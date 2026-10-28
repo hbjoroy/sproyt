@@ -88,6 +88,16 @@ const components: Components = {
 
 export function MarkdownContent({ source, className }: { readonly source: string; readonly className?: string }) {
   if (!source.trim()) return null;
+  // New shared place answers stay ordinary Markdown for other clients. Keep
+  // provider detail available without repeating it above the compact result list.
+  const detailMarker = "\n\n**Om stadene**\n\n";
+  const detailAt = source.startsWith("**Barforslag · Google Maps**") ? source.indexOf(detailMarker) : -1;
+  if (detailAt >= 0) return <div className={[className, "sp-bar-results"].filter(Boolean).join(" ")}>
+    <Markdown remarkPlugins={[remarkGfm]} components={components}>{source.slice(0, detailAt)}</Markdown>
+    <details><summary>Om stadene</summary>
+      <Markdown remarkPlugins={[remarkGfm]} components={components}>{source.slice(detailAt + detailMarker.length)}</Markdown>
+    </details>
+  </div>;
   return <div className={className}>
     <Markdown remarkPlugins={[remarkGfm]} components={components}>{source}</Markdown>
   </div>;

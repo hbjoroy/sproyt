@@ -181,6 +181,7 @@ fn text(value: &str) -> String {
             '`' => 'ˋ',
             '*' => '＊',
             '_' => '＿',
+            '|' => '｜',
             ch if ch.is_control() && ch != '\n' => ' ',
             ch => ch,
         })
@@ -211,9 +212,19 @@ fn candidates(data: &Value) -> std::result::Result<Vec<String>, &'static str> {
                 return Err("maps_attribution");
             }
             // URL angle brackets keep parentheses and Unicode URLs inside the link.
-            let url = url.replace('<', "%3C").replace('>', "%3E");
-            let source_url = source_url.replace('<', "%3C").replace('>', "%3E");
-            let title = text(title);
+            let url = url
+                .replace('<', "%3C")
+                .replace('>', "%3E")
+                .replace('|', "%7C");
+            let source_url = source_url
+                .replace('<', "%3C")
+                .replace('>', "%3E")
+                .replace('|', "%7C");
+            let title = text(title)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace('|', "｜");
             Ok(if url == source_url {
                 format!("[{title}](<{url}>)")
             } else {
@@ -250,15 +261,14 @@ pub(super) fn render(
         answer.push_str("\n\n");
     }
     let summary = data["summary"].as_str().ok_or("maps_invalid_response")?;
-    // Avoid cutting source links or leaking opaque provider tokens/coordinates.
-    answer.push_str(&text(&summary.chars().take(8_000).collect::<String>()));
-    answer.push_str("\n\n");
+    answer.push_str("| # | Stad |\n| ---: | --- |\n");
     for (index, choice) in choices.iter().enumerate() {
-        answer.push_str(&format!("{}. {choice}\n", index + 1));
+        answer.push_str(&format!("| {} | {choice} |\n", index + 1));
     }
     answer.push_str(&format!(
-        "\nKjelde: Google Maps · Henta {} UTC. Opningstider og tilbod kan endre seg.",
-        Utc::now().format("%d.%m.%Y %H:%M")
+        "\nKjelde: Google Maps · {} UTC.\n\n**Om stadene**\n\n{}\n\nOpningstider og tilbod kan endre seg.",
+        Utc::now().format("%d.%m.%Y %H:%M"),
+        text(&summary.chars().take(8_000).collect::<String>())
     ));
     MessageBody::new(answer.clone()).map_err(|_| "maps_response_too_large")?;
     Ok(answer)
@@ -309,7 +319,16 @@ pub(super) fn choose_from_context(
         .body
         .lines()
         .filter_map(|line| {
-            let (number, choice) = line.split_once(". ")?;
+            // Read both new table rows and already-published numbered lists.
+            let (number, choice) = if let Some(row) = line
+                .strip_prefix("| ")
+                .and_then(|row| row.strip_suffix(" |"))
+            {
+                let (number, choice) = row.split_once(" | ")?;
+                (number.trim(), choice.trim())
+            } else {
+                line.split_once(". ")?
+            };
             if number
                 .parse::<usize>()
                 .ok()
@@ -517,8 +536,8 @@ mod tests {
     fn shared_answer_keeps_sources_but_not_raw_tokens_or_location() {
         let answer = render(&data(), false).unwrap();
         assert!(answer.starts_with(HEADER));
-        assert!(answer.contains("1. [Pub A](<https://www.google.com/maps?cid=1>)"));
-        assert!(answer.contains("2. [Pub B]"));
+        assert!(answer.contains("| 1 | [Pub A](<https://www.google.com/maps?cid=1>) |"));
+        assert!(answer.contains("| 2 | [Pub B]"));
         assert!(answer.contains("Kjelde: Google Maps"));
         for secret in [
             "SECRET-RAW-TOKEN",
@@ -531,6 +550,24 @@ mod tests {
             assert!(!answer.contains(secret));
         }
     }
+    #[test]
+    fn table_cells_keep_provider_pipes_and_newlines_inside_one_row() {
+        let mut value = data();
+        value["places"][0]["attribution"]["title"] = json!("Pub | A\nUpstairs");
+        value["places"][0]["googleMapsLinks"]["placeUrl"] =
+            json!("https://www.google.com/maps?q=a|b");
+        let answer = render(&value, false).unwrap();
+        assert!(answer.contains("[Pub ｜ A Upstairs](<https://www.google.com/maps?q=a%7Cb>)"));
+        assert_eq!(
+            answer
+                .lines()
+                .filter(|line| line.starts_with("| 1 | "))
+                .count(),
+            1
+        );
+        assert!(answer.contains("\n\n**Om stadene**\n\n"));
+    }
+
     #[test]
     fn random_selection_is_one_of_the_actual_results_and_keeps_attribution() {
         let answer = render(&data(), true).unwrap();
