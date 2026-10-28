@@ -103,3 +103,11 @@ Dette dokumentet er arbeidsrekkefølgja; designreglane er dei varige kontraktane
   Alle dei 42 målretta WebKit-scenarioa er no dekte av grøne testar (37 i
   første runde; seks i den målretta retesten, inkludert dei fem som feila).
   CI inkluderer no også dei nye layoutkontraktane og badge-/menytestane i WebKit.
+
+- Full PR-kontroll 40743229630 stadfesta alle 315 Chromium-scenario og 163
+  WebKit-scenario. Ein WebKit-test brukte den gamle direkte medlemsknappen;
+  testen opnar no samtaletittelen på mobil. Alle 14 DM-scenario passerte i
+  målretta retest. Dei fem SSE-testane har òg passert etter at dei to
+  skrivebordstestane vart flytta over den nye kompaktgrensa. Siste endring
+  er berre testkode; den samla main-revisjonen skal gjennom full publiserings-CI
+  før Canary blir endra.
