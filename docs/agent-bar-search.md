@@ -102,3 +102,22 @@ det å setje ein nøkkel berre på Canary avgrensar ikkje effekten til
 Canary-brukarar. Prøv funksjonen mot ei isolert database og kø, eller lag og
 verifiser ei bakoverkompatibel, koordinert utrulling før migrasjon og aktivering.
 Ingen av desse føresetnadene er oppfylte berre ved at ein Canary-image finst.
+
+## Robust stadplanlegging og Qwen-protokoll
+
+Stadnamn blir kontrollerte mot brukaren sin autoriserte kanaltekst etter
+normalisering av store/små bokstavar, nordiske aksentar og skiljeteikn.
+Eit utgangspunkt kan utelate mellomliggjande adresseord; det treng ikkje vere
+ordrett kopiert. Generiske bar-/øl-/matord i spørringa kan genererast av modellen.
+Andre stadnamn må framleis finnast i same brukar sin ferske kanaltekst. Posisjon
+nær meg krev framleis uttrykkeleg deling og eit gyldig grant for denne jobben.
+
+vLLM sine native tool_calls og komplette Qwen JSON-/XML-verktøykall blir
+normaliserte til same interne kallformat før allowlist, argumentkontroll,
+stadkontroll og autorisasjon. Ufullstendige eller ugyldige verktøymarkørar blir
+avviste; dei skal aldri publiserast som chattekst, heller ikkje i sluttsvaret.
+Ein kontroll med ekte Qwen finst i den eksplisitt ignorerte testen
+`live_qwen_hotel_search_and_real_die_use_executable_tools`. Han krev eit eksplisitt
+test-endepunkt og nøkkel i prosessmiljøet, gjer ingen Google-oppslag og postar ingen
+chatmeldingar. Han dekkjer hotellspørsmål, ekte terning og oppfølging med tidlegare
+oppgitt adresse.
