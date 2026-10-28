@@ -1,6 +1,9 @@
 //! One bounded round of model-selected, read-only tools. Capability snapshots
 //! come from the job's authorized configuration, never the agent's name.
 use super::*;
+#[path = "tool_wire.rs"]
+mod wire;
+pub(super) use wire::{contains_wire_markup, decode_calls};
 
 pub(super) struct ReadTools<'a> {
     pub place_lookup: Option<super::place_lookup::PlaceLookupPlan>,
@@ -546,6 +549,18 @@ mod tests {
         calls: Value,
         body: &str,
     ) -> (std::result::Result<String, &'static str>, Vec<Value>) {
+        model_exchange_draft(
+            agent,
+            json!({"role":"assistant","content":null,"tool_calls":calls}),
+            body,
+        )
+        .await
+    }
+    async fn model_exchange_draft(
+        agent: &str,
+        draft: Value,
+        body: &str,
+    ) -> (std::result::Result<String, &'static str>, Vec<Value>) {
         use axum::{
             Json, Router,
             routing::{get, post},
@@ -556,12 +571,12 @@ mod tests {
             .route("/v1/models", get(|| async { Json(json!({"data":[{"id":"qwen-test"}]})) }))
             .route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
                 let record = record.clone();
-                let calls = calls.clone();
+                let draft = draft.clone();
                 async move {
                     let mut requests = record.lock().await;
                     requests.push(request);
                     if requests.len() == 1 {
-                        Json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":calls}}]}))
+                        Json(json!({"choices":[{"message":draft}]}))
                     } else {
                         Json(json!({"choices":[{"message":{"content":"Delos har planlagt anløp frå Naxos.","tool_calls":[]}}]}))
                     }
@@ -617,6 +632,34 @@ mod tests {
         let requests = captured.lock().await.clone();
         server.abort();
         (result, requests)
+    }
+
+    #[tokio::test]
+    async fn qwen_content_tools_are_executed_and_fragments_are_never_published() {
+        let content = "<tool_call>\n<function=roll_die>\n<parameter=sides>\n6\n</parameter>\n</function>\n</tool_call>";
+        let (reply, requests) =
+            model_exchange_draft("terningar", json!({"content":content}), "trill ein terning")
+                .await;
+        assert!(reply.is_ok());
+        assert_eq!(requests.len(), 2);
+        let result = requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "tool")
+            .unwrap();
+        let result: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+        assert_eq!(result["sides"], 6);
+        assert!((1..=6).contains(&result["value"].as_u64().unwrap()));
+        let leaked = "Ja, no! </parameter>\n</function>\n</tool_call>";
+        let (reply, requests) =
+            model_exchange_draft("terningar", json!({"content":leaked}), "Søker du?").await;
+        assert_eq!(reply, Err("model_invalid_tool"));
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            crate::chatbot::validate_model_answer(leaked, false),
+            Err("model_invalid_reply")
+        );
     }
 
     #[tokio::test]

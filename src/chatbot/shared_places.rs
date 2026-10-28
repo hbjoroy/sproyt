@@ -6,6 +6,130 @@ use super::*;
 const HEADER: &str = "**Barforslag · Google Maps**";
 const MAX_PLACES: usize = 8;
 
+// Ground place names in human text without requiring the model to reproduce
+// punctuation, casing, Nordic accents or intervening address words verbatim.
+fn words(value: &str) -> Vec<String> {
+    let folded: String = value
+        .nfkd()
+        .filter(|ch| !unicode_normalization::char::is_combining_mark(*ch))
+        .flat_map(char::to_lowercase)
+        .map(|ch| if ch == 'ø' { 'o' } else { ch })
+        .collect();
+    let folded = folded.replace('æ', "ae");
+    folded
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+fn bar_word(word: &str) -> bool {
+    matches!(
+        word,
+        "bar"
+            | "bars"
+            | "barar"
+            | "barer"
+            | "olbar"
+            | "olbarer"
+            | "olbarar"
+            | "pub"
+            | "pubs"
+            | "pubar"
+            | "puber"
+            | "beer"
+            | "beers"
+            | "ol"
+            | "craft"
+            | "craftbeer"
+            | "brewpub"
+            | "brewpubs"
+            | "food"
+            | "mat"
+            | "sport"
+            | "sports"
+            | "near"
+            | "nearby"
+            | "around"
+            | "in"
+            | "at"
+            | "by"
+            | "i"
+            | "ved"
+            | "naer"
+            | "naerheten"
+            | "naerleiken"
+            | "av"
+            | "med"
+            | "og"
+            | "and"
+            | "good"
+            | "gode"
+            | "a"
+            | "the"
+    )
+}
+fn grounded_text(plan: &PlaceLookupPlan, body: &str) -> bool {
+    // Mask macros and mentions before considering any place evidence.
+    let mut plain = body.to_owned();
+    while let Some(start) = plain.find("[[") {
+        let end = plain[start..]
+            .find("]]")
+            .map_or(plain.len(), |offset| start + offset + 2);
+        plain.replace_range(start..end, " ");
+    }
+    let plain = plain
+        .split_whitespace()
+        .filter(|word| !word.starts_with('@'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let source = words(&plain);
+    let query = words(&plan.query);
+    if plan.origin_mode == "shared" {
+        let phrase = format!(" {} ", source.join(" "));
+        let explicit = [
+            "naer meg",
+            "i naerleiken av meg",
+            "i naerheten av meg",
+            "her eg er",
+            "her jeg er",
+            "near me",
+            "around me",
+            "naera mig",
+        ]
+        .iter()
+        .any(|near| phrase.contains(&format!(" {near} ")));
+        return explicit
+            && !query.is_empty()
+            && query.iter().all(|word| {
+                bar_word(word)
+                    || matches!(word.as_str(), "me" | "meg" | "mig")
+                    || source.contains(word)
+            });
+    }
+    if query.is_empty()
+        || !query
+            .iter()
+            .all(|word| bar_word(word) || source.contains(word))
+    {
+        return false;
+    }
+    if plan.origin_mode == "named" {
+        let Some(origin) = plan.named_origin.as_deref() else {
+            return false;
+        };
+        let origin = words(origin);
+        let mut remaining = source.iter();
+        !origin.is_empty()
+            && origin
+                .iter()
+                .all(|word| remaining.any(|candidate| candidate == word))
+    } else {
+        query
+            .iter()
+            .any(|word| !bar_word(word) && source.contains(word))
+    }
+}
+
 pub(super) fn grounded_in_context(
     plan: &PlaceLookupPlan,
     target: &str,
@@ -14,7 +138,7 @@ pub(super) fn grounded_in_context(
     let Some(target) = messages.iter().find(|message| message.id == target) else {
         return false;
     };
-    if place_lookup::grounded_in_source(plan, &target.body) {
+    if grounded_text(plan, &target.body) {
         return true;
     }
     // A live position can only come from this request's grant and explicit text.
@@ -39,7 +163,7 @@ pub(super) fn grounded_in_context(
                     .signed_duration_since(source.created_at)
                     .num_seconds()
                     <= WINDOW_SECONDS
-        }) && place_lookup::grounded_in_source(plan, &message.body)
+        }) && grounded_text(plan, &message.body)
     })
 }
 
@@ -361,6 +485,32 @@ mod tests {
             &target.id,
             &[near, target.clone()]
         ));
+    }
+
+    #[test]
+    fn hotel_address_accepts_generated_bar_query_and_normalized_place_spelling() {
+        let body = "@terningar hotellet vi skal bu på er Elite Hotel Savoy i Norra Vallgatan 62, Malmö - finn du nokre gode ølbarar i nærleiken?";
+        for query in [
+            "beer bars",
+            "ølbarer near Elite Hotel Savoy Malmö",
+            "craft beer bars in Malmö",
+        ] {
+            let plan=place_lookup::parse_plan(&json!({"query":query,"origin_mode":"named","named_origin":"Elite Hotel Savoy, Malmo"}).to_string()).unwrap();
+            assert!(grounded_text(&plan, body), "{query}");
+        }
+        let invented=place_lookup::parse_plan(r#"{"query":"bars","origin_mode":"named","named_origin":"Hotel California Copenhagen"}"#).unwrap();
+        assert!(!grounded_text(&invented, body));
+        let missing = place_lookup::parse_plan(r#"{"query":"bars","origin_mode":"none"}"#).unwrap();
+        assert!(!grounded_text(&missing, "find bars"));
+    }
+
+    #[test]
+    fn generated_near_me_query_still_requires_explicit_target_location_intent() {
+        let shared =
+            place_lookup::parse_plan(r#"{"query":"beer bars near me","origin_mode":"shared"}"#)
+                .unwrap();
+        assert!(grounded_text(&shared, "Finn ølbarar nær meg"));
+        assert!(!grounded_text(&shared, "Finn ølbarar i Malmö"));
     }
 
     #[test]
