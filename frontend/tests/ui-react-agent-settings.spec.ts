@@ -1,3 +1,4 @@
+import { openChannelMenu } from "./support/channel-menu";
 import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -313,7 +314,7 @@ test("the channel-menu entry fences pending reads across two administrators and 
       if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
       await group.getByRole("button", { name: "# Privat arbeid", exact: true }).click();
     }
-    await preview.locator(".sp-mobile-header-channel-actions").getByRole("button", { name: "Kanalval", exact: true }).click();
+    await openChannelMenu(preview);
     await preview.getByRole("group", { name: "Kanalval: Privat arbeid", exact: true })
       .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
   };
@@ -438,7 +439,7 @@ test("agent internal edits return to their overview and one Back restores the or
   await page.goto(`/?participant=agent-settings-owner&channel=${privateChannel}`);
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  await preview.getByRole("button", { name: "Kanalval", exact: true }).filter({ visible: true }).click();
+  await openChannelMenu(preview);
   await preview.getByRole("group", { name: "Kanalval: Privat arbeid", exact: true })
     .getByRole("button", { name: "Agentar i kanalen", exact: true }).click();
   const channelPage = destinationSurface(preview, "Kanaldetaljar: Privat arbeid", true);

@@ -11,7 +11,7 @@
 .sp-theme .sp-product-nav-heading > h2 { flex: 1; min-width: 0; font-size: .875rem; margin: 0; }
 .sp-theme .sp-product-nav-disclosure { width: 100%; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: .35rem; padding: .4rem .15rem; border: 0; background: transparent; color: var(--sp-text); text-align: left; cursor: pointer; }
 .sp-theme .sp-product-nav-disclosure:hover { background: var(--sp-wash); }
-.sp-theme .sp-product-nav-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-theme .sp-product-nav-name { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .sp-theme .sp-product-nav-chevron { width: .8rem; flex-shrink: 0; text-align: center; color: var(--sp-muted); }
 .sp-theme .sp-product-nav-pin { flex-shrink: 0; min-width: 44px; min-height: 44px; padding: .25rem; border: 0; background: transparent; color: var(--sp-muted); font-size: 1.15rem; cursor: pointer; }
 .sp-theme .sp-product-nav-pin[aria-pressed=true] { color: var(--sp-text); }

@@ -12,13 +12,16 @@ for (const width of [320, 390, 1500]) {
     const composer = channel.getByRole("textbox", { name: "Skriv melding" });
     await expect(composer).toBeEnabled({ timeout: 15_000 });
     if (compact) {
-      const name = app.locator(".sp-mobile-conversation-short-name");
+      const name = app.locator(".sp-mobile-conversation-title");
       await expect(name).toBeVisible();
       expect((await name.boundingBox())!.width).toBeGreaterThanOrEqual(25);
-      const directory = app.getByRole("button", { name: /Trådar i samtalen/ });
+      await name.tap();
+      const directory = app.locator(".sp-mobile-conversation-name").getByRole("button", { name: /Trådar i samtalen/ });
       const bounds = await directory.boundingBox();
       expect(bounds!.width).toBeGreaterThanOrEqual(44);
       expect(bounds!.height).toBeGreaterThanOrEqual(44);
+      await page.keyboard.press("Escape");
+      await expect(name).toBeFocused();
     }
     const text = `Ei melding som får tråd ${Date.now()}`;
     await composer.fill(text); await channel.getByRole("button", { name: "Send ↑", exact: true }).click();

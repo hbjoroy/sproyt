@@ -1,32 +1,41 @@
-# Design rules
+# Sprøyt layout and visual design
 
-The accepted direction combines editorial hierarchy with social warmth: purposeful rules, strong destination headings, readable sans-serif UI text, sparse monospaced metadata, and a serif for authored invitations. Avoid turning every message into a card.
+Preserve the editorial character: warm paper or charcoal surfaces, strong destination names, restrained rules and familiar outline icons. Improve alignment and density before adding cards, navigation layers or decorative effects.
 
-## Tokens
+## Source and tokens
 
-All CSS is scoped under `.sp-theme`. Override `--sp-*` semantic variables on a Theme instance; do not add a second independent palette. The exported `themes` object from `@sproyt/ui/tokens` mirrors the core light/dark colors for other renderers.
+`packages/sproyt-ui` is the maintained component source. Keep its design and component contracts aligned with the skill references. Ship package changes through a versioned frontend tarball; do not edit node_modules. Reuse `--sp-*` theme tokens in light and dark themes.
 
-Light: warm paper `#faf9f5`, dark ink `#191b18`, white surfaces. Dark: charcoal `#191b18`, darker chrome `#141612`, raised surfaces `#22261f`, ivory `#ebece1`. Citron `#d9ed70` and periwinkle `#b9c5ed` are alternative brand accents; error is separate. Dark selection uses an accent edge and quiet fill to avoid large luminous blocks.
+Body and composer text stay at 16px. Names and channel titles use 14–16px in compact layouts; contextual labels and status use 12–13px. Small metadata must remain readable and support zoom. Do not shrink primary content to make controls fit.
 
-Body 16px, labels 14px, metadata 12–13px, headings 24–32px. Spacing 4/8/12/16/24/32. Mostly square surfaces, 2px control corners, 1px dividers, 3–4px structural rules. No decorative shadows, gradients or glass required. Accent never substitutes for text or shape when conveying status.
+## Header and identity
 
-## Composition
+Reserve space for circle and channel identity before secondary actions. Compact headers use a readable circle overline and channel title. Never abbreviate a circle to one letter as its only visible identity, and never combine manual character slicing with CSS ellipsis. Allow deliberate wrapping where useful; unusually long names remain available through an accessible title disclosure.
 
-`AppShell` provides masthead, scrollable navigation and a flexible main region. In main, compose `.sp-context`, `.sp-timeline`, and `Composer`. At container widths <=650px the list and detail are separate views controlled through `view`. `.sp-only-compact` marks a Back button. The shell needs a containing height, e.g. `height:100dvh` or a bounded widget height.
+Keep global actions and channel actions grouped, not distributed across the available width. Compact secondary channel actions may live in the existing title disclosure. Preserve inbox state, connection recovery, settings, history and thread discoverability; do not add a second navigation architecture. Menus share an icon gutter and text baseline even when an item has no icon.
 
-Person directories, tasks, settings and ordinary forms should use the same field and row treatments. Keep group context above channel names. Unread counts, selection, and muted state have different meanings. Technical identifiers stay in details.
+## Responsive shell
 
-For media, use bounded uncropped previews and an explicit full-size action. Preserve reading position when new messages arrive; do not force-scroll readers away from older content. Keep routine contextual details inline or in a dedicated view; use dialogs for a focused temporary task.
+Use container width and actual available space, not device identity. The app list/detail threshold is 900px; above it, navigation is at least 240px and the main region receives the remaining width. A thread splits alongside its channel only when the content region has at least 780px. These thresholds serve separate purposes. Preserve reading position, drafts and focus across transitions.
 
-## Inputs and adaptations
+Use common left edges for channel identity, timeline and composer. Keep prose readable within a bounded column (up to 860px), while rich media may use available width within its own constraints. Do not stretch short messages just to fill a large monitor.
 
-Comfortable targets are 44px minimum; compact density is 36px for fine pointers and remains 44px for coarse pointers. Container size and input type are separate axes. Maintain keyboard focus visibility, native controls, descriptive labels, and reduced-motion behavior. AppShell does not manage router history, authentication, persistence, list virtualization, or network state.
+## Message structure and rhythm
 
-## Message density
+Use an explicit identity area and a single non-wrapping action group. Name, badge, time, edit state and profile status must not compete as unrelated flex children. Secondary metadata may occupy a deliberate second line; actions must never wrap one by one or create a separate empty toolbar row above the body.
 
-Keep message body text at 16px. Place reply/reaction controls alongside author and timestamp, keeping them always reachable. Use a 12px inter-message gap and compact internal spacing rather than adding message cards. Pointer message actions are 32px high; coarse-pointer actions stay at least 44px. The composer starts at one line, keeps its accessible label and keyboard hint, and remains manually resizable. Routine empty status rows do not consume space. Put application-specific attachment tools in a small secondary composer row.
+Keep the early-adopter badge visible. Informational inline metadata is not a full-size toolbar button: provide accessible details without assigning every decoration a separate 44px column. Keep real reaction/reply/menu actions reachable with keyboard and touch. Do not make discovering threads depend solely on hover or long-press.
 
-## Responsive chat and composition
-Use container width rather than device identity. At 800px or less, use list/detail navigation; split a thread alongside the channel only when the content region has at least 780px. Preserve independent drafts and reading position. Keep the idle composer one row, reveal optional tools during writing, and leave selected attachment context visible. Grow the text field to 3½ lines before scrolling inside it.
+Message body follows the identity area closely. Use 8px between successive messages and the faint 56px rule 4px above the next byline. Date and unread boundaries remain distinct. Do not add cards around ordinary messages.
 
-Message rhythm: keep bylines close to their text, use an 8px gap between messages, and place a faint 56px rule 4px above each subsequent byline. The short rule introduces the next sender. Keep body type readable and retain 44px touch targets.
+Rendered Markdown uses normal block whitespace and controlled paragraph/list margins; preserve whitespace only inside code or intentional plain text. Avoid doubled gaps from source newlines plus block margins. Bound tables, links and media to the content width.
+
+## Input and targets
+
+Keep the idle composer to one row, full remaining text width, with attachment context visible when present. Grow to about four lines before internal scrolling. Preserve controlled drafts, attachment-only sending, IME, sending shortcuts and accepted-send clearing. Focus must be visible without a heavy extra frame that clips against the composer.
+
+Aim for 44px actual primary touch targets and 32–36px fine-pointer actions. Visual glyph size and target size are different. Inline information may use appropriate spacing or a shared accessible details action rather than inflating the whole byline. Never overlap hit areas.
+
+## Validation fixtures
+
+Check 320, 390, 430, 820, 900/901 and 1440 CSS pixels, light/dark, coarse pointer and keyboard, plus enlarged text. Use long circle/channel/person names, status, early-adopter badge, edited time, reactions, threads, tables and mixed-orientation media. Verify no page-level horizontal overflow, no separated action rows, visible channel identity, menu dismissal/focus restoration and intact composer/scroll behavior. Production observations are read-only; use isolated fixtures for sending and destructive actions.

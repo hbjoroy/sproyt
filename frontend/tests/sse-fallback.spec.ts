@@ -29,7 +29,8 @@ test("forced SSE loads, sends and receives live messages", async ({ page, contex
 });
 
 test("forced SSE switches channels without leaving the previous stream active", async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 800 });
+  // Keep both channel targets visible while testing transport handoff.
+  await page.setViewportSize({ width: 1280, height: 800 });
   const streamRequests: string[] = [];
   page.on("request", request => {
     if (request.url().includes("/api/v1/events")) streamRequests.push(request.url());
@@ -122,7 +123,8 @@ test("a silent probe returns from SSE to WebSocket when it becomes available", a
 });
 
 test("rapid channel changes do not block a later WebSocket handoff", async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 800 });
+  // Keep both channel targets visible while testing transport handoff.
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() => {
     const NativeWebSocket = window.WebSocket;
     let attempts = 0;

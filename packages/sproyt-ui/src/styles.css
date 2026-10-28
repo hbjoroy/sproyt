@@ -16,7 +16,7 @@
 .sp-composer{margin:0 1.5rem 1rem;padding:.8rem;border:1px solid var(--sp-line);border-top:3px solid var(--sp-rule);background:var(--sp-surface);flex-shrink:0}.sp-composer .sp-textarea{border:0;background:transparent;min-height:62px;max-height:150px;resize:vertical;padding:.5rem 0}.sp-composer-footer{display:flex;align-items:center;justify-content:space-between;gap:.6rem}.sp-status{padding:.6rem .8rem;background:var(--sp-wash);border-left:3px solid var(--sp-rule);font-size:.875rem}.sp-status[data-tone=error]{border-left-color:var(--sp-error);color:var(--sp-error)}
 .sp-avatar{width:40px;height:40px;flex-shrink:0;display:grid;place-items:center;background:var(--sp-wash);font:.875rem monospace}.sp-person{display:flex;align-items:center;gap:.8rem;padding:1rem 0;border-bottom:1px solid var(--sp-line)}.sp-person-info{flex:1;min-width:0;overflow-wrap:anywhere}.sp-person-info small{display:block;font-size:.875rem;color:var(--sp-muted)}.sp-person-list{margin:0;padding:0;list-style:none}
 .sp-dialog{color:var(--sp-text);background:var(--sp-canvas);border:1px solid var(--sp-rule);padding:0;max-width:min(520px,calc(100% - 2rem));width:100%;max-height:calc(100dvh - 2rem)}.sp-dialog::backdrop{background:#0009}.sp-dialog-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;border-bottom:3px solid var(--sp-rule);padding:1rem 1.2rem}.sp-dialog-head h2{margin:0;font-size:1.4rem}.sp-dialog-body{padding:1.2rem}.sp-empty{padding:2rem 1rem;color:var(--sp-muted)}
-@container sp-app (max-width:800px){.sp-workspace{grid-template-columns:minmax(0,1fr)}.sp-sidebar{display:none;border-right:0}.sp-shell[data-view=list] .sp-sidebar{display:block}.sp-shell[data-view=list] .sp-main{display:none}.sp-only-compact{display:inline-flex}.sp-context{padding:1rem}.sp-composer{margin:0 1rem 1rem}.sp-masthead{padding:.8rem 1rem}.sp-timeline{padding:1rem}.sp-brand{font-size:1.7rem}}
+@container sp-app (max-width:900px){.sp-workspace{grid-template-columns:minmax(0,1fr)}.sp-sidebar{display:none;border-right:0}.sp-shell[data-view=list] .sp-sidebar{display:block}.sp-shell[data-view=list] .sp-main{display:none}.sp-only-compact{display:inline-flex}.sp-context{padding:1rem}.sp-composer{margin:0 1rem 1rem}.sp-masthead{padding:.8rem 1rem}.sp-timeline{padding:1rem}.sp-brand{font-size:1.7rem}}
 @media(prefers-reduced-motion:no-preference){.sp-button,.sp-conversation{transition:background-color 100ms ease}}
 
 /* Editorial chat rhythm: actions share metadata space; body type stays readable. */
@@ -38,10 +38,10 @@
 .sp-composer-footer>.sp-help:not(.sp-error){position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .sp-composer:has(.sp-error) .sp-composer-footer{grid-column:1/-1;order:4}
 @media(pointer:coarse){.sp-message-actions .sp-button{min-width:44px;min-height:44px}}
-@container sp-app (max-width:800px){.sp-masthead{padding:.5rem 1rem}.sp-context{padding:.5rem 1rem;gap:.5rem}.sp-timeline{padding:.65rem 1rem}.sp-composer{margin:0 .75rem .5rem}.sp-message{column-gap:.35rem}.sp-event{padding:.65rem .75rem}}
+@container sp-app (max-width:900px){.sp-masthead{padding:.5rem 1rem}.sp-context{padding:.5rem 1rem;gap:.5rem}.sp-timeline{padding:.65rem 1rem}.sp-composer{margin:0 .75rem .5rem}.sp-message{column-gap:.35rem}.sp-event{padding:.65rem .75rem}}
 
 /* Named container queries keep nested widgets responsive to their own space. */
-.sp-workspace{grid-template-columns:clamp(210px,21%,260px) minmax(0,1fr)}
+.sp-workspace{grid-template-columns:clamp(240px,21%,260px) minmax(0,1fr)}
 .sp-main{container-type:inline-size;container-name:sp-content}
 .sp-discussion{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);flex:1;min-height:0;min-width:0}
 .sp-channel-pane,.sp-thread-pane{display:flex;flex-direction:column;min-width:0;min-height:0}
@@ -55,7 +55,7 @@
 .sp-thread-link:hover{background:var(--sp-wash)}
 .sp-thread-link[aria-expanded=true]{background:var(--sp-wash)}
 @container sp-content (min-width:780px){.sp-discussion[data-thread-open=true]{grid-template-columns:minmax(0,1fr) minmax(340px,40%)}.sp-discussion[data-thread-open=true]>.sp-channel-pane{display:flex}.sp-discussion>.sp-thread-pane{border-left:1px solid var(--sp-rule)}}
-@container sp-app (max-width:800px){.sp-workspace{grid-template-columns:minmax(0,1fr)}.sp-masthead{padding:.4rem .8rem}.sp-context{padding:.5rem .8rem}.sp-brand{font-size:1.5rem}.sp-heading{font-size:1.3rem}.sp-sidebar{padding:1rem}}
+@container sp-app (max-width:900px){.sp-workspace{grid-template-columns:minmax(0,1fr)}.sp-masthead{padding:.4rem .8rem}.sp-context{padding:.5rem .8rem}.sp-brand{font-size:1.5rem}.sp-heading{font-size:1.3rem}.sp-sidebar{padding:1rem}}
 @media(pointer:coarse){.sp-thread-link{min-height:44px}}
 
 .sp-composer-tools{grid-column:1/-1;order:3}.sp-composer-tools[hidden]{display:none}.sp-composer .sp-textarea{resize:none;max-height:none;overflow-y:auto}
@@ -75,3 +75,11 @@
 
 .sp-button[data-variant=symbol]{min-width:var(--sp-target);border-color:transparent;background:transparent;box-shadow:none;color:var(--sp-muted);padding:.25rem}
 .sp-button[data-variant=symbol]:hover:not(:disabled),.sp-button[data-variant=symbol]:focus-visible{background:var(--sp-wash);color:var(--sp-text)}
+
+/* Stable byline/action columns with an independent, optional reaction footer. */
+.sp-message-meta{min-width:0;align-self:center;align-items:center;gap:0 .4rem;line-height:1.3}
+.sp-message-actions{min-width:0;flex-wrap:nowrap;align-self:start}
+.sp-message-actions .sp-button{min-height:32px}
+.sp-message-reactions{grid-column:1/-1;grid-row:3;min-width:0}
+.sp-message-reactions:empty{display:none}
+@media(pointer:coarse){.sp-message-actions .sp-button{min-width:44px;min-height:44px}}

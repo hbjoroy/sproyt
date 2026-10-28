@@ -68,6 +68,8 @@ export interface TimelineProps {
   readonly renderContent: (message: ChatMessage) => ReactNode;
   /** Permission checks, replies, reaction counts, edit and delete stay with the host. */
   readonly renderActions?: (message: ChatMessage, context?: { readonly threadParent: boolean }) => ReactNode;
+  /** Reaction badges and feedback below the message body; mutations stay host-owned. */
+  readonly renderReactions?: (message: ChatMessage) => ReactNode;
   /** A compact link below a root message, when a thread exists. */
   readonly renderThreadSummary?: (message: ChatMessage) => ReactNode;
   readonly messageStatus?: (message: ChatMessage) => string | undefined;
@@ -111,7 +113,7 @@ export function ConversationTimeline(props: TimelineProps) {
   </div>;
 }
 
-export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderAuthorStatus" | "renderContent" | "renderActions" | "renderThreadSummary" | "messageStatus" | "onReactionRequest">;
+export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderAuthorStatus" | "renderContent" | "renderActions" | "renderReactions" | "renderThreadSummary" | "messageStatus" | "onReactionRequest">;
 
 export function formatMessageDateTime(sentAt: string): string {
   return new Date(sentAt).toLocaleString(["nn-NO", "nb-NO"], { dateStyle: "full", timeStyle: "medium" });
@@ -255,7 +257,8 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
       </>} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
-        actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}>
+        actions={props.renderActions?.(message, { threadParent: Boolean(props.threadParent) })}
+        reactions={props.renderReactions?.(message)}>
         {message.deleted_at ? <p>Meldinga er sletta.</p> : props.renderContent(message)}
         {!props.threadParent && props.renderThreadSummary?.(message)}
     </Message>
@@ -297,7 +300,7 @@ export function ConversationView(props: ConversationViewProps) {
           {!props.emptyContent && <header className="sp-context">
             <Button className="sp-only-compact" onClick={props.onBack}>← Samtalar</Button>
             <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 className="sp-heading">{props.title}</h1></div>
-            {props.contextActions}
+            <div className="sp-conversation-toolbar">{props.contextActions}</div>
           </header>}
           {props.emptyContent ?? <><ConversationTimeline {...props.timeline} />{props.composer}</>}
         </section>

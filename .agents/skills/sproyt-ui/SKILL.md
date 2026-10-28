@@ -7,10 +7,14 @@ description: Build React or Vue interfaces with the Sprøyt editorial design sys
 
 Use the bundled `@sproyt/ui` package for a consistent editorial application interface. Preserve the host project's framework, routing, data ownership, and package manager. This skill provides components and design guidance; it does not authorize publishing, transmitting messages, or changing production data.
 
+## Layout decisions
+
+Read [design rules](references/design.md) before changing headers, message rows or responsive layout. Preserve circle/channel identity before allocating space to secondary actions. Use explicit metadata/action areas; never solve narrow layouts with double truncation or independently wrapping toolbar icons. The maintained source is `packages/sproyt-ui`; update source, versioned package and skill references together.
+
 ## Integrate
 
 1. Inspect the target project's package manifest and existing UI entry point. If `@sproyt/ui` is present, use the installed version and do not overwrite it blindly.
-2. Otherwise install `assets/sproyt-ui-0.1.0.tgz` from this skill's directory with the project's package manager. Resolve the path relative to this skill, not a remembered workspace. Prefer copying the archive into the target project's `vendor/` directory so local dependency references survive moving the project. The archive is a portable, built package, not an npm registry publication.
+2. Otherwise install `assets/sproyt-ui-0.1.3.tgz` from this skill's directory with the project's package manager. Resolve the path relative to this skill, not a remembered workspace. Prefer copying the archive into the target project's `vendor/` directory so local dependency references survive moving the project. The archive is a portable, built package, not an npm registry publication.
 3. Import `@sproyt/ui/styles.css` once and import components from `@sproyt/ui/react` or `@sproyt/ui/vue`. Use React 18/19 or Vue 3.5+ respectively. A consuming project needs only its chosen framework.
 4. Wrap the relevant application region in `Theme`. Choose `mode="system"`, `"light"`, or `"dark"`; use citron by default. Set an explicit height when using the scrollable `AppShell` in a full app or widget.
 5. Read [component contracts](references/components.md) for APIs and examples; read [design rules](references/design.md) when composing new screens or extending the library.

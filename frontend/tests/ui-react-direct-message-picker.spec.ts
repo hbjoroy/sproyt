@@ -305,6 +305,8 @@ test("the direct conversation header exposes its scoped member details without l
   await expect.poll(() => server.commands.filter(command => command.type === "list_channel_users").length).toBeGreaterThanOrEqual(1);
   const before = server.commands.filter(command => command.type === "list_channel_users").length;
   expect(server.commands.filter(command => command.type === "list_channel_users").every(command => command.payload?.channel_id === directId)).toBe(true);
+  const title = app.locator(".sp-mobile-conversation-title");
+  if (await title.isVisible()) await title.click();
   await app.getByRole("button", { name: "Medlemmer i Ada Lovelace", exact: true }).click();
   const details = destinationSurface(app, "Om samtalen", true);
   await expect(details.getByRole("heading", { name: "Ada Lovelace", exact: true })).toBeVisible();

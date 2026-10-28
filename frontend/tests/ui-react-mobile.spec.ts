@@ -1,3 +1,4 @@
+import { openChannelMenu } from "./support/channel-menu";
 import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -196,7 +197,8 @@ test("compact toolbar and writing tools stay accessible without shrinking the co
   await expect(app.locator(".sp-mobile-conversation-name")).toBeVisible();
   await composer.fill("Bevar mobilutkastet");
   const height = (await channel.locator(".sp-timeline").boundingBox())!.height;
-  await expect(app.getByRole("button", { name: "Kanalval", exact: true })).toBeVisible();
+  const channelMenu = await openChannelMenu(app);
+  await expect(channelMenu.getByRole("button", { name: "Kanaldetaljar", exact: true })).toBeVisible();
   await app.getByRole("button", { name: "Innstillingar", exact: true }).click();
   await app.getByRole("button", { name: "Utsjånad og bruk", exact: true }).click();
   await app.getByRole("button", { name: "Byt tema", exact: true }).click();
@@ -361,7 +363,7 @@ test("channel overflow keeps notification and confirmed leave actions together",
   await page.goto("/?participant=preview-channel-overflow&ui=react");
   const preview = page.locator("#sproyt-react-preview");
   await expect(preview.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled({ timeout: 15_000 });
-  await preview.getByRole("button", { name: "Kanalval" }).click();
+  await openChannelMenu(preview);
   const menu = preview.getByRole("group", { name: /Kanalval:/ });
   await expect(menu.getByRole("button", { name: "Kanalvarsling", exact: true })).toBeVisible();
   const more = menu.locator("details");
@@ -373,7 +375,7 @@ test("channel overflow keeps notification and confirmed leave actions together",
   await expect(confirmation.getByRole("button", { name: "Ja, forlat kanalen", exact: true })).toBeVisible();
   await confirmation.getByRole("button", { name: "Avbryt", exact: true }).click();
   await expect(confirmation).toHaveCount(0);
-  await preview.getByRole("button", { name: "Kanalval", exact: true }).click();
+  await openChannelMenu(preview);
   if (await more.getAttribute("open") === null) await more.locator("summary", { hasText: "Fleire val" }).click();
   await expect(menu.getByRole("button", { name: "Forlat kanalen", exact: true })).toBeVisible();
 });

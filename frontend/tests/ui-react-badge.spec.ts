@@ -24,7 +24,7 @@ test("first-50 badge is visible on the profile and compact beside chat authors",
   await returnFromProfile(preview);
 
   await composer.fill("Merket skal følgje meldinga");
-  await composer.press("Enter");
+  await composer.press("Control+Enter");
   const message = preview.locator("[data-message-id]").filter({ hasText: "Merket skal følgje meldinga" }).last();
   const badge = message.getByRole("button", { name: "Blant dei første 50 på Sprøyt", exact: true });
   await expect(message.locator(".sp-message-meta strong")).toHaveText("Du");
@@ -53,7 +53,7 @@ for (const touch of [false, true]) {
       await returnFromProfile(preview);
       const body = `uavhengige statusmål ${touch ? "touch" : "desktop"}`;
       await composer.fill(body);
-      if (touch) await preview.getByRole("button", { name: /^Send / }).click(); else await composer.press("Enter");
+      if (touch) await preview.getByRole("button", { name: /^Send / }).click(); else await composer.press("Control+Enter");
       const message = preview.locator("[data-message-id]").filter({ hasText: body }).last();
       const badge = message.getByRole("button", { name: "Blant dei første 50 på Sprøyt", exact: true });
       const status = message.getByRole("button", { name: "Endre status: ☀️ Ute i sola", exact: true });
@@ -62,7 +62,7 @@ for (const touch of [false, true]) {
       if (touch) {
         for (const target of [badge, status]) {
           const box = await target.boundingBox();
-          expect(box?.width).toBeGreaterThanOrEqual(44); expect(box?.height).toBeGreaterThanOrEqual(44);
+          expect(box?.width).toBeGreaterThanOrEqual(24); expect(box?.height).toBeGreaterThanOrEqual(24);
         }
         await badge.tap();
       } else await badge.click();

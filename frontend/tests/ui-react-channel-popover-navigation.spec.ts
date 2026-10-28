@@ -8,11 +8,14 @@ for (const compact of [false, true]) {
     const composer = preview.getByRole("textbox", { name: "Skriv melding" });
     await expect(composer).toBeEnabled({ timeout: 15_000 });
     await composer.fill("kanalmenyutkast");
-    const trigger = preview.getByRole("button", { name: "Kanalval", exact: true });
-    const menu = preview.getByRole("group", { name: /^Kanalval:/ });
+    const trigger = compact ? preview.locator(".sp-mobile-conversation-title")
+      : preview.getByRole("button", { name: "Kanalval", exact: true });
+    const menu = compact ? preview.locator(".sp-mobile-conversation-name")
+      : preview.getByRole("group", { name: /^Kanalval:/ });
     await trigger.click();
     await expect(menu).toBeVisible();
-    await expect(menu).toHaveAttribute("popover", "auto");
+    if (!compact) await expect(menu).toHaveAttribute("popover", "auto");
+    else await expect(menu.locator(".sp-channel-actions-inline")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(menu).toBeHidden();
     await expect(trigger).toBeFocused();

@@ -7,11 +7,11 @@ Package exports: `@sproyt/ui/react`, `@sproyt/ui/vue`, `@sproyt/ui/styles.css`, 
 | Component | Props and composition |
 |---|---|
 | Theme | `mode: light/dark/system`, `accent: citron/periwinkle`, `density: comfortable/compact`; children/default slot |
-| Button | `variant: primary/secondary/quiet/danger`, `busy`, `disabled`; native button attributes/events. Default type is button; submit explicitly. |
+| Button | `variant: primary/secondary/quiet/symbol/danger`, `busy`, `disabled`; native button attributes/events. Default type is button; submit explicitly. `symbol` keeps pressed controls visually quiet: provide an accessible name and distinguish state with icon shape plus `aria-pressed`. |
 | TextField | `label`, `hint`, `error`, `id`, native input attributes. React forwards a ref; Vue forwards attributes to the input. |
 | AppShell | `view: list/detail`, `navigationLabel`; React `header`, `navigation`, children; Vue named header/navigation and default slots |
 | ConversationList | `items: {id,name,group,unread?,muted?}[]`, `selectedId`, `emptyLabel`; selection callback/event |
-| Message | `author`, `time`, `dateTime?`, `status?`; body children/default slot; React `actions`, Vue actions slot |
+| Message | `author`, `time`, `dateTime?`, `status?`; body children/default slot; React `actions`, Vue actions slot for the primary toolbar; optional React `reactions`, Vue reactions slot below the body; optional React `authorContent` / Vue author slot replaces the default strong author label |
 | Composer | controlled text, `label`, `placeholder`, `sendLabel`, `hint`, `disabled`, `busy`, `error`, `sendOnEnter`; React `leading` and `tools`, Vue leading/tools slots; `toolsLabel` labels the disclosure button |
 | ThreadPane | `title`, `context`, `closeLabel`; React `parent`, `composer`, children, `onClose`; Vue parent/composer/default slots, `@close`. Escape closes; host restores focus. |
 | EventCard | `title`, `when`, `where?`, controlled RSVP, `summary`, `label`, `options`, `disabled`; RSVP `yes/maybe/no` |
@@ -67,7 +67,7 @@ The console-only examples intentionally have no external side effects. Replace t
 
 ## Composing a responsive conversation
 
-Wrap the channel and optional thread in `.sp-discussion` with `data-thread-open="true"` when a thread is open. The channel wrapper uses `.sp-channel-pane`. `ThreadPane` occupies the second column at content widths of 780px or more, and replaces the channel below that threshold. AppShell navigation switches to explicit list/detail at app container widths of 800px or less. These are container widths, so the same behavior works inside desktop widgets.
+Wrap the channel and optional thread in `.sp-discussion` with `data-thread-open="true"` when a thread is open. The channel wrapper uses `.sp-channel-pane`. `ThreadPane` occupies the second column at content widths of 780px or more, and replaces the channel below that threshold. AppShell navigation switches to explicit list/detail at app container widths of 900px or less. These are container widths, so the same behavior works inside desktop widgets.
 
 The host owns parent/reply IDs, separate drafts per conversation and thread, reply counts, and focus restoration. Keep replies out of the root timeline, provide a reply-count button on the parent, and return focus to that button when closing a thread. Keep the channel mounted to retain its reading position.
 
