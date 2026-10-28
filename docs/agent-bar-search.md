@@ -1,4 +1,37 @@
-# Mellombels stadssøk for kretsagentar
+# Stadssøk og felles barforslag
+
+## Felles chatresultat (28. oktober 2026)
+
+Den nye standardflyten er `spørsmål → find_bars → Google → ferdig chatmelding`.
+Alle kanalmedlemmer ser same svar, både direkte og i historikken. Ingen må opne
+eller godkjenne eit separat kort for eit ordinært stadnamnsøk. Eit spørsmål nær
+meg krev framleis ei uttrykkeleg, gyldig posisjonsdeling; inga IP-lokalisering.
+Utviklaren har akseptert kontraktsrisikoen ved varig lagring av Google-avleidd
+innhald. Dette er ei dokumentert produktavgjerd, ikkje ei stadfesting frå Google.
+
+Berre det formaterte svaret med oppsummering, inntil åtte stadlenkjer,
+kjeldetilvisingar og hentetid blir lagra i jobben og som ordinær chatmelding.
+Modellgenerert søkjeplan, faktisk API-førespurnad, rårespons, innhald-token og
+strukturerte koordinatar blir ikkje lagra. Det blir ikkje bygd ein søkjecache.
+Tidlegare kort og deira separate oppslagsruter er bevarte for eldre meldingar;
+den nye flyten lagrar ikkje `place_lookup_plan`.
+
+`choose_random: true` på `find_bars` vel frå dei faktiske returnerte kandidatane
+med tenaren sin ekte tilfeldige terning. Eit oppfølgingsspørsmål som «trill og
+velje for meg» kan velje frå agenten si siste publiserte liste i same samtale,
+utan nytt Google-oppslag eller modellpåstand om eit uutført kast. Eksisterande
+jobblagring og idempotent publisering bevarer det ferdige valet ved send-retry.
+Stadnamn i oppfølging kan hentast frå same brukar sine autoriserte meldingar i
+same kanal innan 20 minutt, aldri frå minne eller ein annan brukar sin posisjon.
+
+Den nye chatmeldinga gir Google Maps-lenkjer. Interaktiv gangavstand er framleis
+tilgjengeleg i eldre søkekort; ho er ikkje inkludert i den nye tekstlista.
+Ingen database- eller Helm-endring er nødvendig for denne overgangen.
+
+## Eldre kortflyt (bevart for eksisterande meldingar)
+
+Følgjande skildrar den tidlegare kortflyten, ikkje standarden for nye agentsvar.
+
 
 `find_bars` let ein agent føreslå eit Google Maps-søk etter barar. Den same
 kapabiliteten er tilgjengeleg for kretsagentane; han er ikkje knytt til eitt

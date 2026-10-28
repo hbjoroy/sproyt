@@ -19,8 +19,9 @@ installerte Qwen-modellen på Santorini er kontrollert for native tool calls.
 - `vessel_observations({})`: same autoriserte, ferske AIS-utval som blei
   innhenta for denne meldinga. Ufullstendig dekning og posisjonsobservasjon er
   ikkje stadfesta kaiankomst, kansellering, forseinking eller live ETA.
-- `find_bars(...)`: lagar ein plan for eit brukarutløyst, mellombels
-  Google Maps-søk, ikkje eit verktøyresultat som blir sendt til modellen.
+- `find_bars(..., choose_random?)`: utfører eit Google Maps-søk og publiserer
+  eit felles svar med kjelder og lenkjer i kanalen. Plan og rårespons blir ikkje
+  lagra eller sendt til ein ny modellrunde; berre det ferdige svaret blir lagra.
   Tilgang, posisjonssamtykke, avgrensingar og nødvendige utrullingssteg er
   skildra i [agent-bar-search.md](agent-bar-search.md).
 
