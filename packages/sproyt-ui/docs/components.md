@@ -22,6 +22,8 @@ Package exports: `@sproyt/ui/react`, `@sproyt/ui/vue`, `@sproyt/ui/styles.css`, 
 
 `Composer` emits React `onSend(text)` / Vue `@send="handler"`. Ctrl/Cmd+Enter sends; plain Enter inserts a newline by default. `sendOnEnter` opts into Enter-send, Shift+Enter for newline. IME composition does not send. Disabled/busy/whitespace-only messages cannot send. The app controls clearing and retries.
 
+`Message` shares a full-width, subtly tinted first grid row between identity and primary actions, with its separator above the sender. The decorative layer does not capture input; body and reactions retain the canvas background.
+
 ## React
 
 ```tsx

@@ -38,9 +38,17 @@ for (const width of [320, 390, 1440]) for (const theme of ["light", "dark"]) {
     await expect(messages).not.toContainText("Sendt");
     const rule = await pane.locator('[data-message-id] + [data-message-id] .sp-message').first().evaluate(element => {
       const style = getComputedStyle(element, "::before");
-      return { width: style.width, content: style.content };
+      const body = element.querySelector('.sp-message-body')!.getBoundingClientRect();
+      const message = element.getBoundingClientRect();
+      return { width: parseFloat(style.width), height: parseFloat(style.height), content: style.content,
+        messageWidth: message.width, headerHeight: body.top - message.top,
+        border: style.borderTopWidth, background: style.backgroundColor, pointerEvents: style.pointerEvents };
     });
-    expect(rule.width).toBe("56px");
+    expect(rule.width).toBeCloseTo(rule.messageWidth, 0);
+    expect(rule.height).toBeCloseTo(rule.headerHeight, 0);
+    expect(rule.border).toBe("1px");
+    expect(rule.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(rule.pointerEvents).toBe("none");
     expect(rule.content).toBe('""');
     await field.blur();
     await page.screenshot({ path: `${evidence}/app-${width}-${theme}.png` });

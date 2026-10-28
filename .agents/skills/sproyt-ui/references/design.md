@@ -26,7 +26,7 @@ Use an explicit identity area and a single non-wrapping action group. Name, badg
 
 Keep the early-adopter badge visible. Informational inline metadata is not a full-size toolbar button: provide accessible details without assigning every decoration a separate 44px column. Keep real reaction/reply/menu actions reachable with keyboard and touch. Do not make discovering threads depend solely on hover or long-press.
 
-Message body follows the identity area closely. Use 8px between successive messages and the faint 56px rule 4px above the next byline. Date and unread boundaries remain distinct. Do not add cards around ordinary messages.
+Message body follows the identity area closely. Use 8px between successive messages. Each byline/action row has a thin rule across the full message column at its top and a very faint shared background, including when identity wraps. The rule belongs above the sender, never between sender and body. Use `--sp-message-header` (4% text mixed into canvas) and `--sp-message-divider` (35% line mixed into canvas), so both themes retain their palette. Keep body/media on the normal canvas, preserve aligned text edges and compact row height, and keep date/unread boundaries distinct. Do not add side borders, rounded cards or a bottom rule around ordinary messages.
 
 Rendered Markdown uses normal block whitespace and controlled paragraph/list margins; preserve whitespace only inside code or intentional plain text. Avoid doubled gaps from source newlines plus block margins. Bound tables, links and media to the content width.
 

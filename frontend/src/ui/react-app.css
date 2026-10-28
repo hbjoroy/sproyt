@@ -34,10 +34,6 @@
 #sproyt-react-preview [data-message-id] { position: relative; }
 #sproyt-react-preview [data-message-id] .sp-message { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .5rem; position: relative; width: 100%; max-width: 860px; }
 #sproyt-react-preview [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message { margin-top: .5rem; }
-#sproyt-react-preview [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message::before {
-  content: ""; position: absolute; left: 0; top: -4px; width: 3.5rem; height: 1px;
-  background: var(--sp-line); opacity: .35;
-}
 #sproyt-react-preview [data-message-id] .sp-message-body { grid-column: 1 / -1; grid-row: 2; }
 #sproyt-react-preview [data-message-id] .sp-message-meta strong { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 #sproyt-react-preview .sp-time { white-space: nowrap; cursor: help; outline-offset: 3px; }
