@@ -226,6 +226,23 @@ pub struct Channel {
     pub created_by: UserId,
 }
 
+/// Server-computed activity across the full history of a direct conversation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DirectActivity {
+    pub last_message_at: Option<DateTime<Utc>>,
+    pub score: f64,
+    pub calculated_at: DateTime<Utc>,
+}
+
+impl PartialEq for DirectActivity {
+    fn eq(&self, other: &Self) -> bool {
+        self.last_message_at == other.last_message_at
+            && self.score.total_cmp(&other.score).is_eq()
+            && self.calculated_at == other.calculated_at
+    }
+}
+impl Eq for DirectActivity {}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSummary {
     pub id: ChannelId,
@@ -239,6 +256,8 @@ pub struct ChannelSummary {
     /// remains populated only for one-to-one conversations.
     #[serde(default)]
     pub is_direct: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_activity: Option<DirectActivity>,
     #[serde(default)]
     pub description: String,
     pub role: MembershipRole,

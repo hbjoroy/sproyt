@@ -1,3 +1,4 @@
+pub(crate) mod direct_activity;
 mod onboarding;
 mod policy;
 mod repository;
