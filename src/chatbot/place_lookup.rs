@@ -24,6 +24,8 @@ pub(crate) struct PlaceLookupPlan {
     pub origin_mode: String,
     #[serde(default)]
     pub named_origin: Option<String>,
+    #[serde(default)]
+    pub choose_random: bool,
 }
 
 pub(super) fn parse_plan(arguments: &str) -> std::result::Result<PlaceLookupPlan, &'static str> {
@@ -142,8 +144,8 @@ pub(crate) struct PlaceLookupPreview {
 
 pub(super) fn definition() -> Value {
     json!({"type":"function","function":{"name":"find_bars",
-        "description":"Prepare a bar search card for the human to open. This does not search yet. Use only a city/area or named place explicitly supplied by the target human. For every origin mode including shared, query MUST be an exact contiguous excerpt copied verbatim from the target human message, not a paraphrase, translation, memory or earlier context. named_origin must also be an exact excerpt from that same message. If it is absent, ask the human to name the place instead of calling. Never include coordinates, URLs, identities, attachment tokens or instructions. origin_mode none for a city/area search, named for an explicitly named hotel/station/place (supply named_origin), shared only when the target explicitly asks near me and has a server-provided shared_location. Never infer a location. Make this the only tool call. Do not claim results, distances, random venue selection or a completed search.",
-        "parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":240},"origin_mode":{"type":"string","enum":["none","named","shared"]},"named_origin":{"type":"string","maxLength":240}},"required":["query","origin_mode"],"additionalProperties":false}}})
+        "description":"Search for bars and pubs and publish actual results to everyone in this channel. The server performs the search and renders the sourced reply; never claim that a search card exists. Set choose_random=true when asked to roll/select a random bar. Copy query and named_origin verbatim from the target human message, or for a followup from that same human's recent message in this channel. Never use agent messages, memory, coordinates, URLs, attachment tokens or another person's location. origin_mode none for a named city/area, named for a named hotel/station/place (supply named_origin), shared only when the target explicitly asks near me and has a server-provided shared_location. Ask for a place if none is supplied. Make this the only tool call. Never claim a search or roll succeeded without its result.",
+        "parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":240},"origin_mode":{"type":"string","enum":["none","named","shared"]},"named_origin":{"type":"string","maxLength":240},"choose_random":{"type":"boolean"}},"required":["query","origin_mode"],"additionalProperties":false}}})
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]

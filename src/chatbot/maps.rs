@@ -1,8 +1,8 @@
 //! Bounded, stateless Google Maps Grounding Lite transport.
 //!
 //! This module does not publish, cache, log, or persist Google content. Callers
-//! must enforce consent immediately before a request and use an authorised,
-//! non-durable presentation with the supplied attribution and source links.
+//! enforce authorization immediately before a request. Shared chat replies may
+//! persist a bounded presentation with attribution; raw responses are transient.
 use std::time::Duration;
 
 use reqwest::{Client, Url, header::HeaderValue};
@@ -33,8 +33,15 @@ pub(super) struct MapsService {
     api_key: HeaderValue,
 }
 
+#[cfg(test)]
+tokio::task_local! { pub(super) static TEST_SERVICE: MapsService; }
+
 impl MapsService {
     pub(super) fn from_env() -> std::result::Result<Option<Self>, &'static str> {
+        #[cfg(test)]
+        if let Ok(service) = TEST_SERVICE.try_with(Clone::clone) {
+            return Ok(Some(service));
+        }
         let key = match std::env::var("SPROYT_GOOGLE_MAPS_API_KEY") {
             Ok(key) if !key.trim().is_empty() => key,
             Ok(_) | Err(std::env::VarError::NotPresent) => return Ok(None),
@@ -47,7 +54,7 @@ impl MapsService {
         .map(Some)
     }
 
-    fn new(key: &str, endpoint: Url) -> std::result::Result<Self, &'static str> {
+    pub(super) fn new(key: &str, endpoint: Url) -> std::result::Result<Self, &'static str> {
         if key.trim() != key || key.len() < 16 || key.len() > 256 {
             return Err("maps_configuration");
         }
@@ -218,7 +225,7 @@ fn decode_response(bytes: &[u8]) -> std::result::Result<Value, &'static str> {
     Ok(value)
 }
 
-fn google_url(value: &str) -> bool {
+pub(super) fn google_url(value: &str) -> bool {
     if value.len() > 4096 || value.chars().any(char::is_control) {
         return false;
     }

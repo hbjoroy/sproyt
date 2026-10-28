@@ -76,6 +76,7 @@ mod observations;
 mod operators;
 pub(crate) mod place_lookup;
 mod sea_temperature;
+mod shared_places;
 mod tools;
 pub(crate) use maps_lookup::MapsLookupError;
 mod vision;
@@ -973,10 +974,7 @@ impl VllmChat {
             || Value::String(content.clone()),
             |vision| vision.content(content.clone()),
         );
-        let target_body = messages
-            .iter()
-            .find(|message| message.id == target)
-            .map(|message| message.body.clone());
+        let messages_context = messages.to_vec();
         let mut messages = vec![
             json!({"role":"system","content":system}),
             json!({"role":"user","content":content}),
@@ -1046,10 +1044,7 @@ impl VllmChat {
                     if plan.origin_mode == "shared" && shared_location.is_none() {
                         return Err("model_invalid_tool");
                     }
-                    if target_body
-                        .as_deref()
-                        .is_none_or(|body| !place_lookup::grounded_in_source(&plan, body))
-                    {
+                    if !shared_places::grounded_in_context(&plan, target, &messages_context) {
                         return Ok(place_lookup::CLARIFICATION_REPLY.to_owned());
                     }
                     let runtime = read_tools.as_mut().ok_or("model_invalid_tool")?;
@@ -1822,27 +1817,31 @@ impl CircleChatAgents {
             };
             // Leave time to release the 180-second global permit and persist
             // the fenced reply. The deadline covers all model/tool rounds.
-            let answer = tokio::time::timeout(
-                Duration::from_secs(140),
-                model.reply_with_location(
-                    &source.agent_name,
-                    &triggers,
-                    &phrases,
-                    &job.source_message_id,
-                    &messages,
-                    snapshot.as_ref(),
-                    source.followup.as_ref(),
-                    ferry_snapshot.as_ref(),
-                    vision.as_ref(),
-                    observations.as_ref(),
-                    source.image_requested && self.imagegen.is_some(),
-                    memory_data.as_ref(),
-                    location_context.as_ref(),
-                    Some(&mut read_tools),
-                ),
-            )
-            .await
-            .unwrap_or(Err("model_transport"));
+            let answer = match shared_places::choose_from_context(job, &messages) {
+                Err(code) => Err(code),
+                Ok(Some(selection)) => Ok(selection),
+                Ok(None) => tokio::time::timeout(
+                    Duration::from_secs(140),
+                    model.reply_with_location(
+                        &source.agent_name,
+                        &triggers,
+                        &phrases,
+                        &job.source_message_id,
+                        &messages,
+                        snapshot.as_ref(),
+                        source.followup.as_ref(),
+                        ferry_snapshot.as_ref(),
+                        vision.as_ref(),
+                        observations.as_ref(),
+                        source.image_requested && self.imagegen.is_some(),
+                        memory_data.as_ref(),
+                        location_context.as_ref(),
+                        Some(&mut read_tools),
+                    ),
+                )
+                .await
+                .unwrap_or(Err("model_transport")),
+            };
             permit
                 .release(!matches!(
                     answer,
@@ -1854,13 +1853,14 @@ impl CircleChatAgents {
             self.location_for_job(job)
                 .await
                 .map_err(|_| "location_changed")?;
-            let place_lookup_plan = read_tools
-                .place_lookup
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(|_| "place_lookup_plan")?
-                .unwrap_or_default();
+            // Only the rendered chat reply survives; generated API arguments and
+            // the raw provider response stay in working memory.
+            let answer = if let Some(plan) = read_tools.place_lookup.take() {
+                self.shared_place_search(job, &plan).await?
+            } else {
+                answer
+            };
+            let place_lookup_plan = String::new();
             let sea_snapshot = read_tools.sea_temperature;
             let sea_valid_until = sea_snapshot
                 .as_ref()
