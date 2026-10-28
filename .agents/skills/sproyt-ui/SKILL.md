@@ -7,6 +7,10 @@ description: Build React or Vue interfaces with the Sprøyt editorial design sys
 
 Use the bundled `@sproyt/ui` package for a consistent editorial application interface. Preserve the host project's framework, routing, data ownership, and package manager. This skill provides components and design guidance; it does not authorize publishing, transmitting messages, or changing production data.
 
+## Layout decisions
+
+Read [design rules](references/design.md) before changing headers, message rows or responsive layout. Preserve circle/channel identity before allocating space to secondary actions. Use explicit metadata/action areas; never solve narrow layouts with double truncation or independently wrapping toolbar icons. The maintained source is `packages/sproyt-ui`; update source, versioned package and skill references together.
+
 ## Integrate
 
 1. Inspect the target project's package manifest and existing UI entry point. If `@sproyt/ui` is present, use the installed version and do not overwrite it blindly.

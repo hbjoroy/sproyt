@@ -67,7 +67,7 @@ The console-only examples intentionally have no external side effects. Replace t
 
 ## Composing a responsive conversation
 
-Wrap the channel and optional thread in `.sp-discussion` with `data-thread-open="true"` when a thread is open. The channel wrapper uses `.sp-channel-pane`. `ThreadPane` occupies the second column at content widths of 780px or more, and replaces the channel below that threshold. AppShell navigation switches to explicit list/detail at app container widths of 800px or less. These are container widths, so the same behavior works inside desktop widgets.
+Wrap the channel and optional thread in `.sp-discussion` with `data-thread-open="true"` when a thread is open. The channel wrapper uses `.sp-channel-pane`. `ThreadPane` occupies the second column at content widths of 780px or more, and replaces the channel below that threshold. AppShell navigation switches to explicit list/detail at app container widths of 900px or less. These are container widths, so the same behavior works inside desktop widgets.
 
 The host owns parent/reply IDs, separate drafts per conversation and thread, reply counts, and focus restoration. Keep replies out of the root timeline, provide a reply-count button on the parent, and return focus to that button when closing a thread. Keep the channel mounted to retain its reading position.
 
