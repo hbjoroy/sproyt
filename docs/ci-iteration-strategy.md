@@ -10,7 +10,8 @@ the release-image build alone could not remove the roughly 39-minute browser wai
 - Build/check the frontend once in quality. Do not repeat `npm test` through
   `test:e2e`, or build the same frontend again in a PR-only Docker stage.
 - Build one real browser-test server from the same checkout. Transfer that
-  binary as an artifact within the same workflow run. Every browser job migrates
+  binary and the built frontend as an artifact within the same workflow run
+  (worker/update tests also read the JavaScript bundle from disk). Every browser job migrates
   its own temporary SQLite database and starts its own server on a reserved port.
   Local test commands retain their Cargo fallback; CI never compiles per shard.
 - Full regression uses four Chromium and two WebKit shards concurrently.

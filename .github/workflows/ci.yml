@@ -155,7 +155,7 @@ jobs:
           mkdir -p .ci-browser-server
           cp target/debug/sproyt .ci-browser-server/sproyt
           strip --strip-debug .ci-browser-server/sproyt
-          tar -czf browser-server.tar.gz -C .ci-browser-server sproyt
+          tar -czf browser-server.tar.gz .ci-browser-server/sproyt frontend/dist
 
       - name: Share same-revision browser server
         if: needs.changes.outputs.browser != 'none'
@@ -213,9 +213,9 @@ jobs:
           name: browser-server-${{ github.sha }}
       - name: Unpack tested server
         run: |
-          mkdir -p .ci-browser-server
-          tar -xzf browser-server.tar.gz -C .ci-browser-server
+          tar -xzf browser-server.tar.gz
           test -x .ci-browser-server/sproyt
+          test -s frontend/dist/app.js
       - name: Cache requested browser binary
         uses: actions/cache@v5
         with:
