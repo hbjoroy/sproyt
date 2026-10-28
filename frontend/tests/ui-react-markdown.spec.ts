@@ -80,3 +80,24 @@ test("saved dice outcomes show two local sprites in compact light and dark chat"
     await page.screenshot({path:`test-results/dice-${colorScheme}.png`});
   }
 });
+
+
+test("bar results show a compact linked table with optional detail on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  const body = "**Barforslag · Google Maps**\n\n| # | Stad |\n| ---: | --- |\n| 1 | [Ein pub med eit svært langt namn ved jernbanestasjonen](<https://www.google.com/maps?cid=1>) |\n| 2 | [Pub B](<https://www.google.com/maps?cid=2>) |\n\nKjelde: Google Maps · 28.10.2026 17:00 UTC.\n\n**Om stadene**\n\nHer er den lengre omtalen frå kjelda.\n\nOpningstider og tilbod kan endre seg.";
+  const preview = await sendReactMessage(page, "compact-bar-table", body);
+  const result = preview.locator(".sp-bar-results");
+  await expect(result.locator("table")).toBeVisible();
+  await expect(result.locator("tbody tr")).toHaveCount(2);
+  await expect(result.getByRole("link", { name: "Pub B", exact: true })).toHaveAttribute("href", "https://www.google.com/maps?cid=2");
+  await expect(result.getByText("Her er den lengre omtalen frå kjelda.")).toBeHidden();
+  expect((await result.boundingBox())!.height).toBeLessThan(230);
+  expect(await result.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect(await result.locator("table").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.screenshot({ path: `test-results/bar-table-${colorScheme}.png` });
+  }
+  await result.locator("summary").click();
+  await expect(result.getByText("Her er den lengre omtalen frå kjelda.")).toBeVisible();
+});
