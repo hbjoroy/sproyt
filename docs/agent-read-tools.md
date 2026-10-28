@@ -51,3 +51,21 @@ begge agentnamn, full rutefakta og ugyldige batchar. Den eksplisitt ignorerte
 og credentials i miljøet; han postar ingen melding og endrar ingen konfigurasjon.
 Denne prøva passerte 9. oktober mot faktisk Qwen og begge cluster-tenestene:
 Fogd valde heile dagslista, Maria valde Bergen, og det resolverte landet var Noreg.
+
+## Terningkast
+
+`roll_die({sides, count?})` kastar 1–10 uavhengige terningar; standard `count` er 1.
+To separate `roll_die`-kall i same batch er også lov. Andre verktøy kan framleis
+berre kallast éin gong per batch. Terningkast brukar operativsystemet si ekte
+tilfeldigheit; sekundet i klokka skal ikkje brukast som seed eller som terning.
+
+Eit reint kast blir formatert frå dei faktiske verdiane på tenaren, utan ny
+modellrunde. Tal, sum og ein avgrensa `dice`-kodeblokk blir lagra som éi vanleg
+melding gjennom den eksisterande idempotente jobbflyten. React viser kodeblokka
+som lokale 3D-PNG-sprites; eldre klientar får tal og sum som lesbar tekst.
+Spriteval skjer direkte frå dei lagra terningverdiane, ikkje frå ein animasjon.
+
+`tools/render-dice-sprites.py` gjenskaper dei 12 PNG-filene med Blender 5:
+seks valørar i to vinklar, 256×256 RGBA, transparente utanfor terningen.
+Motståande sider summerer til sju. V1-filene blir serverte frå ei fast allowlist
+på `/assets/dice/v1/`, med lang cachetid; endra grafikk må få eit nytt URL-versjonsnummer.

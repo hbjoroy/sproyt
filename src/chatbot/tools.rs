@@ -6,6 +6,7 @@ mod wire;
 pub(super) use wire::{contains_wire_markup, decode_calls};
 
 pub(super) struct ReadTools<'a> {
+    pub dice: Vec<(u32, u32)>,
     pub place_lookup: Option<super::place_lookup::PlaceLookupPlan>,
     pub weather_service: Option<&'a weather::WeatherService>,
     pub sea_temperature_service: Option<&'a sea_temperature::SeaTemperatureService>,
@@ -39,11 +40,16 @@ const MAX_DIE_SIDES: u32 = 10_000;
 #[serde(deny_unknown_fields)]
 struct DieArgs {
     sides: u32,
+    #[serde(default = "one_die")]
+    count: u32,
+}
+fn one_die() -> u32 {
+    1
 }
 
 fn die_arguments(arguments: &str) -> std::result::Result<DieArgs, &'static str> {
     let args: DieArgs = serde_json::from_str(arguments).map_err(|_| "model_invalid_tool")?;
-    if !(1..=MAX_DIE_SIDES).contains(&args.sides) {
+    if !(1..=MAX_DIE_SIDES).contains(&args.sides) || !(1..=10).contains(&args.count) {
         return Err("model_invalid_tool");
     }
     Ok(args)
@@ -167,8 +173,8 @@ impl ReadTools<'_> {
     pub fn definitions(&self) -> Vec<Value> {
         let mut tools = Vec::new();
         tools.push(json!({"type":"function","function":{
-            "name":"roll_die","description":"Roll one real random die with the requested number of sides. Use the returned value; never invent a roll. For a random choice among N known options, request N sides and use the resulting 1-based index.",
-            "parameters":{"type":"object","properties":{"sides":{"type":"integer","minimum":1,"maximum":MAX_DIE_SIDES}},"required":["sides"],"additionalProperties":false}}}));
+            "name":"roll_die","description":"Roll real random dice with the requested number of sides. count defaults to 1; use count=2 for two dice. Use the returned values and total; never invent a roll or use the clock as a seed. For a random choice among N known options, request N sides and use the resulting 1-based index.",
+            "parameters":{"type":"object","properties":{"sides":{"type":"integer","minimum":1,"maximum":MAX_DIE_SIDES},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["sides"],"additionalProperties":false}}}));
         if super::place_lookup::enabled() {
             tools.push(super::place_lookup::definition());
         }
@@ -214,7 +220,15 @@ impl ReadTools<'_> {
         let mut result = match name {
             "roll_die" => {
                 let args = die_arguments(arguments)?;
-                json!({"sides": args.sides, "value": roll_die(args.sides)?})
+                if self.dice.len() + args.count as usize > 10 {
+                    return Err("model_invalid_tool");
+                }
+                let values = (0..args.count)
+                    .map(|_| roll_die(args.sides))
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                self.dice
+                    .extend(values.iter().map(|value| (args.sides, *value)));
+                json!({"sides":args.sides,"value":values[0],"total":values.iter().sum::<u32>(),"values":values})
             }
             "find_bars" if super::place_lookup::enabled() => {
                 self.place_lookup = Some(super::place_lookup::parse_plan(arguments)?);
@@ -352,6 +366,7 @@ mod tests {
     async fn real_die_tool_is_bounded_strict_and_available_to_all_agents() {
         let mut tools = ReadTools {
             place_lookup: None,
+            dice: Vec::new(),
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -391,6 +406,7 @@ mod tests {
     async fn marine_capability_is_independent_and_authorized_before_io() {
         let mut tools = ReadTools {
             place_lookup: None,
+            dice: Vec::new(),
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: Some(sea_temperature::SeaTemperatureConfig {
@@ -463,6 +479,7 @@ mod tests {
     async fn capabilities_and_strict_arguments_bound_tool_execution() {
         let mut tools = ReadTools {
             place_lookup: None,
+            dice: Vec::new(),
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -518,6 +535,7 @@ mod tests {
         let default = json!({"configured_location":"Parikia","current":{"temperature_c":22},"valid_until_epoch":expiry});
         let mut tools = ReadTools {
             place_lookup: None,
+            dice: Vec::new(),
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -598,6 +616,7 @@ mod tests {
             json!({"configured_location":"Parikia","valid_until_epoch":Utc::now().timestamp()+300});
         let mut tools = ReadTools {
             place_lookup: None,
+            dice: Vec::new(),
             weather_service: None,
             sea_temperature_service: None,
             sea_temperature_config: None,
@@ -636,7 +655,7 @@ mod tests {
 
     #[tokio::test]
     async fn qwen_content_tools_are_executed_and_fragments_are_never_published() {
-        let content = "<tool_call>\n<function=roll_die>\n<parameter=sides>\n6\n</parameter>\n</function>\n</tool_call>";
+        let content = "<tool_call>\n<function=roll_die>\n<parameter=sides>\n6\n</parameter>\n</function>\n</tool_call><tool_call><function=ferry_calls></function></tool_call>";
         let (reply, requests) =
             model_exchange_draft("terningar", json!({"content":content}), "trill ein terning")
                 .await;
@@ -663,8 +682,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn two_dice_are_one_saved_server_rendered_outcome_without_a_second_model_round() {
+        let die = |id: &str, args: &str| json!({"id":id,"type":"function","function":{"name":"roll_die","arguments":args}});
+        for calls in [
+            json!([die("die-1", r#"{"sides":6,"count":2}"#)]),
+            json!([
+                die("die-1", r#"{"sides":6}"#),
+                die("die-2", r#"{"sides":6}"#)
+            ]),
+        ] {
+            let (reply, requests) = model_exchange_body("terningar", calls, "Trill").await;
+            let reply = reply.unwrap();
+            assert_eq!(requests.len(), 1);
+            let values = reply
+                .split("```dice\n")
+                .nth(1)
+                .unwrap()
+                .split('\n')
+                .next()
+                .unwrap()
+                .split(',')
+                .map(|v| v.parse::<u32>().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(values.len(), 2);
+            assert!(values.iter().all(|value| (1..=6).contains(value)));
+            assert!(reply.starts_with(&format!(
+                "🎲 {} + {} = {}",
+                values[0],
+                values[1],
+                values.iter().sum::<u32>()
+            )));
+        }
+    }
+
+    #[tokio::test]
     async fn agent_receives_real_die_result_in_the_tool_round() {
-        let calls = json!([{"id":"die-1","type":"function","function":{"name":"roll_die","arguments":r#"{"sides":6}"#}}]);
+        let calls = json!([{"id":"die-1","type":"function","function":{"name":"roll_die","arguments":r#"{"sides":6}"#}},{"id":"ferry-1","type":"function","function":{"name":"ferry_calls","arguments":"{}"}}]);
         let (reply, requests) = model_exchange_body("Maria", calls, "Trill ein terning").await;
         assert!(reply.is_ok());
         assert_eq!(requests.len(), 2);
@@ -786,6 +839,7 @@ mod tests {
             }];
             let mut tools = ReadTools {
                 place_lookup: None,
+                dice: Vec::new(),
                 weather_service: Some(&weather_service),
                 sea_temperature_service: None,
                 sea_temperature_config: None,

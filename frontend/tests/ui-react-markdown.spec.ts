@@ -64,3 +64,19 @@ test("Mermaid keeps diagram HTML handlers and javascript links inert", async ({ 
   await expect(diagram.locator("script, [onerror], [onload], [onclick], a[href^='javascript:']")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as Window & { mermaidExecuted?: boolean }).mermaidExecuted)).toBe(false);
 });
+
+test("saved dice outcomes show two local sprites in compact light and dark chat",async({page})=>{
+  await page.setViewportSize({width:390,height:800});
+  const marker=`Dice preview ${Date.now()}`;
+  const preview=await sendReactMessage(page,"react-dice",`${marker}\n🎲 4 + 2 = 6\n\n\`\`\`dice\n4,2\n\`\`\``);
+  const message=preview.locator('[data-message-id]').filter({hasText:marker});
+  const roll=message.getByRole('img',{name:'Terningkast: 4 og 2'});
+  await expect(roll).toBeVisible();
+  await expect(roll.locator('img')).toHaveCount(2);
+  await expect.poll(()=>roll.locator('img').evaluateAll(images=>images.every(image=>image instanceof HTMLImageElement && image.complete && image.naturalWidth===256))).toBe(true);
+  const bounds=await roll.boundingBox();expect(bounds?.width).toBeLessThanOrEqual(390);
+  for(const colorScheme of ['light','dark'] as const) {
+    await page.emulateMedia({colorScheme});
+    await page.screenshot({path:`test-results/dice-${colorScheme}.png`});
+  }
+});
