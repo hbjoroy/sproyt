@@ -26,7 +26,7 @@ class ScopeTests(unittest.TestCase):
     def test_shared_ui_and_http_contracts_get_complete_browser_suite(self):
         for path in ('frontend/src/app.ts', 'frontend/src/ui/react/development-preview.tsx',
                      'src/server.rs', 'src/web/auth.rs', 'crates/sproyt-protocol/src/lib.rs',
-                     'assets/index.html', 'frontend/tests/ui-react-mobile.spec.ts'):
+                     'assets/index.html'):
             self.assertEqual(ci_scope.scope([path])['browser'], 'full', path)
 
     def test_database_migrations_and_runtime_dependencies_keep_restore(self):
@@ -37,6 +37,56 @@ class ScopeTests(unittest.TestCase):
 
     def test_frontend_changes_do_not_need_database_restore(self):
         self.assertEqual(ci_scope.scope(['frontend/src/app.ts'])['recovery'], 'false')
+        self.assertEqual(ci_scope.scope(['frontend/src/app.ts'])['backend'], 'false')
+
+    def test_css_iteration_uses_layout_contracts_on_both_engines(self):
+        result = ci_scope.scope(['frontend/src/ui/react-app.css', 'packages/sproyt-ui/src/styles.css'])
+        self.assertEqual((result['browser'], result['backend'], result['recovery']), ('layout', 'false', 'false'))
+        matrix = result['browser_matrix']['include']
+        self.assertEqual({row['engine'] for row in matrix}, {'chromium', 'webkit'})
+        for row in matrix:
+            self.assertIn('ui-react-direct-message-picker.spec.ts', row['files'])
+            self.assertIn('ui-react-channel-popover-navigation.spec.ts', row['files'])
+            self.assertFalse(row['all'])
+
+    def test_changed_browser_contract_is_selected_exactly_without_backend(self):
+        result = ci_scope.scope(['frontend/tests/sse-fallback.spec.ts'])
+        self.assertEqual((result['browser'], result['backend']), ('related', 'false'))
+        chromium = next(r for r in result['browser_matrix']['include'] if r['engine'] == 'chromium')
+        self.assertIn('sse-fallback.spec.ts', chromium['files'])
+        self.assertIn('ui-react-preview.spec.ts', chromium['files'])
+
+    def test_skill_bundle_is_not_a_database_or_application_change(self):
+        paths = ['.agents/skills/sproyt-ui/assets/sproyt-ui-0.1.3.tgz', '.agents/skills/sproyt-ui/SKILL.md']
+        self.assertEqual(ci_scope.scope(paths)['frontend'], 'false')
+        self.assertEqual(ci_scope.scope(paths + ['frontend/src/ui/react-app.css'])['recovery'], 'false')
+
+    def test_execution_changes_exercise_real_shards_without_unrelated_rust_tests(self):
+        result = ci_scope.scope(['frontend/tests/global-setup.ts', '.github/workflows/ci.yml'])
+        self.assertEqual((result['browser'], result['backend'], result['recovery']), ('full', 'false', 'false'))
+
+    def test_full_regression_keeps_all_engines_and_backend_gates(self):
+        result = ci_scope.scope([], True)
+        self.assertEqual((result['backend'], result['recovery']), ('true', 'true'))
+        rows = result['browser_matrix']['include']
+        self.assertEqual([r['shard'] for r in rows if r['engine'] == 'chromium'], ['1/4', '2/4', '3/4', '4/4'])
+        self.assertEqual([r['shard'] for r in rows if r['engine'] == 'webkit'], ['1/2', '2/2'])
+
+    def test_css_mixed_with_backend_migration_does_not_skip_backend(self):
+        result = ci_scope.scope(['frontend/src/ui/react-app.css', 'migrations/0071_next.sql'])
+        self.assertEqual((result['backend'], result['recovery']), ('true', 'true'))
+
+    def test_unit_test_only_does_not_launch_browser(self):
+        result = ci_scope.scope(['frontend/tests/boundaries.test.ts', 'frontend/src/direct-activity.test.ts'])
+        self.assertEqual((result['browser'], result['frontend']), ('none', 'true'))
+
+    def test_bounded_feature_union_keeps_each_feature_but_unknown_logic_is_full(self):
+        paths = ['frontend/src/direct-activity.ts', 'frontend/src/ui/react/preview-reactions.tsx']
+        result = ci_scope.scope(paths)
+        self.assertEqual(result['browser'], 'related')
+        files = set(result['browser_matrix']['include'][0]['files'])
+        self.assertTrue({'ui-react-direct-message-picker.spec.ts', 'ui-react-reactions.spec.ts'} <= files)
+        self.assertEqual(ci_scope.scope(paths + ['frontend/src/ui/react/development-preview.tsx'])['browser'], 'full')
 
     def test_canonical_design_system_requires_browser_without_database_restore(self):
         for path in ('packages/sproyt-ui/src/react/index.tsx', 'packages/sproyt-ui/src/vue/index.ts',

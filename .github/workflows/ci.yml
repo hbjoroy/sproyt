@@ -3,11 +3,10 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
     tags: ["v*"]
-    # Pull requests and non-documentation main pushes get the fast
-    # quality/PostgreSQL checks. Browser/recovery checks follow changed areas;
-    # full regression is scheduled, forced, or selected by a version tag.
+    # PRs validate iterations; main is validated by the canonical publish run.
+    # No duplicate automatic main-push run immediately before publication.
+    # Full regression remains scheduled, forced, or selected by a version tag.
     paths-ignore:
       - "**/*.md"
       - "docs/**"
@@ -61,6 +60,10 @@ jobs:
     outputs:
       browser: ${{ steps.scope.outputs.browser }}
       recovery: ${{ steps.scope.outputs.recovery }}
+      backend: ${{ steps.scope.outputs.backend }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      codec: ${{ steps.scope.outputs.codec }}
+      browser_matrix: ${{ steps.scope.outputs.browser_matrix }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -71,7 +74,9 @@ jobs:
           echo '::error::Manual publication must use the reviewed main revision.'
           exit 1
       - name: Check scope selection
-        run: python3 tools/test-ci-scope.py
+        run: |
+          python3 tools/test-ci-scope.py
+          python3 tools/test-browser-shards.py
       - name: Select checks from the complete change range
         id: scope
         env:
@@ -84,17 +89,20 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     steps:
-      - name: Check out source
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
       - name: Install pinned Node.js
+        if: needs.changes.outputs.frontend == 'true'
         uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            packages/sproyt-ui/package-lock.json
 
-      - name: Check, build, and test frontend boundaries
+      - name: Check, build, and test frontend boundaries once
+        if: needs.changes.outputs.frontend == 'true'
         run: |
           npm --prefix packages/sproyt-ui ci
           npm --prefix packages/sproyt-ui test
@@ -103,100 +111,159 @@ jobs:
           npm --prefix frontend ci
           npm --prefix frontend test
 
-      - name: Build isolated frontend container stage
-        if: github.event_name == 'pull_request' && needs.changes.outputs.browser != 'none'
-        run: docker build --target frontend-builder --progress=plain .
-
       - name: Install pinned Rust toolchain
+        if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.browser != 'none'
         run: |
           rustup show active-toolchain
           rustup target add wasm32-unknown-unknown
 
       - name: Cache Cargo data
+        if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.browser != 'none'
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}-
+            ${{ runner.os }}-cargo-
 
       - name: Check formatting
+        if: needs.changes.outputs.backend == 'true'
         run: cargo fmt --all --check
 
       - name: Lint all targets and features
+        if: needs.changes.outputs.backend == 'true'
         env:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Run tests
+      - name: Run Rust tests
+        if: needs.changes.outputs.backend == 'true'
         env:
           SPROYT_FRONTEND_PREBUILT: "1"
         run: cargo test --all-targets --all-features --locked
 
-      - name: Verify isolated codec runtime and large-image preview
-        run: bash tools/verify-media-runtime.sh
-
-      - name: Cache Playwright browser binaries
+      - name: Build browser server once for all shards
         if: needs.changes.outputs.browser != 'none'
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
-
-      - name: Install Chromium and WebKit for browser contracts
-        if: needs.changes.outputs.browser == 'full'
-        run: npx --prefix frontend playwright install --with-deps chromium webkit
-
-      - name: Install Chromium for imagegen contracts
-        if: needs.changes.outputs.browser == 'imagegen'
-        run: npx --prefix frontend playwright install --with-deps chromium
-
-      - name: Run browser smoke contracts
-        if: needs.changes.outputs.browser == 'full'
-        run: npm --prefix frontend run test:e2e
-
-      - name: Run related imagegen, draft and validation browser contracts
-        if: needs.changes.outputs.browser == 'imagegen'
-        run: node frontend/scripts/test-e2e.mjs imagegen ui-react-media.spec.ts ui-react-preview.spec.ts
-
-      - name: Run WebKit mobile interaction contracts
-        if: needs.changes.outputs.browser == 'full'
         env:
-          SPROYT_E2E_WEBKIT: "1"
-        run: node frontend/scripts/test-e2e.mjs --project=webkit-iphone ui-react-layout-refinement.spec.ts ui-react-badge.spec.ts ui-react-channel-popover-navigation.spec.ts ui-react-thread-discovery.spec.ts ui-react-thread-directory.spec.ts ui-react-workspace-pages.spec.ts ui-react-connection-recovery.spec.ts ui-react-direct-message-picker.spec.ts ui-react-agent-settings.spec.ts ui-react-profile-favorites.spec.ts ui-react-product-navigation.spec.ts ui-react-agent-handoff.spec.ts ui-react-imagegen-draft.spec.ts ui-react-native-selection.spec.ts ui-react-mobile.spec.ts ui-react-notifications.spec.ts ui-touch-controls.spec.ts ui-react-management.spec.ts ui-react-work-item-information.spec.ts ui-react-work-item-supplements.spec.ts ui-native-download-return.spec.ts ui-react-work-item-github.spec.ts ui-react-work-item-status.spec.ts ui-react-history.spec.ts ui-react-reading.spec.ts ui-react-circle-rename.spec.ts ui-react-deleted.spec.ts ui-react-saved-emojis.spec.ts ui-react-saved-statuses.spec.ts ui-react-circle-moderators.spec.ts ui-react-channel-chat-agents.spec.ts ui-react-agent-memory.spec.ts ui-react-weather-agent.spec.ts ui-react-app-update.spec.ts ui-react-share-target.spec.ts ui-react-agent-location.spec.ts
+          SPROYT_FRONTEND_PREBUILT: "1"
+        run: |
+          cargo build --bin sproyt --locked
+          mkdir -p .ci-browser-server
+          cp target/debug/sproyt .ci-browser-server/sproyt
+          strip --strip-debug .ci-browser-server/sproyt
+          tar -czf browser-server.tar.gz .ci-browser-server/sproyt frontend/dist
 
-      - name: Upload browser test evidence
-        if: failure()
+      - name: Share same-revision browser server
+        if: needs.changes.outputs.browser != 'none'
         uses: actions/upload-artifact@v6
         with:
-          name: playwright-report
-          path: |
-            frontend/playwright-report/
-            frontend/test-results/
-          if-no-files-found: ignore
+          name: browser-server-${{ github.sha }}
+          path: browser-server.tar.gz
+          compression-level: 0
+          overwrite: true
+          retention-days: 3
 
-      - name: Validate local Compose profile
-        run: docker compose config --quiet
+      - name: Verify isolated codec runtime and large-image preview
+        if: needs.changes.outputs.codec == 'true'
+        run: bash tools/verify-media-runtime.sh
 
-      - name: Validate Authentik discovery contract
+      - name: Validate operational contracts
+        if: needs.changes.outputs.backend == 'true'
         run: |
+          docker compose config --quiet
           bash tools/test-oidc-provider-verifier.sh
           python3 tools/test-enrollment-continuation.py
           python3 tools/test-invitation-canary.py
           python3 tools/test-invitation-production.py
           python3 -m pip install -r tools/requirements-authentik-tests.txt
           python3 tools/test-invitation-canary-v2.py
+          bash tools/test-production-rollout-verifier.sh
+          node tools/test-mcp-load.mjs
 
-      - name: Validate production rollout verifier
-        run: bash tools/test-production-rollout-verifier.sh
+  browser:
+    name: Browser ${{ matrix.project }} ${{ matrix.shard }}
+    needs: [changes, quality]
+    if: needs.changes.outputs.browser != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.browser_matrix) }}
+    env:
+      CI_BROWSER_PROJECT: ${{ matrix.project }}
+      CI_BROWSER_SHARD: ${{ matrix.shard }}
+      CI_BROWSER_FILES: ${{ toJSON(matrix.files) }}
+      CI_BROWSER_ALL: ${{ matrix.all }}
+      SPROYT_E2E_WEBKIT: "1"
+      SPROYT_E2E_SERVER_BINARY: ${{ github.workspace }}/.ci-browser-server/sproyt
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm --prefix frontend ci
+      - uses: actions/download-artifact@v7
+        with:
+          name: browser-server-${{ github.sha }}
+      - name: Unpack tested server
+        run: |
+          tar -xzf browser-server.tar.gz
+          test -x .ci-browser-server/sproyt
+          test -s frontend/dist/app.js
+      - name: Cache requested browser binary
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ matrix.engine }}-${{ hashFiles('frontend/package-lock.json') }}
+      - name: Install only the requested engine
+        run: npx --prefix frontend playwright install --with-deps ${{ matrix.engine }}
+      - name: Run isolated browser shard
+        run: python3 tools/run-browser-shard.py
+      - name: Summarize timings, including successful tests
+        if: always()
+        run: python3 tools/summarize-browser-tests.py frontend/test-results/results.json
+      - name: Retain browser evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-${{ matrix.project }}-${{ matrix.index }}-${{ github.run_attempt }}
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: warn
+          retention-days: 7
 
-      - name: Validate MCP load evidence tool
-        run: node tools/test-mcp-load.mjs
+  browser-gate:
+    name: Selected browser checks
+    needs: [changes, quality, browser]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected shard, or an explicit no-browser decision
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          QUALITY: ${{ needs.quality.result }}
+          SELECTION: ${{ needs.changes.outputs.browser }}
+          BROWSERS: ${{ needs.browser.result }}
+        run: |
+          test "$CHANGES" = success
+          test "$QUALITY" = success
+          if test "$SELECTION" = none; then
+            test "$BROWSERS" = skipped
+          else
+            test "$BROWSERS" = success
+          fi
 
   postgres-schema:
     name: PostgreSQL repository contract
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -432,7 +499,7 @@ jobs:
   delivery-arm64:
     name: ARM64 release image and delivery evidence
     # A Heart-only publication reuses its separately tested image archive.
-    # Existing Sprøyt publication/release paths keep their complete build gates.
+    # Existing Sproyt publication/release paths keep their complete build gates.
     if: (github.event_name == 'workflow_dispatch' && (!inputs.publish_heart_image || inputs.publish_image)) || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -619,7 +686,9 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.publish_image)) &&
       needs.changes.result == 'success' &&
       needs.quality.result == 'success' &&
-      needs.postgres-schema.result == 'success' &&
+      needs.browser-gate.result == 'success' &&
+      (needs.postgres-schema.result == 'success' ||
+      (needs.changes.outputs.backend == 'false' && needs.postgres-schema.result == 'skipped')) &&
       needs.security-audit.result == 'success' &&
       needs.delivery-arm64.result == 'success' &&
       (needs.recovery-drill.result == 'success' ||
@@ -627,6 +696,7 @@ jobs:
     needs:
       - changes
       - quality
+      - browser-gate
       - postgres-schema
       - security-audit
       - recovery-drill
@@ -729,7 +799,7 @@ jobs:
   publish-heart-image:
     name: Publish verified Heart image
     if: github.event_name == 'workflow_dispatch' && inputs.publish_heart_image
-    needs: [quality]
+    needs: [quality, browser-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
