@@ -410,6 +410,51 @@ test("opening pages acknowledges only visible messages; reload restores the view
   await fresh.close();
 });
 
+for (const width of [390, 1440]) test.describe(`native thread scrolling at ${width}px`, () => {
+test.use({ isMobile: false, hasTouch: false });
+test(`native wheel over thread messages scrolls the thread at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 700 });
+  const server = readingServer(); await server.install(page);
+  await viewport(page).locator('[data-message-id="a-41"]').getByRole("button", { name: "Svar i tråd", exact: true }).click();
+  const thread = page.locator("#sproyt-react-preview .sp-thread-replies");
+  await expect(thread.locator('[data-message-id="reply-19"]')).toHaveCount(1);
+  await expect.poll(() => thread.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(2);
+  const before = await thread.evaluate(element => element.scrollTop);
+  expect(before).toBeGreaterThan(250);
+  const box = (await thread.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -300);
+  await expect.poll(() => thread.evaluate(element => element.scrollTop), { timeout: 3000 }).toBeLessThan(before - 100);
+  await expect(page.locator(".sp-thread-pane").getByRole("textbox", { name: "Svar i tråden" })).toBeInViewport();
+});
+});
+
+for (const height of [700, 360]) test(`native touch over thread messages scrolls the mobile thread at ${height}px height`, async ({ browser, browserName, baseURL }) => {
+  test.skip(browserName !== "chromium", "Trusted swipe injection uses Chromium's input protocol.");
+  const context = await browser.newContext({ baseURL, viewport: { width: 390, height }, hasTouch: true, isMobile: true, serviceWorkers: "block" });
+  try {
+    const page = await context.newPage();
+    const server = readingServer(); await server.install(page);
+    await viewport(page).locator('[data-message-id="a-41"]').getByRole("button", { name: "Svar i tråd", exact: true }).tap();
+    const thread = page.locator("#sproyt-react-preview .sp-thread-replies");
+    await expect(thread.locator('[data-message-id="reply-19"]')).toHaveCount(1);
+    await expect.poll(() => thread.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(2);
+    const before = await thread.evaluate(element => element.scrollTop);
+    const box = (await thread.boundingBox())!;
+    const input = await context.newCDPSession(page);
+    const point = { x: box.x + box.width / 2, y: box.y + box.height * .25 };
+    await input.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+    for (let step = 1; step <= 12; step++) {
+      await input.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: point.x, y: point.y + step * box.height * .045 }] });
+      if (step === 6) server.appendReply();
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    }
+    await input.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(thread.locator('[data-message-id="reply-20"]')).toHaveCount(1);
+    await expect.poll(() => thread.evaluate(element => element.scrollTop), { timeout: 3000 }).toBeLessThan(before - Math.min(100, box.height * .25));
+  } finally { await context.close(); }
+});
+
 test("loading a hidden thread does not mark replies read and a peer reply preserves the visible thread position", async ({ page }) => {
   const server = readingServer(); await server.install(page);
   await expect.poll(() => server.reads.get("a")!).toBeGreaterThan(40);

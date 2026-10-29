@@ -31,6 +31,12 @@
 #sproyt-react-preview .sp-main {
   padding: 0; border: 0; border-radius: 0; background: var(--sp-canvas); box-shadow: none;
 }
+/* ThreadPane owns scrolling for the root and replies together. An inner
+   timeline must not trap touch/overscroll before it reaches that viewport. */
+#sproyt-react-preview .sp-thread-replies > .sp-timeline {
+  overflow: visible;
+  overscroll-behavior: auto;
+}
 #sproyt-react-preview [data-message-id] { position: relative; }
 #sproyt-react-preview [data-message-id] .sp-message { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .5rem; position: relative; width: 100%; max-width: 860px; }
 #sproyt-react-preview [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message { margin-top: .5rem; }
