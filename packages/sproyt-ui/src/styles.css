@@ -60,12 +60,16 @@
 
 .sp-composer-tools{grid-column:1/-1;order:3}.sp-composer-tools[hidden]{display:none}.sp-composer .sp-textarea{resize:none;max-height:none;overflow-y:auto}
 
-/* The full-width first grid row groups identity/actions with the body below. */
-.sp-theme{--sp-message-header:var(--sp-chrome);--sp-message-divider:color-mix(in srgb,var(--sp-line) 35%,var(--sp-canvas))}
+/* A restrained outline groups identity/actions without a separate surface hue. */
+.sp-theme{--sp-message-header:var(--sp-canvas);--sp-message-divider:color-mix(in srgb,var(--sp-line) 25%,var(--sp-canvas));--sp-message-glow:color-mix(in srgb,var(--sp-accent) 12%,transparent);--sp-message-ink:var(--sp-text);--sp-message-detail:var(--sp-muted)}
+.sp-theme[data-theme=dark]{--sp-message-glow:color-mix(in srgb,var(--sp-accent) 6%,transparent);--sp-message-ink:color-mix(in srgb,var(--sp-text) 90%,var(--sp-canvas));--sp-message-detail:color-mix(in srgb,var(--sp-muted) 95%,var(--sp-canvas))}
+@media(prefers-color-scheme:dark){.sp-theme[data-theme=system]{--sp-message-glow:color-mix(in srgb,var(--sp-accent) 6%,transparent);--sp-message-ink:color-mix(in srgb,var(--sp-text) 90%,var(--sp-canvas));--sp-message-detail:color-mix(in srgb,var(--sp-muted) 95%,var(--sp-canvas))}}
 .sp-message{row-gap:0;margin-bottom:.5rem;isolation:isolate}
-.sp-message::before{content:'';box-sizing:border-box;grid-column:1/-1;grid-row:1;align-self:stretch;z-index:-1;pointer-events:none;background:var(--sp-message-header);border-block-start:1px solid var(--sp-message-divider)}
-.sp-message-meta{position:relative;align-self:end;line-height:1.25}
-.sp-message-actions .sp-button{min-height:28px;padding:.15rem .45rem}
+.sp-message::before{content:'';box-sizing:border-box;grid-column:1/-1;grid-row:1;align-self:stretch;z-index:-1;pointer-events:none;background:var(--sp-message-header);border:1px solid var(--sp-message-divider);border-radius:2px;box-shadow:0 0 6px 1px var(--sp-message-glow)}
+.sp-message-meta{position:relative;align-self:end;line-height:1.25;padding-inline-start:6px;color:var(--sp-message-ink)}
+.sp-message-meta :is(.sp-time,.sp-help,.sp-message-profile-status){color:var(--sp-message-detail)}
+.sp-message-actions{padding-inline-end:2px}
+.sp-message-actions .sp-button{min-height:28px;padding:.15rem .45rem;color:var(--sp-message-detail)}
 @media(pointer:coarse){.sp-message-actions .sp-button{min-width:44px;min-height:44px}}
 
 .sp-reaction-picker{position:fixed;inset:auto;margin:0;width:296px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto;padding:12px;border:1px solid var(--sp-line);border-top:3px solid var(--sp-text);border-radius:3px;color:var(--sp-text);background:var(--sp-surface);box-shadow:0 8px 28px #0003}

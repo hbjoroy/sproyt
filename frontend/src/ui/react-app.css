@@ -188,6 +188,7 @@
   padding: .15rem .35rem; border-color: transparent; background: transparent; color: var(--sp-muted);
   font-size: 1rem; line-height: 1;
 }
+.sp-message-actions .sp-message-symbol.sp-button { color: var(--sp-message-detail); }
 .sp-composer-symbol.sp-button:hover, .sp-composer-symbol.sp-button:focus-visible,
 .sp-message-symbol.sp-button:hover, .sp-message-symbol.sp-button:focus-visible { background: var(--sp-wash); color: var(--sp-text); }
 .sp-thread-icon { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; }
