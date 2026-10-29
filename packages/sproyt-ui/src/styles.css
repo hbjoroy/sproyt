@@ -61,7 +61,7 @@
 .sp-composer-tools{grid-column:1/-1;order:3}.sp-composer-tools[hidden]{display:none}.sp-composer .sp-textarea{resize:none;max-height:none;overflow-y:auto}
 
 /* The full-width first grid row groups identity/actions with the body below. */
-.sp-theme{--sp-message-header:color-mix(in srgb,var(--sp-text) 4%,var(--sp-canvas));--sp-message-divider:color-mix(in srgb,var(--sp-line) 35%,var(--sp-canvas))}
+.sp-theme{--sp-message-header:var(--sp-chrome);--sp-message-divider:color-mix(in srgb,var(--sp-line) 35%,var(--sp-canvas))}
 .sp-message{row-gap:0;margin-bottom:.5rem;isolation:isolate}
 .sp-message::before{content:'';box-sizing:border-box;grid-column:1/-1;grid-row:1;align-self:stretch;z-index:-1;pointer-events:none;background:var(--sp-message-header);border-block-start:1px solid var(--sp-message-divider)}
 .sp-message-meta{position:relative;align-self:end;line-height:1.25}

@@ -20,8 +20,11 @@ the release-image build alone could not remove the roughly 39-minute browser wai
 - Install only the engine used by that job. Keep traces/reports on failures and
   machine-readable timing reports on every run, with the slowest cases in the
   job summary. Use these measurements before rewriting slow tests.
-- Refresh Cargo caches per revision rather than forever restoring the first
-  target tree stored under an unchanged dependency lock hash.
+- Cache Rust dependency artifacts with a pinned rust-cache action, shared by
+  quality, PostgreSQL and recovery jobs. Exclude workspace/incremental artifacts;
+  only main writes, while PRs restore. Do not create a multi-GiB archive per commit.
+- Keep separate ARM64 web/worker BuildKit indexes with max-mode intermediate
+  layers. Import the previous `arm64` scope while the new indexes warm up.
 
 ## Selection
 
@@ -71,3 +74,22 @@ before claiming a numerical speedup.
 
 References: [Playwright sharding](https://playwright.dev/docs/test-sharding) and
 [CI isolation guidance](https://playwright.dev/docs/ci).
+
+## Cache incident, 29 October 2026
+
+Release [40768799498](https://github.com/hbjoroy/sproyt/actions/runs/40768799498)
+had no reusable ARM64 layers at its start. The dependency compile took 7m04s,
+application compile 4m35s, and cache export 2m06s. Before the build, the API
+listed only ordinary Actions caches; BuildKit indexes/blobs reappeared after export.
+Two main Cargo archives alone held about 6.6 GiB (3,299 and 3,459 MiB), alongside
+PR caches. This is consistent with eviction under shared storage pressure; the
+API does not retain an eviction event proving the exact order. Per-revision
+whole-target caching aggravated that pressure and is replaced here.
+
+Keep the current ARM64 cache when removing obsolete whole-target Cargo archives.
+Record restored cache keys, archive sizes and cached dependency steps from the
+next real release. Do not claim a warm-build speedup solely from configuration.
+
+References: [GitHub cache eviction](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows),
+[Rust dependency cache cleanup](https://github.com/Swatinem/rust-cache#cache-details),
+[BuildKit cache scopes](https://docs.docker.com/build/cache/backends/gha/#scope).

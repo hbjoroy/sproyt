@@ -117,18 +117,15 @@ jobs:
           rustup show active-toolchain
           rustup target add wasm32-unknown-unknown
 
-      - name: Cache Cargo data
+      # Dependency artifacts only: workspace binaries/incremental data otherwise
+      # create multi-GiB commit caches and evict the ARM64 BuildKit layers.
+      - name: Cache Cargo dependencies
         if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.browser != 'none'
-        uses: actions/cache@v5
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}-
-            ${{ runner.os }}-cargo-
+          shared-key: linux-checks
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check formatting
         if: needs.changes.outputs.backend == 'true'
@@ -307,15 +304,12 @@ jobs:
           rustup show active-toolchain
           rustup target add wasm32-unknown-unknown
 
-      - name: Cache Cargo data
-        uses: actions/cache@v5
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-postgres-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-postgres-cargo-
+          shared-key: linux-checks
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run PostgreSQL repository contract
         env:
@@ -436,6 +430,12 @@ jobs:
           npm --prefix frontend run build
       - name: Install browser WASM target
         run: rustup target add wasm32-unknown-unknown
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: linux-checks
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Migrate source database
         env:
           SPROYT_FRONTEND_PREBUILT: "1"
@@ -534,8 +534,10 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha,scope=arm64
-          cache-to: type=gha,mode=max,scope=arm64
+          cache-from: |
+            type=gha,scope=arm64-web
+            type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64-web
 
       - name: Cross-build isolated ARM64 media worker
         uses: docker/build-push-action@v7
@@ -547,8 +549,11 @@ jobs:
           load: true
           push: false
           tags: local/sproyt-media-worker-arm64:${{ github.sha }}
-          cache-from: type=gha,scope=arm64
-          cache-to: type=gha,mode=max,scope=arm64
+          cache-from: |
+            type=gha,scope=arm64-worker
+            type=gha,scope=arm64-web
+            type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64-worker
 
       - name: Verify media worker image identity
         id: worker-evidence
