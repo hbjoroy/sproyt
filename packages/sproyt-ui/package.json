@@ -1,6 +1,6 @@
 {
   "name": "@sproyt/ui",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "description": "Editorial application components for React and Vue",
   "files": [

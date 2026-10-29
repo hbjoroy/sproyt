@@ -14,7 +14,7 @@ Read [design rules](references/design.md) before changing headers, message rows 
 ## Integrate
 
 1. Inspect the target project's package manifest and existing UI entry point. If `@sproyt/ui` is present, use the installed version and do not overwrite it blindly.
-2. Otherwise install `assets/sproyt-ui-0.1.4.tgz` from this skill's directory with the project's package manager. Resolve the path relative to this skill, not a remembered workspace. Prefer copying the archive into the target project's `vendor/` directory so local dependency references survive moving the project. The archive is a portable, built package, not an npm registry publication.
+2. Otherwise install `assets/sproyt-ui-0.1.5.tgz` from this skill's directory with the project's package manager. Resolve the path relative to this skill, not a remembered workspace. Prefer copying the archive into the target project's `vendor/` directory so local dependency references survive moving the project. The archive is a portable, built package, not an npm registry publication.
 3. Import `@sproyt/ui/styles.css` once and import components from `@sproyt/ui/react` or `@sproyt/ui/vue`. Use React 18/19 or Vue 3.5+ respectively. A consuming project needs only its chosen framework.
 4. Wrap the relevant application region in `Theme`. Choose `mode="system"`, `"light"`, or `"dark"`; use citron by default. Set an explicit height when using the scrollable `AppShell` in a full app or widget.
 5. Read [component contracts](references/components.md) for APIs and examples; read [design rules](references/design.md) when composing new screens or extending the library.
