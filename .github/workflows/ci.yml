@@ -216,11 +216,15 @@ jobs:
           tar -xzf browser-server.tar.gz
           test -x .ci-browser-server/sproyt
           test -s frontend/dist/app.js
+      - name: Read installed Playwright version
+        id: playwright-version
+        run: node -e "const fs=require('node:fs'); const {version}=require('./frontend/node_modules/playwright-core/package.json'); fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version='+version+'\n');"
       - name: Cache requested browser binary
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ matrix.engine }}-${{ hashFiles('frontend/package-lock.json') }}
+          key: ${{ runner.os }}-playwright-${{ matrix.engine }}-${{ steps.playwright-version.outputs.version }}
+          restore-keys: ${{ runner.os }}-playwright-${{ matrix.engine }}-
       - name: Install only the requested engine
         run: npx --prefix frontend playwright install --with-deps ${{ matrix.engine }}
       - name: Run isolated browser shard
