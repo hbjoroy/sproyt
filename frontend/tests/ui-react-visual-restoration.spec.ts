@@ -33,7 +33,8 @@ for (const width of [320, 390, 1440]) for (const theme of ["light", "dark"]) {
     const messages = pane.locator("[data-message-id]").filter({ hasText: prose[0] });
     await expect(messages).toBeVisible();
     await expect(app.locator(".sp-main")).toHaveCSS("background-color", theme === "light" ? "rgb(250, 249, 245)" : "rgb(25, 27, 24)");
-    await expect(messages.locator(".sp-message-meta")).toHaveCSS("padding", "0px");
+    await expect(messages.locator(".sp-message-meta")).toHaveCSS("padding-left", "6px");
+    await expect(messages.locator(".sp-message-meta")).toHaveCSS("padding-block-start", "0px");
     await expect(messages.locator(".sp-message-meta")).toHaveCSS("border-bottom-width", "0px");
     await expect(messages).not.toContainText("Sendt");
     const rule = await pane.locator('[data-message-id] + [data-message-id] .sp-message').first().evaluate(element => {
@@ -42,11 +43,13 @@ for (const width of [320, 390, 1440]) for (const theme of ["light", "dark"]) {
       const message = element.getBoundingClientRect();
       return { width: parseFloat(style.width), height: parseFloat(style.height), content: style.content,
         messageWidth: message.width, headerHeight: body.top - message.top,
-        border: style.borderTopWidth, background: style.backgroundColor, pointerEvents: style.pointerEvents };
+        borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+        shadow: style.boxShadow, background: style.backgroundColor, pointerEvents: style.pointerEvents };
     });
     expect(rule.width).toBeCloseTo(rule.messageWidth, 0);
     expect(rule.height).toBeCloseTo(rule.headerHeight, 0);
-    expect(rule.border).toBe("1px");
+    expect(rule.borders).toEqual(["1px", "1px", "1px", "1px"]);
+    expect(rule.shadow).not.toBe("none");
     expect(rule.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(rule.pointerEvents).toBe("none");
     expect(rule.content).toBe('""');
