@@ -54,9 +54,10 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Keep native server artifacts and Playwright on the same supported OS.
   changes:
     name: Select relevant checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       browser: ${{ steps.scope.outputs.browser }}
       recovery: ${{ steps.scope.outputs.recovery }}
@@ -87,7 +88,7 @@ jobs:
   quality:
     name: Format, lint, and test
     needs: changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -185,7 +186,7 @@ jobs:
     name: Browser ${{ matrix.project }} ${{ matrix.shard }}
     needs: [changes, quality]
     if: needs.changes.outputs.browser != 'none'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -244,7 +245,7 @@ jobs:
     name: Selected browser checks
     needs: [changes, quality, browser]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every selected shard, or an explicit no-browser decision
         env:
@@ -265,7 +266,7 @@ jobs:
     name: PostgreSQL repository contract
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
@@ -361,7 +362,7 @@ jobs:
     # Ordinary PRs and main pushes stay fast. Run the expensive release gate
     # weekly, explicitly, or for a version tag.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # Remove the pin after RustSec replaces e11d6b3, which accidentally
       # published crates/gettext-rs/RUSTSEC-0000-0000.md on 2026-08-09.
@@ -397,7 +398,7 @@ jobs:
     name: PostgreSQL backup and restore drill
     needs: changes
     if: needs.changes.outputs.recovery == 'true' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
@@ -505,7 +506,7 @@ jobs:
     # A Heart-only publication reuses its separately tested image archive.
     # Existing Sproyt publication/release paths keep their complete build gates.
     if: (github.event_name == 'workflow_dispatch' && (!inputs.publish_heart_image || inputs.publish_image)) || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -710,7 +711,7 @@ jobs:
       - security-audit
       - recovery-drill
       - delivery-arm64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: production-registry
       deployment: false
@@ -809,7 +810,7 @@ jobs:
     name: Publish verified Heart image
     if: github.event_name == 'workflow_dispatch' && inputs.publish_heart_image
     needs: [quality, browser-gate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: production-registry
