@@ -38,7 +38,7 @@ docker run --rm --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-r
     fi
     chroot /worker-root /usr/bin/vips copy /tmp/portrait.v /tmp/sample.$format
     if test "$format" = heic; then
-      apk --root /worker-root --no-scripts --no-network del libheif-x265
+      apk --root /worker-root --no-scripts --no-cache del libheif-x265
     fi
     original_hash=$(sha256sum /worker-root/tmp/sample.$format)
     chroot /worker-root /usr/bin/vipsthumbnail /tmp/sample.$format --size 720x720 --output-profile srgb --output "/tmp/$format.jpg[Q=85,keep=none]"
