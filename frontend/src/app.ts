@@ -592,6 +592,10 @@
         enqueue: async (admission, owner) => {
           await durableJournalReady;
           if (owner !== currentParticipantId) throw new Error("Innlogginga vart endra. Delinga er ikkje send.");
+          // A startup storage failure clears the journal owner. A deliberate
+          // retry must reopen it before persisting the same share admission.
+          await durableOutbox.setUser(owner);
+          if (owner !== currentParticipantId) throw new Error("Innlogginga vart endra. Delinga er ikkje send.");
           if (!knownChannels.some(channel => channel.id === admission.channelId && channel.role !== "observer")) throw new Error("Du har ikkje skriverett i denne kanalen.");
           await durableOutbox.enqueue(admission);
         },
@@ -3491,8 +3495,13 @@
             sendCommand("list_my_channels"); sendCommand("list_my_circles"); sendCommand("list_users");
             sendCommand("list_mentions"); sendCommand("list_tasks");
           }
-          durableJournalReady = durableOutbox.setUser(currentParticipantId).then(async entries => {
-            await shares.refresh(); return entries;
+          // The separate share inbox must remain readable even if the message
+          // journal fails to open. Replay still waits for both recoveries.
+          const receivedSharesReady = shares.refresh();
+          durableJournalReady = Promise.allSettled([durableOutbox.setUser(currentParticipantId), receivedSharesReady]).then(([journal, receipts]) => {
+            if (journal.status === "rejected") throw journal.reason;
+            if (receipts.status === "rejected") throw receipts.reason;
+            return journal.value;
           }).catch(() => {
             setConnectionStatus("Mellombels meldingslagring er ikkje tilgjengeleg. Nye meldingar kan bli sende, men kan ikkje gjenopprettast etter app-avslutting.");
             return [];

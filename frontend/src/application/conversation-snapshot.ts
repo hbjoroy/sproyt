@@ -77,8 +77,9 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
   const query = source.query.trim().toLocaleLowerCase();
   const matches = (text: string) => !query || text.toLocaleLowerCase().includes(query);
   const groups: ConversationSnapshotGroup[] = [];
+  const channelChoices: Readonly<{ id: string; name: string; role: Channel["role"] }>[] = [];
   const appendGroup = (id: string, name: string, circle: Readonly<Circle> | null, members: readonly Channel[]) => {
-    const conversations = members.map(channel => {
+    const allConversations = members.map(channel => {
       const label = channel.is_direct ? source.directChannelLabel(channel) : `# ${channel.name}`;
       return Object.freeze({
         id: channel.id, name: label, unread: Math.max(0, channel.latest_sequence - channel.last_read_sequence),
@@ -88,7 +89,10 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
           error: source.channelNotificationErrors?.get(channel.id)
         })
       });
-    }).filter(item => matches(`${item.name} ${name}`))
+    });
+    // Destination pickers must not inherit the sidebar's current search.
+    channelChoices.push(...allConversations.map(item => Object.freeze({ id: item.id, name: `${name} · ${item.name}`, role: item.channel.role })));
+    const conversations = allConversations.filter(item => matches(`${item.name} ${name}`))
       // Stable partition within the existing scope. Notification preference is
       // independent of unread counts, selection, pending commands and direct chat.
       .sort((left, right) => Number(right.notifications?.enabled ?? false)
@@ -138,7 +142,7 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
 
   return Object.freeze({
     directory: Object.freeze({ ready: source.directoryReady ?? true, error: source.directoryError ?? "" }),
-    channels, circles, groups: Object.freeze(groups), query: source.query,
+    channels, circles, groups: Object.freeze(groups), channelChoices: Object.freeze(channelChoices), query: source.query,
     selection: Object.freeze({ channelId: source.activeChannelId, circleId: source.activeCircleId,
       rootScope: source.activeRootScope, inboxKind: source.activeInboxKind }),
     activeChannel,

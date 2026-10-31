@@ -6,14 +6,14 @@ function fixture() {
   let user = "actor", generation = "0", failEnqueue = false, failIdentity = false, switchDuringUpload = false;
   let resumeEdit: (() => void) | undefined, resumeUpload: (() => void) | undefined;
   let editGate: Promise<void> | undefined, uploadGate: Promise<void> | undefined;
-  let failEdit = false;
+  let failEdit = false, failList = false;
   let generationReads = 0, generationGate: Promise<void> | undefined, resumeGeneration: (() => void) | undefined;
   let item: ShareReceipt = { id: "request", owner: user, generation, createdAt: 1, text: "Delt tekst", file: new File(["image"], "original.png", { type: "image/png" }), admission: null, done: null };
   const enqueued: ShareAdmission[] = [], dispatched: ShareAdmission[] = [];
   let uploads = 0;
   const inbox = {
     identity: async () => { if (failIdentity) throw new Error("Offline identity"); return user; }, generation: async () => { if (++generationReads === 1) await generationGate; return generation; },
-    list: async (owner: string) => item.owner === owner ? [item] : [],
+    list: async (owner: string) => { if (failList) throw new Error("Share storage unavailable"); return item.owner === owner ? [item] : []; },
     claim: async () => item,
     edit: async (_: string, owner: string, revision: string, text: string, channelId: string) => { await editGate; if (failEdit) throw new Error("Draft storage failed"); assert.equal(owner, item.owner); assert.equal(revision, generation); return item = { ...item, text, channelId }; },
     admit: async (_: string, owner: string, revision: string, admission: ShareAdmission) => {
@@ -35,12 +35,36 @@ function fixture() {
   return { get target() { return target; }, get item() { return item; }, get uploads() { return uploads; }, enqueued, dispatched,
     failEnqueue(value: boolean) { failEnqueue = value; }, failIdentity(value: boolean) { failIdentity = value; },
     switchDuringUpload() { switchDuringUpload = true; },
-    failEdit(value: boolean) { failEdit = value; },
+    failEdit(value: boolean) { failEdit = value; }, failList(value: boolean) { failList = value; },
     holdFirstGeneration() { generationGate = new Promise<void>(resolve => { resumeGeneration = resolve; }); }, resumeGeneration() { resumeGeneration?.(); }, get generationReads() { return generationReads; },
     holdEdit() { editGate = new Promise<void>(resolve => { resumeEdit = resolve; }); }, resumeEdit() { resumeEdit?.(); },
     holdUpload() { uploadGate = new Promise<void>(resolve => { resumeUpload = resolve; }); }, resumeUpload() { resumeUpload?.(); },
     switchUser() { user = "other"; target.clear(); }, reload() { target = make(); } };
 }
+
+test("share refresh failure retains the receipt and can recover without erasing a send error", async () => {
+  const f = fixture(); await f.target.refresh(); f.failIdentity(true);
+  await f.target.send("request", "channel", "Text");
+  const sendError = f.target.getSnapshot().error;
+  f.failList(true);
+  await assert.rejects(f.target.refresh(), /Share storage unavailable/);
+  assert.equal(f.target.getSnapshot().receipts[0]?.file, f.item.file);
+  assert.equal(f.target.getSnapshot().loading, false);
+  assert.match(f.target.getSnapshot().loadError, /Share storage unavailable/);
+  assert.equal(f.target.getSnapshot().error, sendError);
+  f.failList(false); await f.target.refresh();
+  assert.equal(f.target.getSnapshot().loadError, "");
+  assert.equal(f.target.getSnapshot().error, sendError);
+});
+
+test("a late share load failure cannot repopulate the next account's state", async () => {
+  const f = fixture(); await f.target.refresh(); f.failList(true);
+  const pending = f.target.refresh(); f.switchUser();
+  await assert.rejects(pending, /Share storage unavailable/);
+  assert.deepEqual(f.target.getSnapshot().receipts, []);
+  assert.equal(f.target.getSnapshot().loadError, "");
+  assert.equal(f.target.getSnapshot().loading, false);
+});
 
 test("share handoff freezes admission before enqueue and preserves the blob on quota failure; retry after reload is exact", async () => {
   const f = fixture(); await f.target.refresh(); f.failEnqueue(true);

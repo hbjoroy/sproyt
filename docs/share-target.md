@@ -22,7 +22,18 @@ Eventuelle attverande eigarbundne delingar er framleis knytte til opphavleg kont
 med skriverett, kan redigere teksten, og trykkjer «Send delinga». Vanlege
 samtaleutkast blir tekne vare på. Serveren kontrollerer skriverett og den
 faktiske fila ved opplasting/sending. Feil bevarer delinga og viser ein lokal
-retry. Etter at sendinga er journalført er request-ID og innhald låste;
+retry.
+
+Ved treg oppstart viser kontrollflata at delingar og samtalar blir henta.
+Feil i delingslageret blir viste med «Prøv igjen», ikkje som ein tom innboks.
+Delingsinnboksen blir lesen uavhengig av meldingslageret. Dersom meldingslageret
+feilar ved oppstart, blir den mottekne delinga framleis vist; eit nytt sendeforsøk
+opnar lageret på nytt og bruker same meldings-ID og innhald.
+Kanalvalet bruker alle tilgjengelege samtalar med skriverett, uavhengig av
+samtalesøket. «Til samtalane» og lukkeknappen bevarer delinga og avsluttar
+delingsadressa også før chatten er tilkopla, slik at ho ikkje opnar att ved reload.
+
+Etter at sendinga er journalført er request-ID og innhald låste;
 retry og gjenoppretting nyttar same ID og payload. Ingen posting skjer før
 brukaren har valt Send. Kvitteringslaus sending kan gjenopptakast etterpå.
 Ei definitiv serveravvising blir lagra og stoppar automatisk replay; brukaren
