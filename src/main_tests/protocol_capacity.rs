@@ -1496,7 +1496,7 @@ fn browser_keeps_conversation_dense_with_accessible_message_actions() {
     assert!(APP_BUNDLE.contains("\"aria-label\": \"Fleire meldingsval\""));
     assert!(APP_BUNDLE.contains("title: \"Meldingsval\""));
     assert!(APP_BUNDLE.contains("className: \"sp-message-reaction-row\""));
-    assert!(APP_BUNDLE.contains(".sp-message{row-gap:0;margin-bottom:.5rem}"));
+    assert!(APP_BUNDLE.contains(".sp-message{row-gap:0;margin-bottom:.5rem;"));
     assert!(APP_BUNDLE.contains(
         "@media(pointer:coarse){.sp-message-actions .sp-button{min-width:44px;min-height:44px}"
     ));
