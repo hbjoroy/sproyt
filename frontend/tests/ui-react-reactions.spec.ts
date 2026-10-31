@@ -1,5 +1,44 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test("incoming reactions refresh the open channel without navigation", async ({ page }) => {
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    window.WebSocket = class extends NativeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        (window as unknown as { reactionSocket: WebSocket }).reactionSocket = this;
+      }
+      send(data: string) {
+        const command = JSON.parse(data);
+        if (command.type === "list_channel_reactions")
+          (window as unknown as { reactionChannel: string }).reactionChannel = command.payload.channel_id;
+        super.send(data);
+      }
+    };
+  });
+  const { message, composer } = await prepareMessage(page, "playwright-reaction-live-refresh");
+  const messageId = await message.getAttribute("data-message-id");
+  await expect(page.locator(`#messages [data-message-id="${messageId}"]`)).toHaveCount(1);
+  await composer.fill("utkast som skal bli verande");
+  await composer.focus();
+  // Do not let startup responses accidentally refresh the UI for this event.
+  await page.waitForTimeout(1500);
+  for (const [envelope, added] of [["chat", true], ["message_reaction_changed", false]] as const) {
+    await page.evaluate(({ messageId, envelope, added }) => {
+      const channelId = (window as unknown as { reactionChannel: string }).reactionChannel;
+      const socket = (window as unknown as { reactionSocket: WebSocket }).reactionSocket;
+      const change = { message_id: messageId, channel_id: channelId, user_id: "peer", emoji: "👍", added, count: added ? 1 : 0 };
+      socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({
+        protocol: "sproyt.chat.v1", type: envelope,
+        payload: envelope === "chat" ? { event: { type: "message_reaction_changed", change } } : { change }
+      }) }));
+    }, { messageId, envelope, added });
+    await expect(message.getByRole("button", { name: "👍: 1 reaksjonar" })).toHaveCount(added ? 1 : 0);
+    await expect(composer).toHaveValue("utkast som skal bli verande");
+    await expect(composer).toBeFocused();
+  }
+});
+
 async function prepareMessage(page: Page, participant: string) {
   await page.goto(`/?participant=${participant}&ui=react`, { waitUntil: "domcontentloaded" });
   const preview = page.locator("#sproyt-react-preview");

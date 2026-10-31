@@ -65,6 +65,7 @@
       let developmentChannelRevealMessageId: string | null = null;
       let developmentThreadRevealMessageId: string | null = null;
       const developmentReactionRequests = new Map<string, string>();
+      let reactionSnapshot: { requestId: string; channelId: string; dirty: boolean } | null = null;
       const developmentReactionErrors = new Map<string, string>();
       const communityRequests = createCommunityRequests();
       const previewInboxRequests = new Map<string, PreviewInboxRequest>();
@@ -3983,7 +3984,13 @@
         }
 
         if (event.type === "channel_reactions_listed") {
-          if (event.payload.channel_id === activeChannelId) {
+          const snapshot = reactionSnapshot;
+          if (snapshot && snapshot.requestId === event.request_id && snapshot.channelId === activeChannelId
+            && event.payload.channel_id === activeChannelId) {
+            reactionSnapshot = null;
+            // A live update may have arrived after the server read this list.
+            // Never erase it with an older snapshot; reconcile with a new read.
+            if (snapshot.dirty) { requestReactionSnapshot(snapshot.channelId); return; }
             replaceChannelReactions(event.payload.reactions);
             renderTimeline({ preserveScroll: true });
           }
@@ -5029,7 +5036,7 @@
         reconnectScrollOffset = null;
         closeMentionSuggestions();
         if (channel.circle_id) sendCommand("list_circle_users", { circle_id: channel.circle_id });
-        sendCommand("list_channel_reactions", { channel_id: channel.id });
+        requestReactionSnapshot(channel.id);
         renderMediaPreviews();
         requestedChannelSlug = channel.slug;
         renderConversationIdentity();
@@ -5560,6 +5567,10 @@
       type ReactionSummary = { count: number; reactedByMe: boolean; userIds: string[] };
       type ServerReaction = Readonly<{ message_id: string; emoji: string; count: number; reacted_by_me: boolean; user_ids?: string[] }>;
       type ReactionChange = Readonly<{ message_id: string; emoji: string; user_id: string; channel_id: string; count: number; added: boolean }>;
+      function requestReactionSnapshot(channelId: string): void {
+        const requestId = sendCommand("list_channel_reactions", { channel_id: channelId });
+        reactionSnapshot = requestId ? { requestId, channelId, dirty: false } : null;
+      }
       function replaceChannelReactions(reactions: ReadonlyArray<ServerReaction>): void {
         messageReactions.clear();
         for (const reaction of reactions) {
@@ -5575,6 +5586,7 @@
       }
 
       function applyReactionChange(change: ReactionChange): void {
+        if (reactionSnapshot?.channelId === change.channel_id) reactionSnapshot.dirty = true;
         if (!messageReactions.has(change.message_id)) messageReactions.set(change.message_id, new Map());
         const reactions = messageReactions.get(change.message_id);
         if (!reactions) return;

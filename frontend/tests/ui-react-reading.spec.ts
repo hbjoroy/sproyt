@@ -205,7 +205,7 @@ async function expectAnchor(page: Page, saved: { id: string; offset: number }) {
   }).toBeLessThan(3);
 }
 
-function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
+function readingServer(initialRead = 40, channelMessages?: ChatMessage[], holdReactions = false) {
   const messages = new Map(["a", "b"].map(channel => [channel, Array.from({ length: 160 }, (_, index) => root(channel, index + 1))]));
   if (channelMessages) messages.set("a", channelMessages);
   const reads = new Map([["a", initialRead], ["b", 160]]);
@@ -216,11 +216,13 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
   const replies = Array.from({ length: 20 }, (_, index) => ({ ...root("a", 161 + index), id: `reply-${index}`, parent_message_id: "a-41" }));
   let hold = false;
   const held: (() => void)[] = [];
+  const reactionRequests: Command[] = [];
+  const currentReactions: { message_id: string; emoji: string; count: number; reacted_by_me: boolean; user_ids: string[] }[] = [];
   const emit = (socket: WebSocketRoute, type: string, payload: unknown, request_id?: string) => socket.send(JSON.stringify({ protocol: "sproyt.chat.v1", type, payload, request_id }));
   return {
-    reads, acknowledgements, threadAcknowledgements, pages,
+    reads, acknowledgements, threadAcknowledgements, pages, reactionRequests,
     hold: (value: boolean) => { hold = value; },
-    release: () => { hold = false; held.splice(0).forEach(respond => respond()); },
+    release: () => { hold = false; holdReactions = false; held.splice(0).forEach(respond => respond()); },
     disconnect: (page: Page) => sockets.get(page)!.close({ code: 1012, reason: "reading reconnect" }),
     marker: (channel: string, sequence: number) => {
       reads.set(channel, Math.max(reads.get(channel) ?? 0, sequence));
@@ -233,6 +235,7 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
       return message;
     },
     reaction: (channel: string, sequence: number) => {
+      currentReactions.push({ message_id: `${channel}-${sequence}`, emoji: "👍", count: 1, reacted_by_me: false, user_ids: ["peer"] });
       for (const socket of sockets.values()) emit(socket, "chat", { event: { type: "message_reaction_changed", change: {
         channel_id: channel, message_id: `${channel}-${sequence}`, user_id: "peer", emoji: "👍", added: true, count: 1
       } } });
@@ -263,7 +266,13 @@ function readingServer(initialRead = 40, channelMessages?: ChatMessage[]) {
             })) }); break;
             case "subscribe_channel": reply("subscription_started", { channel_id: channel, history: messages.get(channel)!.slice(-50) }); break;
             case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: [] }); break;
-            case "list_channel_reactions": reply("channel_reactions_listed", { channel_id: channel, reactions: [] }); break;
+            case "list_channel_reactions": {
+              reactionRequests.push(command);
+              const reactions = currentReactions.filter(item => item.message_id.startsWith(`${channel}-`));
+              const respond = () => reply("channel_reactions_listed", { channel_id: channel, reactions });
+              if (holdReactions) held.push(respond); else respond();
+              break;
+            }
             case "load_thread": {
               const respond = () => reply("thread_loaded", { root_message_id: "a-41", messages: [root("a", 41), ...replies] });
               if (hold) held.push(respond); else respond();
@@ -336,6 +345,18 @@ test("never-read channel pages through reply-only and deleted tails only far eno
   expect(server.pages.length).toBeLessThanOrEqual(4);
   await expect.poll(() => server.reads.get("a")!).toBeGreaterThan(0);
   expect(server.reads.get("a")!).toBeLessThan(160);
+});
+
+test("a delayed reaction snapshot cannot erase a newer live reaction", async ({ page }) => {
+  const server = readingServer(40, undefined, true);
+  await server.install(page);
+  const message = viewport(page).locator('[data-message-id="a-43"]');
+  await expect(message).toHaveCount(1);
+  server.reaction("a", 43);
+  await expect(message.getByRole("button", { name: "👍: 1 reaksjonar", exact: true })).toHaveCount(1);
+  server.release();
+  await expect.poll(() => server.reactionRequests.length).toBe(2);
+  await expect(message.getByRole("button", { name: "👍: 1 reaksjonar", exact: true })).toHaveCount(1);
 });
 
 test("unrelated messages and reactions preserve focused draft, reading anchor and open task details", async ({ page }) => {
