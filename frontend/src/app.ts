@@ -3498,7 +3498,11 @@
           // The separate share inbox must remain readable even if the message
           // journal fails to open. Replay still waits for both recoveries.
           const receivedSharesReady = shares.refresh();
-          durableJournalReady = Promise.all([durableOutbox.setUser(currentParticipantId), receivedSharesReady]).then(([entries]) => entries).catch(() => {
+          durableJournalReady = Promise.allSettled([durableOutbox.setUser(currentParticipantId), receivedSharesReady]).then(([journal, receipts]) => {
+            if (journal.status === "rejected") throw journal.reason;
+            if (receipts.status === "rejected") throw receipts.reason;
+            return journal.value;
+          }).catch(() => {
             setConnectionStatus("Mellombels meldingslagring er ikkje tilgjengeleg. Nye meldingar kan bli sende, men kan ikkje gjenopprettast etter app-avslutting.");
             return [];
           });
