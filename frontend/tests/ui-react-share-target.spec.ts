@@ -34,15 +34,22 @@ test.describe("recovery in the open app", () => {
   test("unavailable share storage offers retry and never claims the inbox is empty", async ({ page }) => {
     await currentShareBundle(page);
     await conversations(page, () => "actor", [], []);
-    await page.addInitScript(() => {
-      (window as any).shareStorageUnavailable = true;
-      const open = indexedDB.open.bind(indexedDB);
-      Object.defineProperty(indexedDB, "open", { configurable: true, value: (...args: Parameters<IDBFactory["open"]>) => {
-        if (args[0] === "sproyt-share-inbox" && (window as any).shareStorageUnavailable) throw new Error("Delingslageret er mellombels utilgjengeleg.");
-        return open(...args);
-      } });
-    });
     await page.goto("/share-target?participant=share-storage-recovery");
+    await expect(page.locator('.sp-channel-pane .sp-composer textarea')).toBeEnabled();
+    await page.evaluate(() => {
+      (window as any).shareStorageUnavailable = true;
+      (window as any).shareLoadFailures = 0;
+      const list = globalThis.SproytShareInbox.list;
+      globalThis.SproytShareInbox.list = async owner => {
+        if ((window as any).shareStorageUnavailable) {
+          (window as any).shareLoadFailures++;
+          throw new Error("Delingslageret er mellombels utilgjengeleg.");
+        }
+        return list(owner);
+      };
+      window.dispatchEvent(new Event("focus"));
+    });
+    await expect.poll(() => page.evaluate(() => (window as any).shareLoadFailures)).toBeGreaterThan(0);
     const dialog = page.getByRole("dialog", { name: "Motteke deling", exact: true });
     await expect(dialog.getByRole("alert")).toContainText("Delingslageret er mellombels utilgjengeleg");
     await expect(dialog).not.toContainText("Ingen delingar ventar");
