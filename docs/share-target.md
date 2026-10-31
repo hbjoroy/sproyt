@@ -26,6 +26,9 @@ retry.
 
 Ved treg oppstart viser kontrollflata at delingar og samtalar blir henta.
 Feil i delingslageret blir viste med «Prøv igjen», ikkje som ein tom innboks.
+Delingsinnboksen blir lesen uavhengig av meldingslageret. Dersom meldingslageret
+feilar ved oppstart, blir den mottekne delinga framleis vist; eit nytt sendeforsøk
+opnar lageret på nytt og bruker same meldings-ID og innhald.
 Kanalvalet bruker alle tilgjengelege samtalar med skriverett, uavhengig av
 samtalesøket. «Til samtalane» og lukkeknappen bevarer delinga og avsluttar
 delingsadressa også før chatten er tilkopla, slik at ho ikkje opnar att ved reload.

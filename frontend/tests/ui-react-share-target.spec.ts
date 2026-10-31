@@ -61,6 +61,49 @@ test.describe("recovery in the open app", () => {
     await expect(page.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
   });
 
+  test("a received share remains available when the message journal fails at startup and retries exactly", async ({ page }) => {
+    await currentShareBundle(page);
+    const sends: any[] = [], acknowledgements: Array<() => void> = [];
+    await conversations(page, () => "actor", sends, acknowledgements);
+    await page.route("**/auth/share-identity", route => route.fulfill({ json: { user_id: "actor" } }));
+    await page.goto("/?participant=share-journal-recovery");
+    await expect(page.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
+    await page.getByRole("textbox", { name: "Skriv melding", exact: true }).fill("Mitt vanlege utkast");
+    const receiptId = await page.evaluate(async () => {
+      const form = new FormData(); form.set("text", "Bevart deling");
+      return globalThis.SproytShareInbox.capture(form);
+    });
+    await page.addInitScript(() => {
+      (window as any).outboxStorageUnavailable = true;
+      (window as any).outboxLoadFailures = 0;
+      const open = IDBFactory.prototype.open;
+      IDBFactory.prototype.open = function (...args: Parameters<IDBFactory["open"]>) {
+        if (args[0] === "sproyt-durable-outbox" && (window as any).outboxStorageUnavailable) {
+          (window as any).outboxLoadFailures++;
+          throw new Error("Meldingslageret er mellombels utilgjengeleg.");
+        }
+        return open.apply(this, args);
+      };
+    });
+    await page.goto("/share-target?participant=share-journal-recovery");
+    await expect.poll(() => page.evaluate(() => (window as any).outboxLoadFailures)).toBeGreaterThan(0);
+    const dialog = page.getByRole("dialog", { name: "Motteke deling", exact: true });
+    await expect(dialog.getByRole("textbox", { name: "Delt tekst eller lenkje" })).toHaveValue("Bevart deling");
+    await dialog.getByRole("combobox").selectOption(channel);
+    await dialog.getByRole("button", { name: "Send delinga", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText("Meldingslageret er mellombels utilgjengeleg");
+    expect(sends).toHaveLength(0);
+    await page.evaluate(() => { (window as any).outboxStorageUnavailable = false; });
+    await dialog.getByRole("button", { name: "Prøv den opphavlege sendinga igjen", exact: true }).click();
+    await expect.poll(() => sends.length).toBe(1);
+    expect(sends[0].request_id).toBe(receiptId);
+    expect(sends[0].payload.body).toBe("Bevart deling");
+    acknowledgements[0]!();
+    await expect(dialog).toContainText("Delinga er send.");
+    await dialog.getByRole("button", { name: "Til samtalane", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Skriv melding", exact: true })).toHaveValue("Mitt vanlege utkast");
+  });
+
   test("received share destinations ignore the conversation search and retain the chat draft", async ({ page }) => {
     await currentShareBundle(page);
     const sends: any[] = [], acknowledgements: Array<() => void> = [];
