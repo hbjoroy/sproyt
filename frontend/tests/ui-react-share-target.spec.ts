@@ -9,6 +9,84 @@ const channel = "00000000-0000-7000-8000-000000001861";
 const observer = "00000000-0000-7000-8000-000000001862";
 const media = "00000000-0000-7000-8000-000000001863";
 
+async function currentShareBundle(page: Page) {
+  const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
+  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+}
+
+test.describe("recovery in the open app", () => {
+  test.use({ serviceWorkers: "block" });
+
+  test("closing a received share before chat connects does not reopen it on reload", async ({ page }) => {
+    await currentShareBundle(page);
+    await page.routeWebSocket(/\/ws(?:\?|$)/, route => route.onMessage(() => {}));
+    await page.goto("/share-target?participant=share-route-recovery");
+    const dialog = page.getByRole("dialog", { name: "Motteke deling", exact: true });
+    await expect(dialog).toBeVisible();
+    await page.evaluate(() => history.replaceState({ preserve: "navigation-state" }, ""));
+    await dialog.getByRole("button", { name: "Lukk delinga", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => ({ path: location.pathname, state: history.state }))).toEqual({ path: "/", state: { preserve: "navigation-state" } });
+    await page.reload();
+    await expect(dialog).toBeHidden();
+  });
+
+  test("unavailable share storage offers retry and never claims the inbox is empty", async ({ page }) => {
+    await currentShareBundle(page);
+    await conversations(page, () => "actor", [], []);
+    await page.addInitScript(() => {
+      (window as any).shareStorageUnavailable = true;
+      const open = indexedDB.open.bind(indexedDB);
+      Object.defineProperty(indexedDB, "open", { configurable: true, value: (...args: Parameters<IDBFactory["open"]>) => {
+        if (args[0] === "sproyt-share-inbox" && (window as any).shareStorageUnavailable) throw new Error("Delingslageret er mellombels utilgjengeleg.");
+        return open(...args);
+      } });
+    });
+    await page.goto("/share-target?participant=share-storage-recovery");
+    const dialog = page.getByRole("dialog", { name: "Motteke deling", exact: true });
+    await expect(dialog.getByRole("alert")).toContainText("Delingslageret er mellombels utilgjengeleg");
+    await expect(dialog).not.toContainText("Ingen delingar ventar");
+    await page.evaluate(() => { (window as any).shareStorageUnavailable = false; });
+    await dialog.getByRole("button", { name: "Prøv igjen", exact: true }).click();
+    await expect(dialog).toContainText("Ingen delingar ventar");
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Lukk delinga", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
+  });
+
+  test("received share destinations ignore the conversation search and retain the chat draft", async ({ page }) => {
+    await currentShareBundle(page);
+    const sends: any[] = [], acknowledgements: Array<() => void> = [];
+    await conversations(page, () => "actor", sends, acknowledgements);
+    await page.route("**/auth/share-identity", route => route.fulfill({ json: { user_id: "actor" } }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/?participant=share-filter-recovery");
+    const composer = page.getByRole("textbox", { name: "Skriv melding", exact: true });
+    await expect(composer).toBeEnabled();
+    await composer.fill("Mitt vanlege utkast");
+    await page.getByRole("button", { name: "Samtalar", exact: true }).click();
+    await page.getByRole("searchbox", { name: "Finn samtale", exact: true }).fill("ingen-samtalar-med-dette-namnet");
+    await page.evaluate(async () => {
+      const form = new FormData(); form.set("text", "Delt frå ei anna app");
+      await globalThis.SproytShareInbox.capture(form);
+      window.dispatchEvent(new Event("focus"));
+    });
+    await page.getByRole("button", { name: /Motteke deling/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Motteke deling", exact: true });
+    await expect(dialog.getByRole("combobox").locator(`option[value="${channel}"]`)).toHaveCount(1);
+    await expect(dialog.getByRole("combobox").locator(`option[value="${observer}"]`)).toHaveCount(0);
+    await dialog.getByRole("combobox").selectOption(channel);
+    await dialog.getByRole("button", { name: "Send delinga", exact: true }).click();
+    await expect.poll(() => sends.length).toBe(1);
+    acknowledgements[0]!();
+    await expect(dialog).toContainText("Delinga er send.");
+    await dialog.getByRole("button", { name: "Til samtalane", exact: true }).click();
+    await page.getByRole("searchbox", { name: "Finn samtale", exact: true }).fill("");
+    await page.getByRole("navigation", { name: "Samtalar", exact: true }).getByRole("button", { name: /^# Deling(?:\s|$)/ }).click();
+    await expect(composer).toHaveValue("Mitt vanlege utkast");
+  });
+});
+
 test("worker never acknowledges failed file storage and rejects unsupported share payloads", async ({ page, browserName }) => {
   const worker = (await readFile(new URL("../../assets/share-inbox.js", import.meta.url), "utf8")) + "\n" + (await readFile(new URL("../../assets/service-worker.js", import.meta.url), "utf8"));
   const helper = await readFile(new URL("../../assets/share-inbox.js", import.meta.url), "utf8");

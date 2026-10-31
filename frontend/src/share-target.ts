@@ -20,7 +20,7 @@ export interface ShareInbox {
 }
 declare global { var SproytShareInbox: ShareInbox; }
 export const shareInbox = globalThis.SproytShareInbox;
-type ShareState = Readonly<{ receipts: readonly ShareReceipt[]; busy: boolean; error: string; notice: string }>;
+type ShareState = Readonly<{ receipts: readonly ShareReceipt[]; busy: boolean; error: string; notice: string; loading: boolean; loadError: string }>;
 
 /** The receipt stores the immutable admission before outbox ownership. A crash
  * in either DB can retry only that same request id and payload, never a new send. */
@@ -31,7 +31,7 @@ export function createShareTarget(options: {
   drop: (requestId: string) => Promise<void>;
   dispatch: (admission: ShareAdmission) => void;
 }, inbox: ShareInbox = shareInbox) {
-  let state: ShareState = { receipts: [], busy: false, error: "", notice: "" };
+  let state: ShareState = { receipts: [], busy: false, error: "", notice: "", loading: false, loadError: "" };
   let epoch = 0;
   let identityEpoch = 0;
   let draftWrites = 0;
@@ -42,11 +42,18 @@ export function createShareTarget(options: {
   const publish = (next: Partial<ShareState>) => { state = { ...state, ...next }; listeners.forEach(listener => listener()); };
   const refresh = async () => {
     const currentEpoch = ++epoch, user = options.user();
-    if (!user) { shareIds.clear(); publish({ receipts: [] }); return; }
-    const receipts = await inbox.list(user);
-    if (epoch === currentEpoch && user === options.user()) {
-      shareIds = new Set(receipts.filter(item => item.admission).map(item => item.id));
-      publish({ receipts: receipts.filter(item => !item.done).map(item => ({ ...item, ...localDrafts.get(item.id) })) });
+    if (!user) { shareIds.clear(); publish({ receipts: [], loading: false, loadError: "" }); return; }
+    publish({ loading: true, loadError: "" });
+    try {
+      const receipts = await inbox.list(user);
+      if (epoch === currentEpoch && user === options.user()) {
+        shareIds = new Set(receipts.filter(item => item.admission).map(item => item.id));
+        publish({ receipts: receipts.filter(item => !item.done).map(item => ({ ...item, ...localDrafts.get(item.id) })), loading: false });
+      }
+    } catch (error) {
+      if (epoch === currentEpoch && user === options.user()) publish({ loading: false,
+        loadError: `Kunne ikkje hente delingar. ${error instanceof Error ? error.message : "Prøv igjen."}` });
+      throw error;
     }
   };
   async function authorized(): Promise<{ user: string; generation: string }> {
@@ -68,7 +75,7 @@ export function createShareTarget(options: {
     canReplay(requestId: string) { return !state.receipts.some(item => item.id === requestId && item.rejected); },
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     refresh,
-    clear() { epoch++; identityEpoch++; shareIds.clear(); localDrafts.clear(); publish({ receipts: [], busy: false, error: "", notice: "" }); },
+    clear() { epoch++; identityEpoch++; shareIds.clear(); localDrafts.clear(); publish({ receipts: [], busy: false, error: "", notice: "", loading: false, loadError: "" }); },
     edit(id: string, channelId: string, text: string): Promise<void> {
       const user = options.user(); if (!user) return Promise.resolve();
       const writeEpoch = identityEpoch;

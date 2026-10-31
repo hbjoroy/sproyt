@@ -4,7 +4,7 @@ import type { ShareReceipt, ShareTarget } from "../../share-target";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 
 function ShareDraft({ item, target, snapshot, busy }: { item: ShareReceipt; target: ShareTarget; snapshot: ConversationSnapshot; busy: boolean }) {
-  const destinations = snapshot.groups.flatMap(group => group.conversations.filter(entry => entry.channel.role !== "observer").map(entry => ({ id: entry.id, name: `${group.name} · ${entry.name}` })));
+  const destinations = snapshot.channelChoices.filter(entry => entry.role !== "observer");
   const [text, setText] = useState(item.text);
   const [channel, setChannel] = useState(item.admission?.channelId ?? item.channelId ?? "");
   const [preview, setPreview] = useState("");
@@ -27,7 +27,7 @@ function ShareDraft({ item, target, snapshot, busy }: { item: ShareReceipt; targ
     }} style={{ minHeight: 44, width: "100%", color: "var(--sp-text)", background: "var(--sp-surface)" }}>
       <option value="">Vel kanal</option>{destinations.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
     </select></label>
-    {!destinations.length && <Status>Du har ingen kanal du kan skrive i. Delinga er teken vare på lokalt.</Status>}
+    {snapshot.directory.ready && !destinations.length && <Status>Du har ingen kanal du kan skrive i. Delinga er teken vare på lokalt.</Status>}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <Button disabled={busy || !channel || (!text.trim() && !item.file && !item.admission)} onClick={() => void target.send(item.id, channel, text)}>{item.admission ? "Prøv den opphavlege sendinga igjen" : "Send delinga"}</Button>
       {(!item.admission || item.rejected) && <Button variant="quiet" disabled={busy} onClick={() => void target.discard(item.id)}>Forkast delinga</Button>}
@@ -38,6 +38,15 @@ function ShareDraft({ item, target, snapshot, busy }: { item: ShareReceipt; targ
 export function ReceivedShares({ target, snapshot }: { target: ShareTarget; snapshot: ConversationSnapshot }) {
   const state = useSyncExternalStore(target.subscribe, target.getSnapshot);
   const [open, setOpen] = useState(location.pathname === "/share-target");
+  const close = () => {
+    setOpen(false);
+    // Chat navigation may not have initialized yet on a slow Android launch.
+    // Consume the share entry without replacing its history state or receipts.
+    if (location.pathname === "/share-target") {
+      const url = new URL(location.href); url.pathname = "/";
+      try { history.replaceState(history.state, "", url); } catch { /* Keep dismissal available even when history is restricted. */ }
+    }
+  };
   useEffect(() => { void target.refresh().catch(() => {}); }, [target]);
   useEffect(() => {
     const refresh = () => { void target.refresh().catch(() => {}); };
@@ -46,13 +55,17 @@ export function ReceivedShares({ target, snapshot }: { target: ShareTarget; snap
     return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); navigator.serviceWorker?.removeEventListener("message", refresh); };
   }, [target]);
   return <>
-    {(state.receipts.length > 0 || state.notice || state.error) && <Button variant="quiet" onClick={() => setOpen(true)}>Motteke deling{state.receipts.length ? ` (${state.receipts.length})` : ""}</Button>}
-    <Dialog open={open} title="Motteke deling" closeLabel="Lukk delinga" onClose={() => setOpen(false)}>
+    {(state.receipts.length > 0 || state.notice || state.error || state.loadError) && <Button variant="quiet" onClick={() => setOpen(true)}>Motteke deling{state.receipts.length ? ` (${state.receipts.length})` : ""}</Button>}
+    <Dialog open={open} title="Motteke deling" closeLabel="Lukk delinga" onClose={close}>
       <p>Vel kvar du vil sende. Vanlege samtaleutkast blir tekne vare på. Ingenting blir sendt før du trykkjer Send.</p>
+      {(state.loading || !snapshot.directory.ready) && <Status>Hentar delingar og samtalar …</Status>}
+      {state.loadError && <><Status tone="error">{state.loadError}</Status><Button disabled={state.loading || state.busy} onClick={() => void target.refresh().catch(() => {})}>Prøv igjen</Button></>}
+      {state.busy && <Status>Behandlar delinga …</Status>}
       {state.error && <Status tone="error">{state.error}</Status>}
       {state.notice && <Status>{state.notice}</Status>}
-      {!state.receipts.length && !state.notice && <Status>Ingen delingar ventar. Ved nettfeil kan du opne Sprøyt igjen; lokalt lagra delingar blir tekne vare på.</Status>}
+      {!state.receipts.length && !state.notice && !state.loading && !state.loadError && snapshot.directory.ready && <Status>Ingen delingar ventar. Ved nettfeil kan du opne Sprøyt igjen; lokalt lagra delingar blir tekne vare på.</Status>}
       {state.receipts.map(item => <ShareDraft key={`${item.id}:${item.owner}`} item={item} target={target} snapshot={snapshot} busy={state.busy} />)}
+      <Button variant="quiet" onClick={close}>Til samtalane</Button>
     </Dialog>
   </>;
 }

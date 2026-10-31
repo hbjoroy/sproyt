@@ -85,6 +85,20 @@ test("search retains active selection and matches group context without altering
   assert.equal(snapshot.channels[0]?.last_read_sequence, 12);
 });
 
+test("destination choices retain unfiltered circle and direct names while search hides conversations", () => {
+  const snapshot = projectConversationSnapshot(source({ channels: [channel("shared"),
+    channel("circle-channel", { circle_id: "one" }), channel("dm", { is_direct: true, name: "stored-name" }),
+    channel("read-only", { role: "observer" })], circles: new Map([["one", circle("one")]]),
+    query: "no-conversation-matches", directChannelLabel: () => "Ada Lovelace" }));
+  assert.deepEqual(snapshot.groups, []);
+  assert.deepEqual(snapshot.channelChoices.map(choice => [choice.id, choice.name, choice.role]), [
+    ["shared", "Felles · # Prat", "member"], ["read-only", "Felles · # Prat", "observer"],
+    ["circle-channel", "Venner · # Prat", "member"], ["dm", "Direkte · Ada Lovelace", "member"]
+  ]);
+  assert.equal(Object.isFrozen(snapshot.channelChoices), true);
+  assert.equal(Object.isFrozen(snapshot.channelChoices[0]), true);
+});
+
 test("root timeline isolates replies and channels, preserves notices and sorts without mutating host data", () => {
   const original = [message("late", 9), message("reply", 3, { parent_message_id: "early" }),
     message("foreign", 2, { channel_id: "other" }), message("early", 1)];
