@@ -1,6 +1,7 @@
 {
   "webkit": [
     "ui-react-layout-refinement.spec.ts",
+    "ui-react-panel-resize.spec.ts",
     "ui-react-badge.spec.ts",
     "ui-react-channel-popover-navigation.spec.ts",
     "ui-react-thread-discovery.spec.ts",
@@ -41,6 +42,7 @@
   ],
   "layout": [
     "ui-react-layout-refinement.spec.ts",
+    "ui-react-panel-resize.spec.ts",
     "ui-react-visual-restoration.spec.ts",
     "ui-react-mobile.spec.ts",
     "ui-react-badge.spec.ts",

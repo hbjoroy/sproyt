@@ -27,6 +27,21 @@
 }
 
 /* Application chrome must not compete with the conversation for viewport height. */
+.sp-workspace[data-resizable-panels] { position: relative; grid-template-columns: var(--sp-sidebar-width) minmax(0, 1fr); }
+.sp-workspace[data-resizable-panels] > .sp-sidebar { border-right: 0; }
+.sp-discussion[data-resizable-thread] { position: relative; grid-template-columns: minmax(0, 1fr) var(--sp-thread-width); }
+.sp-discussion[data-resizable-thread] > .sp-thread-pane { border-left: 0; }
+.sp-panel-resizer {
+  position: absolute; z-index: 5; top: 0; bottom: 0; width: 14px; transform: translateX(-50%);
+  cursor: col-resize; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.sp-panel-resizer::after { content: ""; position: absolute; inset: 0 auto 0 50%; width: 1px; background: var(--sp-line); }
+.sp-panel-resizer[data-panel=thread]::after { background: var(--sp-rule); }
+.sp-panel-resizer:hover::after { background: var(--sp-rule); }
+.sp-panel-resizer[aria-disabled=true] { cursor: default; pointer-events: none; }
+.sp-panel-resizer:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: -3px; }
+.sp-workspace[data-panel-dragging], .sp-workspace[data-panel-dragging] * { cursor: col-resize !important; user-select: none !important; -webkit-user-select: none !important; }
+@media (pointer: coarse) { .sp-panel-resizer { width: 24px; } }
 #sproyt-react-preview { box-sizing: border-box; overflow: hidden; }
 #sproyt-react-preview .sp-main {
   padding: 0; border: 0; border-radius: 0; background: var(--sp-canvas); box-shadow: none;
