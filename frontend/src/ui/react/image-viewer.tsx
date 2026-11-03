@@ -27,9 +27,6 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
   const titleId = useId();
 
   useEffect(() => {
-    viewRef.current = view;
-  }, [view]);
-  useEffect(() => {
     const element = dialog.current;
     if (element && !element.open) element.showModal();
     return () => { if (element?.open) element.close(); };
@@ -37,7 +34,6 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
 
   const constrain = (candidate: View): View => {
     const scale = clamp(candidate.scale, minimumScale, maximumScale);
-    if (scale === 1) return { scale, x: 0, y: 0 };
     const viewport = surface.current;
     const content = image.current;
     if (!viewport || !content) return { ...candidate, scale };
@@ -45,9 +41,29 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     const maxY = Math.max(0, (content.clientHeight * scale - viewport.clientHeight) / 2);
     return { scale, x: clamp(candidate.x, -maxX, maxX), y: clamp(candidate.y, -maxY, maxY) };
   };
-  const update = (candidate: View) => setView(constrain(candidate));
+  const update = (candidate: View) => {
+    const next = constrain(candidate);
+    viewRef.current = next;
+    setView(current => current.scale === next.scale && current.x === next.x && current.y === next.y ? current : next);
+  };
   const zoom = (scale: number) => update({ ...viewRef.current, scale });
-  const toggleZoom = () => zoom(viewRef.current.scale > 1 ? 1 : 2.5);
+  const reset = () => update({ scale: 1, x: 0, y: 0 });
+  const toggleZoom = () => { if (viewRef.current.scale > 1) reset(); else zoom(2.5); };
+
+  useEffect(() => {
+    const reframe = () => {
+      // A resized image/viewport invalidates a drag's old coordinates.
+      pointers.current.clear();
+      gesture.current = null;
+      tap.current = null;
+      lastTap.current = null;
+      update(viewRef.current);
+    };
+    const observer = new ResizeObserver(reframe);
+    if (surface.current) observer.observe(surface.current);
+    if (image.current) observer.observe(image.current);
+    return () => observer.disconnect();
+  }, []);
 
   const beginGesture = () => {
     const active = [...pointers.current.values()];
@@ -92,13 +108,13 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
       const center = midpoint(active[0]!, active[1]!);
       const bounds = surface.current?.getBoundingClientRect();
       const viewportCenter = { x: (bounds?.left ?? 0) + (bounds?.width ?? 0) / 2, y: (bounds?.top ?? 0) + (bounds?.height ?? 0) / 2 };
-      const scale = current.view.scale * distance(active[0]!, active[1]!) / current.distance;
+      const scale = clamp(current.view.scale * distance(active[0]!, active[1]!) / current.distance, minimumScale, maximumScale);
       update({
         scale,
         x: center.x - viewportCenter.x - current.focal.x * scale,
         y: center.y - viewportCenter.y - current.focal.y * scale
       });
-    } else if (active[0] && current?.kind === "pan" && current.view.scale > 1) {
+    } else if (active[0] && current?.kind === "pan") {
       update({ scale: current.view.scale, x: current.view.x + active[0].x - current.point.x, y: current.view.y + active[0].y - current.point.y });
     }
   };
@@ -132,7 +148,7 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     onKeyDown={event => {
       if (event.key === "+" || event.key === "=") zoom(viewRef.current.scale * 1.25);
       if (event.key === "-") zoom(viewRef.current.scale / 1.25);
-      if (event.key === "0") zoom(1);
+      if (event.key === "0") reset();
     }}>
     <header className="sp-image-viewer-head">
       <h2 id={titleId}>{name}</h2>
@@ -150,7 +166,7 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     </div>
     <div className="sp-image-viewer-tools" aria-label="Zoomkontrollar">
       <button type="button" className="sp-image-viewer-control" aria-label="Zoom ut" title="Zoom ut" disabled={view.scale <= 1} onClick={() => zoom(view.scale / 1.4)}>−</button>
-      <button type="button" className="sp-image-viewer-reset" onClick={() => zoom(1)} aria-label="Tilpass biletet til skjermen">{Math.round(view.scale * 100)}%</button>
+      <button type="button" className="sp-image-viewer-reset" onClick={reset} aria-label="Tilbakestill biletvising">{Math.round(view.scale * 100)}%</button>
       <button type="button" className="sp-image-viewer-control" aria-label="Zoom inn" title="Zoom inn" disabled={view.scale >= maximumScale} onClick={() => zoom(view.scale * 1.4)}>+</button>
     </div>
     <p className="sp-sr" aria-live="polite">Zoom {Math.round(view.scale * 100)} prosent</p>

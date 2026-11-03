@@ -8,6 +8,8 @@ open. It is an in-app whisper; it does not send an OS push notification.
 The picture icon in the composer's editing toolbar opens this inbox. The toolbar
 appears while the editor has focus. **Skjul** keeps the inbox closed during
 background polling until it is reopened or another generation is requested.
+The workshop has its own framed surface and a visible header with **Skjul**;
+only its content scrolls, so the action remains reachable on a narrow screen.
 
 Attach up to three images to the unsent channel draft before using `/imagegen`
 to use them as visual references. They remain in the draft and are not published
@@ -15,8 +17,11 @@ by generation. Only the requester's unpublished images in that channel qualify;
 videos are not reference inputs. More than three images produces an error.
 
 **Godta** (accept) creates an ordinary image attachment owned by the requester
-in the original channel and adds it to the draft. Existing caption text is
-preserved. The requester still presses Send to publish. If the channel changed
+in the original channel and adds it to the original channel or thread draft.
+The workshop hides only after the attachment is in that draft; keyboard focus
+returns to the composer. Existing caption text and other attachments are
+preserved. Review or attachment failures keep the workshop open for retry.
+The requester still presses Send to publish. If the channel changed
 while accepting, return to the original channel and choose **Legg i utkast**.
 Accepted images remain recoverable in the inbox until posted, dismissed or
 expired. **Avslå** (decline) removes the private preview without posting.

@@ -58,14 +58,14 @@ test("React sends real attachment-only messages and opens a full-screen zoomable
   expect(viewerBox?.height).toBe(viewport.height);
   const fittedBox = await original.boundingBox();
   await lightbox.getByRole("button", { name: "Zoom inn" }).click();
-  await expect(lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" })).toHaveText("140%");
+  await expect(lightbox.getByRole("button", { name: "Tilbakestill biletvising" })).toHaveText("140%");
   const enlargedBox = await original.boundingBox();
   expect(enlargedBox!.width).toBeGreaterThan(fittedBox!.width);
   await lightbox.locator(".sp-image-viewer-surface").dblclick();
-  await expect(lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" })).toHaveText("100%");
+  await expect(lightbox.getByRole("button", { name: "Tilbakestill biletvising" })).toHaveText("100%");
   await lightbox.locator(".sp-image-viewer-surface").dblclick();
-  await expect(lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" })).toHaveText("250%");
-  const reset = lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" });
+  await expect(lightbox.getByRole("button", { name: "Tilbakestill biletvising" })).toHaveText("250%");
+  const reset = lightbox.getByRole("button", { name: "Tilbakestill biletvising" });
   await reset.click();
   if (browserName === "chromium") {
     const cdp = await context.newCDPSession(page);

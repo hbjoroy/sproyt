@@ -27,6 +27,22 @@ through the existing host transport. Administration and other incomplete parity
 flows remain in that full UI. Other
 hostnames and URLs without this explicit query retain the default UI.
 
+## Adjustable panel widths
+
+`PanelResizers` owns desktop layout preferences without changing application
+state or remounting the navigation, channel or thread. The sidebar is adjustable
+from 240–420 px and the thread from 340–720 px. Available space tightens these
+ranges to preserve the conversation; when possible, an open split keeps at least
+440 px for the channel and 340 px for the thread. The existing 900 px app and
+780 px content breakpoints still determine compact navigation and thread layout.
+
+The divider is 1 px wide with a 14 px pointer target (24 px for coarse pointers).
+Drag or use the arrow keys, Home and End; Enter or a double click restores the
+default. Escape cancels a drag. Widths are optional local preferences under
+`sproyt.panel-widths.v1`, persist after a completed action, and are clamped without
+overwriting the preferred width when the viewport shrinks. Compact layouts do
+not show resize controls. A divider with no available resizing range is inert.
+
 ## Integration seam
 
 1. Keep the one `createApplicationRuntime(renderServerEvent)` in `app.ts`. Pass it

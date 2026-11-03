@@ -7,6 +7,7 @@ import type { ConversationTimelineItem } from "../../application/conversation-sn
 import type { ChatMessage } from "../../types";
 import { ProductConversationNavigation } from "./conversation-navigation";
 import { WorkspacePageOutlet, WorkspacePageProvider } from "./workspace-page";
+import { PanelResizers } from "./panel-resizers";
 
 /** IDs belong to the application. Two circles may have the same display name. */
 export interface ConversationGroup {
@@ -289,12 +290,13 @@ export interface ConversationViewProps {
 
 export function ConversationView(props: ConversationViewProps) {
   const snapshot = useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
+  const discussion = useRef<HTMLDivElement>(null);
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
     <WorkspacePageProvider pageKey={props.pageKey}>
     <AppShell view={props.pageKey ? "detail" : props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
       header={<>{props.header}<span className="sp-sr" role="status" aria-atomic="true">{snapshot.connection.status}</span></>}>
       <WorkspacePageOutlet />
-      <div className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
+      <div ref={discussion} className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
         hidden={!!props.pageKey} inert={!!props.pageKey} aria-hidden={props.pageKey ? true : undefined}>
         <section className="sp-channel-pane" aria-label={props.title}>
           {!props.emptyContent && <header className="sp-context">
@@ -306,6 +308,7 @@ export function ConversationView(props: ConversationViewProps) {
         </section>
         {props.thread}
       </div>
+      <PanelResizers discussionRef={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
     </AppShell>
     {props.overlays}
     </WorkspacePageProvider>
