@@ -12,6 +12,8 @@
     "ui-react-profile-favorites.spec.ts",
     "ui-react-product-navigation.spec.ts",
     "ui-react-agent-handoff.spec.ts",
+    "ui-image-viewer-gestures.spec.ts",
+    "ui-react-imagegen.spec.ts",
     "ui-react-imagegen-draft.spec.ts",
     "ui-react-native-selection.spec.ts",
     "ui-react-mobile.spec.ts",

@@ -839,7 +839,8 @@
         attach: (media, rootId) => {
           if (rootId) {
             const state = threadComposerState(rootId);
-            if (state && !state.media.some(item => item.id === media.id)) state.media.push(media);
+            if (!state) return false;
+            if (!state.media.some(item => item.id === media.id)) state.media.push(media);
             if (rootId === activeThreadRootId) renderThreadMediaPreviews();
             refreshDevelopmentPreview();
           } else {
@@ -847,6 +848,7 @@
             renderMediaPreviews();
             if (!developmentPreviewActive) bodyInput.focus();
           }
+          return true;
         }
       });
       const favoriteCircles = new CircleFavorites(new ProfileCircleFavoritesApi(http), () => currentParticipantId);

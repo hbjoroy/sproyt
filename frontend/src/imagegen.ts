@@ -47,7 +47,7 @@ function decodeJobs(value: unknown): Job[] {
 
 export function createImageGeneration(options: {
   http: HttpClient; before: HTMLElement; toolbar: HTMLElement; connected: () => boolean; channel: () => string;
-  identity: () => string; channelName: (id: string) => string; attach: (media: MediaObject, rootId?: string) => void;
+  identity: () => string; channelName: (id: string) => string; attach: (media: MediaObject, rootId?: string) => boolean;
   restorePrompt: (draft: string, channel: string, rootId?: string) => boolean;
 }) {
   const panel = document.createElement("section");
@@ -215,7 +215,8 @@ export function createImageGeneration(options: {
         const media = mediaFromUpload(result);
         if (!media || media.channel_id !== job.channel_id) throw new Error("Ugyldig biletvedlegg");
         if (options.channel() === job.channel_id) {
-          options.attach(media, jobScope(job.id));
+          if (!options.attach(media, jobScope(job.id))) throw new Error("Biletet er godteke, men kunne ikkje leggjast i utkastet. Prøv å leggje det i utkastet igjen.");
+          dismissed = true;
           setStatus("Biletet er lagt i utkastet. Skriv ei melding og trykk Send når du vil dele det.");
         } else setStatus("Biletet er godteke. Opne den opphavlege kanalen for å leggje det i utkastet.");
       } else if (decision === "decline") {
