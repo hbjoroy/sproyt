@@ -84,7 +84,7 @@ FROM ${BUILD_VARIANT}-builder AS compiled
 
 # Populate target-architecture runtime libraries using native apk. No target
 # binary or package script is executed, and Rust remains native Zig cross-built.
-# Pin the CVE-2026-58016 fix from a tagged repository; keep other packages on 3.24.
+# Pin fixed GLib and Expat runtimes; keep other packages on 3.24.
 FROM --platform=$BUILDPLATFORM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS media-runtime-builder
 ARG TARGETARCH
 RUN case "$TARGETARCH" in \
@@ -103,7 +103,7 @@ RUN case "$TARGETARCH" in \
        '@glibfix https://dl-cdn.alpinelinux.org/alpine/edge/main' \
        > /worker-root/etc/apk/repositories \
     && apk --root /worker-root --arch "$apk_arch" --initdb --no-scripts --no-cache \
-       add vips-tools=8.18.2-r0 vips-heif=8.18.2-r0 'glib@glibfix=2.90.0-r0' 'libarchive>=3.8.7'
+       add vips-tools=8.18.2-r0 vips-heif=8.18.2-r0 'glib@glibfix=2.90.0-r0' 'libexpat=2.10.0-r0' 'libarchive>=3.8.7'
 
 FROM scratch AS media-worker
 ARG VCS_REF=unknown
