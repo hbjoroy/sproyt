@@ -1,0 +1,527 @@
+version: 1
+metadata:
+  name: Sprøyt versioned signup and account recovery
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+# Import after invitation blueprints. This blueprint exclusively owns the
+# public recovery link; gate rollout on deployed executor acceptance.
+entries:
+  - identifiers: {pk: 9b763222-baf4-5a03-a3b8-26f0bc1f71c1}
+    id: recovery-v2-flow
+    model: authentik_flows.flow
+    attrs:
+      slug: sproyt-account-recovery-v2
+      name: Sprøyt account recovery V2
+      title: Tilbakestill Sprøyt-passordet
+      designation: recovery
+      authentication: require_unauthenticated
+      denied_action: message
+  - identifiers: {name: sproyt-recovery-v2-identification}
+    id: recovery-v2-identification
+    model: authentik_stages_identification.identificationstage
+    attrs:
+      user_fields: [email, username]
+      case_insensitive_matching: true
+      show_matched_user: false
+      pretend_user_exists: true
+  - identifiers: {name: sproyt-recovery-v2-email}
+    id: recovery-v2-email
+    model: authentik_stages_email.emailstage
+    attrs:
+      use_global_settings: true
+      token_expiry: minutes=30
+      subject: Tilbakestill Sprøyt-passordet
+      template: email/password_reset.html
+      activate_user_on_success: false
+      recovery_max_attempts: 5
+      recovery_cache_timeout: minutes=5
+  - identifiers: {name: sproyt-recovery-v2-deny}
+    id: recovery-v2-deny
+    model: authentik_stages_deny.denystage
+    attrs:
+      deny_message: Gjenopprettinga kan ikkje fullførast. Start på nytt eller ta kontakt.
+  - identifiers: {name: sproyt-recovery-v2-password}
+    id: recovery-v2-password
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, default-password-change-field-password]]
+        - !Find [authentik_stages_prompt.prompt, [name, default-password-change-field-password-repeat]]
+      validation_policies:
+        - !Find [authentik_policies.policy, [name, default-password-change-password-policy]]
+  - identifiers: {name: sproyt-recovery-v2-login}
+    id: recovery-v2-login
+    model: authentik_stages_user_login.userloginstage
+  - identifiers: {name: sproyt-recovery-v2-classify}
+    id: recovery-v2-classify
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from authentik.core.models import User
+        from authentik.stages.authenticator import devices_for_user
+        from django.core import signing
+        from hashlib import sha256
+
+        def snapshot(user):
+            return {"pk": user.pk, "uuid": str(user.uuid),
+                    "email": str(user.email).strip().casefold(),
+                    "updated": user.last_updated.isoformat(),
+                    "password": sha256(user.password.encode()).hexdigest(),
+                    "groups": sorted(map(str, user.groups.values_list("pk", flat=True))),
+                    "roles": sorted(map(str, user.roles.values_list("pk", flat=True))),
+                    "sources": sorted(map(str, user.sources.values_list("pk", flat=True))),
+                    "mfa": sorted(str(d._meta.label_lower) + ":" + str(d.pk) for d in devices_for_user(user)),
+                    "superuser": bool(user.is_superuser), "active": bool(user.is_active),
+                    "type": str(user.type), "path": str(user.path),
+                    "last_login": user.last_login.isoformat() if user.last_login else None}
+
+        def eligible(user, marker):
+            if not isinstance(marker, str):
+                return False
+            try:
+                origin = signing.loads(marker, salt="sproyt.pending-signup.v1", max_age=2592000)
+                if not isinstance(origin, dict):
+                    return False
+                if origin.get("kind") == "operator":
+                    origin = signing.loads(marker, salt="sproyt.pending-signup.v1", max_age=172800)
+            except signing.BadSignature:
+                return False
+            return (isinstance(origin, dict)
+                and set(origin) == {"v", "kind", "flow", "nonce", "snapshot"}
+                and origin.get("v") == 1 and origin.get("kind") in {"signup", "operator"}
+                and origin.get("flow") in {"645a51d1-1d8a-5369-867d-b2a93ac7504e",
+                     "5eb6dcb6-29a8-5b7d-b424-584c59b7409c", "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35"}
+                and isinstance(origin.get("nonce"), str) and len(origin["nonce"]) == 43
+                and origin.get("snapshot") == snapshot(user)
+                and not user.is_active and not user.is_superuser and user.last_login is None
+                and user.type == "external" and user.path == "users/sproyt"
+                and not user.roles.exists() and not user.sources.exists()
+                and (origin["kind"] == "operator" or not user.has_usable_password())
+                and (user.attributes or {}).get("sproyt_pending_signup_v1") == marker)
+        plan = request.context.get("flow_plan")
+        pending = request.context.get("pending_user")
+        if plan is None or getattr(pending, "pk", None) is None:
+            return True
+        user = User.objects.get(pk=pending.pk)
+        # Identification may match username; mailbox recovery requires one exact recipient.
+        email = str(user.email).strip().casefold()
+        if not email or len(list(User.objects.filter(email__iexact=email)[:2])) != 1:
+            return True
+        marker = (user.attributes or {}).get("sproyt_pending_signup_v1")
+        branch = "active" if user.is_active else "pending" if eligible(user, marker) else "denied"
+        if branch == "denied":
+            return True
+        state = snapshot(user)
+        if "sproyt_recovery_v2_branch" in plan.context:
+            return (plan.context.get("sproyt_recovery_v2_branch") != branch
+                or plan.context.get("sproyt_recovery_v2_snapshot") != state
+                or plan.context.get("sproyt_recovery_v2_marker") != (marker if branch == "pending" else None))
+        plan.context["sproyt_recovery_v2_branch"] = branch
+        plan.context["sproyt_recovery_v2_snapshot"] = state
+        plan.context["sproyt_recovery_v2_marker"] = marker if branch == "pending" else None
+        plan.context["email"] = email
+        plan.context["redirect"] = "https://sproyt.bjoroy.me/auth/login"
+        plan.context["pending_user"] = user
+        request.context["pending_user"] = user
+        return False
+  - identifiers: {name: sproyt-recovery-v2-rate-limit}
+    id: recovery-v2-rate-limit
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from django.core.cache import cache
+        from hashlib import sha256
+
+        plan = request.context["flow_plan"]
+        if request.context.get("is_restored") or plan.context.get("sproyt_recovery_v2_send_counted"):
+            return False
+        email = str(plan.context.get("email", "")).strip().casefold()
+        if not email:
+            return True
+        # Share the legacy recipient bucket so changing flow versions cannot bypass it.
+        key = "sproyt:recovery:first-send:" + sha256(email.encode()).hexdigest()
+        try:
+            attempts = 1 if cache.add(key, 1, timeout=300) else cache.incr(key)
+        except Exception:
+            return True
+        plan.context["sproyt_recovery_v2_send_counted"] = True
+        return attempts > 5
+  - identifiers: {name: sproyt-recovery-v2-proof}
+    id: recovery-v2-proof
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from authentik.core.models import User
+        from authentik.stages.authenticator import devices_for_user
+        from django.core import signing
+        from hashlib import sha256
+
+        def snapshot(user):
+            return {"pk": user.pk, "uuid": str(user.uuid),
+                    "email": str(user.email).strip().casefold(),
+                    "updated": user.last_updated.isoformat(),
+                    "password": sha256(user.password.encode()).hexdigest(),
+                    "groups": sorted(map(str, user.groups.values_list("pk", flat=True))),
+                    "roles": sorted(map(str, user.roles.values_list("pk", flat=True))),
+                    "sources": sorted(map(str, user.sources.values_list("pk", flat=True))),
+                    "mfa": sorted(str(d._meta.label_lower) + ":" + str(d.pk) for d in devices_for_user(user)),
+                    "superuser": bool(user.is_superuser), "active": bool(user.is_active),
+                    "type": str(user.type), "path": str(user.path),
+                    "last_login": user.last_login.isoformat() if user.last_login else None}
+
+        def eligible(user, marker):
+            if not isinstance(marker, str):
+                return False
+            try:
+                origin = signing.loads(marker, salt="sproyt.pending-signup.v1", max_age=2592000)
+                if not isinstance(origin, dict):
+                    return False
+                if origin.get("kind") == "operator":
+                    origin = signing.loads(marker, salt="sproyt.pending-signup.v1", max_age=172800)
+            except signing.BadSignature:
+                return False
+            return (isinstance(origin, dict)
+                and set(origin) == {"v", "kind", "flow", "nonce", "snapshot"}
+                and origin.get("v") == 1 and origin.get("kind") in {"signup", "operator"}
+                and origin.get("flow") in {"645a51d1-1d8a-5369-867d-b2a93ac7504e",
+                     "5eb6dcb6-29a8-5b7d-b424-584c59b7409c", "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35"}
+                and isinstance(origin.get("nonce"), str) and len(origin["nonce"]) == 43
+                and origin.get("snapshot") == snapshot(user)
+                and not user.is_active and not user.is_superuser and user.last_login is None
+                and user.type == "external" and user.path == "users/sproyt"
+                and not user.roles.exists() and not user.sources.exists()
+                and (origin["kind"] == "operator" or not user.has_usable_password())
+                and (user.attributes or {}).get("sproyt_pending_signup_v1") == marker)
+        from django.utils.timezone import now
+
+        def mailbox_matches(plan, token):
+            if (token is None or token.expires <= now()
+                or str(token.flow_id) != "9b763222-baf4-5a03-a3b8-26f0bc1f71c1"):
+                return False
+            original = token.plan
+            if (len(original.bindings) < 2
+                or original.bindings[1].stage.name != "sproyt-recovery-v2-email"):
+                return False
+            original_user = original.context.get("pending_user")
+            current_user = plan.context.get("pending_user")
+            state = plan.context.get("sproyt_recovery_v2_snapshot", {})
+            if not isinstance(state, dict):
+                return False
+            keys = ("sproyt_recovery_v2_branch", "sproyt_recovery_v2_snapshot",
+                    "sproyt_recovery_v2_marker", "email", "redirect")
+            return (all(original.context.get(k) == plan.context.get(k) for k in keys)
+                and state.get("pk") is not None
+                and getattr(original_user, "pk", None) == state["pk"]
+                and getattr(current_user, "pk", None) == state["pk"]
+                and getattr(token.user, "pk", None) == state["pk"]
+                and str(plan.context.get("email", "")).strip().casefold() == state.get("email")
+                and plan.context.get("redirect") == "https://sproyt.bjoroy.me/auth/login"
+                and plan.context.get("sproyt_recovery_v2_branch") in {"active", "pending"})
+        from django.db import transaction
+
+        plan = request.context.get("flow_plan")
+        token = request.context.get("is_restored")
+        if plan is None or not mailbox_matches(plan, token):
+            return True
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=plan.context["sproyt_recovery_v2_snapshot"]["pk"])
+            if (not mailbox_matches(plan, token) or snapshot(user) != plan.context["sproyt_recovery_v2_snapshot"]
+                or (plan.context["sproyt_recovery_v2_branch"] == "pending"
+                    and not eligible(user, plan.context.get("sproyt_recovery_v2_marker")))):
+                return True
+            # Carry only a server-signed claim across the password prompt. Nothing is
+            # written to the identity before the final, transactional recheck.
+            claim = {"flow": str(token.flow_id), "stage": "sproyt-recovery-v2-email",
+                     "expires": token.expires.timestamp(), "snapshot": snapshot(user),
+                     "branch": plan.context["sproyt_recovery_v2_branch"],
+                     "marker": plan.context.get("sproyt_recovery_v2_marker")}
+            plan.context["sproyt_recovery_v2_mailbox"] = signing.dumps(claim, salt="sproyt.recovery-mailbox.v2")
+        return False
+  - identifiers: {name: sproyt-recovery-v2-finalize}
+    id: recovery-v2-finalize
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from authentik.core.models import User
+        from authentik.stages.authenticator import devices_for_user
+        from django.core import signing
+        from hashlib import sha256
+
+        def snapshot(user):
+            return {"pk": user.pk, "uuid": str(user.uuid),
+                    "email": str(user.email).strip().casefold(),
+                    "updated": user.last_updated.isoformat(),
+                    "password": sha256(user.password.encode()).hexdigest(),
+                    "groups": sorted(map(str, user.groups.values_list("pk", flat=True))),
+                    "roles": sorted(map(str, user.roles.values_list("pk", flat=True))),
+                    "sources": sorted(map(str, user.sources.values_list("pk", flat=True))),
+                    "mfa": sorted(str(d._meta.label_lower) + ":" + str(d.pk) for d in devices_for_user(user)),
+                    "superuser": bool(user.is_superuser), "active": bool(user.is_active),
+                    "type": str(user.type), "path": str(user.path),
+                    "last_login": user.last_login.isoformat() if user.last_login else None}
+
+        def eligible(user, marker):
+            if not isinstance(marker, str):
+                return False
+            try:
+                origin = signing.loads(marker, salt="sproyt.pending-signup.v1", max_age=2592000)
+                if not isinstance(origin, dict):
+                    return False
+                if origin.get("kind") == "operator":
+                    origin = signing.loads(marker, salt="sproyt.pending-signup.v1", max_age=172800)
+            except signing.BadSignature:
+                return False
+            return (isinstance(origin, dict)
+                and set(origin) == {"v", "kind", "flow", "nonce", "snapshot"}
+                and origin.get("v") == 1 and origin.get("kind") in {"signup", "operator"}
+                and origin.get("flow") in {"645a51d1-1d8a-5369-867d-b2a93ac7504e",
+                     "5eb6dcb6-29a8-5b7d-b424-584c59b7409c", "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35"}
+                and isinstance(origin.get("nonce"), str) and len(origin["nonce"]) == 43
+                and origin.get("snapshot") == snapshot(user)
+                and not user.is_active and not user.is_superuser and user.last_login is None
+                and user.type == "external" and user.path == "users/sproyt"
+                and not user.roles.exists() and not user.sources.exists()
+                and (origin["kind"] == "operator" or not user.has_usable_password())
+                and (user.attributes or {}).get("sproyt_pending_signup_v1") == marker)
+        from django.utils.timezone import now
+
+        def mailbox_matches(plan, token):
+            if (token is None or token.expires <= now()
+                or str(token.flow_id) != "9b763222-baf4-5a03-a3b8-26f0bc1f71c1"):
+                return False
+            original = token.plan
+            if (len(original.bindings) < 2
+                or original.bindings[1].stage.name != "sproyt-recovery-v2-email"):
+                return False
+            original_user = original.context.get("pending_user")
+            current_user = plan.context.get("pending_user")
+            state = plan.context.get("sproyt_recovery_v2_snapshot", {})
+            if not isinstance(state, dict):
+                return False
+            keys = ("sproyt_recovery_v2_branch", "sproyt_recovery_v2_snapshot",
+                    "sproyt_recovery_v2_marker", "email", "redirect")
+            return (all(original.context.get(k) == plan.context.get(k) for k in keys)
+                and state.get("pk") is not None
+                and getattr(original_user, "pk", None) == state["pk"]
+                and getattr(current_user, "pk", None) == state["pk"]
+                and getattr(token.user, "pk", None) == state["pk"]
+                and str(plan.context.get("email", "")).strip().casefold() == state.get("email")
+                and plan.context.get("redirect") == "https://sproyt.bjoroy.me/auth/login"
+                and plan.context.get("sproyt_recovery_v2_branch") in {"active", "pending"})
+        from django.db import transaction
+
+        plan = request.context.get("flow_plan")
+        token = request.context.get("is_restored")
+        prompt = request.context.get("prompt_data", {})
+        if (plan is None or not mailbox_matches(plan, token) or not isinstance(prompt, dict)
+            or not isinstance(prompt.get("password"), str) or not prompt["password"]
+            or prompt["password"] != prompt.get("password_repeat")):
+            return True
+        encoded_claim = plan.context.get("sproyt_recovery_v2_mailbox", "")
+        if not isinstance(encoded_claim, str):
+            return True
+        try:
+            claim = signing.loads(encoded_claim,
+                                  salt="sproyt.recovery-mailbox.v2", max_age=1800)
+        except signing.BadSignature:
+            return True
+        expected = {"flow": str(token.flow_id), "stage": "sproyt-recovery-v2-email",
+                    "expires": token.expires.timestamp(), "snapshot": plan.context["sproyt_recovery_v2_snapshot"],
+                    "branch": plan.context["sproyt_recovery_v2_branch"],
+                    "marker": plan.context.get("sproyt_recovery_v2_marker")}
+        if claim != expected:
+            return True
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=expected["snapshot"]["pk"])
+            if (not mailbox_matches(plan, token) or claim["expires"] <= now().timestamp()
+                or snapshot(user) != expected["snapshot"]
+                or (expected["branch"] == "pending" and not eligible(user, expected["marker"]))
+                or (expected["branch"] == "active" and not user.is_active)):
+                return True
+            # One lock covers credential change, narrowly authorized activation, and
+            # grant consumption. There is deliberately no subsequent UserWrite stage.
+            user.set_password(prompt["password"], request=request.http_request)
+            if expected["branch"] == "pending":
+                user.is_active = True
+            attributes = dict(user.attributes or {})
+            attributes["email_verified"] = True
+            attributes["email_verified_address"] = user.email.strip()
+            attributes.pop("sproyt_pending_signup_v1", None)
+            attributes.pop("sproyt_canary_v2_pending", None)
+            user.attributes = attributes
+            user.save(update_fields=["password", "password_change_date", "is_active", "attributes", "last_updated"])
+            plan.context["pending_user"] = user
+            request.context["pending_user"] = user
+            plan.context["prompt_data"] = {}
+            request.context["prompt_data"] = {}
+            plan.context.pop("sproyt_recovery_v2_mailbox", None)
+            plan.context["redirect"] = "https://sproyt.bjoroy.me/auth/login"
+        return False
+  - identifiers: {name: sproyt-pending-signup-stamp}
+    id: pending-signup-stamp
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        from authentik.core.models import User
+        from authentik.stages.authenticator import devices_for_user
+        from django.core import signing
+        from hashlib import sha256
+
+        def snapshot(user):
+            return {"pk": user.pk, "uuid": str(user.uuid),
+                    "email": str(user.email).strip().casefold(),
+                    "updated": user.last_updated.isoformat(),
+                    "password": sha256(user.password.encode()).hexdigest(),
+                    "groups": sorted(map(str, user.groups.values_list("pk", flat=True))),
+                    "roles": sorted(map(str, user.roles.values_list("pk", flat=True))),
+                    "sources": sorted(map(str, user.sources.values_list("pk", flat=True))),
+                    "mfa": sorted(str(d._meta.label_lower) + ":" + str(d.pk) for d in devices_for_user(user)),
+                    "superuser": bool(user.is_superuser), "active": bool(user.is_active),
+                    "type": str(user.type), "path": str(user.path),
+                    "last_login": user.last_login.isoformat() if user.last_login else None}
+
+        def eligible(user, marker):
+            if not isinstance(marker, str):
+                return False
+            try:
+                origin = signing.loads(marker, salt="sproyt.pending-signup.v1", max_age=2592000)
+                if not isinstance(origin, dict):
+                    return False
+                if origin.get("kind") == "operator":
+                    origin = signing.loads(marker, salt="sproyt.pending-signup.v1", max_age=172800)
+            except signing.BadSignature:
+                return False
+            return (isinstance(origin, dict)
+                and set(origin) == {"v", "kind", "flow", "nonce", "snapshot"}
+                and origin.get("v") == 1 and origin.get("kind") in {"signup", "operator"}
+                and origin.get("flow") in {"645a51d1-1d8a-5369-867d-b2a93ac7504e",
+                     "5eb6dcb6-29a8-5b7d-b424-584c59b7409c", "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35"}
+                and isinstance(origin.get("nonce"), str) and len(origin["nonce"]) == 43
+                and origin.get("snapshot") == snapshot(user)
+                and not user.is_active and not user.is_superuser and user.last_login is None
+                and user.type == "external" and user.path == "users/sproyt"
+                and not user.roles.exists() and not user.sources.exists()
+                and (origin["kind"] == "operator" or not user.has_usable_password())
+                and (user.attributes or {}).get("sproyt_pending_signup_v1") == marker)
+        from authentik.core.models import Group
+        from django.db import transaction
+        from secrets import token_urlsafe
+
+        plan = request.context.get("flow_plan")
+        invitation = request.context.get("invitation")
+        if plan is None or invitation is None or not request.context.get("invitation_in_effect"):
+            return True
+        flow = str(getattr(invitation, "flow_id", ""))
+        configs = {"645a51d1-1d8a-5369-867d-b2a93ac7504e": ("sproyt_production_", "new_user"),
+                   "5eb6dcb6-29a8-5b7d-b424-584c59b7409c": ("sproyt_canary_", "new_user"),
+                   "a1b4b2b7-80e3-591d-b52f-bed0ae3e5a35": ("sproyt_canary_v2_", "create_user")}
+        if flow not in configs:
+            return True
+        prefix, flag = configs[flow]
+        if prefix + flag not in plan.context:
+            return True
+        if plan.context[prefix + flag] is False:
+            return False
+        if plan.context[prefix + flag] is not True:
+            return True
+        pending = plan.context.get("pending_user")
+        email = str(plan.context.get(prefix + "email", "")).strip().casefold()
+        if getattr(pending, "pk", None) is None or not email:
+            return True
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=pending.pk)
+            group = Group.objects.get(name="sproyt-users")
+            if (snapshot(user) != snapshot(pending) or user.email.strip().casefold() != email
+                or str((invitation.fixed_data or {}).get("email", "")).strip().casefold() != email
+                or user.is_active or user.has_usable_password() or user.last_login is not None
+                or user.type != "external" or user.path != "users/sproyt"
+                or list(user.groups.values_list("pk", flat=True)) != [group.pk]
+                or user.roles.exists() or user.sources.exists() or user.is_superuser):
+                return True
+            existing = (user.attributes or {}).get("sproyt_pending_signup_v1")
+            if existing is not None:
+                return not eligible(user, existing)
+            marker = signing.dumps({"v": 1, "kind": "signup", "flow": flow,
+                                    "nonce": token_urlsafe(32), "snapshot": snapshot(user)},
+                                   salt="sproyt.pending-signup.v1")
+            user.attributes = dict(user.attributes or {}, sproyt_pending_signup_v1=marker)
+            # An ordinary administrative save advances last_updated and revokes this
+            # grant. Mailbox-only verification writes preserve that timestamp.
+            user.save(update_fields=["attributes"])
+            plan.context["pending_user"] = user
+            request.context["pending_user"] = user
+        return False
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !KeyOf recovery-v2-identification, order: 10}
+    id: recovery-v2-binding-identification
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !KeyOf recovery-v2-deny, order: 12}
+    id: recovery-v2-binding-classify
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf recovery-v2-classify, target: !KeyOf recovery-v2-binding-classify, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !KeyOf recovery-v2-deny, order: 15}
+    id: recovery-v2-binding-rate-limit
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf recovery-v2-rate-limit, target: !KeyOf recovery-v2-binding-rate-limit, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !KeyOf recovery-v2-email, order: 20}
+    id: recovery-v2-binding-email
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !KeyOf recovery-v2-deny, order: 22}
+    id: recovery-v2-binding-proof
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf recovery-v2-proof, target: !KeyOf recovery-v2-binding-proof, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, sproyt-authentication-mfa-validation]], order: 25}
+    id: recovery-v2-binding-mfa
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !KeyOf recovery-v2-password, order: 30}
+    id: recovery-v2-binding-password
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !KeyOf recovery-v2-deny, order: 40}
+    id: recovery-v2-binding-finalize
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf recovery-v2-finalize, target: !KeyOf recovery-v2-binding-finalize, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !KeyOf recovery-v2-flow, stage: !KeyOf recovery-v2-login, order: 100}
+    id: recovery-v2-binding-login
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {target: !Find [authentik_flows.flow, [slug, sproyt-invitation-production]], stage: !KeyOf recovery-v2-deny, order: 43}
+    id: pending-signup-production-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf pending-signup-stamp, target: !KeyOf pending-signup-production-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !Find [authentik_flows.flow, [slug, sproyt-invitation-canary]], stage: !KeyOf recovery-v2-deny, order: 43}
+    id: pending-signup-canary-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf pending-signup-stamp, target: !KeyOf pending-signup-canary-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {target: !Find [authentik_flows.flow, [slug, sproyt-invitation-canary-v2]], stage: !KeyOf recovery-v2-deny, order: 43}
+    id: pending-signup-canary-v2-binding
+    model: authentik_flows.flowstagebinding
+    attrs: {evaluate_on_plan: false, re_evaluate_policies: true, policy_engine_mode: all, invalid_response_action: retry}
+  - identifiers: {policy: !KeyOf pending-signup-stamp, target: !KeyOf pending-signup-canary-v2-binding, order: 0}
+    model: authentik_policies.policybinding
+    attrs: {negate: false, enabled: true, timeout: 30, failure_result: true}
+  - identifiers: {name: sproyt-authentication-identification}
+    model: authentik_stages_identification.identificationstage
+    attrs:
+      user_fields: [email, username]
+      recovery_flow: !KeyOf recovery-v2-flow
