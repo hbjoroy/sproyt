@@ -1,5 +1,12 @@
 # Native Sprøyt: klientarkitektur, brukaroppleving og effektiv drift
 
+Statusavstemming 3. november 2026: Windows Canary er no den første konkrete
+produktleveransen, med Android etterpå på same kontraktgrunnlag. Sjå
+[klientstatus](native-client-status-2026-11-03.md) og
+[planen for funksjonslikskap med Canary](native-canary-parity-plan.md).
+Plattformbreidda nedanfor er langsiktig retning; ho er ikkje fem samtidige
+appimplementasjonar eller ei godkjenning av produksjonsaktivering.
+
 Dato: 24. oktober 2026. Status: arkitekturforslag og gjennomføringsplan, revidert med Astra. Ingen app- eller driftsendring er autorisert av dette dokumentet åleine.
 
 Sprøyt skal kjennast rask, sosial og enkel på Android, iOS, Windows, macOS og Linux. Plattformene deler identitet, innhald, leveringsreglar og designmeining, medan grensesnitt og systemintegrasjonar er native. Android blir første brukbare klient; små iOS- og Windows-prøver skal avsløre feil i fellesarkitekturen tidleg.

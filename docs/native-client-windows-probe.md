@@ -1,5 +1,12 @@
 # Native Windows-prøve med Reactor
 
+Dette dokumentet skildrar laboratoriet frå 25. oktober. Den same Windows-appen
+har seinare fått ein separat modus med ekte Canary-innlogging, tekstchat og
+autorisert medielesing. Sjå [oppdatert status](native-client-status-2026-11-03.md),
+[Canary-piloten](native-windows-canary.md) og
+[vidare gjennomføringsplan](native-canary-parity-plan.md).
+Avgrensingane nedanfor gjeld laboratoriemodusen.
+
 Dato: 25. oktober 2026. Dette er eit isolert, lokalt UI-laboratorium og ei
 utviding av N02. Det leverer ikkje N01-identitet, N06-produksjonskjerne eller
 ein ferdig Windows-klient. Etter ny prioritering skal ein fungerande Windows-

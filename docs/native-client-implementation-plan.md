@@ -1,5 +1,13 @@
 # Implementasjonsplan for native Sprøyt
 
+Statusavstemming 3. november 2026: [noverande klientstatus](native-client-status-2026-11-03.md),
+[funksjonsmatrise mot faktisk Canary](native-canary-parity-matrix.md) og
+[Astra sin gjennomføringsplan](native-canary-parity-plan.md) styrer neste
+Windows-leveransar. N00–N13 nedanfor er den opphavlege programinndelinga;
+avsnitt som legg ekte Windows-innlogging og tekstchat fram i tid, er
+historiske. Denne piloten er implementert, medan full funksjonslikskap,
+produksjonslager og full offlinesynkronisering står att.
+
 Dato: 24. oktober 2026. Status: gjennomføring starta for avgrensa N00/N02-prøver; seinare pakkar står framleis som plan. Byggjer på [arkitekturplanen](native-client-architecture-plan.md), produktavklaringar med Harald og arkitekturrevisjon med Astra.
 
 Målet er ein rask Android-klient med ein påliteleg felleskjerne som også er prøvd frå Swift og WinUI. Arbeidet blir små PR-ar som kan vurderast og målast kvar for seg. Ingen ny innlogging eller synkroniseringsprotokoll skal aktiverast før nødvendig serverkode, gamle klientar og tilbakeføring er prøvde.
