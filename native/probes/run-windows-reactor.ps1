@@ -107,7 +107,7 @@ try {
         liveChatViewFixture = $liveUi
         publishDirectory = $publish
         notTested = @('physical keyboard and IME', 'touch', 'screen reader', 'visual screenshot approval', 'production sync', 'production authentication',
-            'hard process termination during equal-body newer-draft repair after an unknown enqueue')
+            'hard termination of the full WinUI process during live transport')
     }
     $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $run 'receipt.json') -Encoding utf8
     Write-Output ('PASS Windows Reactor probe; package: ' + $publish)

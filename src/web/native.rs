@@ -1,5 +1,7 @@
 //! Bounded native HTTP edge. No provider or browser authentication cookies are
 //! returned to the desktop app, and native bearer APIs reject cookie authority.
+mod notification_preferences;
+
 use crate::{
     native_sessions::{CancelRequest, ExchangeRequest, LoginRequest, NativeError, RefreshRequest},
     server::AppState,
@@ -22,6 +24,10 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/api/v1/native/refresh", post(refresh))
         .route("/api/v1/native/revoke", post(revoke))
         .route("/api/v1/native/cancel-login", post(cancel))
+        .route(
+            "/api/v1/native/me/notifications/preferences",
+            get(notification_preferences::read).put(notification_preferences::save),
+        )
         .route("/auth/native/browser/{id}", get(browser))
         .route("/auth/native/confirm/{id}", post(confirm))
         .layer(DefaultBodyLimit::max(8192))

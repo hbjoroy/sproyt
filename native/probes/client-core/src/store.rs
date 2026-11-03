@@ -10,6 +10,7 @@ pub type Result<T> = std::result::Result<T, &'static str>;
 
 pub struct Store {
     connection: Connection,
+    draft_revisions: bool,
     #[cfg(any(test, feature = "fault-injection"))]
     fault: Option<crate::fault::Fault>,
 }
@@ -39,6 +40,14 @@ pub fn text(value: &str) -> Result<()> {
 
 impl Store {
     pub fn open(path: &str, account: &str) -> Result<Self> {
+        Self::open_with_draft_revisions(path, account, false)
+    }
+
+    pub fn open_with_draft_revisions(
+        path: &str,
+        account: &str,
+        draft_revisions: bool,
+    ) -> Result<Self> {
         identifier(account)?;
         if !Path::new(path).is_absolute() || path.len() > 4096 {
             return Err("invalid_path");
@@ -53,7 +62,7 @@ impl Store {
             db(connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive))?;
         let version: i64 = db(tx.pragma_query_value(None, "user_version", |row| row.get(0)))?;
         let application: i64 = db(tx.pragma_query_value(None, "application_id", |row| row.get(0)))?;
-        if !(0..=1).contains(&version) || (version != 0 && application != APPLICATION_ID) {
+        if !(0..=2).contains(&version) || (version != 0 && application != APPLICATION_ID) {
             return Err("unsupported_schema");
         }
         if version == 0 {
@@ -80,6 +89,15 @@ impl Store {
         if owner != account {
             return Err("account_mismatch");
         }
+        if version < 2 {
+            // Migrate in the same exclusive transaction as the identity check.
+            // Revision 1 names existing drafts; the identity clock survives
+            // removal/recreation so an old capture can never match a new draft.
+            db(tx.execute_batch("alter table identity add column draft_clock integer not null default 1 check(draft_clock>=1);
+                alter table drafts add column revision integer not null default 1 check(revision>=1);
+                alter table outbox add column draft_revision integer;
+                PRAGMA user_version=2;"))?;
+        }
         // The pure core does not yet define a process-recovery event. This
         // adapter explicitly makes an interrupted dispatch uncertain.
         db(tx.execute(
@@ -89,6 +107,7 @@ impl Store {
         db(tx.commit())?;
         Ok(Self {
             connection,
+            draft_revisions,
             #[cfg(any(test, feature = "fault-injection"))]
             fault: None,
         })
@@ -107,7 +126,18 @@ impl Store {
         Ok(tx)
     }
 
-    pub fn save_draft(&mut self, generation: u64, channel: &str, body: &str) -> Result<()> {
+    fn next_draft_revision(tx: &Transaction<'_>) -> Result<u64> {
+        let clock: i64 = db(tx.query_row(
+            "select draft_clock from identity where id=1",
+            [],
+            |row| row.get(0),
+        ))?;
+        let revision = clock.checked_add(1).ok_or("revision_capacity")?;
+        db(tx.execute("update identity set draft_clock=?1 where id=1", [revision]))?;
+        Ok(revision as u64)
+    }
+
+    pub fn save_draft(&mut self, generation: u64, channel: &str, body: &str) -> Result<u64> {
         identifier(channel)?;
         text(body)?;
         let tx = self.transaction(generation)?;
@@ -119,18 +149,33 @@ impl Store {
         if count >= ITEM_LIMIT {
             return Err("capacity");
         }
-        db(tx.execute("insert into drafts values(?1,?2) on conflict(channel) do update set body=excluded.body", params![channel, body]))?;
-        db(tx.commit())
+        let revision = Self::next_draft_revision(&tx)?;
+        db(tx.execute("insert into drafts(channel,body,revision) values(?1,?2,?3) on conflict(channel) do update set body=excluded.body,revision=excluded.revision", params![channel, body, revision as i64]))?;
+        db(tx.commit())?;
+        Ok(revision)
     }
 
-    pub fn clear_draft(&mut self, generation: u64, channel: &str) -> Result<()> {
+    pub fn clear_draft(&mut self, generation: u64, channel: &str) -> Result<u64> {
         identifier(channel)?;
         let tx = self.transaction(generation)?;
+        let revision = Self::next_draft_revision(&tx)?;
         db(tx.execute("delete from drafts where channel=?1", [channel]))?;
-        db(tx.commit())
+        db(tx.commit())?;
+        Ok(revision)
     }
 
     pub fn enqueue(&mut self, generation: u64, id: &str, channel: &str, body: &str) -> Result<()> {
+        self.enqueue_draft(generation, id, channel, body, None)
+    }
+
+    pub fn enqueue_draft(
+        &mut self,
+        generation: u64,
+        id: &str,
+        channel: &str,
+        body: &str,
+        expected_revision: Option<u64>,
+    ) -> Result<()> {
         // One-shot means the next decoded enqueue attempt, even if validation
         // or duplicate-ID checks return before the chosen site is reached.
         #[cfg(any(test, feature = "fault-injection"))]
@@ -138,6 +183,13 @@ impl Store {
         identifier(id)?;
         identifier(channel)?;
         text(body)?;
+        if self.draft_revisions && expected_revision.is_none() {
+            return Err("draft_revision_required");
+        }
+        if expected_revision.is_some_and(|revision| revision > i64::MAX as u64) {
+            return Err("invalid_revision");
+        }
+        let expected_sql = expected_revision.map(|revision| revision as i64);
         if body.trim().is_empty() {
             return Err("empty_body");
         }
@@ -145,15 +197,29 @@ impl Store {
             "type":"send_message","payload":{"channel":{"type":"id","value":channel},"body":body}}))
         .map_err(|_| "serialization_error")?;
         let tx = self.transaction(generation)?;
-        let existing: Option<String> = db(tx
-            .query_row(
-                "select payload from outbox where request_id=?1",
-                [id],
+        if let Some(revision) = expected_sql {
+            let clock: i64 = db(tx.query_row(
+                "select draft_clock from identity where id=1",
+                [],
                 |row| row.get(0),
+            ))?;
+            if revision > clock {
+                return Err("invalid_revision");
+            }
+        }
+        let existing: Option<(String, Option<i64>)> = db(tx
+            .query_row(
+                "select payload,draft_revision from outbox where request_id=?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional())?;
-        if let Some(existing) = existing {
-            return if existing == payload {
+        if let Some((existing, revision)) = existing {
+            // Replay is a read: it must never clear a draft created after the
+            // original admission, including one with exactly the same body.
+            return if existing == payload
+                && (expected_revision.is_none() || revision == expected_sql)
+            {
                 Ok(())
             } else {
                 Err("request_conflict")
@@ -164,16 +230,24 @@ impl Store {
             return Err("capacity");
         }
         db(tx.execute(
-            "insert into outbox values(?1,?2,?3,'queued')",
-            params![id, channel, payload],
+            "insert into outbox(request_id,channel,payload,state,draft_revision) values(?1,?2,?3,'queued',?4)",
+            params![id, channel, payload, expected_sql],
         ))?;
         #[cfg(any(test, feature = "fault-injection"))]
         crate::fault::hit(fault.as_ref(), crate::fault::Site::AfterInsert, &payload)?;
-        // Journal first; clearing the matching draft belongs to the same commit.
-        db(tx.execute(
-            "delete from drafts where channel=?1 and body=?2",
-            params![channel, body],
-        ))?;
+        // The legacy laboratory contract remains opt-out compatible. Updated
+        // clients explicitly opt in and bind removal to the saved revision.
+        if let Some(revision) = expected_revision {
+            db(tx.execute(
+                "delete from drafts where channel=?1 and body=?2 and revision=?3",
+                params![channel, body, revision as i64],
+            ))?;
+        } else {
+            db(tx.execute(
+                "delete from drafts where channel=?1 and body=?2",
+                params![channel, body],
+            ))?;
+        }
         #[cfg(any(test, feature = "fault-injection"))]
         crate::fault::hit(fault.as_ref(), crate::fault::Site::BeforeCommit, &payload)?;
         db(tx.commit())?;
@@ -203,8 +277,15 @@ impl Store {
             )
             .optional())?;
         let state = state.ok_or("unknown_request")?;
-        if action == "forget" {
-            if state != "acknowledged" {
+        if action == "forget" || action == "discard_rejected" {
+            // A terminal rejection may only be removed by the caller's
+            // explicit discard action. No uncertain/unsent work is dropped.
+            let required = if action == "forget" {
+                "acknowledged"
+            } else {
+                "rejected"
+            };
+            if state != required {
                 return Err("invalid_delivery_transition");
             }
             db(tx.execute("delete from outbox where request_id=?1", [id]))?;
@@ -313,9 +394,9 @@ impl Store {
         ))?;
         let mut drafts = db(self
             .connection
-            .prepare("select channel,body from drafts order by channel limit 8"))?;
+            .prepare("select channel,body,revision from drafts order by channel limit 8"))?;
         let drafts = db(db(drafts.query_map([], |row| {
-            Ok(json!({"channel":row.get::<_,String>(0)?,"body":row.get::<_,String>(1)?}))
+            Ok(json!({"channel":row.get::<_,String>(0)?,"body":row.get::<_,String>(1)?,"revision":row.get::<_,i64>(2)?}))
         }))?
         .collect::<rusqlite::Result<Vec<_>>>())?;
         let mut outbox = db(self
@@ -327,7 +408,7 @@ impl Store {
             .prepare("select id,revision,body,deleted from messages order by id limit 8"))?;
         let messages = db(db(messages.query_map([], |row| Ok(json!({"id":row.get::<_,String>(0)?,"revision":row.get::<_,i64>(1)?,"body":row.get::<_,String>(2)?,"deleted":row.get::<_,bool>(3)?}))))?.collect::<rusqlite::Result<Vec<_>>>())?;
         Ok(
-            json!({"account":account,"generation":generation,"active":active,"drafts":drafts,"outbox":outbox,"messages":messages}),
+            json!({"schema":2,"draft_revisions":self.draft_revisions,"account":account,"generation":generation,"active":active,"drafts":drafts,"outbox":outbox,"messages":messages}),
         )
     }
 

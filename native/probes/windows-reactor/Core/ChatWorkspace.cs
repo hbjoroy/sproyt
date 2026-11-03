@@ -5,15 +5,15 @@ namespace Sproyt.WindowsProbe;
 public interface IWorkspaceStore : IAsyncDisposable
 {
     Task<StoreSnapshot> SnapshotAsync();
-    Task SaveDraftAsync(string channel, string body);
-    Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId);
+    Task<long> SaveDraftAsync(string channel, string body);
+    Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision);
 }
 
 public sealed class NativeWorkspaceStoreAdapter(NativeSession session) : IWorkspaceStore
 {
     public Task<StoreSnapshot> SnapshotAsync() => session.SnapshotAsync();
-    public Task SaveDraftAsync(string channel, string body) => session.SaveDraftAsync(channel, body);
-    public Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId) => session.EnqueueAsync(channel, body, requestId);
+    public Task<long> SaveDraftAsync(string channel, string body) => session.SaveDraftAsync(channel, body);
+    public Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision) => session.EnqueueAsync(channel, body, requestId, expectedDraftRevision);
     public ValueTask DisposeAsync() => session.DisposeAsync();
 }
 
@@ -73,6 +73,23 @@ public sealed class ChatWorkspace
     {
         lock (_gate) _outbox.RemoveAll(item => item.RequestId == requestId);
         Notify();
+    }
+
+    // The delivery owner calls this only after persisting the terminal state.
+    // Do not replace the whole outbox with an older delivery snapshot.
+    internal void ServerRejected(string requestId)
+    {
+        bool changed = false;
+        lock (_gate)
+        {
+            int index = _outbox.FindIndex(item => item.RequestId == requestId);
+            if (index >= 0 && _outbox[index].State != "rejected")
+            {
+                _outbox[index] = _outbox[index] with { State = "rejected" };
+                changed = true;
+            }
+        }
+        if (changed) Notify();
     }
 
     public WorkspaceSnapshot State
@@ -284,6 +301,7 @@ public sealed class ChatWorkspace
 
     private async Task SendCapturedAsync(Capture capture)
     {
+        bool enqueueStarted = false;
         try
         {
             bool retry;
@@ -292,10 +310,13 @@ public sealed class ChatWorkspace
             // overwrite newer durable draft text while reconciling an old ID.
             if (!retry)
             {
-                await _store.SaveDraftAsync(capture.Channel, capture.Body).ConfigureAwait(false);
+                long revision = await _store.SaveDraftAsync(capture.Channel, capture.Body).ConfigureAwait(false);
+                capture = capture with { DurableRevision = revision };
                 lock (_gate) GetDraft(capture.Channel).SavedRevision = capture.Revision;
             }
-            var queued = await _store.EnqueueAsync(capture.Channel, capture.Body, capture.RequestId).ConfigureAwait(false);
+            long expectedRevision = capture.DurableRevision ?? throw new InvalidOperationException("A send must retain its durable draft revision.");
+            enqueueStarted = true;
+            var queued = await _store.EnqueueAsync(capture.Channel, capture.Body, capture.RequestId, expectedRevision).ConfigureAwait(false);
             lock (_gate)
             {
                 _outbox.RemoveAll(item => item.RequestId == queued.RequestId);
@@ -308,10 +329,6 @@ public sealed class ChatWorkspace
                     draft.BlockedRevision = null;
                     // Empty is dirty too: reconcile the visible draft even when
                     // native's existing-ID fast path made no draft change.
-                }
-                else
-                {
-                    MarkNewerDraftDirty(capture);
                 }
                 _retry = null;
                 _sending = false;
@@ -326,30 +343,17 @@ public sealed class ChatWorkspace
                 _sending = false;
                 // A definite failure does not reconcile an earlier unknown
                 // enqueue. Only success clears that outstanding identity.
-                if (exception is NativeProbeException { Code: "unknown_outcome" })
+                if (enqueueStarted && exception is NativeProbeException { Code: "unknown_outcome" })
                 {
                     _retry = capture;
-                    // An enqueue may have committed and cleared matching text
-                    // before its result was lost. Repair newer visible text on
-                    // this same pump while retaining the unresolved request ID.
-                    MarkNewerDraftDirty(capture);
+                    // Retry retains the saved revision as well as ID/body.
+                    // Native admission cannot clear a newer durable revision,
+                    // even when the old transaction had not committed yet.
                 }
                 SetError(exception);
                 _sendCompletion!.TrySetException(exception);
             }
         }
-    }
-
-    private void MarkNewerDraftDirty(Capture capture)
-    {
-        var draft = GetDraft(capture.Channel);
-        if (draft.Revision == capture.Revision) return;
-        // Native knows bodies, not managed revisions. A first actual retry can
-        // clear a newer equal-body draft on either success or an unknown result.
-        // Re-save it after the call settles. This clear/re-save gap is not atomic
-        // across hard process termination; this source probe is not a shipping SDK.
-        draft.SavedRevision = Math.Min(draft.SavedRevision, capture.Revision);
-        draft.BlockedRevision = null;
     }
 
     private void FailShutdown(Exception exception)
@@ -389,6 +393,6 @@ public sealed class ChatWorkspace
         public long Revision, SavedRevision;
         public long? BlockedRevision;
     }
-    private sealed record Capture(string Channel, long Revision, string Body, string RequestId);
+    private sealed record Capture(string Channel, long Revision, string Body, string RequestId, long? DurableRevision = null);
     private sealed record DraftCapture(string Channel, long Revision, string Body);
 }

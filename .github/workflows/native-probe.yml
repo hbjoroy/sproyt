@@ -211,12 +211,23 @@ jobs:
       - name: Run the isolated Rust and managed probe
         shell: pwsh
         run: ./native/probes/run-probe.ps1 -ArtifactsDirectory '${{ runner.temp }}/sproyt-native-probe'
+      - name: Check typed native client transport contracts
+        shell: pwsh
+        working-directory: native/probes/client-contracts
+        run: dotnet run --project ClientContracts.csproj --artifacts-path '${{ runner.temp }}/native-client-contracts' -- '${{ runner.temp }}/native-client-contracts/receipt.json'
+      - name: Check durable native delivery outcomes
+        shell: pwsh
+        working-directory: native/probes/delivery-contracts
+        run: dotnet run --project DeliveryContracts.csproj --artifacts-path '${{ runner.temp }}/native-delivery-contracts' -- '${{ runner.temp }}/native-delivery-contracts/receipt.json'
       - name: Preserve non-secret fixture receipts
         if: success()
         uses: actions/upload-artifact@v6
         with:
           name: native-probe-${{ matrix.os }}
-          path: ${{ runner.temp }}/sproyt-native-probe/fixtures/**/receipt.json
+          path: |
+            ${{ runner.temp }}/sproyt-native-probe/fixtures/**/receipt.json
+            ${{ runner.temp }}/native-client-contracts/receipt.json
+            ${{ runner.temp }}/native-delivery-contracts/receipt.json
 
   kotlin-binding:
     runs-on: ubuntu-latest

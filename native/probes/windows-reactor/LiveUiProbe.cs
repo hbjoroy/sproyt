@@ -16,13 +16,14 @@ internal sealed class LiveUiFixture : ILiveApplication
     private string _selected = "channel-a";
     private readonly Dictionary<string, DraftView> _drafts = new() { ["channel-a"] = new("",0,0), ["channel-b"] = new("",0,0) };
     private readonly List<NativeMessage> _messages = [];
+    private readonly List<QueuedMessage> _outbox = [];
     private readonly NativeMediaViewFixture _mediaFixture = new(User);
     public event Action? Changed;
     public NativeAuthSnapshot Authentication => _mediaFixture.Owner.Snapshot;
     public NativeChatSnapshot Chat => new(true, false, null,
         [new("channel-a", "Prat", "UI-prøve", "fixture-circle"), new("channel-b", "Idear", "UI-prøve", "fixture-circle")], _selected,
         _messages.Where(message => message.ChannelId == _selected).ToArray(), User);
-    public WorkspaceSnapshot Workspace => new(true, false, false, false, null, null, _drafts, []);
+    public WorkspaceSnapshot Workspace => new(true, false, false, false, null, null, _drafts, _outbox.ToArray());
     public LiveSnapshot Capture() => new(Authentication, Chat, Workspace, true, null);
     public Task LoginAsync() => Task.CompletedTask;
     public NativeMediaLibrary? Media => _mediaFixture.Library;
@@ -35,14 +36,26 @@ internal sealed class LiveUiFixture : ILiveApplication
     internal void AddGallery()
     {
         _messages.Clear();
+        _outbox.Clear();
         for (int index=0;index<24;index++)
             _messages.Add(new(Guid.NewGuid().ToString(),_selected,User,"UI-prøve",
                 "[[media:"+NativeMediaViewFixture.GalleryId(index)+"|image/png|gallery-"+index+".png]]",DateTimeOffset.Now,(ulong)index+1));
         Changed?.Invoke();
     }
+    internal void AddRejectedMessage()
+    {
+        _outbox.Add(new("fixture-rejected", _selected, "Denne meldinga vart avvist", "rejected"));
+        Changed?.Invoke();
+    }
     public Task LogoutAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
     public Task ConfirmPendingSendsAsync(string expectedUser, string expectedStamp) => Task.CompletedTask;
+    public Task DiscardRejectedAsync(string expectedUser, string expectedStamp, string requestId)
+    {
+        if (Authentication.UserId == expectedUser && Authentication.SessionStamp == expectedStamp)
+            _outbox.RemoveAll(item => item.RequestId == requestId && item.State == "rejected");
+        Changed?.Invoke(); return Task.CompletedTask;
+    }
     public Task SelectAsync(string channel) { _selected = channel; Changed?.Invoke(); return Task.CompletedTask; }
     public void Edit(string channel, string body) { var old = _drafts[channel]; _drafts[channel] = new(body, old.Revision+1, old.Revision+1); Changed?.Invoke(); }
     public Task SendAsync(string channel)
@@ -82,6 +95,18 @@ internal static class LiveUiProbe
             await LiveChatComponent.SendForProbe!();
             await Until(() => Find<TextBox>(root,"live-composer").Text == "" && Program.Live.Chat.Messages.Count == 1);
             ((LiveUiFixture)Program.Live).AddMedia();
+            ((LiveUiFixture)Program.Live).AddRejectedMessage();
+            await Until(() => Find<TextBlock>(root,"live-delivery-pending:fixture-rejected").Text == "Ikkje sendt — avvist");
+            if (Program.Live.Capture().PendingSends != 0 || Program.Live.Capture().RejectedSends != 1 ||
+                Find<Button>(root,"live-delivery-retry").Visibility == Visibility.Visible)
+                throw new InvalidOperationException("A rejected send was presented as waiting for retry.");
+            var discard = LiveChatComponent.DiscardForProbe!("fixture-rejected");
+            await Until(() => LiveChatComponent.DiscardDialogForProbe?.IsLoaded == true);
+            LiveChatComponent.DiscardDialogForProbe!.Hide();
+            await discard;
+            if (Program.Live.Capture().RejectedSends != 1) throw new InvalidOperationException("Cancelling discard removed the rejected text.");
+            await Program.Live.DiscardRejectedAsync(Program.Live.Authentication.UserId!, Program.Live.Authentication.SessionStamp!, "fixture-rejected");
+            await Until(() => Program.Live.Capture().RejectedSends == 0);
             await Until(() => Find<Image>(root,"native-image-"+NativeMediaViewFixture.Id).Source is not null);
             if(NativeMessageView.ScopeFor(Program.Live.Media,Program.Live.Authentication with { UserId="ffffffff-ffff-ffff-ffff-ffffffffffff" }) is not null ||
                 NativeMessageView.ScopeFor(Program.Live.Media,Program.Live.Authentication with { SessionStamp="999:another-family:0" }) is not null)

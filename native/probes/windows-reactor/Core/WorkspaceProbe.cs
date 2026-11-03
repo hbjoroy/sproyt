@@ -126,7 +126,58 @@ public static class WorkspaceProbe
         await VerifyCloseDuringSendAsync(path + ".closing", libraryPath).ConfigureAwait(false);
         await VerifyTerminalCleanupAsync(path + ".terminal", libraryPath).ConfigureAwait(false);
         await VerifyRetryFirstAdmissionAsync(path + ".beforecommit", libraryPath).ConfigureAwait(false);
+        await VerifyDeliveryReconciliationAsync(path + ".delivery", libraryPath).ConfigureAwait(false);
         return $"PASS Windows workspace: coalesced revisions, durable retry capture, capacity, recoverable flush and terminal cleanup; database={path}";
+    }
+
+    private static async Task VerifyDeliveryReconciliationAsync(string path, string libraryPath)
+    {
+        var store = await NativeSession.OpenAsync(path, libraryPath);
+        var workspace = new ChatWorkspace(new NativeWorkspaceStoreAdapter(store), Channels);
+        await workspace.InitializeAsync().WaitAsync(Deadline);
+        workspace.EditDraft(Channels[0], "Rejected after commit");
+        await workspace.SendAsync(Channels[0]).WaitAsync(Deadline);
+        await SavedAsync(workspace);
+        string rejected = workspace.State.Outbox.Single().RequestId;
+        await store.DeliveryAsync(rejected, "dispatch");
+        await store.DeliveryAsync(rejected, "reject");
+        // The server/store commit completed but its local publication was lost.
+        var published = workspace.State.Outbox.Select(item => item.RequestId).ToHashSet();
+        var persisted = await store.SnapshotAsync();
+        LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        Check(workspace.State.Outbox.Single().State == "rejected", "Lost reject result left a pending UI row.");
+        int duplicateNotifications = 0;
+        void Changed() => duplicateNotifications++;
+        workspace.Changed += Changed;
+        LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        workspace.Changed -= Changed;
+        Check(duplicateNotifications == 0, "Unchanged rejected reconciliation restarted the application pump.");
+
+        workspace.EditDraft(Channels[0], "Acknowledged and forgotten after commit");
+        await workspace.SendAsync(Channels[0]).WaitAsync(Deadline);
+        await SavedAsync(workspace);
+        string acknowledged = workspace.State.Outbox.Single(item => item.RequestId != rejected).RequestId;
+        await store.DeliveryAsync(acknowledged, "dispatch");
+        await store.DeliveryAsync(acknowledged, "acknowledge");
+        await store.DeliveryAsync(acknowledged, "forget");
+        published = workspace.State.Outbox.Select(item => item.RequestId).ToHashSet();
+        persisted = await store.SnapshotAsync();
+        // A new enqueue after capture must survive the older reconciliation.
+        workspace.EditDraft(Channels[1], "Newer queued message");
+        await workspace.SendAsync(Channels[1]).WaitAsync(Deadline);
+        await SavedAsync(workspace);
+        LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        Check(workspace.State.Outbox.Count == 2 && workspace.State.Outbox.All(item => item.RequestId != acknowledged) &&
+            workspace.State.Outbox.Any(item => item.Channel == Channels[1] && item.State == "queued"),
+            "Lost forget result left a ghost or reconciliation removed a newer enqueue.");
+        await store.DeliveryAsync(rejected, "discard_rejected");
+        published = workspace.State.Outbox.Select(item => item.RequestId).ToHashSet();
+        persisted = await store.SnapshotAsync();
+        LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        Check(workspace.State.Outbox.Count == 1 && workspace.State.Outbox[0].Channel == Channels[1],
+            "Committed rejected discard was not reconciled independently of newer pending work.");
+        await workspace.ShutdownAsync().WaitAsync(Deadline);
     }
 
     private static async Task VerifyRetryFirstAdmissionAsync(string path, string libraryPath)
@@ -147,15 +198,18 @@ public static class WorkspaceProbe
         Check(beforeRetry.Outbox.Count == 0 && beforeRetry.Drafts.Single(item => item.Channel == Channels[0]).Body == body,
             "Unknown-before-commit fixture unexpectedly enqueued or lost the newer draft.");
         // The first actual enqueue now commits but loses its acknowledgement.
-        // Even with NeedsRetry retained, the pump must restore newer equal-body
-        // text that native's body-only clear removed during that unknown call.
+        // The newer equal-body revision must remain in SQLite itself: no
+        // coordinator save is allowed to repair a clear/re-save crash window.
+        int savesBeforeRetry = store.SaveCount;
+        long durableRevision = beforeRetry.Drafts.Single(item => item.Channel == Channels[0]).Revision;
         store.UnknownAfterCommit = 1;
         await ExpectAsync("unknown_outcome", workspace.RetryAsync).ConfigureAwait(false);
         await SavedAsync(workspace).ConfigureAwait(false);
         var afterSecondUnknown = await store.SnapshotAsync().WaitAsync(Deadline).ConfigureAwait(false);
         Check(workspace.State.NeedsRetry && afterSecondUnknown.Outbox.Count == 1 &&
-            afterSecondUnknown.Drafts.Single(item => item.Channel == Channels[0]).Body == body,
-            "A committed retry with a lost acknowledgement failed to restore the newer equal-body draft.");
+            afterSecondUnknown.Drafts.Single(item => item.Channel == Channels[0]).Body == body &&
+            afterSecondUnknown.Drafts.Single(item => item.Channel == Channels[0]).Revision == durableRevision && store.SaveCount == savesBeforeRetry,
+            "A committed retry changed the newer equal-body draft or required a non-atomic repair save.");
         await workspace.RetryAsync().WaitAsync(Deadline).ConfigureAwait(false);
         await SavedAsync(workspace).ConfigureAwait(false);
         Check(workspace.State.Drafts[Channels[0]].Revision == capturedRevision + 2 &&
@@ -163,7 +217,7 @@ public static class WorkspaceProbe
             "First actual retry admission lost the newer revision or stable identity.");
         var reconciled = await store.SnapshotAsync().WaitAsync(Deadline).ConfigureAwait(false);
         Check(reconciled.Outbox.Count == 1 && reconciled.Drafts.Single(item => item.Channel == Channels[0]).Body == body,
-            "Native's matching-body draft clear was not followed by saving the preserved newer revision.");
+            "Revision-bound admission changed the preserved newer draft.");
         await workspace.ShutdownAsync().WaitAsync(Deadline).ConfigureAwait(false);
         await using var reopened = await NativeSession.OpenAsync(path, libraryPath).ConfigureAwait(false);
         var persisted = await reopened.SnapshotAsync().ConfigureAwait(false);
@@ -303,13 +357,13 @@ public static class WorkspaceProbe
             Interlocked.Increment(ref _callCount);
             return session.SnapshotAsync();
         }
-        public Task SaveDraftAsync(string channel, string body)
+        public Task<long> SaveDraftAsync(string channel, string body)
         {
             Interlocked.Increment(ref _saveCount);
             Interlocked.Increment(ref _callCount);
             return session.SaveDraftAsync(channel, body);
         }
-        public async Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId)
+        public async Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision)
         {
             Interlocked.Increment(ref _callCount);
             lock (_gate) _requestIds.Add(requestId);
@@ -319,7 +373,7 @@ public static class WorkspaceProbe
                 throw new NativeProbeException("unknown_outcome", "The forwarding adapter lost the request outcome before the native enqueue ran.");
             var gate = Interlocked.Exchange(ref EnqueueGate, null);
             if (gate is not null) await gate.HoldAsync().ConfigureAwait(false);
-            var queued = await session.EnqueueAsync(channel, body, requestId).ConfigureAwait(false);
+            var queued = await session.EnqueueAsync(channel, body, requestId, expectedDraftRevision).ConfigureAwait(false);
             if (Interlocked.Exchange(ref UnknownAfterCommit, 0) != 0)
                 throw new NativeProbeException("unknown_outcome", "The test forwarding adapter lost one committed result.");
             return queued;

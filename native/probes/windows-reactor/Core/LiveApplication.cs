@@ -4,26 +4,6 @@ using System.Text.Json;
 
 namespace Sproyt.WindowsProbe;
 
-internal sealed record LiveSnapshot(NativeAuthSnapshot Authentication, NativeChatSnapshot Chat,
-    WorkspaceSnapshot? Workspace, bool ShowConversation, string? Error, bool ConfirmPendingSends = false);
-
-internal interface ILiveApplication : IAsyncDisposable
-{
-    event Action? Changed;
-    NativeAuthSnapshot Authentication { get; }
-    NativeChatSnapshot Chat { get; }
-    WorkspaceSnapshot? Workspace { get; }
-    NativeMediaLibrary? Media { get; }
-    LiveSnapshot Capture();
-    Task LoginAsync();
-    Task LogoutAsync();
-    Task ResumeAsync();
-    Task SelectAsync(string channel);
-    void Edit(string channel, string body);
-    Task SendAsync(string channel);
-    Task ConfirmPendingSendsAsync(string expectedUser, string expectedStamp);
-}
-
 // Coordinates the existing durable draft/outbox owner with the live transport.
 // No token or provider credential is projected into the UI.
 internal sealed class LiveApplication : ILiveApplication
@@ -44,6 +24,7 @@ internal sealed class LiveApplication : ILiveApplication
     private string? _admittedFamily;
     private readonly string _instance;
     private SendAdmissionStore? _replayConsent;
+    private LiveDeliveryCoordinator _delivery = new();
     public event Action? Changed;
     public NativeAuthSnapshot Authentication => _authentication.Snapshot;
     public NativeChatSnapshot Chat => _chat.Snapshot;
@@ -59,7 +40,7 @@ internal sealed class LiveApplication : ILiveApplication
         bool same = ReferenceEquals(workspace, _workspace) && auth.UserId is not null && auth.UserId == account &&
             auth.UserId == after.UserId && auth.Phase == after.Phase && chat.UserId == auth.UserId;
         return new(auth, chat, same ? local : null, same && local?.Ready == true && auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline, Error,
-            same && local?.Outbox.Count > 0 && !SameSendFamily(_admittedFamily, auth.SessionStamp));
+            same && local?.Outbox.Any(item => item.State != "rejected") == true && !SameSendFamily(_admittedFamily, auth.SessionStamp));
     }
 
     private sealed record Authority(string Broker, string Instance, string Issuer);
@@ -150,8 +131,13 @@ internal sealed class LiveApplication : ILiveApplication
     }
     public async Task SendAsync(string channel)
     {
-        if (_closing || !ShowConversation || _workspace is null || Capture().ConfirmPendingSends || Authentication.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline)) return;
-        try { _error = null; await _workspace.SendAsync(channel); }
+        if (_closing || !ShowConversation || _workspace is null || Authentication.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline)) return;
+        try
+        {
+            ApproveEmptyQueue();
+            if (Capture().ConfirmPendingSends) return;
+            _error = null; await _workspace.SendAsync(channel);
+        }
         catch { _error = "Meldinga kunne ikkje leggjast i sendekøen. Teksten er teken vare på."; }
         ChangedState();
     }
@@ -169,6 +155,31 @@ internal sealed class LiveApplication : ILiveApplication
         }
         ChangedState(); return Task.CompletedTask;
     }
+    public async Task DiscardRejectedAsync(string expectedUser, string expectedStamp, string requestId)
+    {
+        var store = _store; var workspace = _workspace; var auth = Authentication;
+        if (_closing || store is null || workspace is null || auth.UserId != expectedUser ||
+            auth.SessionStamp != expectedStamp || _account != expectedUser ||
+            auth.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline) ||
+            !workspace.State.Outbox.Any(item => item.RequestId == requestId && item.State == "rejected")) return;
+        try
+        {
+            // This confirmed local operation targets the captured account's
+            // store. It needs no active network credential and can run offline.
+            await store.DeliveryAsync(requestId, "discard_rejected");
+            if (ReferenceEquals(workspace, _workspace) && Authentication.UserId == expectedUser)
+            {
+                workspace.ServerAcknowledged(requestId);
+                _error = null;
+            }
+        }
+        catch
+        {
+            if (ReferenceEquals(workspace, _workspace) && Authentication.UserId == expectedUser)
+                _error = "Den avviste meldinga kunne ikkje fjernast. Teksten er teken vare på; prøv igjen.";
+        }
+        ChangedState();
+    }
     private static string? SendFamily(string? stamp)
     {
         if (stamp is null) return null;
@@ -176,6 +187,15 @@ internal sealed class LiveApplication : ILiveApplication
         return last > 0 ? stamp[..last] : null;
     }
     internal static bool SameSendFamily(string? admitted, string? stamp) => admitted is not null && admitted == SendFamily(stamp);
+    private void ApproveEmptyQueue()
+    {
+        var auth = Authentication;
+        if (auth.UserId != _account || auth.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline) ||
+            _workspace is null || _workspace.State.Outbox.Any(item => item.State != "rejected") ||
+            SendFamily(auth.SessionStamp) is not string family || family == _admittedFamily || _replayConsent is null) return;
+        _replayConsent.Approve(family);
+        _admittedFamily = family;
+    }
 
     private async Task PumpAsync()
     {
@@ -201,10 +221,9 @@ internal sealed class LiveApplication : ILiveApplication
                         _admittedFamily = _replayConsent.Family;
                         _workspace = new(new NativeWorkspaceStoreAdapter(store), channels, maximumChannels: 512);
                         await _workspace.InitializeAsync();
-                        if (_workspace.State.Outbox.Count == 0 && SendFamily(Authentication.SessionStamp) is string family)
-                            { _replayConsent.Approve(family); _admittedFamily = family; }
                         _workspace.Changed += ChangedState;
                     }
+                    ApproveEmptyQueue();
                     // The transport resumes stored credentials itself. Start it
                     // for an offline restored session too, before window activation.
                     if (_connection is null) _connection = ConnectAsync();
@@ -236,29 +255,62 @@ internal sealed class LiveApplication : ILiveApplication
         if (admission.UserId != account || admission.SessionStamp is not string stamp || !SameSendFamily(_admittedFamily, stamp)) return;
         var published = workspace.State.Outbox.Select(item => item.RequestId).ToHashSet();
         var snapshot = await store.SnapshotAsync();
+        if (!ReferenceEquals(workspace, _workspace) || Authentication.UserId != account) return;
+        _delivery.Reconcile(snapshot.Outbox);
+        ReconcileDeliveries(workspace, published, snapshot.Outbox);
         foreach (var item in snapshot.Outbox.Where(item => published.Contains(item.RequestId)))
         {
             if (Authentication.UserId != account || Authentication.Phase != NativeAuthPhase.Active || !Chat.Connected) break;
             if (item.State == "rejected") continue;
             try
             {
-                if (item.State != "acknowledged")
+                bool Admitted()
                 {
-                    if (item.State == "dispatching") await store.DeliveryAsync(item.RequestId, "uncertain");
-                    await store.DeliveryAsync(item.RequestId, "dispatch");
-                    await _chat.SendAsync(item.Channel, item.Body, item.RequestId, account, stamp, _lifetime.Token);
-                    await store.DeliveryAsync(item.RequestId, "acknowledge");
+                    var current = Authentication;
+                    return current.UserId == account && current.Phase == NativeAuthPhase.Active &&
+                        SameSendFamily(_admittedFamily, current.SessionStamp) && Chat.Connected;
                 }
-                await store.DeliveryAsync(item.RequestId, "forget");
-                _error = null;
-                workspace.ServerAcknowledged(item.RequestId);
+                var result = await _delivery.DispatchAsync(item, store.DeliveryAsync,
+                    () => _chat.SendAsync(item.Channel, item.Body, item.RequestId, account, stamp, _lifetime.Token),
+                    Admitted, _lifetime.Token);
+                if (result.Outcome == LiveDeliveryOutcome.Acknowledged)
+                {
+                    _error = null;
+                    workspace.ServerAcknowledged(item.RequestId);
+                }
+                else
+                {
+                    if (result.Outcome == LiveDeliveryOutcome.Rejected)
+                    {
+                        // Refresh the same store owner so the UI never labels a
+                        // terminal server rejection as waiting for a receipt.
+                        workspace.ServerRejected(item.RequestId);
+                        _error = result.Message is { Length: > 0 } message
+                            ? "Meldinga vart ikkje send: " + message
+                            : "Meldinga vart avvist. Teksten er teken vare på og blir ikkje send automatisk.";
+                    }
+                    else if (result.Outcome == LiveDeliveryOutcome.Uncertain)
+                        _error = "Vi manglar sendekvittering. Meldinga ligg trygt i kø med same ID.";
+                    Notify();
+                    if (result.Outcome != LiveDeliveryOutcome.Rejected) break;
+                }
             }
             catch
             {
-                try { await store.DeliveryAsync(item.RequestId, "uncertain"); } catch { }
-                _error = "Vi manglar sendekvittering. Meldinga ligg trygt i kø med same ID.";
+                _error = "Sendestatusen kunne ikkje lagrast. Meldinga er teken vare på; prøv igjen.";
                 Notify(); break;
             }
+        }
+    }
+    internal static void ReconcileDeliveries(ChatWorkspace workspace, IReadOnlySet<string> published, IReadOnlyList<QueuedMessage> persisted)
+    {
+        // Only reconcile IDs visible before the store snapshot was requested.
+        // A newer local enqueue must not be removed by an older snapshot.
+        var durable = persisted.ToDictionary(item => item.RequestId);
+        foreach (string id in published)
+        {
+            if (!durable.TryGetValue(id, out var item)) workspace.ServerAcknowledged(id);
+            else if (item.State == "rejected") workspace.ServerRejected(id);
         }
     }
     private async Task CloseStoreAsync()
@@ -266,6 +318,7 @@ internal sealed class LiveApplication : ILiveApplication
         if (_workspace is not null) { _workspace.Changed -= ChangedState; await _workspace.ShutdownAsync(); }
         else if (_store is not null) await _store.DisposeAsync();
         _replayConsent?.Dispose(); _replayConsent = null; _admittedFamily = null;
+        _delivery = new();
         _workspace = null; _store = null; _account = null;
     }
     public async ValueTask DisposeAsync()

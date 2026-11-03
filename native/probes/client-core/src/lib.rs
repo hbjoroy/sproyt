@@ -30,6 +30,8 @@ enum Request {
     Open {
         database: String,
         account: String,
+        #[serde(default)]
+        draft_revisions: bool,
     },
     Close {
         handle: u64,
@@ -54,6 +56,8 @@ enum Request {
         request_id: String,
         channel: String,
         body: String,
+        #[serde(default)]
+        expected_draft_revision: Option<u64>,
     },
     Delivery {
         handle: u64,
@@ -88,11 +92,19 @@ fn execute(request: Request) -> Result<Value> {
         .lock()
         .map_err(|_| "probe_poisoned")?;
     match request {
-        Request::Open { database, account } => {
+        Request::Open {
+            database,
+            account,
+            draft_revisions,
+        } => {
             if registry.stores.len() >= 16 {
                 return Err("handle_capacity");
             }
-            let store = Store::open(&database, &account)?;
+            let store = if draft_revisions {
+                Store::open_with_draft_revisions(&database, &account, true)?
+            } else {
+                Store::open(&database, &account)?
+            };
             let handle = registry.next.checked_add(1).ok_or("handle_capacity")?;
             registry.next = handle;
             registry.stores.insert(handle, store);
@@ -130,19 +142,40 @@ fn execute(request: Request) -> Result<Value> {
                     channel,
                     body,
                     ..
-                } => store.save_draft(generation, &channel, &body)?,
+                } => {
+                    return store
+                        .save_draft(generation, &channel, &body)
+                        .map(|revision| json!({"revision":revision}));
+                }
                 Request::ClearDraft {
                     generation,
                     channel,
                     ..
-                } => store.clear_draft(generation, &channel)?,
+                } => {
+                    return store
+                        .clear_draft(generation, &channel)
+                        .map(|revision| json!({"revision":revision}));
+                }
                 Request::Enqueue {
                     generation,
                     request_id,
                     channel,
                     body,
+                    expected_draft_revision,
                     ..
-                } => store.enqueue(generation, &request_id, &channel, &body)?,
+                } => {
+                    if expected_draft_revision.is_some() {
+                        store.enqueue_draft(
+                            generation,
+                            &request_id,
+                            &channel,
+                            &body,
+                            expected_draft_revision,
+                        )?
+                    } else {
+                        store.enqueue(generation, &request_id, &channel, &body)?
+                    }
+                }
                 Request::Delivery {
                     generation,
                     request_id,

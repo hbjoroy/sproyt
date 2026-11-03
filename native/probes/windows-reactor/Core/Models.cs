@@ -1,6 +1,6 @@
 namespace Sproyt.WindowsProbe;
 
-public sealed record Draft(string Channel, string Body);
+public sealed record Draft(string Channel, string Body, long Revision = 0);
 
 public sealed record QueuedMessage(string RequestId, string Channel, string Body, string State);
 
