@@ -1,0 +1,368 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-11-04T05:45:16.2745022+00:00",
+  "branch": "codex/native-history-navigation",
+  "testedSourceBase": "96425c13280605bd6ce06fa4ba747e98263bfe1d",
+  "testedSourceDirty": true,
+  "foundationPullRequest": "https://github.com/hbjoroy/sproyt/pull/330",
+  "sourceHashes": [
+    {
+      "path": ".github/workflows/native-probe.yml",
+      "sha256": "0df21655dba2829978e6b1c9db5e9914d3fa75c4ebefe8dcbfb19b7a54fb1cf9"
+    },
+    {
+      "path": "native/probes/client-contracts/SyntheticSession.cs",
+      "sha256": "9b3cb95fd5b26071608d237547efa3feb68757e56bf8962677e346296bab2e2f"
+    },
+    {
+      "path": "native/probes/delivery-contracts/DeliveryContracts.csproj",
+      "sha256": "41987f1a35c9ad53d24cee5eed187875976edee70e08a364c5960b2cb389266d"
+    },
+    {
+      "path": "native/probes/delivery-contracts/Program.cs",
+      "sha256": "8d63e44a46f2ce62e769abed1baf5161282c5de0f12dd9767b2c51ab26584ea2"
+    },
+    {
+      "path": "native/probes/delivery-contracts/README.md",
+      "sha256": "54ae039b57375e3e877c16291acc4b74b3b4a9c3e612313ec64b02797ecad687"
+    },
+    {
+      "path": "native/probes/history-contracts/global.json",
+      "sha256": "e67cbfea6a001b75869cb8314b566bfd09e90ec5071c3f3e329faa59f062585d"
+    },
+    {
+      "path": "native/probes/history-contracts/HistoryContracts.csproj",
+      "sha256": "eb31bc560f45d2ccac211102302f926141b53b65f548ad7c41088853c6ef640e"
+    },
+    {
+      "path": "native/probes/history-contracts/HistoryServer.cs",
+      "sha256": "6be67f8318a4e8a3e0b4567548e38a0083fbc9d7bdbeb0ec20d42b1d32eca3e2"
+    },
+    {
+      "path": "native/probes/history-contracts/Program.cs",
+      "sha256": "2e3aa3ed58c985b34833f918b3723b5aa098bbccc6c818dd7ef2341535c393a9"
+    },
+    {
+      "path": "native/probes/history-contracts/README.md",
+      "sha256": "ccf41ad9e60b0e189bbb562ce6bcea41feaefa2e0bd2f456f2e0a06ed698ae5b"
+    },
+    {
+      "path": "native/probes/navigation-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/navigation-contracts/NavigationContracts.csproj",
+      "sha256": "bcc0c5da21d902cf91c38c721b3ff7bf1d32e8671413f9e316c5ed99e33be0cc"
+    },
+    {
+      "path": "native/probes/navigation-contracts/packages.lock.json",
+      "sha256": "a4364d81a6de2707d66fbced18fbbc926c882ab96e1d1aebbb17e871285b9d75"
+    },
+    {
+      "path": "native/probes/navigation-contracts/Program.cs",
+      "sha256": "8cae0c49e62832f7e80ce09f92922e0af40345ec70906dc84f7aa28b48d8d016"
+    },
+    {
+      "path": "native/probes/navigation-contracts/README.md",
+      "sha256": "f74eede99c20dce9a34c4950b8edd4230055eff4b2c25c5e6b52d58c2ae963f2"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveApplication.cs",
+      "sha256": "50b1cf17e5b085d6f9c96e4ea5fd338f3c0fdd3b37601286c3208f52cc314bab"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveContracts.cs",
+      "sha256": "a2805b7768c6af95ac2c42514b64b4b569479ac84e0c2f16a87272e5fd15771c"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveDeliveryBackoff.cs",
+      "sha256": "9564ccd8d6759eb6c25e65d6627a5f228d36f3c4cf89dc3b146e86bb75ef8337"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveDeliveryCoordinator.cs",
+      "sha256": "caf8f8827bd3b19d4cd772b3eed2f0ec9e667d99d10fdbad02d62daf2fd26a63"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveDeliveryRetryWake.cs",
+      "sha256": "a006bc6c2740ad37fd37155d692fc8478bb069a9bea043f4661381223fa873f4"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/Navigation/NativeNavigationController.cs",
+      "sha256": "590f2f765d8d21bcb910c51a1f4b044b8695478d19146b995251d10a405613af"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/Navigation/NativeNavigationPreferenceStore.cs",
+      "sha256": "307ad0ce11ea37077432a39fd9fb035746be95c20b2c9caacc4353e0363285eb"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/Navigation/NavigationContracts.cs",
+      "sha256": "fde4454d37d030515857e16d6861742541f18b7312cc8cf4e1490b15da9eb65a"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/WorkspaceProbe.cs",
+      "sha256": "a6ef52ceaa4e1b1ade6254507e6a33c2a01bd9400014b07161fb95c851ac9844"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Conversation/Core/ConversationHistoryPolicy.cs",
+      "sha256": "aa29099a026f638ce2748c8c12f420ef33408d95e14afa6fe9b0409af3a2a3cd"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Navigation/NativeNavigationView.cs",
+      "sha256": "6a530ffb3c8b55d5074f95f1332a47fb28d00d2aba3193900ac71daa9cae1b7c"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveChatComponent.cs",
+      "sha256": "26b1267a2bf4e46682297c8eb5ffce53fb861104f3a8e31fc570bf9786b8c5e6"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveTimelineUiProbe.cs",
+      "sha256": "ac3a46c9177786bba2102ccf9371c6199108e3ba99da969e65415dfc81b2ae1b"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveUiProbe.cs",
+      "sha256": "60c3896e622a399b07135de33da90b9887400bbf909d3f1cc393d40991e02ea2"
+    },
+    {
+      "path": "native/probes/windows-reactor/NativeTimelineViewport.cs",
+      "sha256": "91167bd620cc129fafd2d584ef918104cff379534f56f1d402d66ea1f8695984"
+    },
+    {
+      "path": "native/probes/windows-reactor/Program.cs",
+      "sha256": "2d6bf85c2930787079fce85f748a53fe4c4f974e709ef09ed77cc2844dd60aa2"
+    },
+    {
+      "path": "native/probes/windows-reactor/README.md",
+      "sha256": "f3da09cd26c04bff8ba2d670a0dc5fc44e0ecbe9c6cd1947cced633543b4ccf3"
+    },
+    {
+      "path": "native/session-client/NativeAuthSession.cs",
+      "sha256": "6e988a971224fbd2ce29dbf694bc88b48635a676140bea49689231b81cf3de7d"
+    },
+    {
+      "path": "native/session-client/NativeChatClient.cs",
+      "sha256": "b72958cc2807fddc947c1629584d9f2dbb1b4a9d333f68afed6eb9f54c1240f3"
+    }
+  ],
+  "deliveryContracts": {
+    "receipt": "S:/Build/native-daily-integrated/delivery-receipt.json",
+    "result": {
+      "scope": "native_delivery_coordinator",
+      "passed": 16,
+      "actualTransport": false
+    }
+  },
+  "historyContracts": {
+    "receipt": "S:/Build/native-daily-final-review/history/receipt.json",
+    "result": {
+      "passed": true,
+      "production_transport_source": true,
+      "local_websocket": true,
+      "synthetic_session_owner": true,
+      "live_canary": false,
+      "actual_credentials": false,
+      "oldest_cursor_includes_replies": true,
+      "roots_only": true,
+      "paging_retry_same_cursor": true,
+      "malformed_page_atomic": true,
+      "stable_ids_sequences": true,
+      "no_optimistic_read": true,
+      "measured_ids_only": true,
+      "inactive_offscreen_restore_read_suppressed": true,
+      "late_page_view_fence": true,
+      "account_revocation_fence": true,
+      "permission_loss_clears_projection": true,
+      "large_legal_messages": true,
+      "queued_repair_preserves_user_selection": true,
+      "read_denial_clears_current_only": true,
+      "disconnect_fences_completed_page": true,
+      "queued_selection_original_account": true,
+      "stale_history_cannot_resurrect": true,
+      "bounded_history_no_silent_eviction": true,
+      "maximum_roots": 2000,
+      "page_size": 50,
+      "architecture": "Arm64"
+    }
+  },
+  "clientContracts": {
+    "receipt": "S:/Build/native-daily-final-review/client/receipt.json",
+    "result": {
+      "passed": true,
+      "production_transport_source": true,
+      "local_websocket": true,
+      "synthetic_session_owner": true,
+      "live_credentials": false,
+      "live_canary": false,
+      "domain_rejections": true,
+      "uncertain_server_errors": true,
+      "correlated_errors_only": true,
+      "lost_ack_exact_wire_replay": true,
+      "duplicate_waiter_single_frame": true,
+      "account_change_rejects_late_result": true,
+      "complete_channel_metadata": true,
+      "thread_edit_delete_metadata": true,
+      "architecture": "Arm64"
+    }
+  },
+  "navigationContracts": {
+    "receipt": "S:/Build/native-daily-final-review/navigation/tests/navigation-a9e74331a73049d7a01aed9584024cd7/receipt.json",
+    "result": {
+      "passed": true,
+      "scope": "native_navigation_headless_contract",
+      "source": "linked production navigation controller",
+      "checks": [
+        "search keeps canonical channels",
+        "equal circle names retain distinct IDs",
+        "server metadata DM ranking",
+        "stable targets during interaction",
+        "back forward and precise targets",
+        "message/sequence/pixel anchor restoration",
+        "account and family fences",
+        "normal token rotation preserves navigation",
+        "late A-B-A result rejection",
+        "access loss prunes history and anchors",
+        "bounded history",
+        "account-owned optional preferences",
+        "storage failure remains navigable"
+      ],
+      "actualWinUi": false,
+      "actualTransport": false,
+      "actualDraftStorage": false
+    }
+  },
+  "windowsArm64": {
+    "receipt": "S:/Build/native-daily-integrated/windows/runs/ac5b41081cbf4f558361e3f485e43184/receipt.json",
+    "result": {
+      "schema": 1,
+      "scope": "windows_reactor_local_feasibility",
+      "sourceRevision": "96425c13280605bd6ce06fa4ba747e98263bfe1d",
+      "sourceDirty": true,
+      "architecture": "arm64",
+      "platform": "win-arm64",
+      "reactor": "0.1.0-preview.16",
+      "compiler": "Microsoft.Net.Compilers.Toolset 5.9.0",
+      "runtime": "win-arm64",
+      "nativeLibrarySha256": "2b55829a5791bd1bc7f66590a24888b5745c3eb13fb64ca6c3d74ad19ae58182",
+      "executableSha256": "6862567e77370aec4b64d4dfd1c5999845eee9f57ea4e52e6a0e31f1718ae8ba",
+      "applicationPriSha256": "1c93954aab25ca97e589d93f2791562ac874ee8d0dbbfb7e4d5f6ad2b169afd2",
+      "coreTests": true,
+      "uiSmoke": {
+        "passed": true,
+        "architecture": "Arm64",
+        "materializedTextBlocks": 65,
+        "syntheticMessagesPerChannel": 1000,
+        "rasterizationScale": 2,
+        "keyboardViewportAvailable": true,
+        "compactWidthDip": 347,
+        "checks": [
+          "native WinUI tree",
+          "virtualization",
+          "editor identity and selection",
+          "independent drafts",
+          "reading position",
+          "light and dark semantic brushes",
+          "UI enqueue binding",
+          "own message visible",
+          "immediate send and navigation",
+          "debounced resize tail",
+          "resize preserves history reader",
+          "keyboard transition coalescing",
+          "overlay keyboard editor and tail visibility",
+          "no double keyboard inset",
+          "stable keyboard geometry",
+          "keyboard preserves history reader",
+          "compact layout",
+          "flush and reopen"
+        ],
+        "notTested": [
+          "physical keyboard and IME",
+          "touch",
+          "screen reader",
+          "visual screenshot approval",
+          "production"
+        ]
+      },
+      "uiResume": {
+        "passed": true,
+        "architecture": "Arm64",
+        "checks": [
+          "new app process",
+          "multiline editor hydration",
+          "second channel draft",
+          "queued message retained"
+        ]
+      },
+      "syntheticSessionUi": true,
+      "liveChatViewFixture": {
+        "passed": true,
+        "scope": "live_chat_view_fixture",
+        "actualWinUi": true,
+        "channelDrafts": true,
+        "sendBinding": true,
+        "compactComposer": true,
+        "circleGroups": true,
+        "decodedMediaPreview": true,
+        "boundedPreviewLeases": true,
+        "viewportPreviewGallery": 24,
+        "viewportRelease": true,
+        "stablePreviewGeometry": true,
+        "rapidPreviewReentry": true,
+        "portraitAndLandscape": true,
+        "originalAspectRatio": true,
+        "responsivePreviewWidth": true,
+        "macroCard": true,
+        "temporaryOriginalCleanup": true,
+        "timelinePaging": true,
+        "stableMessageAnchor": true,
+        "visibleReadOnly": true,
+        "navigationSearch": true,
+        "navigationDirectoryScopes": true,
+        "navigationBackForward": true,
+        "independentNavigationDrafts": true,
+        "variableHeightAnchor": true,
+        "productionAuthentication": false,
+        "actualTransport": false,
+        "storageAcceptance": false
+      },
+      "publishDirectory": "S:\\Build\\native-daily-integrated\\windows\\runs\\ac5b41081cbf4f558361e3f485e43184\\publish-win-arm64",
+      "notTested": [
+        "physical keyboard and IME",
+        "touch",
+        "screen reader",
+        "visual screenshot approval",
+        "production sync",
+        "production authentication",
+        "hard termination of the full WinUI process during live transport"
+      ]
+    },
+    "sequenceOnlyAnchorMeasured": true,
+    "stableGeometryToleranceDip": 2
+  },
+  "staticChecks": {
+    "actionlint": true,
+    "gitDiffCheck": true
+  },
+  "hostedChecks": {
+    "status": "pending; tracked in pull request"
+  },
+  "limits": {
+    "historyRawPageSize": 50,
+    "manualRetryMinimumSeconds": 1,
+    "historyRootMessages": 2000,
+    "automaticRetrySeconds": [
+      2,
+      4,
+      8,
+      16,
+      32,
+      60
+    ]
+  },
+  "notEstablished": [
+    "Live Canary acceptance with two users",
+    "Physical keyboard/IME, touch and screen reader",
+    "Full local history/offline synchronization",
+    "External cold-start deep links and threads",
+    "Message-ID-only paging is reviewed application integration; the WinUI fixture does not use LiveApplication transport"
+  ],
+  "deploymentPerformed": false
+}

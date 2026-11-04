@@ -11,6 +11,7 @@ internal static class Program
     internal static string? LiveUiProbeDirectory { get; private set; }
     internal static string? CanaryAcceptanceDirectory { get; private set; }
     internal static bool LiveMode { get; private set; }
+    internal static bool LiveWindowActive { get; set; } = true;
     internal static string? LiveError { get; private set; }
     internal static event Action? LiveStateChanged;
     private static string _liveServer = "";
@@ -93,6 +94,8 @@ internal static class Program
                 keyboard.Attach(PilotComponent.RootForClose as Microsoft.UI.Xaml.Controls.Grid);
                 window.NativeWindow.Activated += (_, activated) =>
                 {
+                    LiveWindowActive = activated.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated;
+                    LiveChatComponent.WindowActivityChanged?.Invoke();
                     if (!CloseAdmissionClosed && activated.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated && Live is not null)
                         _ = Live.ResumeAsync();
                     if (!CloseAdmissionClosed && activated.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated

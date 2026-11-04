@@ -36,4 +36,9 @@ internal sealed class NativeAuthSession(Uri socketUri)
         lock (gate) state = state with { Phase = NativeAuthPhase.AuthRequired, UserId = null, Generation = state.Generation + 1, SessionStamp = null };
         Changed?.Invoke();
     }
+    internal void SwitchAccount(string userId, string stamp)
+    {
+        lock (gate) state = state with { Phase = NativeAuthPhase.Active, UserId = userId, Generation = state.Generation + 1, SessionStamp = stamp };
+        Changed?.Invoke();
+    }
 }

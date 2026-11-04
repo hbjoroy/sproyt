@@ -219,6 +219,14 @@ jobs:
         shell: pwsh
         working-directory: native/probes/delivery-contracts
         run: dotnet run --project DeliveryContracts.csproj --artifacts-path '${{ runner.temp }}/native-delivery-contracts' -- '${{ runner.temp }}/native-delivery-contracts/receipt.json'
+      - name: Check native history and visible reading
+        shell: pwsh
+        working-directory: native/probes/history-contracts
+        run: dotnet run --project HistoryContracts.csproj --artifacts-path '${{ runner.temp }}/native-history-contracts/build' -- '${{ runner.temp }}/native-history-contracts/receipt.json'
+      - name: Check native navigation and account scopes
+        shell: pwsh
+        working-directory: native/probes/navigation-contracts
+        run: dotnet run --project NavigationContracts.csproj --artifacts-path '${{ runner.temp }}/native-navigation-contracts/build' -- '${{ runner.temp }}/native-navigation-contracts/tests'
       - name: Preserve non-secret fixture receipts
         if: success()
         uses: actions/upload-artifact@v6
@@ -228,6 +236,8 @@ jobs:
             ${{ runner.temp }}/sproyt-native-probe/fixtures/**/receipt.json
             ${{ runner.temp }}/native-client-contracts/receipt.json
             ${{ runner.temp }}/native-delivery-contracts/receipt.json
+            ${{ runner.temp }}/native-history-contracts/receipt.json
+            ${{ runner.temp }}/native-navigation-contracts/tests/**/receipt.json
 
   kotlin-binding:
     runs-on: ubuntu-latest

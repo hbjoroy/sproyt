@@ -18,13 +18,40 @@ internal sealed class LiveUiFixture : ILiveApplication
     private readonly List<NativeMessage> _messages = [];
     private readonly List<QueuedMessage> _outbox = [];
     private readonly NativeMediaViewFixture _mediaFixture = new(User);
+    private readonly NativeNavigationController _navigation = new();
+    private readonly Dictionary<string, ulong> _lastRead = [];
+    private readonly List<ulong> _readReports = [];
+    private bool _historyMode, _loadingOlder;
+    private ulong _historyStart = 301;
+    private long _historyGeneration = 1;
+    internal int OlderCalls { get; private set; }
+    internal IReadOnlyList<ulong> ReadReports => _readReports.ToArray();
+    internal LiveUiFixture()
+    {
+        _drafts["channel-dm"] = new("", 0, 0);
+        SyncNavigation();
+        _navigation.Changed += () => Changed?.Invoke();
+        var initial = _navigation.Select(new(_selected));
+        if (initial is not null) _navigation.Complete(initial);
+    }
     public event Action? Changed;
     public NativeAuthSnapshot Authentication => _mediaFixture.Owner.Snapshot;
-    public NativeChatSnapshot Chat => new(true, false, null,
-        [new("channel-a", "Prat", "UI-prøve", "fixture-circle"), new("channel-b", "Idear", "UI-prøve", "fixture-circle")], _selected,
-        _messages.Where(message => message.ChannelId == _selected).ToArray(), User);
+    private IReadOnlyList<NativeChannel> Channels =>
+        [new("channel-a", "Prat", "UI-prøve", "fixture-circle", LastReadSequence: _lastRead.GetValueOrDefault("channel-a"), LatestSequence: _messages.Where(item => item.ChannelId == "channel-a").Select(item => item.Sequence).DefaultIfEmpty(0UL).Max()),
+         new("channel-b", "Idear", "UI-prøve", "fixture-circle", LastReadSequence: _lastRead.GetValueOrDefault("channel-b"), LatestSequence: _messages.Where(item => item.ChannelId == "channel-b").Select(item => item.Sequence).DefaultIfEmpty(0UL).Max()),
+         new("channel-dm", "Testven", Kind: "direct", IsDirect: true)];
+    public NativeChatSnapshot Chat => new(true, false, null, Channels, _selected,
+        _messages.Where(message => message.ChannelId == _selected).OrderBy(item => item.Sequence).ToArray(), User,
+        new(_selected, _historyGeneration, _loadingOlder, _historyMode && _selected == "channel-a" && _historyStart > 1,
+            false, null, _messages.Where(item => item.ChannelId == _selected).Select(item => (ulong?)item.Sequence).Min(),
+            _messages.Count(item => item.ChannelId == _selected)));
     public WorkspaceSnapshot Workspace => new(true, false, false, false, null, null, _drafts, _outbox.ToArray());
-    public LiveSnapshot Capture() => new(Authentication, Chat, Workspace, true, null);
+    private void SyncNavigation()
+    {
+        _navigation.BindScope(Authentication.UserId, Authentication.SessionStamp);
+        _navigation.UpdateChannels(Authentication.UserId!, Authentication.SessionStamp!, Channels);
+    }
+    public LiveSnapshot Capture() { SyncNavigation(); return new(Authentication, Chat, Workspace, true, null, Navigation: _navigation.Capture()); }
     public Task LoginAsync() => Task.CompletedTask;
     public NativeMediaLibrary? Media => _mediaFixture.Library;
     internal void AddMedia()
@@ -49,6 +76,7 @@ internal sealed class LiveUiFixture : ILiveApplication
     }
     public Task LogoutAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
+    public Task RetryPendingSendsAsync(string expectedUser, string expectedStamp) => Task.CompletedTask;
     public Task ConfirmPendingSendsAsync(string expectedUser, string expectedStamp) => Task.CompletedTask;
     public Task DiscardRejectedAsync(string expectedUser, string expectedStamp, string requestId)
     {
@@ -56,7 +84,70 @@ internal sealed class LiveUiFixture : ILiveApplication
             _outbox.RemoveAll(item => item.RequestId == requestId && item.State == "rejected");
         Changed?.Invoke(); return Task.CompletedTask;
     }
-    public Task SelectAsync(string channel) { _selected = channel; Changed?.Invoke(); return Task.CompletedTask; }
+    public Task SelectAsync(string channel) => NavigateAsync(new(channel));
+    public Task NavigateAsync(NativeNavigationTarget target) { SyncNavigation(); return ApplyVisit(_navigation.Select(target)); }
+    public Task BackAsync() => ApplyVisit(_navigation.Back());
+    public Task ForwardAsync() => ApplyVisit(_navigation.Forward());
+    private Task ApplyVisit(NativeNavigationVisit? visit)
+    {
+        if (visit is null) return Task.CompletedTask;
+        _selected = visit.Target.ChannelId; _historyGeneration++;
+        _navigation.Complete(visit); Changed?.Invoke(); return Task.CompletedTask;
+    }
+    public void SetNavigationQuery(string query) => _navigation.SetQuery(query);
+    public void SetNavigationScope(NativeNavigationDirectoryScope scope) => _navigation.SetDirectoryScope(scope);
+    public void SetNavigationInteraction(bool interacting) => _navigation.SetInteraction(interacting);
+    public void RememberViewport(NativeNavigationVisit visit, NativeScrollAnchor anchor) => _navigation.SaveAnchor(visit, anchor);
+    public async Task LoadOlderAsync(string channel, long viewGeneration, string expectedUser, string expectedStamp, NativeNavigationVisit visit)
+    {
+        if (!_historyMode || channel != "channel-a" || viewGeneration != _historyGeneration || !_navigation.IsCurrent(visit) ||
+            Authentication.UserId != expectedUser || Authentication.SessionStamp != expectedStamp || _loadingOlder || _historyStart <= 1) return;
+        _loadingOlder = true; Changed?.Invoke();
+        await Task.Delay(60);
+        if (_navigation.IsCurrent(visit) && viewGeneration == _historyGeneration)
+        {
+            ulong first = _historyStart > 50 ? _historyStart - 50 : 1;
+            for (ulong sequence = first; sequence < _historyStart; sequence++) _messages.Add(HistoryMessage(channel, sequence));
+            _historyStart = first; OlderCalls++;
+        }
+        _loadingOlder = false; Changed?.Invoke();
+    }
+    public Task MarkVisibleReadAsync(string channel, long viewGeneration, IReadOnlyList<string> messageIds, string expectedUser, string expectedStamp, NativeNavigationVisit visit)
+    {
+        if (!Program.LiveWindowActive || !_navigation.IsCurrent(visit) || _selected != channel || _historyGeneration != viewGeneration ||
+            Authentication.UserId != expectedUser || Authentication.SessionStamp != expectedStamp) return Task.CompletedTask;
+        ulong highest = _messages.Where(item => item.ChannelId == channel && messageIds.Contains(item.Id)).Select(item => item.Sequence).DefaultIfEmpty(0UL).Max();
+        if (highest > _lastRead.GetValueOrDefault(channel))
+        {
+            _lastRead[channel] = highest; _readReports.Add(highest); Changed?.Invoke();
+        }
+        return Task.CompletedTask;
+    }
+    internal void PrepareHistory()
+    {
+        _historyMode = true; _messages.Clear(); _outbox.Clear(); _lastRead.Clear(); _readReports.Clear(); OlderCalls = 0;
+        _historyStart = 301; _historyGeneration++;
+        for (ulong sequence = 301; sequence <= 350; sequence++) _messages.Add(HistoryMessage("channel-a", sequence));
+        for (ulong sequence = 1; sequence <= 80; sequence++) _messages.Add(HistoryMessage("channel-b", sequence));
+        SyncNavigation();
+        _selected = "channel-a";
+        var visit = _navigation.Select(new("channel-a"));
+        if (visit is not null) _navigation.Complete(visit);
+        Changed?.Invoke();
+    }
+    private static NativeMessage HistoryMessage(string channel, ulong sequence)
+    {
+        string body = sequence % 7 == 0
+            ? "Bilete i historikken\n[[media:" + NativeMediaViewFixture.GalleryId((int)(sequence % 24)) + "|image/png|history.png]]"
+            : string.Join("\n", Enumerable.Repeat("Historisk melding " + sequence, 1 + (int)(sequence % 5)));
+        return new("history-" + channel + "-" + sequence, channel, User, "UI-prøve", body, DateTimeOffset.UtcNow.AddMinutes(-(long)(350 - Math.Min(350UL, sequence))), sequence);
+    }
+    internal void ExpandMessage(string id)
+    {
+        int index = _messages.FindIndex(item => item.Id == id);
+        if (index >= 0) _messages[index] = _messages[index] with { Body = _messages[index].Body + "\n" + string.Join("\n", Enumerable.Repeat("Meir innhald før leseposisjonen", 40)) };
+        Changed?.Invoke();
+    }
     public void Edit(string channel, string body) { var old = _drafts[channel]; _drafts[channel] = new(body, old.Revision+1, old.Revision+1); Changed?.Invoke(); }
     public Task SendAsync(string channel)
     {
@@ -86,6 +177,19 @@ internal static class LiveUiProbe
             await Until(() => root.ActualWidth > 500);
             var input = Find<TextBox>(root,"live-composer"); input.Text = "Eit utkast i første kanal";
             await Until(() => Program.Live!.Workspace!.Drafts["channel-a"].Body == input.Text);
+            var search = Find<TextBox>(root, "live-navigation-search");
+            search.Text = "Idear";
+            await Until(() => Program.Live!.Capture().Navigation is { Query: "Idear", Channels.Count: 3 } filtered &&
+                filtered.Groups.SelectMany(group => group.Channels).Select(item => item.Id).SequenceEqual(["channel-b"]));
+            if (Program.Live!.Chat.SelectedChannel != "channel-a" || Program.Live.Workspace!.Drafts["channel-a"].Body != "Eit utkast i første kanal")
+                throw new InvalidOperationException("Navigation search changed the selected conversation or its draft.");
+            _ = Find<Button>(root, "live-channel-channel-b");
+            search.Text = "";
+            Program.Live.SetNavigationScope(NativeNavigationDirectoryScope.Direct);
+            await Until(() => Program.Live.Capture().Navigation?.DirectoryScope == NativeNavigationDirectoryScope.Direct &&
+                Find<Button>(root, "live-channel-channel-dm").IsLoaded);
+            Program.Live.SetNavigationScope(NativeNavigationDirectoryScope.Circles);
+            await Until(() => Find<Button>(root, "live-channel-channel-a").IsLoaded);
             await Program.Live!.SelectAsync("channel-b");
             await Until(() => Find<TextBox>(root,"live-composer").Text == "");
             Find<TextBox>(root,"live-composer").Text = "Eit anna utkast";
@@ -188,9 +292,11 @@ internal static class LiveUiProbe
             await Until(() => Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)).Source is not null);
             root.UpdateLayout();
             CheckImage(Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)),.5,Math.Min(320,root.ActualWidth-32));
+            await LiveTimelineUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await Program.PrepareShutdownAsync();
             File.WriteAllText(Path.Combine(folder,"live-ui-result.json"),JsonSerializer.Serialize(new
             {passed=true,scope="live_chat_view_fixture",actualWinUi=true,channelDrafts=true,sendBinding=true,compactComposer=true,circleGroups=true,decodedMediaPreview=true,boundedPreviewLeases=true,viewportPreviewGallery=24,viewportRelease=true,stablePreviewGeometry=true,rapidPreviewReentry=true,portraitAndLandscape=true,originalAspectRatio=true,responsivePreviewWidth=true,macroCard=true,temporaryOriginalCleanup=true,
+                timelinePaging=true,stableMessageAnchor=true,visibleReadOnly=true,navigationSearch=true,navigationDirectoryScopes=true,navigationBackForward=true,independentNavigationDrafts=true,variableHeightAnchor=true,
                 productionAuthentication=false,actualTransport=false,storageAcceptance=false}));
             Program.CloseAfterShutdown(window);
         }

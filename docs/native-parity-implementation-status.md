@@ -1,12 +1,13 @@
 # Framdrift for native funksjonsparitet
 
-Oppdatert 3. november 2026. Første fundamentpulje er implementert og prøvd
-lokalt i `S:/Source/sproyt-native-parity`, på `codex/native-parity-foundation`
-frå Canary-baseline `142f71888cdde11dec42a698432530e208f577bb`.
-Tre arbeidarar leverte separate transport-, HTTP- og lagerendringar medan
-integratoren kopla dei saman og køyrde Windows-prøvene.
+Oppdatert 4. november 2026. Fundamentpulja ligg i PR #330 på
+`codex/native-parity-foundation` (`96425c1`), frå Canary-baseline
+`142f71888cdde11dec42a698432530e208f577bb`. Andre pulje er integrert i
+`S:/Source/sproyt-native-daily`, på `codex/native-history-navigation` oppå
+fundamentet. Tre arbeidarar leverte retry-, historikk- og navigasjonsdelane
+medan integratoren kopla dei saman og køyrde Windows-prøvene.
 
-Dette er grunnlaget for neste UI-pulje. Trådar, reaksjonar, opplasting,
+Trådar, reaksjonar, opplasting,
 innboks og dei andre uferdige brukarflatene står framleis att i
 [funksjonsmatrisa](native-canary-parity-matrix.md).
 Sjå [Astra-planen](native-canary-parity-plan.md) for vidare rekkjefølgje og
@@ -52,9 +53,37 @@ Prøvene bruker syntetiske kontoar og testprofilar. Første pulje er ikkje
 rulla ut, og det er ikkje posta meldingar til Canary eller endra brukaren
 sin aktive native-profil.
 
-Hosted x64-CI, PostgreSQL, fysisk IME/touch/skjermlesar og ekte sending med
-to brukarar mot den aktuelle Canary-kandidaten har eigne attståande portar.
-Ei WinUI-fixture blir ikkje brukt som bevis for desse.
+Fundamentet har grøn hosted x64-/Linux-CI og PostgreSQL-regresjon
+([native](https://github.com/hbjoroy/sproyt/actions/runs/41716737542),
+[hovud-CI](https://github.com/hbjoroy/sproyt/actions/runs/41716737849)).
+Dette kvitterer ikkje andre pulje. Fysisk IME/touch/skjermlesar og ekte
+sending med to brukarar mot den aktuelle Canary-kandidaten har eigne
+attståande portar. Ei WinUI-fixture blir ikkje brukt som bevis for desse.
+
+## Andre implementerte snitt: dagleg samtalebruk
+
+| Del | Implementert | Avgrensing |
+| --- | --- | --- |
+| PAR-011 retry/backoff | Monoton, avgrensa venting på 2–60 sekund per request-ID; separat lagringsretry; éin oppvekkjartimer. Manuell retry har minst eitt sekund mellom forsøk. Aktivering av vindauget er ikkje manuell retry. Mottatt ACK/avslag blir ferdiglagra utan ny nettverkssending. | Den eksisterande køgrensa på åtte meldingar gjeld framleis. Dette er ikkje full offlinesynkronisering. |
+| P10a / PAR-001–002 | Eiga navigasjonseigar og native-vising med søk, krets-/DM-faner, serverbasert DM-rangering, ulestindikator og tilbake/fram. Separate kanalutkast og meldings-/pikselanker blir bevarte. Besøk, konto og øktfamilie gjerder forseinka arbeid. | Favorittkretsar, OS-lenkjer/kaldstart og trådmål står att. Historikk er avgrensa i minnet; berre fanepreferansen blir lagra per konto. |
+| P11a / PAR-004–005 | Eldre rothistorikk i sider på 50 rå rader, også gjennom sider med berre trådsvar. UI bevarer faktisk synleg melding og pikselposisjon ved prepend og høgdeendringar. Lesing blir sendt for målte synlege røter og vist som stadfesta først etter korrekt serverkvittering. | Maks 2000 lasta rotmeldingar med synleg kapasitetsstatus. Ingen full lokal historikklagring, trådlesing eller fabrikkerte ulesttal. |
+
+Transporten sperrar gamle historikksvar etter disconnect, kontobyte og nye
+visingar. Bakgrunnsreparasjon kan ikkje byte tilbake til ein tidlegare kanal.
+Lesing er stoppa under gjenoppretting av anker, skjult samtaleflate og inaktivt
+vindauge. Gamle tilgangsavslag kan ikkje rydde ei nyare vising.
+
+Dei integrerte headless-prøvene dekkjer backoff/timer med styrt tid,
+historikk-/lesekommandoar over ekte lokal WebSocket og navigasjon med
+kontobyte, tilgangstap og forseinka operasjonar. Windows ARM64-prøva køyrer
+det faktiske native kontrolltreet: søk/faner, tilbake/fram, separate utkast,
+virtualisert prepend, synleg-lesing, inaktivt vindauge og endra radhøgd.
+Ankerprøva måler faktisk meldings-ID, Y-posisjon og rulleposisjon innan 2 DIP.
+Ho injiserer ikkje fysisk input og er ikkje live Canary-aksept.
+
+Sjå [kvitteringa for andre pulje](evidence/native-history-navigation-2026-11-04.json)
+for kjeldehashar og artefaktar. P10 og P11 er framleis delvis leverte;
+funksjonsmatrisa si baseline er bevart.
 
 ## Lager og tilbakeføring
 
@@ -67,10 +96,10 @@ lokal schemaversjon før ein ekte pilotprofil blir oppgradert.
 
 ## Neste UI-pulje
 
-1. Navigasjon som eigen modul: søk, krets-/DM-oversyn, prioritering og presise
-   navigasjonsmål med bevart utkast og leseposisjon.
-2. Samtale: eldre historikk og lesemarkørar, deretter trådar, reaksjonar og
-   rediger/slett med same leverings- og kontogjerde.
+1. Samtale: trådar, reaksjonar og rediger/slett med same leverings-, besøks-
+   og kontogjerde.
+2. Navigasjon: favorittar, meldings-/trådlenkjer frå eksterne flater og
+   innboksintegrasjon med bevart utkast og leseposisjon.
 3. Innhald: trygg rik tekst og delte renderer-/handlingskontraktar for media,
    invitasjonar, agentkort og arbeidskort.
 

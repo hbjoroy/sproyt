@@ -393,6 +393,13 @@ internal sealed class NativeAuthSession : IDisposable
     private static string Stamp(long lifecycle, Grant grant) => lifecycle.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + grant.Family + ":" + grant.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
     // Admission holds the owner gate only while a caller selects/starts work;
     // callers must return an asynchronous operation and await it outside the gate.
+    // Apply credential-free projections while the captured account/lifecycle
+    // is still current. The callback must not await or start network work.
+    internal T ProjectSnapshot<T>(Func<NativeAuthSnapshot, T> projection)
+    {
+        lock (gate) return projection(Snapshot);
+    }
+
     internal T AdmitTransport<T>(string expectedUserId, string expectedSessionStamp, Func<T> operation)
     {
         lock (gate)

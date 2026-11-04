@@ -144,7 +144,8 @@ public static class WorkspaceProbe
         // The server/store commit completed but its local publication was lost.
         var published = workspace.State.Outbox.Select(item => item.RequestId).ToHashSet();
         var persisted = await store.SnapshotAsync();
-        LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        var settled = LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        Check(settled.SetEquals([rejected]), "A committed reject did not retire its retry notice.");
         Check(workspace.State.Outbox.Single().State == "rejected", "Lost reject result left a pending UI row.");
         int duplicateNotifications = 0;
         void Changed() => duplicateNotifications++;
@@ -160,6 +161,10 @@ public static class WorkspaceProbe
         string acknowledged = workspace.State.Outbox.Single(item => item.RequestId != rejected).RequestId;
         await store.DeliveryAsync(acknowledged, "dispatch");
         await store.DeliveryAsync(acknowledged, "acknowledge");
+        published = workspace.State.Outbox.Select(item => item.RequestId).ToHashSet();
+        persisted = await store.SnapshotAsync();
+        settled = LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        Check(!settled.Contains(acknowledged), "Acknowledgement still awaiting forget lost its local storage retry.");
         await store.DeliveryAsync(acknowledged, "forget");
         published = workspace.State.Outbox.Select(item => item.RequestId).ToHashSet();
         persisted = await store.SnapshotAsync();
@@ -167,7 +172,8 @@ public static class WorkspaceProbe
         workspace.EditDraft(Channels[1], "Newer queued message");
         await workspace.SendAsync(Channels[1]).WaitAsync(Deadline);
         await SavedAsync(workspace);
-        LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        settled = LiveApplication.ReconcileDeliveries(workspace, published, persisted.Outbox);
+        Check(settled.SetEquals([rejected, acknowledged]), "Post-commit reconciliation resolved the wrong request's retry.");
         Check(workspace.State.Outbox.Count == 2 && workspace.State.Outbox.All(item => item.RequestId != acknowledged) &&
             workspace.State.Outbox.Any(item => item.Channel == Channels[1] && item.State == "queued"),
             "Lost forget result left a ghost or reconciliation removed a newer enqueue.");
