@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Sproyt.WindowsProbe;
 
 internal sealed class NativeProfileController(IPersonalCommands commands) : NativePersonalController
@@ -89,7 +91,7 @@ internal sealed class NativeProfileController(IPersonalCommands commands) : Nati
         {
             if (!Matches(scope) || !CanWrite) return;
             string name = _name.Trim(), text = _text.Trim(), emoji = _emoji.Trim();
-            if (!status && name.Length == 0) { _error = "Skriv eit visingsnamn før du lagrar."; operation = null; write = null!; }
+            if (Validate(status, name, text, emoji) is { } validation) { _error = validation; operation = null; write = null!; }
             else
             {
                 operation = Begin(scope, "profile-write"); if (operation is null) return;
@@ -133,5 +135,30 @@ internal sealed class NativeProfileController(IPersonalCommands commands) : Nati
         { _text = profile.StatusText; _emoji = profile.StatusEmoji; }
         _nameDirty = _name != profile.DisplayName;
         _statusDirty = _text != profile.StatusText || _emoji != profile.StatusEmoji;
+    }
+    private static string? Validate(bool status, string name, string text, string emoji)
+    {
+        if (!status)
+        {
+            if (name.Length == 0) return "Skriv eit visingsnamn før du lagrar.";
+            if (!Scalars(name, int.MaxValue)) return "Namnet inneheld ugyldig tekst.";
+            if (Encoding.UTF8.GetByteCount(name) > 120) return "Namnet er for langt. Maks 120 UTF-8-byte.";
+            return null;
+        }
+        if (text.Any(char.IsControl)) return "Statusteksten kan ikkje innehalde kontrollteikn.";
+        if (!Scalars(text, 100)) return "Statusteksten er for lang eller ugyldig. Maks 100 teikn.";
+        if (emoji.Any(char.IsControl)) return "Status-emojien kan ikkje innehalde kontrollteikn.";
+        if (!Scalars(emoji, 16)) return "Status-emojien er for lang eller ugyldig. Maks 16 teikn.";
+        return null;
+    }
+    private static bool Scalars(string value, int maximum)
+    {
+        int count = 0;
+        for (int at = 0; at < value.Length;)
+        {
+            if (!Rune.TryGetRuneAt(value, at, out var rune) || ++count > maximum) return false;
+            at += rune.Utf16SequenceLength;
+        }
+        return true;
     }
 }
