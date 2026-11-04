@@ -172,8 +172,8 @@ pub(crate) async fn upload_media(
         }
     };
     let content_type = match detected_media_type(&content, &declared_type) {
-        Some(value) => value,
-        None => {
+        Some(value) if value.starts_with("image/") || value.starts_with("video/") => value,
+        _ => {
             return (
                 axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "only supported images and videos can be uploaded",
@@ -491,13 +491,24 @@ async fn serve_authorized_media(
     }
     response.headers_mut().insert(
         axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("private, max-age=3600"),
+        HeaderValue::from_static(
+            if matches!(
+                media.content_type.as_str(),
+                "application/pdf" | "application/zip" | "text/plain" | "text/csv"
+            ) {
+                "private, no-store"
+            } else {
+                "private, max-age=3600"
+            },
+        ),
     );
     response.headers_mut().insert(
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
     );
-    if attachment {
+    if attachment
+        || !media.content_type.starts_with("image/") && !media.content_type.starts_with("video/")
+    {
         response.headers_mut().insert(
             axum::http::header::CONTENT_DISPOSITION,
             attachment_disposition(&media.original_filename, &media.id, &media.content_type),
@@ -579,6 +590,10 @@ fn byte_range(header: Option<&str>, size: u64) -> Result<Option<(u64, u64)>, ()>
 }
 
 fn attachment_disposition(filename: &str, id: &MediaId, content_type: &str) -> HeaderValue {
+    let document = matches!(
+        content_type,
+        "application/pdf" | "application/zip" | "text/plain" | "text/csv"
+    );
     let extension = match content_type {
         "image/jpeg" => "jpg",
         "image/png" => "png",
@@ -586,6 +601,10 @@ fn attachment_disposition(filename: &str, id: &MediaId, content_type: &str) -> H
         "image/webp" => "webp",
         "image/avif" => "avif",
         "image/heic" => "heic",
+        "application/pdf" => "pdf",
+        "application/zip" => "zip",
+        "text/plain" => "txt",
+        "text/csv" => "csv",
         _ => "bin",
     };
     let fallback = format!("sproyt-media-{id}.{extension}");
@@ -597,9 +616,45 @@ fn attachment_disposition(filename: &str, id: &MediaId, content_type: &str) -> H
         .filter(|c| !c.is_control())
         .take(180)
         .collect::<String>();
-    let cleaned = cleaned.trim();
-    let name = if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
-        &fallback
+    let cleaned = if document {
+        cleaned
+            .chars()
+            .filter(|ch| !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
+            .map(|ch| {
+                if matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
+                    '_'
+                } else {
+                    ch
+                }
+            })
+            .collect::<String>()
+    } else {
+        cleaned
+    };
+    let cleaned = if document {
+        cleaned.trim_matches([' ', '.'])
+    } else {
+        cleaned.trim()
+    };
+    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = document
+        && (matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || stem
+                .strip_prefix("COM")
+                .or_else(|| stem.strip_prefix("LPT"))
+                .is_some_and(|suffix| {
+                    matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+                }));
+    let safe_document_name;
+    let name = if cleaned.is_empty() || cleaned == "." || cleaned == ".." || reserved {
+        fallback.as_str()
+    } else if document
+        && !cleaned
+            .rsplit_once('.')
+            .is_some_and(|(_, suffix)| suffix.eq_ignore_ascii_case(extension))
+    {
+        safe_document_name = format!("{cleaned}.{extension}");
+        safe_document_name.as_str()
     } else {
         cleaned
     };
@@ -657,6 +712,22 @@ pub(crate) async fn download_media_preview(
             return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
         }
     };
+    // Uploaded documents are download-only, including the preview alias.
+    // Do not let a legacy fallback stream PDF/text/archive bytes inline.
+    let metadata = match state
+        .chat
+        .media_metadata(principal.user.id.clone(), media_id)
+        .await
+    {
+        Ok(value) => value,
+        Err(error) => return chat_error_response(error),
+    };
+    if matches!(
+        metadata.content_type.as_str(),
+        "application/pdf" | "application/zip" | "text/plain" | "text/csv"
+    ) {
+        return axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    }
     match state
         .chat
         .load_media_preview(principal.user.id.clone(), media_id)
@@ -758,6 +829,18 @@ pub(crate) fn detected_media_type(content: &[u8], declared: &str) -> Option<Stri
         } else {
             "video/x-matroska"
         })
+    } else if content.starts_with(b"%PDF-")
+        && content.get(5).is_some_and(u8::is_ascii_digit)
+        && content.get(6) == Some(&b'.')
+        && content.get(7).is_some_and(u8::is_ascii_digit)
+    {
+        Some("application/pdf")
+    } else if content.starts_with(b"PK\x03\x04") || content.starts_with(b"PK\x05\x06") {
+        Some("application/zip")
+    } else if matches!(declared, "text/plain" | "text/csv") {
+        // Full UTF-8/control-character validation is streamed by MediaStore;
+        // never guess text from an octet-stream or accept uploaded HTML/SVG.
+        Some(declared)
     } else {
         None
     };

@@ -46,6 +46,12 @@ function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: 
   id: string; contentType: string; name: string; onOpen?: () => void; fullResolution?: boolean;
 }) {
   const isVideo = contentType.startsWith("video/");
+  if (!isVideo && !contentType.startsWith("image/")) return <figure className="sp-media-figure">
+    <figcaption><span title={name}>{name}</span>
+      <a href={mediaUrl(id, "/download")} download target="_blank" rel="noopener noreferrer"
+        aria-label={`Last ned ${name}`}>Last ned vedlegget</a>
+    </figcaption>
+  </figure>;
   return <figure className="sp-media-figure">
     {isVideo
       ? <video src={mediaUrl(id)} controls preload="metadata" aria-label={name} />
