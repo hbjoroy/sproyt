@@ -31,11 +31,11 @@ internal sealed class NativePreviewLease(byte[] bytes, Action releasePipeline, A
     }
 }
 
-internal sealed class NativeMediaFile(string path, string contentType) : IDisposable
+internal sealed class NativeMediaFile(string path, string contentType, Action<string> release) : IDisposable
 {
     internal string Path { get; } = path;
     internal string ContentType { get; } = contentType;
-    public void Dispose() { try { File.Delete(Path); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+    public void Dispose() => release(Path);
 }
 
 // Previews are bounded in memory. Originals are fetched only after an explicit
@@ -46,10 +46,15 @@ internal sealed class NativeMediaLibrary : IDisposable
     private readonly NativeAuthSession _owner;
     private readonly string _folder;
     private readonly SemaphoreSlim _previews = new(2, 2), _previewSlots = new(8, 8), _originals = new(1, 1);
-    private CancellationTokenSource _scopeCancellation = new();
-    private NativeMediaScope? _scope;
+    private sealed class Family(NativeMediaScope scope)
+    {
+        internal NativeMediaScope Scope { get; } = scope;
+        internal CancellationTokenSource Cancellation { get; } = new();
+        internal HashSet<string> Files { get; } = [];
+    }
+    private Family? _family;
     private readonly object _gate = new();
-    private bool _disposed;
+    private volatile bool _disposed;
     internal event Action? Invalidated;
     internal event Action? PreviewSlotAvailable;
     internal bool HasPreviewCapacity => _previewSlots.CurrentCount > 0;
@@ -80,27 +85,68 @@ internal sealed class NativeMediaLibrary : IDisposable
     internal bool Current(NativeMediaScope scope) => !_disposed && _owner.MediaScopeCurrent(scope);
     private CancellationTokenSource Link(NativeMediaScope scope, CancellationToken cancellation)
     {
-        if (!Current(scope)) throw new OperationCanceledException();
-        lock (_gate)
+        Family? retired = null;
+        var linked = _owner.ProjectSnapshot(_ =>
         {
-            if (_disposed) throw new OperationCanceledException();
-            _scope ??= scope;
-            if (_scope != scope) throw new OperationCanceledException();
-            return CancellationTokenSource.CreateLinkedTokenSource(cancellation, _scopeCancellation.Token);
-        }
+            // Bind the cancellation source in the same auth admission as the
+            // family check. Logout cannot run between those two operations.
+            if (!Current(scope)) throw new OperationCanceledException();
+            lock (_gate)
+            {
+                if (_disposed) throw new OperationCanceledException();
+                if (_family?.Scope != scope)
+                {
+                    retired = _family;
+                    _family = new(scope);
+                }
+                return CancellationTokenSource.CreateLinkedTokenSource(cancellation, _family.Cancellation.Token);
+            }
+        });
+        if (retired is not null) Retire(retired);
+        return linked;
     }
     private void OwnerChanged()
     {
-        NativeMediaScope? captured;
-        lock (_gate) captured = _scope;
-        if (captured is null || Current(captured)) return;
-        lock (_gate)
+        var retired = _owner.ProjectSnapshot(_ =>
         {
-            if (_scope != captured) return;
-            _scopeCancellation.Cancel(); _scopeCancellation.Dispose(); _scopeCancellation = new(); _scope = null;
+            lock (_gate)
+            {
+                var family = _family;
+                if (family is null || _owner.MediaScopeCurrent(family.Scope)) return null;
+                _family = null;
+                return family;
+            }
+        });
+        if (retired is not null) Retire(retired);
+    }
+    private void Retire(Family family)
+    {
+        // Once detached, the family's file set is immutable. A subscriber may
+        // open a newer family's original during this callback.
+        try { family.Cancellation.Cancel(); }
+        catch (AggregateException) { /* A failed cancellation observer cannot veto retirement. */ }
+        finally
+        {
+            family.Cancellation.Dispose();
+            try { Invalidated?.Invoke(); } catch { }
+            foreach (string path in family.Files) DeleteFile(path);
         }
-        try { Invalidated?.Invoke(); } catch { }
-        CleanFiles();
+    }
+    private static bool DeleteFile(string path)
+    {
+        try { File.Delete(path); return true; }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+    private void ReleaseFile(string path)
+    {
+        if (!DeleteFile(path)) return;
+        lock (_gate) _family?.Files.Remove(path);
+        if (_disposed) RemoveEmptyFolder();
+    }
+    private void RemoveEmptyFolder()
+    {
+        try { Directory.Delete(_folder); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
     internal async Task<NativePreviewLease> PreviewAsync(string id, NativeMediaScope scope, CancellationToken cancellation)
     {
@@ -135,7 +181,15 @@ internal sealed class NativeMediaLibrary : IDisposable
         string file = System.IO.Path.Combine(_folder, Guid.NewGuid().ToString("N"));
         try
         {
-            long used = Directory.GetFiles(_folder).Sum(path => new FileInfo(path).Length);
+            lock (_gate)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                if (_disposed || _family?.Scope != scope) throw new OperationCanceledException();
+                _family.Files.Add(file);
+            }
+            long used = 0;
+            foreach (var existing in new DirectoryInfo(_folder).EnumerateFiles())
+                if (existing.Exists) used += existing.Length;
             using var response = await _owner.ReadMediaAsync(id, false, scope, linked.Token); response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength is long length && length > MaxFileBytes - used) throw new IOException("Ikkje plass i det mellombelse medielageret. Lukk førre vedlegg først.");
             string type = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
@@ -155,16 +209,24 @@ internal sealed class NativeMediaLibrary : IDisposable
                 }
             }
             if (!Current(scope)) throw new OperationCanceledException();
-            return new(file, type);
+            return new(file, type, ReleaseFile);
         }
-        catch { try { File.Delete(file); } catch (IOException) { } throw; }
+        catch { ReleaseFile(file); throw; }
         finally { _originals.Release(); }
     }
-    private void CleanFiles() { foreach (string file in Directory.GetFiles(_folder)) try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
     public void Dispose()
     {
-        lock (_gate) { if (_disposed) return; _disposed = true; _scopeCancellation.Cancel(); }
-        _owner.Changed -= OwnerChanged; try { Invalidated?.Invoke(); } catch { } CleanFiles();
-        try { Directory.Delete(_folder); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        Family? retired;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            retired = _family;
+            _family = null;
+        }
+        _owner.Changed -= OwnerChanged;
+        if (retired is not null) Retire(retired);
+        else { try { Invalidated?.Invoke(); } catch { } }
+        RemoveEmptyFolder();
     }
 }
