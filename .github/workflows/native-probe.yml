@@ -265,6 +265,26 @@ jobs:
         shell: pwsh
         working-directory: native/probes/file-drop-contracts
         run: dotnet run --project FileDropContracts.csproj --artifacts-path '${{ runner.temp }}/native-file-drop-contracts/build' -- '${{ runner.temp }}/native-file-drop-contracts/receipt.json'
+      - name: Check typed personal WebSocket commands
+        shell: pwsh
+        working-directory: native/probes/personal-wire-contracts
+        run: dotnet run --project PersonalWireContracts.csproj --artifacts-path '${{ runner.temp }}/native-personal-wire/build' -- '${{ runner.temp }}/native-personal-wire/tests'
+      - name: Check personal surface visit ownership
+        shell: pwsh
+        working-directory: native/probes/personal-surface-contracts
+        run: dotnet run --project PersonalSurfaceContracts.csproj --artifacts-path '${{ runner.temp }}/native-personal-surface/build' -- '${{ runner.temp }}/native-personal-surface/tests'
+      - name: Check covered conversation admission
+        shell: pwsh
+        working-directory: native/probes/personal-cover-contracts
+        run: dotnet run --project PersonalCoverContracts.csproj --artifacts-path '${{ runner.temp }}/native-personal-cover/build' -- '${{ runner.temp }}/native-personal-cover/tests'
+      - name: Check people and own profile controllers
+        shell: pwsh
+        working-directory: native/probes/people-contracts
+        run: dotnet run --project PeopleContracts.csproj --artifacts-path '${{ runner.temp }}/native-people/build' -- '${{ runner.temp }}/native-people/tests'
+      - name: Check inbox ownership and acknowledgements
+        shell: pwsh
+        working-directory: native/probes/inbox-contracts
+        run: dotnet run --project InboxContracts.csproj --artifacts-path '${{ runner.temp }}/native-inbox/build' -- '${{ runner.temp }}/native-inbox/receipt.json'
       - name: Preserve non-secret fixture receipts
         if: success()
         uses: actions/upload-artifact@v6
@@ -285,6 +305,11 @@ jobs:
             ${{ runner.temp }}/native-image-viewport-contracts/tests/**/receipt.json
             ${{ runner.temp }}/native-media-lifecycle-contracts/tests/**/receipt.json
             ${{ runner.temp }}/native-file-drop-contracts/receipt.json
+            ${{ runner.temp }}/native-personal-wire/tests/**/receipt.json
+            ${{ runner.temp }}/native-personal-surface/tests/**/receipt.json
+            ${{ runner.temp }}/native-personal-cover/tests/**/receipt.json
+            ${{ runner.temp }}/native-people/tests/**/receipt.json
+            ${{ runner.temp }}/native-inbox/receipt.json
 
   kotlin-binding:
     runs-on: ubuntu-latest

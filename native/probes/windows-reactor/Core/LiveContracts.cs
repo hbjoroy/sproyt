@@ -18,6 +18,9 @@ internal interface ILiveApplication : IAsyncDisposable
     NativeChatSnapshot Chat { get; }
     WorkspaceSnapshot? Workspace { get; }
     NativeMediaLibrary? Media { get; }
+    IPersonalCommands PersonalCommands { get; }
+    void CoverConversation(NativePersonalScope scope);
+    void UncoverConversation(NativePersonalScope expectedScope);
     LiveSnapshot Capture();
     Task LoginAsync();
     Task LogoutAsync();

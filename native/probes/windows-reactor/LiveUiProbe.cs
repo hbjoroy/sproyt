@@ -18,6 +18,19 @@ internal sealed class LiveUiFixture : ILiveApplication
     private readonly List<NativeMessage> _messages = [];
     private readonly List<QueuedMessage> _outbox = [];
     private readonly List<NativeUploadJob> _uploadJobs = [];
+    private readonly List<NativeChannel> _personalChannels = [];
+    private NativePersonalUiFixtureCommands? _personalCommands;
+    private NativePersonalScope? _personalCover;
+    internal NativePersonalUiFixtureCommands PersonalForProbe => _personalCommands ??= new(() => Authentication, () => Channels, AddPersonalChannel, () => _messages.ToArray());
+    public IPersonalCommands PersonalCommands => PersonalForProbe;
+    public void CoverConversation(NativePersonalScope scope) { if (scope.UserId == Authentication.UserId && scope.SessionStamp == Authentication.SessionStamp) _personalCover = scope; }
+    public void UncoverConversation(NativePersonalScope scope) { if (_personalCover == scope) _personalCover = null; }
+    internal bool ConversationCoveredForProbe => _personalCover is { } scope && scope.UserId == Authentication.UserId && scope.SessionStamp == Authentication.SessionStamp;
+    private void AddPersonalChannel(NativeChannel channel)
+    {
+        if (Channels.Any(existing => existing.Id == channel.Id)) return;
+        _personalChannels.Add(channel); _drafts[channel.Id] = new("", 0, 0); SyncNavigation(); Changed?.Invoke();
+    }
     internal bool HoldNextUpload { get; set; }
     internal bool FailNextUpload { get; set; }
     internal int? MaximumFilesForNextAdmission { get; set; }
@@ -61,7 +74,7 @@ internal sealed class LiveUiFixture : ILiveApplication
     private IReadOnlyList<NativeChannel> Channels =>
         [new("channel-a", "Prat", "UI-prøve", "fixture-circle", LastReadSequence: _lastRead.GetValueOrDefault("channel-a"), LatestSequence: _messages.Where(item => item.ChannelId == "channel-a").Select(item => item.Sequence).DefaultIfEmpty(0UL).Max()),
          new("channel-b", "Idear", "UI-prøve", "fixture-circle", LastReadSequence: _lastRead.GetValueOrDefault("channel-b"), LatestSequence: _messages.Where(item => item.ChannelId == "channel-b").Select(item => item.Sequence).DefaultIfEmpty(0UL).Max()),
-         new("channel-dm", "Testven", Kind: "direct", IsDirect: true)];
+         new("channel-dm", "Testven", Kind: "direct", IsDirect: true), .._personalChannels];
     public NativeChatSnapshot Chat => new(true, false, null, Channels, _selected,
         _messages.Where(message => message.ChannelId == _selected && message.ParentMessageId is null).OrderBy(item => item.Sequence).ToArray(), User,
         new(_selected, _historyGeneration, _loadingOlder, _historyMode && _selected == "channel-a" && _historyStart > 1,
@@ -189,7 +202,7 @@ internal sealed class LiveUiFixture : ILiveApplication
     private bool ScopeCurrent(NativeMessageActionScope scope)
     {
         var visit = _navigation.Capture().Current; var thread = _threads.Capture().Visit;
-        return Authentication.UserId == scope.UserId && Authentication.SessionStamp == scope.SessionStamp &&
+        return !ConversationCoveredForProbe && Authentication.UserId == scope.UserId && Authentication.SessionStamp == scope.SessionStamp &&
             _selected == scope.ChannelId && visit?.Generation == scope.ChannelVisit &&
             (scope.ThreadRootId is null ? visit.Target.ThreadId is null && thread is null :
                 visit.Target.ThreadId == scope.ThreadRootId && thread?.RootMessageId == scope.ThreadRootId && thread.Generation == scope.ThreadVisit);
@@ -563,6 +576,7 @@ internal static class LiveUiProbe
             await LiveTimelineUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await LiveConversationUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await LiveContentUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
+            await LivePersonalUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await NativeMediaInteractionUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await Program.PrepareShutdownAsync();
             File.WriteAllText(Path.Combine(folder,"live-ui-result.json"),JsonSerializer.Serialize(new

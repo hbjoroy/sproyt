@@ -11,7 +11,7 @@ using static Microsoft.UI.Reactor.Factories;
 namespace Sproyt.WindowsProbe;
 
 // Uses real server projections. No demo channels or manufactured chat history.
-internal sealed class LiveChatComponent : Component
+internal sealed partial class LiveChatComponent : Component
 {
     internal static Func<Task>? SendForProbe;
     internal static Func<string, Task>? DiscardForProbe;
@@ -70,7 +70,10 @@ internal sealed class LiveChatComponent : Component
                 _rootDropContext = _threadDropContext = null;
                 foreach (var binding in _dropBindings.Values) binding.Dispose();
                 _dropBindings.Clear(); _rootDropBinding = _threadDropBinding = null;
-                RootDropForProbe = ThreadDropForProbe = null; };
+                RootDropForProbe = ThreadDropForProbe = null;
+                if (_personalSurface.Scope is { } personal) _personalApp?.UncoverConversation(personal);
+                _personalSurface.Close(); RetirePersonalControllers();
+                OpenPersonalForProbe = null; ClosePersonalForProbe = null; PersonalScopeForProbe = null; };
         }, app is null ? "starting" : "ready");
         if (app is null)
         {
@@ -84,6 +87,7 @@ internal sealed class LiveChatComponent : Component
                 .OnMount(element => PilotComponent.RootForClose = element).AutomationId("live-startup");
         }
         var state = app.Capture(); var auth = state.Authentication; var chat = state.Chat;
+        SynchronizePersonal(app, state, () => invalidate(Interlocked.Increment(ref _revision)));
         var navigation = state.Navigation;
         var threads = state.Threads;
         bool threadDetail = threads?.DetailOpen == true, threadDirectory = threads?.DirectoryOpen == true;
@@ -104,6 +108,7 @@ internal sealed class LiveChatComponent : Component
             ? (loadedThread.Root is { } parent ? new[] { parent } : Array.Empty<NativeMessage>()).Concat(loadedThread.Replies).ToArray() : [];
         _rootActions.Bind(rootScope); if (rootScope is not null) _rootActions.Observe(rootScope, rows);
         _threadActions.Bind(threadScope); if (threadScope is not null) _threadActions.Observe(threadScope, threadRows);
+        _rootActions.SetCovered(PersonalOpen); _threadActions.SetCovered(PersonalOpen);
         var messageCommands = new NativeMessageActionCommands(app.ExecuteMessageMutationAsync, app.ReadBackMessageMutationAsync);
         string? family = auth.SessionStamp is { } currentStamp && currentStamp.LastIndexOf(':') > 0 ? currentStamp[..currentStamp.LastIndexOf(':')] : null;
         _rawMessages.Bind(auth.UserId, family);
@@ -123,12 +128,12 @@ internal sealed class LiveChatComponent : Component
             if (error is null) setShowUploads(true);
             invalidate(Interlocked.Increment(ref _revision));
         }
-        bool DropEnabled(NativeMessageActionScope? scope) => scope is not null && state.Uploads is not null && chat.Connected &&
+        bool DropEnabled(NativeMessageActionScope? scope) => !PersonalOpen && scope is not null && state.Uploads is not null && chat.Connected &&
             auth.Phase == NativeAuthPhase.Active && !Program.CloseAdmissionClosed && !_uploadChoosing && navigation is { Pending: false, Error: null };
         _rootDropContext = DropEnabled(rootScope) ? new(app, rootScope!, ReportUploadIssue) : null;
         _threadDropContext = DropEnabled(threadScope) ? new(app, threadScope!, ReportUploadIssue) : null;
         bool UploadBlocked(string targetChannel, string? parent) => NativeUploadPresentation.BlocksSend(state.Uploads, auth.UserId, family, targetChannel, parent);
-        bool canSend = !state.ConfirmPendingSends && navigation is { Pending: false, Error: null } && chat.SelectedChannel == channel && draft is not null && !string.IsNullOrWhiteSpace(draft.Body) && Encoding.UTF8.GetByteCount(draft.Body) <= 1024 &&
+        bool canSend = !PersonalOpen && !state.ConfirmPendingSends && navigation is { Pending: false, Error: null } && chat.SelectedChannel == channel && draft is not null && !string.IsNullOrWhiteSpace(draft.Body) && Encoding.UTF8.GetByteCount(draft.Body) <= 1024 &&
             NativeRichText.AttachmentSuffixVisible(draft.Body, draft.Attachments) && channel is not null && !UploadBlocked(channel, null) &&
             !Program.CloseAdmissionClosed && state.Workspace is { Ready: true, Closing: false, Sending: false, NeedsRetry: false } &&
             state.Workspace.Outbox.Count < 8 && auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline;
@@ -138,7 +143,7 @@ internal sealed class LiveChatComponent : Component
         async void Retry() { if (!Program.CloseAdmissionClosed) await app.ResumeAsync(); }
         async Task ChooseUpload(NativeMessageActionScope captured, bool paste)
         {
-            if (_uploadChoosing || Program.CloseAdmissionClosed) return;
+            if (PersonalOpen || _uploadChoosing || Program.CloseAdmissionClosed) return;
             _uploadChoosing = true;
             invalidate(Interlocked.Increment(ref _revision));
             try
@@ -224,22 +229,26 @@ internal sealed class LiveChatComponent : Component
         async Task Navigate(NativeNavigationTarget target)
         {
             if (!CurrentNavigationRender()) return;
+            _personalReturn = null; _personalNavigationSerial++;
             RememberViewport(); setShowList(false); await app.NavigateAsync(target);
         }
         async Task Back()
         {
             if (!CurrentNavigationRender()) return;
+            if (await ReturnPersonalAsync(app)) return;
+            _personalReturn = null; _personalNavigationSerial++;
             RememberViewport(); setShowList(false); await app.BackAsync();
         }
         async Task Forward()
         {
             if (!CurrentNavigationRender()) return;
+            _personalReturn = null; _personalNavigationSerial++;
             RememberViewport(); setShowList(false); await app.ForwardAsync();
         }
         bool CurrentNavigationRender()
         {
             var latest = app.Capture();
-            return !Program.CloseAdmissionClosed && latest.Authentication.UserId == auth.UserId && latest.Authentication.SessionStamp == auth.SessionStamp &&
+            return !PersonalOpen && !Program.CloseAdmissionClosed && latest.Authentication.UserId == auth.UserId && latest.Authentication.SessionStamp == auth.SessionStamp &&
                 latest.Navigation?.Current?.Generation == navigation?.Current?.Generation;
         }
         async Task LoadOlder()
@@ -290,7 +299,7 @@ internal sealed class LiveChatComponent : Component
         async Task SendCurrent()
         {
             var latest = app.Capture();
-            if (channel is null || latest.Chat.SelectedChannel != channel || !latest.ShowConversation || Program.CloseAdmissionClosed ||
+            if (PersonalOpen || channel is null || latest.Chat.SelectedChannel != channel || !latest.ShowConversation || Program.CloseAdmissionClosed ||
                 latest.ConfirmPendingSends || latest.Navigation is not { Pending: false, Error: null } || latest.Workspace is not { Ready: true, Closing: false, Sending: false, NeedsRetry: false } ||
                 !latest.Workspace.Drafts.TryGetValue(channel, out var text) || string.IsNullOrWhiteSpace(text.Body) ||
                 Encoding.UTF8.GetByteCount(text.Body) > 1024 || latest.Workspace.Outbox.Count >= 8 ||
@@ -305,7 +314,7 @@ internal sealed class LiveChatComponent : Component
         if (Program.LiveUiProbeDirectory is not null) SendForProbe = SendCurrent;
         async Task DiscardRejected(string requestId)
         {
-            if (Program.CloseAdmissionClosed || _discardDialog is not null || auth.UserId is not string user ||
+            if (PersonalOpen || Program.CloseAdmissionClosed || _discardDialog is not null || auth.UserId is not string user ||
                 auth.SessionStamp is not string stamp || PilotComponent.RootForClose?.XamlRoot is not { } root) return;
             bool SameAccount() => app.Authentication.UserId == user && app.Authentication.SessionStamp == stamp && !Program.CloseAdmissionClosed;
             var dialog = new ContentDialog { XamlRoot = root, Title = "Fjerne den avviste meldinga?",
@@ -337,19 +346,19 @@ internal sealed class LiveChatComponent : Component
             _ => "○ Logga ut",
         };
         bool loginVisible = auth.Phase is NativeAuthPhase.SignedOut or NativeAuthPhase.SigningIn or NativeAuthPhase.AuthRequired;
-        var masthead = Grid([GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto], [GridSize.Auto],
+        var masthead = VStack(0, Grid([GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto], [GridSize.Auto],
             TextBlock("Sprøyt").FontSize(23).Bold().Foreground(palette.Ink).VAlign(VerticalAlignment.Center).Grid(column: 0),
-            VStack(2, TextBlock(auth.DisplayName ?? "Canary").FontSize(13).SemiBold().Foreground(palette.Ink),
+            VStack(2, TextBlock(_canonicalSelf?.DisplayName ?? auth.DisplayName ?? "Canary").AutomationId("live-personal-display-name").FontSize(13).SemiBold().Foreground(palette.Ink),
                 TextBlock(status).FontSize(12).Foreground(palette.Muted)).Margin(16, 0).Grid(column: 1),
             Button(auth.Phase == NativeAuthPhase.SigningIn ? "Avbryt" : loginVisible ? "Logg inn" : "Logg ut", () =>
                 { if (auth.Phase == NativeAuthPhase.SigningIn) Logout(); else if (loginVisible) Login(); else Logout(); })
                 .AutomationId("live-authentication").AutomationName("Innlogging og utlogging").MinHeight(44).Grid(column: 2),
             Button("◐", () => setDark(!dark)).AutomationName("Byt lyst og mørkt tema").Size(44, 44).Margin(8, 0, 0, 0).Grid(column: 3)
-        ).Padding(16, 8).Background(palette.Chrome).Grid(columnSpan: 2);
+        ).Padding(16, 8).Background(palette.Chrome), PersonalToolbar(app, state, palette)).Grid(columnSpan: 2);
 
-        var list = (navigation is not null ? NativeNavigationView.Render(navigation, palette,
+        var list = (navigation is not null ? NativeNavigationView.Render(navigation with { CanBack = navigation.CanBack || CanReturnPersonal(app) }, palette,
             new(app.SetNavigationQuery, app.SetNavigationScope, target => { _ = Navigate(target); }, () => { _ = Back(); }, () => { _ = Forward(); }, app.SetNavigationInteraction))
-            : ScrollViewer(TextBlock("Lastar samtalar …"))).Background(palette.Chrome).IsVisible(state.ShowConversation && (wide || showList))
+            : ScrollViewer(TextBlock("Lastar samtalar …"))).Background(palette.Chrome).IsVisible(!PersonalOpen && state.ShowConversation && (wide || showList))
             .Grid(row: 1, column: 0, columnSpan: wide ? 1 : 2);
 
         bool IsRejected(NativeMessage message) => message.Id.StartsWith("pending:", StringComparison.Ordinal) &&
@@ -410,7 +419,7 @@ internal sealed class LiveChatComponent : Component
             })
             .OnUnmount(_ => { _timeline?.Dispose(); _timeline = null; TimelineForProbe = null; ScrollForProbe = null; })
             .WithKey("live-history").Grid(row: 1);
-        _surfaceVisible = state.ShowConversation && (wide || !showList) && !featureOpen;
+        _surfaceVisible = !PersonalOpen && state.ShowConversation && (wide || !showList) && !featureOpen;
         var currentVisit = navigation?.Current;
         long viewGeneration = chat.History?.ViewGeneration ?? 0;
         if (currentVisit is not null && (_lastVisitGeneration != currentVisit.Generation || _lastViewGeneration != viewGeneration || (!_previousSurfaceVisible && _surfaceVisible)))
@@ -473,11 +482,11 @@ internal sealed class LiveChatComponent : Component
                         await app.ConfirmPendingSendsAsync(user, stamp); else Retry(); })
                     .AutomationId("live-delivery-retry").AutomationName("Stadfest ventande meldingar eller oppdater samband").MinHeight(44).IsVisible(notice.Length > 0 && canRetryDelivery)))
                 .Padding(12, 4).IsVisible(notice.Length > 0).Grid(row: 2), composer
-        ).IsVisible(state.ShowConversation && (wide || !showList) && !featureOpen).Grid(row: 1, column: 1);
+        ).IsVisible(!PersonalOpen && state.ShowConversation && (wide || !showList) && !featureOpen).Grid(row: 1, column: 1);
 
         async Task SendThread()
         {
-            if (threadScope is null || Program.CloseAdmissionClosed) return;
+            if (PersonalOpen || threadScope is null || Program.CloseAdmissionClosed) return;
             var latest = app.Capture(); string key = new ComposerTarget(threadScope.ChannelId, threadScope.ThreadRootId).Key;
             if (latest.Threads?.Visit?.Generation != threadScope.ThreadVisit || latest.Authentication.UserId != threadScope.UserId ||
                 latest.Authentication.SessionStamp != threadScope.SessionStamp || latest.Navigation is not { Pending: false, Error: null, Current: { } nav } ||
@@ -491,11 +500,12 @@ internal sealed class LiveChatComponent : Component
         }
         async Task CloseThread()
         {
+            if (PersonalOpen) return;
             RememberViewport(); if (threads?.Visit is { } visit) await app.CloseThreadAsync(visit);
         }
         if (Program.LiveUiProbeDirectory is not null) SendThreadForProbe = SendThread;
         Element feature = Empty();
-        _threadSurfaceVisible = threadDetail && state.ShowConversation && (wide || !showList);
+        _threadSurfaceVisible = !PersonalOpen && threadDetail && state.ShowConversation && (wide || !showList);
         if (threads?.Visit is { } featureVisit)
         {
             async void RetryThread() => await app.RetryThreadAsync(featureVisit);
@@ -509,7 +519,7 @@ internal sealed class LiveChatComponent : Component
                 var pending = (state.Workspace?.Outbox ?? []).Where(item => item.Channel == featureVisit.ChannelId && item.ParentMessageId == featureVisit.RootMessageId)
                     .Select(item => new NativeMessage("pending:" + item.RequestId, item.Channel, auth.UserId ?? "", auth.DisplayName ?? "Du", item.Body,
                         DateTimeOffset.MinValue, ulong.MaxValue, item.ParentMessageId)).ToArray();
-                bool enabled = threadScope is not null && !threads.Loading && threads.Error is null && !threads.AtCapacity && threadDraft is not null &&
+                bool enabled = !PersonalOpen && threadScope is not null && !threads.Loading && threads.Error is null && !threads.AtCapacity && threadDraft is not null &&
                     state.Workspace is { Ready: true, Closing: false } && !Program.CloseAdmissionClosed;
                 bool sendReply = enabled && !state.ConfirmPendingSends && navigation is { Pending: false, Error: null } &&
                     state.Workspace is { Sending: false, NeedsRetry: false } && state.Workspace.Outbox.Count < 8 &&
@@ -554,7 +564,7 @@ internal sealed class LiveChatComponent : Component
             }
         }
         else { _threadTimelineContext = null; _threadTimeline?.Update(null); _lastThreadVisit = _lastThreadGeneration = -1; }
-        feature = feature.IsVisible(state.ShowConversation && (wide || !showList) && featureOpen).Grid(row: 1, column: 1);
+        feature = feature.IsVisible(!PersonalOpen && state.ShowConversation && (wide || !showList) && featureOpen).Grid(row: 1, column: 1);
 
         string invitation = auth.Phase == NativeAuthPhase.SigningIn ? "Vel kontoen din i nettlesaren og stadfest innlogginga."
             : auth.Phase == NativeAuthPhase.AuthRequired ? "Logg inn igjen. Utkast og ventande meldingar ventar på deg."
@@ -564,10 +574,11 @@ internal sealed class LiveChatComponent : Component
             TextBlock(state.Error ?? "").TextWrapping().Foreground(palette.Muted),
             Button("Logg inn med Sprøyt", Login).MinHeight(44).IsVisible(loginVisible).AutomationName("Logg inn med Sprøyt")
         ).Padding(32).VAlign(VerticalAlignment.Center).IsVisible(!state.ShowConversation).Grid(row: 1, columnSpan: 2);
-        return Grid([wide ? GridSize.Px(244) : GridSize.Px(0), GridSize.Star()], [GridSize.Auto, GridSize.Star()], masthead, list, conversation, feature, welcome)
+        var personal = PersonalView(app, state, palette).IsVisible(PersonalOpen && state.ShowConversation).Grid(row: 1, columnSpan: 2);
+        return Grid([wide ? GridSize.Px(244) : GridSize.Px(0), GridSize.Star()], [GridSize.Auto, GridSize.Star()], masthead, list, conversation, feature, welcome, personal)
             .Background(palette.Paper).RequestedTheme(dark ? ElementTheme.Dark : ElementTheme.Light)
-            .OnMount(element => { PilotComponent.RootForClose = element; Program.Keyboard?.Attach(element as Grid); LiveUiProbe.Attach(element); LiveCanaryAcceptance.Attach(element); })
-            .OnUnmount(_ => { PilotComponent.RootForClose = null; }).AutomationId("sproyt-live-root");
+            .OnMount(element => { PilotComponent.RootForClose = element; Program.Keyboard?.Attach(element as Grid); LiveUiProbe.Attach(element); LiveCanaryAcceptance.Attach(element); element.GotFocus += ConversationGotFocus; })
+            .OnUnmount(element => { element.GotFocus -= ConversationGotFocus; PilotComponent.RootForClose = null; }).AutomationId("sproyt-live-root");
     }
 
 }
