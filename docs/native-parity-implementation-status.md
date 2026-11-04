@@ -7,9 +7,11 @@ Oppdatert 4. november 2026. Fundamentpulja ligg i PR #330 på
 fundamentet. Tre arbeidarar leverte retry-, historikk- og navigasjonsdelane
 medan integratoren kopla dei saman og køyrde Windows-prøvene.
 
-Trådar, reaksjonar, opplasting,
-innboks og dei andre uferdige brukarflatene står framleis att i
-[funksjonsmatrisa](native-canary-parity-matrix.md).
+Tredje pulje ligg på `codex/native-thread-actions` i
+`S:/Source/sproyt-native-conversations`. Ho byggjer på `9c0c456` i den
+framleis opne [PR #331](https://github.com/hbjoroy/sproyt/pull/331).
+Pulja omfattar trådar, reaksjonar og handlingar på eigne meldingar.
+Opplasting og innboks står framleis att i [funksjonsmatrisa](native-canary-parity-matrix.md).
 Sjå [Astra-planen](native-canary-parity-plan.md) for vidare rekkjefølgje og
 [baseline-statusen](native-client-status-2026-11-03.md) for utgangspunktet.
 
@@ -85,22 +87,62 @@ Sjå [kvitteringa for andre pulje](evidence/native-history-navigation-2026-11-04
 for kjeldehashar og artefaktar. P10 og P11 er framleis delvis leverte;
 funksjonsmatrisa si baseline er bevart.
 
+## Tredje pulje med trådar og meldingshandlingar
+
+Astra-planen delte arbeidet mellom tre funksjonseigarar og éin integrator.
+Transportarbeidaren eig `native/session-client/NativeChatClient.cs` og
+WebSocket-prøvene i `native/probes/conversation-contracts`. Trådarbeidaren
+eig oversikta, detaljvisinga, ankeret og lesepolicyen i `Features/Threads`.
+Meldingsarbeidaren eig reaksjonsveljaren, redigering, slettestadfesting og
+feiltilstandane i `Features/MessageActions`. Integratoren koplar desse til
+`LiveApplication`, `LiveChatComponent`, den målte rulleflata og det varige lageret.
+
+| Brukaroppgåve | Akseptkrav i tredje pulje | Vidare arbeid |
+| --- | --- | --- |
+| PAR-005/006 · Finne, lese og svare i ein tråd | Oversikta kan opne ei rot utanfor den lasta kanaltidslinja. Rota og svara har eiga vising og eige anker. Kanalutkast og utkast i to ulike trådar overlever navigasjon og omstart. Berre målte, synlege svar i det aktive besøket kan gi eit lesekall. Serverkvitteringa avgjer vist lesetilstand. | Oversikta er avgrensa til 2000 trådar. Ein tråd har plass til 2000 svar, og transporten tek imot svarrammer på inntil 20 MiB. Større trådar får kapasitetsstatus. Eksterne lenkjer ved kaldstart, full offlinesynkronisering og lesing på tvers av to ekte klientar står att. |
+| PAR-008 · Redigere og slette eigne røter og svar | Redigering bevarer vedleggsmarkørane og held på teksten ved avslag. Sletting krev stadfesting. Ei sletta melding viser slettemarkør også etter eit forseinka lastesvar. | Moderatorsletting av andre sine meldingar og endeleg utprøving mot Canary står att. |
+| PAR-009 · Reagere i kanalen og tråden | Brukaren kan velje fleire emoji og sjå tal, eigne val og kjende deltakarnamn. Etter tapt kvittering kan brukaren kontrollere servertilstanden før eit eventuelt nytt forsøk. | Lagra personlege emoji og full namnedekning for deltakarar utanfor den lasta samtalen står att. |
+
+Konto, full øktidentitet og konkret kanal-/trådbesøk avgrensar forseinka svar.
+Eit trådsvar bruker den eksisterande leveringskoordinatoren. Ved uvisst
+sendingsutfall bevarer køen request-ID, tekst og foreldre-ID.
+Eit endeleg avslag stoppar leveringa. Etter eit uvisst redigerings-, slette-
+eller reaksjonskall les klienten tilbake meldinga eller reaksjonane på
+brukaren si oppmoding.
+
+Alle sju lokale kontraktgrupper passerte på den integrerte kjelda. Dei
+dekkjer klienttransport, historikk, samtaletransport, trådvising,
+meldingshandlingar, levering og navigasjon. Rust-lageret passerte 30 testar.
+Ein separat Windows-prøve mot den bygde Rust-DLL-en opna arbeidsområdet på
+nytt og fann rett forelder på eit uvisst trådsvar. Den integrerte Windows ARM64-
+køyringa passerte lager, omstart, session-UI og dei faktiske WinUI-kontrollane
+for trådar, utkast, synleg-lesing, rediger/slett og reaksjon/readback.
+CI på GitHub blir følgt i PR-en; fysisk input og live Canary-aksept står att.
+Kjeldehashar og resultat
+blir samla i [kvitteringa for tredje pulje](evidence/native-thread-actions-2026-11-04.json).
+
 ## Lager og tilbakeføring
 
-Schema 1 blir migrert transaksjonelt til schema 2 med utkast, request-ID-ar
-og payload intakte. Ein eldre DLL avviser schema 2; den nye klienten avviser
-ein eldre DLL som ikkje forstår den eksplisitte revisjonskontrakten. Det er
-ikkje innført automatisk nedgradering av lokale databasar. Oppdatering og
-tilbakeføring må bruke eit testa app/DLL-par og ta omsyn til profilbackup og
-lokal schemaversjon før ein ekte pilotprofil blir oppgradert.
+Første pulje migrerte skjema 1 til skjema 2 og innførte revisjonsbundne
+utkast. Tredje pulje migrerer vidare til skjema 3 i éin transaksjon.
+Eit utkast er no nøkla på kanal og foreldre-ID. Eksisterande kanalutkast
+beheld revisjonen sin, og lagra payload for gamle rotsendingar er
+byteidentisk ved replay. Grensene på åtte varige utkast, åtte oppføringar
+i utboksen og 1024 UTF-8-byte per melding gjeld også når fleire trådar er opne.
+
+Windows-klienten krev eksplisitt `thread_targets` og `draft_revisions` ved
+opning. Eldre DLL-ar avviser skjema 3. Utan `thread_targets` avviser den
+nye DLL-en opning dersom eit trådutkast eller ei trådsending ligg i lageret.
+Tilbakeføring krev eit testa app/DLL-par og ein kompatibel profilbackup.
+Migreringsprøvene dekkjer også rollback ved feil under tabellkopieringa.
 
 ## Neste UI-pulje
 
-1. Samtale: trådar, reaksjonar og rediger/slett med same leverings-, besøks-
-   og kontogjerde.
-2. Navigasjon: favorittar, meldings-/trådlenkjer frå eksterne flater og
-   innboksintegrasjon med bevart utkast og leseposisjon.
-3. Innhald: trygg rik tekst og delte renderer-/handlingskontraktar for media,
+1. Prøve fysisk input og lesing/meldingshandlingar med to brukarar mot den
+   aktuelle Canary-kandidaten; halde hosted CI skilt frå denne live-aksepten.
+2. Kople favorittar, meldings- og trådlenkjer frå eksterne flater og innboks
+   til navigasjonen med bevart utkast og leseposisjon.
+3. Utvide trygg rik tekst og delte visings- og handlingskontraktar for media,
    invitasjonar, agentkort og arbeidskort.
 
 Integrator eig framleis sentrale appfiler. Arbeidarane får separate

@@ -32,6 +32,8 @@ enum Request {
         account: String,
         #[serde(default)]
         draft_revisions: bool,
+        #[serde(default)]
+        thread_targets: bool,
     },
     Close {
         handle: u64,
@@ -44,11 +46,15 @@ enum Request {
         generation: u64,
         channel: String,
         body: String,
+        #[serde(default)]
+        parent_message_id: Option<String>,
     },
     ClearDraft {
         handle: u64,
         generation: u64,
         channel: String,
+        #[serde(default)]
+        parent_message_id: Option<String>,
     },
     Enqueue {
         handle: u64,
@@ -58,6 +64,8 @@ enum Request {
         body: String,
         #[serde(default)]
         expected_draft_revision: Option<u64>,
+        #[serde(default)]
+        parent_message_id: Option<String>,
     },
     Delivery {
         handle: u64,
@@ -96,15 +104,13 @@ fn execute(request: Request) -> Result<Value> {
             database,
             account,
             draft_revisions,
+            thread_targets,
         } => {
             if registry.stores.len() >= 16 {
                 return Err("handle_capacity");
             }
-            let store = if draft_revisions {
-                Store::open_with_draft_revisions(&database, &account, true)?
-            } else {
-                Store::open(&database, &account)?
-            };
+            let store =
+                Store::open_with_options(&database, &account, draft_revisions, thread_targets)?;
             let handle = registry.next.checked_add(1).ok_or("handle_capacity")?;
             registry.next = handle;
             registry.stores.insert(handle, store);
@@ -141,19 +147,26 @@ fn execute(request: Request) -> Result<Value> {
                     generation,
                     channel,
                     body,
+                    parent_message_id,
                     ..
                 } => {
                     return store
-                        .save_draft(generation, &channel, &body)
+                        .save_target_draft(
+                            generation,
+                            &channel,
+                            parent_message_id.as_deref(),
+                            &body,
+                        )
                         .map(|revision| json!({"revision":revision}));
                 }
                 Request::ClearDraft {
                     generation,
                     channel,
+                    parent_message_id,
                     ..
                 } => {
                     return store
-                        .clear_draft(generation, &channel)
+                        .clear_target_draft(generation, &channel, parent_message_id.as_deref())
                         .map(|revision| json!({"revision":revision}));
                 }
                 Request::Enqueue {
@@ -162,20 +175,16 @@ fn execute(request: Request) -> Result<Value> {
                     channel,
                     body,
                     expected_draft_revision,
+                    parent_message_id,
                     ..
-                } => {
-                    if expected_draft_revision.is_some() {
-                        store.enqueue_draft(
-                            generation,
-                            &request_id,
-                            &channel,
-                            &body,
-                            expected_draft_revision,
-                        )?
-                    } else {
-                        store.enqueue(generation, &request_id, &channel, &body)?
-                    }
-                }
+                } => store.enqueue_target(
+                    generation,
+                    &request_id,
+                    &channel,
+                    parent_message_id.as_deref(),
+                    &body,
+                    expected_draft_revision,
+                )?,
                 Request::Delivery {
                     generation,
                     request_id,

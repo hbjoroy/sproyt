@@ -15,7 +15,7 @@ internal sealed record NativeThreadDetailBindings(Func<NativeMessage, bool, Elem
     string DraftBody, Action<string> DraftChanged, Action Send, Action Close, Action Retry,
     bool CanSend, bool ComposerEnabled = true, IReadOnlyList<NativeMessage>? PendingReplies = null,
     Action<ScrollViewer>? ViewportMounted = null, Action? ViewportUnmounted = null,
-    Action<TextBox>? ComposerMounted = null);
+    Action<TextBox>? ComposerMounted = null, Element? DeliveryNotice = null);
 
 // The host supplies the same message renderer/actions used in the channel and
 // the durable, target-bound composer. This view owns neither tokens nor drafts.
@@ -80,8 +80,8 @@ internal static class NativeThreadView
                         bindings.Send();
                     }
                 };
-            }).WithKey("live-thread-composer-" + visit.ChannelId + "-" + rootId);
-        return Grid([GridSize.Star()], [GridSize.Auto, GridSize.Star(), GridSize.Auto],
+            }).WithKey("live-thread-composer-" + visit.ChannelId + "-" + rootId + "-" + visit.Generation);
+        return Grid([GridSize.Star()], [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
             VStack(5,
                 Header("Tråd", palette, bindings.Close),
                 Status(state, palette, bindings.Retry),
@@ -94,11 +94,12 @@ internal static class NativeThreadView
                 .OnMount(element => { if (element is ScrollViewer scroller) bindings.ViewportMounted?.Invoke(scroller); })
                 .OnUnmount(_ => bindings.ViewportUnmounted?.Invoke())
                 .WithKey("live-thread-history-" + visit.ChannelId + "-" + rootId).Grid(row: 1),
+            (bindings.DeliveryNotice ?? Empty()).Grid(row: 2),
             Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
                 editor.Grid(column: 0),
                 Button("Send svar", bindings.Send).MinHeight(44).Padding(12, 8).Margin(8, 0, 0, 0)
                     .IsEnabled(bindings.CanSend).AutomationName("Send svar i tråden").AutomationId("live-thread-send").Grid(column: 1)
-            ).Padding(12, 8).Background(palette.Chrome).Grid(row: 2)
+            ).Padding(12, 8).Background(palette.Chrome).Grid(row: 3)
         ).Background(palette.Paper).AutomationId("live-thread-pane");
     }
 

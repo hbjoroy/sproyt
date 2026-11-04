@@ -19,6 +19,17 @@ internal sealed class LiveUiFixture : ILiveApplication
     private readonly List<QueuedMessage> _outbox = [];
     private readonly NativeMediaViewFixture _mediaFixture = new(User);
     private readonly NativeNavigationController _navigation = new();
+    private readonly NativeThreadFeatureController _threads = new();
+    private readonly List<NativeMessageReaction> _reactions = [];
+    private readonly Dictionary<string, ulong> _threadLastRead = [];
+    private NativeThreadSnapshot? _thread;
+    private long _threadGeneration;
+    internal bool FailNextMutationAfterCommit { get; set; }
+    internal int MutationExecutions { get; private set; }
+    internal int MutationReadBacks { get; private set; }
+    internal QueuedMessage? LastEnqueuedReply { get; private set; }
+    internal NativeMessage? Message(string id) => _messages.FirstOrDefault(message => message.Id == id);
+    internal List<(string Root, ulong Sequence)> ThreadReadReports { get; } = [];
     private readonly Dictionary<string, ulong> _lastRead = [];
     private readonly List<ulong> _readReports = [];
     private bool _historyMode, _loadingOlder;
@@ -31,6 +42,8 @@ internal sealed class LiveUiFixture : ILiveApplication
         _drafts["channel-dm"] = new("", 0, 0);
         SyncNavigation();
         _navigation.Changed += () => Changed?.Invoke();
+        _threads.BindScope(Authentication.UserId, Authentication.SessionStamp);
+        _threads.Changed += () => Changed?.Invoke();
         var initial = _navigation.Select(new(_selected));
         if (initial is not null) _navigation.Complete(initial);
     }
@@ -41,17 +54,19 @@ internal sealed class LiveUiFixture : ILiveApplication
          new("channel-b", "Idear", "UI-prøve", "fixture-circle", LastReadSequence: _lastRead.GetValueOrDefault("channel-b"), LatestSequence: _messages.Where(item => item.ChannelId == "channel-b").Select(item => item.Sequence).DefaultIfEmpty(0UL).Max()),
          new("channel-dm", "Testven", Kind: "direct", IsDirect: true)];
     public NativeChatSnapshot Chat => new(true, false, null, Channels, _selected,
-        _messages.Where(message => message.ChannelId == _selected).OrderBy(item => item.Sequence).ToArray(), User,
+        _messages.Where(message => message.ChannelId == _selected && message.ParentMessageId is null).OrderBy(item => item.Sequence).ToArray(), User,
         new(_selected, _historyGeneration, _loadingOlder, _historyMode && _selected == "channel-a" && _historyStart > 1,
             false, null, _messages.Where(item => item.ChannelId == _selected).Select(item => (ulong?)item.Sequence).Min(),
-            _messages.Count(item => item.ChannelId == _selected)));
+            _messages.Count(item => item.ChannelId == _selected && item.ParentMessageId is null)),
+        new(_thread, ThreadSummaries(), _reactions.ToArray(), ReactionsLoaded: true, ThreadSummariesLoaded: true));
     public WorkspaceSnapshot Workspace => new(true, false, false, false, null, null, _drafts, _outbox.ToArray());
     private void SyncNavigation()
     {
         _navigation.BindScope(Authentication.UserId, Authentication.SessionStamp);
         _navigation.UpdateChannels(Authentication.UserId!, Authentication.SessionStamp!, Channels);
+        _threads.BindScope(Authentication.UserId, Authentication.SessionStamp);
     }
-    public LiveSnapshot Capture() { SyncNavigation(); return new(Authentication, Chat, Workspace, true, null, Navigation: _navigation.Capture()); }
+    public LiveSnapshot Capture() { SyncNavigation(); return new(Authentication, Chat, Workspace, true, null, Navigation: _navigation.Capture(), Threads: _threads.Capture()); }
     public Task LoginAsync() => Task.CompletedTask;
     public NativeMediaLibrary? Media => _mediaFixture.Library;
     internal void AddMedia()
@@ -92,12 +107,158 @@ internal sealed class LiveUiFixture : ILiveApplication
     {
         if (visit is null) return Task.CompletedTask;
         _selected = visit.Target.ChannelId; _historyGeneration++;
+        _thread = null;
+        if (visit.Target.ThreadId is { } root)
+        {
+            var threadVisit = _threads.Open(_selected, root);
+            EnsureComposer(_selected, root);
+            _thread = BuildThread(root, ++_threadGeneration);
+            if (threadVisit is not null) _threads.ApplyThread(threadVisit, _thread);
+        }
+        else _threads.Close();
         _navigation.Complete(visit); Changed?.Invoke(); return Task.CompletedTask;
     }
     public void SetNavigationQuery(string query) => _navigation.SetQuery(query);
     public void SetNavigationScope(NativeNavigationDirectoryScope scope) => _navigation.SetDirectoryScope(scope);
     public void SetNavigationInteraction(bool interacting) => _navigation.SetInteraction(interacting);
     public void RememberViewport(NativeNavigationVisit visit, NativeScrollAnchor anchor) => _navigation.SaveAnchor(visit, anchor);
+    public Task RefreshConversationAsync(NativeMessageActionScope scope) { if (ScopeCurrent(scope)) Changed?.Invoke(); return Task.CompletedTask; }
+    public Task OpenThreadDirectoryAsync(NativeMessageActionScope rootScope)
+    {
+        if (!ScopeCurrent(rootScope) || rootScope.ThreadRootId is not null) return Task.CompletedTask;
+        var visit = _threads.OpenDirectory(_selected);
+        if (visit is not null) _threads.ApplyDirectory(visit, ThreadSummaries(), _messages.Where(message => message.ChannelId == _selected && message.ParentMessageId is null).ToArray());
+        return Task.CompletedTask;
+    }
+    public Task CloseThreadAsync(NativeThreadVisit expected)
+    {
+        if (!_threads.IsCurrent(expected) || _threads.Capture().Visit is not { } visit) return Task.CompletedTask;
+        if (visit.IsDirectory)
+        {
+            _threads.Close(visit);
+            if (_navigation.Capture().Current?.Target.ThreadId is { } existing) return NavigateAsync(new(_selected, ThreadId: existing));
+            return Task.CompletedTask;
+        }
+        return NavigateAsync(new(_selected));
+    }
+    public Task RetryThreadAsync(NativeThreadVisit expected)
+    {
+        if (!_threads.IsCurrent(expected)) return Task.CompletedTask;
+        if (expected.RootMessageId is { } root) return NavigateAsync(new(_selected, ThreadId: root));
+        var visit = _threads.OpenDirectory(_selected);
+        if (visit is not null) _threads.ApplyDirectory(visit, ThreadSummaries(), _messages.Where(message => message.ChannelId == _selected && message.ParentMessageId is null).ToArray());
+        return Task.CompletedTask;
+    }
+    public void RememberThreadViewport(NativeThreadVisit visit, NativeScrollAnchor anchor) => _threads.SaveAnchor(visit, anchor);
+    public Task MarkThreadVisibleReadAsync(NativeThreadVisit visit, long viewGeneration, long threadGeneration, IReadOnlyList<string> messageIds)
+    {
+        if (!Program.LiveWindowActive || !_threads.IsCurrent(visit) || _thread is not { } thread || thread.ViewGeneration != viewGeneration || thread.Generation != threadGeneration) return Task.CompletedTask;
+        ulong highest = thread.Replies.Where(message => messageIds.Contains(message.Id)).Select(message => message.Sequence).DefaultIfEmpty(0UL).Max();
+        if (highest > _threadLastRead.GetValueOrDefault(thread.RootMessageId))
+        {
+            _threadLastRead[thread.RootMessageId] = highest; ThreadReadReports.Add((thread.RootMessageId, highest)); RefreshThread(); Changed?.Invoke();
+        }
+        return Task.CompletedTask;
+    }
+    private IReadOnlyList<NativeThreadSummary> ThreadSummaries() => _messages.Where(message => message.ChannelId == _selected && message.ParentMessageId is not null)
+        .GroupBy(message => message.ParentMessageId!).Select(group => new NativeThreadSummary(group.Key,
+            (uint)group.Count(message => message.DeletedAt is null),
+            (uint)group.Count(message => message.DeletedAt is null && message.AuthorId != User && message.Sequence > _threadLastRead.GetValueOrDefault(group.Key)),
+            group.Max(message => message.Sequence))).ToArray();
+    private NativeThreadSnapshot BuildThread(string root, long generation) => new(_selected, root, _historyGeneration, generation,
+        _messages.FirstOrDefault(message => message.ChannelId == _selected && message.Id == root && message.ParentMessageId is null),
+        _messages.Where(message => message.ChannelId == _selected && message.ParentMessageId == root).OrderBy(message => message.Sequence).ToArray(),
+        LastReadSequence: _threadLastRead.GetValueOrDefault(root));
+    private void RefreshThread()
+    {
+        if (_threads.Capture().Visit is { RootMessageId: string root } visit && _thread is { } previous)
+        { _thread = BuildThread(root, previous.Generation); _threads.ApplyThread(visit, _thread); }
+    }
+    private bool ScopeCurrent(NativeMessageActionScope scope)
+    {
+        var visit = _navigation.Capture().Current; var thread = _threads.Capture().Visit;
+        return Authentication.UserId == scope.UserId && Authentication.SessionStamp == scope.SessionStamp &&
+            _selected == scope.ChannelId && visit?.Generation == scope.ChannelVisit &&
+            (scope.ThreadRootId is null ? visit.Target.ThreadId is null && thread is null :
+                visit.Target.ThreadId == scope.ThreadRootId && thread?.RootMessageId == scope.ThreadRootId && thread.Generation == scope.ThreadVisit);
+    }
+    public Task ExecuteMessageMutationAsync(NativeMessageMutation mutation)
+    {
+        if (!ScopeCurrent(mutation.Scope)) throw new OperationCanceledException("Fixture visit was replaced.");
+        int index = _messages.FindIndex(message => message.Id == mutation.MessageId && message.ChannelId == mutation.Scope.ChannelId);
+        if (index < 0) throw new InvalidOperationException("Fixture message missing.");
+        var message = _messages[index]; MutationExecutions++;
+        switch (mutation.Kind)
+        {
+            case NativeMessageMutationKind.Edit:
+                if (message.AuthorId != User) throw new InvalidOperationException("Fixture permission denied.");
+                _messages[index] = message with { Body = mutation.Value!, EditedAt = DateTimeOffset.UtcNow }; break;
+            case NativeMessageMutationKind.Delete:
+                if (message.AuthorId != User) throw new InvalidOperationException("Fixture permission denied.");
+                _messages[index] = message with { Body = "", DeletedAt = DateTimeOffset.UtcNow };
+                _reactions.RemoveAll(reaction => reaction.MessageId == message.Id); break;
+            case NativeMessageMutationKind.ToggleReaction:
+                var reaction = _reactions.FirstOrDefault(item => item.MessageId == message.Id && item.Emoji == mutation.Value);
+                if (reaction is not null) _reactions.Remove(reaction);
+                bool mine = reaction?.ReactedByMe != true;
+                uint count = mine ? (reaction?.Count ?? 0) + 1 : reaction!.Count - 1;
+                if (count > 0) _reactions.Add(new(message.Id, mutation.Value!, count, mine, mine ? [User] : []));
+                break;
+        }
+        RefreshThread(); Changed?.Invoke();
+        if (FailNextMutationAfterCommit) { FailNextMutationAfterCommit = false; throw new IOException("Fixture lost the mutation acknowledgement after commit."); }
+        return Task.CompletedTask;
+    }
+    public Task<bool?> ReadBackMessageMutationAsync(NativeMessageMutation mutation)
+    {
+        if (!ScopeCurrent(mutation.Scope)) return Task.FromResult<bool?>(null);
+        MutationReadBacks++;
+        var message = _messages.FirstOrDefault(message => message.Id == mutation.MessageId);
+        bool? result = message is null ? null : mutation.Kind switch
+        {
+            NativeMessageMutationKind.Edit => message.DeletedAt is null && message.Body == mutation.Value,
+            NativeMessageMutationKind.Delete => message.DeletedAt is not null,
+            _ => _reactions.Any(reaction => reaction.MessageId == message.Id && reaction.Emoji == mutation.Value && reaction.ReactedByMe) == mutation.ExpectedMine
+        };
+        return Task.FromResult(result);
+    }
+    private string EnsureComposer(string channel, string? parent)
+    {
+        string key = new ComposerTarget(channel, parent).Key;
+        if (!_drafts.ContainsKey(key)) _drafts[key] = new("", 0, 0);
+        return key;
+    }
+    public void EditComposer(NativeMessageActionScope scope, string body)
+    {
+        if (!ScopeCurrent(scope)) return;
+        Edit(EnsureComposer(scope.ChannelId, scope.ThreadRootId), body);
+    }
+    public Task SendComposerAsync(NativeMessageActionScope scope)
+    {
+        if (!ScopeCurrent(scope)) return Task.CompletedTask;
+        string key = EnsureComposer(scope.ChannelId, scope.ThreadRootId), body = _drafts[key].Body;
+        if (string.IsNullOrWhiteSpace(body)) return Task.CompletedTask;
+        string id = Guid.NewGuid().ToString();
+        LastEnqueuedReply = new(id, scope.ChannelId, body, "queued", scope.ThreadRootId);
+        _messages.Add(new(id, scope.ChannelId, User, "UI-prøve", body, DateTimeOffset.UtcNow,
+            _messages.Where(message => message.ChannelId == scope.ChannelId).Select(message => message.Sequence).DefaultIfEmpty(0UL).Max() + 1, scope.ThreadRootId));
+        Edit(key, ""); RefreshThread(); Changed?.Invoke(); return Task.CompletedTask;
+    }
+    internal void PrepareConversations()
+    {
+        _historyMode = false; _messages.Clear(); _outbox.Clear(); _reactions.Clear(); _lastRead.Clear(); _readReports.Clear();
+        _threadLastRead.Clear(); ThreadReadReports.Clear(); MutationExecutions = MutationReadBacks = 0; LastEnqueuedReply = null;
+        _thread = null; _threads.Close(); _drafts.Clear();
+        foreach (string channel in new[] { "channel-a", "channel-b", "channel-dm" }) _drafts[channel] = new("", 0, 0);
+        _selected = "channel-a"; _historyGeneration++;
+        _messages.Add(new("conversation-root-one", _selected, User, "Du", "Opphavleg melding ein", DateTimeOffset.UtcNow, 1));
+        _messages.Add(new("conversation-root-two", _selected, User, "Du", "Opphavleg melding to", DateTimeOffset.UtcNow, 2));
+        _messages.Add(new("conversation-reply-one", _selected, User, "Du", "Eit tidlegare svar", DateTimeOffset.UtcNow, 3, "conversation-root-one"));
+        _messages.Add(new("conversation-reply-two", _selected, User, "Du", "Svar i andre tråden", DateTimeOffset.UtcNow, 4, "conversation-root-two"));
+        _messages.Add(new("conversation-reply-other", _selected, "other-user", "Testven", "Eit svar frå ein annan", DateTimeOffset.UtcNow, 5, "conversation-root-one"));
+        SyncNavigation(); var visit = _navigation.Select(new(_selected)); if (visit is not null) _navigation.Complete(visit);
+        Changed?.Invoke();
+    }
     public async Task LoadOlderAsync(string channel, long viewGeneration, string expectedUser, string expectedStamp, NativeNavigationVisit visit)
     {
         if (!_historyMode || channel != "channel-a" || viewGeneration != _historyGeneration || !_navigation.IsCurrent(visit) ||
@@ -293,10 +454,12 @@ internal static class LiveUiProbe
             root.UpdateLayout();
             CheckImage(Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)),.5,Math.Min(320,root.ActualWidth-32));
             await LiveTimelineUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
+            await LiveConversationUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await Program.PrepareShutdownAsync();
             File.WriteAllText(Path.Combine(folder,"live-ui-result.json"),JsonSerializer.Serialize(new
             {passed=true,scope="live_chat_view_fixture",actualWinUi=true,channelDrafts=true,sendBinding=true,compactComposer=true,circleGroups=true,decodedMediaPreview=true,boundedPreviewLeases=true,viewportPreviewGallery=24,viewportRelease=true,stablePreviewGeometry=true,rapidPreviewReentry=true,portraitAndLandscape=true,originalAspectRatio=true,responsivePreviewWidth=true,macroCard=true,temporaryOriginalCleanup=true,
                 timelinePaging=true,stableMessageAnchor=true,visibleReadOnly=true,navigationSearch=true,navigationDirectoryScopes=true,navigationBackForward=true,independentNavigationDrafts=true,variableHeightAnchor=true,
+                threadOpenClose=true,threadDirectory=true,independentThreadDrafts=true,parentBoundReply=true,threadVisibleReadOnly=true,messageEdit=true,messageDeleteConfirmation=true,deletedThreadParent=true,reactionToggle=true,uncertainReactionReadback=true,
                 productionAuthentication=false,actualTransport=false,storageAcceptance=false}));
             Program.CloseAfterShutdown(window);
         }

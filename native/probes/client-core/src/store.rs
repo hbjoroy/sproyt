@@ -11,6 +11,7 @@ pub type Result<T> = std::result::Result<T, &'static str>;
 pub struct Store {
     connection: Connection,
     draft_revisions: bool,
+    thread_targets: bool,
     #[cfg(any(test, feature = "fault-injection"))]
     fault: Option<crate::fault::Fault>,
 }
@@ -39,14 +40,25 @@ pub fn text(value: &str) -> Result<()> {
 }
 
 impl Store {
+    #[cfg(test)]
     pub fn open(path: &str, account: &str) -> Result<Self> {
         Self::open_with_draft_revisions(path, account, false)
     }
 
+    #[cfg(test)]
     pub fn open_with_draft_revisions(
         path: &str,
         account: &str,
         draft_revisions: bool,
+    ) -> Result<Self> {
+        Self::open_with_options(path, account, draft_revisions, false)
+    }
+
+    pub fn open_with_options(
+        path: &str,
+        account: &str,
+        draft_revisions: bool,
+        thread_targets: bool,
     ) -> Result<Self> {
         identifier(account)?;
         if !Path::new(path).is_absolute() || path.len() > 4096 {
@@ -62,7 +74,7 @@ impl Store {
             db(connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive))?;
         let version: i64 = db(tx.pragma_query_value(None, "user_version", |row| row.get(0)))?;
         let application: i64 = db(tx.pragma_query_value(None, "application_id", |row| row.get(0)))?;
-        if !(0..=2).contains(&version) || (version != 0 && application != APPLICATION_ID) {
+        if !(0..=3).contains(&version) || (version != 0 && application != APPLICATION_ID) {
             return Err("unsupported_schema");
         }
         if version == 0 {
@@ -98,6 +110,24 @@ impl Store {
                 alter table outbox add column draft_revision integer;
                 PRAGMA user_version=2;"))?;
         }
+        if version < 3 {
+            db(tx.execute_batch("alter table drafts rename to drafts_v2;
+                create table drafts(channel text not null, parent_message_id text not null default '', body text not null, revision integer not null check(revision>=1), primary key(channel,parent_message_id));
+                insert into drafts(channel,parent_message_id,body,revision) select channel,'',body,revision from drafts_v2;
+                drop table drafts_v2;
+                PRAGMA user_version=3;"))?;
+        }
+        if !thread_targets {
+            let threads: i64 = db(tx.query_row(
+                "select count(*) from drafts where parent_message_id<>''",
+                [],
+                |row| row.get(0),
+            ))?;
+            let sends: i64 = db(tx.query_row("select count(*) from outbox where json_extract(payload,'$.payload.parent_message_id') is not null", [], |row| row.get(0)))?;
+            if threads != 0 || sends != 0 {
+                return Err("thread_targets_required");
+            }
+        }
         // The pure core does not yet define a process-recovery event. This
         // adapter explicitly makes an interrupted dispatch uncertain.
         db(tx.execute(
@@ -108,6 +138,7 @@ impl Store {
         Ok(Self {
             connection,
             draft_revisions,
+            thread_targets,
             #[cfg(any(test, feature = "fault-injection"))]
             fault: None,
         })
@@ -137,42 +168,93 @@ impl Store {
         Ok(revision as u64)
     }
 
+    #[cfg(test)]
     pub fn save_draft(&mut self, generation: u64, channel: &str, body: &str) -> Result<u64> {
+        self.save_target_draft(generation, channel, None, body)
+    }
+
+    pub fn save_target_draft(
+        &mut self,
+        generation: u64,
+        channel: &str,
+        parent: Option<&str>,
+        body: &str,
+    ) -> Result<u64> {
         identifier(channel)?;
+        self.validate_parent(parent)?;
+        let parent = parent.unwrap_or("");
         text(body)?;
         let tx = self.transaction(generation)?;
         let count: i64 = db(tx.query_row(
-            "select count(*) from drafts where channel<>?1",
-            [channel],
+            "select count(*) from drafts where channel<>?1 or parent_message_id<>?2",
+            params![channel, parent],
             |row| row.get(0),
         ))?;
         if count >= ITEM_LIMIT {
             return Err("capacity");
         }
         let revision = Self::next_draft_revision(&tx)?;
-        db(tx.execute("insert into drafts(channel,body,revision) values(?1,?2,?3) on conflict(channel) do update set body=excluded.body,revision=excluded.revision", params![channel, body, revision as i64]))?;
+        db(tx.execute("insert into drafts(channel,parent_message_id,body,revision) values(?1,?2,?3,?4) on conflict(channel,parent_message_id) do update set body=excluded.body,revision=excluded.revision", params![channel, parent, body, revision as i64]))?;
         db(tx.commit())?;
         Ok(revision)
     }
 
+    #[cfg(test)]
     pub fn clear_draft(&mut self, generation: u64, channel: &str) -> Result<u64> {
+        self.clear_target_draft(generation, channel, None)
+    }
+
+    pub fn clear_target_draft(
+        &mut self,
+        generation: u64,
+        channel: &str,
+        parent: Option<&str>,
+    ) -> Result<u64> {
         identifier(channel)?;
+        self.validate_parent(parent)?;
         let tx = self.transaction(generation)?;
         let revision = Self::next_draft_revision(&tx)?;
-        db(tx.execute("delete from drafts where channel=?1", [channel]))?;
+        db(tx.execute(
+            "delete from drafts where channel=?1 and parent_message_id=?2",
+            params![channel, parent.unwrap_or("")],
+        ))?;
         db(tx.commit())?;
         Ok(revision)
     }
 
+    #[cfg(test)]
     pub fn enqueue(&mut self, generation: u64, id: &str, channel: &str, body: &str) -> Result<()> {
         self.enqueue_draft(generation, id, channel, body, None)
     }
 
+    #[cfg(test)]
     pub fn enqueue_draft(
         &mut self,
         generation: u64,
         id: &str,
         channel: &str,
+        body: &str,
+        expected_revision: Option<u64>,
+    ) -> Result<()> {
+        self.enqueue_target(generation, id, channel, None, body, expected_revision)
+    }
+
+    fn validate_parent(&self, parent: Option<&str>) -> Result<()> {
+        if let Some(parent) = parent {
+            if !self.thread_targets {
+                return Err("thread_targets_required");
+            }
+            identifier(parent)?;
+        }
+        Ok(())
+    }
+
+    pub fn enqueue_target(
+        &mut self,
+        generation: u64,
+        id: &str,
+        channel: &str,
+        parent: Option<&str>,
         body: &str,
         expected_revision: Option<u64>,
     ) -> Result<()> {
@@ -182,6 +264,7 @@ impl Store {
         let fault = self.fault.take();
         identifier(id)?;
         identifier(channel)?;
+        self.validate_parent(parent)?;
         text(body)?;
         if self.draft_revisions && expected_revision.is_none() {
             return Err("draft_revision_required");
@@ -193,8 +276,12 @@ impl Store {
         if body.trim().is_empty() {
             return Err("empty_body");
         }
+        let mut content = json!({"channel":{"type":"id","value":channel},"body":body});
+        if let Some(parent) = parent {
+            content["parent_message_id"] = json!(parent);
+        }
         let payload = serde_json::to_string(&json!({"protocol":"sproyt.chat.v1","request_id":id,
-            "type":"send_message","payload":{"channel":{"type":"id","value":channel},"body":body}}))
+            "type":"send_message","payload":content}))
         .map_err(|_| "serialization_error")?;
         let tx = self.transaction(generation)?;
         if let Some(revision) = expected_sql {
@@ -239,13 +326,13 @@ impl Store {
         // clients explicitly opt in and bind removal to the saved revision.
         if let Some(revision) = expected_revision {
             db(tx.execute(
-                "delete from drafts where channel=?1 and body=?2 and revision=?3",
-                params![channel, body, revision as i64],
+                "delete from drafts where channel=?1 and parent_message_id=?2 and body=?3 and revision=?4",
+                params![channel, parent.unwrap_or(""), body, revision as i64],
             ))?;
         } else {
             db(tx.execute(
-                "delete from drafts where channel=?1 and body=?2",
-                params![channel, body],
+                "delete from drafts where channel=?1 and parent_message_id=?2 and body=?3",
+                params![channel, parent.unwrap_or(""), body],
             ))?;
         }
         #[cfg(any(test, feature = "fault-injection"))]
@@ -394,9 +481,12 @@ impl Store {
         ))?;
         let mut drafts = db(self
             .connection
-            .prepare("select channel,body,revision from drafts order by channel limit 8"))?;
+            .prepare("select channel,body,revision,parent_message_id from drafts order by channel,parent_message_id limit 8"))?;
         let drafts = db(db(drafts.query_map([], |row| {
-            Ok(json!({"channel":row.get::<_,String>(0)?,"body":row.get::<_,String>(1)?,"revision":row.get::<_,i64>(2)?}))
+            let mut draft = json!({"channel":row.get::<_,String>(0)?,"body":row.get::<_,String>(1)?,"revision":row.get::<_,i64>(2)?});
+            let parent: String = row.get(3)?;
+            if !parent.is_empty() { draft["parent_message_id"] = json!(parent); }
+            Ok(draft)
         }))?
         .collect::<rusqlite::Result<Vec<_>>>())?;
         let mut outbox = db(self
@@ -408,7 +498,7 @@ impl Store {
             .prepare("select id,revision,body,deleted from messages order by id limit 8"))?;
         let messages = db(db(messages.query_map([], |row| Ok(json!({"id":row.get::<_,String>(0)?,"revision":row.get::<_,i64>(1)?,"body":row.get::<_,String>(2)?,"deleted":row.get::<_,bool>(3)?}))))?.collect::<rusqlite::Result<Vec<_>>>())?;
         Ok(
-            json!({"schema":2,"draft_revisions":self.draft_revisions,"account":account,"generation":generation,"active":active,"drafts":drafts,"outbox":outbox,"messages":messages}),
+            json!({"schema":3,"draft_revisions":self.draft_revisions,"thread_targets":self.thread_targets,"account":account,"generation":generation,"active":active,"drafts":drafts,"outbox":outbox,"messages":messages}),
         )
     }
 

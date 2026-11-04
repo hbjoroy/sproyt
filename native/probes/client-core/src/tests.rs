@@ -174,7 +174,7 @@ fn account_schema_owner_and_generation_are_fenced() {
         store.apply_message(1, "message", 2, "Late", false),
         Err("stale_generation")
     );
-    store.execute_test_sql("PRAGMA user_version=3");
+    store.execute_test_sql("PRAGMA user_version=4");
     drop(store);
     assert_eq!(
         Store::open(&fixture.database, "fixture-alice").err(),
@@ -819,7 +819,7 @@ fn schema_one_migration_preserves_drafts_outbox_ids_payloads_and_delivery_recove
     }
     let mut store = Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
     let snapshot = store.snapshot().unwrap();
-    assert_eq!(snapshot["schema"], 2);
+    assert_eq!(snapshot["schema"], 3);
     assert_eq!(
         snapshot["drafts"][0],
         json!({"channel":"channel","body":"Legacy draft","revision":1})
@@ -839,6 +839,300 @@ fn schema_one_migration_preserves_drafts_outbox_ids_payloads_and_delivery_recove
         store.snapshot().unwrap()["outbox"][0]["request_id"],
         "legacy-id"
     );
+}
+
+fn seed_v2(fixture: &Fixture) -> &'static str {
+    seed_v1(fixture);
+    // The schema-2 writer used serde_json's sorted keys and omitted the parent.
+    const ROOT: &str = r#"{"payload":{"body":"Legacy draft","channel":{"type":"id","value":"channel"}},"protocol":"sproyt.chat.v1","request_id":"legacy-id","type":"send_message"}"#;
+    let connection = rusqlite::Connection::open(&fixture.database).unwrap();
+    connection
+        .execute_batch(
+            "alter table identity add column draft_clock integer not null default 17;
+        alter table drafts add column revision integer not null default 16;
+        alter table outbox add column draft_revision integer;
+        PRAGMA user_version=2;",
+        )
+        .unwrap();
+    connection
+        .execute("update outbox set payload=?1,draft_revision=16", [ROOT])
+        .unwrap();
+    ROOT
+}
+
+#[test]
+fn schema_two_root_replays_byte_identically_without_consuming_migrated_draft() {
+    let fixture = Fixture::new();
+    let root = seed_v2(&fixture);
+    let mut store = Store::open_with_options(&fixture.database, "alice", true, true).unwrap();
+    store
+        .enqueue_target(1, "legacy-id", "channel", None, "Legacy draft", Some(16))
+        .unwrap();
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(
+        snapshot["drafts"][0],
+        json!({"channel":"channel","body":"Legacy draft","revision":16})
+    );
+    assert_eq!(snapshot["outbox"][0]["payload"], root);
+    assert_eq!(snapshot["outbox"][0]["state"], "uncertain");
+    assert_eq!(
+        store
+            .save_target_draft(1, "channel", Some("t"), "New")
+            .unwrap(),
+        18
+    );
+}
+
+#[test]
+fn schema_two_bad_row_rolls_back_the_table_copy_and_version() {
+    let fixture = Fixture::new();
+    let root = seed_v2(&fixture);
+    // SQLite's old non-integer primary key allows NULL on a damaged database.
+    {
+        let db = rusqlite::Connection::open(&fixture.database).unwrap();
+        db.execute(
+            "insert into drafts(channel,body,revision) values(null,'bad',15)",
+            [],
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        Store::open_with_options(&fixture.database, "alice", true, true).err(),
+        Some("storage_error")
+    );
+    let db = rusqlite::Connection::open(&fixture.database).unwrap();
+    assert_eq!(
+        db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row("select count(*) from drafts", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row(
+            "select payload from outbox where state='dispatching'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        root
+    );
+    assert_eq!(
+        db.query_row(
+            "select count(*) from sqlite_master where name='drafts_v2'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn thread_outbox_shares_root_capacity_and_rolls_back_on_precommit_error() {
+    use crate::fault::{Fault, Mode, Site};
+    let fixture = Fixture::new();
+    let mut store = Store::open_with_options(&fixture.database, "alice", true, true).unwrap();
+    let body = "ø".repeat(512);
+    let root = store.save_draft(1, "channel", &body).unwrap();
+    let revision = store
+        .save_target_draft(1, "channel", Some("t"), &body)
+        .unwrap();
+    for site in [Site::AfterInsert, Site::BeforeCommit] {
+        store
+            .arm_fault(
+                1,
+                Fault {
+                    site,
+                    mode: Mode::Error,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store.enqueue_target(1, "reply", "channel", Some("t"), &body, Some(revision)),
+            Err("injected_failure")
+        );
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot["drafts"].as_array().unwrap().len(), 2);
+        assert_eq!(snapshot["outbox"], json!([]));
+    }
+    store
+        .enqueue_target(1, "reply", "channel", Some("t"), &body, Some(revision))
+        .unwrap();
+    for i in 1..8 {
+        store
+            .enqueue_target(1, &format!("other-{i}"), "channel", None, &body, Some(root))
+            .unwrap();
+    }
+    let ninth = store
+        .save_target_draft(1, "channel", Some("t2"), "Keep")
+        .unwrap();
+    assert_eq!(
+        store.enqueue_target(1, "ninth", "channel", Some("t2"), "Keep", Some(ninth)),
+        Err("capacity")
+    );
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(snapshot["outbox"].as_array().unwrap().len(), 8);
+    assert_eq!(snapshot["drafts"][0]["parent_message_id"], "t2");
+}
+
+#[test]
+fn thread_targets_keep_drafts_payload_and_revision_independent_across_restart() {
+    let fixture = Fixture::new();
+    let mut store = Store::open_with_options(&fixture.database, "alice", true, true).unwrap();
+    let root = store
+        .save_target_draft(1, "channel", None, "Same body")
+        .unwrap();
+    let first = store
+        .save_target_draft(1, "channel", Some("thread-1"), "Same body")
+        .unwrap();
+    store
+        .save_target_draft(1, "channel", Some("thread-2"), "Same body")
+        .unwrap();
+    store
+        .enqueue_target(
+            1,
+            "reply-id",
+            "channel",
+            Some("thread-1"),
+            "Same body",
+            Some(first),
+        )
+        .unwrap();
+    let newer = store
+        .save_target_draft(1, "channel", Some("thread-1"), "Same body")
+        .unwrap();
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(snapshot["drafts"].as_array().unwrap().len(), 3);
+    let wire: Value =
+        serde_json::from_str(snapshot["outbox"][0]["payload"].as_str().unwrap()).unwrap();
+    assert_eq!(wire["payload"]["channel"]["value"], "channel");
+    assert_eq!(wire["payload"]["parent_message_id"], "thread-1");
+    let exact_payload = snapshot["outbox"][0]["payload"].clone();
+    store.delivery(1, "reply-id", "dispatch").unwrap();
+    drop(store);
+    assert_eq!(
+        Store::open_with_draft_revisions(&fixture.database, "alice", true).err(),
+        Some("thread_targets_required")
+    );
+    let mut store = Store::open_with_options(&fixture.database, "alice", true, true).unwrap();
+    assert_eq!(store.snapshot().unwrap()["outbox"][0]["state"], "uncertain");
+    store
+        .enqueue_target(
+            1,
+            "reply-id",
+            "channel",
+            Some("thread-1"),
+            "Same body",
+            Some(first),
+        )
+        .unwrap();
+    assert_eq!(
+        store.enqueue_target(
+            1,
+            "reply-id",
+            "channel",
+            Some("thread-2"),
+            "Same body",
+            Some(first)
+        ),
+        Err("request_conflict")
+    );
+    assert_eq!(
+        store.enqueue_target(1, "reply-id", "channel", None, "Same body", Some(first)),
+        Err("request_conflict")
+    );
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(snapshot["outbox"][0]["payload"], exact_payload);
+    assert_eq!(
+        snapshot["drafts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["parent_message_id"] == "thread-1")
+            .unwrap()["revision"],
+        newer
+    );
+    assert_eq!(
+        snapshot["drafts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["parent_message_id"].is_null())
+            .unwrap()["revision"],
+        root
+    );
+    store
+        .clear_target_draft(1, "channel", Some("thread-2"))
+        .unwrap();
+    assert_eq!(
+        store.snapshot().unwrap()["drafts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn thread_target_limits_and_post_commit_loss_do_not_change_the_destination() {
+    let fixture = Fixture::new();
+    let mut store = Store::open_with_options(&fixture.database, "alice", true, true).unwrap();
+    let revision = store
+        .save_target_draft(1, "channel", Some("parent"), "Reply")
+        .unwrap();
+    store
+        .arm_fault(
+            1,
+            crate::fault::Fault {
+                site: crate::fault::Site::AfterCommit,
+                mode: crate::fault::Mode::Error,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.enqueue_target(
+            1,
+            "reply",
+            "channel",
+            Some("parent"),
+            "Reply",
+            Some(revision)
+        ),
+        Err("injected_unknown_outcome")
+    );
+    let payload = store.snapshot().unwrap()["outbox"][0]["payload"].clone();
+    store
+        .enqueue_target(
+            1,
+            "reply",
+            "channel",
+            Some("parent"),
+            "Reply",
+            Some(revision),
+        )
+        .unwrap();
+    assert_eq!(store.snapshot().unwrap()["outbox"][0]["payload"], payload);
+    assert_eq!(
+        store.save_target_draft(1, "channel", Some("parent"), &"ø".repeat(513)),
+        Err("text_too_large")
+    );
+    for i in 0..8 {
+        store
+            .save_target_draft(1, "channel", Some(&format!("parent-{i}")), "draft")
+            .unwrap();
+    }
+    assert_eq!(
+        store.save_target_draft(1, "channel", None, "root"),
+        Err("capacity")
+    );
+    store
+        .clear_target_draft(1, "channel", Some("parent-0"))
+        .unwrap();
+    assert!(store.save_target_draft(1, "channel", None, "root").is_ok());
 }
 
 #[test]

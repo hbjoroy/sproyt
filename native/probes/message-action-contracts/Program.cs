@@ -95,6 +95,16 @@ await reading;
 Expect(owner.MessageId == null && !owner.Busy && owner.Error == null && !owner.NeedsReadBack);
 Expect(!NativeMessageActionController.ValidEmoji("A") && NativeMessageActionController.ValidEmoji("1️⃣"));
 Console.WriteLine("message action contracts passed");
+if (args.FirstOrDefault() is { } receipt)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(receipt))!);
+    await File.WriteAllTextAsync(receipt, System.Text.Json.JsonSerializer.Serialize(new
+    {
+        passed = true, scope = "native_message_action_contract", actualWinUi = false, actualTransport = false,
+        checks = new[] { "own-message permission", "attachment preservation", "edit conflict", "delete confirmation",
+            "Unicode reactions", "uncertain readback without automatic write", "stale visit and account callbacks" }
+    }));
+}
 static void Expect(bool satisfied, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(satisfied))] string? assertion = null)
 {
     if (!satisfied) throw new InvalidOperationException(assertion);

@@ -50,7 +50,7 @@ public sealed class NativeSession : IAsyncDisposable
                 session._call = session.Export<CallNative>("sproyt_probe_call");
                 // Explicit opt-in: an older ABI-1 library rejects this unknown
                 // field instead of silently applying body-only draft removal.
-                var opened = session.Call(new { Op = "open", Database = actualDatabase, Account = account, DraftRevisions = true });
+                var opened = session.Call(new { Op = "open", Database = actualDatabase, Account = account, DraftRevisions = true, ThreadTargets = true });
                 if (!opened.TryGetProperty("handle", out var handle) || handle.ValueKind != JsonValueKind.Number ||
                     !handle.TryGetUInt64(out session._handle) || session._handle == 0)
                     throw Unknown("The native open reply did not contain a valid handle.");
@@ -75,29 +75,29 @@ public sealed class NativeSession : IAsyncDisposable
         return true;
     });
 
-    public Task<long> SaveDraftAsync(string channel, string body) => _worker.Queue(() =>
+    public Task<long> SaveDraftAsync(string channel, string body, string? parentMessageId = null) => _worker.Queue(() =>
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentNullException.ThrowIfNull(body);
         var result = _clearEmptyDraft && body.Length == 0
-            ? Call(new { Op = "clear_draft", Handle = _handle, Generation = _generation, Channel = channel })
-            : Call(new { Op = "save_draft", Handle = _handle, Generation = _generation, Channel = channel, Body = body });
+            ? Call(new { Op = "clear_draft", Handle = _handle, Generation = _generation, Channel = channel, ParentMessageId = parentMessageId })
+            : Call(new { Op = "save_draft", Handle = _handle, Generation = _generation, Channel = channel, Body = body, ParentMessageId = parentMessageId });
         return RequiredRevision(result);
     });
 
-    public Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision) => _worker.Queue(() =>
+    public Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision, string? parentMessageId = null) => _worker.Queue(() =>
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(requestId);
         ArgumentOutOfRangeException.ThrowIfNegative(expectedDraftRevision);
-        Call(new { Op = "enqueue", Handle = _handle, Generation = _generation, RequestId = requestId, Channel = channel, Body = body, ExpectedDraftRevision = expectedDraftRevision });
+        Call(new { Op = "enqueue", Handle = _handle, Generation = _generation, RequestId = requestId, Channel = channel, Body = body, ExpectedDraftRevision = expectedDraftRevision, ParentMessageId = parentMessageId });
         // The mutation returned success. A subsequent read failure cannot be
         // represented as a failed enqueue: the stable request ID may persist.
         try
         {
             var queued = ReadSnapshot().Snapshot.Outbox.SingleOrDefault(item => item.RequestId == requestId);
-            if (queued is null || queued.Channel != channel || queued.Body != body)
+            if (queued is null || queued.Channel != channel || queued.Body != body || queued.ParentMessageId != parentMessageId)
                 throw Unknown("The committed request was absent or inconsistent in its snapshot.");
             return queued;
         }
@@ -158,8 +158,9 @@ public sealed class NativeSession : IAsyncDisposable
     private (StoreSnapshot Snapshot, ulong Generation) ReadSnapshot()
     {
         var result = Call(new { Op = "snapshot", Handle = _handle });
-        if (!result.TryGetProperty("schema", out var schema) || schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out int schemaVersion) || schemaVersion != 2 ||
+        if (!result.TryGetProperty("schema", out var schema) || schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out int schemaVersion) || schemaVersion != 3 ||
             !result.TryGetProperty("draft_revisions", out var revisionMode) || revisionMode.ValueKind != JsonValueKind.True ||
+            !result.TryGetProperty("thread_targets", out var targetMode) || targetMode.ValueKind != JsonValueKind.True ||
             RequiredString(result, "account") != _account ||
             !result.TryGetProperty("generation", out var generation) || generation.ValueKind != JsonValueKind.Number ||
             !generation.TryGetUInt64(out ulong currentGeneration) || currentGeneration == 0 ||
@@ -173,7 +174,7 @@ public sealed class NativeSession : IAsyncDisposable
         foreach (var draft in draftArray.EnumerateArray())
         {
             RequireObject(draft, "draft");
-            drafts.Add(new Draft(RequiredString(draft, "channel"), RequiredString(draft, "body"), RequiredRevision(draft)));
+            drafts.Add(new Draft(RequiredString(draft, "channel"), RequiredString(draft, "body"), RequiredRevision(draft), OptionalParent(draft)));
         }
         var outbox = new List<QueuedMessage>();
         foreach (var item in outboxArray.EnumerateArray())
@@ -194,17 +195,26 @@ public sealed class NativeSession : IAsyncDisposable
                 var content = RequiredObject(envelope, "payload");
                 var channel = RequiredObject(content, "channel");
                 if (RequiredString(channel, "type") != "id") throw Unknown("The native outbox channel was invalid.");
-                outbox.Add(new QueuedMessage(requestId, RequiredString(channel, "value"), RequiredString(content, "body"), state));
+                outbox.Add(new QueuedMessage(requestId, RequiredString(channel, "value"), RequiredString(content, "body"), state, OptionalParent(content)));
             }
             catch (JsonException exception)
             {
                 throw Unknown("The stored native outbox payload was not valid JSON.", exception);
             }
         }
-        if (drafts.Select(item => item.Channel).Distinct(StringComparer.Ordinal).Count() != drafts.Count ||
+        if (drafts.Select(item => item.Key).Distinct(StringComparer.Ordinal).Count() != drafts.Count ||
             outbox.Select(item => item.RequestId).Distinct(StringComparer.Ordinal).Count() != outbox.Count)
             throw Unknown("The native snapshot contained duplicate identities.");
         return (new StoreSnapshot(drafts.AsReadOnly(), outbox.AsReadOnly()), currentGeneration);
+    }
+
+    private static string? OptionalParent(JsonElement item)
+    {
+        if (!item.TryGetProperty("parent_message_id", out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: > 0 } parent ||
+            System.Text.Encoding.UTF8.GetByteCount(parent) > 128 || parent.Any(char.IsControl))
+            throw Unknown("The native snapshot contained an invalid thread target.");
+        return parent;
     }
 
     private void CloseNative()

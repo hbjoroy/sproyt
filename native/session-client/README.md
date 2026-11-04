@@ -98,3 +98,14 @@ sessionkontrakten og dei same feilsituasjonane, med eigen OS-lagringsadapter.
 C#-eigaren er Windows-adapteren, ikkje ein ny felles Kotlin/C#-kodebase.
 Rust-/wirekontraktar blir gjenbrukte; tokeneigarskap blir ikkje kopiert inn i UI.
 Recovery og generell produksjonsaktivering har framleis eigne opne portar.
+
+Samtaleutvidinga brukar dei same autoriserte WS-kommandoane som web for
+trådar, trådlesing, reaksjonar og rediger/slett. Rot- og trådprojeksjonar er
+skilde, og ei eldre trådrot lagar ikkje hol i den samanhengande kanaltidslinja.
+Alle nye kall fangar konto, full økt-stamp og visingsgenerasjon. Direkte
+sendings- og mutasjonskvitteringar blir validerte før dei blir fletta inn.
+
+Berre `send_message` har server-idempotens. Dei andre mutasjonane skal aldri
+spelast blindt om att etter eit tapt svar; klienten tilbyr autoritativ
+tilbakelesing. Sjå [samtalekontraktane](../probes/conversation-contracts/README.md)
+for faktisk wire-dekning, metadataflagg og kapasitetsgrenser.

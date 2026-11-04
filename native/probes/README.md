@@ -146,6 +146,16 @@ Operations: `open(database,account)`, `close(handle)`, `snapshot(handle)`,
 `invalidate(handle,generation)`. The managed code is the complete executable
 example. A fixture account string is a local partition, not authentication.
 
+The Windows conversation pilot opts into `draft_revisions` and `thread_targets`
+when opening the same ABI. Schema 3 migrates root drafts transactionally and
+keys drafts by `(channel,parent_message_id)`; save/clear/enqueue accept the
+optional parent explicitly. Root payload bytes remain unchanged. Thread send
+payloads retain their parent across admission, restart, uncertainty and replay.
+The eight-draft/eight-outbox and 1024-byte limits are shared across targets.
+An older DLL rejects schema 3; a new DLL without thread opt-in refuses to open
+a profile containing thread drafts or queued replies. Rollback needs a tested
+client/library pair and compatible profile backup.
+
 ## Kotlin and Swift desktop bindings
 
 `run-language-probe.ps1` adds two desktop-language probes against the same

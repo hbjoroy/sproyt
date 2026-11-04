@@ -106,3 +106,22 @@ navigasjon og endra radhøgd, og kontrollerer at inaktivt vindauge ikkje sender
 lesekvitteringar. Transport- og timerkontraktane ligg i `history-contracts`,
 `navigation-contracts` og `delivery-contracts`; dei bruker syntetiske eigarar
 og kontrollerte feil. Full live-aksept og fysisk input står framleis att.
+
+## Trådar og meldingshandlingar
+
+«Svar i tråd» opnar forelder og svar med eit eige varig utkast. Trådoversikta
+kan òg opne røter som ligg utanfor den lasta kanalhistorikken. Tilbake/fram,
+lukking og kontobytte held kanal- og trådutkast skilde. Trådlesing bruker målte
+synlege svar; forelderen blir ikkje rekna som eit lese svar.
+
+Meldingsval har reaksjonar, redigering av eigne meldingar og sletting med
+stadfesting. Vedlegg blir bevarte ved redigering. Sletting viser ein tombstone
+og skjermar gammal tekst/media, medan tråden framleis kan opnast. Ved uviss
+kvittering tilbyr klienten «Kontroller endringa»; han sender ikkje same
+reaksjon eller endring automatisk på nytt. Moderator-sletting står att.
+
+Trådar er avgrensa til 2000 svar og 20 MiB per serversvar. Store svar blir
+avviste med kapasitetsstatus utan reconnect-løkke. Dette er framleis eit
+online pilotsnitt, med dei eksisterande grensene for utkast og sendekø.
+`conversation-contracts`, `thread-feature-contracts` og
+`message-action-contracts` supplerer den faktiske WinUI-prøva.

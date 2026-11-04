@@ -10,7 +10,7 @@ internal static class NativeMessageActionsView
 {
     internal static Element Render(NativeMessageActionController owner, NativeMessageActionScope scope,
         NativeMessage message, IReadOnlyList<NativeReactionChip> reactions, SproytPalette palette,
-        NativeMessageActionCommands commands)
+        NativeMessageActionCommands commands, bool reactionsReady = true, Action? refreshReactions = null)
     {
         string id = message.Id;
         if (!owner.Available(scope, message)) return Empty();
@@ -22,7 +22,7 @@ internal static class NativeMessageActionsView
                 .AutomationName(label).AutomationId($"live-message-{key}-{id}");
         void Open(NativeMessageActionMode value) => owner.Open(scope, message, value);
         Element Choice(string emoji) => ActionButton(emoji, "emoji-" + emoji,
-            async () => await owner.ToggleAsync(scope, message, emoji, reactions.Any(c => c.Emoji == emoji && c.Mine), commands), enabled);
+            async () => await owner.ToggleAsync(scope, message, emoji, reactions.Any(c => c.Emoji == emoji && c.Mine), commands), enabled && reactionsReady);
         var rows = new List<Element>();
         foreach (var chip in reactions.Where(c => c.Count != 0))
         {
@@ -30,7 +30,7 @@ internal static class NativeMessageActionsView
             string names = chip.Names.Count > 0 ? string.Join(", ", chip.Names) : "Ingen namn tilgjengelege";
             rows.Add(ActionButton(text, "reaction-" + chip.Emoji,
                 async () => await owner.ToggleAsync(scope, message, chip.Emoji, chip.Mine, commands),
-                enabled && mode is NativeMessageActionMode.Closed or NativeMessageActionMode.Reactions)
+                enabled && reactionsReady && mode is NativeMessageActionMode.Closed or NativeMessageActionMode.Reactions)
                 .HAlign(HorizontalAlignment.Left).AutomationName(text + ". " + names)
                 .OnMount(native =>
                 {
@@ -66,12 +66,14 @@ internal static class NativeMessageActionsView
         }
         if (mode == NativeMessageActionMode.Reactions)
         {
+            if (!reactionsReady)
+                rows.Add(ActionButton("Hent reaksjonar", "refresh-reactions", () => refreshReactions?.Invoke(), !owner.Busy));
             rows.Add(HStack(4, Choice("👍"), Choice("❤️"), Choice("🎉"), Choice("😂")));
             rows.Add(TextBox(owner.Input, text => owner.ChangeInput(scope, id, mode, text)).PlaceholderText("Skriv eller lim inn ein emoji")
                 .IsEnabled(enabled).AutomationName("Eigen emoji").AutomationId("live-message-emoji-input-" + id));
             string emoji = owner.Input.Trim();
             rows.Add(ActionButton("Bruk emoji", "toggle", async () => await owner.ToggleAsync(scope, message, emoji,
-                reactions.Any(c => c.Emoji == emoji && c.Mine), commands), enabled && NativeMessageActionController.ValidEmoji(emoji)));
+                reactions.Any(c => c.Emoji == emoji && c.Mine), commands), enabled && reactionsReady && NativeMessageActionController.ValidEmoji(emoji)));
         }
         if (active)
         {
