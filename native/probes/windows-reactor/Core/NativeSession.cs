@@ -48,7 +48,9 @@ public sealed class NativeSession : IAsyncDisposable
                 if (version() != 1 || capacity() != ResponseCapacity)
                     throw new NativeProbeException("abi_mismatch", "Expected probe ABI 1 and a 256 KiB response buffer.");
                 session._call = session.Export<CallNative>("sproyt_probe_call");
-                var opened = session.Call(new { Op = "open", Database = actualDatabase, Account = account });
+                // Explicit opt-in: an older ABI-1 library rejects this unknown
+                // field instead of silently applying body-only draft removal.
+                var opened = session.Call(new { Op = "open", Database = actualDatabase, Account = account, DraftRevisions = true });
                 if (!opened.TryGetProperty("handle", out var handle) || handle.ValueKind != JsonValueKind.Number ||
                     !handle.TryGetUInt64(out session._handle) || session._handle == 0)
                     throw Unknown("The native open reply did not contain a valid handle.");
@@ -73,21 +75,23 @@ public sealed class NativeSession : IAsyncDisposable
         return true;
     });
 
-    public Task SaveDraftAsync(string channel, string body) => _worker.Queue(() =>
+    public Task<long> SaveDraftAsync(string channel, string body) => _worker.Queue(() =>
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentNullException.ThrowIfNull(body);
-        if (_clearEmptyDraft && body.Length == 0) Call(new { Op = "clear_draft", Handle = _handle, Generation = _generation, Channel = channel });
-        else Call(new { Op = "save_draft", Handle = _handle, Generation = _generation, Channel = channel, Body = body });
-        return true;
+        var result = _clearEmptyDraft && body.Length == 0
+            ? Call(new { Op = "clear_draft", Handle = _handle, Generation = _generation, Channel = channel })
+            : Call(new { Op = "save_draft", Handle = _handle, Generation = _generation, Channel = channel, Body = body });
+        return RequiredRevision(result);
     });
 
-    public Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId) => _worker.Queue(() =>
+    public Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision) => _worker.Queue(() =>
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(requestId);
-        Call(new { Op = "enqueue", Handle = _handle, Generation = _generation, RequestId = requestId, Channel = channel, Body = body });
+        ArgumentOutOfRangeException.ThrowIfNegative(expectedDraftRevision);
+        Call(new { Op = "enqueue", Handle = _handle, Generation = _generation, RequestId = requestId, Channel = channel, Body = body, ExpectedDraftRevision = expectedDraftRevision });
         // The mutation returned success. A subsequent read failure cannot be
         // represented as a failed enqueue: the stable request ID may persist.
         try
@@ -154,7 +158,9 @@ public sealed class NativeSession : IAsyncDisposable
     private (StoreSnapshot Snapshot, ulong Generation) ReadSnapshot()
     {
         var result = Call(new { Op = "snapshot", Handle = _handle });
-        if (RequiredString(result, "account") != _account ||
+        if (!result.TryGetProperty("schema", out var schema) || schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out int schemaVersion) || schemaVersion != 2 ||
+            !result.TryGetProperty("draft_revisions", out var revisionMode) || revisionMode.ValueKind != JsonValueKind.True ||
+            RequiredString(result, "account") != _account ||
             !result.TryGetProperty("generation", out var generation) || generation.ValueKind != JsonValueKind.Number ||
             !generation.TryGetUInt64(out ulong currentGeneration) || currentGeneration == 0 ||
             !result.TryGetProperty("active", out var active) || active.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
@@ -167,7 +173,7 @@ public sealed class NativeSession : IAsyncDisposable
         foreach (var draft in draftArray.EnumerateArray())
         {
             RequireObject(draft, "draft");
-            drafts.Add(new Draft(RequiredString(draft, "channel"), RequiredString(draft, "body")));
+            drafts.Add(new Draft(RequiredString(draft, "channel"), RequiredString(draft, "body"), RequiredRevision(draft)));
         }
         var outbox = new List<QueuedMessage>();
         foreach (var item in outboxArray.EnumerateArray())
@@ -238,6 +244,14 @@ public sealed class NativeSession : IAsyncDisposable
         if (!value.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.String)
             throw Unknown($"The native result had no {name} string.");
         return property.GetString()!;
+    }
+
+    private static long RequiredRevision(JsonElement value)
+    {
+        if (!value.TryGetProperty("revision", out var revision) || revision.ValueKind != JsonValueKind.Number ||
+            !revision.TryGetInt64(out long result) || result <= 0)
+            throw Unknown("The native result omitted a valid durable draft revision.");
+        return result;
     }
 
     private static void RequireObject(JsonElement value, string name)

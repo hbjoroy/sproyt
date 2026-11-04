@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "observedAtUtc": "2026-11-03T20:24:38.5043652+00:00",
+  "userTimeZone": "Europe/Oslo",
+  "namespace": "sproyt-canary",
+  "publicBaseUrl": "https://sproyt-canary.bjoroy.me",
+  "applicationRevision": "142f71888cdde11dec42a698432530e208f577bb",
+  "applicationVersion": "0.1.0",
+  "publicReadiness": {
+    "body": "ready",
+    "httpStatus": 200
+  },
+  "argo": {
+    "revisions": [
+      "79f28a8b0247ad7eb633fdf6da7aa945000fb532",
+      "79f28a8b0247ad7eb633fdf6da7aa945000fb532",
+      "142f71888cdde11dec42a698432530e208f577bb"
+    ],
+    "lastOperationFinishedAt": "2026-11-03T19:52:17Z",
+    "name": "sproyt-canary",
+    "health": "Healthy",
+    "sync": "Synced"
+  },
+  "deployments": [
+    {
+      "desiredReplicas": 1,
+      "name": "sproyt-canary-sproyt",
+      "readyReplicas": 1,
+      "images": [
+        "oci.bjoroy.me/sproyt/sproyt@sha256:973fd0e10ba09d897c2fdefb57c2f21ab255a2ad9e091e2fd4e52a075c56356a"
+      ]
+    },
+    {
+      "desiredReplicas": 1,
+      "name": "sproyt-canary-sproyt-heart",
+      "readyReplicas": 1,
+      "images": [
+        "oci.bjoroy.me/sproyt/heart@sha256:fe2eb544a14006504dbbb20e2c0a3489a0035eababefc5c93dba9f10c7ec1955"
+      ]
+    }
+  ],
+  "configuredFeatureFlags": {
+    "SPROYT_NATIVE_ENABLED": "true",
+    "SPROYT_CHAT_AGENTS_ENABLED": "true",
+    "SPROYT_CHANNEL_CHAT_AGENTS_ENABLED": "true"
+  },
+  "localSource": {
+    "revision": "8715726e9fe11290f215a13cbc71261993942313",
+    "unrelatedWorkingTreeChangesPresent": true,
+    "nativeFilesChangedBetweenLocalAndCanary": []
+  },
+  "verificationScope": [
+    "Read-only Kubernetes deployment, Argo Application and selected ConfigMap fields",
+    "Public /versionz and /readyz",
+    "Native source diff between local HEAD and deployed revision"
+  ],
+  "notEstablished": [
+    "Authenticated feature availability for each role and circle",
+    "Fresh end-to-end Windows native acceptance against this deployed revision",
+    "Current native message sending and reconnect acceptance",
+    "Feature parity percentage"
+  ]
+}

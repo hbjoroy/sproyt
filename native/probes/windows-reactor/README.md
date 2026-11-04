@@ -1,5 +1,12 @@
 # Sprøyt Windows-laboratorium
 
+Den same appen har no òg ein separat ekte Canary-modus. Start ei bygd pakke
+med `--server https://sproyt-canary.bjoroy.me/` for innlogging, kanalar,
+tekstchat og autorisert medielesing. Sjå [oppdatert klientstatus](../../../docs/native-client-status-2026-11-03.md)
+og [paritetsplanen](../../../docs/native-canary-parity-plan.md).
+Demo- og laboratorieavgrensingane nedanfor gjeld ikkje som status for alle
+modusar. Windows er første produktprioritet, deretter Android.
+
 Ein lokal, køyrbar UI-pilot med **Microsoft.UI.Reactor 0.1.0-preview.16** og
 ekte WinUI 3-kontrollar. Reactor er C# med MVU, ikkje React/JavaScript eller ein
 nettlesar. Prøva er isolert frå dagens Sprøyt-klient og produksjon.
@@ -79,5 +86,5 @@ Desse automatiske integrasjonsprøvene injiserer ikkje OS-input og erstattar
 ikkje testing av fysisk tastatur, IME, touch, skjermlesar eller visuell kvalitet.
 
 Reactor er eksperimentell. Denne prøva tek ikkje stilling til ein endeleg
-Windows-produktplattform. Android er framleis første produktmål; innlogging,
-ekte historikk og produksjonssynkronisering følgjer den eksisterande native-planen.
+Windows-produktplattform. Vidare produktarbeid følgjer paritetsplanen;
+full produksjonssynkronisering står framleis att.

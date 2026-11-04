@@ -36,26 +36,27 @@ public static class SessionProbe
             Check((await session.SnapshotAsync().ConfigureAwait(false)).Drafts.Single(item => item.Channel == firstChannel).Body == firstBody,
                 "A rejected UTF-8 draft overwrote saved text.");
 
-            var queued = await session.EnqueueAsync(firstChannel, firstBody, identity).ConfigureAwait(false);
+            long firstRevision = reopened.Drafts.Single(item => item.Channel == firstChannel).Revision;
+            var queued = await session.EnqueueAsync(firstChannel, firstBody, identity, firstRevision).ConfigureAwait(false);
             Check(queued == new QueuedMessage(identity, firstChannel, firstBody, "queued"), "Enqueue did not return the stored queued payload.");
             var afterEnqueue = await session.SnapshotAsync().ConfigureAwait(false);
             Check(afterEnqueue.Drafts.All(item => item.Channel != firstChannel) &&
                 afterEnqueue.Drafts.Single(item => item.Channel == secondChannel).Body == secondBody, "Enqueue did not clear only its matching draft.");
-            Check(await session.EnqueueAsync(firstChannel, firstBody, identity).ConfigureAwait(false) == queued,
+            Check(await session.EnqueueAsync(firstChannel, firstBody, identity, firstRevision).ConfigureAwait(false) == queued,
                 "An identical request ID did not return its original stored item.");
             await Expect("request_conflict", async () =>
             {
-                await session.EnqueueAsync(firstChannel, "Changed payload", identity).ConfigureAwait(false);
+                await session.EnqueueAsync(firstChannel, "Changed payload", identity, firstRevision).ConfigureAwait(false);
             }).ConfigureAwait(false);
             Check((await session.SnapshotAsync().ConfigureAwait(false)).Outbox.Count == 1, "A repeated identity produced a duplicate outbox item.");
 
             for (int index = 1; index < 8; index++)
-                await session.EnqueueAsync(firstChannel, $"Fiktiv kømelding {index}", $"{identity}-{index}").ConfigureAwait(false);
+                await session.EnqueueAsync(firstChannel, $"Fiktiv kømelding {index}", $"{identity}-{index}", 0).ConfigureAwait(false);
             const string retainedBody = "Ta vare på utkastet når køen er full";
-            await session.SaveDraftAsync(secondChannel, retainedBody).ConfigureAwait(false);
+            long retainedRevision = await session.SaveDraftAsync(secondChannel, retainedBody).ConfigureAwait(false);
             await Expect("capacity", async () =>
             {
-                await session.EnqueueAsync(secondChannel, retainedBody, $"{identity}-overflow").ConfigureAwait(false);
+                await session.EnqueueAsync(secondChannel, retainedBody, $"{identity}-overflow", retainedRevision).ConfigureAwait(false);
             }).ConfigureAwait(false);
             var full = await session.SnapshotAsync().ConfigureAwait(false);
             Check(full.Outbox.Count == 8 && full.Outbox.All(item => item.State == "queued"), "Local requests changed state without delivery.");

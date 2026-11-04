@@ -84,14 +84,14 @@ Den siste kommandoen opnar systemnettlesaren med den syntetiske Alice-kontoen.
 Launcher-eigaren held brokeren i gang medan appen er open, stoppar berre den
 prosessen han sjølv starta og bevarer labdata for neste oppstart.
 
-## Vegen til ein nyttig app
+## Frå sessionlab til Windows Canary
 
-N03a er sessionfundamentet. Neste Windows-etappe er native endepunkt i den
-ekte backend-en, normal Authentik-innlogging og transportautorisasjon gjennom
-HTTP/WS/SSE. Deretter koplar vi Windows-samtalen til ekte kanalliste, historikk,
-tekstsend­ing og innkomande meldingar i ein avgrensa Canary-pilot. Ein full
-N05-synkmotor og avansert media er ikkje føresetnad for den første nettbaserte
-pilotprøva; lokal kø må likevel aldri kunne sende same melding to gonger.
+N03a er sessionfundamentet. Den separate Windows Canary-modusen har no
+native endepunkt i den ekte backend-en, Authentik-innlogging, autentisert
+WebSocket, kanalliste, siste historikk, tekstsending og autorisert medielesing.
+Sjå [noverande status og akseptbevis](../../docs/native-client-status-2026-11-03.md)
+og [planen for funksjonslikskap](../../docs/native-canary-parity-plan.md).
+Full N05-synkronisering og produksjonslager står framleis att.
 
 Android-starten følgjer denne Windows-piloten. Android bruker den same
 sessionkontrakten og dei same feilsituasjonane, med eigen OS-lagringsadapter.

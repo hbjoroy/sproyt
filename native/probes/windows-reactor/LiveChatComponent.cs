@@ -14,6 +14,9 @@ namespace Sproyt.WindowsProbe;
 internal sealed class LiveChatComponent : Component
 {
     internal static Func<Task>? SendForProbe;
+    internal static Func<string, Task>? DiscardForProbe;
+    internal static ContentDialog? DiscardDialogForProbe;
+    private ContentDialog? _discardDialog;
     private ScrollViewer? _scroller;
     private ChatViewportFollow? _follow;
     private readonly Dictionary<string, double> _positions = [];
@@ -36,7 +39,7 @@ internal sealed class LiveChatComponent : Component
             Program.LiveStateChanged += Changed;
             if (app is not null) app.Changed += Changed;
             else _ = Program.OpenLiveAsync();
-            return () => { Program.LiveStateChanged -= Changed; if (app is not null) app.Changed -= Changed; _follow?.Dispose(); };
+            return () => { Program.LiveStateChanged -= Changed; if (app is not null) app.Changed -= Changed; _follow?.Dispose(); _discardDialog?.Hide(); };
         }, app is null ? "starting" : "ready");
         if (app is null)
         {
@@ -84,6 +87,29 @@ internal sealed class LiveChatComponent : Component
         }
         async void Send() => await SendCurrent();
         if (Program.LiveUiProbeDirectory is not null) SendForProbe = SendCurrent;
+        async Task DiscardRejected(string requestId)
+        {
+            if (Program.CloseAdmissionClosed || _discardDialog is not null || auth.UserId is not string user ||
+                auth.SessionStamp is not string stamp || PilotComponent.RootForClose?.XamlRoot is not { } root) return;
+            bool SameAccount() => app.Authentication.UserId == user && app.Authentication.SessionStamp == stamp && !Program.CloseAdmissionClosed;
+            var dialog = new ContentDialog { XamlRoot = root, Title = "Fjerne den avviste meldinga?",
+                Content = "Teksten blir fjerna frå sendekøen på denne eininga. Inga melding blir send.",
+                PrimaryButtonText = "Fjern", CloseButtonText = "Behald", DefaultButton = ContentDialogButton.Close };
+            _discardDialog = dialog;
+            if (Program.LiveUiProbeDirectory is not null) DiscardDialogForProbe = dialog;
+            void AccountChanged() { if (!SameAccount()) dialog.DispatcherQueue.TryEnqueue(() => dialog.Hide()); }
+            app.Changed += AccountChanged;
+            try
+            {
+                if (!SameAccount()) return;
+#pragma warning disable REACTOR_DIALOG_001
+                var choice = await dialog.ShowAsync();
+#pragma warning restore REACTOR_DIALOG_001
+                if (choice == ContentDialogResult.Primary && SameAccount()) await app.DiscardRejectedAsync(user, stamp, requestId);
+            }
+            finally { app.Changed -= AccountChanged; _discardDialog = null; DiscardDialogForProbe = null; }
+        }
+        if (Program.LiveUiProbeDirectory is not null) DiscardForProbe = DiscardRejected;
 
         string status = auth.Phase switch
         {
@@ -118,12 +144,18 @@ internal sealed class LiveChatComponent : Component
                 .ToArray())).Background(palette.Chrome).IsVisible(state.ShowConversation && (wide || showList))
             .Grid(row: 1, column: 0, columnSpan: wide ? 1 : 2);
 
+        bool IsRejected(NativeMessage message) => message.Id.StartsWith("pending:", StringComparison.Ordinal) &&
+            state.Workspace?.Outbox.Any(item => item.RequestId == message.Id[8..] && item.State == "rejected") == true;
+        string MessageStatus(NativeMessage message) => IsRejected(message) ? "Ikkje sendt — avvist" :
+            message.Id.StartsWith("pending:", StringComparison.Ordinal) ? "Lagra på denne eininga" : message.SentAt.ToLocalTime().ToString("HH:mm");
         Element Message(NativeMessage message) => VStack(5,
             Border(Empty()).Height(1).Width(56).Background(palette.Rule).HAlign(HorizontalAlignment.Left),
             HStack(8, TextBlock(message.Author).FontSize(14).SemiBold().Foreground(palette.Ink),
-                TextBlock(message.Id.StartsWith("pending:", StringComparison.Ordinal) ? "Lagra på denne eininga" : message.SentAt.ToLocalTime().ToString("HH:mm"))
-                    .FontSize(12).Foreground(palette.Muted)),
-            NativeMessageView.Render(app, message, palette, auth)
+                TextBlock(MessageStatus(message)).FontSize(12).Foreground(IsRejected(message) ? palette.Error : palette.Muted)
+                    .AutomationId("live-delivery-" + message.Id)),
+            NativeMessageView.Render(app, message, palette, auth),
+            Button("Fjern avvist", async () => await DiscardRejected(message.Id[8..])).MinHeight(44)
+                .AutomationId("live-discard-" + message.Id).IsVisible(IsRejected(message))
         ).Padding(16, 8).AutomationId("live-message-" + message.Id).WithKey(message.Id);
         var history = LazyVStack<NativeMessage>(rows, item => item.Id, (item, _) => Message(item))
             .AutomationId("live-history").AutomationName("Meldingar")
@@ -161,7 +193,9 @@ internal sealed class LiveChatComponent : Component
                 };
             }).WithKey("live-composer-" + channel);
         string notice = state.ConfirmPendingSends ? "Du har lagra meldingar frå førre innlogging. Stadfest før dei blir sende." : state.Error ?? (Encoding.UTF8.GetByteCount(draft?.Body ?? "") > 1024 ? "Meldinga er for lang for denne første Windows-versjonen." :
-            state.Workspace?.Outbox.Count > 0 ? $"{state.Workspace.Outbox.Count} meldingar ventar på sendekvittering." : "");
+            state.RejectedSends > 0 ? $"{state.RejectedSends} meldingar vart avviste. Teksten er teken vare på og blir ikkje send automatisk." :
+            state.PendingSends > 0 ? $"{state.PendingSends} meldingar ventar på sendekvittering." : "");
+        bool canRetryDelivery = state.ConfirmPendingSends || state.PendingSends > 0 || state.Error is not null;
         var composer = Border(Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], editor.Grid(column: 0),
             Button("↑", Send).AutomationId("live-send").AutomationName("Send meldinga").Size(48, 48).Margin(8, 0, 0, 0)
                 .Foreground(palette.AccentInk).Background(palette.Accent).IsEnabled(canSend).Grid(column: 1)
@@ -172,10 +206,10 @@ internal sealed class LiveChatComponent : Component
                     TextBlock(selected is null ? "Samtalar" : (selected.IsDirect ? "" : "# ") + selected.Name).FontSize(21).Bold().Foreground(palette.Ink)))
                 .Padding(12, 8).Grid(row: 0), history,
             Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], TextBlock(notice).TextWrapping().FontSize(12).Foreground(palette.Muted).Grid(column: 0),
-                Button(state.ConfirmPendingSends ? "Send ventande" : "Prøv igjen", async () =>
+                Button(state.ConfirmPendingSends ? "Send ventande" : "Oppdater samband", async () =>
                     { if (state.ConfirmPendingSends && auth.UserId is string user && auth.SessionStamp is string stamp)
                         await app.ConfirmPendingSendsAsync(user, stamp); else Retry(); })
-                    .AutomationName("Stadfest ventande meldingar eller prøv igjen").MinHeight(44).IsVisible(notice.Length > 0).Grid(column: 1))
+                    .AutomationId("live-delivery-retry").AutomationName("Stadfest ventande meldingar eller prøv igjen").MinHeight(44).IsVisible(notice.Length > 0 && canRetryDelivery).Grid(column: 1))
                 .Padding(12, 4).IsVisible(notice.Length > 0).Grid(row: 2), composer
         ).IsVisible(state.ShowConversation && (wide || !showList)).Grid(row: 1, column: 1);
 

@@ -11,7 +11,10 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
-        let directory = std::env::temp_dir().join(format!(
+        let root = std::env::var_os("SPROYT_DRAFT_TEST_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let directory = root.join(format!(
             "sproyt-native-probe-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -171,7 +174,7 @@ fn account_schema_owner_and_generation_are_fenced() {
         store.apply_message(1, "message", 2, "Late", false),
         Err("stale_generation")
     );
-    store.execute_test_sql("PRAGMA user_version=2");
+    store.execute_test_sql("PRAGMA user_version=3");
     drop(store);
     assert_eq!(
         Store::open(&fixture.database, "fixture-alice").err(),
@@ -485,7 +488,7 @@ fn ordinary_abi_rejects_diagnostic_requests() {
 }
 
 #[test]
-fn only_server_acknowledged_sends_can_free_outbox_capacity() {
+fn only_server_acknowledged_sends_can_use_automatic_forget() {
     let fixture = Fixture::new();
     let mut store = Store::open(&fixture.database, "native-pilot").unwrap();
     for index in 0..20 {
@@ -514,6 +517,172 @@ fn only_server_acknowledged_sends_can_free_outbox_capacity() {
 }
 
 #[test]
+fn discard_rejected_only_removes_the_named_terminal_rejection() {
+    let fixture = Fixture::new();
+    let mut store = Store::open(&fixture.database, "alice").unwrap();
+    store
+        .save_draft(1, "draft-channel", "Keep this draft")
+        .unwrap();
+    store
+        .apply_message(1, "message", 1, "Keep history", false)
+        .unwrap();
+    let mut prior = None;
+    for (id, actions) in [
+        ("queued", vec![]),
+        ("dispatching", vec!["dispatch"]),
+        ("uncertain", vec!["dispatch", "uncertain"]),
+        ("acknowledged", vec!["dispatch", "acknowledge"]),
+        ("rejected-other", vec!["dispatch", "reject"]),
+        ("rejected-target", vec!["dispatch", "reject"]),
+    ] {
+        store.enqueue(1, id, "channel", "Payload").unwrap();
+        for action in actions {
+            store.delivery(1, id, action).unwrap();
+        }
+        if !id.starts_with("rejected") {
+            let before = store.snapshot().unwrap();
+            assert_eq!(
+                store.delivery(1, id, "discard_rejected"),
+                Err("invalid_delivery_transition")
+            );
+            assert_eq!(store.snapshot().unwrap(), before);
+        }
+        prior = Some(store.snapshot().unwrap());
+    }
+    assert_eq!(
+        store.delivery(1, "missing", "discard_rejected"),
+        Err("unknown_request")
+    );
+    assert_eq!(
+        store.delivery(2, "rejected-target", "discard_rejected"),
+        Err("stale_generation")
+    );
+    let mut expected = prior.unwrap();
+    expected["outbox"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|item| item["request_id"] != "rejected-target");
+    store
+        .delivery(1, "rejected-target", "discard_rejected")
+        .unwrap();
+    assert_eq!(store.snapshot().unwrap(), expected);
+    assert_eq!(
+        store.delivery(1, "rejected-target", "discard_rejected"),
+        Err("unknown_request")
+    );
+    drop(store);
+    let reopened = Store::open(&fixture.database, "alice").unwrap();
+    // Opening converts the interrupted dispatch to uncertain, independently
+    // of discard. Every other field remains unchanged across process lifetime.
+    for item in expected["outbox"].as_array_mut().unwrap() {
+        if item["state"] == "dispatching" {
+            item["state"] = json!("uncertain");
+        }
+    }
+    assert_eq!(reopened.snapshot().unwrap(), expected);
+}
+
+#[test]
+fn abi_discard_rejected_is_explicit_and_additive_for_legacy_and_revisioned_handles() {
+    for revisioned in [false, true] {
+        let fixture = Fixture::new();
+        let handle = call(json!({"op":"open","database":fixture.database,"account":"alice","draft_revisions":revisioned}))["result"]["handle"].as_u64().unwrap();
+        let enqueue = |id: &str| {
+            let mut request = json!({"op":"enqueue","handle":handle,"generation":1,"channel":"channel","body":"Payload","request_id":id});
+            if revisioned {
+                request["expected_draft_revision"] = json!(0);
+            }
+            assert_eq!(call(request)["ok"], true);
+        };
+        let delivery = |id: &str, action: &str| {
+            call(
+                json!({"op":"delivery","handle":handle,"generation":1,"request_id":id,"action":action}),
+            )
+        };
+        let snapshot = || call(json!({"op":"snapshot","handle":handle}))["result"].clone();
+        for (id, actions) in [
+            ("queued", vec![]),
+            ("dispatching", vec!["dispatch"]),
+            ("uncertain", vec!["dispatch", "uncertain"]),
+            ("acknowledged", vec!["dispatch", "acknowledge"]),
+            ("rejected", vec!["dispatch", "reject"]),
+        ] {
+            enqueue(id);
+            for action in actions {
+                assert_eq!(delivery(id, action)["ok"], true);
+            }
+            if id != "rejected" {
+                let before = snapshot();
+                assert_eq!(
+                    delivery(id, "discard_rejected")["error"],
+                    "invalid_delivery_transition"
+                );
+                assert_eq!(snapshot(), before);
+            }
+        }
+        let mut expected = snapshot();
+        expected["outbox"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|item| item["request_id"] != "rejected");
+        assert_eq!(delivery("rejected", "discard_rejected")["ok"], true);
+        assert_eq!(snapshot(), expected);
+        // Existing acknowledged cleanup remains its own unchanged action.
+        assert_eq!(
+            delivery("queued", "forget")["error"],
+            "invalid_delivery_transition"
+        );
+        assert_eq!(delivery("acknowledged", "forget")["ok"], true);
+        assert_eq!(call(json!({"op":"close","handle":handle}))["ok"], true);
+    }
+}
+
+#[test]
+fn explicit_discard_rejected_releases_exactly_one_full_queue_slot() {
+    let fixture = Fixture::new();
+    let mut store = Store::open(&fixture.database, "alice").unwrap();
+    for index in 0..8 {
+        let id = format!("rejected-{index}");
+        store
+            .enqueue(1, &id, "channel", "Rejected payload")
+            .unwrap();
+        store.delivery(1, &id, "dispatch").unwrap();
+        store.delivery(1, &id, "reject").unwrap();
+    }
+    store.save_draft(1, "channel", "New draft").unwrap();
+    assert_eq!(
+        store.enqueue(1, "new-id", "channel", "New draft"),
+        Err("capacity")
+    );
+    store.delivery(1, "rejected-3", "discard_rejected").unwrap();
+    assert_eq!(store.snapshot().unwrap()["drafts"][0]["body"], "New draft");
+    store.enqueue(1, "new-id", "channel", "New draft").unwrap();
+    let outbox = store.snapshot().unwrap()["outbox"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(outbox.len(), 8);
+    assert_eq!(
+        outbox
+            .iter()
+            .filter(|item| item["state"] == "rejected")
+            .count(),
+        7
+    );
+    assert_eq!(
+        outbox
+            .iter()
+            .filter(|item| item["request_id"] == "new-id")
+            .count(),
+        1
+    );
+    assert_eq!(
+        store.enqueue(1, "overflow", "channel", "Another send"),
+        Err("capacity")
+    );
+}
+
+#[test]
 fn cleared_channel_drafts_do_not_exhaust_live_storage_slots() {
     let fixture = Fixture::new();
     let mut store = Store::open(&fixture.database, "native-pilot").unwrap();
@@ -529,4 +698,325 @@ fn cleared_channel_drafts_do_not_exhaust_live_storage_slots() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn revision_opt_in_rejects_unbound_admission_and_never_reuses_a_cleared_revision() {
+    let fixture = Fixture::new();
+    let mut store = Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
+    let first = store.save_draft(1, "channel", "Same body").unwrap();
+    assert_eq!(
+        store.enqueue(1, "unbound", "channel", "Same body"),
+        Err("draft_revision_required")
+    );
+    assert_eq!(
+        store.enqueue_draft(1, "future", "channel", "Same body", Some(first + 100)),
+        Err("invalid_revision")
+    );
+    store
+        .enqueue_draft(1, "first", "channel", "Same body", Some(first))
+        .unwrap();
+    assert_eq!(store.snapshot().unwrap()["drafts"], json!([]));
+    let second = store.save_draft(1, "channel", "Same body").unwrap();
+    assert!(second > first);
+    let cleared = store.clear_draft(1, "channel").unwrap();
+    assert!(cleared > second);
+    drop(store);
+    let mut reopened = Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
+    let third = reopened.save_draft(1, "channel", "Same body").unwrap();
+    assert!(third > cleared);
+    reopened
+        .enqueue_draft(1, "old-capture", "channel", "Same body", Some(first))
+        .unwrap();
+    assert_eq!(reopened.snapshot().unwrap()["drafts"][0]["revision"], third);
+    assert_eq!(
+        reopened.enqueue_draft(1, "first", "channel", "Same body", Some(third)),
+        Err("request_conflict")
+    );
+}
+
+#[test]
+fn lost_enqueue_results_preserve_newer_identical_drafts_without_repair_writes() {
+    use crate::fault::{Fault, Mode, Site};
+    for site in [Site::AfterInsert, Site::BeforeCommit, Site::AfterCommit] {
+        let fixture = Fixture::new();
+        let mut store = Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
+        let captured = store.save_draft(1, "channel", "Same body").unwrap();
+        store
+            .arm_fault(
+                1,
+                Fault {
+                    site,
+                    mode: Mode::Error,
+                },
+            )
+            .unwrap();
+        let error = if site == Site::AfterCommit {
+            "injected_unknown_outcome"
+        } else {
+            "injected_failure"
+        };
+        assert_eq!(
+            store.enqueue_draft(1, "request", "channel", "Same body", Some(captured)),
+            Err(error)
+        );
+        store.save_draft(1, "channel", "Away").unwrap();
+        let newer = store.save_draft(1, "channel", "Same body").unwrap();
+        store
+            .enqueue_draft(1, "request", "channel", "Same body", Some(captured))
+            .unwrap();
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot["drafts"][0]["revision"], newer);
+        assert_eq!(snapshot["drafts"][0]["body"], "Same body");
+        assert_eq!(snapshot["outbox"].as_array().unwrap().len(), 1);
+        let payload = snapshot["outbox"][0]["payload"].clone();
+        drop(store);
+        let mut store = Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
+        store
+            .enqueue_draft(1, "request", "channel", "Same body", Some(captured))
+            .unwrap();
+        assert_eq!(store.snapshot().unwrap()["drafts"][0]["revision"], newer);
+        assert_eq!(store.snapshot().unwrap()["outbox"][0]["payload"], payload);
+    }
+}
+
+fn seed_v1(fixture: &Fixture) -> String {
+    let connection = rusqlite::Connection::open(&fixture.database).unwrap();
+    connection.execute_batch("PRAGMA application_id=1397772880; PRAGMA user_version=1;
+        create table identity(id integer primary key,account text not null,generation integer not null,active integer not null);
+        create table drafts(channel text primary key,body text not null);
+        create table outbox(request_id text primary key,channel text not null,payload text not null,state text not null);
+        create table messages(id text primary key,revision integer not null,body text not null,deleted integer not null);
+        insert into identity values(1,'alice',1,1);
+        insert into drafts values('channel','Legacy draft');
+        insert into messages values('message',7,'Keep history',0);").unwrap();
+    let payload = "{\"unchanged\":\"legacy payload bytes\"}".to_owned();
+    connection
+        .execute(
+            "insert into outbox values('legacy-id','channel',?1,'dispatching')",
+            [&payload],
+        )
+        .unwrap();
+    payload
+}
+
+#[test]
+fn schema_one_migration_preserves_drafts_outbox_ids_payloads_and_delivery_recovery() {
+    let fixture = Fixture::new();
+    let payload = seed_v1(&fixture);
+    assert_eq!(
+        Store::open_with_draft_revisions(&fixture.database, "bob", true).err(),
+        Some("account_mismatch")
+    );
+    {
+        let connection = rusqlite::Connection::open(&fixture.database).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+    let mut store = Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(snapshot["schema"], 2);
+    assert_eq!(
+        snapshot["drafts"][0],
+        json!({"channel":"channel","body":"Legacy draft","revision":1})
+    );
+    assert_eq!(snapshot["outbox"][0]["request_id"], "legacy-id");
+    assert_eq!(snapshot["outbox"][0]["payload"], payload);
+    assert_eq!(snapshot["outbox"][0]["state"], "uncertain");
+    assert_eq!(snapshot["messages"][0]["revision"], 7);
+    store
+        .enqueue_draft(1, "new-id", "channel", "Legacy draft", Some(1))
+        .unwrap();
+    assert_eq!(store.snapshot().unwrap()["drafts"], json!([]));
+    assert!(store.save_draft(1, "channel", "New draft").unwrap() > 1);
+    drop(store);
+    let store = Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap()["outbox"][0]["request_id"],
+        "legacy-id"
+    );
+}
+
+#[test]
+fn failed_schema_migration_rolls_back_all_column_and_version_changes() {
+    let fixture = Fixture::new();
+    let payload = seed_v1(&fixture);
+    {
+        let connection = rusqlite::Connection::open(&fixture.database).unwrap();
+        // Force the final ALTER to fail after the earlier ALTERs ran.
+        connection
+            .execute_batch("alter table outbox add column draft_revision integer")
+            .unwrap();
+    }
+    assert_eq!(
+        Store::open_with_draft_revisions(&fixture.database, "alice", true).err(),
+        Some("storage_error")
+    );
+    let connection = rusqlite::Connection::open(&fixture.database).unwrap();
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert!(
+        connection
+            .prepare("select draft_clock from identity")
+            .is_err()
+    );
+    assert!(connection.prepare("select revision from drafts").is_err());
+    assert_eq!(
+        connection
+            .query_row("select payload from outbox", [], |row| row
+                .get::<_, String>(0))
+            .unwrap(),
+        payload
+    );
+}
+
+#[test]
+fn abi_revision_opt_in_is_explicit_while_legacy_admission_keeps_its_contract() {
+    for revisioned in [false, true] {
+        let fixture = Fixture::new();
+        let handle = call(json!({"op":"open","database":fixture.database,"account":"alice","draft_revisions":revisioned}))["result"]["handle"].as_u64().unwrap();
+        let saved = call(
+            json!({"op":"save_draft","handle":handle,"generation":1,"channel":"channel","body":"Same body"}),
+        );
+        let revision = saved["result"]["revision"].as_u64().unwrap();
+        let mut request = json!({"op":"enqueue","handle":handle,"generation":1,"channel":"channel","body":"Same body","request_id":"request"});
+        if revisioned {
+            assert_eq!(call(request.clone())["error"], "draft_revision_required");
+            request["expected_draft_revision"] = json!(revision);
+        }
+        assert_eq!(call(request)["ok"], true);
+        assert_eq!(
+            call(json!({"op":"snapshot","handle":handle}))["result"]["drafts"],
+            json!([])
+        );
+        assert_eq!(call(json!({"op":"close","handle":handle}))["ok"], true);
+    }
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn revision_crash_child() {
+    use crate::fault::{Fault, Mode, Site};
+    let Some(path) = std::env::var_os("SPROYT_DRAFT_CRASH_DATABASE") else {
+        return;
+    };
+    let site: Site = serde_json::from_str(&format!(
+        "\"{}\"",
+        std::env::var("SPROYT_DRAFT_CRASH_SITE").unwrap()
+    ))
+    .unwrap();
+    let newer = std::env::var("SPROYT_DRAFT_CRASH_NEWER").unwrap() == "true";
+    let mut store =
+        Store::open_with_draft_revisions(path.to_str().unwrap(), "alice", true).unwrap();
+    let captured = store.save_draft(1, "channel", "Same body").unwrap();
+    if newer {
+        store.save_draft(1, "channel", "Away").unwrap();
+        store.save_draft(1, "channel", "Same body").unwrap();
+    }
+    store
+        .arm_fault(
+            1,
+            Fault {
+                site,
+                mode: Mode::Pause,
+            },
+        )
+        .unwrap();
+    store
+        .enqueue_draft(1, "request", "channel", "Same body", Some(captured))
+        .unwrap();
+    panic!("Diagnostic pause returned instead of waiting for process termination");
+}
+
+#[test]
+#[cfg(feature = "fault-injection")]
+fn hard_process_death_at_each_commit_boundary_preserves_revision_and_exact_replay() {
+    use std::{
+        io::{BufRead, BufReader},
+        process::{Child, Command, Stdio},
+        sync::mpsc,
+        time::Duration,
+    };
+    struct ChildGuard(Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    for site in ["after_insert", "before_commit", "after_commit"] {
+        for newer in [false, true] {
+            let fixture = Fixture::new();
+            let mut child = ChildGuard(
+                Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "tests::revision_crash_child", "--nocapture"])
+                    .env("SPROYT_DRAFT_CRASH_DATABASE", &fixture.database)
+                    .env("SPROYT_DRAFT_CRASH_SITE", site)
+                    .env("SPROYT_DRAFT_CRASH_NEWER", newer.to_string())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap(),
+            );
+            let stdout = child.0.stdout.take().unwrap();
+            let (sender, receiver) = mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines() {
+                    let line = line.unwrap();
+                    if let Some(marker) = line.strip_prefix("PROBE_FAULT ") {
+                        sender.send(marker.to_owned()).unwrap();
+                        return;
+                    }
+                }
+            });
+            let marker: Value = serde_json::from_str(
+                &receiver
+                    .recv_timeout(Duration::from_secs(15))
+                    .expect("Child never reached the requested commit boundary"),
+            )
+            .unwrap();
+            assert_eq!(marker["site"], site);
+            child.0.kill().unwrap();
+            assert!(!child.0.wait().unwrap().success());
+            reader.join().unwrap();
+            let mut store =
+                Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
+            let before_retry = store.snapshot().unwrap();
+            let committed = site == "after_commit";
+            assert_eq!(
+                before_retry["outbox"].as_array().unwrap().len(),
+                usize::from(committed)
+            );
+            if newer || !committed {
+                assert_eq!(before_retry["drafts"][0]["body"], "Same body");
+                assert_eq!(
+                    before_retry["drafts"][0]["revision"],
+                    if newer { 4 } else { 2 }
+                );
+            } else {
+                assert_eq!(before_retry["drafts"], json!([]));
+            }
+            for _ in 0..2 {
+                store
+                    .enqueue_draft(1, "request", "channel", "Same body", Some(2))
+                    .unwrap();
+            }
+            let after_retry = store.snapshot().unwrap();
+            assert_eq!(after_retry["outbox"].as_array().unwrap().len(), 1);
+            assert_eq!(after_retry["outbox"][0]["payload"], marker["payload"]);
+            if newer {
+                assert_eq!(after_retry["drafts"], before_retry["drafts"]);
+            } else {
+                assert_eq!(after_retry["drafts"], json!([]));
+            }
+        }
+    }
 }

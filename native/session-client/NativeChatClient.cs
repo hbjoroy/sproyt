@@ -2,8 +2,12 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
-internal sealed record NativeChannel(string Id, string Name, string? CircleName = null, string? CircleId = null, string Kind = "private", bool IsDirect = false);
-internal sealed record NativeMessage(string Id, string ChannelId, string AuthorId, string Author, string Body, DateTimeOffset SentAt, ulong Sequence);
+internal sealed record NativeDirectActivity(DateTimeOffset? LastMessageAt, double Score, DateTimeOffset CalculatedAt);
+internal sealed record NativeChannel(string Id, string Name, string? CircleName = null, string? CircleId = null, string Kind = "private", bool IsDirect = false,
+    string? Slug = null, string Description = "", string? Role = null, ulong LastReadSequence = 0, ulong LatestSequence = 0,
+    string? DirectUserId = null, NativeDirectActivity? DirectActivity = null);
+internal sealed record NativeMessage(string Id, string ChannelId, string AuthorId, string Author, string Body, DateTimeOffset SentAt, ulong Sequence,
+    string? ParentMessageId = null, DateTimeOffset? EditedAt = null, DateTimeOffset? DeletedAt = null);
 internal sealed record NativeChatSnapshot(bool Connected, bool Loading, string? Error, IReadOnlyList<NativeChannel> Channels, string? SelectedChannel, IReadOnlyList<NativeMessage> Messages, string? UserId = null);
 
 // A transport projection of server events. Drafts and durable outbox work belong
@@ -132,7 +136,7 @@ internal sealed class NativeChatClient : IAsyncDisposable
                 {
                     if (ReferenceEquals(socket, active)) socket = null;
                     connected = false; loading = false;
-                    foreach (var request in pending.Values) request.Completion.TrySetException(new InvalidOperationException("Vi fekk ikkje stadfesta førespurnaden. Prøv igjen med same førespurnads-ID."));
+                    foreach (var request in pending) request.Value.Completion.TrySetException(NativeCommandException.Uncertain(request.Key));
                     pending.Clear();
                 }
                 Notify();
@@ -163,9 +167,15 @@ internal sealed class NativeChatClient : IAsyncDisposable
         NativeClientWire.Require(Guid.TryParseExact(channelId, "D", out _) && !string.IsNullOrWhiteSpace(body) && Encoding.UTF8.GetByteCount(body) <= 1024 && RequestId(requestId));
         NativeClientWire.Require(Guid.TryParseExact(expectedUserId, "D", out _) && !string.IsNullOrEmpty(expectedSessionStamp));
         var response = await CommandAsync("send_message", new { channel_id = channelId, parent_message_id = (string?)null, body }, requestId, cancellationToken, new SendFence(expectedUserId, expectedSessionStamp));
-        NativeClientWire.Require(response.GetProperty("type").GetString() == "message_accepted");
-        var message = ParseMessage(response.GetProperty("payload").GetProperty("message"));
-        NativeClientWire.Require(message.ChannelId == channelId); return message;
+        try
+        {
+            NativeClientWire.Require(response.GetProperty("type").GetString() == "message_accepted");
+            var message = ParseMessage(response.GetProperty("payload").GetProperty("message"));
+            NativeClientWire.Require(message.ChannelId == channelId && message.AuthorId == expectedUserId && message.ParentMessageId is null);
+            return message;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or KeyNotFoundException or FormatException)
+        { throw NativeCommandException.Uncertain(requestId); }
     }
     private sealed record SendFence(string UserId, string SessionStamp);
     private async Task<JsonElement> CommandAsync(string type, object? payload, string? requestId, CancellationToken cancellationToken, SendFence? fence = null)
@@ -213,15 +223,16 @@ internal sealed class NativeChatClient : IAsyncDisposable
                 finally { sendGate.Release(); }
             }
             var response = await request.Completion.Task.WaitAsync(timeout.Token);
-            if (response.GetProperty("type").GetString() == "error")
-            {
-                string message = SafeError(response.GetProperty("payload").GetProperty("message").GetString() ?? "Tenesta avviste førespurnaden.");
-                SetError(message); throw new InvalidOperationException(message);
-            }
-            return response;
+            // The account can change after the receiver completes this task but
+            // before its continuation runs. Never classify an old account's error
+            // as a definitive result for the newly active account.
+            return fence is null ? NativeClientWire.CommandResponse(response, requestId)
+                : owner.AdmitTransport(fence.UserId, fence.SessionStamp, () => NativeClientWire.CommandResponse(response, requestId));
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && !lifetime.IsCancellationRequested)
-        { SetError("Vi fekk ikkje stadfesta førespurnaden. Prøv igjen med same førespurnads-ID."); throw new InvalidOperationException(Snapshot.Error); }
+        catch (NativeCommandException failure) { SetError(failure.Message); throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || lifetime.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (exception is InvalidOperationException or WebSocketException or OperationCanceledException or System.IO.IOException)
+        { var failure = NativeCommandException.Uncertain(requestId); SetError(failure.Message); throw failure; }
         finally { lock (gate) if (--request.Waiters == 0 && pending.TryGetValue(requestId, out var current) && ReferenceEquals(current, request)) pending.Remove(requestId); }
     }
     private async Task ReceiveAsync(ClientWebSocket active, CancellationToken cancellationToken)
@@ -263,14 +274,7 @@ internal sealed class NativeChatClient : IAsyncDisposable
             }
             else if (type == "channels_listed")
             {
-                var listed = payload.GetProperty("channels"); NativeClientWire.Require(listed.GetArrayLength() <= 2000);
-                channels = listed.EnumerateArray().Select(channel =>
-                {
-                    string? circle = channel.TryGetProperty("circle_id", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() : null;
-                    bool direct = channel.TryGetProperty("is_direct", out var directValue) && directValue.ValueKind == JsonValueKind.True;
-                    direct |= channel.TryGetProperty("direct_user_id", out var directUser) && directUser.ValueKind == JsonValueKind.String;
-                    return new NativeChannel(channel.GetProperty("id").GetString()!, channel.GetProperty("name").GetString()!, circle is not null && circles.TryGetValue(circle, out var name) ? name : null, circle, channel.GetProperty("kind").GetString()!, direct);
-                }).ToArray();
+                channels = DecodeChannels(payload, circles).ToArray();
                 if (selected is not null && !channels.Any(channel => channel.Id == selected)) { selected = null; messages.Clear(); }
             }
             else if (type is "messages_loaded" or "subscription_started")
@@ -292,7 +296,31 @@ internal sealed class NativeChatClient : IAsyncDisposable
         if (message.ChannelId != selected) return; messages[message.Id] = message;
         if (messages.Count > 500) foreach (string id in messages.Values.OrderByDescending(value => value.Sequence).ThenByDescending(value => value.Id, StringComparer.Ordinal).Skip(500).Select(value => value.Id).ToArray()) messages.Remove(id);
     }
-    private static NativeMessage ParseMessage(JsonElement value) => new(value.GetProperty("id").GetString()!, value.GetProperty("channel_id").GetString()!, value.GetProperty("sender_id").GetString()!, value.GetProperty("sender_display_name").GetString()!, value.GetProperty("body").GetString()!, value.GetProperty("sent_at").GetDateTimeOffset(), value.GetProperty("sequence").GetUInt64());
+    private static string? OptionalString(JsonElement value, string property) => value.TryGetProperty(property, out var item) && item.ValueKind != JsonValueKind.Null ? item.GetString() : null;
+    private static DateTimeOffset? OptionalDate(JsonElement value, string property) => value.TryGetProperty(property, out var item) && item.ValueKind != JsonValueKind.Null ? item.GetDateTimeOffset() : null;
+    private static ulong OptionalSequence(JsonElement value, string property) => value.TryGetProperty(property, out var item) ? item.GetUInt64() : 0;
+    internal static IReadOnlyList<NativeChannel> DecodeChannels(JsonElement payload, IReadOnlyDictionary<string, string> circles)
+    {
+        var listed = payload.GetProperty("channels"); NativeClientWire.Require(listed.GetArrayLength() <= 2000);
+        return Array.AsReadOnly(listed.EnumerateArray().Select(channel =>
+        {
+            string? circle = OptionalString(channel, "circle_id");
+            string? directUser = OptionalString(channel, "direct_user_id");
+            bool direct = channel.TryGetProperty("is_direct", out var directValue) && directValue.GetBoolean();
+            NativeDirectActivity? activity = null;
+            if (channel.TryGetProperty("direct_activity", out var ranking) && ranking.ValueKind != JsonValueKind.Null)
+            {
+                double score = ranking.GetProperty("score").GetDouble(); NativeClientWire.Require(double.IsFinite(score));
+                activity = new(OptionalDate(ranking, "last_message_at"), score, ranking.GetProperty("calculated_at").GetDateTimeOffset());
+            }
+            return new NativeChannel(channel.GetProperty("id").GetString()!, channel.GetProperty("name").GetString()!,
+                circle is not null && circles.TryGetValue(circle, out var name) ? name : null, circle, channel.GetProperty("kind").GetString()!, direct || directUser is not null,
+                OptionalString(channel, "slug"), OptionalString(channel, "description") ?? "", OptionalString(channel, "role"),
+                OptionalSequence(channel, "last_read_sequence"), OptionalSequence(channel, "latest_sequence"), directUser, activity);
+        }).ToArray());
+    }
+    private static NativeMessage ParseMessage(JsonElement value) => new(value.GetProperty("id").GetString()!, value.GetProperty("channel_id").GetString()!, value.GetProperty("sender_id").GetString()!, value.GetProperty("sender_display_name").GetString()!, value.GetProperty("body").GetString()!, value.GetProperty("sent_at").GetDateTimeOffset(), value.GetProperty("sequence").GetUInt64(),
+        OptionalString(value, "parent_message_id"), OptionalDate(value, "edited_at"), OptionalDate(value, "deleted_at"));
     internal static IReadOnlyList<NativeMessage> DecodeMessageEvents(JsonElement envelope)
     {
         NativeClientWire.Require(envelope.GetProperty("protocol").GetString() == Protocol);
@@ -316,7 +344,7 @@ internal sealed class NativeChatClient : IAsyncDisposable
         return start();
     }
     private static bool RequestId(string value) => value is { Length: >= 1 and <= 128 } && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
-    private static string SafeError(string value) => new(value.Where(c => !char.IsControl(c) || c == '\n').Take(512).ToArray());
+    private static string SafeError(string value) => NativeClientWire.SafeMessage(value);
     private void SetError(string value) { lock (gate) error = value; Notify(); }
     public async ValueTask DisposeAsync()
     {

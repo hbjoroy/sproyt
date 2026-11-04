@@ -60,6 +60,11 @@ gates.
 See [docs/development.md](docs/development.md) for the local and CI quality
 gates used for contributions.
 
+For the Windows native client, see the
+[current implementation and acceptance status](docs/native-client-status-2026-11-03.md),
+[Canary feature matrix](docs/native-canary-parity-matrix.md), and
+[parallel implementation plan](docs/native-canary-parity-plan.md).
+
 For copy/paste startup instructions, including the existing cluster PostgreSQL,
 private `oci.bjoroy.me` images, namespaced pull secrets, Helm, and manual
 Ingress, see [docs/running.md](docs/running.md).

@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-11-03T20:51:29.8728447+00:00",
+  "branch": "codex/native-parity-foundation",
+  "testedSourceBase": "142f71888cdde11dec42a698432530e208f577bb",
+  "testedSourceDirty": true,
+  "sourceHashes": [
+    {
+      "path": ".github/workflows/native-probe.yml",
+      "sha256": "ed5ab4a4cab595b6d85681aba793374e210fef0211928825b4c6231b40d4acc1"
+    },
+    {
+      "path": "native/probes/client-contracts/ClientContracts.csproj",
+      "sha256": "5b48d1878e60b717e8549967bc399d5389bb9348298cfaabed8de543fc949549"
+    },
+    {
+      "path": "native/probes/client-contracts/FixtureServer.cs",
+      "sha256": "6a8456ea960a8435013b6fa4bbc185febd0386024033da15af29b86ad1339fb3"
+    },
+    {
+      "path": "native/probes/client-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/client-contracts/Program.cs",
+      "sha256": "db1f2dac7f46222867bf3b40a4a1826606224710957f064222c122077f57ceb5"
+    },
+    {
+      "path": "native/probes/client-contracts/README.md",
+      "sha256": "f088f375583eb4dec020542d04f9e44330d4527df73062d6a4cdf36149b832d4"
+    },
+    {
+      "path": "native/probes/client-contracts/SyntheticSession.cs",
+      "sha256": "a4f2bfece1dc67a37fb0eccee07babfd4e81cfe6dca10ffadf2eb791c7da15eb"
+    },
+    {
+      "path": "native/probes/client-core/src/lib.rs",
+      "sha256": "c048515232acbe2282a090c6386dce2e2fe9e2b3001f78c05e82f638b817f0e5"
+    },
+    {
+      "path": "native/probes/client-core/src/store.rs",
+      "sha256": "4141c5ee650758a4dac744ec126529812a8417985976378e580a1e82d45b46d2"
+    },
+    {
+      "path": "native/probes/client-core/src/tests.rs",
+      "sha256": "ac73a76c5bd869bda3bc1169bcf0cad69712ea7090490c43aa8b7a0087582a47"
+    },
+    {
+      "path": "native/probes/delivery-contracts/DeliveryContracts.csproj",
+      "sha256": "42f591974290228a182fe1f6681c7cd034ed79b75062ee74eebedd6f547b649e"
+    },
+    {
+      "path": "native/probes/delivery-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/delivery-contracts/Program.cs",
+      "sha256": "5241950d98f373316601081102aa7bc759f1f36e7bf44e347aa4ea4b7cb26c43"
+    },
+    {
+      "path": "native/probes/delivery-contracts/README.md",
+      "sha256": "cb7d51f5b090ee852d3187175545fc01712f8ca56f1e5bf6d42242f1167ec030"
+    },
+    {
+      "path": "native/probes/run-windows-reactor.ps1",
+      "sha256": "3edf0de763ebec3a6a75920b820dc7ab2453605ffbd3d0f9da4b4c82540de277"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/ChatWorkspace.cs",
+      "sha256": "584ec2526aaf81a082e0ed10f081534c656e9b1813b68c384abc46c821fec831"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveApplication.cs",
+      "sha256": "19552e59f81a25b1ba09524e80af575c2562ffdc82df250f22782884ae04b1f7"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveContracts.cs",
+      "sha256": "4191c23a5dae24e2ac9e7d82f7dd32e415a561e9e216bc84f5426943577861f9"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveDeliveryCoordinator.cs",
+      "sha256": "80b3c5bafbaa9ffa881508c1584a62b06436f5f86cce852b2a4a5b8b959db47b"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/Models.cs",
+      "sha256": "eaafbeeced8015cf00d36b58d3bc7fa3a64b75f4d61e42eb375b33a42c53e2e4"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/NativeSession.cs",
+      "sha256": "8a9b3a3662da457ec4a3413449a82c0caac78f02f1ac55de29581cad1e022157"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/SessionProbe.cs",
+      "sha256": "d0b014e8108b393f3a734bb3c5bf0c0e0d62526c22a8589f004a6054fbdc8290"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/WorkspaceProbe.cs",
+      "sha256": "db80f9c6b633da227799505d25ff0adfea4feaa25c2051aa3de9a4447ff07107"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveChatComponent.cs",
+      "sha256": "f14a1669338a10f045d461eaeec7fd21e5cc94aa6dc63c659a11de79d8d3914f"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveUiProbe.cs",
+      "sha256": "2740d0fba34fba484c3b4e4f8ee8ecbc6c7b68c7776cab18be421395f0b39361"
+    },
+    {
+      "path": "native/probes/windows-reactor/README.md",
+      "sha256": "87038287539636d79e163035e4b9bc46491524d289ca69f1a9ca70c1204a4ae2"
+    },
+    {
+      "path": "native/session-client/NativeChatClient.cs",
+      "sha256": "f53a70cc4a02bf32d8445f87bbb6ee11e2b8f9b7b39564dcd818c6d47297d9d0"
+    },
+    {
+      "path": "native/session-client/NativeClientWire.cs",
+      "sha256": "a5e65a033bb1b8af9a6d196941361d5122aebbd14e4b5f5f4f424f775e02f4e8"
+    },
+    {
+      "path": "native/session-client/NativeCommandException.cs",
+      "sha256": "ab21a8308bd530d5868846823d19621078db732aa439e2fda612f45655200e4d"
+    },
+    {
+      "path": "native/session-client/README.md",
+      "sha256": "c76050249821c7a175fe6aa48bce7d7d9860945b6f7f48817af485f6f1066568"
+    },
+    {
+      "path": "src/auth.rs",
+      "sha256": "5477427474e6863daf6a2d2a5ae647f5c1d17ef79289806954b2f4b3a99bd9e6"
+    },
+    {
+      "path": "src/auth/tests/native_notification_preferences_tests.rs",
+      "sha256": "7b11e999bdf6bc9ef060affea4b20427ba197abccccb25830b76a03ec0dce28b"
+    },
+    {
+      "path": "src/web/native.rs",
+      "sha256": "8ca53122bfcf586a0ff5909523f802974a287f689d634d96d7cdf14e286e3659"
+    },
+    {
+      "path": "src/web/native/notification_preferences.rs",
+      "sha256": "00b4aa1c2ef7f5503e67e44f5b25e1195b3a28e59209d06e86c8cc419a2b1e73"
+    }
+  ],
+  "clientContracts": {
+    "result": {
+      "passed": true,
+      "production_transport_source": true,
+      "local_websocket": true,
+      "synthetic_session_owner": true,
+      "live_credentials": false,
+      "live_canary": false,
+      "domain_rejections": true,
+      "uncertain_server_errors": true,
+      "correlated_errors_only": true,
+      "lost_ack_exact_wire_replay": true,
+      "duplicate_waiter_single_frame": true,
+      "account_change_rejects_late_result": true,
+      "complete_channel_metadata": true,
+      "thread_edit_delete_metadata": true,
+      "architecture": "Arm64"
+    },
+    "receipt": "S:/Build/native-parity-integrated/client-contracts-final.json"
+  },
+  "deliveryContracts": {
+    "result": {
+      "scope": "native_delivery_coordinator",
+      "passed": 10,
+      "actualTransport": false
+    },
+    "receipt": "S:/Build/native-parity-integrated/delivery-contracts-final.json"
+  },
+  "rustFaultInjection": {
+    "failed": 0,
+    "command": "cargo test --manifest-path native/probes/client-core/Cargo.toml --locked --features fault-injection",
+    "passed": 25,
+    "realChildProcessKills": 6
+  },
+  "legacyInterop": {
+    "faultInjectionRustTests": 25,
+    "receipt": "S:/Build/native-parity-integrated/interop/fixtures/1b811edafee0437da9b6847012d3871d/receipt.json",
+    "normalRustTests": 24,
+    "passed": true,
+    "managedContracts": [
+      "guard",
+      "seed",
+      "busy",
+      "resume",
+      "verify",
+      "worker"
+    ],
+    "transactionKillSites": [
+      "after_insert",
+      "before_commit",
+      "after_commit"
+    ]
+  },
+  "windowsArm64": {
+    "actualCanaryTransport": false,
+    "liveViewFixturePassed": true,
+    "receipt": "S:/Build/native-parity-integrated/windows/runs/3388f5aa3dd944b882378e1e2c9312bd/receipt.json",
+    "package": "S:\\Build\\native-parity-integrated\\windows\\runs\\3388f5aa3dd944b882378e1e2c9312bd\\publish-win-arm64",
+    "coreTests": true,
+    "syntheticSessionUi": true,
+    "uiResumePassed": true,
+    "uiSmokePassed": true
+  },
+  "backend": {
+    "notificationGroupReportedPasses": 16,
+    "groupsOverlap": true,
+    "reportedBy": "canary_parity agent, independently reviewed by native_status",
+    "clippyAllTargetsAllFeaturesPassed": true,
+    "integratedHttpTests": 2,
+    "integratedHttpSourceHashMatched": true,
+    "postgresqlAccepted": false,
+    "nativeGroupReportedPasses": 14
+  },
+  "staticChecks": {
+    "actionlint": true,
+    "gitDiffCheck": true,
+    "nativeFormat": true,
+    "backendFormat": true
+  },
+  "notEstablished": [
+    "Hosted x64 CI for this change",
+    "PostgreSQL acceptance",
+    "Real Canary sending by two users",
+    "Physical IME, touch and screen-reader acceptance",
+    "Full native UI feature parity"
+  ],
+  "deploymentPerformed": false
+}
