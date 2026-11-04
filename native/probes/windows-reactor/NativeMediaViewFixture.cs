@@ -44,6 +44,8 @@ internal sealed class NativeMediaViewFixture : IDisposable
             {
                 case "/api/v1/native/info": payload=new {scope=config.Scope,environment=config.Environment,instance_id=config.Instance,issuer=config.Issuer}; break;
                 case "/api/v1/native/session": payload=new {user_id=user,family=Family,generation=Volatile.Read(ref _generation),epoch=0}; break;
+                case "/api/v1/native/revoke":
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
                 case "/api/v1/native/refresh":
                     using (var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult()))
                     {

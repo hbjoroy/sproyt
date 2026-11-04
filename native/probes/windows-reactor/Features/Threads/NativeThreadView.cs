@@ -16,7 +16,7 @@ internal sealed record NativeThreadDetailBindings(Func<NativeMessagePresentation
     bool CanSend, bool ComposerEnabled = true, IReadOnlyList<NativeMessage>? PendingReplies = null,
     Action<ScrollViewer>? ViewportMounted = null, Action? ViewportUnmounted = null,
     Action<TextBox>? ComposerMounted = null, Element? DeliveryNotice = null, Element? UploadTools = null,
-    Func<NativeMessage, NativeMessagePresentation>? PresentMessage = null);
+    Func<NativeMessage, NativeMessagePresentation>? PresentMessage = null, Func<Element, Element>? WrapComposer = null);
 
 // The host supplies the same message renderer/actions used in the channel and
 // the durable, target-bound composer. This view owns neither tokens nor drafts.
@@ -84,6 +84,11 @@ internal static class NativeThreadView
                     }
                 };
             }).WithKey("live-thread-composer-" + visit.ChannelId + "-" + rootId + "-" + visit.Generation);
+        var composer = VStack(4, bindings.UploadTools ?? Empty(), Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
+                editor.Grid(column: 0),
+                Button("Send svar", bindings.Send).MinHeight(44).Padding(12, 8).Margin(8, 0, 0, 0)
+                    .IsEnabled(bindings.CanSend).AutomationName("Send svar i tråden").AutomationId("live-thread-send").Grid(column: 1)
+            )).Padding(12, 8).Background(palette.Chrome).Grid(row: 3);
         return Grid([GridSize.Star()], [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
             VStack(5,
                 Header("Tråd", palette, bindings.Close),
@@ -98,11 +103,7 @@ internal static class NativeThreadView
                 .OnUnmount(_ => bindings.ViewportUnmounted?.Invoke())
                 .WithKey("live-thread-history-" + visit.ChannelId + "-" + rootId).Grid(row: 1),
             (bindings.DeliveryNotice ?? Empty()).Grid(row: 2),
-            VStack(4, bindings.UploadTools ?? Empty(), Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
-                editor.Grid(column: 0),
-                Button("Send svar", bindings.Send).MinHeight(44).Padding(12, 8).Margin(8, 0, 0, 0)
-                    .IsEnabled(bindings.CanSend).AutomationName("Send svar i tråden").AutomationId("live-thread-send").Grid(column: 1)
-            )).Padding(12, 8).Background(palette.Chrome).Grid(row: 3)
+            (bindings.WrapComposer?.Invoke(composer) ?? composer)
         ).Background(palette.Paper).AutomationId("live-thread-pane");
     }
 
