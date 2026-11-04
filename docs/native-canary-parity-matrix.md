@@ -144,3 +144,18 @@ Denne kartlegginga verifiserer at kjelder og testscenario finst. Ho stadfestar i
 Det finst søk i samtalar, personar, kretsar og innstillingar. Generelt fulltekstsøk i alle meldingar er ikkje funne i den eksisterande `ClientCommand`-kontrakten og blir ikkje innført som eit oppdikta paritetskrav. Dataeksport er ei skjult eksisterande webflate (audit A21), ikkje ein synleg brukarflow som automatisk skal eksponerast i native.
 
 Android og seinare plattformer skal ha separate akseptrader per PAR-ID. Eit bestått Windows-scenario godkjenner ikkje Android-UI eller OS-lager. Web-lenkjer kan førast som mellombels avvik, men kan ikkje lukkast som full funksjonslikskap. Nye funksjonar etter den pinna Canary-revisjonen skal førast som eksplisitte baseline-endringar slik at målet ikkje flyttar seg umerkeleg.
+
+## Femte pulje 4. november: biletvisar og filslipp
+
+PAR-012 og PAR-013 har fått eit nytt, avgrensa native-snitt: filslipp til
+montert kanal-/trådkomponist, ein biletvisar med originalbasert skala,
+fit/100 %/zoom/panorering, og eksplisitt lagring av bilete/video/dokument.
+Geometri og dekodingsbudsjett er skilde. Kontobyte pensjonerer rett familie
+og vernar siste filbyte ved lagring. Den tidlegare baselinen over blir ikkje
+skriven om; sjå [femte pulje i implementasjonsstatusen](native-parity-implementation-status.md#femte-pulje-biletvisar-og-filslipp)
+for grenser, bevis og kva som framleis krev fysisk og autentisert aksept.
+
+Den nye greina inkluderer main `bb103337ff505bcd19f99ab2c319db4d94e9c694`.
+Den avgrensa backenden er alt på Canary frå før denne pulja; produksjon står
+på `e3ac63e9c751289c7f6d1b5f0c17ba13b5cfee5d`. Ingen server- eller
+produksjonsutrulling blir gjord av denne pulja.

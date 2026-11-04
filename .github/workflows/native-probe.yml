@@ -253,6 +253,18 @@ jobs:
         shell: pwsh
         working-directory: native/probes/upload-admission-contracts
         run: dotnet run --project UploadAdmissionContracts.csproj --artifacts-path '${{ runner.temp }}/native-upload-admission-contracts/build' -- '${{ runner.temp }}/native-upload-admission-contracts/receipt.json'
+      - name: Check original image viewport geometry
+        shell: pwsh
+        working-directory: native/probes/image-viewport-contracts
+        run: dotnet run --project ImageViewportContracts.csproj --artifacts-path '${{ runner.temp }}/native-image-viewport-contracts/build' -- '${{ runner.temp }}/native-image-viewport-contracts/tests'
+      - name: Check scoped media file lifetime and publication
+        shell: pwsh
+        working-directory: native/probes/media-lifecycle-contracts
+        run: dotnet run --project MediaLifecycleContracts.csproj --artifacts-path '${{ runner.temp }}/native-media-lifecycle-contracts/build' -- '${{ runner.temp }}/native-media-lifecycle-contracts/tests'
+      - name: Check Windows file drop intake ownership
+        shell: pwsh
+        working-directory: native/probes/file-drop-contracts
+        run: dotnet run --project FileDropContracts.csproj --artifacts-path '${{ runner.temp }}/native-file-drop-contracts/build' -- '${{ runner.temp }}/native-file-drop-contracts/receipt.json'
       - name: Preserve non-secret fixture receipts
         if: success()
         uses: actions/upload-artifact@v6
@@ -270,6 +282,9 @@ jobs:
             ${{ runner.temp }}/native-rich-text-contracts/receipt.json
             ${{ runner.temp }}/native-upload-contracts/tests/receipt.json
             ${{ runner.temp }}/native-upload-admission-contracts/receipt.json
+            ${{ runner.temp }}/native-image-viewport-contracts/tests/**/receipt.json
+            ${{ runner.temp }}/native-media-lifecycle-contracts/tests/**/receipt.json
+            ${{ runner.temp }}/native-file-drop-contracts/receipt.json
 
   kotlin-binding:
     runs-on: ubuntu-latest

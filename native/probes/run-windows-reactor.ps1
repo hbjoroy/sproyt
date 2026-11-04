@@ -99,6 +99,7 @@ try {
         runtime = $runtime
         nativeLibrarySha256 = (Get-FileHash -LiteralPath $library -Algorithm SHA256).Hash.ToLowerInvariant()
         executableSha256 = (Get-FileHash -LiteralPath (Join-Path $publish 'Sproyt.ReactorProbe.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+        managedApplicationSha256 = (Get-FileHash -LiteralPath (Join-Path $publish 'Sproyt.ReactorProbe.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
         applicationPriSha256 = (Get-FileHash -LiteralPath (Join-Path $publish 'Sproyt.ReactorProbe.pri') -Algorithm SHA256).Hash.ToLowerInvariant()
         coreTests = $true
         uiSmoke = $ui

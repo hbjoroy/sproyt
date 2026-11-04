@@ -20,6 +20,7 @@ internal sealed class LiveUiFixture : ILiveApplication
     private readonly List<NativeUploadJob> _uploadJobs = [];
     internal bool HoldNextUpload { get; set; }
     internal bool FailNextUpload { get; set; }
+    internal int? MaximumFilesForNextAdmission { get; set; }
     internal NativeUploadTarget? LastCapturedUploadTarget { get; private set; }
     internal NativeUploadTarget? LastAddedUploadTarget { get; private set; }
     internal IReadOnlyList<string> LastAddedUploadPaths { get; private set; } = [];
@@ -79,6 +80,7 @@ internal sealed class LiveUiFixture : ILiveApplication
     private string? UploadFamily => Authentication.SessionStamp is { } stamp && stamp.LastIndexOf(':') is int index && index > 0 ? stamp[..index] : null;
     public Task LoginAsync() => Task.CompletedTask;
     public NativeMediaLibrary? Media => _mediaFixture.Library;
+    internal Task InvalidateMediaForProbeAsync() => _mediaFixture.Owner.LogoutAsync();
     internal void AddMedia()
     {
         _messages.Add(new(Guid.NewGuid().ToString(),_selected,User,"UI-prøve","Her er eit bilete\n[[media:"+NativeMediaViewFixture.Id+"|image/gif|probe.gif]]\n[[invite:"+new string('A',43)+"]]",DateTimeOffset.Now,2));
@@ -261,16 +263,19 @@ internal sealed class LiveUiFixture : ILiveApplication
         return LastCapturedUploadTarget = new(scope.UserId, family, scope.ChannelId, scope.ThreadRootId);
     }
     private bool UploadTargetCurrent(NativeUploadTarget target) => target.UserId == Authentication.UserId && target.FamilyStamp == UploadFamily && Channels.Any(channel => channel.Id == target.ChannelId);
-    public Task AddUploadFilesAsync(NativeUploadTarget target, IReadOnlyList<string> paths)
+    public Task AddUploadFilesAsync(NativeUploadTarget target, IReadOnlyList<string> paths) => AddUploadFilesCountedAsync(target, paths);
+    public Task<int> AddUploadFilesCountedAsync(NativeUploadTarget target, IReadOnlyList<string> paths)
     {
-        if (!UploadTargetCurrent(target)) return Task.CompletedTask;
-        LastAddedUploadTarget = target; LastAddedUploadPaths = paths.ToArray();
-        foreach (string path in paths)
+        int maximum = MaximumFilesForNextAdmission ?? paths.Count; MaximumFilesForNextAdmission = null;
+        if (!UploadTargetCurrent(target) || maximum == 0) return Task.FromResult(0);
+        var accepted = paths.Take(maximum).ToArray();
+        LastAddedUploadTarget = target; LastAddedUploadPaths = accepted;
+        foreach (string path in accepted)
         {
             string type = Path.GetExtension(path).ToLowerInvariant() switch { ".pdf" => "application/pdf", ".txt" => "text/plain", ".csv" => "text/csv", ".zip" => "application/zip", _ => "image/gif" };
             AddSyntheticUpload(target, Path.GetFileName(path), type);
         }
-        return Task.CompletedTask;
+        return Task.FromResult(accepted.Length);
     }
     public Task AddUploadStreamAsync(NativeUploadTarget target, Stream stream, string fileName, string contentType)
     {
@@ -558,12 +563,14 @@ internal static class LiveUiProbe
             await LiveTimelineUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await LiveConversationUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await LiveContentUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
+            await NativeMediaInteractionUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await Program.PrepareShutdownAsync();
             File.WriteAllText(Path.Combine(folder,"live-ui-result.json"),JsonSerializer.Serialize(new
             {passed=true,scope="live_chat_view_fixture",actualWinUi=true,channelDrafts=true,sendBinding=true,compactComposer=true,circleGroups=true,decodedMediaPreview=true,boundedPreviewLeases=true,viewportPreviewGallery=24,viewportRelease=true,stablePreviewGeometry=true,rapidPreviewReentry=true,portraitAndLandscape=true,originalAspectRatio=true,responsivePreviewWidth=true,macroCard=true,temporaryOriginalCleanup=true,
                 timelinePaging=true,stableMessageAnchor=true,visibleReadOnly=true,navigationSearch=true,navigationDirectoryScopes=true,navigationBackForward=true,independentNavigationDrafts=true,variableHeightAnchor=true,
                 threadOpenClose=true,threadDirectory=true,independentThreadDrafts=true,parentBoundReply=true,threadVisibleReadOnly=true,messageEdit=true,messageDeleteConfirmation=true,deletedThreadParent=true,reactionToggle=true,uncertainReactionReadback=true,
                 nativeRichText=true,nativeTable=true,exactRawSource=true,literalCodeMarker=true,documentDownloadAction=true,rootAndThreadAttachmentChips=true,attachmentOnlySend=true,activeUploadBlocksSend=true,uploadCancelRetry=true,capturedPickerTarget=true,
+                capturedFileDropTarget=true,threadFileDropTarget=true,scopedDropErrors=true,originalImageZoomControls=true,originalScaleAfterResize=true,imageSaveAction=true,mediaInvalidationClosesViewer=true,
                 productionAuthentication=false,actualTransport=false,storageAcceptance=false}));
             Program.CloseAfterShutdown(window);
         }

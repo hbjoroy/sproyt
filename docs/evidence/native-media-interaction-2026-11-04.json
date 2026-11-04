@@ -1,0 +1,380 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-11-04T17:06:24.6284494Z",
+  "branch": "codex/native-media-parity",
+  "basePullRequest": "https://github.com/hbjoroy/sproyt/pull/334",
+  "baseline": "dbe556cf4701a44a136ea86bd7e4436da718f81a",
+  "includedMain": "bb103337ff505bcd19f99ab2c319db4d94e9c694",
+  "testedSourceHead": "9cf30f6145e3038644757087a1f887907c477942",
+  "sourceDirtyExplanation": "Runner sourceDirty=true because only native/probes/windows-reactor/README.md had pending documentation. All compiled code, project, lock, runner and workflow files were committed; git diff --name-only -- *.cs *.csproj *.rs *.yml *.ps1 was empty.",
+  "sourceHashKind": "SHA256 of tested workspace bytes before Git line-ending normalization",
+  "sourceHashes": [
+    {
+      "path": ".github/workflows/native-probe.yml",
+      "sha256": "6f7c02537dc7363e5b637fcea87a8b83a5c75be5e1233b39617a6516bb5c7b2f"
+    },
+    {
+      "path": "native/probes/file-drop-contracts/FileDropContracts.csproj",
+      "sha256": "dfbd42687568beb9269002b61ddb34e4e641e973639862234882bb78d2fed9da"
+    },
+    {
+      "path": "native/probes/file-drop-contracts/Program.cs",
+      "sha256": "bc521a46ed4e368c5e657567ab6c0f6d77754f111baea5c063f00ba1a0bbd17d"
+    },
+    {
+      "path": "native/probes/file-drop-contracts/global.json",
+      "sha256": "5e6cfd5e105839af48ef44bb1dc0724ac8464f4f1446e26ef050730b7b32e00e"
+    },
+    {
+      "path": "native/probes/file-drop-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/image-viewport-contracts/ImageViewportContracts.csproj",
+      "sha256": "928444fb7fe2f352762a4a493f9b49a5325b122b7d2b9ec1ff5ac3ad11390ac6"
+    },
+    {
+      "path": "native/probes/image-viewport-contracts/Program.cs",
+      "sha256": "0cdbde4419ab0350faed061f60e0473d011901e0a8ba3d15f47305bd709588c7"
+    },
+    {
+      "path": "native/probes/image-viewport-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/image-viewport-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/media-lifecycle-contracts/Fixture.cs",
+      "sha256": "ac047e5c1fd6f8f1112d95e6f4039f4bb6e64edc294bd087076cffce846c16c6"
+    },
+    {
+      "path": "native/probes/media-lifecycle-contracts/MediaLifecycleContracts.csproj",
+      "sha256": "12b04f21fc36b5b9592b667dd8f8e05cf119037d3f864d892bc26eb863723910"
+    },
+    {
+      "path": "native/probes/media-lifecycle-contracts/Program.cs",
+      "sha256": "28d96cd55ce87c033019afc9e2e1fc46edc618f3fcc7b8990738dd906685ed84"
+    },
+    {
+      "path": "native/probes/media-lifecycle-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/media-lifecycle-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/run-windows-reactor.ps1",
+      "sha256": "dd918ed374b8f8d90b0e22189d011478bd866f23e2cfd200e2659f6b146d5ae8"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/CountedAdmission.cs",
+      "sha256": "e31a59ba20a852aeca82721efdf6b00e31ca81878b6979091c241fc5767cc910"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/Environment.cs",
+      "sha256": "e34e78de75d1ed7cea03e7c60f7c71e22f4b07641f0a76e2bb462afd52753712"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/Program.cs",
+      "sha256": "315003a834df4f7e98a26e9a8a6b3c2425a3e24ae94ad04b1167d018ca11b661"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveApplication.cs",
+      "sha256": "a35b4224242c470fa39a2728a61579a198caef00b085df8720a4fd8582434b74"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveContracts.cs",
+      "sha256": "617a77bcdb74123d56dcc92f3fba17fedecc3d994f188e897c66f737b99c5106"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveUploadApplication.cs",
+      "sha256": "3c8454555193374cf59e66d55fc07af940160a7aedb9fee1a7a9c2fe39850dd7"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/NativeMediaLibrary.cs",
+      "sha256": "d7b1ea9fa62f21c93e7f3c955a964f39ded25c919b52ca9048f80614a704a5ed"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Media/Core/NativeImageViewport.cs",
+      "sha256": "01a5da5380b10d175865d752dc28e3194ac7837db70b685b0dc373b0c92fb59c"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Media/NativeImageViewer.cs",
+      "sha256": "9848bb508770752654fa247579971dfd8d3a25d8a4a57ea0245551ac4a25922a"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Threads/NativeThreadView.cs",
+      "sha256": "397ff2f572f843da850e70cd3a615f657bce410fc0248c5d0f57d6d215539824"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Uploads/NativeFileDrop.cs",
+      "sha256": "ec79b8e4fddb4f16a2e7b8e984883a46ae2925c1515ebbbb7ef1eeaf79fa34cd"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveChatComponent.cs",
+      "sha256": "1c7b086945d9dde1f9bcf81e2796a2aa018b50f5d307ab3406765b3b9ce579df"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveUiProbe.cs",
+      "sha256": "8eafc87aab4c94726f3a28bce080c81755fd5726eacdf0aea874750255ff367b"
+    },
+    {
+      "path": "native/probes/windows-reactor/NativeMediaInteractionUiProbe.cs",
+      "sha256": "3bfb2ea791980110f6e43005069f569469dd15b11e050cc1530b691eab10f572"
+    },
+    {
+      "path": "native/probes/windows-reactor/NativeMediaViewFixture.cs",
+      "sha256": "5fe652f9c630c1482c4f341b97115211aed26bdf5c04eb42503579eb34c8858a"
+    },
+    {
+      "path": "native/probes/windows-reactor/NativeMessageView.cs",
+      "sha256": "61820b8ad639c2d51a721f276f7d6bc5428472b8c5c28a4dc351163807c99435"
+    }
+  ],
+  "planning": "Astra; four streams including root integrator",
+  "scope": [
+    "PAR-012 retained-composer scoped file drops",
+    "PAR-013 original-image interaction and explicit image/video/document save"
+  ],
+  "localValidation": {
+    "geometry": {
+      "passed": true,
+      "scope": "native_image_viewport_contracts",
+      "source": "linked production viewport geometry with synthetic dimensions and DIP inputs",
+      "checks": [
+        "OpeningAndFit",
+        "OriginalPixelSize",
+        "FitBelowFivePercent",
+        "PanningAndResize",
+        "ManualZoomAndToggle",
+        "PinchAtZoomLimits",
+        "MovingPinchCenter",
+        "InvalidMeasurementsAndInput"
+      ]
+    },
+    "mediaLifecycle": {
+      "passed": true,
+      "scope": "native_media_lifecycle_contracts",
+      "source": "production library, synthetic authority, physical temp files",
+      "checks": [
+        "StaleFirstAdmission",
+        "ReentrantOriginalDuringRetirement",
+        "RotationAndSameAccountRelogin",
+        "AdmissionBeforeChangeNotification",
+        "ClosedWhileOriginalOpen",
+        "StalePublishPreservesDestination",
+        "PublishSerializesWithFamilyChange",
+        "SameFamilyCanOverwriteAfterRotation"
+      ],
+      "failures": []
+    },
+    "applicationAdmission": {
+      "passed": true,
+      "actual_application_source": true,
+      "actual_queue_source": true,
+      "synthetic_auth_disk_workspace": true,
+      "stage_cancelled_on_offline_logout_user_family": true,
+      "admission_wait_cancelled": true,
+      "rotation_navigation_preserve_target": true,
+      "close_cancels_before_disk_disposal": true,
+      "stale_scope_registration_rejected": true,
+      "cancellation_outside_auth_gate": true,
+      "definitive_capacity_keeps_retryable_ready": true,
+      "unknown_handoff_preserved": true,
+      "old_family_retirement_waits_for_existing_receipt": true,
+      "uncertain_settlement_retains_job": true,
+      "account_change_fences_late_retirement": true,
+      "counted_durable_admission": true,
+      "partial_batch_count": true,
+      "cancelled_batch_count": true,
+      "scoped_staging_errors": true,
+      "journal_failure_unconfirmed": true,
+      "actual_network": false,
+      "actual_disk_journal": false,
+      "actual_winui": false
+    },
+    "windowsArm64": {
+      "schema": 1,
+      "scope": "windows_reactor_local_feasibility",
+      "sourceRevision": "9cf30f6145e3038644757087a1f887907c477942",
+      "sourceDirty": true,
+      "architecture": "arm64",
+      "platform": "win-arm64",
+      "reactor": "0.1.0-preview.16",
+      "compiler": "Microsoft.Net.Compilers.Toolset 5.9.0",
+      "runtime": "win-arm64",
+      "nativeLibrarySha256": "13daff3f697ce89fc7e27b5ac4a3d0019e3508f0cfcee4748e24c0cc9828f908",
+      "executableSha256": "035b611056675c8299fd153a378ebf1147d9476b3464810396b1a63ce591a195",
+      "managedApplicationSha256": "426435059e353d700057f75d87afe8e9da348ad050d4389ece94cc1bd07ead2c",
+      "applicationPriSha256": "1c93954aab25ca97e589d93f2791562ac874ee8d0dbbfb7e4d5f6ad2b169afd2",
+      "coreTests": true,
+      "uiSmoke": {
+        "passed": true,
+        "architecture": "Arm64",
+        "materializedTextBlocks": 61,
+        "syntheticMessagesPerChannel": 1000,
+        "rasterizationScale": 2,
+        "keyboardViewportAvailable": true,
+        "compactWidthDip": 347,
+        "checks": [
+          "native WinUI tree",
+          "virtualization",
+          "editor identity and selection",
+          "independent drafts",
+          "reading position",
+          "light and dark semantic brushes",
+          "UI enqueue binding",
+          "own message visible",
+          "immediate send and navigation",
+          "debounced resize tail",
+          "resize preserves history reader",
+          "keyboard transition coalescing",
+          "overlay keyboard editor and tail visibility",
+          "no double keyboard inset",
+          "stable keyboard geometry",
+          "keyboard preserves history reader",
+          "compact layout",
+          "flush and reopen"
+        ],
+        "notTested": [
+          "physical keyboard and IME",
+          "touch",
+          "screen reader",
+          "visual screenshot approval",
+          "production"
+        ]
+      },
+      "uiResume": {
+        "passed": true,
+        "architecture": "Arm64",
+        "checks": [
+          "new app process",
+          "multiline editor hydration",
+          "second channel draft",
+          "queued message retained"
+        ]
+      },
+      "syntheticSessionUi": true,
+      "liveChatViewFixture": {
+        "passed": true,
+        "scope": "live_chat_view_fixture",
+        "actualWinUi": true,
+        "channelDrafts": true,
+        "sendBinding": true,
+        "compactComposer": true,
+        "circleGroups": true,
+        "decodedMediaPreview": true,
+        "boundedPreviewLeases": true,
+        "viewportPreviewGallery": 24,
+        "viewportRelease": true,
+        "stablePreviewGeometry": true,
+        "rapidPreviewReentry": true,
+        "portraitAndLandscape": true,
+        "originalAspectRatio": true,
+        "responsivePreviewWidth": true,
+        "macroCard": true,
+        "temporaryOriginalCleanup": true,
+        "timelinePaging": true,
+        "stableMessageAnchor": true,
+        "visibleReadOnly": true,
+        "navigationSearch": true,
+        "navigationDirectoryScopes": true,
+        "navigationBackForward": true,
+        "independentNavigationDrafts": true,
+        "variableHeightAnchor": true,
+        "threadOpenClose": true,
+        "threadDirectory": true,
+        "independentThreadDrafts": true,
+        "parentBoundReply": true,
+        "threadVisibleReadOnly": true,
+        "messageEdit": true,
+        "messageDeleteConfirmation": true,
+        "deletedThreadParent": true,
+        "reactionToggle": true,
+        "uncertainReactionReadback": true,
+        "nativeRichText": true,
+        "nativeTable": true,
+        "exactRawSource": true,
+        "literalCodeMarker": true,
+        "documentDownloadAction": true,
+        "rootAndThreadAttachmentChips": true,
+        "attachmentOnlySend": true,
+        "activeUploadBlocksSend": true,
+        "uploadCancelRetry": true,
+        "capturedPickerTarget": true,
+        "capturedFileDropTarget": true,
+        "threadFileDropTarget": true,
+        "scopedDropErrors": true,
+        "originalImageZoomControls": true,
+        "originalScaleAfterResize": true,
+        "imageSaveAction": true,
+        "mediaInvalidationClosesViewer": true,
+        "productionAuthentication": false,
+        "actualTransport": false,
+        "storageAcceptance": false
+      },
+      "publishDirectory": "C:\\Build\\sproyt-windows-arm64-canary-20261104\\runs\\f4e9294a20254af6a41d8e0fb81b3f7c\\publish-win-arm64",
+      "notTested": [
+        "physical keyboard and IME",
+        "touch",
+        "screen reader",
+        "visual screenshot approval",
+        "production sync",
+        "production authentication",
+        "hard termination of the full WinUI process during live transport"
+      ]
+    },
+    "fileDrop": {
+      "passed": true,
+      "scope": "native_file_drop_owner",
+      "checks": [
+        "Copy-only hover; fresh target at Drop; no hover IO",
+        "Delayed file resolution retains captured root/thread composer",
+        "Delayed result fenced after account",
+        "Delayed result fenced after logout",
+        "Delayed result fenced after family",
+        "Delayed result fenced after membership",
+        "Delayed result fenced after account-roundtrip",
+        "Mixed folders, URLs, empty/relative paths and over-capacity sets reject before submission",
+        "Delayed source failure remains keyed to the captured composer",
+        "Unsupported formats and unreadable sources produce safe scoped errors",
+        "Single transfer, retained-host unmount cancellation and no late staging",
+        "Resolver failure is retryable without private diagnostics or duplicate submissions",
+        "Account-family loss during queue handoff is retired",
+        "Unmount during queue handoff is retired",
+        "Zero queue admissions never acknowledge COPY",
+        "Partial admission acknowledges only an explicitly reported partial batch",
+        "Full admission acknowledges COPY without an error",
+        "Invalid queue admission counts fail closed without automatic retry"
+      ],
+      "notTested": [
+        "physical shell drag/drop",
+        "actual WinUI routed-event deferral",
+        "real filesystem spooling and transport"
+      ]
+    }
+  },
+  "ci": {
+    "note": "PR main/native workflows are followed after push. No publication or deployment workflow is requested.",
+    "status": "pending"
+  },
+  "behavioralLimits": [
+    "Pending shell resolution is cancelled when its composer host unmounts; retained-host navigation preserves original target",
+    "Partial file admission acknowledges COPY only with a positive confirmed count and reports N of M; never silently retries or rolls back admitted jobs",
+    "Uncertain journal admission reports no confirmed copy and preserves retained source/job for explicit storage recovery",
+    "Decode budget 16*1024*1024 physical pixels and 8192 edge; original dimensions retain 100% meaning and reduced detail is visibly labelled",
+    "Video still downloads completely before playback",
+    "1024 UTF-8-byte message limit and eight draft/outbox bounds remain"
+  ],
+  "notTested": [
+    "Physical Explorer drag/drop and actual WinRT routed-event deferral",
+    "Physical mouse, touch/pinch, keyboard/IME, screen reader and DPI transitions",
+    "Physical FileSavePicker",
+    "Authenticated two-client Canary acceptance",
+    "Production"
+  ],
+  "dataEffects": "No live authentication, real-user messages/uploads, deployment or production configuration changes; only synthetic fixtures and test-owned local files."
+}

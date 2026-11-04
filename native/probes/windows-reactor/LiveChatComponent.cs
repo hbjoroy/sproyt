@@ -25,6 +25,7 @@ internal sealed class LiveChatComponent : Component
     internal static ScrollViewer? ThreadScrollForProbe;
     internal static Func<Task>? SendThreadForProbe;
     internal static Action? WindowActivityChanged;
+    internal static NativeFileDrop? RootDropForProbe, ThreadDropForProbe;
     private ContentDialog? _discardDialog;
     private NativeTimelineViewport? _timeline;
     private NativeTimelineViewport? _threadTimeline;
@@ -35,7 +36,10 @@ internal sealed class LiveChatComponent : Component
     private readonly NativeMessageActionController _rootActions = new(), _threadActions = new();
     private readonly NativeRawMessageState _rawMessages = new();
     private bool _uploadChoosing;
-    private string? _uploadUiUser, _uploadUiFamily, _uploadUiError;
+    private readonly Dictionary<NativeUploadTarget, string> _uploadUiErrors = [];
+    private NativeFileDropContext? _rootDropContext, _threadDropContext;
+    private IDisposable? _rootDropBinding, _threadDropBinding;
+    private readonly Dictionary<FrameworkElement, IDisposable> _dropBindings = [];
     private NativeTimelineContext? _timelineContext;
     private NativeScrollAnchor? _requestedAnchor;
     private bool _surfaceVisible, _previousSurfaceVisible;
@@ -62,7 +66,11 @@ internal sealed class LiveChatComponent : Component
             return () => { Program.LiveStateChanged -= Changed; if (app is not null) app.Changed -= Changed;
                 _rootActions.Changed -= Changed; _threadActions.Changed -= Changed;
                 _rawMessages.Changed -= Changed;
-                _timeline?.Dispose(); _threadTimeline?.Dispose(); _discardDialog?.Hide(); WindowActivityChanged = null; };
+                _timeline?.Dispose(); _threadTimeline?.Dispose(); _discardDialog?.Hide(); WindowActivityChanged = null;
+                _rootDropContext = _threadDropContext = null;
+                foreach (var binding in _dropBindings.Values) binding.Dispose();
+                _dropBindings.Clear(); _rootDropBinding = _threadDropBinding = null;
+                RootDropForProbe = ThreadDropForProbe = null; };
         }, app is null ? "starting" : "ready");
         if (app is null)
         {
@@ -99,6 +107,26 @@ internal sealed class LiveChatComponent : Component
         var messageCommands = new NativeMessageActionCommands(app.ExecuteMessageMutationAsync, app.ReadBackMessageMutationAsync);
         string? family = auth.SessionStamp is { } currentStamp && currentStamp.LastIndexOf(':') > 0 ? currentStamp[..currentStamp.LastIndexOf(':')] : null;
         _rawMessages.Bind(auth.UserId, family);
+        foreach (var retired in _uploadUiErrors.Keys.Where(target => target.UserId != auth.UserId || target.FamilyStamp != family).ToArray())
+            _uploadUiErrors.Remove(retired);
+        void ReportUploadIssue(NativeUploadTarget target, string? error)
+        {
+            var latest = app.Authentication;
+            string? currentFamily = latest.SessionStamp is { } stamp && stamp.LastIndexOf(':') > 0 ? stamp[..stamp.LastIndexOf(':')] : null;
+            if (!ReferenceEquals(Program.Live, app) || latest.UserId != target.UserId || currentFamily != target.FamilyStamp) return;
+            if (error is null) _uploadUiErrors.Remove(target);
+            else
+            {
+                if (!_uploadUiErrors.ContainsKey(target) && _uploadUiErrors.Count >= 8) _uploadUiErrors.Remove(_uploadUiErrors.Keys.First());
+                _uploadUiErrors[target] = error;
+            }
+            if (error is null) setShowUploads(true);
+            invalidate(Interlocked.Increment(ref _revision));
+        }
+        bool DropEnabled(NativeMessageActionScope? scope) => scope is not null && state.Uploads is not null && chat.Connected &&
+            auth.Phase == NativeAuthPhase.Active && !Program.CloseAdmissionClosed && !_uploadChoosing && navigation is { Pending: false, Error: null };
+        _rootDropContext = DropEnabled(rootScope) ? new(app, rootScope!, ReportUploadIssue) : null;
+        _threadDropContext = DropEnabled(threadScope) ? new(app, threadScope!, ReportUploadIssue) : null;
         bool UploadBlocked(string targetChannel, string? parent) => NativeUploadPresentation.BlocksSend(state.Uploads, auth.UserId, family, targetChannel, parent);
         bool canSend = !state.ConfirmPendingSends && navigation is { Pending: false, Error: null } && chat.SelectedChannel == channel && draft is not null && !string.IsNullOrWhiteSpace(draft.Body) && Encoding.UTF8.GetByteCount(draft.Body) <= 1024 &&
             NativeRichText.AttachmentSuffixVisible(draft.Body, draft.Attachments) && channel is not null && !UploadBlocked(channel, null) &&
@@ -111,7 +139,7 @@ internal sealed class LiveChatComponent : Component
         async Task ChooseUpload(NativeMessageActionScope captured, bool paste)
         {
             if (_uploadChoosing || Program.CloseAdmissionClosed) return;
-            _uploadChoosing = true; _uploadUiError = null;
+            _uploadChoosing = true;
             invalidate(Interlocked.Increment(ref _revision));
             try
             {
@@ -123,7 +151,8 @@ internal sealed class LiveChatComponent : Component
                 var latest = app.Authentication;
                 if (latest.UserId == captured.UserId && latest.SessionStamp is { } stamp && stamp.LastIndexOf(':') > 0 &&
                     captured.SessionStamp.LastIndexOf(':') > 0 && stamp[..stamp.LastIndexOf(':')] == captured.SessionStamp[..captured.SessionStamp.LastIndexOf(':')])
-                { _uploadUiUser = captured.UserId; _uploadUiFamily = stamp[..stamp.LastIndexOf(':')]; _uploadUiError = "Fila eller biletet kunne ikkje hentast. Prøv Legg ved på nytt."; }
+                    ReportUploadIssue(new(captured.UserId, stamp[..stamp.LastIndexOf(':')], captured.ChannelId, captured.ThreadRootId),
+                        "Fila eller biletet kunne ikkje hentast. Prøv Legg ved på nytt.");
             }
             finally { _uploadChoosing = false; invalidate(Interlocked.Increment(ref _revision)); }
         }
@@ -142,7 +171,8 @@ internal sealed class LiveChatComponent : Component
                         .AutomationName("Fjern vedlegget " + attachment.Text).AutomationId(prefix + "draft-attachment-remove-" + index).Grid(column: 1))
                     .AutomationId(prefix + "draft-attachment-" + index);
             }).ToArray();
-            string? error = state.UploadError ?? (_uploadUiUser == auth.UserId && _uploadUiFamily == family ? _uploadUiError : null);
+            string? error = state.UploadError is not null && (state.UploadErrorTarget is null || state.UploadErrorTarget == target)
+                ? state.UploadError : target is not null ? _uploadUiErrors.GetValueOrDefault(target) : null;
             return VStack(4,
                 HStack(8,
                     Button(_uploadChoosing ? "Klargjer …" : "Legg ved", async () => { if (scope is not null) await ChooseUpload(scope, false); })
@@ -164,6 +194,23 @@ internal sealed class LiveChatComponent : Component
                         id => { if (auth.UserId is string user && auth.SessionStamp is string stamp) _ = app.RemoveUploadAsync(user, stamp, id); })))
                     .MaxHeight(120).IsVisible(showUploads && (uploads.Jobs.Count > 0 || uploads.StorageError is not null)) : Empty());
         }
+        Element DropHost(Element element, bool thread) => element.AutomationId(thread ? "live-thread-file-drop" : "live-file-drop")
+            .OnMount(host =>
+            {
+                var binding = NativeFileDrop.Attach(host, () => thread ? _threadDropContext : _rootDropContext);
+                _dropBindings[host] = binding;
+                if (thread) { _threadDropBinding = binding;
+                    if (Program.LiveUiProbeDirectory is not null) ThreadDropForProbe = binding as NativeFileDrop; }
+                else { _rootDropBinding = binding;
+                    if (Program.LiveUiProbeDirectory is not null) RootDropForProbe = binding as NativeFileDrop; }
+            })
+            .OnUnmount(host =>
+            {
+                if (!_dropBindings.Remove(host, out var binding)) return;
+                binding.Dispose();
+                if (thread && ReferenceEquals(_threadDropBinding, binding)) { _threadDropBinding = null; ThreadDropForProbe = null; }
+                if (!thread && ReferenceEquals(_rootDropBinding, binding)) { _rootDropBinding = null; RootDropForProbe = null; }
+            });
         void RememberViewport()
         {
             var current = app.Capture().Navigation?.Current;
@@ -397,10 +444,10 @@ internal sealed class LiveChatComponent : Component
             state.DeliveryRetryPending ? "Sendinga ventar før eit nytt forsøk. Teksten er teken vare på." :
             state.PendingSends > 0 ? $"{state.PendingSends} meldingar ventar på sendekvittering." : "");
         bool canRetryDelivery = state.ConfirmPendingSends || state.PendingSends > 0 || state.Error is not null;
-        var composer = Border(VStack(4, UploadTools(rootScope, draft, false), Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], editor.Grid(column: 0),
+        var composer = DropHost(Border(VStack(4, UploadTools(rootScope, draft, false), Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], editor.Grid(column: 0),
             Button("↑", Send).AutomationId("live-send").AutomationName("Send meldinga").Size(48, 48).Margin(8, 0, 0, 0)
                 .Foreground(palette.AccentInk).Background(palette.Accent).IsEnabled(canSend).Grid(column: 1)
-        ))).Padding(12).BorderThickness(new Thickness(0, 2, 0, 0)).BorderBrush(palette.Rule).Grid(row: 3);
+        ))).Padding(12).Background(palette.Chrome).BorderThickness(new Thickness(0, 2, 0, 0)).BorderBrush(palette.Rule).Grid(row: 3), false);
         var conversation = Grid([GridSize.Star()], [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
             VStack(4, HStack(12, Button("←", () => { RememberViewport(); setShowList(true); }).AutomationName("Vis samtalar").Size(44, 44).IsVisible(!wide),
                 VStack(2, TextBlock(selected?.IsDirect == true ? "Direkte" : selected?.CircleName ?? "Felles").FontSize(12).Foreground(palette.Muted),
@@ -503,7 +550,7 @@ internal sealed class LiveChatComponent : Component
                                 .AutomationName("Stadfest ventande meldingar eller oppdater samband").AutomationId("live-thread-delivery-retry").MinHeight(44)
                                 .IsVisible(state.ConfirmPendingSends || state.Error is not null)))
                         .Padding(12, 4).IsVisible(state.ConfirmPendingSends || state.PendingSends > 0 || state.RejectedSends > 0 || state.Error is not null || Encoding.UTF8.GetByteCount(threadDraft?.Body ?? "") > 1024),
-                    UploadTools(threadScope, threadDraft, true), message => Present(message, true)));
+                    UploadTools(threadScope, threadDraft, true), message => Present(message, true), composer => DropHost(composer, true)));
             }
         }
         else { _threadTimelineContext = null; _threadTimeline?.Update(null); _lastThreadVisit = _lastThreadGeneration = -1; }

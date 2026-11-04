@@ -3,7 +3,7 @@ using Sproyt.WindowsProbe;
 
 await Probe.RunAsync(args.Single());
 
-internal static class Probe
+internal static partial class Probe
 {
     internal const string User="11111111-1111-4111-8111-111111111111",OtherUser="22222222-2222-4222-8222-222222222222",
         Channel="33333333-3333-4333-8333-333333333333",OtherChannel="44444444-4444-4444-8444-444444444444";
@@ -90,11 +90,13 @@ internal static class Probe
             Check(app.JobsForProbe().Jobs.Count==0&&app.SourceRetainedForProbe(job.Source.SourceId),"Late old-account removal retired the wrong scope or exposed its metadata");
             await app.CloseForProbeAsync();
         }
+        await CheckCountedAdmissionAsync();
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         await File.WriteAllTextAsync(path,JsonSerializer.Serialize(new{passed=true,actual_application_source=true,actual_queue_source=true,synthetic_auth_disk_workspace=true,
             stage_cancelled_on_offline_logout_user_family=true,admission_wait_cancelled=true,rotation_navigation_preserve_target=true,close_cancels_before_disk_disposal=true,
             stale_scope_registration_rejected=true,cancellation_outside_auth_gate=true,definitive_capacity_keeps_retryable_ready=true,unknown_handoff_preserved=true,
             old_family_retirement_waits_for_existing_receipt=true,uncertain_settlement_retains_job=true,account_change_fences_late_retirement=true,
+            counted_durable_admission=true,partial_batch_count=true,cancelled_batch_count=true,scoped_staging_errors=true,journal_failure_unconfirmed=true,
             actual_network=false,actual_disk_journal=false,actual_winui=false},new JsonSerializerOptions{WriteIndented=true}));
         Console.WriteLine("PASS actual upload application admission, staging lifetime and handoff classification");
     }

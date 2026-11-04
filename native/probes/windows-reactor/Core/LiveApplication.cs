@@ -63,12 +63,13 @@ internal sealed partial class LiveApplication : ILiveApplication
             if (threads?.UserId != auth.UserId || threads?.Visit is { } visit && (visit.SessionStamp != auth.SessionStamp ||
                 navigation?.Current?.Target.ChannelId != visit.ChannelId || navigation.Current.Target.ThreadId != visit.RootMessageId))
                 threads = null;
+            var uploadIssue = same ? CurrentUploadIssue(auth) : null;
             return new LiveSnapshot(auth, chat, same ? local : null, same && local?.Ready == true &&
                 auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline, ErrorFor(auth, chat, same ? local : null),
                 same && local?.Outbox.Any(item => item.State != "rejected") == true && !SameSendFamily(_admittedFamily, auth.SessionStamp),
                 same && _deliveryWakeTarget?.Scope == auth.UserId + "/" + SendFamily(auth.SessionStamp), navigation, threads,
                 same && _uploads is { } uploads ? uploads.Capture() with { ActiveFamilyStamp = SendFamily(auth.SessionStamp) } : null,
-                same && _uploadIssue is { } issue && issue.UserId == auth.UserId && issue.Family == SendFamily(auth.SessionStamp) ? issue.Message : null);
+                uploadIssue?.Message, uploadIssue?.Target);
         });
     }
 
