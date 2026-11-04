@@ -49,6 +49,15 @@ internal static class Program
                 Environment.ExitCode = DesktopHandoffClient.Run(args[1], args[2], args[3]).GetAwaiter().GetResult();
                 return;
             }
+            // An explicit test profile keeps a Canary trial separate from an
+            // existing signed-in instance, its drafts and its durable outbox.
+            string? liveDataDirectory = null;
+            if (args.Length == 4 && args[0] == "--server" && args[2] == "--data-dir")
+            {
+                if (!Path.IsPathFullyQualified(args[3])) throw new ArgumentException("Use an absolute test-profile path.");
+                liveDataDirectory = Path.GetFullPath(args[3]);
+                args = args[..2];
+            }
             string library = LibraryPath;
             if (args.Length == 2 && args[0] == "--self-test")
             {
@@ -73,7 +82,7 @@ internal static class Program
             CanaryAcceptanceDirectory = args.Length == 2 && args[0] == "--canary-acceptance" ? Path.GetFullPath(args[1]) : null;
             LiveUiProbeDirectory = args.Length == 2 && args[0] == "--live-ui-smoke" ? Path.GetFullPath(args[1]) : null;
             if (LiveMode) _liveServer = CanaryAcceptanceDirectory is not null ? "https://sproyt-canary.bjoroy.me/" : args[1];
-            DataDirectory = LiveUiProbeDirectory ?? (LiveMode ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsCanary")
+            DataDirectory = liveDataDirectory ?? LiveUiProbeDirectory ?? (LiveMode ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsCanary")
                 : UiProbeDirectory is not null ? Path.Combine(UiProbeDirectory, "data") : args.Length == 2 && args[0] == "--data-dir"
                 ? Path.GetFullPath(args[1])
                 : sessionMode

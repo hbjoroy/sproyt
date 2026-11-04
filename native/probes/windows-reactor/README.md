@@ -7,6 +7,11 @@ og [paritetsplanen](../../../docs/native-canary-parity-plan.md).
 Demo- og laboratorieavgrensingane nedanfor gjeld ikkje som status for alle
 modusar. Windows er første produktprioritet, deretter Android.
 
+For ein separat live-testprofil kan du leggje til
+`--data-dir "$env:LOCALAPPDATA/Sproyt/WindowsCanaryTest"` etter serveradressa.
+Bruk ein absolutt sti. Standardprofilen `WindowsCanary` blir då ikkje opna,
+og gamle utkast eller kømeldingar der blir ikkje sende av testinstansen.
+
 Ein lokal, køyrbar UI-pilot med **Microsoft.UI.Reactor 0.1.0-preview.16** og
 ekte WinUI 3-kontrollar. Reactor er C# med MVU, ikkje React/JavaScript eller ein
 nettlesar. Prøva er isolert frå dagens Sprøyt-klient og produksjon.
@@ -17,7 +22,7 @@ På Windows 11 med PowerShell 7, .NET SDK 10.0.301, Rust 1.96 og ein native
 C-kompilator for SQLite:
 
 ```powershell
-./native/probes/run-windows-reactor.ps1 -ArtifactsDirectory S:/Build/sproyt-reactor -UiSmoke -Launch
+./native/probes/run-windows-reactor.ps1 -ArtifactsDirectory C:/Build/sproyt-reactor -UiSmoke -Launch
 ```
 
 Runneren byggjer på den lokale maskina sin ARM64- eller x64-arkitektur, køyrer
