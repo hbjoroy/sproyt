@@ -128,6 +128,7 @@ internal sealed class NativeImageViewer : IDisposable
     private void Loaded(object sender, RoutedEventArgs args)
     {
         if (!Current || Root.XamlRoot is not { } xamlRoot) return;
+        if (_xamlRoot is not null) _xamlRoot.Changed -= XamlRootChanged;
         _xamlRoot = xamlRoot; xamlRoot.Changed += XamlRootChanged; ResizeRoot();
         Surface.Focus(FocusState.Programmatic);
     }
