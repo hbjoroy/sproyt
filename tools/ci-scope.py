@@ -15,6 +15,17 @@ POLICY = {'.github/workflows/ci.yml', 'tools/ci-scope.py', 'tools/test-ci-scope.
           'tools/test-browser-shards.py', 'tools/summarize-browser-tests.py'}
 EXECUTION = {'frontend/playwright.config.ts', 'frontend/tests/global-setup.ts',
              'frontend/scripts/test-e2e.mjs'}
+IDENTITY = {'deploy/authentik/kustomization.yaml',
+            'deploy/authentik/sproyt-email-recovery.yaml',
+            'deploy/authentik/sproyt-invitation-canary.yaml',
+            'deploy/authentik/sproyt-invitation-canary-v2.yaml',
+            'deploy/authentik/sproyt-invitation-production.yaml',
+            'deploy/authentik/z-sproyt-signup-recovery-v2.yaml',
+            'tools/test-enrollment-continuation.py',
+            'tools/test-invitation-canary.py', 'tools/test-invitation-production.py',
+            'tools/test-invitation-canary-v2.py', 'tools/requirements-authentik-tests.txt',
+            'tools/test-signup-recovery.py', 'tools/issue-signup-recovery-grant.py',
+            'tools/verify-signup-recovery-runtime.py'}
 FEATURES = [
     ({'frontend/src/direct-conversation.ts', 'frontend/src/direct-activity.ts',
       'frontend/src/ui/react/direct-message-picker.tsx', 'frontend/src/ui/react/new-direct-message.tsx'},
@@ -72,6 +83,8 @@ def scope(paths, force_full=False):
         return result('none', False, False, 'documentation/skill only', frontend=False)
     if set(paths) <= POLICY:
         return result('none', False, False, 'CI policy only; selector and workflow contracts apply', frontend=False)
+    if set(paths) <= POLICY | IDENTITY:
+        return result('none', False, False, 'provider-only identity contracts; no application image changes', frontend=False)
     if set(paths) <= POLICY | {'tools/verify-media-runtime.sh'}:
         return result('none', False, False, 'isolated codec contract', frontend=False, codec=True)
 
