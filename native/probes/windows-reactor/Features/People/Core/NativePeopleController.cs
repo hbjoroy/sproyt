@@ -106,13 +106,29 @@ internal sealed class NativePeopleController(IPersonalCommands commands) : Nativ
                 if (!Current(operation)) return null;
                 var matching = channels.Where(channel => channel.IsDirect && channel.DirectUserId == intent.UserId &&
                     (intent.ChannelId is null || channel.Id == intent.ChannelId)).ToArray();
+                if (matching.Length == 0)
+                {
+                    _direct = null;
+                    _openError = "Fann inga stadfesta samtale. Kontrollen oppretta ingen samtale. Du kan velje ein person på nytt.";
+                    return null;
+                }
                 if (matching.Length != 1)
-                { _openError = "Fann ikkje éi stadfesta samtale. Ingen ny samtale er oppretta av kontrollen."; return null; }
+                { _openError = "Fann fleire moglege samtalar. Ingen ny samtale er oppretta av kontrollen."; return null; }
                 _direct = null; return matching[0].Id;
             }
         }
         catch (OperationCanceledException) { lock (Gate) { if (Current(operation)) _openError = "Kontrollen vart avbroten. Prøv kontrollen igjen."; } return null; }
         catch { lock (Gate) { if (Current(operation)) _openError = "Samtalen kunne ikkje kontrollerast. Prøv kontrollen igjen."; } return null; }
         finally { Finish(operation); }
+    }
+    internal void DismissUncertainDirect(NativePersonalScope scope)
+    {
+        lock (Gate)
+        {
+            if (!Matches(scope) || Active is not null || _direct is null) return;
+            _direct = null;
+            _openError = "Den førre samtalen er ikkje stadfesta. Ingen førespurnad er send på nytt.";
+        }
+        Notify();
     }
 }

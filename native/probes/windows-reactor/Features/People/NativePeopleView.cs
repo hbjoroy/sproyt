@@ -7,7 +7,7 @@ namespace Sproyt.WindowsProbe;
 
 internal sealed record NativePeopleActions(Action<NativePersonalScope, string> QueryChanged,
     Func<NativePersonalScope, Task> Reload, Func<NativePersonalScope, string, Task> OpenDirect,
-    Func<NativePersonalScope, Task> ReadBack);
+    Func<NativePersonalScope, Task> ReadBack, Action<NativePersonalScope>? DismissUncertain = null);
 
 internal static class NativePeopleView
 {
@@ -39,6 +39,9 @@ internal static class NativePeopleView
                 .TextWrapping().Foreground(palette.Muted).IsVisible(state.HasUncertainDirect),
             Button("Kontroller samtalen", async () => await actions.ReadBack(scope)).MinHeight(44)
                 .IsEnabled(!busy).IsVisible(state.HasUncertainDirect).AutomationName("Kontroller samtalen").AutomationId("live-people-readback"),
+            Button("Vel ein annan person", () => actions.DismissUncertain?.Invoke(scope)).MinHeight(44)
+                .IsEnabled(!busy).IsVisible(state.HasUncertainDirect && actions.DismissUncertain is not null)
+                .AutomationName("Avslutt kontrollen og vel person på nytt").AutomationId("live-people-dismiss-uncertain"),
             TextBlock("Ingen personar passar søket.").TextWrapping().Foreground(palette.Muted)
                 .IsVisible(state.Loaded && state.People.Count == 0),
             VStack(6, state.People.Select(Person).ToArray())

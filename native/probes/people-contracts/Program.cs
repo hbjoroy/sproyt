@@ -52,6 +52,17 @@ static class Program
         Check(await people.RefreshUncertainDirectAsync(A) is null, "Ambiguous readback chose arbitrary channel.");
         command.Channels = (_, _) => Task.FromResult<IReadOnlyList<NativeChannel>>([new("found", "A", true, "other")]);
         Check(await people.RefreshUncertainDirectAsync(A) == "found" && command.DirectWrites == 1, "Explicit lost-ACK recovery did not use read-only canonical state.");
+        await people.OpenDirectAsync(A, "other");
+        command.Channels = (_, _) => Task.FromResult<IReadOnlyList<NativeChannel>>([]);
+        Check(await people.RefreshUncertainDirectAsync(A) is null && !people.Capture().HasUncertainDirect && command.DirectWrites == 2,
+            "Zero-match readback kept every future DM permanently held or issued a write.");
+        command.Open = null; command.Channels = null;
+        Check(await people.OpenDirectAsync(A, "other") == "dm" && command.DirectWrites == 3 && command.RequestIds.Distinct().Count() == 3,
+            "Explicit fresh open after zero-match readback was blocked or reused prior intent.");
+        command.Open = (_, _, id, _) => throw NativeCommandException.Uncertain(id);
+        await people.OpenDirectAsync(A, "other");
+        people.DismissUncertainDirect(A with { Visit = 2 }); Check(people.Capture().HasUncertainDirect, "Old visit dismissed current uncertainty.");
+        people.DismissUncertainDirect(A); Check(!people.Capture().HasUncertainDirect && command.DirectWrites == 4, "Explicit dismissal replayed an open.");
     }
     private static async Task PeopleScopes()
     {
@@ -108,6 +119,12 @@ static class Program
         Check(profile.Capture().HasUncertainWrite, "Lost status acknowledgement was silently accepted.");
         await profile.ReadBackAsync(A);
         Check(!profile.Capture().HasUncertainWrite && command.StatusWrites == 1, "Status readback replayed a write.");
+        command.Status = (_, text, emoji, _, _) => Task.FromResult(command.Self = command.Self with
+            { StatusText = text, StatusEmoji = emoji, StatusExpiresAt = DateTimeOffset.UtcNow.AddHours(1) });
+        profile.EditStatusText(A, "Expiry check"); await profile.SaveStatusAsync(A); await profile.ReadBackAsync(A);
+        Check(profile.Capture().HasUncertainWrite && command.StatusWrites == 2, "Expiring status falsely confirmed a no-expiry write.");
+        command.Self = command.Self with { StatusExpiresAt = null }; await profile.ReadBackAsync(A);
+        Check(!profile.Capture().HasUncertainWrite && command.StatusWrites == 2, "Correct expiry postcondition did not confirm read-only.");
     }
     private static async Task ProfileScopes()
     {

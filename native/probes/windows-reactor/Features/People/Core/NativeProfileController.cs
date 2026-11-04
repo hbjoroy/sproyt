@@ -57,7 +57,7 @@ internal sealed class NativeProfileController(IPersonalCommands commands) : Nati
                 ApplyProfile(own, null); _loaded = true;
                 if (_write is { } uncertain)
                 {
-                    bool confirmed = uncertain.Status ? own.StatusText == uncertain.Text && own.StatusEmoji == uncertain.Emoji : own.DisplayName == uncertain.Name;
+                    bool confirmed = uncertain.Status ? own.StatusText == uncertain.Text && own.StatusEmoji == uncertain.Emoji && own.StatusExpiresAt is null : own.DisplayName == uncertain.Name;
                     if (confirmed) { _write = null; _notice = "Lagringa er stadfesta av serveren."; }
                     else
                     {
@@ -103,7 +103,7 @@ internal sealed class NativeProfileController(IPersonalCommands commands) : Nati
             var receipt = status
                 ? await commands.SetStatusAsync(scope, write.Text, write.Emoji, write.RequestId, operation.Token)
                 : await commands.UpdateProfileAsync(scope, write.Name, write.RequestId, operation.Token);
-            if (receipt.Id != scope.UserId || (status ? receipt.StatusText != write.Text || receipt.StatusEmoji != write.Emoji : receipt.DisplayName != write.Name))
+            if (receipt.Id != scope.UserId || (status ? receipt.StatusText != write.Text || receipt.StatusEmoji != write.Emoji || receipt.StatusExpiresAt is not null : receipt.DisplayName != write.Name))
                 throw new InvalidDataException();
             lock (Gate)
             {
