@@ -67,6 +67,11 @@ internal static class LivePersonalNavigationUiProbe
             await cleanup();
             if (resize) window.NativeWindow.AppWindow.Resize(originalSize);
             Program.LiveWindowActive = active;
+            await Until("restored channel-a editor mounted", () =>
+                fixture.Capture().Navigation?.Current is { Target.ChannelId: "channel-a" } visit &&
+                Find<TextBox>(root, "live-composer") is { IsLoaded: true, IsEnabled: true, Tag: NativeMessageActionScope scope } editor &&
+                scope == new NativeMessageActionScope(visit.UserId, visit.SessionStamp, "channel-a", visit.Generation) &&
+                editor.Text == fixture.Workspace.Drafts["channel-a"].ComposerText);
         }
     }
 
