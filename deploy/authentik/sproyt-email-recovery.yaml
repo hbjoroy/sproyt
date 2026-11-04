@@ -137,7 +137,6 @@ entries:
     model: authentik_stages_identification.identificationstage
     attrs:
       user_fields: [email, username]
-      recovery_flow: !KeyOf recovery-flow
 
   - identifiers:
       slug: sproyt-user-settings

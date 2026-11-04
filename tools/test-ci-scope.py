@@ -12,6 +12,17 @@ spec.loader.exec_module(ci_scope)
 
 
 class ScopeTests(unittest.TestCase):
+    def test_identity_provider_changes_run_contracts_without_application_rebuild(self):
+        for paths in ([path] for path in ci_scope.IDENTITY):
+            result = ci_scope.scope(paths)
+            self.assertEqual((result['browser'], result['backend'], result['frontend'], result['recovery']),
+                             ('none', 'false', 'false', 'false'), paths)
+        result = ci_scope.scope(sorted(ci_scope.IDENTITY | ci_scope.POLICY))
+        self.assertEqual(result['browser'], 'none')
+        self.assertEqual(ci_scope.scope(['deploy/authentik/unknown.yaml'])['browser'], 'full')
+        self.assertEqual(ci_scope.scope(['src/auth.rs', *ci_scope.IDENTITY])['backend'], 'true')
+        self.assertEqual(ci_scope.scope(list(ci_scope.IDENTITY), True)['browser'], 'full')
+
     def test_literal_change_uses_related_ui_tests_without_restore(self):
         result = ci_scope.scope(['src/imagegen.rs', 'src/imagegen_prompt.rs', 'src/web/imagegen.rs',
                                  'frontend/src/imagegen.ts', 'frontend/src/ui/react/preview-imagegen.tsx',

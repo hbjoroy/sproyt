@@ -145,15 +145,21 @@ test("React sends real attachment-only messages and opens a full-screen zoomable
   expect(viewerBox?.width).toBe(viewport.width);
   expect(viewerBox?.height).toBe(viewport.height);
   const fittedBox = await original.boundingBox();
+  const fittedScale = fittedBox!.width / 600;
+  const percentage = (scale: number) => `${new Intl.NumberFormat(["nn-NO", "nb-NO"], { maximumFractionDigits: 1 }).format(scale * 100)}%`;
+  const reset = lightbox.getByRole("button", { name: "Tilpass biletet til skjermen" });
+  await expect(reset).toHaveText(percentage(fittedScale));
   await lightbox.getByRole("button", { name: "Zoom inn" }).click();
-  await expect(lightbox.getByRole("button", { name: "Tilbakestill biletvising" })).toHaveText("140%");
+  await expect(reset).toHaveText(percentage(fittedScale * 1.4));
   const enlargedBox = await original.boundingBox();
   expect(enlargedBox!.width).toBeGreaterThan(fittedBox!.width);
   await lightbox.locator(".sp-image-viewer-surface").dblclick();
-  await expect(lightbox.getByRole("button", { name: "Tilbakestill biletvising" })).toHaveText("100%");
+  await expect(reset).toHaveText(percentage(fittedScale));
   await lightbox.locator(".sp-image-viewer-surface").dblclick();
-  await expect(lightbox.getByRole("button", { name: "Tilbakestill biletvising" })).toHaveText("250%");
-  const reset = lightbox.getByRole("button", { name: "Tilbakestill biletvising" });
+  await expect(reset).toHaveText(fittedScale < 1 ? "100%" : "250%");
+  await lightbox.getByRole("button", { name: "Vis biletet i faktisk storleik (100 %)" }).click();
+  expect((await original.boundingBox())!.width).toBeCloseTo(600, 0);
+  expect((await original.boundingBox())!.height).toBeCloseTo(100, 0);
   await reset.click();
   if (browserName === "chromium") {
     const cdp = await context.newCDPSession(page);
