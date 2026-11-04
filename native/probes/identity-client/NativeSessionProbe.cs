@@ -23,11 +23,14 @@ internal static class NativeSessionProbe
         {
             var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (string argument in new[] { "--database", database, "--callback-uri", $"http://127.0.0.1:{callback}/return", "--session-lab", "--listen-port", port.ToString(System.Globalization.CultureInfo.InvariantCulture) }) start.ArgumentList.Add(argument);
+            ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.SessionBrokerLaunch;
             process = Process.Start(start)!;
             _ = process.StandardError.ReadToEndAsync();
-            string? line = await process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(20));
-            Check(line is not null && line.StartsWith("N01_READY ", StringComparison.Ordinal));
+            ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.SessionBrokerReady;
+            string line = await ProbeDiagnostics.ReadReadyAsync(process.StandardOutput);
+            Check(line.StartsWith("N01_READY ", StringComparison.Ordinal));
             _ = process.StandardOutput.ReadToEndAsync();
+            ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.SessionRequests;
         }
         internal void Stop() { if (process is not null) { if (!process.HasExited) { process.Kill(entireProcessTree: true); process.WaitForExit(); } process.Dispose(); process = null; } }
         public void Dispose() => Stop();
@@ -159,6 +162,7 @@ internal static class NativeSessionProbe
             using (var r = await Auth(app, HttpMethod.Post, "/session/refresh", grant.GetProperty("refresh_token").GetString()!, new { operation_id = op, generation = 0 })) Check(r.StatusCode == HttpStatusCode.Unauthorized);
         }
 
+        ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.SessionOwner;
         string ownerDirectory = Path.Combine(directory, "owner"); var transport = new FaultHandler();
         using (var owner = NativeAuthSession.Open(ownerDirectory, config, handler: transport))
         {
@@ -175,6 +179,7 @@ internal static class NativeSessionProbe
         }
         using (var owner = NativeAuthSession.Open(ownerDirectory, config))
         { Check(owner.Snapshot.Phase == NativeAuthPhase.Offline); await owner.ResumeAsync(); Check(owner.Snapshot.Phase == NativeAuthPhase.Active && owner.Snapshot.Generation == 2); }
+        ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.SessionOffline;
         server.Stop();
         using (var owner = NativeAuthSession.Open(ownerDirectory, config))
         {
@@ -206,6 +211,7 @@ internal static class NativeSessionProbe
         using (var owner = NativeAuthSession.Open(staleLoginDirectory, config))
         { long ticket = await owner.BeginLoginAsync(); await owner.CompleteLoginAsync(ticket, staleExchange); Check(owner.Snapshot.Phase == NativeAuthPhase.AuthRequired); }
 
+        ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.SessionRefreshRace;
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using (var owner = NativeAuthSession.Open(Path.Combine(directory, "race"), config, async phase => { if (phase == "rotation-received") { received.SetResult(); await release.Task; } }))
         {
@@ -219,6 +225,7 @@ internal static class NativeSessionProbe
             await owner.CompleteLoginAsync(ticket, freshLate); Check(owner.Snapshot.Phase == NativeAuthPhase.SignedOut && !owner.Snapshot.PendingRevocation);
             await Probe(app, freshLate, HttpStatusCode.Unauthorized);
         }
+        ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.SessionLateLogin;
         string lateDirectory = Path.Combine(directory, "offline-late-login"); var lateTransport = new FaultHandler(); string offlineLate;
         using (var owner = NativeAuthSession.Open(lateDirectory, config, handler: lateTransport))
         {
@@ -248,6 +255,7 @@ internal static class NativeSessionProbe
         string corrupt = Path.Combine(directory, "corrupt"); using (var owner = NativeAuthSession.Open(corrupt, config)) { }
         await File.WriteAllBytesAsync(Path.Combine(corrupt, "state.bin"), RandomNumberGenerator.GetBytes(64)); Rejected(() => NativeAuthSession.Open(corrupt, config).Dispose());
         var configPath = Path.Combine(directory, "config.json"); await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config, Json));
+        ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.SessionChildCheckpoint;
         foreach (string phase in new[] { "rotation-received", "rotation-durable" })
         {
             string childDirectory = Path.Combine(directory, phase);

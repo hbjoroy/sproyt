@@ -31,7 +31,7 @@ Fjerde pulje 4. november byggjer på `7866b8d` frå [PR #332](https://github.com
 | --- | --- | --- |
 | **PAR-007** | Trygg native Markdown/GFM, kode, tabellar, eksplisitt opning av lenkjer og val av råtekst. Eksterne bilete blir ikkje henta automatisk. | Grafisk Mermaid-vising. Kjeldekoden er tilgjengeleg. |
 | **PAR-012** | Filveljar og utklippstavle, blokkvis opplasting med framdrift, avbrot og nytt forsøk, og eigne vedlegg i rett kanal- eller trådutkast. Sending er eit eige brukarval. | Dra-og-slepp, fysisk Windows-input og aksept med to ekte kontoar. |
-| **PAR-013** | Eksplisitt nedlasting av PDF, ZIP, tekst og CSV med typetilpassa filending. | Office-format og full fysisk aksept av zoom, panorering og touch. |
+| **PAR-013** | Eksplisitt nedlasting av PDF, ZIP, tekst og CSV med typetilpassa filending. Web-mottakarar får nedlastingslenkje utan automatisk dokumentinnlasting. | Office-format og full fysisk aksept av zoom, panorering og touch. |
 
 Alle ti lokale klientkontraktgrupper, 34 Rust-lagertestar, HTTP-/media-prøvene og den samla Windows ARM64-køyringa er grøne. WinUI-prøva brukar syntetiske serverprojeksjonar; live-aksept og fysisk input står opne.
 

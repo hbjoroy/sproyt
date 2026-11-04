@@ -1,16 +1,28 @@
 {
   "schemaVersion": 1,
-  "recordedAtUtc": "2026-11-04T12:38:52.9454589+00:00",
+  "recordedAtUtc": "2026-11-04T13:31:57.2630467+00:00",
   "branch": "codex/native-richtext-uploads",
   "baseline": "7866b8d2b651474f8f06b8280f880978f41be8c1",
   "basePullRequest": "https://github.com/hbjoroy/sproyt/pull/332",
-  "testedSourceHead": "051a0828e6684d9e294f8daff396c990e46057d4",
+  "testedSourceHead": "8aa038f0ade335dfdbeb933099677cd990924ea0",
   "testedSourceDirty": true,
   "sourceHashKind": "SHA256 of tested workspace file bytes before Git line-ending normalization",
   "sourceHashes": [
     {
       "path": ".github/workflows/native-probe.yml",
       "sha256": "78d05054a7143b96c122e4a3ded50b49c3a2ded80389b731ce0ac69236966cad"
+    },
+    {
+      "path": "frontend/src/app.ts",
+      "sha256": "cfd27e85ba83680c1684008c90c3168b28a68349b859b0860d6ff43fd9e676af"
+    },
+    {
+      "path": "frontend/src/ui/react/preview-media.tsx",
+      "sha256": "1dbaf90ad6ad72fb87b3c07f5e76815c498bc66866d31d285a1f1f9bfca86c2a"
+    },
+    {
+      "path": "frontend/tests/ui-react-media.spec.ts",
+      "sha256": "b778e655ad45c3ad157b2c0a54ba7182db353dce63204b836cc0051b7d1e5c69"
     },
     {
       "path": "native/probes/client-core/src/lib.rs",
@@ -23,6 +35,18 @@
     {
       "path": "native/probes/client-core/src/tests.rs",
       "sha256": "b8e34d870febf03d5681ed86f20aa1f5eedcf6517f8299cd14d9f2496f17ec34"
+    },
+    {
+      "path": "native/probes/identity-client/NativeSessionProbe.cs",
+      "sha256": "d12e5a489736db95a78348c4006cd7020b1f87706de29dc12485d115ff75cbd4"
+    },
+    {
+      "path": "native/probes/identity-client/ProbeDiagnostics.cs",
+      "sha256": "1ee4d9cc9390a9b32e9549758e954348d3fe3dedcf3538cf28e37a17cc8eab5a"
+    },
+    {
+      "path": "native/probes/identity-client/Program.cs",
+      "sha256": "6321969c52decc0339e77c582b35f4a04a4d4f8d2a4faeaa95297da19a2a7a91"
     },
     {
       "path": "native/probes/README.md",
@@ -796,6 +820,118 @@
         "production authentication",
         "hard termination of the full WinUI process during live transport"
       ]
+    }
+  },
+  "webDocumentCompatibility": {
+    "receipt": "C:/Build/native-content-final/frontend-compat/receipt.json",
+    "result": {
+      "schema": 1,
+      "scope": "frontend_document_consumer_compatibility",
+      "recordedUtc": "2026-11-04T13:30:35.3775592Z",
+      "baseHead": "8aa038f0ade335dfdbeb933099677cd990924ea0",
+      "sourceDirectory": "S:/Source/sproyt-native-content",
+      "sourceDirty": true,
+      "sourceFiles": [
+        {
+          "path": "frontend/src/app.ts",
+          "absolutePath": "S:\\Source\\sproyt-native-content\\frontend\\src\\app.ts",
+          "sha256": "cfd27e85ba83680c1684008c90c3168b28a68349b859b0860d6ff43fd9e676af",
+          "lastWriteUtc": "2026-11-04T12:53:22.7328925Z"
+        },
+        {
+          "path": "frontend/src/ui/react/preview-media.tsx",
+          "absolutePath": "S:\\Source\\sproyt-native-content\\frontend\\src\\ui\\react\\preview-media.tsx",
+          "sha256": "1dbaf90ad6ad72fb87b3c07f5e76815c498bc66866d31d285a1f1f9bfca86c2a",
+          "lastWriteUtc": "2026-11-04T12:53:22.7301177Z"
+        },
+        {
+          "path": "frontend/tests/ui-react-media.spec.ts",
+          "absolutePath": "S:\\Source\\sproyt-native-content\\frontend\\tests\\ui-react-media.spec.ts",
+          "sha256": "b778e655ad45c3ad157b2c0a54ba7182db353dce63204b836cc0051b7d1e5c69",
+          "lastWriteUtc": "2026-11-04T13:27:41.4594916Z"
+        }
+      ],
+      "bundleDirectory": "C:/Build/native-content-final/frontend-compat/dist",
+      "bundles": [
+        {
+          "path": "C:\\Build\\native-content-final\\frontend-compat\\dist\\app.js",
+          "bytes": 10425583,
+          "sha256": "2520b0a49830c0531f9274b83c90a328a7525639d46bb069dc87868e11835da6"
+        },
+        {
+          "path": "C:\\Build\\native-content-final\\frontend-compat\\dist\\client-store.js",
+          "bytes": 1490,
+          "sha256": "b1226e575e6f06bb4cb891fa686afbf6192f0ea3edbff3479881ae04fcb2d220"
+        }
+      ],
+      "frontend": {
+        "command": "npm run test",
+        "passed": true,
+        "typecheck": true,
+        "build": true,
+        "boundariesPassed": 211,
+        "boundariesFailed": 0,
+        "log": "C:/Build/native-content-final/frontend-compat/final-npm-test.log"
+      },
+      "browser": {
+        "browser": "chromium",
+        "passed": 3,
+        "failed": 0,
+        "durationSeconds": 11.6,
+        "scenarios": [
+          "react receives native document markers as explicit downloads without preview requests",
+          "legacy receives native document markers as explicit downloads without preview requests",
+          "React sends real attachment-only messages and opens a full-screen zoomable original"
+        ],
+        "lastRun": "C:/Build/native-content-final/frontend-compat/browser/results/.last-run.json",
+        "summary": "C:/Build/native-content-final/frontend-compat/browser-summary.txt",
+        "config": "C:/Build/native-content-final/frontend-compat/browser/playwright.config.cjs",
+        "harness": "C:/Build/native-content-final/frontend-compat/browser/compat.spec.cjs",
+        "serverBinary": "C:/Build/native-content-final/backend/target/debug/sproyt.exe",
+        "isolation": "Local backend process, unique local port and SQLite directory; no production requests.",
+        "frontendBundle": "Playwright route override served the freshly built final frontend bundle for /assets/app/*/app.js; source files were unchanged during browser execution. The existing backend embedded an earlier bundle; it supplied fixture APIs only.",
+        "documents": "Synthetic received WebSocket message markers and synthetic context-routed document HTTP responses. No real document upload. Download filename checked by native navigation to the captured link URL because Chromium download-attribute requests bypass Playwright routing.",
+        "images": "The existing image scenario used actual upload/send/original/download against the isolated local backend. No physical file picker interaction; synthetic generated image bytes.",
+        "notTested": [
+          "production",
+          "new document end-to-end upload over browser transport",
+          "direct document anchor-click response interception",
+          "physical user file dialogs"
+        ]
+      }
+    }
+  },
+  "identityHarnessDiagnostics": {
+    "receipt": "C:/Build/native-content-final-review/identity-diag/diagnostics-receipt.json",
+    "result": {
+      "schemaVersion": 1,
+      "scope": "identity_probe_safe_readiness_diagnostics",
+      "sourceHashes": [
+        {
+          "path": "native/probes/identity-client/Program.cs",
+          "sha256": "6321969c52decc0339e77c582b35f4a04a4d4f8d2a4faeaa95297da19a2a7a91"
+        },
+        {
+          "path": "native/probes/identity-client/NativeSessionProbe.cs",
+          "sha256": "d12e5a489736db95a78348c4006cd7020b1f87706de29dc12485d115ff75cbd4"
+        },
+        {
+          "path": "native/probes/identity-client/ProbeDiagnostics.cs",
+          "sha256": "1ee4d9cc9390a9b32e9549758e954348d3fe3dedcf3538cf28e37a17cc8eab5a"
+        }
+      ],
+      "receipts": {
+        "generic": "C:/Build/native-content-final-review/identity-diag/generic-b38a1481-8567-4b3d-9bf2-1240cffb690a/receipt.json",
+        "session": "C:/Build/native-content-final-review/identity-diag/session-ad5fbe55-713d-4326-81a9-d790d5cf9f1e/receipt.json"
+      },
+      "readinessDeadlineSeconds": 20,
+      "diagnosticObservationSeconds": 5,
+      "controlledSlowBroker": {
+        "delaySeconds": 21,
+        "exitCode": 1,
+        "observation": "late-ready",
+        "noSentinelLeak": true
+      }
     }
   },
   "limits": {
