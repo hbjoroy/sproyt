@@ -1,4 +1,5 @@
 using Sproyt.WindowsProbe;
+using System.Text.Json;
 
 static class Program
 {
@@ -7,8 +8,10 @@ static class Program
     private static NativeProfileController Profile(Commands commands) { var profile = new NativeProfileController(commands); profile.Bind(A); return profile; }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private static TaskCompletionSource<T> Deferred<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private static async Task Main()
+    private static async Task Main(string[] args)
     {
+        if (args.Length > 1 || args.Length == 1 && !Path.IsPathFullyQualified(args[0]))
+            throw new ArgumentException("Pass one absolute evidence directory, or omit it for stdout-only use.");
         await Directory(); Console.WriteLine("PASS directory identity/search/read failures");
         await Direct(); Console.WriteLine("PASS direct ACK and canonical summary admission");
         await UncertainDirect(); Console.WriteLine("PASS uncertain direct readback without replay");
@@ -19,6 +22,23 @@ static class Program
         await ProfileScopes(); Console.WriteLine("PASS profile family retention and stale callbacks");
         await Rejections(); Console.WriteLine("PASS correlated definite rejection and mismatched errors");
         Console.WriteLine("PASS all 9 people/profile contract groups");
+        if (args.Length == 1)
+        {
+            string directory = Path.Combine(Path.GetFullPath(args[0]), "people-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(directory);
+            string receipt = Path.Combine(directory, "receipt.json");
+            await File.WriteAllTextAsync(receipt, JsonSerializer.Serialize(new
+            {
+                passed = true, scope = "synthetic_people_profile_controller_contracts",
+                groups = new[] { "directory identity/search/read failures", "direct ACK and canonical summary admission",
+                    "uncertain direct readback without replay", "people full-stamp/visit and stale read fences",
+                    "own profile by ID and independent dirty drafts", "profile ACK preserves newer name/status edits and clear",
+                    "uncertain profile readback without replay", "profile family retention and stale callbacks",
+                    "correlated definite rejection and mismatched errors" },
+                actualWinUi = false, actualTransport = false, productionAuthentication = false, storageAcceptance = false
+            }));
+            Console.WriteLine("Receipt: " + receipt);
+        }
     }
     private static async Task Directory()
     {
