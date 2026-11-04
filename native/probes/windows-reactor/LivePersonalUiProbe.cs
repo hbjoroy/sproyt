@@ -26,7 +26,8 @@ internal static class LivePersonalUiProbe
                 Find<TextBox>(root, "live-composer") is { IsLoaded: true, Text: "" });
             var editor = Find<TextBox>(root, "live-composer")!;
             editor.Text = RootDraft; editor.Focus(FocusState.Programmatic); editor.Select(4, 5);
-            await Until("root draft persisted", () => fixture.Workspace.Drafts["channel-a"].ComposerText == RootDraft);
+            // Open immediately: the shell must flush the native edit before
+            // covering it, even if TextChanged is still queued.
             var retainedSend = LiveChatComponent.SendForProbe!;
             var retainedDrop = LiveChatComponent.RootDropForProbe!;
             var auth = fixture.Authentication; var nav = fixture.Capture().Navigation!.Current!;
@@ -106,7 +107,10 @@ internal static class LivePersonalUiProbe
                 Find<Button>(root, "live-person-open-" + NativePersonalUiFixtureCommands.PersonTwoId) is not null);
             personal.FailNextDirectAfterCommit = true;
             await Click(root, "live-person-open-" + NativePersonalUiFixtureCommands.PersonTwoId);
-            await Until("unknown DM readback", () => Find<Button>(root, "live-people-readback") is { IsEnabled: true });
+            await Until("unknown DM readback", () => Find<Button>(root, "live-people-readback") is { IsEnabled: true }, () => JsonSerializer.Serialize(new
+            { personal.DirectExecutions, personal.LastDirectUserId, channel = fixture.Chat.SelectedChannel,
+                peoplePresent = Find<TextBox>(root, "live-people-query") is not null,
+                text = string.Join(" | ", Descendants<TextBlock>(root, false).Select(x => x.Text)) }));
             Require(personal.DirectExecutions == 1 && fixture.Chat.SelectedChannel == "channel-a" && fixture.AcceptedMessageCount == accepted,
                 "Unknown DM acknowledgement navigated or sent chat automatically.");
             await Click(root, "live-people-readback");
@@ -118,6 +122,20 @@ internal static class LivePersonalUiProbe
             await Until("people return frame", () => fixture.Chat.SelectedChannel == "channel-a" && Find<TextBox>(root, "live-people-query")?.Text == "anna-to");
             await Close(root);
             Require(fixture.Workspace.Drafts["channel-a"].ComposerText == RootDraft, "DM return lost original root draft.");
+
+            var editingMessage = fixture.Message(RootOne)!;
+            LiveChatComponent.TimelineForProbe!.Restore(new(RootOne, editingMessage.Sequence, -5, false, 0));
+            await Click(root, "live-message-actions-" + RootOne);
+            await Click(root, "live-message-edit-" + RootOne);
+            var edit = Find<TextBox>(root, "live-message-edit-input-" + RootOne)!;
+            edit.Text = "Ulagra meldingsredigering"; edit.Focus(FocusState.Programmatic);
+            await Open(root, NativePersonalSurfaceKind.Profile);
+            Require(edit.IsLoaded && Find<TextBox>(root, "live-message-edit-input-" + RootOne) is null,
+                "A personal surface exposed or unmounted an active message editor.");
+            await Close(root);
+            await Until("message editor preserved", () => ReferenceEquals(edit, Find<TextBox>(root, "live-message-edit-input-" + RootOne)) && edit.Text == "Ulagra meldingsredigering");
+            Require(fixture.Message(RootOne)!.Body != edit.Text, "Opening a personal surface saved a message edit.");
+            await Click(root, "live-message-cancel-" + RootOne);
 
             await LiveChatComponent.NavigateForProbe!(new("channel-a", ThreadId: RootOne));
             await Until("thread draft surface", () => Find<TextBox>(root, "live-thread-composer") is { IsLoaded: true });
@@ -179,7 +197,7 @@ internal static class LivePersonalUiProbe
     }
     private static async Task Close(FrameworkElement root)
     { await Click(root, "live-personal-close"); await Until("personal surface closed", () => LiveChatComponent.PersonalScopeForProbe is null); }
-    private static async Task Click(FrameworkElement root, string id)
+    internal static async Task Click(FrameworkElement root, string id)
     {
         await Until("button " + id, () => Find<Button>(root, id) is { IsLoaded: true, IsEnabled: true });
         var button = Find<Button>(root, id)!;
@@ -187,7 +205,7 @@ internal static class LivePersonalUiProbe
         if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke) throw new InvalidOperationException("Missing button Invoke: " + id);
         invoke.Invoke(); await Task.Delay(30);
     }
-    private static async Task Until(string name, Func<bool> condition, Func<string>? detail = null)
+    internal static async Task Until(string name, Func<bool> condition, Func<string>? detail = null)
     {
         for (int attempt = 0; attempt < 400; attempt++) { try { if (condition()) return; } catch (KeyNotFoundException) { } await Task.Delay(25); }
         throw new InvalidOperationException("Personal UI fixture did not settle: " + name + (detail is null ? "" : "; " + detail()));
@@ -199,7 +217,7 @@ internal static class LivePersonalUiProbe
         for (int index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
             foreach (var child in Descendants<T>(VisualTreeHelper.GetChild(parent, index), includeHidden)) yield return child;
     }
-    private static T? Find<T>(DependencyObject root, string id, bool includeHidden = false) where T : FrameworkElement =>
+    internal static T? Find<T>(DependencyObject root, string id, bool includeHidden = false) where T : FrameworkElement =>
         Descendants<T>(root, includeHidden).FirstOrDefault(element => AutomationProperties.GetAutomationId(element) == id);
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 }

@@ -53,6 +53,7 @@ internal sealed partial class LiveChatComponent : Component
         PilotComponent.InvalidateForClose = () => invalidate(Interlocked.Increment(ref _revision));
         var (dark, setDark) = UseState(Application.Current.RequestedTheme == ApplicationTheme.Dark);
         var (showList, setShowList) = UseState(false);
+        _showPersonalDestination = () => setShowList(false);
         var (showUploads, setShowUploads) = UseState(false);
         bool wide = UseBreakpoint(800);
         UseEffect(() =>
@@ -441,6 +442,7 @@ internal sealed partial class LiveChatComponent : Component
             .OnMount(element =>
             {
                 if (element is not TextBox input) return;
+                input.Tag = rootScope;
                 PilotComponent.EditorForClose = input;
                 input.PreviewKeyDown += (_, args) =>
                 {
@@ -458,7 +460,7 @@ internal sealed partial class LiveChatComponent : Component
                 .Foreground(palette.AccentInk).Background(palette.Accent).IsEnabled(canSend).Grid(column: 1)
         ))).Padding(12).Background(palette.Chrome).BorderThickness(new Thickness(0, 2, 0, 0)).BorderBrush(palette.Rule).Grid(row: 3), false);
         var conversation = Grid([GridSize.Star()], [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
-            VStack(4, HStack(12, Button("←", () => { RememberViewport(); setShowList(true); }).AutomationName("Vis samtalar").Size(44, 44).IsVisible(!wide),
+            VStack(4, HStack(12, Button("←", () => { RememberViewport(); setShowList(true); }).AutomationName("Vis samtalar").AutomationId("live-show-channel-list").Size(44, 44).IsVisible(!wide),
                 VStack(2, TextBlock(selected?.IsDirect == true ? "Direkte" : selected?.CircleName ?? "Felles").FontSize(12).Foreground(palette.Muted),
                     TextBlock(selected is null ? "Samtalar" : (selected.IsDirect ? "" : "# ") + selected.Name).FontSize(21).Bold().Foreground(palette.Ink)))
                 .Padding(12, 8),
@@ -544,7 +546,7 @@ internal sealed partial class LiveChatComponent : Component
                         if (Program.LiveUiProbeDirectory is not null) { ThreadTimelineForProbe = _threadTimeline; ThreadScrollForProbe = scroller; }
                     },
                     () => { _threadTimeline?.Dispose(); _threadTimeline = null; ThreadTimelineForProbe = null; ThreadScrollForProbe = null; },
-                    input => PilotComponent.EditorForClose = input,
+                    input => { input.Tag = threadScope; PilotComponent.EditorForClose = input; },
                     VStack(4,
                         TextBlock(state.ConfirmPendingSends ? "Stadfest dei lagra meldingane frå førre innlogging før du sender." : state.Error ??
                             (Encoding.UTF8.GetByteCount(threadDraft?.Body ?? "") > 1024 ? "Svaret er for langt for denne Windows-versjonen." :

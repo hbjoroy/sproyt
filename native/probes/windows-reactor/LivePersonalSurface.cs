@@ -20,10 +20,12 @@ internal sealed partial class LiveChatComponent
     private NativeInboxController? _inbox;
     private NativePerson? _canonicalSelf;
     private Action? _personalInvalidate;
+    private Action? _showPersonalDestination;
     private WeakReference<TextBox>? _conversationFocus;
     private long? _focusVisit;
     private NativePersonalScope? _loadedPersonalScope;
     private long _personalNavigationSerial;
+    private bool _personalConnectionKnown, _personalConnected;
     private sealed record PersonalReturn(NativePersonalSurfaceKind Kind, string UserId, string Stamp,
         NativeNavigationTarget Origin, long OriginGeneration, NativeNavigationTarget? Destination = null, long? DestinationGeneration = null);
     private PersonalReturn? _personalReturn;
@@ -53,8 +55,12 @@ internal sealed partial class LiveChatComponent
     {
         _personalInvalidate = invalidate;
         var before = _personalSurface.Scope;
+        bool reconnected = _personalConnectionKnown && !_personalConnected && state.Chat.Connected;
+        if (before is not null && (before.SessionStamp != state.Authentication.SessionStamp || reconnected)) FlushProfileInputs(app, before, allowRotation: true);
         bool valid = state.ShowConversation && state.Authentication.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline;
         bool identityChanged = _personalSurface.Bind(valid ? state.Authentication.UserId : null, valid ? state.Authentication.SessionStamp : null);
+        _personalConnectionKnown = true; _personalConnected = state.Chat.Connected;
+        if (reconnected && _personalSurface.Kind is { } reopened) _personalSurface.Open(reopened);
         if (!ReferenceEquals(_personalApp, app) || identityChanged)
         {
             if (before is not null) _personalApp?.UncoverConversation(before);
@@ -124,14 +130,15 @@ internal sealed partial class LiveChatComponent
         var state = app.Capture();
         if (!ReferenceEquals(app, _personalApp) || Program.CloseAdmissionClosed || !state.ShowConversation ||
             state.Authentication.Phase != NativeAuthPhase.Active || !state.Chat.Connected) return;
+        if (_personalSurface.Scope is { } previous) FlushProfileInputs(app, previous);
         _personalNavigationSerial++;
-        if (!PersonalOpen) SavePersonalOrigin(app);
+        if (!PersonalOpen) { FlushConversationInputs(app, state); SavePersonalOrigin(app); }
         var before = _personalSurface.Scope;
         var scope = _personalSurface.Open(kind);
         if (scope is null) return;
         _personalReturn = null;
         ApplyPersonalBindings(app, state, before); _loadedPersonalScope = scope;
-        // The mutable predicates close admission immediately, before Reactoring
+        // The mutable predicates close admission immediately, before rendering
         // the covered tree. Existing drafts and edit controls remain mounted.
         _surfaceVisible = _threadSurfaceVisible = false;
         _rootDropContext = _threadDropContext = null;
@@ -141,6 +148,7 @@ internal sealed partial class LiveChatComponent
     private void ClosePersonal(ILiveApplication app, NativePersonalScope scope, bool restoreFocus = true)
     {
         if (!PersonalCurrent(app, scope)) return;
+        FlushProfileInputs(app, scope);
         _personalNavigationSerial++;
         CacheCanonicalSelf(); _personalSurface.Close(); _loadedPersonalScope = null;
         ApplyPersonalBindings(app, app.Capture(), scope); _personalInvalidate?.Invoke();
@@ -158,16 +166,18 @@ internal sealed partial class LiveChatComponent
     }
     private async Task OpenPersonalSourceAsync(ILiveApplication app, NativePersonalScope scope, NativeNavigationTarget target)
     {
-        if (!PersonalCurrent(app, scope) || app.Capture().Navigation?.Current is not { } origin || _personalSurface.Kind is not { } kind) return;
+        if (!PersonalCurrent(app, scope) || _personalSurface.Kind is not { } kind) return;
+        var origin = app.Capture().Navigation?.Current;
         SavePersonalOrigin(app);
-        var frame = new PersonalReturn(kind, scope.UserId, scope.SessionStamp, origin.Target, origin.Generation);
+        var frame = origin is null ? null : new PersonalReturn(kind, scope.UserId, scope.SessionStamp, origin.Target, origin.Generation);
         ClosePersonal(app, scope, false); _personalReturn = frame;
+        _showPersonalDestination?.Invoke();
         long serial = ++_personalNavigationSerial;
         var navigating = app.NavigateAsync(target);
         var started = app.Capture().Navigation?.Current;
         await navigating;
         var latest = app.Capture();
-        if (_personalNavigationSerial == serial && ReferenceEquals(_personalReturn, frame) && latest.Authentication.UserId == frame.UserId && latest.Authentication.SessionStamp == frame.Stamp &&
+        if (frame is not null && _personalNavigationSerial == serial && ReferenceEquals(_personalReturn, frame) && latest.Authentication.UserId == frame.UserId && latest.Authentication.SessionStamp == frame.Stamp &&
             latest.Navigation is { Pending: false, Error: null, Current: { } destination } && started?.Generation == destination.Generation && destination.Target == target)
             _personalReturn = frame with { Destination = destination.Target, DestinationGeneration = destination.Generation };
         else if (ReferenceEquals(_personalReturn, frame)) _personalReturn = null;
@@ -178,6 +188,7 @@ internal sealed partial class LiveChatComponent
         var state = app.Capture();
         return _personalReturn is { DestinationGeneration: { } generation } frame && !PersonalOpen &&
             state.Authentication.UserId == frame.UserId && state.Authentication.SessionStamp == frame.Stamp &&
+            state.Chat.Channels.Any(channel => channel.Id == frame.Origin.ChannelId) &&
             state.Navigation?.Current?.Generation == generation && state.Navigation.Current.Target == frame.Destination;
     }
     private async Task<bool> ReturnPersonalAsync(ILiveApplication app)
@@ -231,8 +242,12 @@ internal sealed partial class LiveChatComponent
             NativePersonalSurfaceKind.People => NativePeopleView.Render(_people!.Capture(), palette,
                 new(_people.Query, _people.LoadAsync, OpenDirect, ReadDirect, _people.DismissUncertainDirect)),
             NativePersonalSurfaceKind.Profile => NativeProfileView.Render(_profile!.Capture(), palette,
-                new(_profile.EditName, _profile.EditStatusText, _profile.EditStatusEmoji, _profile.LoadAsync,
-                    _profile.SaveNameAsync, _profile.SaveStatusAsync, _profile.ClearStatusAsync, _profile.ReadBackAsync)),
+                new(_profile.EditName, _profile.EditStatusText, _profile.EditStatusEmoji,
+                    captured => ProfileAction(app, captured, _profile.LoadAsync),
+                    captured => ProfileAction(app, captured, _profile.SaveNameAsync),
+                    captured => ProfileAction(app, captured, _profile.SaveStatusAsync),
+                    captured => ProfileAction(app, captured, _profile.ClearStatusAsync),
+                    captured => ProfileAction(app, captured, _profile.ReadBackAsync))),
             _ => NativeInboxView.Render(_inbox!, palette, new(
                 () => ClosePersonal(app, scope), tab => { _ = OpenPersonalAsync(app, tab switch { NativeInboxTab.Mentions => NativePersonalSurfaceKind.Mentions,
                     NativeInboxTab.Tasks => NativePersonalSurfaceKind.Tasks, _ => NativePersonalSurfaceKind.Unread }); },
@@ -245,7 +260,55 @@ internal sealed partial class LiveChatComponent
             HStack(8, TextBlock(_personalSurface.Kind == NativePersonalSurfaceKind.Profile ? "Profil og status" : _personalSurface.Kind == NativePersonalSurfaceKind.People ? "Personar" : "Innboks")
                     .FontSize(22).Bold().Foreground(palette.Ink), Button("Tilbake til samtalen", () => ClosePersonal(app, scope)).MinHeight(40)
                     .AutomationId("live-personal-close")).Padding(12).Grid(row: 0),
-            content.IsEnabled(state.Chat.Connected && state.Authentication.Phase == NativeAuthPhase.Active).Grid(row: 1))
+            content.WithKey($"personal-{_personalSurface.Kind}-{scope.Visit}")
+                .IsEnabled(state.Chat.Connected && state.Authentication.Phase == NativeAuthPhase.Active).Grid(row: 1))
             .Background(palette.Paper).AutomationId("live-personal-surface");
+    }
+    private Task ProfileAction(ILiveApplication app, NativePersonalScope scope, Func<NativePersonalScope, Task> action)
+    {
+        if (!PersonalCurrent(app, scope) || _personalSurface.Kind != NativePersonalSurfaceKind.Profile) return Task.CompletedTask;
+        FlushProfileInputs(app, scope);
+        return action(scope);
+    }
+    private void FlushProfileInputs(ILiveApplication app, NativePersonalScope scope, bool allowRotation = false)
+    {
+        if (_profile is null || _personalSurface.Kind != NativePersonalSurfaceKind.Profile || !_personalSurface.Current(scope) ||
+            !ReferenceEquals(app, _personalApp) || PilotComponent.RootForClose is not { } root) return;
+        var auth = app.Authentication;
+        bool same = auth.UserId == scope.UserId && (auth.SessionStamp == scope.SessionStamp || allowRotation &&
+            LiveApplication.SameSendFamily(scope.SessionStamp[..scope.SessionStamp.LastIndexOf(':')], auth.SessionStamp));
+        if (!same) return;
+        // Native TextChanged notifications can be queued behind an immediate
+        // button invocation. Explicit actions must use the text on screen.
+        var name = VisibleInput(root, "live-profile-name"); var text = VisibleInput(root, "live-profile-status-text"); var emoji = VisibleInput(root, "live-profile-status-emoji");
+        if (name?.Tag is not NativePersonalScope nameScope || nameScope != scope ||
+            text?.Tag is not NativePersonalScope textScope || textScope != scope || emoji?.Tag is not NativePersonalScope emojiScope || emojiScope != scope) return;
+        string nameValue = name.Text, textValue = text.Text, emojiValue = emoji.Text;
+        var current = _profile.Capture();
+        if (current.NameDraft != nameValue) _profile.EditName(scope, nameValue);
+        if (current.StatusTextDraft != textValue) _profile.EditStatusText(scope, textValue);
+        if (current.StatusEmojiDraft != emojiValue) _profile.EditStatusEmoji(scope, emojiValue);
+    }
+    private void FlushConversationInputs(ILiveApplication app, LiveSnapshot state)
+    {
+        if (PersonalOpen || PilotComponent.RootForClose is not { } root || state.Navigation?.Current is not { } nav ||
+            state.Authentication.UserId is not { } user || state.Authentication.SessionStamp is not { } stamp) return;
+        var thread = state.Threads?.Visit;
+        NativeMessageActionScope scope = new(user, stamp, nav.Target.ChannelId, nav.Generation,
+            thread is { IsDirectory: false } ? thread.RootMessageId : null, thread?.Generation ?? 0);
+        var editor = VisibleInput(root, thread is { IsDirectory: false } ? "live-thread-composer" : "live-composer");
+        if (editor?.Tag is NativeMessageActionScope editorScope && editorScope == scope) app.EditComposer(scope, editor.Text);
+        var actions = thread is { IsDirectory: false } ? _threadActions : _rootActions;
+        if (actions.Mode == NativeMessageActionMode.Edit && actions.MessageId is { } message &&
+            VisibleInput(root, "live-message-edit-input-" + message) is { Tag: NativeMessageActionScope editingScope } editing && editingScope == scope)
+            actions.ChangeInput(scope, message, NativeMessageActionMode.Edit, editing.Text);
+    }
+    private static TextBox? VisibleInput(DependencyObject element, string id)
+    {
+        if (element is UIElement { Visibility: not Visibility.Visible }) return null;
+        if (element is TextBox input && Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(input) == id) return input;
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(element); index++)
+            if (VisibleInput(VisualTreeHelper.GetChild(element, index), id) is { } child) return child;
+        return null;
     }
 }

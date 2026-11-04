@@ -19,14 +19,14 @@ internal static class NativeProfileView
         return ScrollViewer(VStack(8,
             TextBlock("Visingsnamn").SemiBold().Foreground(palette.Ink),
             TextBox(state.NameDraft, value => actions.NameChanged(scope, value)).MinHeight(44)
-                .AutomationName("Visingsnamn").AutomationId("live-profile-name"),
+                .AutomationName("Visingsnamn").AutomationId("live-profile-name").OnMount(input => input.Tag = scope).WithKey("profile-1-" + scope.ToString()),
             Button("Lagre namn", async () => await actions.SaveName(scope)).MinHeight(44)
                 .IsEnabled(state.CanSave).AutomationName("Lagre namn").AutomationId("live-profile-save-name"),
             TextBlock("Status").SemiBold().Foreground(palette.Ink).Margin(0, 12, 0, 0),
             TextBox(state.StatusTextDraft, value => actions.StatusTextChanged(scope, value)).MinHeight(44)
-                .AutomationName("Statustekst").AutomationId("live-profile-status-text"),
+                .AutomationName("Statustekst").AutomationId("live-profile-status-text").OnMount(input => input.Tag = scope).WithKey("profile-2-" + scope.ToString()),
             TextBox(state.StatusEmojiDraft, value => actions.StatusEmojiChanged(scope, value)).MinHeight(44)
-                .AutomationName("Status-emoji").AutomationId("live-profile-status-emoji"),
+                .AutomationName("Status-emoji").AutomationId("live-profile-status-emoji").OnMount(input => input.Tag = scope).WithKey("profile-3-" + scope.ToString()),
             Button("Lagre status", async () => await actions.SaveStatus(scope)).MinHeight(44)
                 .IsEnabled(state.CanSave).AutomationName("Lagre status").AutomationId("live-profile-save-status"),
             Button("Tøm status", async () => await actions.ClearStatus(scope)).MinHeight(44)

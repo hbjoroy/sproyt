@@ -55,7 +55,8 @@ internal static class NativeMessageActionsView
         {
             rows.Add(TextBox(owner.Input, text => owner.ChangeInput(scope, id, mode, text))
                 .AcceptsReturn(true).TextWrapping(TextWrapping.Wrap).MaxHeight(180).IsEnabled(enabled)
-                .AutomationName("Endra meldingstekst").AutomationId("live-message-edit-input-" + id));
+                .AutomationName("Endra meldingstekst").AutomationId("live-message-edit-input-" + id)
+                .OnMount(input => input.Tag = scope).WithKey(scope.ToString()));
             if (owner.HasAttachments) rows.Add(TextBlock("Vedlegga blir verande på meldinga.").Foreground(palette.Muted).TextWrapping());
             rows.Add(ActionButton("Lagre endring", "save", async () => await owner.ConfirmAsync(scope, message, commands), enabled && owner.CanSave));
         }
