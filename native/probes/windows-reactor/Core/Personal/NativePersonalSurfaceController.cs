@@ -5,7 +5,7 @@ internal enum NativePersonalSurfaceKind { People, Unread, Mentions, Tasks, Profi
 internal sealed class NativePersonalSurfaceController
 {
     private string? _user, _stamp, _family;
-    private long _visit;
+    private static long _lastVisit;
     internal NativePersonalSurfaceKind? Kind { get; private set; }
     internal NativePersonalScope? Scope { get; private set; }
 
@@ -29,8 +29,16 @@ internal sealed class NativePersonalSurfaceController
     internal NativePersonalScope? Open(NativePersonalSurfaceKind kind)
     {
         if (_user is null || _stamp is null) return null;
+        // A retired component may still have callbacks in flight when the
+        // same user mounts a replacement controller under the same stamp.
+        long previous;
+        do
+        {
+            previous = Interlocked.Read(ref _lastVisit);
+            if (previous == long.MaxValue) { Close(); return null; }
+        } while (Interlocked.CompareExchange(ref _lastVisit, previous + 1, previous) != previous);
         Kind = kind;
-        Scope = new(_user, _stamp, checked(++_visit));
+        Scope = new(_user, _stamp, previous + 1);
         return Scope;
     }
 
