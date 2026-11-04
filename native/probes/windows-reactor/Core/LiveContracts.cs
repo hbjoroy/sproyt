@@ -4,7 +4,8 @@ namespace Sproyt.WindowsProbe;
 // modules share its snapshot and actions instead of creating transport owners.
 internal sealed record LiveSnapshot(NativeAuthSnapshot Authentication, NativeChatSnapshot Chat,
     WorkspaceSnapshot? Workspace, bool ShowConversation, string? Error, bool ConfirmPendingSends = false,
-    bool DeliveryRetryPending = false, NativeNavigationSnapshot? Navigation = null, NativeThreadFeatureSnapshot? Threads = null)
+    bool DeliveryRetryPending = false, NativeNavigationSnapshot? Navigation = null, NativeThreadFeatureSnapshot? Threads = null,
+    NativeUploadSnapshot? Uploads = null, string? UploadError = null)
 {
     public int RejectedSends => Workspace?.Outbox.Count(item => item.State == "rejected") ?? 0;
     public int PendingSends => Workspace?.Outbox.Count(item => item.State != "rejected") ?? 0;
@@ -42,6 +43,13 @@ internal interface ILiveApplication : IAsyncDisposable
     Task<bool?> ReadBackMessageMutationAsync(NativeMessageMutation mutation);
     void EditComposer(NativeMessageActionScope scope, string body);
     Task SendComposerAsync(NativeMessageActionScope scope);
+    NativeUploadTarget? CaptureUploadTarget(NativeMessageActionScope scope);
+    Task AddUploadFilesAsync(NativeUploadTarget target, IReadOnlyList<string> paths);
+    Task AddUploadStreamAsync(NativeUploadTarget target, Stream stream, string fileName, string contentType);
+    void RemoveDraftAttachment(NativeMessageActionScope scope, int index, string expectedMarker);
+    Task RetryUploadAsync(string expectedUser, string expectedStamp, string jobId);
+    Task CancelUploadAsync(string expectedUser, string expectedStamp, string jobId);
+    Task RemoveUploadAsync(string expectedUser, string expectedStamp, string jobId);
     void Edit(string channel, string body);
     Task SendAsync(string channel);
     Task ConfirmPendingSendsAsync(string expectedUser, string expectedStamp);

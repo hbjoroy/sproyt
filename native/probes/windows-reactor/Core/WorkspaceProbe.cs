@@ -19,7 +19,7 @@ public static class WorkspaceProbe
             Check(!LiveApplication.SameSendFamily(afterRestart.Family, "8:family-b:1"),
                 "Restart must not approve old queued sends for a new authentication family.");
         Check(!File.Exists(path) && !File.Exists(path + ".closing") && !File.Exists(path + ".terminal") &&
-            !File.Exists(path + ".beforecommit") && !File.Exists(path + ".delivery") && !File.Exists(path + ".threads"), "Workspace probe refuses existing test databases.");
+            !File.Exists(path + ".beforecommit") && !File.Exists(path + ".delivery") && !File.Exists(path + ".threads") && !File.Exists(path + ".uploads"), "Workspace probe refuses existing test databases.");
         var forwarding = new ForwardingStore(await NativeSession.OpenAsync(path, libraryPath).ConfigureAwait(false));
         var workspace = new ChatWorkspace(forwarding, Channels);
         await workspace.InitializeAsync().WaitAsync(Deadline).ConfigureAwait(false);
@@ -128,7 +128,138 @@ public static class WorkspaceProbe
         await VerifyRetryFirstAdmissionAsync(path + ".beforecommit", libraryPath).ConfigureAwait(false);
         await VerifyDeliveryReconciliationAsync(path + ".delivery", libraryPath).ConfigureAwait(false);
         await VerifyThreadTargetsAsync(path + ".threads", libraryPath).ConfigureAwait(false);
+        await VerifyUploadDraftAsync(path + ".uploads", libraryPath).ConfigureAwait(false);
         return $"PASS Windows workspace: coalesced revisions, durable retry capture, capacity, recoverable flush and terminal cleanup; database={path}";
+    }
+
+    private static async Task VerifyUploadDraftAsync(string path, string libraryPath)
+    {
+        const string marker = "[[media:00000000-0000-0000-0000-000000000001|image/jpeg|A%20B.jpg]]";
+        string channel = Channels[0];
+        string target = new ComposerTarget(channel, "upload-thread").Key;
+        string sibling = new ComposerTarget(channel, "other-thread").Key;
+        var session = await NativeSession.OpenAsync(path, libraryPath, clearEmptyDraft: true);
+        var store = new ForwardingStore(session);
+        var workspace = new ChatWorkspace(store, Channels);
+        await workspace.InitializeAsync().WaitAsync(Deadline);
+        workspace.EditDraft(channel, "initial");
+        foreach (var key in new[] { target, sibling })
+        {
+            workspace.EnsureChannels([key]);
+            workspace.EditDraft(key, "initial");
+        }
+        await SavedAsync(workspace);
+        var gate = new AsyncGate();
+        store.UploadGate = gate;
+        store.UnknownAfterUpload = 1;
+        var attaching = workspace.AttachUploadAsync(target, "upload-job", marker);
+        await gate.Entered.WaitAsync(Deadline);
+        workspace.EditDraft(target, "newer");
+        await ExpectAsync("upload_pending", () => workspace.SendAsync(target));
+        gate.Release();
+        await ExpectAsync("unknown_outcome", () => attaching);
+        await ExpectAsync("upload_pending", () => workspace.SendAsync(target));
+        await ExpectAsync("upload_pending", () => workspace.AttachUploadAsync(target, "different-job", marker));
+        await workspace.ReconcileUploadReceiptsAsync([]);
+        await workspace.SendAsync(channel).WaitAsync(Deadline);
+        var snapshot = await session.SnapshotAsync();
+        Check(snapshot.Drafts.Single(d => d.Key == target).Body == "initial\n" + marker &&
+            snapshot.Drafts.Single(d => d.Key == sibling).Body == "initial" &&
+            snapshot.Outbox.Single().ParentMessageId is null && workspace.State.Drafts[target].Body == "newer",
+            "An uncertain attachment overwrote newer text or blocked a different composer.");
+        await workspace.AttachUploadAsync(target, "upload-job", marker).WaitAsync(Deadline);
+        await SavedAsync(workspace);
+        var merged = "newer\n" + marker;
+        Check((await session.SnapshotAsync()).Drafts.Single(d => d.Key == target).Body == merged,
+            "Retry lost an intervening edit or duplicated the marker.");
+        await workspace.SendAsync(target).WaitAsync(Deadline);
+        workspace.EditDraft(target, "newer");
+        await SavedAsync(workspace);
+        await workspace.ShutdownAsync().WaitAsync(Deadline);
+
+        var reopened = await NativeSession.OpenAsync(path, libraryPath, clearEmptyDraft: true);
+        var restoredStore = new ForwardingStore(reopened) { UnknownAfterUpload = 1 };
+        var restored = new ChatWorkspace(restoredStore, Channels);
+        await restored.InitializeAsync().WaitAsync(Deadline);
+        await ExpectAsync("unknown_outcome", () => restored.AttachUploadAsync(target, "upload-job", marker));
+        await restored.AttachUploadAsync(target, "upload-job", marker).WaitAsync(Deadline);
+        await SavedAsync(restored);
+        var result = await reopened.SnapshotAsync();
+        Check(result.Drafts.Single(d => d.Key == target).Body == "newer" &&
+            result.Outbox.Single(q => q.ParentMessageId == "upload-thread").Body == merged &&
+            restored.State.Drafts[target].Body == "newer", "A replay resurrected a sent marker in its replacement draft.");
+        var replay = await reopened.AttachUploadAsync(ComposerTarget.FromKey(target), "upload-job", "readback-test",
+            new string('x', 128 * 1024), marker);
+        Check(replay.AlreadyApplied && replay.Body is null, "A huge replacement editor body blocked receipt lookup.");
+        const string openCode = "A literal marker:\n```text\n" + marker + "\n";
+        restored.EditComposer(target, openCode);
+        await restored.AttachUploadAsync(target, "chip-one", marker).WaitAsync(Deadline);
+        await restored.AttachUploadAsync(target, "chip-two", marker).WaitAsync(Deadline);
+        await SavedAsync(restored);
+        var editor = restored.State.Drafts[target];
+        Check(editor.ComposerText == openCode && editor.Attachments.SequenceEqual(new[] { marker, marker }) &&
+            editor.Body == openCode + marker + "\n" + marker, "An open fence, literal marker or trailing newline was reinterpreted.");
+        await restored.ReconcileUploadReceiptsAsync([]);
+        await restored.ShutdownAsync().WaitAsync(Deadline);
+
+        var last = await NativeSession.OpenAsync(path, libraryPath, clearEmptyDraft: true);
+        var composer = new ChatWorkspace(new NativeWorkspaceStoreAdapter(last), Channels);
+        await composer.InitializeAsync().WaitAsync(Deadline);
+        var restoredEditor = composer.State.Drafts[target];
+        Check(restoredEditor.ComposerText == openCode && restoredEditor.Attachments.SequenceEqual(editor.Attachments),
+            "Receipt collection or restart lost exact editor text or duplicate chips.");
+        composer.RemoveDraftAttachment(target, 1, "stale-marker");
+        Check(composer.State.Drafts[target].Attachments.Count == 2, "Stale removal changed the draft.");
+        composer.RemoveDraftAttachment(target, 0, marker);
+        string closedCode = openCode + "```\n\n";
+        composer.EditComposer(target, closedCode);
+        await SavedAsync(composer);
+        var one = (await last.SnapshotAsync()).Drafts.Single(d => d.Key == target);
+        Check(one.ComposerText == closedCode && one.Attachments.SequenceEqual(new[] { marker }) &&
+            one.Body == closedCode + marker, "Removal or editing changed the literal code or the remaining chip.");
+        await ExpectAsync("draft_changed", () => composer.SendAsync(target, restoredEditor.Revision));
+        await composer.SendAsync(target, composer.State.Drafts[target].Revision).WaitAsync(Deadline);
+        await SavedAsync(composer);
+        Check(composer.State.Drafts[target].Attachments.Count == 0 &&
+            (await last.SnapshotAsync()).Outbox.Any(q => q.Body == closedCode + marker && q.ParentMessageId == "upload-thread"),
+            "Sending did not atomically consume the revision's chips and preserve the exact wire body.");
+        await composer.ShutdownAsync().WaitAsync(Deadline);
+        var closingSession = await NativeSession.OpenAsync(path, libraryPath, clearEmptyDraft: true);
+        var closingStore = new ForwardingStore(closingSession);
+        var closing = new ChatWorkspace(closingStore, Channels);
+        await closing.InitializeAsync().WaitAsync(Deadline);
+        closing.EnsureChannels([target]);
+        var retiringGate = new AsyncGate();
+        closingStore.UploadGate = retiringGate; closingStore.UnknownAfterUpload = 1;
+        var running = closing.AttachUploadAsync(target, "held-family-retire", marker);
+        await retiringGate.Entered.WaitAsync(Deadline);
+        var settlement = closing.SettleUploadAsync("held-family-retire");
+        Check(!settlement.IsCompleted, "Held-family retirement passed an active handoff.");
+        closing.EditComposer(target, "edited during retirement");
+        retiringGate.Release();
+        await ExpectAsync("unknown_outcome", () => running);
+        await settlement.WaitAsync(Deadline);
+        await SavedAsync(closing);
+        Check(closing.State.Drafts[target].Attachments.SequenceEqual(new[] { marker }),
+            "Read-only retirement lost a committed marker.");
+
+        closingStore.UnknownAfterUpload = 1;
+        await ExpectAsync("unknown_outcome", () => closing.AttachUploadAsync(target, "closing-after-commit", marker));
+        closing.EditComposer(target, "newer before logout");
+        closingStore.UnknownBeforeUpload = 1;
+        await ExpectAsync("unknown_outcome", () => closing.AttachUploadAsync(channel, "closing-before-commit", marker));
+        closing.EditComposer(channel, "different dirty draft");
+        await closing.ShutdownAsync().WaitAsync(Deadline);
+        await using var verified = await NativeSession.OpenAsync(path, libraryPath, clearEmptyDraft: true);
+        var closed = await verified.SnapshotAsync();
+        var present = closed.Drafts.Single(d => d.Key == target);
+        var absent = closed.Drafts.Single(d => d.Key == channel);
+        Check(present.ComposerText == "newer before logout" && present.Attachments.SequenceEqual(new[] { marker, marker }) &&
+            absent.ComposerText == "different dirty draft" && absent.Attachments.Count == 0,
+            "Shutdown did not reconcile committed and missing receipts without starting a new attachment.");
+        await ExpectAsync("receipt_not_found", () => verified.AttachUploadAsync(new(channel), "closing-before-commit",
+            "verify", "", marker, receiptOnly: true));
+
     }
 
     private static async Task VerifyThreadTargetsAsync(string path, string libraryPath)
@@ -380,7 +511,7 @@ public static class WorkspaceProbe
         public void Release() => _released.TrySetResult();
     }
 
-    private sealed class ForwardingStore(NativeSession session) : IWorkspaceStore
+    private sealed class ForwardingStore(NativeSession session) : IWorkspaceStore, IWorkspaceUploadStore
     {
         private readonly object _gate = new();
         private readonly List<string> _requestIds = [];
@@ -388,6 +519,25 @@ public static class WorkspaceProbe
         private int _saveCount;
         private int _callCount;
         public AsyncGate? EnqueueGate;
+        public AsyncGate? UploadGate;
+        public int UnknownAfterUpload;
+        public int UnknownBeforeUpload;
+        public Task<UploadDraftResult?> ReadUploadReceiptAsync(string key, string jobId, string operationId, string marker) =>
+            _backing.ReadUploadReceiptAsync(key, jobId, operationId, marker);
+        private readonly NativeWorkspaceStoreAdapter _backing = new(session);
+        public Task<long> SaveComposerAsync(string key, string body, DraftComposer composer) => _backing.SaveComposerAsync(key, body, composer);
+        public async Task<UploadDraftResult> AttachUploadAsync(string key, string job, string operation, string body, string marker, DraftComposer composer)
+        {
+            if (Interlocked.Exchange(ref UnknownBeforeUpload, 0) != 0)
+                throw new NativeProbeException("unknown_outcome", "Lost the handoff before any native write.");
+            var result = await _backing.AttachUploadAsync(key, job, operation, body, marker, composer);
+            var gate = Interlocked.Exchange(ref UploadGate, null);
+            if (gate is not null) await gate.HoldAsync();
+            if (Interlocked.Exchange(ref UnknownAfterUpload, 0) != 0)
+                throw new NativeProbeException("unknown_outcome", "Lost the result of attaching a completed upload.");
+            return result;
+        }
+        public Task ReconcileUploadReceiptsAsync(IReadOnlyList<string> ids) => _backing.ReconcileUploadReceiptsAsync(ids);
         public int UnknownAfterCommit;
         public int UnknownBeforeEnqueue;
         public int FailNextEnqueue;
@@ -405,7 +555,7 @@ public static class WorkspaceProbe
         {
             Interlocked.Increment(ref _saveCount);
             Interlocked.Increment(ref _callCount);
-            return session.SaveDraftAsync(channel, body);
+            return _backing.SaveDraftAsync(channel, body);
         }
         public async Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision)
         {
@@ -417,7 +567,7 @@ public static class WorkspaceProbe
                 throw new NativeProbeException("unknown_outcome", "The forwarding adapter lost the request outcome before the native enqueue ran.");
             var gate = Interlocked.Exchange(ref EnqueueGate, null);
             if (gate is not null) await gate.HoldAsync().ConfigureAwait(false);
-            var queued = await session.EnqueueAsync(channel, body, requestId, expectedDraftRevision).ConfigureAwait(false);
+            var queued = await _backing.EnqueueAsync(channel, body, requestId, expectedDraftRevision).ConfigureAwait(false);
             if (Interlocked.Exchange(ref UnknownAfterCommit, 0) != 0)
                 throw new NativeProbeException("unknown_outcome", "The test forwarding adapter lost one committed result.");
             return queued;

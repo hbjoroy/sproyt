@@ -19,6 +19,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <None Update="ThirdPartyNotices.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <PackageReference Include="Markdig" Version="1.5.1" />
     <PackageReference Include="Microsoft.UI.Reactor" Version="0.1.0-preview.16" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />

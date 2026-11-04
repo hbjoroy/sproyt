@@ -80,9 +80,36 @@ Check("complexity limits preserve a readable source fallback", () =>
     var nested = NativeRichText.Parse(new string('>', 1000) + " text");
     Require(nested.Blocks.Count > 0);
 });
+Check("managed attachment suffix is outside literal Markdown", () =>
+{
+    const string marker = "[[media:00000000-0000-0000-0000-000000000001|image/png|image.png]]";
+    foreach (string opening in new[] { "```csharp\n", "~~~~\n", "<script>\n", "<!--\n" })
+        Require(!NativeRichText.AttachmentSuffixVisible(opening + marker, [marker]));
+    Require(NativeRichText.AttachmentSuffixVisible("```csharp\ntext\n```\n" + marker, [marker]));
+    var literal = NativeRichText.LiteralRanges("`" + marker + "`\n\n" + marker);
+    Require(literal.Count == 1 && literal[0].Start == 0 && literal[0].End < marker.Length + 3);
+});
+Check("bounded wire parsing and exact rendered attachment suffixes", () =>
+{
+    const string marker = "[[media:00000000-0000-0000-0000-000000000001|image/png|a]]";
+    var chips = Enumerable.Repeat(marker, 17).ToArray();
+    string body = string.Join('\n', chips);
+    Require(System.Text.Encoding.UTF8.GetByteCount(body) <= 1024);
+    Require(NativeMessageContent.ParseRichText(body, []).Count(part => part.Kind == "media") == 17);
+    Require(NativeRichText.AttachmentSuffixVisible(body, chips));
+    Require(!NativeRichText.AttachmentSuffixVisible(string.Join('\n', Enumerable.Repeat(marker, 21)), [marker]));
+    Require(!NativeRichText.AttachmentSuffixVisible("[[media:bad|image/png|a]]", ["[[media:bad|image/png|a]]"]));
+    var oversized = string.Concat(Enumerable.Repeat(marker, 1500));
+    var fallback = NativeMessageContent.ParseRichText(oversized, []);
+    Require(fallback is [{ Kind: "text" }] && ReferenceEquals(fallback[0].Text, oversized));
+});
 if (args.Length == 1 && Path.IsPathFullyQualified(args[0]))
 {
     Directory.CreateDirectory(Path.GetDirectoryName(args[0])!);
     await File.WriteAllTextAsync(args[0], JsonSerializer.Serialize(new { scope = "native_rich_text_contracts", passed = true, checks }, new JsonSerializerOptions { WriteIndented = true }));
 }
 else throw new ArgumentException("Supply an absolute path for the receipt.");
+
+
+// Only needed by the channel-group presentation helper in NativeMessageContent.
+internal sealed record NativeChannel(string Id, string Name, string? CircleName = null, string? CircleId = null, bool IsDirect = false);

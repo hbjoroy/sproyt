@@ -109,3 +109,9 @@ Berre `send_message` har server-idempotens. Dei andre mutasjonane skal aldri
 spelast blindt om att etter eit tapt svar; klienten tilbyr autoritativ
 tilbakelesing. Sjå [samtalekontraktane](../probes/conversation-contracts/README.md)
 for faktisk wire-dekning, metadataflagg og kapasitetsgrenser.
+
+## Native opplasting i Windows-piloten
+
+Opplastingsklienten brukar den delte økteigaren til eigne native HTTP-kall for konfigurasjon, oppretting, status, blokker, fullføring og avbrot. Kvart kall er bunde til tilgangstoken, konto og innloggingsfamilie. Serveren kontrollerer eigarskap og kanaltilgang. Blokkene er 1 MiB med SHA-256, og klienten avgrensar kontrollsvar til 16 KiB. Filvalet bind eit ferdig vedlegg til den opphavlege kanalen og eventuell trådrot.
+
+Windows-eigaren har ein kryptert journal, private filkopiar og eit atomisk steg frå ferdig opplasting til utkast. Chatmeldinga blir send ved eige brukarval. Sjå [Windows-piloten](../probes/windows-reactor/README.md#riktekst-og-opplasting) og [endepunktregisteret](../../docs/native-http-endpoint-register.md).

@@ -192,7 +192,7 @@ internal sealed partial class LiveApplication
     public void EditComposer(NativeMessageActionScope scope, string body) => WithComposer(scope, (workspace, key) =>
     {
         workspace.EnsureChannels([key]);
-        workspace.EditDraft(key, body);
+        workspace.EditComposer(key, body);
     });
     private CancellationTokenSource AdmitMessageAction(NativeMessageActionScope scope) => _authentication.ProjectSnapshot(_ =>
     {
@@ -213,7 +213,10 @@ internal sealed partial class LiveApplication
             {
                 ApproveEmptyQueue();
                 if (workspace.State.Outbox.Any(item => item.State != "rejected") && !SameSendFamily(_admittedFamily, scope.SessionStamp)) return;
-                admitted = workspace.SendAsync(key);
+                if (NativeUploadPresentation.BlocksSend(_uploads?.Capture(), scope.UserId, SendFamily(scope.SessionStamp), scope.ChannelId, scope.ThreadRootId)) return;
+                var draft = workspace.State.Drafts.GetValueOrDefault(key);
+                if (draft is null || !NativeRichText.AttachmentSuffixVisible(draft.Body, draft.Attachments)) return;
+                admitted = workspace.SendAsync(key, draft.Revision);
             });
             if (admitted is null) return;
             await admitted;

@@ -11,7 +11,7 @@ Tredje pulje ligg på `codex/native-thread-actions` i
 `S:/Source/sproyt-native-conversations`. Ho byggjer på `9c0c456` i den
 framleis opne [PR #331](https://github.com/hbjoroy/sproyt/pull/331).
 Pulja omfattar trådar, reaksjonar og handlingar på eigne meldingar.
-Opplasting og innboks står framleis att i [funksjonsmatrisa](native-canary-parity-matrix.md).
+Fjerde pulje byggjer vidare på denne greina med riktekst og opplasting. Innboks står framleis att i [funksjonsmatrisa](native-canary-parity-matrix.md).
 Sjå [Astra-planen](native-canary-parity-plan.md) for vidare rekkjefølgje og
 [baseline-statusen](native-client-status-2026-11-03.md) for utgangspunktet.
 
@@ -124,15 +124,18 @@ blir samla i [kvitteringa for tredje pulje](evidence/native-thread-actions-2026-
 ## Lager og tilbakeføring
 
 Første pulje migrerte skjema 1 til skjema 2 og innførte revisjonsbundne
-utkast. Tredje pulje migrerer vidare til skjema 3 i éin transaksjon.
+utkast. Tredje pulje migrerte vidare til skjema 3; fjerde pulje migrerer
+til skjema 4 i éin transaksjon og legg til vedleggsmetadata og kvitteringar.
 Eit utkast er no nøkla på kanal og foreldre-ID. Eksisterande kanalutkast
 beheld revisjonen sin, og lagra payload for gamle rotsendingar er
 byteidentisk ved replay. Grensene på åtte varige utkast, åtte oppføringar
 i utboksen og 1024 UTF-8-byte per melding gjeld også når fleire trådar er opne.
 
-Windows-klienten krev eksplisitt `thread_targets` og `draft_revisions` ved
-opning. Eldre DLL-ar avviser skjema 3. Utan `thread_targets` avviser den
+Windows-klienten krev eksplisitt `thread_targets`, `draft_revisions` og
+`upload_drafts` ved opning. Ein eldre DLL avviser skjema 4. Utan `thread_targets` avviser den
 nye DLL-en opning dersom eit trådutkast eller ei trådsending ligg i lageret.
+Utan `upload_drafts` blir ein profil med opplastingskvitteringar eller
+vedleggsmetadata avvist. Gamle kø-payload-byte blir ikkje skrivne om.
 Tilbakeføring krev eit testa app/DLL-par og ein kompatibel profilbackup.
 Migreringsprøvene dekkjer også rollback ved feil under tabellkopieringa.
 
@@ -148,3 +151,29 @@ Migreringsprøvene dekkjer også rollback ved feil under tabellkopieringa.
 Integrator eig framleis sentrale appfiler. Arbeidarane får separate
 funksjonsmapper og kontraktar; alle fire skal ikkje redigere
 `LiveChatComponent` eller `LiveApplication` samtidig.
+
+
+## Fjerde pulje med riktekst og opplasting
+
+Den 4. november bygde fire arbeidsspor vidare på `7866b8d` frå [PR #332](https://github.com/hbjoroy/sproyt/pull/332).
+Ein arbeidar eigde riktekstrenderaren, ein eigde HTTP-opptaket på serveren og ein eigde klienttransporten og opplastingskøen. Integratoren kopla dei til Windows-skallet, kontolageret, kanal- og trådkomponisten. PAR-007, PAR-012 og PAR-013 har **delvis dekning**.
+
+| Pakke | Kva brukaren kan gjere | Grenser for denne pulja |
+| --- | --- | --- |
+| P12 riktekst | Lese Markdown/GFM med overskrifter, lister, sitat, tabellar, lenkjer og kode, og byte til den opphavlege meldingsteksten. Markørar i kode held seg bokstavlege. HTML blir vist utan køyring. Eksterne bilete får ein plasshaldar, og opning av ei godkjend lenkje krev eit brukarval. | Mermaid blir vist som kjeldekode. Grafisk Mermaid-vising står att. |
+| P13 opplasting | Velje fleire filer eller lime inn filer og bilete i ein kanal eller tråd. Utklippstavlebilete blir koda som PNG etter kontroll av ei grense på 16 × 1024 × 1024 pikslar. Køen viser framdrift, avbrot og nytt forsøk. | Inntil åtte jobbar per konto og 512 MiB totalt til private, uforanderlege filkopiar. Dra-og-slepp, OS-delingsmottak og Office-dokument står att. |
+| P13 dokument | Laste ned PDF, ZIP, UTF-8-tekst og CSV via ein eksplisitt lagringsdialog. Serveren leverer desse som vedlegg med trygg filending, `Content-Disposition: attachment` og `nosniff`. | Fysisk aksept for filveljar, utklippstavle, touch og skjermlesar, og ei sending mellom to ekte kontoar, står att. |
+
+Dei dedikerte native-endepunkta tek imot tilgangstoken og kontohovud. Serveren kontrollerer eigarskap og kanalmedlemskap, medan klienten bind jobben til konto, innloggingsfamilie, kanal og eventuell trådrot. Klienten brukar 1 MiB per blokk og les høgst 16 KiB per kontrollsvar. Filkopien blir hashkontrollert før overføring. Den krypterte Windows-journalen held på jobben fram til utkastet har teke imot vedlegget. Sjå [endepunktregisteret](native-http-endpoint-register.md).
+
+Skjema 4 skriv kvittering, utkastrevisjon, redigerbar tekst og ei ordna liste med vedleggsmarkørar i same transaksjon. Brukaren kan til dømes skrive ein uavslutta kodeblokk, lukke appen og framleis finne teksten og vedlegga kvar for seg etter omstart. Ved tapt lokalt svar kan klienten lese kvitteringa ved lukking eller fjerning av ein jobb frå ei tidlegare innloggingsfamilie. Oppslaget startar inga ny opplasting. Eit gjenteke svar etter at meldinga er send, kan heller ikkje setje markøren inn i neste utkast. Overføringa til utkastet sender inga chatmelding. Brukaren må velje **Send**.
+
+Den samla meldingsteksten har framleis ei grense på 1024 UTF-8-byte, og utboksen har plass til åtte meldingar. Dersom eit ferdig vedlegg ikkje får plass i utkastet, står jobben som `Ready`. Brukaren kan frigjere plass og prøve overføringa til utkastet på nytt.
+
+Fire backend-regresjonar for HTTP, 34 Rust-lagertestar og alle ti integrerte
+vindaugslause klientgrupper er grøne lokalt. Den samla Windows ARM64-prøva
+passerte publisering, faktisk Rust-DLL/SQLite/DPAPI, omstart og session-UI,
+og alle WinUI-scenarioa for riktekst, råtekst, redigeringsfokus, dokumentstraum
+og vedlegg i kanal og tråd. CI på GitHub blir følgd i PR-en.
+Resultat og kjeldeidentitet for pulja er førte i
+[kvitteringa for riktekst og opplasting](evidence/native-richtext-uploads-2026-11-04.json).

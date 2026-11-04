@@ -22,6 +22,10 @@ pub(crate) async fn configuration(
     if let Err(error) = authenticate_http(&state, query, &headers).await {
         return auth_error_response(error);
     }
+    configuration_for(&state)
+}
+
+pub(super) fn configuration_for(state: &AppState) -> Response {
     private_json(
         serde_json::json!({"enabled":state.media_store.is_some(),"allowed_channel_ids":state.media_store.as_ref().and_then(|s|s.allowed_channels()),"max_file_bytes":state.media_store.as_ref().map(|s|s.max_file_bytes()).unwrap_or(35*1024*1024),"chunk_bytes":CHUNK_BYTES}),
     )
@@ -75,10 +79,19 @@ pub(crate) async fn create(
         Ok(p) => p,
         Err(error) => return auth_error_response(error),
     };
+    create_for(&state, &principal.user.id, channel, input).await
+}
+
+pub(super) async fn create_for(
+    state: &AppState,
+    actor: &crate::domain::UserId,
+    channel: Uuid,
+    input: NewUpload,
+) -> Response {
     let Some(store) = &state.media_store else {
         return unavailable();
     };
-    match store.create(&principal.user.id, channel, &input).await {
+    match store.create(actor, channel, &input).await {
         Ok(status) => (StatusCode::CREATED, private_json(status)).into_response(),
         Err(error) => failure(error),
     }
@@ -94,10 +107,18 @@ pub(crate) async fn status(
         Ok(p) => p,
         Err(error) => return auth_error_response(error),
     };
+    status_for(&state, &principal.user.id, id).await
+}
+
+pub(super) async fn status_for(
+    state: &AppState,
+    actor: &crate::domain::UserId,
+    id: Uuid,
+) -> Response {
     let Some(store) = &state.media_store else {
         return unavailable();
     };
-    match store.status(&principal.user.id, id).await {
+    match store.status(actor, id).await {
         Ok(status) => private_json(status),
         Err(error) => failure(error),
     }
@@ -117,6 +138,17 @@ pub(crate) async fn put_chunk(
         Ok(p) => p,
         Err(error) => return auth_error_response(error),
     };
+    put_chunk_for(&state, &principal.user.id, id, index, request).await
+}
+
+pub(super) async fn put_chunk_for(
+    state: &AppState,
+    actor: &crate::domain::UserId,
+    id: Uuid,
+    index: u32,
+    request: Request,
+) -> Response {
+    let headers = request.headers();
     let Some(store) = &state.media_store else {
         return unavailable();
     };
@@ -134,7 +166,7 @@ pub(crate) async fn put_chunk(
         }
         _ => return failure(UploadError::Invalid),
     };
-    if let Err(error) = store.status(&principal.user.id, id).await {
+    if let Err(error) = store.status(actor, id).await {
         return failure(error);
     }
     let _permit = match CHUNK_TRANSFERS.try_acquire() {
@@ -152,10 +184,7 @@ pub(crate) async fn put_chunk(
         Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
-    match store
-        .put_chunk(&principal.user.id, id, index, &bytes, &hash)
-        .await
-    {
+    match store.put_chunk(actor, id, index, &bytes, &hash).await {
         Ok(status) => private_json(status),
         Err(error) => failure(error),
     }
@@ -174,6 +203,14 @@ pub(crate) async fn complete(
         Ok(p) => p,
         Err(error) => return auth_error_response(error),
     };
+    complete_for(&state, &principal.user.id, id).await
+}
+
+pub(super) async fn complete_for(
+    state: &AppState,
+    actor: &crate::domain::UserId,
+    id: Uuid,
+) -> Response {
     let Some(store) = &state.media_store else {
         return unavailable();
     };
@@ -181,11 +218,11 @@ pub(crate) async fn complete(
         Ok(p) => p,
         Err(_) => return busy(),
     };
-    let id = match store.complete(&principal.user.id, id).await {
+    let id = match store.complete(actor, id).await {
         Ok(id) => id,
         Err(error) => return failure(error),
     };
-    match state.chat.media_metadata(principal.user.id, id).await {
+    match state.chat.media_metadata(actor.clone(), id).await {
         Ok(media) => {
             private_json(serde_json::json!({"media":media,"url":format!("/api/v1/media/{id}")}))
         }
@@ -206,10 +243,18 @@ pub(crate) async fn abort(
         Ok(p) => p,
         Err(error) => return auth_error_response(error),
     };
+    abort_for(&state, &principal.user.id, id).await
+}
+
+pub(super) async fn abort_for(
+    state: &AppState,
+    actor: &crate::domain::UserId,
+    id: Uuid,
+) -> Response {
     let Some(store) = &state.media_store else {
         return unavailable();
     };
-    match store.abort(&principal.user.id, id).await {
+    match store.abort(actor, id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => failure(error),
     }

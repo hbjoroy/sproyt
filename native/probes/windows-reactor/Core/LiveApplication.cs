@@ -66,7 +66,9 @@ internal sealed partial class LiveApplication : ILiveApplication
             return new LiveSnapshot(auth, chat, same ? local : null, same && local?.Ready == true &&
                 auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline, ErrorFor(auth, chat, same ? local : null),
                 same && local?.Outbox.Any(item => item.State != "rejected") == true && !SameSendFamily(_admittedFamily, auth.SessionStamp),
-                same && _deliveryWakeTarget?.Scope == auth.UserId + "/" + SendFamily(auth.SessionStamp), navigation, threads);
+                same && _deliveryWakeTarget?.Scope == auth.UserId + "/" + SendFamily(auth.SessionStamp), navigation, threads,
+                same && _uploads is { } uploads ? uploads.Capture() with { ActiveFamilyStamp = SendFamily(auth.SessionStamp) } : null,
+                same && _uploadIssue is { } issue && issue.UserId == auth.UserId && issue.Family == SendFamily(auth.SessionStamp) ? issue.Message : null);
         });
     }
 
@@ -129,6 +131,7 @@ internal sealed partial class LiveApplication : ILiveApplication
     private void ChangedState()
     {
         SynchronizeNavigation();
+        BindUploadScope();
         var auth = Authentication;
         string? scope = auth.UserId is string user && SendFamily(auth.SessionStamp) is string family ? user + "/" + family : null;
         if (_deliveryNotice is { } issue && !issue.Matches(auth)) Interlocked.CompareExchange(ref _deliveryNotice, null, issue);
@@ -244,6 +247,7 @@ internal sealed partial class LiveApplication : ILiveApplication
     }
     public async Task ResumeAsync()
     {
+        _uploadInitializationFailed = false;
         try { _error = null; if (_workspace?.State.NeedsRetry == true) await _workspace.RetryAsync(); await _authentication.ResumeAsync(); }
         catch { _error = "Vi fekk ikkje kontakt. Utkast og ventande meldingar er tekne vare på."; }
         ChangedState();
@@ -483,6 +487,8 @@ internal sealed partial class LiveApplication : ILiveApplication
                         _workspace.Changed += ChangedState;
                     }
                     ApproveEmptyQueue();
+                    if (_uploads is null && !_uploadInitializationFailed) await InitializeUploadsAsync(user, _workspace!);
+                    BindUploadScope();
                     // The transport resumes stored credentials itself. Start it
                     // for an offline restored session too, before window activation.
                     if (_connection is null) _connection = ConnectAsync();
@@ -597,6 +603,7 @@ internal sealed partial class LiveApplication : ILiveApplication
     }
     private async Task CloseStoreAsync()
     {
+        await CloseUploadsAsync();
         CancelDeliveryWake();
         _deliveryNotice = null;
         if (_workspace is not null) { _workspace.Changed -= ChangedState; await _workspace.ShutdownAsync(); }

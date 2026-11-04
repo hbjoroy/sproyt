@@ -174,7 +174,7 @@ fn account_schema_owner_and_generation_are_fenced() {
         store.apply_message(1, "message", 2, "Late", false),
         Err("stale_generation")
     );
-    store.execute_test_sql("PRAGMA user_version=4");
+    store.execute_test_sql("PRAGMA user_version=5");
     drop(store);
     assert_eq!(
         Store::open(&fixture.database, "fixture-alice").err(),
@@ -819,7 +819,7 @@ fn schema_one_migration_preserves_drafts_outbox_ids_payloads_and_delivery_recove
     }
     let mut store = Store::open_with_draft_revisions(&fixture.database, "alice", true).unwrap();
     let snapshot = store.snapshot().unwrap();
-    assert_eq!(snapshot["schema"], 3);
+    assert_eq!(snapshot["schema"], 4);
     assert_eq!(
         snapshot["drafts"][0],
         json!({"channel":"channel","body":"Legacy draft","revision":1})
@@ -838,6 +838,281 @@ fn schema_one_migration_preserves_drafts_outbox_ids_payloads_and_delivery_recove
     assert_eq!(
         store.snapshot().unwrap()["outbox"][0]["request_id"],
         "legacy-id"
+    );
+}
+
+const MEDIA_MARKER: &str = "[[media:00000000-0000-0000-0000-000000000001|image/jpeg|A%20B.jpg]]";
+
+fn attachment<'a>(
+    job: &'a str,
+    op: &'a str,
+    parent: Option<&'a str>,
+    body: &'a str,
+) -> store::DraftAttachment<'a> {
+    store::DraftAttachment {
+        job_id: job,
+        operation_id: op,
+        receipt_only: false,
+        channel: "channel",
+        parent,
+        body,
+        marker: MEDIA_MARKER,
+        composer: None,
+    }
+}
+
+#[test]
+fn schema_three_to_four_preserves_root_payload_and_thread_draft_and_rolls_back_failed_migration() {
+    let fixture = Fixture::new();
+    let payload = seed_v2(&fixture);
+    let db = rusqlite::Connection::open(&fixture.database).unwrap();
+    db.execute_batch("alter table drafts rename to old;
+        create table drafts(channel text not null,parent_message_id text not null default '',body text not null,revision integer not null,primary key(channel,parent_message_id));
+        insert into drafts select channel,'',body,revision from old;
+        insert into drafts values('channel','t','Thread',14); drop table old; pragma user_version=3;
+        create table upload_receipts(unexpected integer);").unwrap();
+    drop(db);
+    assert_eq!(
+        Store::open_with_capabilities(&fixture.database, "alice", true, true, true).err(),
+        Some("storage_error")
+    );
+    let db = rusqlite::Connection::open(&fixture.database).unwrap();
+    assert_eq!(
+        db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    db.execute_batch("drop table upload_receipts").unwrap();
+    drop(db);
+    let mut store =
+        Store::open_with_capabilities(&fixture.database, "alice", true, true, true).unwrap();
+    store
+        .enqueue_target(1, "legacy-id", "channel", None, "Legacy draft", Some(16))
+        .unwrap();
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(snapshot["schema"], 4);
+    assert_eq!(snapshot["upload_drafts"], true);
+    assert_eq!(snapshot["outbox"][0]["payload"], payload);
+    assert_eq!(
+        snapshot["drafts"][1],
+        json!({"channel":"channel","parent_message_id":"t","body":"Thread","revision":14})
+    );
+}
+
+#[test]
+fn attachment_commit_loss_replays_without_rewriting_sent_or_replaced_drafts() {
+    use crate::fault::{Fault, Mode, Site};
+    let fixture = Fixture::new();
+    let mut store =
+        Store::open_with_capabilities(&fixture.database, "alice", true, true, true).unwrap();
+    for parent in [None, Some("t1"), Some("t2")] {
+        store
+            .save_target_draft(1, "channel", parent, "same")
+            .unwrap();
+    }
+    let before = store.snapshot().unwrap();
+    store
+        .arm_fault(
+            1,
+            Fault {
+                site: Site::BeforeCommit,
+                mode: Mode::Error,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.attach_upload(1, attachment("job", "op", Some("t1"), "same")),
+        Err("injected_failure")
+    );
+    assert_eq!(store.snapshot().unwrap(), before);
+    store
+        .arm_fault(
+            1,
+            Fault {
+                site: Site::AfterCommit,
+                mode: Mode::Error,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.attach_upload(1, attachment("job", "op", Some("t1"), "same")),
+        Err("injected_unknown_outcome")
+    );
+    drop(store);
+    assert_eq!(
+        Store::open_with_options(&fixture.database, "alice", true, true).err(),
+        Some("upload_drafts_required")
+    );
+    let mut store =
+        Store::open_with_capabilities(&fixture.database, "alice", true, true, true).unwrap();
+    let result = store
+        .attach_upload(
+            1,
+            attachment("job", "new-op", Some("t1"), &"oversized".repeat(300)),
+        )
+        .unwrap();
+    assert_eq!(result["already_applied"], true);
+    assert_eq!(result["operation_id"], "op");
+    let merged = format!("same\n{MEDIA_MARKER}");
+    assert_eq!(result["body"], merged);
+    let snapshot = store.snapshot().unwrap();
+    assert_eq!(snapshot["drafts"][0], before["drafts"][0]);
+    assert_eq!(snapshot["drafts"][2], before["drafts"][2]);
+    assert_eq!(
+        store.attach_upload(1, attachment("job", "op", None, "same")),
+        Err("request_conflict")
+    );
+    store
+        .enqueue_target(
+            1,
+            "send-reply",
+            "channel",
+            Some("t1"),
+            &merged,
+            result["revision"].as_u64(),
+        )
+        .unwrap();
+    let replay = store
+        .attach_upload(1, attachment("job", "new-op", Some("t1"), ""))
+        .unwrap();
+    assert!(replay["body"].is_null());
+    let replacement = store
+        .save_target_draft(1, "channel", Some("t1"), "same")
+        .unwrap();
+    let replay = store
+        .attach_upload(1, attachment("job", "new-op", Some("t1"), "same"))
+        .unwrap();
+    assert!(replay["body"].is_null());
+    assert_eq!(
+        store.snapshot().unwrap()["drafts"][1]["revision"],
+        replacement
+    );
+}
+
+#[test]
+fn attachment_budgets_generation_and_journal_gc_are_enforced() {
+    let fixture = Fixture::new();
+    let mut store =
+        Store::open_with_capabilities(&fixture.database, "alice", true, true, true).unwrap();
+    assert_eq!(
+        store.attach_upload(2, attachment("job", "op", None, "")),
+        Err("stale_generation")
+    );
+    for marker in [
+        "[[media:https://host|image/png|x]]",
+        "[[media:00000000-0000-0000-0000-000000000001|x/;q|x]]",
+    ] {
+        let mut invalid = attachment("job", "op", None, "");
+        invalid.marker = marker;
+        assert_eq!(store.attach_upload(1, invalid), Err("invalid_media_marker"));
+    }
+    let within = "x".repeat(1024 - MEDIA_MARKER.len() - 1);
+    let over = within.clone() + "x";
+    assert_eq!(
+        store.attach_upload(1, attachment("job", "op", None, &over)),
+        Err("text_too_large")
+    );
+    store
+        .attach_upload(1, attachment("job", "op", None, &within))
+        .unwrap();
+    for i in 1..16 {
+        store
+            .attach_upload(1, attachment(&format!("j{i}"), "op", None, ""))
+            .unwrap();
+    }
+    assert_eq!(
+        store.attach_upload(1, attachment("limit", "op", None, "")),
+        Err("receipt_capacity")
+    );
+    assert_eq!(
+        store.reconcile_upload_receipts(2, &[]),
+        Err("stale_generation")
+    );
+    store.reconcile_upload_receipts(1, &["job".into()]).unwrap();
+    for i in 1..8 {
+        store
+            .save_target_draft(1, "channel", Some(&format!("t{i}")), "draft")
+            .unwrap();
+    }
+    assert_eq!(
+        store.attach_upload(1, attachment("limit", "op", Some("t9"), "")),
+        Err("capacity")
+    );
+    assert!(
+        store
+            .attach_upload(1, attachment("limit", "op", Some("t1"), ""))
+            .is_ok()
+    );
+    assert_eq!(
+        store
+            .attach_upload(1, attachment("job", "new", None, ""))
+            .unwrap()["already_applied"],
+        true
+    );
+    assert!(
+        store.snapshot().unwrap()["outbox"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn composer_sidecar_is_atomic_revision_bound_and_independent_of_receipt_gc() {
+    let fixture = Fixture::new();
+    let mut store =
+        Store::open_with_capabilities(&fixture.database, "alice", true, true, true).unwrap();
+    let editor = format!("```text\n{MEDIA_MARKER}\n");
+    let initial = store
+        .attach_upload(1, attachment("one", "op", Some("T"), &editor))
+        .unwrap();
+    let body = format!("{editor}{MEDIA_MARKER}");
+    assert_eq!(initial["body"], body);
+    let old_revision = initial["revision"].as_u64().unwrap();
+    store.reconcile_upload_receipts(1, &[]).unwrap();
+    drop(store);
+    assert!(matches!(
+        Store::open_with_capabilities(&fixture.database, "alice", true, true, false),
+        Err("upload_drafts_required")
+    ));
+    let mut store =
+        Store::open_with_capabilities(&fixture.database, "alice", true, true, true).unwrap();
+    let draft = &store.snapshot().unwrap()["drafts"][0];
+    assert_eq!(draft["composer_text"], editor);
+    assert_eq!(draft["attachments"], json!([MEDIA_MARKER]));
+    let composer = store::Composer {
+        text: editor.clone(),
+        attachments: vec![MEDIA_MARKER.into()],
+    };
+    assert_eq!(
+        store.save_composer(1, "channel", Some("T"), "mismatch", Some(&composer)),
+        Err("invalid_composer")
+    );
+    let mut two = attachment("two", "op2", Some("T"), &body);
+    two.composer = Some(&composer);
+    store.attach_upload(1, two).unwrap();
+    let two_body = format!("{body}\n{MEDIA_MARKER}");
+    let draft = &store.snapshot().unwrap()["drafts"][0];
+    assert_eq!(draft["attachments"], json!([MEDIA_MARKER, MEDIA_MARKER]));
+    assert_eq!(draft["body"], two_body);
+    store
+        .enqueue_target(1, "old", "channel", Some("T"), &body, Some(old_revision))
+        .unwrap();
+    assert_eq!(
+        store.snapshot().unwrap()["drafts"][0]["attachments"],
+        json!([MEDIA_MARKER, MEDIA_MARKER])
+    );
+    let revision = store
+        .save_composer(1, "channel", Some("T"), &body, Some(&composer))
+        .unwrap();
+    store
+        .enqueue_target(1, "new", "channel", Some("T"), &body, Some(revision))
+        .unwrap();
+    assert!(
+        store.snapshot().unwrap()["drafts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
     );
 }
 

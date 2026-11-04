@@ -3,6 +3,8 @@ namespace Sproyt.WindowsProbe;
 public sealed record Draft(string Channel, string Body, long Revision = 0, string? ParentMessageId = null)
 {
     public string Key => new ComposerTarget(Channel, ParentMessageId).Key;
+    public string ComposerText { get; init; } = Body;
+    public IReadOnlyList<string> Attachments { get; init; } = [];
 }
 
 public sealed record QueuedMessage(string RequestId, string Channel, string Body, string State, string? ParentMessageId = null);
@@ -24,6 +26,10 @@ public sealed record ComposerTarget(string ChannelId, string? ParentMessageId = 
         return new(parts[0], parts[1]);
     }
 }
+
+public sealed record DraftComposer(string Text, IReadOnlyList<string> Attachments);
+
+public sealed record UploadDraftResult(bool AlreadyApplied, string OperationId, string? Body, long Revision);
 
 public sealed record StoreSnapshot(IReadOnlyList<Draft> Drafts, IReadOnlyList<QueuedMessage> Outbox);
 

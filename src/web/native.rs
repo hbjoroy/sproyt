@@ -1,5 +1,6 @@
 //! Bounded native HTTP edge. No provider or browser authentication cookies are
 //! returned to the desktop app, and native bearer APIs reject cookie authority.
+mod media_uploads;
 mod notification_preferences;
 
 use crate::{
@@ -27,6 +28,26 @@ pub(crate) fn routes() -> Router<AppState> {
         .route(
             "/api/v1/native/me/notifications/preferences",
             get(notification_preferences::read).put(notification_preferences::save),
+        )
+        .route(
+            "/api/v1/native/media-uploads/config",
+            get(media_uploads::configuration),
+        )
+        .route(
+            "/api/v1/native/channels/{channel}/media-uploads",
+            post(media_uploads::create),
+        )
+        .route(
+            "/api/v1/native/media-uploads/{id}",
+            get(media_uploads::status).delete(media_uploads::abort),
+        )
+        .route(
+            "/api/v1/native/media-uploads/{id}/chunks/{index}",
+            axum::routing::put(media_uploads::put_chunk),
+        )
+        .route(
+            "/api/v1/native/media-uploads/{id}/complete",
+            post(media_uploads::complete),
         )
         .route("/auth/native/browser/{id}", get(browser))
         .route("/auth/native/confirm/{id}", post(confirm))

@@ -23,7 +23,7 @@ internal sealed record NativeRichDocument(IReadOnlyList<NativeRichBlock> Blocks,
 // no HTML renderer, external-resource resolver, diagram engine or URI launcher.
 internal static class NativeRichText
 {
-    internal const int MaximumSourceLength = 65536;
+    internal const int MaximumSourceLength = NativeMessageContent.MaximumRichSourceLength;
     private const int MaximumBlocks = 128, MaximumRuns = 1024, MaximumTableCells = 256;
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder { MaximumNestingDepth = 32, PreciseSourceLocation = true }
         .UsePipeTables(new PipeTableOptions { UseGfmRules = true })
@@ -36,6 +36,52 @@ internal static class NativeRichText
             !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http") ||
             uri.Host.Length == 0 || uri.UserInfo.Length != 0) return false;
         safe = uri;
+        return true;
+    }
+
+    // Wire markers inside code, raw HTML or an image/link target remain literal.
+    // Use the same precise AST as rendering rather than another Markdown grammar.
+    internal static IReadOnlyList<(int Start, int End)> LiteralRanges(string source)
+    {
+        if (source.Length > MaximumSourceLength) return [(0, source.Length - 1)];
+        var ranges = new List<(int, int)>();
+        try
+        {
+            void Visit(MarkdownObject node)
+            {
+                if (node is CodeBlock code)
+                {
+                    // An unterminated fenced block can retain only the opener
+                    // in Span. Its original line slices still cover the body.
+                    int end = node.Span.End;
+                    for (int line = 0; line < code.Lines.Count; line++) end = Math.Max(end, code.Lines.Lines[line].Slice.End);
+                    ranges.Add((node.Span.Start, end)); return;
+                }
+                if (node is CodeInline or HtmlBlock or HtmlInline or LinkInline or AutolinkInline)
+                { ranges.Add((node.Span.Start, node.Span.End)); return; }
+                if (node is LeafBlock { Inline: { } inline }) Visit(inline);
+                if (node is ContainerBlock blocks) foreach (var block in blocks) Visit(block);
+                if (node is ContainerInline inlines) foreach (var inlineNode in inlines) Visit(inlineNode);
+            }
+            Visit(Markdown.Parse(source, Pipeline));
+            return ranges;
+        }
+        catch { return [(0, source.Length - 1)]; }
+    }
+
+    internal static bool AttachmentSuffixVisible(string wireBody, IReadOnlyList<string> attachments)
+    {
+        if (attachments.Count == 0) return true;
+        var rendered = new HashSet<(int Start, int Length)>();
+        NativeMessageContent.ParseRichText(wireBody, LiteralRanges(wireBody), rendered);
+        int end = wireBody.Length;
+        for (int index = attachments.Count - 1; index >= 0; index--)
+        {
+            string marker = attachments[index]; int start = end - marker.Length;
+            if (start < 0 || !wireBody.AsSpan(start, marker.Length).SequenceEqual(marker) ||
+                !rendered.Contains((start, marker.Length))) return false;
+            end = start > 0 && wireBody[start - 1] == '\n' ? start - 1 : start;
+        }
         return true;
     }
 

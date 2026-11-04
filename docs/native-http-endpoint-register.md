@@ -1,5 +1,69 @@
 # Native HTTP: endepunktregister og første opptak
 
+## Tillegg 4. november 2026: native opplasting og dokumentvedlegg
+
+P13 legg til heile den avgrensa chunk-familien under native-prefikset:
+
+| Rute | Metode og respons |
+| --- | --- |
+| `/api/v1/native/media-uploads/config` | GET: same `enabled`, `allowed_channel_ids`, `max_file_bytes`, `chunk_bytes` som browser. |
+| `/api/v1/native/channels/{channel}/media-uploads` | POST: `request_id` (UUID), `filename`, `content_type`, `size_bytes`; `201` og same `UploadStatus` som browser. |
+| `/api/v1/native/media-uploads/{id}` | GET: kontoeigd status; DELETE: avbryt staged upload med `204`. Ferdig media kan ikkje slettast gjennom abort. |
+| `/api/v1/native/media-uploads/{id}/chunks/{index}` | PUT: rå byte, nøyaktig indeks og lowercase `X-Chunk-Sha256`; returnerer status. |
+| `/api/v1/native/media-uploads/{id}/complete` | POST: idempotent publisering, deretter autorisert metadata; `{ "media": ..., "url": "/api/v1/media/{id}" }`. |
+
+Alle krev native access-grant og nøyaktig éin rett `X-Sproyt-Account`.
+Browsercookie, blanda/duplisert autoritet, alle queryparameterar og feil
+scope/utløpt/revoked grant blir avviste. Kontoheaderen er eit gjerde, ikkje
+autoritet. Same-origin-policyen gjeld når Origin/Sec-Fetch-Site er sende.
+Vanlege desktopkall treng ikkje Origin. Ingen browsercookie eller generell
+bearer-fallback er innført på dei eksisterande browser-rutene. Native-svar
+etter opptak har `private, no-store` og servervald `X-Sproyt-Account`.
+
+Browser og native bruker no dei same auth-uavhengige servicefunksjonane i
+`src/web/media_uploads.rs`, med uendra `MediaStore`-eigar-/kanal-/kvotereglar,
+same fire transferpermit og éi finalisering. Oppretting er avgrensa til 8192
+JSON-byte med 15 sekund lesefrist, etter grant og kontofencen. Native
+chunk-ruta les manuelt høgst 1 MiB etter grant, konto,
+upload-eigarskap og medlemskap; lesetida er høgst 60 sekund. Staging lever i
+24 timar, maks åtte aktive opplastingar per konto / 64 globalt, og belastar
+minst 1 MiB kvote per fil. Konfigurert filgrense kan vere opptil 1 GiB;
+klienten skal bruke serverkonfigurasjonen. Same create-ID må ha identisk
+kanal, filnamn, type og storleik. Chunk-retry må ha identisk indeks/byte/hash.
+`409` tyder konflikt, `415` ustøtta/ugyldig filinnhald, `507` full kvote,
+`503` mellombels lagrings-/permitfeil og `404` ukjend/utløpt/ikkje-autorisert
+upload eller deaktivert teneste. Opplasting sender inga chatmelding.
+
+MediaStore får ei eksplisitt additiv dokumentliste i tillegg til bilete/video:
+`application/pdf`, `application/zip` (`application/x-zip-compressed` som
+innsendingsalias), `text/plain` og `text/csv`. PDF krev versjonssignatur og
+avsluttande EOF-markør; ZIP krev signatur, samanhengande EOCD-grenser og inga
+multidisk/ZIP64-utviding. Arkiv blir aldri pakka ut. Dette er avgrensa
+formatvalidering, ikkje full PDF-/ZIP-parsing eller skadevarekontroll. Tekst
+og CSV krev gyldig UTF-8 gjennom heile fila, også når ei rune kryssar
+chunkgrensa; binære kontrollteikn og ufullstendig UTF-8 blir avviste. CSV blir
+ikkje tolka eller køyrd som reknearkformlar av serveren.
+Deklarert tekst blir alltid dokument, også når teksten liknar ein GIF-/video-
+header. Deklarert PDF/ZIP må samsvare med den detekterte dokumenttypen; eit
+sniff-resultat kan ikkje løfte eit deklarert dokument til inline bilete/video.
+
+Dokument blir alltid leverte som `Content-Disposition: attachment` med
+`X-Content-Type-Options: nosniff`, både frå vanleg media-URL og `/download`.
+Dokument-/arkivpreview blir avvist med `415`. Filnamn blir reinska for sti,
+kontroll-/bidi-teikn og utrygge Windows-teikn/reserverte namn; feil extension
+får den kanoniske dokumentextensionen lagd til. HTML, SVG og executable MIME
+er ikkje med i lista. Vanleg legacy multipart opnar ikkje dokumentstøtte;
+den nye dokumentflyten bruker chunk-lageret. Nedlasting krev framleis
+kanaltilgang og same avgrensa streaming/Range som bilete og video.
+
+`src/auth/tests/native_media_upload_tests.rs` går gjennom ekte native
+login/confirm/exchange og HTTP mot migrert SQLite. Testane dekkjer browser-
+readback, 1 MiB/retry/hashgrenser, eigarskap før body, konto/mixed authority,
+utløp/revoke/medlemskapstap, abort, dokumentheaders, spoof/trunkering og
+UTF-8 over chunkgrense. Dei erstattar ikkje PostgreSQL-, faktisk UI- eller
+live Canary-aksept. Dei eldre registertabellane under er bevarte som P02a-
+baselinen; upload-radene er no aktiverte gjennom dette native-tillegget.
+
 Dato: 3. november 2026. P02a / PAR-026. Baseline er den pinna Canary-revisjonen `142f71888cdde11dec42a698432530e208f577bb`. Denne endringa er additiv og aktiverer berre lesing og lagring av personlege varslingspreferansar for native. Ho endrar ikkje browserautorisasjon, upload, pushlevering eller clusterkonfigurasjon.
 
 ## Første vertikale snitt

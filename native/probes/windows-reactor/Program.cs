@@ -12,6 +12,7 @@ internal static class Program
     internal static string? CanaryAcceptanceDirectory { get; private set; }
     internal static bool LiveMode { get; private set; }
     internal static bool LiveWindowActive { get; set; } = true;
+    internal static Microsoft.UI.WindowId? MainWindowId { get; private set; }
     internal static string? LiveError { get; private set; }
     internal static event Action? LiveStateChanged;
     private static string _liveServer = "";
@@ -55,7 +56,10 @@ internal static class Program
                 Directory.CreateDirectory(testRoot);
                 string sessionResult = SessionProbe.RunAsync(Path.Combine(testRoot, $"session-{Guid.NewGuid():N}.sqlite"), library).GetAwaiter().GetResult();
                 string workspaceResult = WorkspaceProbe.RunAsync(Path.Combine(testRoot, $"workspace-{Guid.NewGuid():N}.sqlite"), library).GetAwaiter().GetResult();
-                File.WriteAllText(Path.Combine(testRoot, "core-result.txt"), sessionResult + Environment.NewLine + workspaceResult);
+                NativeUploadDiskStoreProbe.RunAsync(Path.Combine(testRoot, "upload-disk-" + Guid.NewGuid().ToString("N"))).GetAwaiter().GetResult();
+                NativeContentProbe.RunAsync().GetAwaiter().GetResult();
+                File.WriteAllText(Path.Combine(testRoot, "core-result.txt"), sessionResult + Environment.NewLine + workspaceResult +
+                    Environment.NewLine + "PASS upload private spool/DPAPI and rich-text/wire/editor contracts");
                 return;
             }
             UiResume = args.Length == 2 && args[0] == "--ui-resume";
@@ -89,6 +93,7 @@ internal static class Program
             }
             ReactorApp.WindowOpened += (_, window) =>
             {
+                MainWindowId = window.NativeWindow.AppWindow.Id;
                 var keyboard = Keyboard = new KeyboardViewport(window);
                 KeyboardViewportAvailable = keyboard.Available;
                 keyboard.Attach(PilotComponent.RootForClose as Microsoft.UI.Xaml.Controls.Grid);
@@ -102,7 +107,7 @@ internal static class Program
                         && Authentication is not null) _ = Authentication.ResumeAsync();
                 };
                 if (Authentication is not null) _ = Authentication.ResumeAsync();
-                window.Closed += (_, _) => { keyboard.Dispose(); Keyboard = null; };
+                window.Closed += (_, _) => { keyboard.Dispose(); Keyboard = null; MainWindowId = null; };
                 window.Closing += (_, closing) =>
                 {
                     if (_allowFinalClose) return;

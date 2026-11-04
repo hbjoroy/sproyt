@@ -133,6 +133,7 @@ macro_rules! with_store {
     };
 }
 
+mod attachments;
 pub(crate) mod monitoring;
 macro_rules! write_transaction {
     ($pool:expr, $pg:expr) => {{
@@ -382,6 +383,29 @@ impl MediaStore {
         if !self.channel_enabled(channel) {
             return Err(UploadError::NotFound);
         }
+        if !matches!(
+            input.content_type.as_str(),
+            "application/octet-stream"
+                | "image/jpeg"
+                | "image/jpg"
+                | "image/png"
+                | "image/gif"
+                | "image/webp"
+                | "image/heic"
+                | "image/heif"
+                | "image/avif"
+                | "video/mp4"
+                | "video/quicktime"
+                | "video/webm"
+                | "video/x-matroska"
+                | "application/pdf"
+                | "application/zip"
+                | "application/x-zip-compressed"
+                | "text/plain"
+                | "text/csv"
+        ) {
+            return Err(UploadError::Unsupported);
+        }
         if input.size_bytes == 0
             || input.size_bytes > self.limits.max_file_bytes
             || input.filename.is_empty()
@@ -570,12 +594,30 @@ impl MediaStore {
         }
         let mut hash = Sha256::new();
         let mut detected_type = None;
+        let mut attachment = None;
         let mut length = 0u64;
         for index in 0..status.next_chunk {
             let bytes = self.read_sealed_chunk(actor, id, index).await?;
             if index == 0 {
                 detected_type =
                     crate::web::media::detected_media_type(&bytes, &status.declared_type);
+                // A declared document must never be promoted to an inline
+                // image/video merely because its text resembles a magic header.
+                detected_type = match status.declared_type.as_str() {
+                    "text/plain" | "text/csv" => Some(status.declared_type.clone()),
+                    "application/pdf" => detected_type.filter(|kind| kind == "application/pdf"),
+                    "application/zip" | "application/x-zip-compressed" => {
+                        detected_type.filter(|kind| kind == "application/zip")
+                    }
+                    _ => detected_type,
+                };
+                attachment = detected_type.as_deref().map(attachments::Validator::new);
+            }
+            if attachment
+                .as_mut()
+                .is_some_and(|validator| !validator.push(&bytes))
+            {
+                return Err(UploadError::Unsupported);
             }
             length += bytes.len() as u64;
             hash.update(&bytes);
@@ -584,6 +626,9 @@ impl MediaStore {
             return Err(UploadError::Conflict);
         }
         let content_type = detected_type.ok_or(UploadError::Unsupported)?;
+        if !attachment.is_some_and(attachments::Validator::finish) {
+            return Err(UploadError::Unsupported);
+        }
         let sha256 = format!("{:x}", hash.finalize());
         with_store!(self, |pool, pg| {
             let mut tx = write_transaction!(pool, pg);

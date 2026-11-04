@@ -20,7 +20,7 @@ internal static class NativeMessageActionsView
         Element ActionButton(string label, string key, Action action, bool allowed = true) =>
             Button(label, action).IsEnabled(allowed).MinHeight(36).Padding(8, 4)
                 .AutomationName(label).AutomationId($"live-message-{key}-{id}");
-        void Open(NativeMessageActionMode value) => owner.Open(scope, message, value);
+        void Open(NativeMessageActionMode value) => owner.Open(scope, message, value, NativeRichText.LiteralRanges(message.Body));
         Element Choice(string emoji) => ActionButton(emoji, "emoji-" + emoji,
             async () => await owner.ToggleAsync(scope, message, emoji, reactions.Any(c => c.Emoji == emoji && c.Mine), commands), enabled && reactionsReady);
         var rows = new List<Element>();
