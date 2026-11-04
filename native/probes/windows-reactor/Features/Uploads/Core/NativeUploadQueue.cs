@@ -147,6 +147,32 @@ internal sealed class NativeUploadQueue : IAsyncDisposable
         Signal();
     }
 
+    private async Task<NativeUploadJob?> SelectReadyAsync(CancellationTokenSource cancellation)
+    {
+        // A scope or membership notification can wake the pump during Enqueue.
+        // Wait for the journal writer before observing its in-memory mutations.
+        await _operations.WaitAsync(cancellation.Token).ConfigureAwait(false);
+        try
+        {
+            NativeUploadJob[] candidates;
+            lock (_gate)
+                candidates = _storageError is null && _scope is not null
+                    ? _jobs.Where(item => item.Target.Scope == _scope && !_cancelRequested.Contains(item.Id) &&
+                        item.Error is null && item.State is NativeUploadState.Queued or NativeUploadState.Uploading or
+                            NativeUploadState.Finalizing or NativeUploadState.Ready or NativeUploadState.Attached).ToArray() : [];
+            var job = candidates.FirstOrDefault(candidate => Allowed(candidate.Target));
+            lock (_gate)
+            {
+                if (job is null || _disposed || _storageError is not null || _scope != job.Target.Scope ||
+                    _cancelRequested.Contains(job.Id)) return null;
+                _activeId = job.Id;
+                _activeCancellation = cancellation;
+                return job;
+            }
+        }
+        finally { _operations.Release(); }
+    }
+
     private async Task PumpAsync()
     {
         try
@@ -156,14 +182,9 @@ internal sealed class NativeUploadQueue : IAsyncDisposable
                 await _signal.WaitAsync(_lifetime.Token).ConfigureAwait(false);
                 while (!_lifetime.IsCancellationRequested)
                 {
-                    NativeUploadJob[] candidates;
-                    lock (_gate) candidates = _storageError is null && _scope is not null ? _jobs.Where(item => item.Target.Scope == _scope &&
-                        !_cancelRequested.Contains(item.Id) && item.Error is null &&
-                        item.State is NativeUploadState.Queued or NativeUploadState.Uploading or NativeUploadState.Finalizing or NativeUploadState.Ready or NativeUploadState.Attached).ToArray() : [];
-                    var job = candidates.FirstOrDefault(candidate => Allowed(candidate.Target));
-                    if (job is null) break;
                     using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-                    lock (_gate) { _activeId = job.Id; _activeCancellation = cancellation; }
+                    var job = await SelectReadyAsync(cancellation).ConfigureAwait(false);
+                    if (job is null) break;
                     Notify();
                     try { await ProcessAsync(job, cancellation.Token); }
                     catch (JournalFailure) { }
@@ -332,6 +353,7 @@ internal sealed class NativeUploadQueue : IAsyncDisposable
     private void Check(NativeUploadJob job, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate) { if (_storageError is not null) throw new JournalFailure(); }
         var current = Find(job.Id);
         if (current is null || CancelledOrRemoved(job.Id) || !Allowed(job.Target)) throw new OperationCanceledException();
     }

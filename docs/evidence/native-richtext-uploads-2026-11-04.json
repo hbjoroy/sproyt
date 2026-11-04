@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "recordedAtUtc": "2026-11-04T10:16:10.9434343+00:00",
+  "recordedAtUtc": "2026-11-04T12:38:52.9454589+00:00",
   "branch": "codex/native-richtext-uploads",
   "baseline": "7866b8d2b651474f8f06b8280f880978f41be8c1",
   "basePullRequest": "https://github.com/hbjoroy/sproyt/pull/332",
-  "testedSourceHead": "0127731b98c453c9618af6980ce176a04021c8ea",
+  "testedSourceHead": "051a0828e6684d9e294f8daff396c990e46057d4",
   "testedSourceDirty": true,
   "sourceHashKind": "SHA256 of tested workspace file bytes before Git line-ending normalization",
   "sourceHashes": [
@@ -66,7 +66,7 @@
     },
     {
       "path": "native/probes/upload-contracts/Fixtures.cs",
-      "sha256": "dd2ccf5a37bf9414e591d1a51d5fc278fe556dc85f955d7b02736f7d8a086fd5"
+      "sha256": "06399c51e90748d848cecb278ac15e94f80ec3c5d93d14c0009742afd846994e"
     },
     {
       "path": "native/probes/upload-contracts/global.json",
@@ -82,7 +82,7 @@
     },
     {
       "path": "native/probes/upload-contracts/Program.cs",
-      "sha256": "4fb57684eee5fb1f4ddf267dbaf9911dbf8a6ee1888618a43446a505d436dd23"
+      "sha256": "c9e033290d02dc43ec86038f0c04cea26413db33426ff333f0f7f862d36c5813"
     },
     {
       "path": "native/probes/upload-contracts/README.md",
@@ -174,7 +174,7 @@
     },
     {
       "path": "native/probes/windows-reactor/Features/Uploads/Core/NativeUploadQueue.cs",
-      "sha256": "9faefd602a1e000f1899dcd550ea9d54422e0aa4e8ac3df33645c608bb555f65"
+      "sha256": "581adbd9619cde9df444501b5c20fce2359f4a209001ec284b7c00879f21b8df"
     },
     {
       "path": "native/probes/windows-reactor/Features/Uploads/NativeUploadView.cs",
@@ -595,14 +595,14 @@
       {
         "group": "upload",
         "passed": true,
-        "log": "C:/Build/native-content-final/managed/upload/run.txt",
+        "log": "C:/Build/native-content-final-review/race/repeat-8.log",
         "receipts": [
           {
-            "path": "C:/Build/native-content-final/managed/upload/tests/receipt.json",
-            "sha256": "e5c001220249cc3ce9acab559959aba7bfed18e2a9ebc14756e5fe6c3a7ff8c4",
+            "path": "C:/Build/native-content-final-review/race/repeat-8-13b9684c-25ce-44ab-ac06-c8180f4e4e75/receipt.json",
+            "sha256": "5daaec17ff8357e73e262393367146056d1dcb9c592d35d17a5713a75dcb93ee",
             "result": {
               "passed": true,
-              "checks": 20,
+              "checks": 22,
               "productionQueue": true,
               "productionHttpAdapter": true,
               "realWindowsSessionOwner": true,
@@ -620,10 +620,10 @@
       {
         "group": "upload-admission",
         "passed": true,
-        "log": "C:/Build/native-content-final/managed/upload-admission/run.txt",
+        "log": "C:/Build/native-content-final-review/race/admission.log",
         "receipts": [
           {
-            "path": "C:/Build/native-content-final/managed/upload-admission/receipt.json",
+            "path": "C:/Build/native-content-final-review/race/admission.json",
             "sha256": "dbc1038149ac2242faf1cc68f909ae982e9fb03883a347c31b064185a3f8fe03",
             "result": {
               "passed": true,
@@ -648,7 +648,12 @@
           }
         ]
       }
-    ]
+    ],
+    "targetedGroupsRerunAfterHostedRace": [
+      "upload",
+      "upload-admission"
+    ],
+    "repeatedUploadRuns": 9
   },
   "storage": {
     "schema": 4,
@@ -668,19 +673,19 @@
     "actualWindowsDllAndDpapi": true
   },
   "windows": {
-    "receipt": "C:/Build/native-content-final/windows/runs/5f1e26c5c671413abd65cb7760769ae1/receipt.json",
+    "receipt": "C:/Build/native-content-final/windows-after-race/runs/e4e22429a853405fa10d8fa0dee77f1d/receipt.json",
     "result": {
       "schema": 1,
       "scope": "windows_reactor_local_feasibility",
-      "sourceRevision": "0127731b98c453c9618af6980ce176a04021c8ea",
+      "sourceRevision": "051a0828e6684d9e294f8daff396c990e46057d4",
       "sourceDirty": true,
       "architecture": "arm64",
       "platform": "win-arm64",
       "reactor": "0.1.0-preview.16",
       "compiler": "Microsoft.Net.Compilers.Toolset 5.9.0",
       "runtime": "win-arm64",
-      "nativeLibrarySha256": "860271e7d366973f1b1cb4470a36883f465a1a42af1cbb54e454c0775ca1b43f",
-      "executableSha256": "7346586b3548e83b8df01fcc521d49645f2d88707d5cb7b03e3d7657df64dedb",
+      "nativeLibrarySha256": "ff9e817f16777846660e01d91afd0096c2153030159708f28c3c3e3b868e398f",
+      "executableSha256": "a6a2a9acf4310f8f3eb35f82167dc6b49de62bd9d479c8ae78cfc159235720d3",
       "applicationPriSha256": "1c93954aab25ca97e589d93f2791562ac874ee8d0dbbfb7e4d5f6ad2b169afd2",
       "coreTests": true,
       "uiSmoke": {
@@ -781,7 +786,7 @@
         "actualTransport": false,
         "storageAcceptance": false
       },
-      "publishDirectory": "C:\\Build\\native-content-final\\windows\\runs\\5f1e26c5c671413abd65cb7760769ae1\\publish-win-arm64",
+      "publishDirectory": "C:\\Build\\native-content-final\\windows-after-race\\runs\\e4e22429a853405fa10d8fa0dee77f1d\\publish-win-arm64",
       "notTested": [
         "physical keyboard and IME",
         "touch",
@@ -818,7 +823,13 @@
     "thirdPartyNoticeIncludedInPublish": true
   },
   "hostedChecks": {
-    "status": "pending; exact commit and final results tracked in pull request"
+    "status": "pending; exact commit and final results tracked in pull request",
+    "initialFinding": {
+      "sourceHead": "051a0828e6684d9e294f8daff396c990e46057d4",
+      "run": "https://github.com/hbjoroy/sproyt/actions/runs/41813090500",
+      "finding": "An initial scope wake could dispatch an upload before its first journal acknowledgment.",
+      "resolution": "Serialize pump selection and active claim with journal mutations; stop active work at the next boundary after any journal failure. Both regressions were reproduced or forced with controlled gates, then all 22 upload checks passed nine times."
+    }
   },
   "notEstablished": [
     "Live Canary two-user acceptance and actual Windows network authentication/upload round trip",

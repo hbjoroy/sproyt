@@ -113,6 +113,37 @@ internal static partial class Program
                 admitted = true; await queue.RetryAsync(id); await Until(() => queue.Capture().Jobs.Count == 0);
                 Require(local.Attached.Count == 1, "Offline recovery duplicated the handoff.");
             });
+            await Check("pump wake during first journal write cannot start HTTP", async () =>
+            {
+                var local = new Local { HoldSave = true }; var source = local.Source(23); var wire = new Wire(local);
+                await using var queue = await Open(local, wire);
+                queue.BindScope(Target.Scope);
+                var enqueue = queue.EnqueueAsync(Target, source);
+                await local.SaveEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                queue.RecheckAdmission();
+                bool dispatchedEarly;
+                try { dispatchedEarly = await Task.WhenAny(wire.FirstHttp.Task, Task.Delay(200)) == wire.FirstHttp.Task; }
+                finally { local.ReleaseSave.TrySetResult(); }
+                var id = await enqueue;
+                await Until(() => local.Attached.ContainsKey(id) && queue.Capture().Jobs.Count == 0);
+                Require(!dispatchedEarly && wire.FirstDispatchWasJournaled && wire.Creates == 1,
+                    "The network saw an upload before its first journal write completed.");
+            });
+            await Check("concurrent journal failure stops an active upload before its next operation", async () =>
+            {
+                var local = new Local(); var first = local.Source(17); var second = local.Source(19); var wire = new Wire(local) { HoldChunk = true };
+                await using var queue = await Open(local, wire); queue.BindScope(Target.Scope);
+                string id = await queue.EnqueueAsync(Target, first);
+                await wire.ChunkEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                local.FailSaveBefore = true;
+                try { await Throws<IOException>(() => queue.EnqueueAsync(Target, second)); }
+                finally { wire.ReleaseChunk.TrySetResult(); }
+                await Until(() => !queue.Capture().Busy);
+                Require(queue.Capture().StorageError is not null && wire.Completes == 0 && local.Attached.Count == 0,
+                    "An in-flight chunk advanced beyond a different job's failed journal write.");
+                await queue.RetryAsync(id); await Until(() => queue.Capture().Jobs.Count == 0);
+                Require(wire.UniqueChunks == 2 && local.Attached.Count == 2, "Repair lost or duplicated an admitted file.");
+            });
             await Check("enqueue rechecks account admission after the journal gate", async () =>
             {
                 var local = new Local { HoldSave = true }; var first = local.Source(17); var second = local.Source(19); var wire = new Wire(local); bool admitted = true;

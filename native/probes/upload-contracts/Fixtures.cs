@@ -48,7 +48,12 @@ internal static partial class Program
         internal int Creates, Statuses, ChunkCalls, UniqueChunks, Completes, Aborts, MaximumChunk;
         internal bool FirstDispatchWasJournaled = true;
         internal readonly TaskCompletionSource ChunkEntered = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseChunk = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task<NativeUploadConfiguration> ConfigurationAsync(NativeUploadTarget target, CancellationToken cancellationToken) => Task.FromResult(new NativeUploadConfiguration(true, NativeUploadHttpClient.MaximumFileBytes, NativeUploadHttpClient.ChunkBytes, [Channel]));
+        internal readonly TaskCompletionSource FirstHttp = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<NativeUploadConfiguration> ConfigurationAsync(NativeUploadTarget target, CancellationToken cancellationToken)
+        {
+            FirstHttp.TrySetResult();
+            return Task.FromResult(new NativeUploadConfiguration(true, NativeUploadHttpClient.MaximumFileBytes, NativeUploadHttpClient.ChunkBytes, [Channel]));
+        }
         public Task<NativeUploadStatus> CreateAsync(NativeUploadJob job, CancellationToken cancellationToken)
         {
             Creates++; FirstDispatchWasJournaled &= local.Saved.Any(saved => saved.Id == job.Id && saved.RequestId == job.RequestId && saved.Target == job.Target);
