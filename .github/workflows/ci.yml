@@ -169,16 +169,22 @@ jobs:
         if: needs.changes.outputs.codec == 'true'
         run: bash tools/verify-media-runtime.sh
 
+      # Provider-only releases still run authentication contracts, without a
+      # Rust/browser rebuild. These inexpensive checks also protect CI edits.
+      - name: Validate identity-provider contracts
+        run: |
+          python3 -m pip install -r tools/requirements-authentik-tests.txt
+          python3 tools/test-enrollment-continuation.py
+          python3 tools/test-invitation-canary.py
+          python3 tools/test-invitation-production.py
+          python3 tools/test-invitation-canary-v2.py
+          python3 tools/test-signup-recovery.py
+
       - name: Validate operational contracts
         if: needs.changes.outputs.backend == 'true'
         run: |
           docker compose config --quiet
           bash tools/test-oidc-provider-verifier.sh
-          python3 tools/test-enrollment-continuation.py
-          python3 tools/test-invitation-canary.py
-          python3 tools/test-invitation-production.py
-          python3 -m pip install -r tools/requirements-authentik-tests.txt
-          python3 tools/test-invitation-canary-v2.py
           bash tools/test-production-rollout-verifier.sh
           node tools/test-mcp-load.mjs
 

@@ -185,11 +185,11 @@
   -webkit-touch-callout: none;
 }
 .sp-image-viewer-surface:active { cursor: grabbing; }
-/* Keep the large width-based opening view. Centering is independent of the
-   pan/zoom transform, including when the image is taller than the viewport. */
+/* Intrinsic dimensions make scale(1) actual size; opening/fit scales are explicit.
+   Centering remains independent of the pan/zoom transform. */
 .sp-image-viewer-surface img {
   position: absolute; top: 50%; left: 50%; translate: -50% -50%;
-  display: block; max-width: 100%; max-height: none; width: auto; height: auto; object-fit: contain;
+  display: block; max-width: none; max-height: none; width: auto; height: auto; object-fit: contain;
   transform-origin: center; will-change: transform; -webkit-user-drag: none;
 }
 .sp-image-viewer-tools {
@@ -549,6 +549,7 @@
 .sp-conversation-toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: .25rem; max-width: 100%; }
 #sproyt-react-preview .sp-timeline { padding-inline: 1rem; }
 #sproyt-react-preview .sp-composer { margin-inline: 1rem; }
+#sproyt-react-preview .sp-draft-composer .sp-textarea { padding-inline: .5rem; }
 #sproyt-react-preview .sp-draft-composer .sp-textarea:focus-visible { outline: 2px solid var(--sp-text); outline-offset: -2px; }
 @container sp-app (max-width: 900px) {
   #sproyt-react-preview .sp-timeline { padding-inline: .5rem; }
