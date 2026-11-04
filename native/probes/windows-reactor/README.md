@@ -136,3 +136,17 @@ online pilotsnitt, med dei eksisterande grensene for utkast og sendekø.
 Meldingar i kanal og tråd viser Markdown/GFM med tabellar og kode. Bruk **Vis råtekst** for å sjå heile originalen. Mermaid blir vist som kjeldekode, HTML er inaktivt og eksterne bilete blir viste som plasshaldarar. Dokument av typen PDF, ZIP, UTF-8-tekst og CSV kan lagrast med ein filveljar.
 
 Vel **Legg ved** eller lim inn filer og bilete. Utklippstavlebilete blir koda som PNG etter kontroll av ei grense på 16 × 1024 × 1024 pikslar. Windows tek ein privat kopi før overføring, med høgst 512 MiB totalt og åtte jobbar per konto. Køen viser framdrift, avbrot og nytt forsøk. Eit ferdig vedlegg blir lagt i utkastet som vart valt ved start. Du kan fjerne det der eller velje **Send**. Er utkastet for stort, kan du frigjere plass og prøve igjen. Tekst og markørar må til saman få plass i 1024 UTF-8-byte.
+
+## Originalbilete og filslipp
+
+Windows Canary har ein originalvisar med prosent, zoom inn/ut, tilpassing av
+heile biletet og 1:1. 100 % tyder eitt orientert originalpunkt per logisk
+skjermpunkt. Redusert dekoding av store bilete blir merkt tydeleg; **Lagre**
+bevarer originalbyte. Bilete, video og dokument bruker typetilpassa filending.
+Visaren lukkar og slepper den private originalfila ved konto-/familiebyte.
+
+Filer kan sleppast på heile kanal- eller trådkomponisten. Filslipp kopierer
+berre til det fanga utkastet og sender inga melding. Høgst åtte filer om gongen;
+mapper og flytting blir ikkje tekne imot som vedlegg. Uavklart filslipp blir
+avbrote dersom komponistfeltet blir avmontert. Fysisk input og autentisert
+Canary-aksept står framleis att; sjå implementasjonsstatusen for prøveomfang.

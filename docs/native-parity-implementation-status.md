@@ -195,3 +195,46 @@ og alle WinUI-scenarioa for riktekst, råtekst, redigeringsfokus, dokumentstraum
 og vedlegg i kanal og tråd. CI på GitHub blir følgd i PR-en.
 Resultat og kjeldeidentitet for pulja er førte i
 [kvitteringa for riktekst og opplasting](evidence/native-richtext-uploads-2026-11-04.json).
+
+## Femte pulje: biletvisar og filslipp
+
+Denne pulja byggjer på klienttippen `dbe556cf4701a44a136ea86bd7e4436da718f81a`
+og inkluderer den avgrensa backend-releasen frå main
+`bb103337ff505bcd19f99ab2c319db4d94e9c694`. Canary køyrer denne backenden;
+produksjon er ikkje endra av pulja. Planlegging og gjennomgang vart gjorde
+med Astra. Fire samtidige arbeidsspor delte geometri, WinUI-visar, filinntak
+og integrasjon/aksept. Alle nye arbeidstre og bygg ligg på C-disken.
+
+| Rad | Ny brukarflow | Attståande omfang |
+| --- | --- | --- |
+| PAR-012 | Slepp kopierbare filer på kanal- eller trådkomponisten. Målet blir fanga før Windows opnar filene; eit halde montert felt bevarer målet ved navigasjon. Mapper, lenkjer som vedlegg, ulesbare filer og meir enn åtte filer blir avviste. Tekst blir ikkje endra og inga melding blir send. | Eit avmontert komponistfelt avbryt uavklart filslipp. Produksjonsnavigasjon kan avmontere tråden medan neste tråd blir lasta. Fysisk Explorer-drag/drop og faktisk WinRT-deferral står att. |
+| PAR-013 | Opne originalbilete med breiddetilpassing, heile-biletet-tilpassing, 100 %, prosentvising, zoom inn/ut og panorering. Normalstorleiken kjem frå orienterte originalmål og held seg ved endra visingsstorleik. Originalen kan lagrast eksplisitt; bilete, video og dokument deler trygg lagring med filtype frå serveren. | Fysisk mus, touch/kniping, tastatur/IME, skjermlesar og faktisk lagringsdialog står att. Video blir framleis lasta heilt ned før avspeling. |
+
+Biletvisaren dekodar høgst 16 × 1024 × 1024 fysiske pikslar og høgst 8192
+pikslar per kant. Originalmåla styrer geometrien sjølv ved redusert dekoding;
+brukaren får då ei varig melding om avgrensa detaljnivå og kan lagre originalen.
+Dette er ikkje ei påståing om uavgrensa full detaljgrad for store bilete.
+
+Mellombelse originalar blir pensjonerte per konto og innloggingsfamilie.
+Tre reproduserte livsløpsfeil vart retta: forelda opptak kunne blokkere ein ny
+familie, opprydding kunne slette den nye familien si fil, og siste kontosjekk
+før lagring var ikkje atomisk med filbytet. Sluttsteget held no kontofencen
+rundt det avgrensa filbytet, medan dialog og filkopiering skjer utanfor låsen.
+Vanleg tokenfornying bevarer gyldige filer og lagring.
+
+Prøvene skil reine geometri-/livsløps-/filinntakskontraktar, faktiske WinUI-
+kontrollar med syntetisk teneste og filval, og manuell live-aksept. Kvitteringa
+for pulja blir ført i `docs/evidence/native-media-interaction-2026-11-04.json`.
+Ingen backendendring, ny utrulling eller melding til ekte brukarar inngår i
+pulja. PAR-012 og PAR-013 har framleis delvis dekning.
+
+Den samla Windows ARM64-køyringa passerte med kjelde `9cf30f6`: faktisk
+Rust-DLL/SQLite/DPAPI, varige utkast, omstart/sesjonar og alle WinUI-prøvene.
+Dei nye kontraktgruppene har åtte geometriprøver, åtte livsløpsprøver og atten
+filslipp-prøver; i tillegg passerer den utvida prøva av faktisk applikasjon
+og kø ved stadfesta, delvis og uvisst opptak. Det siste opplastingselementet
+blir berre kvittert til Windows når minst éi fil faktisk vart stadfesta i køen.
+Delvis opptak blir oppgjeve som N av M, utan automatisk rollback eller retry.
+Kjeldebyte og program-DLL-hash er med i [kvitteringa](evidence/native-media-interaction-2026-11-04.json).
+README var einaste ucommitta native-fil under sluttkøyringa; ingen kompilert
+kode hadde lokale endringar. Full CI blir følgd i PR-en.
