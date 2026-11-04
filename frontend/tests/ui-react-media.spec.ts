@@ -11,6 +11,94 @@ async function photo(page: Page, name = "landskap.png") {
   return { name, mimeType: "image/png", buffer: Buffer.from(data, "base64") };
 }
 
+for (const ui of ["react", "legacy"] as const) {
+  test(`${ui} receives native document markers as explicit downloads without preview requests`, async ({ page, context, browserName }) => {
+    const participant = `document ${ui} + ${browserName} ${Date.now()}`;
+    const documents = [
+      { id: "00000000-0000-4000-8000-000000000071", type: "application/pdf", name: "Rå%20 [plan] & rapport.pdf" },
+      { id: "00000000-0000-4000-8000-000000000072", type: "application/zip", name: "arkiv.zip" },
+      { id: "00000000-0000-4000-8000-000000000073", type: "text/plain", name: "Blå%20 | [<em>notat</em>].txt" },
+      { id: "00000000-0000-4000-8000-000000000074", type: "text/csv", name: "måling.csv" }
+    ];
+    const imageId = "00000000-0000-4000-8000-000000000075";
+    const videoId = "00000000-0000-4000-8000-000000000076";
+    const requests: string[] = [];
+    // Context routing includes a separate native attachment navigation.
+    await context.route(/\/api\/v1\/media\//, route => {
+      const url = new URL(route.request().url());
+      requests.push(url.pathname);
+      if (url.pathname.startsWith(`/api/v1/media/${imageId}`)) return route.fulfill(url.pathname.endsWith("/status")
+        ? { json: { state: "ready" } }
+        : { contentType: "image/gif", body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64") });
+      if (url.pathname === `/api/v1/media/${videoId}`) return route.fulfill({ contentType: "video/mp4", body: Buffer.alloc(0) });
+      const document = documents.find(item => url.pathname === `/api/v1/media/${item.id}/download`);
+      return route.fulfill(document ? { contentType: document.type, body: "synthetic document fixture", headers: {
+        "content-disposition": "attachment; filename=\"server-normalized.pdf\"",
+        "x-content-type-options": "nosniff"
+      } } : { status: 415, body: "Documents do not have media previews" });
+    });
+    const body = [...documents.map(item => `[[media:${item.id}|${item.type}|${encodeURIComponent(item.name)}]]`),
+      `[[media:${imageId}|image/gif|image.gif]]`, `[[media:${videoId}|video/mp4|video.mp4]]`].join("\n");
+    // These are received messages from a native sender, not web uploads. Keep
+    // the emitted wire marker fixture independent of server-owned file IDs.
+    const channel = "document-download";
+    await page.routeWebSocket(/\/ws(?:\?|$)/, socket => socket.onMessage(data => {
+      const command = JSON.parse(String(data));
+      const reply = (type: string, payload: unknown) => socket.send(JSON.stringify({ protocol: "sproyt.chat.v1", request_id: command.request_id, type, payload }));
+      switch (command.type) {
+        case "hello": reply("hello", { participant_id: "reader" }); break;
+        case "ping": reply("pong", {}); break;
+        case "list_users": reply("users_listed", { users: [] }); break;
+        case "list_my_circles": reply("circles_listed", { circles: [] }); break;
+        case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
+        case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
+        case "list_my_channels": reply("channels_listed", { channels: [{ id: channel, slug: channel, name: channel, kind: "public",
+          circle_id: null, direct_user_id: null, is_direct: false, description: "", role: "member", last_read_sequence: 1, latest_sequence: 1 }] }); break;
+        case "subscribe_channel": reply("subscription_started", { channel_id: channel, history: [{ id: "native-document-message", channel_id: channel,
+          parent_message_id: null, sender_id: "native-sender", sender_display_name: "Native sender", body, sequence: 1,
+          sent_at: "2026-11-04T12:00:00Z", edited_at: null, deleted_at: null }] }); break;
+        case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: [] }); break;
+        case "list_channel_reactions": reply("channel_reactions_listed", { channel_id: channel, reactions: [] }); break;
+        case "mark_read": reply("read_marker_updated", { membership: { channel_id: channel, user_id: "reader", role: "member",
+          joined_at: "2026-11-04T12:00:00Z", last_read_sequence: 1 } }); break;
+      }
+    }));
+    await page.goto(`/?participant=${encodeURIComponent(participant)}&ui=${ui}&channel=${channel}`);
+    const surface = page.locator(ui === "react" ? "#sproyt-react-preview .sp-channel-pane" : "#messages");
+    for (const document of documents) {
+      const link = surface.getByRole("link", { name: `Last ned ${document.name}`, exact: true });
+      await expect(link).toBeVisible();
+      await expect(link).toHaveText("Last ned vedlegget");
+      await expect(link).toHaveAttribute("href", `/api/v1/media/${document.id}/download?participant=${encodeURIComponent(participant)}`);
+      await expect(link).toHaveAttribute("download", "");
+      await expect(link).toHaveAttribute("target", "_blank");
+      await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      const figure = surface.locator("figure").filter({ has: page.getByRole("link", { name: `Last ned ${document.name}`, exact: true }) });
+      await expect(figure.locator("figcaption")).toContainText(document.name);
+      await expect(figure.locator("img,video,iframe,object,embed,em")).toHaveCount(0);
+    }
+    const documentRequests = () => requests.filter(path => documents.some(document => path.includes(document.id)));
+    expect(documentRequests()).toEqual([]);
+    const image = surface.locator(`img[src*="${imageId}/preview"]`);
+    await expect(image).toBeVisible();
+    const video = surface.locator(`video[src*="${videoId}"]`);
+    await expect(video).toBeVisible();
+    await expect(video).toHaveAttribute("controls", "");
+    await expect(video).toHaveAttribute("preload", "metadata");
+    const href = await surface.getByRole("link", { name: `Last ned ${documents[0]!.name}`, exact: true }).evaluate(element => (element as HTMLAnchorElement).href);
+    // Chromium's download-attribute requests bypass Playwright routing. Use
+    // the actual link destination in a native navigation so the synthetic
+    // attachment response can prove the server's filename is authoritative.
+    const downloadPage = await context.newPage();
+    try {
+      const downloaded = downloadPage.waitForEvent("download");
+      await downloadPage.goto(href).catch((error: Error) => expect(error.message).toMatch(/ERR_ABORTED|Download is starting/));
+      expect((await downloaded).suggestedFilename()).toBe("server-normalized.pdf");
+    } finally { await downloadPage.close(); }
+    expect(documentRequests()).toEqual([`/api/v1/media/${documents[0]!.id}/download`]);
+  });
+}
+
 test("React sends real attachment-only messages and opens a full-screen zoomable original", async ({ page, context, browserName }) => {
   let sockets = 0;
   const sends: string[] = [];

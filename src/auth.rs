@@ -919,6 +919,9 @@ impl From<TextValidationError> for AuthError {
 
 #[cfg(test)]
 mod tests {
+    mod native_media_upload_tests;
+    mod native_notification_preferences_tests;
+
     use super::*;
     use axum::{
         Form, Json, Router,
