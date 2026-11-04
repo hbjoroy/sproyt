@@ -20,6 +20,7 @@ internal sealed class LiveUiFixture : ILiveApplication
     private readonly List<NativeUploadJob> _uploadJobs = [];
     internal bool HoldNextUpload { get; set; }
     internal bool FailNextUpload { get; set; }
+    internal int? MaximumFilesForNextAdmission { get; set; }
     internal NativeUploadTarget? LastCapturedUploadTarget { get; private set; }
     internal NativeUploadTarget? LastAddedUploadTarget { get; private set; }
     internal IReadOnlyList<string> LastAddedUploadPaths { get; private set; } = [];
@@ -262,16 +263,19 @@ internal sealed class LiveUiFixture : ILiveApplication
         return LastCapturedUploadTarget = new(scope.UserId, family, scope.ChannelId, scope.ThreadRootId);
     }
     private bool UploadTargetCurrent(NativeUploadTarget target) => target.UserId == Authentication.UserId && target.FamilyStamp == UploadFamily && Channels.Any(channel => channel.Id == target.ChannelId);
-    public Task AddUploadFilesAsync(NativeUploadTarget target, IReadOnlyList<string> paths)
+    public Task AddUploadFilesAsync(NativeUploadTarget target, IReadOnlyList<string> paths) => AddUploadFilesCountedAsync(target, paths);
+    public Task<int> AddUploadFilesCountedAsync(NativeUploadTarget target, IReadOnlyList<string> paths)
     {
-        if (!UploadTargetCurrent(target)) return Task.CompletedTask;
-        LastAddedUploadTarget = target; LastAddedUploadPaths = paths.ToArray();
-        foreach (string path in paths)
+        int maximum = MaximumFilesForNextAdmission ?? paths.Count; MaximumFilesForNextAdmission = null;
+        if (!UploadTargetCurrent(target) || maximum == 0) return Task.FromResult(0);
+        var accepted = paths.Take(maximum).ToArray();
+        LastAddedUploadTarget = target; LastAddedUploadPaths = accepted;
+        foreach (string path in accepted)
         {
             string type = Path.GetExtension(path).ToLowerInvariant() switch { ".pdf" => "application/pdf", ".txt" => "text/plain", ".csv" => "text/csv", ".zip" => "application/zip", _ => "image/gif" };
             AddSyntheticUpload(target, Path.GetFileName(path), type);
         }
-        return Task.CompletedTask;
+        return Task.FromResult(accepted.Length);
     }
     public Task AddUploadStreamAsync(NativeUploadTarget target, Stream stream, string fileName, string contentType)
     {

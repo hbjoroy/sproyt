@@ -171,7 +171,8 @@ internal sealed class LiveChatComponent : Component
                         .AutomationName("Fjern vedlegget " + attachment.Text).AutomationId(prefix + "draft-attachment-remove-" + index).Grid(column: 1))
                     .AutomationId(prefix + "draft-attachment-" + index);
             }).ToArray();
-            string? error = state.UploadError ?? (target is not null ? _uploadUiErrors.GetValueOrDefault(target) : null);
+            string? error = state.UploadError is not null && (state.UploadErrorTarget is null || state.UploadErrorTarget == target)
+                ? state.UploadError : target is not null ? _uploadUiErrors.GetValueOrDefault(target) : null;
             return VStack(4,
                 HStack(8,
                     Button(_uploadChoosing ? "Klargjer …" : "Legg ved", async () => { if (scope is not null) await ChooseUpload(scope, false); })

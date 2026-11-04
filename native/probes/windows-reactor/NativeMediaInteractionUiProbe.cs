@@ -44,6 +44,9 @@ internal static class NativeMediaInteractionUiProbe
             Require(await rootDrop.DropForProbeAsync(() => Task.FromResult<IReadOnlyList<NativeFileDropItem>>([new("C:/synthetic-ui/kanal-b.pdf")])),
                 "The retained host did not accept its next drop.");
             Require(fixture.LastAddedUploadTarget?.ChannelId == "channel-b", "A retained host kept its first render's channel.");
+            fixture.MaximumFilesForNextAdmission = 0;
+            Require(!await rootDrop.DropForProbeAsync(() => Task.FromResult<IReadOnlyList<NativeFileDropItem>>([new("C:/synthetic-ui/rejected.pdf")])),
+                "Windows acknowledged a copied file that the staging owner rejected.");
             Require(!await rootDrop.DropForProbeAsync(() => Task.FromResult<IReadOnlyList<NativeFileDropItem>>([new("C:/synthetic-ui/folder", false)])),
                 "A folder was admitted as a file.");
             await Until("scoped B error", () => Find<TextBlock>(root, "live-upload-error") is { IsLoaded: true, Visibility: Visibility.Visible });
