@@ -41,6 +41,16 @@ Check(!controller.Bind(null, "1:family-a:1") && controller.Scope is null, "Missi
 Check(controller.Bind("A", "1:family-a:1") && Open(NativePersonalSurfaceKind.People).Visit > returned.Visit, "Logout reset the monotonic visit counter.");
 checks.Add("missing or incomplete credentials close surfaces without resetting the visit sequence");
 
+var replacement = new NativePersonalSurfaceController();
+replacement.Bind("A", "1:family-a:1");
+var retired = controller.Scope!;
+var mounted = replacement.Open(NativePersonalSurfaceKind.People)!;
+Check(mounted.Visit > retired.Visit && mounted.UserId == retired.UserId && mounted.SessionStamp == retired.SessionStamp,
+    "Recreating the component reused a visit under the same account and stamp.");
+Check(!replacement.Current(retired with { }) && !controller.Current(mounted) && replacement.Current(mounted with { }),
+    "A stale callback from the retired controller matched the replacement's scope.");
+checks.Add("replacement controller under identical auth rejects old value-equal scope snapshots");
+
 string run = Path.Combine(args[0], "personal-surface-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(run);
 string receipt = Path.Combine(run, "receipt.json");
