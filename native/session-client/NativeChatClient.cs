@@ -20,7 +20,7 @@ internal sealed record NativeChatSnapshot(bool Connected, bool Loading, string? 
 
 // A transport projection of server events. Drafts and durable outbox work belong
 // to the application; this client never manufactures an accepted chat message.
-internal sealed class NativeChatClient : IAsyncDisposable
+internal sealed partial class NativeChatClient : IAsyncDisposable
 {
     private const string Protocol = "sproyt.chat.v1";
     private readonly object gate = new();
@@ -631,7 +631,7 @@ internal sealed class NativeChatClient : IAsyncDisposable
     }
     private static NativeMessage Newer(NativeMessage? current, NativeMessage incoming) => current is not null &&
         (current.DeletedAt is not null && incoming.DeletedAt is null || (current.DeletedAt ?? current.EditedAt ?? current.SentAt) > (incoming.DeletedAt ?? incoming.EditedAt ?? incoming.SentAt)) ? current : incoming.DeletedAt is null ? incoming : incoming with { Body = "" };
-    private sealed record SendFence(string UserId, string SessionStamp, string? Channel = null, long? ViewGeneration = null, long? ThreadGeneration = null);
+    private sealed record SendFence(string UserId, string SessionStamp, string? Channel = null, long? ViewGeneration = null, long? ThreadGeneration = null, ClientWebSocket? PersonalSocket = null);
     private void WakeMaintenance() { try { maintenance.Release(); } catch (SemaphoreFullException) { } }
     private async Task<JsonElement> CommandAsync(string type, object? payload, string? requestId, CancellationToken cancellationToken, SendFence? fence = null)
     {
@@ -644,7 +644,7 @@ internal sealed class NativeChatClient : IAsyncDisposable
                 NativeClientWire.Require(!disposed && connected && socket is { State: WebSocketState.Open });
                 if (fence?.ViewGeneration is long view) NativeClientWire.Require(SameView(fence.Channel!, view));
                 if (fence?.ThreadGeneration is long visit) NativeClientWire.Require(thread?.Generation == visit);
-                if (fence is not null) AdmitSocket(fence.UserId, fence.SessionStamp, connectedUser, connectedStamp, socket, socket, () => true);
+                if (fence is not null) AdmitSocket(fence.UserId, fence.SessionStamp, connectedUser, connectedStamp, socket, fence.PersonalSocket ?? socket, () => true);
                 bool transmit = false; Pending request;
                 if (pending.TryGetValue(requestId, out var existing)) { NativeClientWire.Require(existing.Wire == wire); request = existing; }
                 else { NativeClientWire.Require(pending.Count < 64); request = new Pending(wire, fence, type); pending.Add(requestId, request); transmit = true; }
@@ -717,7 +717,7 @@ internal sealed class NativeChatClient : IAsyncDisposable
                 // safely correlate it, so reads fail closed and mutations stay
                 // uncertain rather than being replayed by this transport.
                 lock (gate) foreach (var (id, request) in pending)
-                    request.Completion.TrySetException(request.Type is "load_thread" or "list_thread_summaries" or "list_channel_reactions"
+                    request.Completion.TrySetException(request.Type is "load_thread" or "list_thread_summaries" or "list_channel_reactions" or "list_users" or "list_mentions" or "list_tasks" or "list_my_channels"
                         ? new FrameCapacityException() : NativeCommandException.Uncertain(id));
                 continue;
             }
@@ -739,6 +739,15 @@ internal sealed class NativeChatClient : IAsyncDisposable
         lock (gate)
         {
             if (disposed || !connected || auth.Phase != NativeAuthPhase.Active || auth.UserId != connectedUser || auth.Generation != connectedGeneration || auth.SessionStamp != connectedStamp) return false;
+            Pending? correlated = null;
+            if (envelope.TryGetProperty("request_id", out var correlation) && correlation.ValueKind == JsonValueKind.String)
+                pending.TryGetValue(correlation.GetString()!, out correlated);
+            // Personal replies are consumed by the typed caller. A foreign
+            // success type must never apply chat data or set a global error.
+            if (correlated?.Fence?.PersonalSocket is not null && (correlated.Type != "list_my_channels" || type != "channels_listed"))
+                return true;
+            if (type == "channels_listed" && correlated?.Type != "list_my_channels")
+                return true;
             if (type == "hello") NativeClientWire.Require(payload.GetProperty("participant_id").GetString() == connectedUser);
             else if (type == "circles_listed")
             {
@@ -747,8 +756,22 @@ internal sealed class NativeChatClient : IAsyncDisposable
             }
             else if (type == "channels_listed")
             {
+                IReadOnlyList<NativeChannel> listed;
+                try
+                {
+                    listed = DecodeChannels(payload, circles);
+                    if (correlated?.Fence?.PersonalSocket is not null)
+                        NativeClientWire.Require(listed.All(c => Guid.TryParseExact(c.Id, "D", out _) && !string.IsNullOrWhiteSpace(c.Name) &&
+                            c.Kind is "public" or "local" or "private" && (c.DirectUserId is null || Guid.TryParseExact(c.DirectUserId, "D", out _))) &&
+                            listed.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count() == listed.Count);
+                }
+                catch (Exception e) when (correlated?.Fence?.PersonalSocket is not null && e is InvalidOperationException or FormatException or KeyNotFoundException)
+                {
+                    correlated.Completion.TrySetException(NativeCommandException.Uncertain(correlation.GetString()!));
+                    return true;
+                }
                 var prior = channels.ToDictionary(c => c.Id);
-                channels = DecodeChannels(payload, circles).Select(c => prior.TryGetValue(c.Id, out var known) ? c with { LastReadSequence = Math.Max(c.LastReadSequence, known.LastReadSequence), LatestSequence = Math.Max(c.LatestSequence, known.LatestSequence) } : c).ToArray();
+                channels = listed.Select(c => prior.TryGetValue(c.Id, out var known) ? c with { LastReadSequence = Math.Max(c.LastReadSequence, known.LastReadSequence), LatestSequence = Math.Max(c.LatestSequence, known.LatestSequence) } : c).ToArray();
                 if (selected is not null && !channels.Any(channel => channel.Id == selected)) { selected = null; ResetHistory(); }
             }
             else if (type is "messages_loaded" or "subscription_started")
@@ -890,6 +913,7 @@ internal sealed class NativeChatClient : IAsyncDisposable
     private static string SafeError(string value) => NativeClientWire.SafeMessage(value);
     private void SetCommandError(SendFence? fence, string value)
     {
+        if (fence?.PersonalSocket is not null) return;
         lock (gate)
         {
             if (fence?.ViewGeneration is long generation && !SameView(fence.Channel!, generation)) return;

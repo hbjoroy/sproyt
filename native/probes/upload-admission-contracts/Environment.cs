@@ -100,6 +100,7 @@ internal sealed partial class LiveApplication
     private readonly NativeAuthSession _authentication = new();
     private readonly CancellationTokenSource _lifetime = new();
     private bool _closing;
+    private bool ConversationCovered => false; // This headless upload fixture has no personal surface.
     private string _account = Probe.User;
     private readonly string _directory = "unused-synthetic-store";
     private readonly ChatWorkspace _workspace = new();

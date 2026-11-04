@@ -11,7 +11,10 @@ Tredje pulje ligg på `codex/native-thread-actions` i
 `S:/Source/sproyt-native-conversations`. Ho byggjer på `9c0c456` i den
 framleis opne [PR #331](https://github.com/hbjoroy/sproyt/pull/331).
 Pulja omfattar trådar, reaksjonar og handlingar på eigne meldingar.
-Fjerde pulje byggjer vidare på denne greina med riktekst og opplasting. Innboks står framleis att i [funksjonsmatrisa](native-canary-parity-matrix.md).
+Fjerde pulje byggjer vidare på denne greina med riktekst og opplasting,
+og femte pulje legg til biletvisar og filslipp. Sjette pulje tek eit
+avgrensa snitt av personar, innboks og profil; desse radene har framleis
+delvis dekning i [funksjonsmatrisa](native-canary-parity-matrix.md).
 Sjå [Astra-planen](native-canary-parity-plan.md) for vidare rekkjefølgje og
 [baseline-statusen](native-client-status-2026-11-03.md) for utgangspunktet.
 
@@ -155,13 +158,17 @@ vedleggsmetadata avvist. Gamle kø-payload-byte blir ikkje skrivne om.
 Tilbakeføring krev eit testa app/DLL-par og ein kompatibel profilbackup.
 Migreringsprøvene dekkjer også rollback ved feil under tabellkopieringa.
 
-## Neste UI-pulje
+## Vidare arbeid etter sjette pulje
 
 1. Prøve fysisk input og lesing/meldingshandlingar med to brukarar mot den
    aktuelle Canary-kandidaten; halde hosted CI skilt frå denne live-aksepten.
-2. Kople favorittar, meldings- og trådlenkjer frå eksterne flater og innboks
-   til navigasjonen med bevart utkast og leseposisjon.
-3. Utvide trygg rik tekst og delte visings- og handlingskontraktar for media,
+2. Leggje til utviding av DM til gruppesamtale, oppgåveoppretting og
+   lagra statusar/emoji.
+   Dei grunnleggjande person-, profil- og innboksflatene under er ikkje
+   ei erklæring om full dekning av desse brukaroppgåvene.
+3. Kople favorittar, eksterne meldings-/trådlenkjer og kaldstart til
+   navigasjonen; varslingspreferansar og OS-varsling har eigne attståande flowar.
+4. Utvide trygg rik tekst og delte visings- og handlingskontraktar for media,
    invitasjonar, agentkort og arbeidskort.
 
 Integrator eig framleis sentrale appfiler. Arbeidarane får separate
@@ -238,4 +245,46 @@ Delvis opptak blir oppgjeve som N av M, utan automatisk rollback eller retry.
 Kjeldebyte og program-DLL-hash er med i [kvitteringa](evidence/native-media-interaction-2026-11-04.json).
 README var einaste ucommitta native-fil under sluttkøyringa; ingen kompilert
 kode hadde lokale endringar. Full CI blir følgd i PR-en.
+
+## Sjette pulje: personar, innboks og profil
+
+Denne pulja byggjer vidare på biletvisar- og filslipp-pulja i
+[PR #337](https://github.com/hbjoroy/sproyt/pull/337). Astra planlegg og
+går gjennom kontraktane. Fire arbeidsspor deler typa personlege kommandoar,
+innboks, person-/profilflater og integrasjon med faktiske WinUI-kontrollar.
+Pulja bruker eksisterande chatkommandoar; nye REST-endepunkt, backendutrulling
+og handlingar mot ekte brukardata inngår ikkje i dette arbeidet.
+
+| Rad | Implementert brukarflow | Avgrensing |
+| --- | --- | --- |
+| PAR-018 | Søkje personar på visningsnamn og brukarnamn, med eigen konto filtrert bort, og opne eller opprette ei ein-til-ein-samtale. Kanallista blir oppdatert før navigasjon. | Utviding til privat gruppesamtale står att. Personsøk bruker den henta personlista, ikkje eit nytt serversøk. |
+| PAR-023 uleste/omtalar | Sjå uleste samtalar frå stadfesta kanaldata, opne kjelda til ei omtale og velje Marker lesen eksplisitt. Omtalar med trådforelder får presist trådmål. | Omtalelista er dei opptil 200 nyaste tilgjengelege omtalane; protokollen har inga paginering for eldre omtalar. Å opne innboksen merker ikkje samtalane lesne. |
+| PAR-023 oppgåver | Sjå eigne tildelte oppgåver og velje Ferdig eller Opne att, med eigen status for kvar oppgåve og korrelert kvittering. | Oppgåveoppretting er ikkje del av snittet. Oppgåvelista har ei klientgrense og blir ikkje presentert som komplett dersom ho ikkje kan lastast innanfor henne. |
+| PAR-002 kjelde og retur | Opne eit kjent kanal-/meldings-/trådmål frå innboksen og gå tilbake gjennom verten si navigasjon, med samtaleutkast og leseposisjon eigde av dei eksisterande samtalekomponentane. | Ei oppgåve utan uavhengig kjent kjeldemelding får berre Opne samtalen. Ein utilgjengeleg kanal sperrar kjeldehandlinga utan å fjerne den tildelte oppgåva. Eksterne lenkjer og kaldstart står att. |
+| PAR-024 | Endre eige visningsnamn, statustekst og statusemoji, og tømme status med eit eksplisitt brukarval. Utkast i felta og stadfesta profil er skilde. | Lagra statusval, lagra emoji og dei andre kontofunksjonane frå web står att. Varslingspreferansar og OS-varsling er ikkje leverte av denne pulja. |
+
+Dei personlege flatene deler den eksisterande transport- og kontoeigaren.
+Førespurnads-ID, venta hendingstype, ressurs-ID, full øktidentitet og konkret
+flatebesøk må stemme før eit svar kan endre UI. Ein sein listeoperasjon kan
+ikkje rulle tilbake ei nyare stadfesta lese- eller oppgåvekvittering.
+Avslag bevarer den stadfesta tilstanden. Uvisst utfall får ei eiga handling
+for å lese servertilstanden tilbake; kontrollen gjentek ikkje skrivehandlinga
+automatisk. Det gjeld òg DM-opning og profil/status.
+
+Tilbakekalla kanaltilgang fjernar både vanlege og haldne uavklarte omtalar,
+inkludert avsendar, kanalnamn og meldingstekst. Seine listesvar eller
+lesekvitteringar kan ikkje hente dei tilbake. Tildelte oppgåver har ei anna
+serverkontrakt: dei kan framleis visast og fullførast, medan kjelda blir
+utilgjengeleg. Oppgåvekontrakten har ikkje foreldre-ID eller sekvens for
+kjeldemeldinga; klienten finn difor ikkje på eit presist meldingsmål.
+
+Dette er delvis dekning av PAR-018, PAR-023 og PAR-024, med eit avgrensa
+tillegg til PAR-002. Utviding av DM til gruppesamtale, oppgåveoppretting,
+lagra statusar/emoji, favorittar, varslingspreferansar og OS-varsling er
+eksplisitt vidare arbeid. Dei eksisterande grensene for samtaleutkast og
+varig sendekø er ikkje auka av denne pulja.
+Kjeldeidentitet, resultat frå kontraktprøver, faktisk WinUI-integrasjon og
+hosted CI skal førast i sluttkvitteringa for denne pulja. Denne oppdateringa
+registrerer kodeomfanget; ho godkjenner ikkje live Canary-aksept, fysisk
+input, skjermlesar eller lesesynkronisering mellom to ekte klientar.
 

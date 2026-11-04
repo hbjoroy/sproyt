@@ -37,6 +37,11 @@ Alle ti lokale klientkontraktgrupper, 34 Rust-lagertestar, HTTP-/media-prøvene 
 
 Sjå [implementasjonsstatusen for fjerde pulje](native-parity-implementation-status.md#fjerde-pulje-med-riktekst-og-opplasting) og [kvitteringa for fjerde pulje](evidence/native-richtext-uploads-2026-11-04.json).
 
+Femte og sjette pulje er førte som tillegg nedst i dokumentet. Sjette pulje
+har delvis dekning av personsøk/ein-til-ein-DM, personlege innboksar og
+eigen profil/status. Dei historiske «Native no»-radene under blir ikkje
+skrivne om til sluttakseptert paritet.
+
 ## Synk mot Canary og prod 4. november
 
 Begge `/versionz`-endepunkta vart kontrollerte 4. november kl. 13:58 UTC og
@@ -159,3 +164,27 @@ Den nye greina inkluderer main `bb103337ff505bcd19f99ab2c319db4d94e9c694`.
 Den avgrensa backenden er alt på Canary frå før denne pulja; produksjon står
 på `e3ac63e9c751289c7f6d1b5f0c17ba13b5cfee5d`. Ingen server- eller
 produksjonsutrulling blir gjord av denne pulja.
+
+## Sjette pulje: personar, innboks og profil
+
+Det nye snittet byggjer på mediearbeidet i
+[PR #337](https://github.com/hbjoroy/sproyt/pull/337) og bruker eksisterande
+chatkommandoar utan nye REST-endepunkt eller backendutrulling.
+
+| Rad | Ny delvis dekning | Attståande omfang eller aksept |
+| --- | --- | --- |
+| PAR-018 | Personsøk på namn/brukarnamn, sjølvfilter og opning/oppretting av ein-til-ein-DM. Stadfesta kanalliste styrer navigasjonen. | Utviding til privat gruppesamtale og endeleg live-aksept står att. |
+| PAR-023 | Uleste samtalar frå serverdata, dei opptil 200 nyaste tilgjengelege omtalane, eksplisitt omtale-lesing og eigne tildelte oppgåver med Ferdig/Opne att. Feil blir knytte til handlinga, med kontroll av servertilstanden ved uvisst utfall. | Ingen eldre omtalesider eller oppgåveoppretting. Ei oppgåve utan kjent kjeldemelding har berre kanalopning; utilgjengeleg kjelde sperrar navigasjon og bevarer oppgåva. |
+| PAR-024 | Eige visningsnamn, statustekst/statusemoji og tømming av status, med skilde utkast og stadfesta verdiar. | Lagra statusar/emoji og andre kontofunksjonar står att; PAR-026/027 varslingspreferansar og OS-varsling er ikkje del av leveransen. |
+| PAR-002 | Intern opning av kjent omtale-/oppgåvekjelde og retur gjennom det eksisterande samtaleskallet. | Presise oppgåvemål krev uavhengig kjeldemetadata. Eksterne lenkjer og kaldstart står framleis att. |
+
+Tilgangstap fjernar omtaleinnhald og haldne omtalehandlingar; gamle svar
+skal ikkje gjenopprette dei. Oppgåvelista følgjer serveren si tildeling,
+med separat kontroll av kjeldetilgangen. Konto, full økt og flatebesøk
+gjerder alle asynkrone resultat. Ingen uvisse skrivehandlingar blir
+spelte automatisk om att.
+
+Sjå [sjette pulje i implementasjonsstatusen](native-parity-implementation-status.md#sjette-pulje-personar-innboks-og-profil)
+for avgrensingar. Endeleg kjeldeidentitet og testresultat blir registrerte
+i puljekvitteringa av integratoren. Dette tillegget er ikkje bevis på
+full funksjonsparitet eller fysisk/autentisert ende-til-ende-aksept.

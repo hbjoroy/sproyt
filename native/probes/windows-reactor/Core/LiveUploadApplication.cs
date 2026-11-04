@@ -219,6 +219,7 @@ internal sealed partial class LiveApplication
 
     private async Task ChangeUploadAsync(string user, string stamp, string id, Func<NativeUploadQueue, string, Task> change)
     {
+        if (ConversationCovered) return;
         var auth = Authentication; var queue = _uploads;
         if (queue is null || auth.UserId != user || auth.SessionStamp != stamp || _account != user ||
             !queue.Capture().Jobs.Any(job => job.Id == id && job.Target.UserId == user)) return;

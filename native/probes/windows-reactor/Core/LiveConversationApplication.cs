@@ -115,7 +115,7 @@ internal sealed partial class LiveApplication
     private bool CurrentActionScope(NativeMessageActionScope scope, bool requireConnection = true)
     {
         var auth = Authentication; var navigation = _navigation.Capture(); var chat = Chat;
-        if (_closing || auth.UserId != scope.UserId || auth.SessionStamp != scope.SessionStamp || auth.UserId != _account ||
+        if (_closing || ConversationCovered || auth.UserId != scope.UserId || auth.SessionStamp != scope.SessionStamp || auth.UserId != _account ||
             auth.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline) ||
             (requireConnection && (auth.Phase != NativeAuthPhase.Active || !chat.Connected)) ||
             navigation is not { Pending: false, Error: null, Current: { } current } || current.Generation != scope.ChannelVisit ||

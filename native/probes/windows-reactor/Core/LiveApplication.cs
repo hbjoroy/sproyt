@@ -256,7 +256,7 @@ internal sealed partial class LiveApplication : ILiveApplication
     public Task RetryPendingSendsAsync(string expectedUser, string expectedStamp)
     {
         var auth = Authentication;
-        if (!_closing && auth.Phase == NativeAuthPhase.Active && Chat.Connected && auth.UserId == expectedUser &&
+        if (!_closing && !ConversationCovered && auth.Phase == NativeAuthPhase.Active && Chat.Connected && auth.UserId == expectedUser &&
             auth.SessionStamp == expectedStamp && auth.UserId == _account && SameSendFamily(_admittedFamily, expectedStamp) &&
             _workspace?.State.Outbox.FirstOrDefault(item => item.State is not ("rejected" or "acknowledged")) is { } item &&
             SendFamily(expectedStamp) is string family)
@@ -270,11 +270,12 @@ internal sealed partial class LiveApplication : ILiveApplication
     public Task SelectAsync(string channel) => NavigateAsync(new(channel));
     public Task NavigateAsync(NativeNavigationTarget target)
     {
+        if (ConversationCovered) return Task.CompletedTask;
         SynchronizeNavigation();
         return NavigateVisitAsync(_navigation.Select(target));
     }
-    public Task BackAsync() { SynchronizeNavigation(); return NavigateVisitAsync(_navigation.Back()); }
-    public Task ForwardAsync() { SynchronizeNavigation(); return NavigateVisitAsync(_navigation.Forward()); }
+    public Task BackAsync() { if (ConversationCovered) return Task.CompletedTask; SynchronizeNavigation(); return NavigateVisitAsync(_navigation.Back()); }
+    public Task ForwardAsync() { if (ConversationCovered) return Task.CompletedTask; SynchronizeNavigation(); return NavigateVisitAsync(_navigation.Forward()); }
     public void SetNavigationQuery(string query) => _navigation.SetQuery(query);
     public void SetNavigationScope(NativeNavigationDirectoryScope scope) => _navigation.SetDirectoryScope(scope);
     public void SetNavigationInteraction(bool interacting) => _navigation.SetInteraction(interacting);
@@ -390,12 +391,12 @@ internal sealed partial class LiveApplication : ILiveApplication
     }
     public void Edit(string channel, string body)
     {
-        if (_closing || !ShowConversation || _workspace is null) return;
+        if (_closing || ConversationCovered || !ShowConversation || _workspace is null) return;
         _workspace.EnsureChannels([channel]); _workspace.EditDraft(channel, body);
     }
     public async Task SendAsync(string channel)
     {
-        if (_closing || !ShowConversation || _workspace is null || Authentication.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline)) return;
+        if (_closing || ConversationCovered || !ShowConversation || _workspace is null || Authentication.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline)) return;
         try
         {
             ApproveEmptyQueue();
@@ -408,7 +409,7 @@ internal sealed partial class LiveApplication : ILiveApplication
     public Task ConfirmPendingSendsAsync(string expectedUser, string expectedStamp)
     {
         var auth = Authentication;
-        if (!_closing && auth.UserId == expectedUser && auth.SessionStamp == expectedStamp && auth.UserId == _account && auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline)
+        if (!_closing && !ConversationCovered && auth.UserId == expectedUser && auth.SessionStamp == expectedStamp && auth.UserId == _account && auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline)
         {
             try
             {
@@ -422,7 +423,7 @@ internal sealed partial class LiveApplication : ILiveApplication
     public async Task DiscardRejectedAsync(string expectedUser, string expectedStamp, string requestId)
     {
         var store = _store; var workspace = _workspace; var auth = Authentication;
-        if (_closing || store is null || workspace is null || auth.UserId != expectedUser ||
+        if (_closing || ConversationCovered || store is null || workspace is null || auth.UserId != expectedUser ||
             auth.SessionStamp != expectedStamp || _account != expectedUser ||
             auth.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline) ||
             !workspace.State.Outbox.Any(item => item.RequestId == requestId && item.State == "rejected")) return;

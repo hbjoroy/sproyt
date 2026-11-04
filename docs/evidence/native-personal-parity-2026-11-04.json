@@ -1,0 +1,585 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-11-04T18:29:06.6229018+00:00",
+  "branch": "codex/native-personal-parity",
+  "pullRequest": "https://github.com/hbjoroy/sproyt/pull/338",
+  "basePullRequest": "https://github.com/hbjoroy/sproyt/pull/337",
+  "baseline": "2db569c085fe0d19d44dbe51c3c27b294ba7ac96",
+  "includedMain": "bb103337ff505bcd19f99ab2c319db4d94e9c694",
+  "testedSourceHead": "fe831260267a9df5d40f07c33d94a15d048df33f",
+  "sourceDirty": false,
+  "sourceHashKind": "SHA256 of tested workspace bytes before Git line-ending normalization",
+  "sourceHashes": [
+    {
+      "path": ".github/workflows/native-probe.yml",
+      "sha256": "d07012dc73c5e04551ef8a61ab25f8e6bbb42cca6ef4443384f960294cc21cdc"
+    },
+    {
+      "path": "native/probes/inbox-contracts/Fixture.cs",
+      "sha256": "99aefc4e47e2a04c3b0b698a0433ab7c01b376556a961119b3726b05e1d80ca1"
+    },
+    {
+      "path": "native/probes/inbox-contracts/InboxContracts.csproj",
+      "sha256": "720331adf4043d842f0b147a8e8ce02f71575548d4e9c124d08979b080f6849f"
+    },
+    {
+      "path": "native/probes/inbox-contracts/Program.cs",
+      "sha256": "8c09b88a8cb40ca6641ce2f7caf6e532c22ffccce606f34363ac2c8fec20909f"
+    },
+    {
+      "path": "native/probes/inbox-contracts/global.json",
+      "sha256": "5e6cfd5e105839af48ef44bb1dc0724ac8464f4f1446e26ef050730b7b32e00e"
+    },
+    {
+      "path": "native/probes/inbox-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/message-action-contracts/CoverContracts.cs",
+      "sha256": "04856ca23b7526462a36b3f6aa1d82040199b4a13e9eb1f9edb482931ee2273e"
+    },
+    {
+      "path": "native/probes/message-action-contracts/Program.cs",
+      "sha256": "140e0863749a1e90d35fc421a286e5da1b050f259a7b389c1f0e07436f2c5c28"
+    },
+    {
+      "path": "native/probes/people-contracts/Fixture.cs",
+      "sha256": "4906f9a852acb6e9d409599b449db64c15e083f71851b8cd9e4ddb36dbd55793"
+    },
+    {
+      "path": "native/probes/people-contracts/PeopleContracts.csproj",
+      "sha256": "a0adad411f8b277470a25dbb0338fd3580269970e39d4797a717daa9169faddf"
+    },
+    {
+      "path": "native/probes/people-contracts/Program.cs",
+      "sha256": "78df521a0057e5b0b7306b0222a8cdb80b29542d0844266dc3b0bb5ece05e044"
+    },
+    {
+      "path": "native/probes/people-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/people-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/personal-cover-contracts/Fixture.cs",
+      "sha256": "db45d32dcec410262abe3e1be94eed2368ceeee93c560a76446d50b1bc23ab39"
+    },
+    {
+      "path": "native/probes/personal-cover-contracts/PersonalCoverContracts.csproj",
+      "sha256": "90547be6006ad443905b32ce4532d0abd08735c0be40d5588371a69e33de00d5"
+    },
+    {
+      "path": "native/probes/personal-cover-contracts/Program.cs",
+      "sha256": "2057aad9f4a735e719872dd524cd2e3db1f3fa5d09531c172971e99496753a16"
+    },
+    {
+      "path": "native/probes/personal-cover-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/personal-cover-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/personal-surface-contracts/PersonalSurfaceContracts.csproj",
+      "sha256": "a689caed13bbd9a55905c6a1a73d0d7e9134a66ea520bc07b9f0e00605afff9e"
+    },
+    {
+      "path": "native/probes/personal-surface-contracts/Program.cs",
+      "sha256": "cb79f6716ac4edc90c162dba2376121291083aa869d8f967ae3ddc079126b1c7"
+    },
+    {
+      "path": "native/probes/personal-surface-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/personal-surface-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/personal-wire-contracts/FixtureServer.cs",
+      "sha256": "eadd3b9278c89f165b527043416125a02b889527a6c0deeb26fb1df02e2b4783"
+    },
+    {
+      "path": "native/probes/personal-wire-contracts/PersonalWireContracts.csproj",
+      "sha256": "24731d0059670f7d10c3466cbdfed5f5445021ca211bf6592c568467bff365ae"
+    },
+    {
+      "path": "native/probes/personal-wire-contracts/Program.cs",
+      "sha256": "b9f1e9ecdb878d24f0d959bcbbaa20fece873f3cc4584b8c0d710d5e859f060b"
+    },
+    {
+      "path": "native/probes/personal-wire-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/personal-wire-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/Environment.cs",
+      "sha256": "c8d287cc53b9da0213bf0684d51e871cb76b2e35349e6fe12ac72a1a5cab7943"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveApplication.cs",
+      "sha256": "5bece922f5ba8039f336559b3ea8e2b282680211aec8a77652a57463e8884c09"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveContracts.cs",
+      "sha256": "2bdedd08e4d739458ebae1f869d16f5f1356eacbcc682041370f51b06afbcaba"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveConversationApplication.cs",
+      "sha256": "f701eb24da24d49b5065f90dcee76a58f6a71b6acb23bfabf9d4fe9d15b9e8ae"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LivePersonalApplication.cs",
+      "sha256": "4828b594c7a71cdb64ffd4674339ef9bafabb96032e765e11d27032f62f0ba78"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveUploadApplication.cs",
+      "sha256": "449c94aed398843b4f7809c9a633539639907da7093af773d2cd4d174400e08d"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/Personal/NativePersonalSurfaceController.cs",
+      "sha256": "ab4a8a40da0defbdd81bd2dc3079614d8cf7ab802b2f66a89b831b78af846fce"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Inbox/Core/NativeInboxContracts.cs",
+      "sha256": "5035802a0e44c22ee897ed9657a96c5423a1e39584c448915073f77eec082368"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Inbox/Core/NativeInboxController.cs",
+      "sha256": "2f0fc497a4603b3c732e5a8e3bf86a5033a5956e0ca821e3b066826e1e7ed499"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Inbox/NativeInboxView.cs",
+      "sha256": "86237f04a99ec43b4f354700384928617c0368e04bbdfd6b6a3de65fa50853cf"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/MessageActions/NativeMessageActionController.cs",
+      "sha256": "05c45687dfd515052e72f02cd268fa9ecc703587fbff7915e3741358e7d8f47c"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/MessageActions/NativeMessageActionsView.cs",
+      "sha256": "ec15596aeb1f8ad982d7176c54854ba2701170addfe9ac07a297204d28c9c543"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/People/Core/NativePeopleController.cs",
+      "sha256": "fc087edc86ea23b5967be3c4ecd2153541b851aeda1013db24fecdaa00eee2e6"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/People/Core/NativePersonalViewContracts.cs",
+      "sha256": "87b28c87c9017387ad6cbc164695eeb33e7edd2b1dba6b282da45c14b9a7ea30"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/People/Core/NativeProfileController.cs",
+      "sha256": "5984273e6f73c3f04c97dfc33d0b7462d6137945428b4851d3683c4388ffe712"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/People/NativePeopleView.cs",
+      "sha256": "028e6c953b4844fa5c5edecc44178ae3b1f1b284d6509fa71763958bc8642062"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/People/NativeProfileView.cs",
+      "sha256": "c618a67786dd962b4e2265a5787153f62273a17480f57bae2ea181d81d29b065"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveChatComponent.cs",
+      "sha256": "a667bda9b3f4acd7e9b565c6e03d3b9630b1a03ad8482d84fee2f040699a2fba"
+    },
+    {
+      "path": "native/probes/windows-reactor/LivePersonalNavigationUiProbe.cs",
+      "sha256": "85dd42ba6641566f9cc5ce0cf0b0eb3ed462c43a8dbdb54adb6acfc27f60911f"
+    },
+    {
+      "path": "native/probes/windows-reactor/LivePersonalSurface.cs",
+      "sha256": "e24d12e836e16117feb6f95b4db14781592712f13399f9f996278d4b4e58bc95"
+    },
+    {
+      "path": "native/probes/windows-reactor/LivePersonalUiProbe.cs",
+      "sha256": "530ba1015c306b3b277c50cb07808d759516cc79c6eb7d98c79d1e91f9e1ec76"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveUiProbe.cs",
+      "sha256": "0d660263d9ff30a5821a492d2972d0c9eaf9515dd1740de67aa93d7b408dac5d"
+    },
+    {
+      "path": "native/probes/windows-reactor/PersonalUiFixtureCommands.cs",
+      "sha256": "1884a9825fce3a7ecb6454bb322cf77e65808d394550882ace4ac0e84aa979c6"
+    },
+    {
+      "path": "native/session-client/NativeChatClient.cs",
+      "sha256": "9254ec2482c3d278d822e2ae48c2db2e5d348529872415d62247455e668598a8"
+    },
+    {
+      "path": "native/session-client/NativePersonalCommands.cs",
+      "sha256": "c2d0acd8833fcca33ea3b9f31ef35d62714d6dccbfe5bec38a42466f1954af4a"
+    },
+    {
+      "path": "native/session-client/NativePersonalWire.cs",
+      "sha256": "98bac99e95a73aa222cf0dd959450e0bba4183a51aec5b963e930f7f2de24e79"
+    }
+  ],
+  "implemented": [
+    "People search by display name/handle and verified one-to-one DM",
+    "Unread channels, newest 200 mentions and explicit read acknowledgement",
+    "Assigned tasks done/reopen; known exact source or labelled channel fallback",
+    "Explicit own name/status save and clear with canonical masthead",
+    "Uncertain mutation readback without automatic replay",
+    "Account/full-stamp/monotonic-visit fencing and retained conversation/edit controls",
+    "Compact source navigation, first DM without origin and revoked-origin return fence"
+  ],
+  "portableContractSource": "cde5661fc5245181f635cf0c3024f1e670ef2191",
+  "portableContractNote": "Portable sources were unchanged by the subsequent WinUI integration fixes; seven projects passed with locked restore and separate build directories.",
+  "results": {
+    "contracts": [
+      {
+        "project": "personal-wire-contracts",
+        "receipt": "C:\\Build\\native-personal-final-contracts\\run-1793816360792\\personal-wire-contracts\\tests\\personal-wire-1b8ed0abe19f406896e1ad8d8bb9b0e9\\receipt.json",
+        "result": {
+          "passed": true,
+          "scope": "native_personal_wire",
+          "actual_loopback_websocket": true,
+          "synthetic_authority": true,
+          "checks": [
+            "public directory projection",
+            "verified DM ACK and separate authoritative directory refresh",
+            "precise mention source and correlated read",
+            "assigned tasks complete and reopen",
+            "own name, Unicode status and explicit clear",
+            "pre-send own DM and byte/scalar validation",
+            "typed ACK, resource, ownership and malformed-directory isolation",
+            "personal rejection stays on its surface",
+            "oversize list reported without truncation or reconnect",
+            "logout while awaiting ACK; no mutation replay"
+          ],
+          "production_authentication": false
+        }
+      },
+      {
+        "project": "personal-surface-contracts",
+        "receipt": "C:\\Build\\native-personal-final-contracts\\run-1793816360792\\personal-surface-contracts\\tests\\personal-surface-eec8b1e64b13465995cbc356ca99c494\\receipt.json",
+        "result": {
+          "passed": true,
+          "scope": "native_personal_surface_owner",
+          "checks": [
+            "signed-out admission, unchanged binding and fresh per-surface visits",
+            "same-family rotation preserves the surface and invalidates old callbacks",
+            "close, same-account relogin and A to B to A discard the previous visit",
+            "missing or incomplete credentials close surfaces without resetting the visit sequence",
+            "replacement controller under identical auth rejects old value-equal scope snapshots"
+          ]
+        }
+      },
+      {
+        "project": "personal-cover-contracts",
+        "receipt": "C:\\Build\\native-personal-final-contracts\\run-1793816360792\\personal-cover-contracts\\tests\\personal-cover-ed2727f9f5564a5aa94ed223090c9464\\receipt.json",
+        "result": {
+          "passed": true,
+          "scope": "native_personal_application_cover",
+          "linked_production_partial": true,
+          "synthetic_authority": true,
+          "checks": [
+            "cover requires current workspace, account and full stamp",
+            "same-family rotation stays covered; stale removal ignored; equivalent current scope may clear",
+            "watermark prevents older or equal visits remasking after close",
+            "same-account relogin, account switch and sign-out invalidate old cover"
+          ]
+        }
+      },
+      {
+        "project": "people-contracts",
+        "receipt": "C:\\Build\\native-personal-final-contracts\\run-1793816360792\\people-contracts\\tests\\people-89f4b3b7a84044bd808ce0754ec65808\\receipt.json",
+        "result": {
+          "passed": true,
+          "scope": "synthetic_people_profile_controller_contracts",
+          "groups": [
+            "directory identity/search/read failures",
+            "direct ACK and canonical summary admission",
+            "uncertain direct readback without replay",
+            "people full-stamp/visit and stale read fences",
+            "own profile by ID and independent dirty drafts",
+            "profile ACK preserves newer name/status edits and clear",
+            "uncertain profile readback without replay",
+            "profile family retention and stale callbacks",
+            "correlated definite rejection and mismatched errors"
+          ],
+          "actualWinUi": false,
+          "actualTransport": false,
+          "productionAuthentication": false,
+          "storageAcceptance": false
+        }
+      },
+      {
+        "project": "inbox-contracts",
+        "receipt": "C:\\Build\\native-personal-final-contracts\\run-1793816360792\\inbox-contracts\\receipt.json",
+        "result": {
+          "passed": true,
+          "scope": "native_inbox_controller",
+          "checks": [
+            "authoritative unread counts, immutable snapshots and quiet binding",
+            "mention load has no read side effect and preserves exact reply source",
+            "tasks retain assignment with explicit channel fallback and unavailable source",
+            "loaded mentions provide independent exact task source hints",
+            "mark-read waits for matching receipt and duplicate click stays single",
+            "definitive rejection retains confirmed state and scoped message",
+            "uncertain mention has explicit readback with no automatic replay",
+            "uncertain task reads actual server state before another explicit change",
+            "missing uncertain target stays visible without invented result",
+            "wrong task/read receipts remain uncertain",
+            "late list cannot roll back a newer confirmed task/read acknowledgement",
+            "out-of-order refresh success/error cannot replace the newer list",
+            "full stamp and surface A-B-A visits fence delayed results",
+            "closing from a synchronous Changed callback prevents dispatch",
+            "oversized, duplicate and foreign lists fail atomically",
+            "unchanged directory bind preserves read failure until explicit retry",
+            "ambiguous source hints fall back to channel without guessing a thread",
+            "per-item concurrent work keeps separate pending states",
+            "membership loss purges mention metadata and fences late lists and read receipts",
+            "revoked channels remove orphan uncertain mentions and reject stale member-list content",
+            "bounded concurrent actions show a row error instead of silently dispatching more work"
+          ],
+          "notTested": [
+            "actual WinUI controls",
+            "live authenticated Canary",
+            "two-user read synchronization"
+          ]
+        }
+      },
+      {
+        "project": "message-action-contracts",
+        "receipt": "C:\\Build\\native-personal-final-contracts\\run-1793816360792\\message-action-contracts\\receipt.json",
+        "result": {
+          "passed": true,
+          "scope": "native_message_action_contract",
+          "actualWinUi": false,
+          "actualTransport": false,
+          "checks": [
+            "own-message permission",
+            "attachment preservation",
+            "edit conflict",
+            "delete confirmation",
+            "Unicode reactions",
+            "uncertain readback without automatic write",
+            "stale visit and account callbacks",
+            "covered input and mutation admission",
+            "hidden edits survive while server deletion takes effect",
+            "pending writes and readback settle under cover"
+          ]
+        }
+      },
+      {
+        "project": "upload-admission-contracts",
+        "receipt": "C:\\Build\\native-personal-final-contracts\\run-1793816360792\\upload-admission-contracts\\receipt.json",
+        "result": {
+          "passed": true,
+          "actual_application_source": true,
+          "actual_queue_source": true,
+          "synthetic_auth_disk_workspace": true,
+          "stage_cancelled_on_offline_logout_user_family": true,
+          "admission_wait_cancelled": true,
+          "rotation_navigation_preserve_target": true,
+          "close_cancels_before_disk_disposal": true,
+          "stale_scope_registration_rejected": true,
+          "cancellation_outside_auth_gate": true,
+          "definitive_capacity_keeps_retryable_ready": true,
+          "unknown_handoff_preserved": true,
+          "old_family_retirement_waits_for_existing_receipt": true,
+          "uncertain_settlement_retains_job": true,
+          "account_change_fences_late_retirement": true,
+          "counted_durable_admission": true,
+          "partial_batch_count": true,
+          "cancelled_batch_count": true,
+          "scoped_staging_errors": true,
+          "journal_failure_unconfirmed": true,
+          "actual_network": false,
+          "actual_disk_journal": false,
+          "actual_winui": false
+        }
+      }
+    ],
+    "windowsArm64": {
+      "schema": 1,
+      "scope": "windows_reactor_local_feasibility",
+      "sourceRevision": "fe831260267a9df5d40f07c33d94a15d048df33f",
+      "sourceDirty": false,
+      "architecture": "arm64",
+      "platform": "win-arm64",
+      "reactor": "0.1.0-preview.16",
+      "compiler": "Microsoft.Net.Compilers.Toolset 5.9.0",
+      "runtime": "win-arm64",
+      "nativeLibrarySha256": "7706f733526bc6ed6ba47e01f138019be958c8eadcf8962e934a4cd17d3a0087",
+      "executableSha256": "416c46230e84011e1a265643b86688bc80ebc111f7b2c842ceb4caecdf5640db",
+      "managedApplicationSha256": "7a581cf17f5ead36a877c0c91cd9ef75ead0d1d8276853876d36c6cfdc6a4d48",
+      "applicationPriSha256": "1c93954aab25ca97e589d93f2791562ac874ee8d0dbbfb7e4d5f6ad2b169afd2",
+      "coreTests": true,
+      "uiSmoke": {
+        "passed": true,
+        "architecture": "Arm64",
+        "materializedTextBlocks": 61,
+        "syntheticMessagesPerChannel": 1000,
+        "rasterizationScale": 2,
+        "keyboardViewportAvailable": true,
+        "compactWidthDip": 347,
+        "checks": [
+          "native WinUI tree",
+          "virtualization",
+          "editor identity and selection",
+          "independent drafts",
+          "reading position",
+          "light and dark semantic brushes",
+          "UI enqueue binding",
+          "own message visible",
+          "immediate send and navigation",
+          "debounced resize tail",
+          "resize preserves history reader",
+          "keyboard transition coalescing",
+          "overlay keyboard editor and tail visibility",
+          "no double keyboard inset",
+          "stable keyboard geometry",
+          "keyboard preserves history reader",
+          "compact layout",
+          "flush and reopen"
+        ],
+        "notTested": [
+          "physical keyboard and IME",
+          "touch",
+          "screen reader",
+          "visual screenshot approval",
+          "production"
+        ]
+      },
+      "uiResume": {
+        "passed": true,
+        "architecture": "Arm64",
+        "checks": [
+          "new app process",
+          "multiline editor hydration",
+          "second channel draft",
+          "queued message retained"
+        ]
+      },
+      "syntheticSessionUi": true,
+      "liveChatViewFixture": {
+        "passed": true,
+        "scope": "live_chat_view_fixture",
+        "actualWinUi": true,
+        "channelDrafts": true,
+        "sendBinding": true,
+        "compactComposer": true,
+        "circleGroups": true,
+        "decodedMediaPreview": true,
+        "boundedPreviewLeases": true,
+        "viewportPreviewGallery": 24,
+        "viewportRelease": true,
+        "stablePreviewGeometry": true,
+        "rapidPreviewReentry": true,
+        "portraitAndLandscape": true,
+        "originalAspectRatio": true,
+        "responsivePreviewWidth": true,
+        "macroCard": true,
+        "temporaryOriginalCleanup": true,
+        "timelinePaging": true,
+        "stableMessageAnchor": true,
+        "visibleReadOnly": true,
+        "navigationSearch": true,
+        "navigationDirectoryScopes": true,
+        "navigationBackForward": true,
+        "independentNavigationDrafts": true,
+        "variableHeightAnchor": true,
+        "threadOpenClose": true,
+        "threadDirectory": true,
+        "independentThreadDrafts": true,
+        "parentBoundReply": true,
+        "threadVisibleReadOnly": true,
+        "messageEdit": true,
+        "messageDeleteConfirmation": true,
+        "deletedThreadParent": true,
+        "reactionToggle": true,
+        "uncertainReactionReadback": true,
+        "nativeRichText": true,
+        "nativeTable": true,
+        "exactRawSource": true,
+        "literalCodeMarker": true,
+        "documentDownloadAction": true,
+        "rootAndThreadAttachmentChips": true,
+        "attachmentOnlySend": true,
+        "activeUploadBlocksSend": true,
+        "uploadCancelRetry": true,
+        "capturedPickerTarget": true,
+        "capturedFileDropTarget": true,
+        "threadFileDropTarget": true,
+        "scopedDropErrors": true,
+        "originalImageZoomControls": true,
+        "originalScaleAfterResize": true,
+        "imageSaveAction": true,
+        "mediaInvalidationClosesViewer": true,
+        "personalPeopleDirect": true,
+        "personalProfileStatus": true,
+        "personalInboxes": true,
+        "personalScopeReturn": true,
+        "productionAuthentication": false,
+        "actualTransport": false,
+        "storageAcceptance": false
+      },
+      "publishDirectory": "C:\\Build\\sproyt-windows-arm64-canary-20261104\\runs\\46d7767467fa4272adc65d13516c6829\\publish-win-arm64",
+      "notTested": [
+        "physical keyboard and IME",
+        "touch",
+        "screen reader",
+        "visual screenshot approval",
+        "production sync",
+        "production authentication",
+        "hard termination of the full WinUI process during live transport"
+      ]
+    },
+    "personalUi": {
+      "passed": true,
+      "actualWinUi": true,
+      "profileExplicitSave": true,
+      "canonicalHeader": true,
+      "dirtyReopen": true,
+      "equalNamePeople": true,
+      "directReadback": true,
+      "mentions": true,
+      "taskToggle": true,
+      "exactReplySource": true,
+      "inboxReturn": true,
+      "coveredSendDropRead": true,
+      "staleCloseFence": true,
+      "rootThreadDrafts": true,
+      "productionAuthentication": false,
+      "actualTransport": false,
+      "storageAcceptance": false
+    },
+    "personalNavigationUi": {
+      "passed": true,
+      "actualWinUi": true,
+      "compactListSource": true,
+      "revokedOriginReturn": true,
+      "firstDirectWithoutOrigin": true,
+      "syntheticFixture": true
+    }
+  },
+  "ci": {
+    "status": "pending",
+    "checks": "https://github.com/hbjoroy/sproyt/pull/338/checks",
+    "note": "Hosted observations are recorded separately in the local package after completion; no publish/deploy workflow requested."
+  },
+  "behavioralLimits": [
+    "Mentions limited to newest 200; no server cursor",
+    "Tasks without known source parent/sequence offer labelled channel navigation only",
+    "Group DM, task creation, saved status choices, notification preferences and OS notifications deferred",
+    "Existing 1024 UTF-8-byte message and eight draft/outbox limits remain",
+    "Profile drafts remain in memory for the same account/family; conversation drafts retain existing durable storage"
+  ],
+  "notTested": [
+    "Authenticated two-client Canary acceptance",
+    "Physical Explorer drag/drop, keyboard/IME, touch, screen reader, DPI transitions and file dialogs",
+    "Production"
+  ],
+  "dataEffects": "Only synthetic fixtures and test-owned local files; no live authentication, real user writes, backend changes, deployment or production configuration changes."
+}
