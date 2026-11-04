@@ -227,6 +227,18 @@ jobs:
         shell: pwsh
         working-directory: native/probes/navigation-contracts
         run: dotnet run --project NavigationContracts.csproj --artifacts-path '${{ runner.temp }}/native-navigation-contracts/build' -- '${{ runner.temp }}/native-navigation-contracts/tests'
+      - name: Check thread and message mutation transport
+        shell: pwsh
+        working-directory: native/probes/conversation-contracts
+        run: dotnet run --project ConversationContracts.csproj --artifacts-path '${{ runner.temp }}/native-conversation-contracts/build' -- '${{ runner.temp }}/native-conversation-contracts/receipt.json'
+      - name: Check thread presentation ownership
+        shell: pwsh
+        working-directory: native/probes/thread-feature-contracts
+        run: dotnet run --project ThreadFeatureContracts.csproj --artifacts-path '${{ runner.temp }}/native-thread-feature-contracts/build' -- '${{ runner.temp }}/native-thread-feature-contracts/tests'
+      - name: Check edit delete and reaction actions
+        shell: pwsh
+        working-directory: native/probes/message-action-contracts
+        run: dotnet run --project MessageActionContracts.csproj --artifacts-path '${{ runner.temp }}/native-message-action-contracts/build' -- '${{ runner.temp }}/native-message-action-contracts/receipt.json'
       - name: Preserve non-secret fixture receipts
         if: success()
         uses: actions/upload-artifact@v6
@@ -238,6 +250,9 @@ jobs:
             ${{ runner.temp }}/native-delivery-contracts/receipt.json
             ${{ runner.temp }}/native-history-contracts/receipt.json
             ${{ runner.temp }}/native-navigation-contracts/tests/**/receipt.json
+            ${{ runner.temp }}/native-conversation-contracts/receipt.json
+            ${{ runner.temp }}/native-thread-feature-contracts/tests/receipt.json
+            ${{ runner.temp }}/native-message-action-contracts/receipt.json
 
   kotlin-binding:
     runs-on: ubuntu-latest

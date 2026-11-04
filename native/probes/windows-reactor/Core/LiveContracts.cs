@@ -4,7 +4,7 @@ namespace Sproyt.WindowsProbe;
 // modules share its snapshot and actions instead of creating transport owners.
 internal sealed record LiveSnapshot(NativeAuthSnapshot Authentication, NativeChatSnapshot Chat,
     WorkspaceSnapshot? Workspace, bool ShowConversation, string? Error, bool ConfirmPendingSends = false,
-    bool DeliveryRetryPending = false, NativeNavigationSnapshot? Navigation = null)
+    bool DeliveryRetryPending = false, NativeNavigationSnapshot? Navigation = null, NativeThreadFeatureSnapshot? Threads = null)
 {
     public int RejectedSends => Workspace?.Outbox.Count(item => item.State == "rejected") ?? 0;
     public int PendingSends => Workspace?.Outbox.Count(item => item.State != "rejected") ?? 0;
@@ -32,6 +32,16 @@ internal interface ILiveApplication : IAsyncDisposable
     void RememberViewport(NativeNavigationVisit visit, NativeScrollAnchor anchor);
     Task LoadOlderAsync(string channel, long viewGeneration, string expectedUser, string expectedStamp, NativeNavigationVisit visit);
     Task MarkVisibleReadAsync(string channel, long viewGeneration, IReadOnlyList<string> messageIds, string expectedUser, string expectedStamp, NativeNavigationVisit visit);
+    Task OpenThreadDirectoryAsync(NativeMessageActionScope scope);
+    Task RefreshConversationAsync(NativeMessageActionScope scope);
+    Task CloseThreadAsync(NativeThreadVisit visit);
+    Task RetryThreadAsync(NativeThreadVisit visit);
+    void RememberThreadViewport(NativeThreadVisit visit, NativeScrollAnchor anchor);
+    Task MarkThreadVisibleReadAsync(NativeThreadVisit visit, long viewGeneration, long threadGeneration, IReadOnlyList<string> messageIds);
+    Task ExecuteMessageMutationAsync(NativeMessageMutation mutation);
+    Task<bool?> ReadBackMessageMutationAsync(NativeMessageMutation mutation);
+    void EditComposer(NativeMessageActionScope scope, string body);
+    Task SendComposerAsync(NativeMessageActionScope scope);
     void Edit(string channel, string body);
     Task SendAsync(string channel);
     Task ConfirmPendingSendsAsync(string expectedUser, string expectedStamp);

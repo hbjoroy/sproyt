@@ -1,0 +1,111 @@
+using Sproyt.WindowsProbe;
+
+var owner = new NativeMessageActionController();
+var scope = new NativeMessageActionScope("self", "full:1", "chan", 1);
+const string media = "[[media:00000000-0000-0000-0000-000000000001|image/jpeg|A%20B.jpg]]";
+var message = new NativeMessage("message", "chan", "self", "Meg", "gammal\n" + media, DateTimeOffset.UnixEpoch, 42);
+var writes = new List<NativeMessageMutation>();
+var reads = new List<NativeMessageMutation>();
+Exception? failure = null;
+bool? server = null;
+var commands = new NativeMessageActionCommands(m =>
+{
+    writes.Add(m);
+    return failure is null ? Task.CompletedTask : Task.FromException(failure);
+}, m => { reads.Add(m); return Task.FromResult(server); });
+
+owner.Bind(scope);
+owner.Open(scope, message with { AuthorId = "other" }, NativeMessageActionMode.Edit);
+Expect(owner.MessageId == null);
+owner.Open(scope, message with { AuthorId = "other" }, NativeMessageActionMode.Delete);
+Expect(owner.MessageId == null);
+owner.Open(scope, message, NativeMessageActionMode.Delete);
+Expect(writes.Count == 0);
+owner.Cancel(scope, message.Id);
+await owner.ConfirmAsync(scope, message, commands);
+Expect(writes.Count == 0);
+owner.Open(scope, message, NativeMessageActionMode.Edit);
+Expect(owner.Input == "gammal" && owner.HasAttachments);
+owner.ChangeInput(scope, message.Id, owner.Mode, "ny");
+await owner.ConfirmAsync(scope, message with { Body = "endra andre stader" }, commands);
+Expect(writes.Count == 0 && owner.Input == "ny" && owner.Error != null);
+failure = NativeCommandException.FromServer("r", "permission_denied", "Ingen tilgang.");
+await owner.ConfirmAsync(scope, message, commands);
+Expect(owner.Input == "ny" && owner.Error == "Ingen tilgang." && !owner.NeedsReadBack);
+Expect(writes.Single().Value == "ny\n" + media);
+failure = null;
+owner.ChangeInput(scope, message.Id, owner.Mode, "");
+await owner.ConfirmAsync(scope, message, commands);
+Expect(writes.Count == 2 && writes[^1].Value == media && owner.MessageId == null);
+var reply = message with { Id = "reply", ParentMessageId = "message" };
+Expect(!owner.Available(scope, reply) && !owner.Available(scope, message with { DeletedAt = DateTimeOffset.Now }));
+Expect(!owner.Available(scope, message with { Id = "pending:p" }));
+var thread = scope with { ThreadRootId = "message", ThreadVisit = 10 };
+owner.Bind(thread);
+Expect(owner.Available(thread, reply) && owner.Available(thread, message));
+const string emoji = "👩🏽‍💻";
+Expect(NativeMessageActionController.ValidEmoji(emoji) && !NativeMessageActionController.ValidEmoji("👍👍"));
+failure = new IOException("lost ACK");
+await owner.ToggleAsync(thread, reply, emoji, true, commands);
+Expect(writes.Count == 3 && writes[^1].ExpectedMine == false && writes[^1].MessageId == reply.Id);
+owner.Cancel(thread, reply.Id);
+await owner.ToggleAsync(thread, reply, emoji, true, commands);
+await owner.CheckAsync(thread, reply.Id, commands);
+Expect(owner.NeedsReadBack && writes.Count == 3 && reads.Single() == writes[^1]);
+server = false;
+await owner.CheckAsync(thread, reply.Id, commands);
+Expect(!owner.NeedsReadBack && owner.Error != null && writes.Count == 3);
+await owner.ToggleAsync(thread, reply, emoji, true, commands);
+server = true;
+await owner.CheckAsync(thread, reply.Id, commands);
+Expect(owner.MessageId == null && writes.Count == 4);
+var wait = new TaskCompletionSource();
+var delayed = commands with { Execute = m => { writes.Add(m); return wait.Task; } };
+owner.Open(thread, reply, NativeMessageActionMode.Delete);
+var inFlight = owner.ConfirmAsync(thread, reply, delayed);
+await owner.ConfirmAsync(thread, reply, delayed);
+Expect(owner.Busy && writes.Count == 5);
+var next = thread with { SessionStamp = "full:2", ThreadVisit = 12 };
+owner.Bind(next);
+owner.Open(next, reply, NativeMessageActionMode.Edit);
+owner.ChangeInput(next, reply.Id, owner.Mode, "nytt utkast");
+wait.SetException(new IOException());
+await inFlight;
+await owner.ConfirmAsync(thread, reply, commands);
+Expect(!owner.Busy && !owner.NeedsReadBack && owner.Error == null && owner.Input == "nytt utkast" && writes.Count == 5);
+owner.Observe(next, [reply with { DeletedAt = DateTimeOffset.UtcNow }]);
+Expect(owner.MessageId == null);
+owner.Open(next, reply with { Body = "```\n" + media + "\n```" }, NativeMessageActionMode.Edit);
+Expect(!owner.HasAttachments && owner.Input.Contains(media));
+var otherVisit = next with { ThreadVisit = next.ThreadVisit + 2 };
+owner.Bind(otherVisit);
+await owner.ToggleAsync(next, reply, "👍", false, commands);
+Expect(writes.Count == 5);
+owner.Open(otherVisit, reply, NativeMessageActionMode.Edit);
+await owner.ConfirmAsync(otherVisit, reply, commands);
+Expect(owner.MessageId == null && writes.Count == 5);
+await owner.ToggleAsync(otherVisit, reply, "👍", false, commands);
+Expect(owner.NeedsReadBack);
+var late = new TaskCompletionSource<bool?>();
+var reading = owner.CheckAsync(otherVisit, reply.Id, commands with { ReadBack = _ => late.Task });
+owner.Bind(null);
+owner.Bind(otherVisit with { UserId = "other" });
+late.SetResult(false);
+await reading;
+Expect(owner.MessageId == null && !owner.Busy && owner.Error == null && !owner.NeedsReadBack);
+Expect(!NativeMessageActionController.ValidEmoji("A") && NativeMessageActionController.ValidEmoji("1️⃣"));
+Console.WriteLine("message action contracts passed");
+if (args.FirstOrDefault() is { } receipt)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(receipt))!);
+    await File.WriteAllTextAsync(receipt, System.Text.Json.JsonSerializer.Serialize(new
+    {
+        passed = true, scope = "native_message_action_contract", actualWinUi = false, actualTransport = false,
+        checks = new[] { "own-message permission", "attachment preservation", "edit conflict", "delete confirmation",
+            "Unicode reactions", "uncertain readback without automatic write", "stale visit and account callbacks" }
+    }));
+}
+static void Expect(bool satisfied, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(satisfied))] string? assertion = null)
+{
+    if (!satisfied) throw new InvalidOperationException(assertion);
+}

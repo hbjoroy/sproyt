@@ -11,6 +11,20 @@ søk og intern navigasjon, paginert rothistorikk, synleg-lesing og retry/backoff
 Sjå [implementasjonsstatusen](native-parity-implementation-status.md#andre-implementerte-snitt-dagleg-samtalebruk)
 for prøver og attståande delar. «Native no» under er framleis kartleggingsbaselinen.
 
+Tredje pulje 4. november byggjer vidare på PR #331. Fire rader er
+**delvis leverte** i dette snittet.
+
+| Rad | Tillegg etter kartlegginga | Attståande aksept eller omfang |
+| --- | --- | --- |
+| **PAR-005** | Målte trådsvar kan merkjast lesne, med stadfesta lesetilstand frå serveren. | Samspel mellom to ekte klientar. |
+| **PAR-006** | Trådoversikt, opning av eldre røter, separate utkast og varige svar med foreldre-ID. | Eksterne trådlenkjer ved kaldstart og trådar over kapasitetsgrensa. |
+| **PAR-008** | Redigering og stadfesta sletting av eigne røter og svar med bevarte vedlegg og slettemarkør. | Moderatorsletting og endeleg Canary-aksept. |
+| **PAR-009** | Emoji, tal, eigne val, kjende namn og kontroll av servertilstanden etter tapt kvittering. | Lagra emoji, full namnedekning og fysisk input. |
+
+Den integrerte WinUI-prøva og CI på GitHub står opne ved denne oppdateringa.
+Sjå [implementasjonsstatusen](native-parity-implementation-status.md#tredje-pulje-med-trådar-og-meldingshandlingar)
+og [kvitteringa for tredje pulje](evidence/native-thread-actions-2026-11-04.json).
+
 ## Baseline og tolking
 
 Målet er den deploya web-Canary-revisjonen `142f71888cdde11dec42a698432530e208f577bb`, som hovudagenten stadfesta gjennom live `/versionz`. Lokal HEAD ved kartlegging var `8715726e9fe11290f215a13cbc71261993942313`. Matrisen er lesen mot lokal kode og `git show`/`git grep` av den deploya revisjonen; differansen er kontrollert særskilt for panelbreidder, biletevisar, bileteverkstad og delingsmottak. Ingen checkout eller endring av eksisterande kode var nødvendig. Lokale, ucommitta family-app-endringar er ikkje del av Canary-baselinen.

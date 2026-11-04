@@ -19,7 +19,7 @@ public static class WorkspaceProbe
             Check(!LiveApplication.SameSendFamily(afterRestart.Family, "8:family-b:1"),
                 "Restart must not approve old queued sends for a new authentication family.");
         Check(!File.Exists(path) && !File.Exists(path + ".closing") && !File.Exists(path + ".terminal") &&
-            !File.Exists(path + ".beforecommit"), "Workspace probe refuses existing test databases.");
+            !File.Exists(path + ".beforecommit") && !File.Exists(path + ".delivery") && !File.Exists(path + ".threads"), "Workspace probe refuses existing test databases.");
         var forwarding = new ForwardingStore(await NativeSession.OpenAsync(path, libraryPath).ConfigureAwait(false));
         var workspace = new ChatWorkspace(forwarding, Channels);
         await workspace.InitializeAsync().WaitAsync(Deadline).ConfigureAwait(false);
@@ -127,7 +127,45 @@ public static class WorkspaceProbe
         await VerifyTerminalCleanupAsync(path + ".terminal", libraryPath).ConfigureAwait(false);
         await VerifyRetryFirstAdmissionAsync(path + ".beforecommit", libraryPath).ConfigureAwait(false);
         await VerifyDeliveryReconciliationAsync(path + ".delivery", libraryPath).ConfigureAwait(false);
+        await VerifyThreadTargetsAsync(path + ".threads", libraryPath).ConfigureAwait(false);
         return $"PASS Windows workspace: coalesced revisions, durable retry capture, capacity, recoverable flush and terminal cleanup; database={path}";
+    }
+
+    private static async Task VerifyThreadTargetsAsync(string path, string libraryPath)
+    {
+        const string body = "Identical text in three composers";
+        string channel = Channels[0];
+        var first = new ComposerTarget(channel, "thread-one");
+        var second = new ComposerTarget(channel, "thread-two");
+        var session = await NativeSession.OpenAsync(path, libraryPath, clearEmptyDraft: true);
+        var workspace = new ChatWorkspace(new NativeWorkspaceStoreAdapter(session), Channels);
+        await workspace.InitializeAsync().WaitAsync(Deadline);
+        workspace.EditDraft(channel, body);
+        workspace.EnsureChannels([first.Key]);
+        workspace.EditDraft(first.Key, body);
+        workspace.EnsureChannels([second.Key]);
+        workspace.EditDraft(second.Key, body);
+        await SavedAsync(workspace);
+        await workspace.SendAsync(first.Key).WaitAsync(Deadline);
+        await SavedAsync(workspace);
+        var queued = workspace.State.Outbox.Single();
+        Check(queued.Channel == channel && queued.ParentMessageId == first.ParentMessageId && queued.Body == body,
+            "Reply admission lost the canonical channel, parent or body.");
+        await session.DeliveryAsync(queued.RequestId, "dispatch");
+        await workspace.ShutdownAsync().WaitAsync(Deadline);
+
+        var reopened = await NativeSession.OpenAsync(path, libraryPath, clearEmptyDraft: true);
+        var restored = new ChatWorkspace(new NativeWorkspaceStoreAdapter(reopened), Channels);
+        await restored.InitializeAsync().WaitAsync(Deadline);
+        var state = restored.State;
+        Check(state.Outbox.Single() == (queued with { State = "uncertain" }) && state.Drafts[channel].Body == body &&
+            state.Drafts[second.Key].Body == body && !state.Drafts.ContainsKey(first.Key),
+            "Restart lost a thread target or consumed another composer's identical draft.");
+        for (int visit = 0; visit < 530; visit++)
+            restored.EnsureChannels([new ComposerTarget(channel, $"unwritten-{visit}").Key]);
+        Check(restored.State.Drafts.Count == Channels.Length + 2 && restored.State.Drafts[second.Key].Body == body,
+            "Clean thread visits accumulated or displaced a nonempty draft.");
+        await restored.ShutdownAsync().WaitAsync(Deadline);
     }
 
     private static async Task VerifyDeliveryReconciliationAsync(string path, string libraryPath)

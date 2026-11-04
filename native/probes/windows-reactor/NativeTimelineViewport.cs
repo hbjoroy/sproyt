@@ -9,7 +9,8 @@ using Windows.Foundation;
 namespace Sproyt.WindowsProbe;
 
 internal sealed record NativeTimelineContext(string UserId, string SessionStamp, string ChannelId,
-    long ViewGeneration, NativeNavigationVisit Visit, IReadOnlyList<NativeMessage> Messages, bool Loading);
+    long ViewGeneration, NativeNavigationVisit Visit, IReadOnlyList<NativeMessage> Messages, bool Loading,
+    string? ThreadRootId = null, long ThreadGeneration = 0, long ThreadTransportGeneration = 0);
 internal sealed record NativeViewportObservation(NativeTimelineContext Context, NativeScrollAnchor Anchor,
     IReadOnlyList<string> VisibleMessageIds);
 
@@ -104,7 +105,9 @@ internal sealed class NativeTimelineViewport : IDisposable
     private static bool SameView(NativeTimelineContext? left, NativeTimelineContext? right) =>
         left is not null && right is not null && left.UserId == right.UserId &&
         Family(left.SessionStamp) == Family(right.SessionStamp) && left.ChannelId == right.ChannelId &&
-        left.ViewGeneration == right.ViewGeneration && left.Visit.Generation == right.Visit.Generation;
+        left.ViewGeneration == right.ViewGeneration && left.Visit.Generation == right.Visit.Generation &&
+        left.ThreadRootId == right.ThreadRootId && left.ThreadGeneration == right.ThreadGeneration &&
+        left.ThreadTransportGeneration == right.ThreadTransportGeneration;
     internal void UserIntentForProbe()
     {
         if (Program.LiveUiProbeDirectory is null) throw new InvalidOperationException("Viewport intent injection is only available in the UI fixture.");

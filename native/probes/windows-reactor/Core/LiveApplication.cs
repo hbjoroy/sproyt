@@ -6,7 +6,7 @@ namespace Sproyt.WindowsProbe;
 
 // Coordinates the existing durable draft/outbox owner with the live transport.
 // No token or provider credential is projected into the UI.
-internal sealed class LiveApplication : ILiveApplication
+internal sealed partial class LiveApplication : ILiveApplication
 {
     private readonly NativeAuthSession _authentication;
     private readonly NativeLoginClient _login;
@@ -37,6 +37,7 @@ internal sealed class LiveApplication : ILiveApplication
     private DeliveryNotice? _deliveryNotice;
     private readonly NativeNavigationController _navigation;
     private CancellationTokenSource? _navigationOperation;
+    private CancellationTokenSource _conversationVisitCancellation = new();
     private string? _navigationStamp;
     private NativeNavigationTarget? _navigationResume;
     public event Action? Changed;
@@ -44,20 +45,29 @@ internal sealed class LiveApplication : ILiveApplication
     public NativeChatSnapshot Chat => _chat.Snapshot;
     public WorkspaceSnapshot? Workspace => _workspace?.State;
     public NativeMediaLibrary Media { get; }
-    private string? ErrorFor(NativeAuthSnapshot auth) => _error ?? (_deliveryNotice is { } issue && issue.Matches(auth) ? issue.Message : null)
-        ?? Chat.Error ?? Workspace?.ErrorMessage;
+    private string? ErrorFor(NativeAuthSnapshot auth, NativeChatSnapshot chat, WorkspaceSnapshot? local) => _error ?? (_deliveryNotice is { } issue && issue.Matches(auth) ? issue.Message : null)
+        ?? chat.Error ?? local?.ErrorMessage;
     internal bool HasAccount => _workspace is not null && Authentication.UserId == _account;
     internal bool ShowConversation => HasAccount && Authentication.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline;
     public LiveSnapshot Capture()
     {
         SynchronizeNavigation();
-        var auth = Authentication; var workspace = _workspace; string? account = _account;
-        var local = workspace?.State; var chat = Chat; var after = Authentication;
-        bool same = ReferenceEquals(workspace, _workspace) && auth.UserId is not null && auth.UserId == account &&
-            auth.UserId == after.UserId && auth.SessionStamp == after.SessionStamp && auth.Phase == after.Phase && chat.UserId == auth.UserId;
-        return new(auth, chat, same ? local : null, same && local?.Ready == true && auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline, ErrorFor(after),
-            same && local?.Outbox.Any(item => item.State != "rejected") == true && !SameSendFamily(_admittedFamily, auth.SessionStamp),
-            same && _deliveryWakeTarget?.Scope == after.UserId + "/" + SendFamily(after.SessionStamp), FencedNavigation(after));
+        return _authentication.ProjectSnapshot(auth =>
+        {
+            var workspace = _workspace; var local = workspace?.State; var rawChat = Chat;
+            var chat = NativeChatClient.FenceAccountProjection(rawChat, auth);
+            bool same = ReferenceEquals(workspace, _workspace) && auth.UserId is not null && auth.UserId == _account && rawChat.UserId == auth.UserId;
+            var navigation = _navigation.Capture();
+            if (_navigationStamp != auth.SessionStamp || navigation.UserId != auth.UserId) navigation = null;
+            var threads = same ? _threads.Capture() : null;
+            if (threads?.UserId != auth.UserId || threads?.Visit is { } visit && (visit.SessionStamp != auth.SessionStamp ||
+                navigation?.Current?.Target.ChannelId != visit.ChannelId || navigation.Current.Target.ThreadId != visit.RootMessageId))
+                threads = null;
+            return new LiveSnapshot(auth, chat, same ? local : null, same && local?.Ready == true &&
+                auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline, ErrorFor(auth, chat, same ? local : null),
+                same && local?.Outbox.Any(item => item.State != "rejected") == true && !SameSendFamily(_admittedFamily, auth.SessionStamp),
+                same && _deliveryWakeTarget?.Scope == auth.UserId + "/" + SendFamily(auth.SessionStamp), navigation, threads);
+        });
     }
 
     private sealed record Authority(string Broker, string Instance, string Issuer);
@@ -67,6 +77,7 @@ internal sealed class LiveApplication : ILiveApplication
         _deliveryWake = new(Signal);
         _navigation = new(new NativeNavigationPreferenceStore(Path.Combine(directory, "navigation")));
         _navigation.Changed += Notify;
+        _threads.Changed += Notify;
         Media = new(owner, directory);
         _instance = config.Instance;
         _login = new(owner, config, Path.Combine(directory, "login"));
@@ -128,11 +139,13 @@ internal sealed class LiveApplication : ILiveApplication
     private void SynchronizeNavigation()
     {
         CancellationTokenSource? cancel = null;
+        NativeNavigationVisit? refresh = null;
         var resume = _authentication.ProjectSnapshot(auth =>
         {
             if (auth.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline) || auth.UserId is null || auth.SessionStamp is null)
             {
                 _navigation.BindScope(null, null); _navigationStamp = null; _navigationResume = null;
+                _threads.BindScope(null, null);
                 cancel = Interlocked.Exchange(ref _navigationOperation, null);
                 return (NativeNavigationVisit?)null;
             }
@@ -145,15 +158,17 @@ internal sealed class LiveApplication : ILiveApplication
                 cancel = Interlocked.Exchange(ref _navigationOperation, null);
             }
             _navigation.BindScope(auth.UserId, auth.SessionStamp);
+            _threads.BindScope(auth.UserId, auth.SessionStamp);
             var chat = Chat;
             if (chat.UserId != auth.UserId || !chat.Connected)
             {
                 _navigationResume = _navigation.Capture().Current?.Target;
                 return null;
             }
-            if (chat.Loading) return null;
+            if (chat.Loading || auth.UserId != _account || _workspace?.State.Ready != true) return null;
             _navigation.UpdateChannels(auth.UserId, auth.SessionStamp, chat.Channels);
-            var current = _navigation.Capture().Current;
+            SynchronizeThreadProjection(chat);
+            var navigation = _navigation.Capture(); var current = navigation.Current;
             if (_navigationResume is { } wanted)
             {
                 _navigationResume = null;
@@ -162,22 +177,34 @@ internal sealed class LiveApplication : ILiveApplication
             if (current is null && chat.SelectedChannel is string selected && chat.Channels.Any(item => item.Id == selected))
             {
                 var initial = _navigation.Select(new(selected));
-                if (initial is not null) _navigation.Complete(initial);
+                return initial;
+            }
+            if (!navigation.Pending && navigation.Error is null && current is not null && current.Target.ChannelId == chat.SelectedChannel &&
+                chat.History is { } history)
+            {
+                if (_metadataVisit == current.Generation && _metadataView != history.ViewGeneration)
+                {
+                    // An in-place history repair retired all transport projections.
+                    // Replace the visit once and reload its exact target and anchor.
+                    _metadataVisit = -1;
+                    return _navigation.RestartCurrent();
+                }
+                if (_metadataVisit != current.Generation)
+                {
+                    _metadataVisit = current.Generation; _metadataView = history.ViewGeneration;
+                    refresh = current;
+                }
             }
             return null;
         });
         try { cancel?.Cancel(); } catch (ObjectDisposedException) { }
         if (resume is not null) _ = NavigateVisitAsync(resume);
+        else if (refresh is not null) _ = RefreshConversationMetadataAsync(refresh);
     }
-    private NativeNavigationSnapshot? FencedNavigation(NativeAuthSnapshot expected)
-    {
-        return _authentication.ProjectSnapshot(auth =>
-        {
-            var navigation = _navigation.Capture();
-            return auth.UserId == expected.UserId && auth.SessionStamp == expected.SessionStamp && _navigationStamp == auth.SessionStamp && navigation.UserId == auth.UserId
-                ? navigation : null;
-        });
-    }
+    private bool AdmitNavigation(NativeNavigationVisit visit, Action admission) => _authentication.ProjectSnapshot(auth =>
+        !_closing && auth.UserId == visit.UserId && auth.SessionStamp == visit.SessionStamp && _account == auth.UserId &&
+        _navigation.AdmitCurrent(visit, admission));
+
     private void CancelDeliveryWake()
     {
         _deliveryWake.Cancel(); _deliveryWakeTarget = null;
@@ -253,20 +280,46 @@ internal sealed class LiveApplication : ILiveApplication
         if (visit is null || _closing || _workspace is null || !ShowConversation) return;
         var operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         CancellationTokenSource? previous = null;
-        if (!_navigation.AdmitCurrent(visit, () => previous = Interlocked.Exchange(ref _navigationOperation, operation)))
+        CancellationTokenSource? previousVisit = null;
+        if (!AdmitNavigation(visit, () =>
+            {
+                previous = Interlocked.Exchange(ref _navigationOperation, operation);
+                previousVisit = Interlocked.Exchange(ref _conversationVisitCancellation, new());
+            }))
         {
             operation.Dispose(); return;
         }
         try { previous?.Cancel(); } catch (ObjectDisposedException) { }
+        previousVisit?.Cancel(); previousVisit?.Dispose();
+        NativeThreadVisit? threadVisit = null;
         try
         {
-            if (!_navigation.IsCurrent(visit) || Authentication.UserId != visit.UserId || Authentication.SessionStamp != visit.SessionStamp) return;
-            if (visit.Target.ThreadId is not null) throw new InvalidOperationException("Dette samtalesnittet viser berre rotmeldingar.");
-            _workspace.EnsureChannels([visit.Target.ChannelId]);
+            if (!AdmitNavigation(visit, () => { _threads.Close(); _workspace.EnsureChannels([visit.Target.ChannelId]); })) return;
             var before = Chat;
             if (_navigation.Capture().Pending || before.SelectedChannel != visit.Target.ChannelId || before.Loading || before.Error is not null)
                 await _chat.SelectChannelAsync(visit.Target.ChannelId, operation.Token, expectedUserId: visit.UserId, expectedSessionStamp: visit.SessionStamp);
             if (!_navigation.IsCurrent(visit)) return;
+            if (visit.Target.ThreadId is string rootId)
+            {
+                if (!AdmitNavigation(visit, () =>
+                {
+                    threadVisit = _threads.Open(visit.Target.ChannelId, rootId);
+                    if (threadVisit is null) return;
+                    _workspace.EnsureChannels([new ComposerTarget(visit.Target.ChannelId, rootId).Key]);
+                    _threads.SaveAnchor(threadVisit, visit.Anchor);
+                }) || threadVisit is null) return;
+                var thread = await _chat.LoadThreadAsync(visit.Target.ChannelId, rootId, Chat.History!.ViewGeneration,
+                    visit.UserId, visit.SessionStamp, operation.Token);
+                if (!_navigation.IsCurrent(visit) || !_threads.IsCurrent(threadVisit)) return;
+                _threads.ApplyThread(threadVisit, thread);
+                bool found = visit.Target.MessageId is null && visit.Target.Sequence is null ||
+                    (thread.Root is null ? thread.Replies : new[] { thread.Root }.Concat(thread.Replies)).Any(item =>
+                        (visit.Target.MessageId is null || item.Id == visit.Target.MessageId) &&
+                        (visit.Target.Sequence is null || item.Sequence == visit.Target.Sequence));
+                if (thread.Error is not null || !found) _navigation.Fail(visit, thread.Error ?? "Meldinga finst ikkje i tråden.");
+                else _navigation.Complete(visit);
+                return;
+            }
             // Recover an older saved position from contiguous pages before
             // enabling visible-read reporting. No jump over an unknown gap.
             var wanted = visit.Target.Sequence ?? (!visit.Anchor.AtEnd ? visit.Anchor.Sequence : null);
@@ -294,7 +347,14 @@ internal sealed class LiveApplication : ILiveApplication
             else _navigation.Complete(visit);
         }
         catch (OperationCanceledException) when (operation.IsCancellationRequested) { }
-        catch { _navigation.Fail(visit, "Samtalen kunne ikkje opnast. Oppdater sambandet og prøv igjen."); }
+        catch
+        {
+            AdmitNavigation(visit, () =>
+            {
+                if (threadVisit is not null) _threads.Fail(threadVisit, "Tråden kunne ikkje hentast. Prøv igjen.");
+                _navigation.Fail(visit, "Samtalen kunne ikkje opnast. Oppdater sambandet og prøv igjen.");
+            });
+        }
         finally
         {
             Interlocked.CompareExchange(ref _navigationOperation, null, operation);
@@ -314,10 +374,12 @@ internal sealed class LiveApplication : ILiveApplication
     }
     public async Task MarkVisibleReadAsync(string channel, long viewGeneration, IReadOnlyList<string> messageIds, string expectedUser, string expectedStamp, NativeNavigationVisit visit)
     {
-        var auth = Authentication;
-        if (_closing || !_navigation.IsCurrent(visit) || auth.UserId != expectedUser || auth.SessionStamp != expectedStamp ||
-            _navigation.Capture() is not { Pending: false, Error: null, Current: { } current } || current.Target.ChannelId != channel) return;
-        try { await _chat.MarkVisibleReadAsync(channel, viewGeneration, messageIds, expectedUser, expectedStamp, _lifetime.Token); }
+        var scope = new NativeMessageActionScope(expectedUser, expectedStamp, channel, visit.Generation);
+        try
+        {
+            using var operation = AdmitMessageAction(scope);
+            await _chat.MarkVisibleReadAsync(channel, viewGeneration, messageIds, expectedUser, expectedStamp, operation.Token);
+        }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch { /* Unconfirmed read progress remains unconfirmed and retryable. */ }
     }
@@ -472,7 +534,7 @@ internal sealed class LiveApplication : ILiveApplication
                         SameSendFamily(_admittedFamily, current.SessionStamp) && Chat.Connected;
                 }
                 var result = await _delivery.DispatchAsync(item, store.DeliveryAsync,
-                    () => _chat.SendAsync(item.Channel, item.Body, item.RequestId, account, stamp, _lifetime.Token),
+                    () => _chat.SendAsync(item.Channel, item.Body, item.RequestId, account, stamp, _lifetime.Token, item.ParentMessageId),
                     Admitted, _lifetime.Token, ConsumeManualRetry(item.RequestId, account, stamp));
                 if (result.Outcome == LiveDeliveryOutcome.Acknowledged)
                 {
@@ -547,6 +609,7 @@ internal sealed class LiveApplication : ILiveApplication
     {
         if (_closing) return;
         _closing = true; _lifetime.Cancel();
+        _conversationVisitCancellation.Cancel(); _conversationVisitCancellation.Dispose();
         var navigation = Interlocked.Exchange(ref _navigationOperation, null);
         try { navigation?.Cancel(); } catch (ObjectDisposedException) { }
         _deliveryWake.Dispose();
@@ -554,6 +617,7 @@ internal sealed class LiveApplication : ILiveApplication
         await _pump; await CloseStoreAsync();
         _authentication.Changed -= ChangedState; _login.Changed -= ChangedState; _chat.Changed -= ChangedState;
         _navigation.Changed -= Notify;
+        _threads.Changed -= Notify;
         _authentication.Dispose(); _lifetime.Dispose();
     }
 }

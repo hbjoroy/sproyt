@@ -89,8 +89,13 @@ internal static class Program
         await using var client = new NativeChatClient(owner); await client.StartAsync();
         server.HoldNextPage = true; var page = Older(client); await Until(() => server.Held.Task.IsCompleted);
         int requests = server.Pages.Count; await Older(client); Check(server.Pages.Count == requests && client.Snapshot.History!.LoadingOlder);
+        int observedUpdates = 0;
+        void ObservedUpdate() => Interlocked.Increment(ref observedUpdates);
+        client.Changed += ObservedUpdate;
         await server.EditEvent(60, false); await server.EditEvent(61, true);
-        await Until(() => client.Snapshot.Messages.Any(m => m.Id == HistoryServer.Id(61) && m.DeletedAt is not null));
+        await Until(() => Volatile.Read(ref observedUpdates) >= 2);
+        client.Changed -= ObservedUpdate;
+        Check(client.Snapshot.Messages.All(m => m.Id != HistoryServer.Id(60) && m.Id != HistoryServer.Id(61)));
         server.Release.TrySetResult(); await page;
         Check(client.Snapshot.Messages.Single(m => m.Id == HistoryServer.Id(60)).Body == "Edited body");
         Check(client.Snapshot.Messages.Single(m => m.Id == HistoryServer.Id(61)).DeletedAt is not null);

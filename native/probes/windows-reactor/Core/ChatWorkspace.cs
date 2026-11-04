@@ -12,8 +12,16 @@ public interface IWorkspaceStore : IAsyncDisposable
 public sealed class NativeWorkspaceStoreAdapter(NativeSession session) : IWorkspaceStore
 {
     public Task<StoreSnapshot> SnapshotAsync() => session.SnapshotAsync();
-    public Task<long> SaveDraftAsync(string channel, string body) => session.SaveDraftAsync(channel, body);
-    public Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision) => session.EnqueueAsync(channel, body, requestId, expectedDraftRevision);
+    public Task<long> SaveDraftAsync(string channel, string body)
+    {
+        var target = ComposerTarget.FromKey(channel);
+        return session.SaveDraftAsync(target.ChannelId, body, target.ParentMessageId);
+    }
+    public Task<QueuedMessage> EnqueueAsync(string channel, string body, string requestId, long expectedDraftRevision)
+    {
+        var target = ComposerTarget.FromKey(channel);
+        return session.EnqueueAsync(target.ChannelId, body, requestId, expectedDraftRevision, target.ParentMessageId);
+    }
     public ValueTask DisposeAsync() => session.DisposeAsync();
 }
 
@@ -59,11 +67,23 @@ public sealed class ChatWorkspace
     {
         lock (_gate)
         {
-            foreach (string channel in channels)
+            var requested = channels.ToHashSet(StringComparer.Ordinal);
+            if (requested.Any(string.IsNullOrWhiteSpace)) throw new ArgumentException("Invalid channel.");
+            if (!_sending && _retry is null && requested.Any(ComposerTarget.IsThreadKey))
             {
-                if (string.IsNullOrWhiteSpace(channel)) throw new ArgumentException("Invalid channel.");
+                // Visits to empty threads do not consume a slot forever. A
+                // captured admission, unsaved edit or nonempty draft stays.
+                foreach (var idle in _drafts.Where(pair => ComposerTarget.IsThreadKey(pair.Key) && !requested.Contains(pair.Key) &&
+                    pair.Value.Body.Length == 0 && pair.Value.Revision == pair.Value.SavedRevision)
+                    .Select(pair => pair.Key).ToArray())
+                    _drafts.Remove(idle);
+            }
+            foreach (string channel in requested)
+            {
                 if (_drafts.ContainsKey(channel)) continue;
-                if (_drafts.Count == 512) throw new InvalidOperationException("Channel capacity reached.");
+                // 512 directory entries, eight persisted targets outside the
+                // directory, and the thread currently being opened.
+                if (_drafts.Count >= 512 + 8 + 1) throw new InvalidOperationException("Composer capacity reached.");
                 _drafts.Add(channel, new DraftState());
             }
         }
@@ -258,7 +278,11 @@ public sealed class ChatWorkspace
             lock (_gate)
             {
                 foreach (var draft in snapshot.Drafts)
-                    if (_drafts.TryGetValue(draft.Channel, out var state)) state.Body = draft.Body;
+                {
+                    if (!_drafts.TryGetValue(draft.Key, out var state))
+                        _drafts.Add(draft.Key, state = new DraftState());
+                    state.Body = draft.Body;
+                }
                 _outbox = snapshot.Outbox.ToList();
                 foreach (var item in _outbox)
                     if (item.RequestId.Length == 60 && item.RequestId.StartsWith("windows-", StringComparison.Ordinal) &&
