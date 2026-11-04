@@ -19,6 +19,7 @@ internal sealed class LiveUiFixture : ILiveApplication
     private readonly List<QueuedMessage> _outbox = [];
     private readonly List<NativeUploadJob> _uploadJobs = [];
     private readonly List<NativeChannel> _personalChannels = [];
+    private readonly HashSet<string> _excludedProbeChannels = [];
     private NativePersonalUiFixtureCommands? _personalCommands;
     private NativePersonalScope? _personalCover;
     internal NativePersonalUiFixtureCommands PersonalForProbe => _personalCommands ??= new(() => Authentication, () => Channels, AddPersonalChannel, () => _messages.ToArray());
@@ -30,6 +31,29 @@ internal sealed class LiveUiFixture : ILiveApplication
     {
         if (Channels.Any(existing => existing.Id == channel.Id)) return;
         _personalChannels.Add(channel); _drafts[channel.Id] = new("", 0, 0); SyncNavigation(); Changed?.Invoke();
+    }
+    internal void ExcludeChannelsForNavigationProbe(IEnumerable<string> ids)
+    {
+        _excludedProbeChannels.UnionWith(ids);
+        if (_excludedProbeChannels.Contains(_selected))
+        {
+            _selected = ""; _thread = null; _threads.Close(); _historyGeneration++;
+        }
+        SyncNavigation(); Changed?.Invoke();
+    }
+    internal Func<Task> CaptureNavigationProbeCleanup()
+    {
+        var personalChannels = _personalChannels.ToArray();
+        var drafts = _drafts.ToArray();
+        return () =>
+        {
+            _excludedProbeChannels.Clear();
+            _personalChannels.Clear(); _personalChannels.AddRange(personalChannels);
+            _drafts.Clear();
+            foreach (var draft in drafts) _drafts.Add(draft.Key, draft.Value);
+            SyncNavigation();
+            return ApplyVisit(_navigation.Select(new("channel-a")));
+        };
     }
     internal bool HoldNextUpload { get; set; }
     internal bool FailNextUpload { get; set; }
@@ -71,11 +95,13 @@ internal sealed class LiveUiFixture : ILiveApplication
     }
     public event Action? Changed;
     public NativeAuthSnapshot Authentication => _mediaFixture.Owner.Snapshot;
-    private IReadOnlyList<NativeChannel> Channels =>
+    private IReadOnlyList<NativeChannel> Channels => _excludedProbeChannels.Count == 0
+        ? AllChannels : AllChannels.Where(channel => !_excludedProbeChannels.Contains(channel.Id)).ToArray();
+    private IReadOnlyList<NativeChannel> AllChannels =>
         [new("channel-a", "Prat", "UI-prøve", "fixture-circle", LastReadSequence: _lastRead.GetValueOrDefault("channel-a"), LatestSequence: _messages.Where(item => item.ChannelId == "channel-a").Select(item => item.Sequence).DefaultIfEmpty(0UL).Max()),
          new("channel-b", "Idear", "UI-prøve", "fixture-circle", LastReadSequence: _lastRead.GetValueOrDefault("channel-b"), LatestSequence: _messages.Where(item => item.ChannelId == "channel-b").Select(item => item.Sequence).DefaultIfEmpty(0UL).Max()),
          new("channel-dm", "Testven", Kind: "direct", IsDirect: true), .._personalChannels];
-    public NativeChatSnapshot Chat => new(true, false, null, Channels, _selected,
+    public NativeChatSnapshot Chat => new(true, false, null, Channels, _selected.Length == 0 ? null : _selected,
         _messages.Where(message => message.ChannelId == _selected && message.ParentMessageId is null).OrderBy(item => item.Sequence).ToArray(), User,
         new(_selected, _historyGeneration, _loadingOlder, _historyMode && _selected == "channel-a" && _historyStart > 1,
             false, null, _messages.Where(item => item.ChannelId == _selected).Select(item => (ulong?)item.Sequence).Min(),
@@ -577,6 +603,7 @@ internal static class LiveUiProbe
             await LiveConversationUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await LiveContentUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await LivePersonalUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
+            await LivePersonalNavigationUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await NativeMediaInteractionUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await Program.PrepareShutdownAsync();
             File.WriteAllText(Path.Combine(folder,"live-ui-result.json"),JsonSerializer.Serialize(new
@@ -585,6 +612,7 @@ internal static class LiveUiProbe
                 threadOpenClose=true,threadDirectory=true,independentThreadDrafts=true,parentBoundReply=true,threadVisibleReadOnly=true,messageEdit=true,messageDeleteConfirmation=true,deletedThreadParent=true,reactionToggle=true,uncertainReactionReadback=true,
                 nativeRichText=true,nativeTable=true,exactRawSource=true,literalCodeMarker=true,documentDownloadAction=true,rootAndThreadAttachmentChips=true,attachmentOnlySend=true,activeUploadBlocksSend=true,uploadCancelRetry=true,capturedPickerTarget=true,
                 capturedFileDropTarget=true,threadFileDropTarget=true,scopedDropErrors=true,originalImageZoomControls=true,originalScaleAfterResize=true,imageSaveAction=true,mediaInvalidationClosesViewer=true,
+                personalPeopleDirect=true,personalProfileStatus=true,personalInboxes=true,personalScopeReturn=true,
                 productionAuthentication=false,actualTransport=false,storageAcceptance=false}));
             Program.CloseAfterShutdown(window);
         }
