@@ -31,7 +31,6 @@ internal static class LivePersonalUiProbe
             var retainedDrop = LiveChatComponent.RootDropForProbe!;
             var auth = fixture.Authentication; var nav = fixture.Capture().Navigation!.Current!;
             var rootScope = new NativeMessageActionScope(auth.UserId!, auth.SessionStamp!, "channel-a", nav.Generation);
-            var uploadTarget = fixture.CaptureUploadTarget(rootScope)!;
             int accepted = fixture.AcceptedMessageCount;
 
             await Open(root, NativePersonalSurfaceKind.Profile);
@@ -42,8 +41,8 @@ internal static class LivePersonalUiProbe
             await retainedSend();
             Require(!await retainedDrop.DropForProbeAsync(() => Task.FromResult<IReadOnlyList<NativeFileDropItem>>([new("C:/synthetic-personal/covered.pdf")])),
                 "A retained root drop was admitted through the personal surface.");
-            Require(await fixture.AddUploadFilesCountedAsync(uploadTarget, ["C:/synthetic-personal/covered-owner.pdf"]) == 0 && fixture.AcceptedMessageCount == accepted &&
-                fixture.Workspace.Drafts["channel-a"].ComposerText == RootDraft, "Covered application actions wrote chat or attachments.");
+            Require(fixture.CaptureUploadTarget(rootScope) is null && fixture.AcceptedMessageCount == accepted &&
+                fixture.Workspace.Drafts["channel-a"].ComposerText == RootDraft, "Covered surface admitted a new upload or sent chat.");
             int reads = fixture.ReadReports.Count;
             Program.LiveWindowActive = true; LiveChatComponent.TimelineForProbe?.ObserveSoon();
             await Task.Delay(250);
