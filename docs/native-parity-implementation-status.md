@@ -15,6 +15,22 @@ Fjerde pulje byggjer vidare på denne greina med riktekst og opplasting. Innboks
 Sjå [Astra-planen](native-canary-parity-plan.md) for vidare rekkjefølgje og
 [baseline-statusen](native-client-status-2026-11-03.md) for utgangspunktet.
 
+## Synk med siste leverte kode
+
+Den 4. november kl. 13:58 UTC rapporterte både Canary og prod
+`e3ac63e9c751289c7f6d1b5f0c17ba13b5cfee5d`, lik `origin/main`.
+Alle fire PR-greinene er synka i rekkjefølgje frå fundamentet til riktekst og
+opplasting, med vanlege merge-commits og utan konfliktar eller omskriven historikk.
+Dette tek inn #329, #333 og #335. Native-kode, serverdomene og wire-kontraktar
+er uendra av synken; funksjonsomfanget er det same.
+
+Den samla frontendkontrollen passerte 211 testar, og 23 lokale Chromium-scenario
+passerte for mottatte dokument, eksisterande biletflyt og den oppdaterte zoomen.
+CI-scope og browser-sharding passerte høvesvis 24 og 3 testar.
+Tidlegare testkvitteringar er bevarte som historiske bevis; nye kjeldeidentitetar
+og vidare CI-status er registrerte i [synkkvitteringa](evidence/native-main-sync-2026-11-04.json)
+og dei fire PR-ane. Ingen deploy eller produksjonsendring vart utført i denne synken.
+
 ## Første implementerte snitt
 
 | Pakke | Implementert | Vidare arbeid |

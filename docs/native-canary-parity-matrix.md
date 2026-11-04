@@ -37,9 +37,19 @@ Alle ti lokale klientkontraktgrupper, 34 Rust-lagertestar, HTTP-/media-prøvene 
 
 Sjå [implementasjonsstatusen for fjerde pulje](native-parity-implementation-status.md#fjerde-pulje-med-riktekst-og-opplasting) og [kvitteringa for fjerde pulje](evidence/native-richtext-uploads-2026-11-04.json).
 
+## Synk mot Canary og prod 4. november
+
+Begge `/versionz`-endepunkta vart kontrollerte 4. november kl. 13:58 UTC og
+rapporterte `e3ac63e9c751289c7f6d1b5f0c17ba13b5cfee5d`, som òg var `origin/main`.
+PR-stakken #330 → #331 → #332 → #334 er fletta fram til denne revisjonen.
+Tillegga frå main er innmeldingsgjenoppretting (#329), innvendig padding i
+komponisten (#333) og korrekt originalskala i biletvisaren (#335).
+Funksjonsomfanget og dei historiske baselineradene under er bevarte.
+Sjå [synkkvitteringa](evidence/native-main-sync-2026-11-04.json).
+
 ## Baseline og tolking
 
-Målet er den deploya web-Canary-revisjonen `142f71888cdde11dec42a698432530e208f577bb`, som hovudagenten stadfesta gjennom live `/versionz`. Lokal HEAD ved kartlegging var `8715726e9fe11290f215a13cbc71261993942313`. Matrisen er lesen mot lokal kode og `git show`/`git grep` av den deploya revisjonen; differansen er kontrollert særskilt for panelbreidder, biletevisar, bileteverkstad og delingsmottak. Ingen checkout eller endring av eksisterande kode var nødvendig. Lokale, ucommitta family-app-endringar er ikkje del av Canary-baselinen.
+Den opphavlege kartlegginga brukte den deploya web-Canary-revisjonen `142f71888cdde11dec42a698432530e208f577bb`, som hovudagenten stadfesta gjennom live `/versionz`. Lokal HEAD ved kartlegging var `8715726e9fe11290f215a13cbc71261993942313`. Matrisen er lesen mot lokal kode og `git show`/`git grep` av den deploya revisjonen; differansen er kontrollert særskilt for panelbreidder, biletevisar, bileteverkstad og delingsmottak. Gjeldande kodegrunnlag etter synken er registrert over; dei opphavlege observasjonane blir ikkje skrivne om. Lokale, ucommitta family-app-endringar er ikkje del av Canary-baselinen.
 
 React er standardgrensesnittet: `frontend/src/ui/react/development-selector.ts:1–6`. Namn som `preview-*` og `development-preview` tyder difor ikkje at funksjonen berre er ein lokal demo. `docs/sproyt-ui-parity-audit.md:19–74` har 49 eldre kontrollrader (C01–C25/A01–A24), men omfattar ikkje alle seinare produktfunksjonar. Dette dokumentet erstattar ikkje desse detaljane; det grupperer brukaroppgåvene for native-arbeidet og tek med dei nyare flatene.
 
