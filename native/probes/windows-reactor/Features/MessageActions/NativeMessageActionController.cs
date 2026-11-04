@@ -24,6 +24,8 @@ internal sealed partial class NativeMessageActionController
     private string? original;
     private string? initialInput;
     private long revision;
+    private bool covered;
+    internal void SetCovered(bool value) => covered = value;
     internal event Action? Changed;
     internal string? MessageId { get; private set; }
     internal NativeMessageActionMode Mode { get; private set; }
@@ -68,7 +70,7 @@ internal sealed partial class NativeMessageActionController
         (current.ThreadRootId is null ? message.ParentMessageId is null :
             message.Id == current.ThreadRootId || message.ParentMessageId == current.ThreadRootId);
     internal bool CanOpen(NativeMessageActionScope current, NativeMessage message) =>
-        Available(current, message) && !Busy && !NeedsReadBack && (MessageId is null || MessageId == message.Id);
+        !covered && Available(current, message) && !Busy && !NeedsReadBack && (MessageId is null || MessageId == message.Id);
     internal void Open(NativeMessageActionScope current, NativeMessage message, NativeMessageActionMode mode,
         IReadOnlyList<(int Start, int End)>? literalRanges = null)
     {
@@ -106,12 +108,12 @@ internal sealed partial class NativeMessageActionController
     }
     internal void Cancel(NativeMessageActionScope current, string id)
     {
-        if (scope != current || MessageId != id || Busy || NeedsReadBack) return;
+        if (covered || scope != current || MessageId != id || Busy || NeedsReadBack) return;
         Clear(); Changed?.Invoke();
     }
     internal void ChangeInput(NativeMessageActionScope current, string id, NativeMessageActionMode mode, string input)
     {
-        if (scope != current || MessageId != id || Mode != mode || Busy || NeedsReadBack || Input == input) return;
+        if (covered || scope != current || MessageId != id || Mode != mode || Busy || NeedsReadBack || Input == input) return;
         Input = input; Error = null; Changed?.Invoke();
     }
     internal async Task ConfirmAsync(NativeMessageActionScope current, NativeMessage message, NativeMessageActionCommands commands)
@@ -164,7 +166,7 @@ internal sealed partial class NativeMessageActionController
     }
     internal async Task CheckAsync(NativeMessageActionScope current, string id, NativeMessageActionCommands commands)
     {
-        if (current != scope || MessageId != id || Busy || uncertain is not { } mutation) return;
+        if (covered || current != scope || MessageId != id || Busy || uncertain is not { } mutation) return;
         long operation = ++revision;
         Busy = true; Changed?.Invoke();
         try

@@ -14,6 +14,8 @@ var commands = new NativeMessageActionCommands(m =>
     return failure is null ? Task.CompletedTask : Task.FromException(failure);
 }, m => { reads.Add(m); return Task.FromResult(server); });
 
+await CoverContracts.RunAsync(scope, message);
+
 owner.Bind(scope);
 owner.Open(scope, message with { AuthorId = "other" }, NativeMessageActionMode.Edit);
 Expect(owner.MessageId == null);
@@ -102,7 +104,7 @@ if (args.FirstOrDefault() is { } receipt)
     {
         passed = true, scope = "native_message_action_contract", actualWinUi = false, actualTransport = false,
         checks = new[] { "own-message permission", "attachment preservation", "edit conflict", "delete confirmation",
-            "Unicode reactions", "uncertain readback without automatic write", "stale visit and account callbacks" }
+            "Unicode reactions", "uncertain readback without automatic write", "stale visit and account callbacks", "covered input and mutation admission", "hidden edits survive while server deletion takes effect", "pending writes and readback settle under cover" }
     }));
 }
 static void Expect(bool satisfied, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(satisfied))] string? assertion = null)
