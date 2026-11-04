@@ -55,7 +55,17 @@ internal static class LivePersonalUiProbe
             Require(personal.ProfileWrites == 0 && personal.StatusWrites == 0, "Typing profile fields automatically saved them.");
             await Click(root, "live-profile-save-name");
             await Until("canonical own name", () => personal.OwnProfile.DisplayName == "Native UI-namn" &&
-                Find<TextBlock>(root, "live-personal-display-name")?.Text == "Native UI-namn");
+                Find<TextBlock>(root, "live-personal-display-name")?.Text == "Native UI-namn", () => JsonSerializer.Serialize(new
+                {
+                    writes = personal.ProfileWrites, own = personal.OwnProfile.DisplayName,
+                    field = Find<TextBox>(root, "live-profile-name")?.Text,
+                    header = Find<TextBlock>(root, "live-personal-display-name")?.Text,
+                    error = Find<TextBlock>(root, "live-profile-error")?.Text,
+                    notice = Find<TextBlock>(root, "live-profile-notice")?.Text,
+                    saveEnabled = Find<Button>(root, "live-profile-save-name")?.IsEnabled,
+                    surfacePresent = Find<FrameworkElement>(root, "live-personal-surface") is not null,
+                    scopePresent = LiveChatComponent.PersonalScopeForProbe is not null
+                }));
             Require(Find<TextBox>(root, "live-profile-status-text")?.Text == "Prøver WinUI", "Name acknowledgement cleared independent status draft.");
             await Click(root, "live-profile-save-status");
             await Until("explicit status acknowledgement", () => personal.OwnProfile.StatusText == "Prøver WinUI" && personal.OwnProfile.StatusEmoji == "🌿");
@@ -177,10 +187,10 @@ internal static class LivePersonalUiProbe
         if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke) throw new InvalidOperationException("Missing button Invoke: " + id);
         invoke.Invoke(); await Task.Delay(30);
     }
-    private static async Task Until(string name, Func<bool> condition)
+    private static async Task Until(string name, Func<bool> condition, Func<string>? detail = null)
     {
         for (int attempt = 0; attempt < 400; attempt++) { try { if (condition()) return; } catch (KeyNotFoundException) { } await Task.Delay(25); }
-        throw new InvalidOperationException("Personal UI fixture did not settle: " + name);
+        throw new InvalidOperationException("Personal UI fixture did not settle: " + name + (detail is null ? "" : "; " + detail()));
     }
     private static IEnumerable<T> Descendants<T>(DependencyObject parent, bool includeHidden) where T : FrameworkElement
     {
