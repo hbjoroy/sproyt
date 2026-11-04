@@ -150,3 +150,21 @@ berre til det fanga utkastet og sender inga melding. Høgst åtte filer om gonge
 mapper og flytting blir ikkje tekne imot som vedlegg. Uavklart filslipp blir
 avbrote dersom komponistfeltet blir avmontert. Fysisk input og autentisert
 Canary-aksept står framleis att; sjå implementasjonsstatusen for prøveomfang.
+
+## Personar, innboks og profil
+
+**Personar** søkjer på namn eller brukarnamn og opnar ein ein-til-ein-samtale
+etter stadfesta kanaltilgang. **Innboks** viser ulesne kanalar, dei nyaste
+200 omtalingane og eigne tildelte oppgåver. Omtalingar blir merkte lesne med
+eit eige val; oppgåver kan fullførast og opnast att. Ei kjent kjelde opnar
+rett melding eller tråd. Elles er handlinga tydeleg merkt **Opne kanal**.
+
+**Profil** lagrar eige visingsnamn og status berre ved eit uttrykkeleg val.
+Namnet i toppfeltet kjem frå den stadfesta profilen. **Tøm status** fjernar
+tekst og emoji. Ved uviss kvittering hentar **Kontroller** servertilstanden
+utan å sende den same endringa på nytt. Usend samtaletekst og ulagra
+meldingsredigering blir bevarte medan desse flatene er opne.
+
+Gruppesamtalar, oppretting av oppgåver, lagra statusval og varslingsinnstillingar
+står att. Kontraktprøvene og dei syntetiske WinUI-prøvene bruker ingen ekte
+innlogging eller brukardata. Autentisert Canary-aksept står framleis att.
