@@ -107,7 +107,7 @@ foreach (bool unmount in new[] { false, true })
     var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     using var intake = new NativeFileDropIntake<Target>(() => fixture.Target,
         target => fixture.Active && target.User == fixture.User && target.Family == fixture.Family,
-        async (target, paths) => { entered.SetResult(); await finish.Task; },
+        async (target, paths) => { entered.SetResult(); await finish.Task; return paths.Count; },
         (target, message) => fixture.Errors.Add((target, message)));
     var dropping = intake.DropAsync(true, true, _ => Items(new NativeFileDropItem(sample)));
     await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -116,6 +116,33 @@ foreach (bool unmount in new[] { false, true })
     Check(!await dropping, "A retired handoff was reported as an accepted drop.");
     checks.Add(unmount ? "Unmount during queue handoff is retired" : "Account-family loss during queue handoff is retired");
 }
+foreach (int accepted in new[] { 0, 1, 2 })
+{
+    var fixture = new Fixture(); int submissions = 0;
+    using var intake = new NativeFileDropIntake<Target>(() => fixture.Target,
+        target => fixture.Active && target.User == fixture.User && target.Family == fixture.Family,
+        (_, _) => { submissions++; return Task.FromResult(accepted); },
+        (target, message) => fixture.Errors.Add((target, message)));
+    bool copied = await intake.DropAsync(true, true, _ => Items(new(sample), new(sample + ".second")));
+    Check(copied == (accepted > 0) && submissions == 1, "Drop COPY did not reflect the queue's actual admitted count.");
+    if (accepted == 0)
+        Check(fixture.Errors.Last().Message?.StartsWith("Ingen filer", StringComparison.Ordinal) == true, "Zero admission did not expose a scoped rejection.");
+    else if (accepted == 1)
+        Check(fixture.Errors.Last().Message?.Contains("1 av 2", StringComparison.Ordinal) == true &&
+            fixture.Errors.Last().Message!.Contains("berre filer som ikkje alt finst", StringComparison.Ordinal), "Partial admission did not identify the count and protect accepted jobs from whole-batch retry.");
+    else Check(fixture.Errors.Last().Message is null, "Full admission retained a stale error.");
+    checks.Add(accepted == 0 ? "Zero queue admissions never acknowledge COPY" : accepted == 1
+        ? "Partial admission acknowledges only an explicitly reported partial batch" : "Full admission acknowledges COPY without an error");
+}
+foreach (int invalidCount in new[] { -1, 2 })
+{
+    var fixture = new Fixture();
+    using var intake = new NativeFileDropIntake<Target>(() => fixture.Target, _ => true,
+        (_, _) => Task.FromResult(invalidCount), (target, message) => fixture.Errors.Add((target, message)));
+    Check(!await intake.DropAsync(true, true, _ => Items(new NativeFileDropItem(sample))), "An invalid queue count acknowledged COPY.");
+    Check(fixture.Errors.Last().Message is not null, "Invalid queue admission count lost its scoped error.");
+}
+checks.Add("Invalid queue admission counts fail closed without automatic retry");
 var result = new { passed = true, scope = "native_file_drop_owner", checks, notTested = new[] { "physical shell drag/drop", "actual WinUI routed-event deferral", "real filesystem spooling and transport" } };
 if (args.Length == 1)
 {
@@ -136,6 +163,6 @@ internal sealed class Fixture
     internal NativeFileDropIntake<Target> Create() => new(
         () => { Captures++; return Active ? Target : null; },
         target => Active && Access && target.User == User && target.Family == Family,
-        (target, paths) => { Added.Add((target, paths)); return Task.CompletedTask; },
+        (target, paths) => { Added.Add((target, paths)); return Task.FromResult(paths.Count); },
         (target, message) => Errors.Add((target, message)));
 }

@@ -10,9 +10,9 @@ internal sealed record NativeFileDropItem(string Path, bool IsFile = true);
 
 // The captured target belongs to this drop, not to the view reached while the
 // shell resolves its files. Authentication and membership remain authoritative
-// in AddUploadFilesAsync; this owner only fences delayed shell work and errors.
+// in AddUploadFilesCountedAsync; this owner only fences delayed shell work and errors.
 internal sealed class NativeFileDropIntake<TTarget>(Func<TTarget?> capture,
-    Func<TTarget, bool> admitted, Func<TTarget, IReadOnlyList<string>, Task> add,
+    Func<TTarget, bool> admitted, Func<TTarget, IReadOnlyList<string>, Task<int>> add,
     Action<TTarget, string?> report, int maximumFiles = 8) : IDisposable where TTarget : class
 {
     private readonly CancellationTokenSource _lifetime = new();
@@ -54,8 +54,15 @@ internal sealed class NativeFileDropIntake<TTarget>(Func<TTarget?> capture,
             // private spool owns MIME/size/readability checks and durable IO.
             var paths = items.Select(item => item.Path).ToArray();
             if (!Current(target)) return false;
-            await add(target, paths);
-            return Current(target);
+            int accepted = await add(target, paths);
+            if (!Current(target)) return false;
+            if (accepted < 0 || accepted > paths.Length)
+                return Reject(target, "Opplastingskøen gav eit ukjent resultat. Kontroller køen før du prøver fleire filer.");
+            if (accepted == 0)
+                return Reject(target, "Ingen filer vart stadfesta i opplastingskøen. Kontroller køen og feilmeldinga før du vel filer på nytt.");
+            if (accepted < paths.Length)
+                Report(target, $"{accepted} av {paths.Length} filer vart stadfesta i opplastingskøen. Kontroller køen og feilmeldinga før du prøver igjen. Vel berre filer som ikkje alt finst i køen.");
+            return true;
         }
         catch (OperationCanceledException) { return false; }
         catch (UnauthorizedAccessException)
@@ -156,7 +163,7 @@ internal sealed class NativeFileDrop : IDisposable
         NativeUploadTarget? captured = null;
         using var intake = new NativeFileDropIntake<NativeUploadTarget>(
             () => captured = _disposed ? null : context.App.CaptureUploadTarget(context.Scope),
-            target => !_disposed && Admitted(context, target), context.App.AddUploadFilesAsync,
+            target => !_disposed && Admitted(context, target), context.App.AddUploadFilesCountedAsync,
             context.Report, NativeUploadQueue.MaximumJobs);
         void Changed()
         {
