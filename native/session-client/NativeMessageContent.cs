@@ -73,4 +73,42 @@ internal static partial class NativeMessageContent
         void Flush() { if (pending.Length > 0) { parts.Add(new("text", pending.ToString())); pending.Clear(); } }
         void Add(NativeContentPart part) { Flush(); parts.Add(part); }
     }
+
+    internal const int MaximumRichSourceLength = 65536;
+    internal static IReadOnlyList<NativeContentPart> ParseRichText(string body, IReadOnlyList<(int Start, int End)> literalRanges,
+        ISet<(int Start, int Length)>? renderedMedia = null)
+    {
+        // Oversized history uses the renderer's bounded source preview. Keep
+        // the original string for raw mode without scanning it for markers.
+        if (body.Length > MaximumRichSourceLength) return [new("text", body)];
+        var ranges = literalRanges.OrderBy(range => range.Start).ToArray();
+        var parts = new List<NativeContentPart>();
+        int position = 0, cards = 0, media = 0, rangeIndex = 0;
+        foreach (Match match in Marker().Matches(body))
+        {
+            while (rangeIndex < ranges.Length && ranges[rangeIndex].End < match.Index) rangeIndex++;
+            if (rangeIndex < ranges.Length && ranges[rangeIndex].Start < match.Index + match.Length) continue;
+            string kind = match.Groups[1].Value.ToLowerInvariant();
+            if (kind is "process-task" or "work-item-task" or "work-item-status" && body != match.Value) continue;
+            if (kind == "media" ? media >= 20 : cards >= 12) continue;
+            // Reuse the established marker validation without asking the legacy
+            // line parser to reconstruct Markdown or discard diagram sources.
+            var parsed = Parse(match.Value);
+            if (parsed.Count != 1 || parsed[0].Kind == "text") continue;
+            // Earlier unknown cards must not exhaust the budget before a
+            // legitimate uploaded attachment at the end of a bounded draft.
+            // Skipped cards remain literal source; never drop their bytes.
+            if (parsed[0].Kind == "media")
+            {
+                // Twenty covers every valid media marker in a 1024-byte draft.
+                media++;
+                renderedMedia?.Add((match.Index, match.Length));
+            }
+            else cards++;
+            if (match.Index > position) parts.Add(new("text", body[position..match.Index]));
+            parts.Add(parsed[0]); position = match.Index + match.Length;
+        }
+        if (position < body.Length) parts.Add(new("text", body[position..]));
+        return parts;
+    }
 }

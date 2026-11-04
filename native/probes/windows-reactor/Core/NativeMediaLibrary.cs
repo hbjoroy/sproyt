@@ -139,7 +139,9 @@ internal sealed class NativeMediaLibrary : IDisposable
             using var response = await _owner.ReadMediaAsync(id, false, scope, linked.Token); response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength is long length && length > MaxFileBytes - used) throw new IOException("Ikkje plass i det mellombelse medielageret. Lukk førre vedlegg først.");
             string type = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
-            if (!type.StartsWith("image/", StringComparison.Ordinal) && !type.StartsWith("video/", StringComparison.Ordinal)) throw new InvalidOperationException("Denne vedleggstypen må opnast i nettappen.");
+            if (!type.StartsWith("image/", StringComparison.Ordinal) && !type.StartsWith("video/", StringComparison.Ordinal) &&
+                type is not ("application/pdf" or "application/zip" or "text/plain" or "text/csv"))
+                throw new InvalidOperationException("Denne vedleggstypen er ikkje støtta.");
             using var input = await response.Content.ReadAsStreamAsync(linked.Token);
             await using (var output = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous))
             {

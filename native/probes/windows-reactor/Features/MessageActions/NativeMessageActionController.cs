@@ -39,8 +39,10 @@ internal sealed partial class NativeMessageActionController
             or >= 0x2190 and <= 0x21ff or >= 0x2300 and <= 0x23ff or >= 0x2460 and <= 0x24ff or >= 0x25a0 and <= 0x27bf
             or >= 0x1f000 and <= 0x1faff or >= 0x1fc00 and <= 0x1ffff);
 
-    [GeneratedRegex(@"\[\[media:[0-9a-fA-F-]{36}\|[^|\]\r\n]+\|[^\]\r\n]*\]\]", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\[\[media:(?<id>[0-9a-fA-F-]{36})\|(?<type>[^|\]\r\n]+)\|[^\]\r\n]*\]\]", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex MediaTokens();
+    private static bool ValidMediaToken(Match match) => Guid.TryParseExact(match.Groups["id"].Value, "D", out _) &&
+        match.Groups["type"].Value.Length <= 128 && match.Groups["type"].Value.All(c => char.IsAsciiLetterOrDigit(c) || "/+.-".Contains(c));
 
     internal void Bind(NativeMessageActionScope? current)
     {
@@ -67,7 +69,8 @@ internal sealed partial class NativeMessageActionController
             message.Id == current.ThreadRootId || message.ParentMessageId == current.ThreadRootId);
     internal bool CanOpen(NativeMessageActionScope current, NativeMessage message) =>
         Available(current, message) && !Busy && !NeedsReadBack && (MessageId is null || MessageId == message.Id);
-    internal void Open(NativeMessageActionScope current, NativeMessage message, NativeMessageActionMode mode)
+    internal void Open(NativeMessageActionScope current, NativeMessage message, NativeMessageActionMode mode,
+        IReadOnlyList<(int Start, int End)>? literalRanges = null)
     {
         if (!CanOpen(current, message) || mode == NativeMessageActionMode.Closed ||
             (mode is NativeMessageActionMode.Edit or NativeMessageActionMode.Delete && message.AuthorId != current.UserId)) return;
@@ -77,6 +80,15 @@ internal sealed partial class NativeMessageActionController
         {
             original = message.Body;
             var tokens = new List<string>();
+            if (literalRanges is not null)
+            {
+                initialInput = Input = MediaTokens().Replace(original, match =>
+                {
+                    if (!ValidMediaToken(match) || literalRanges.Any(range => match.Index <= range.End && match.Index + match.Length - 1 >= range.Start)) return match.Value;
+                    tokens.Add(match.Value); return "";
+                }).Trim();
+                attachments = tokens.ToArray(); Changed?.Invoke(); return;
+            }
             var lines = original.Split('\n');
             bool fenced = false;
             for (int index = 0; index < lines.Length; index++)
@@ -85,7 +97,7 @@ internal sealed partial class NativeMessageActionController
                 // Keep literal wire syntax in code editable, as in NativeMessageContent.Parse.
                 if (line.TrimStart().StartsWith("```", StringComparison.Ordinal)) { fenced = !fenced; continue; }
                 if (fenced || line.Contains('`')) continue;
-                lines[index] = MediaTokens().Replace(line, match => { tokens.Add(match.Value); return ""; });
+                lines[index] = MediaTokens().Replace(line, match => { if (!ValidMediaToken(match)) return match.Value; tokens.Add(match.Value); return ""; });
             }
             attachments = tokens.ToArray();
             initialInput = Input = string.Join("\n", lines).Trim();

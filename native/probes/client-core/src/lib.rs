@@ -34,6 +34,8 @@ enum Request {
         draft_revisions: bool,
         #[serde(default)]
         thread_targets: bool,
+        #[serde(default)]
+        upload_drafts: bool,
     },
     Close {
         handle: u64,
@@ -42,6 +44,8 @@ enum Request {
         handle: u64,
     },
     SaveDraft {
+        #[serde(default)]
+        composer: Option<store::Composer>,
         handle: u64,
         generation: u64,
         channel: String,
@@ -55,6 +59,26 @@ enum Request {
         channel: String,
         #[serde(default)]
         parent_message_id: Option<String>,
+    },
+    AttachUpload {
+        #[serde(default)]
+        receipt_only: bool,
+        #[serde(default)]
+        composer: Option<store::Composer>,
+        handle: u64,
+        generation: u64,
+        job_id: String,
+        operation_id: String,
+        channel: String,
+        #[serde(default)]
+        parent_message_id: Option<String>,
+        body: String,
+        marker: String,
+    },
+    ReconcileUploadReceipts {
+        handle: u64,
+        generation: u64,
+        active_job_ids: Vec<String>,
     },
     Enqueue {
         handle: u64,
@@ -105,12 +129,18 @@ fn execute(request: Request) -> Result<Value> {
             account,
             draft_revisions,
             thread_targets,
+            upload_drafts,
         } => {
             if registry.stores.len() >= 16 {
                 return Err("handle_capacity");
             }
-            let store =
-                Store::open_with_options(&database, &account, draft_revisions, thread_targets)?;
+            let store = Store::open_with_capabilities(
+                &database,
+                &account,
+                draft_revisions,
+                thread_targets,
+                upload_drafts,
+            )?;
             let handle = registry.next.checked_add(1).ok_or("handle_capacity")?;
             registry.next = handle;
             registry.stores.insert(handle, store);
@@ -125,6 +155,8 @@ fn execute(request: Request) -> Result<Value> {
                 Request::Snapshot { handle }
                 | Request::SaveDraft { handle, .. }
                 | Request::ClearDraft { handle, .. }
+                | Request::AttachUpload { handle, .. }
+                | Request::ReconcileUploadReceipts { handle, .. }
                 | Request::Enqueue { handle, .. }
                 | Request::Delivery { handle, .. }
                 | Request::ApplyMessage { handle, .. }
@@ -144,6 +176,7 @@ fn execute(request: Request) -> Result<Value> {
                 } => store.arm_fault(generation, fault::Fault { site, mode })?,
                 Request::Snapshot { .. } => return store.snapshot(),
                 Request::SaveDraft {
+                    composer,
                     generation,
                     channel,
                     body,
@@ -151,11 +184,12 @@ fn execute(request: Request) -> Result<Value> {
                     ..
                 } => {
                     return store
-                        .save_target_draft(
+                        .save_composer(
                             generation,
                             &channel,
                             parent_message_id.as_deref(),
                             &body,
+                            composer.as_ref(),
                         )
                         .map(|revision| json!({"revision":revision}));
                 }
@@ -169,6 +203,37 @@ fn execute(request: Request) -> Result<Value> {
                         .clear_target_draft(generation, &channel, parent_message_id.as_deref())
                         .map(|revision| json!({"revision":revision}));
                 }
+                Request::AttachUpload {
+                    receipt_only,
+                    composer,
+                    generation,
+                    job_id,
+                    operation_id,
+                    channel,
+                    parent_message_id,
+                    body,
+                    marker,
+                    ..
+                } => {
+                    return store.attach_upload(
+                        generation,
+                        store::DraftAttachment {
+                            job_id: &job_id,
+                            operation_id: &operation_id,
+                            receipt_only,
+                            channel: &channel,
+                            parent: parent_message_id.as_deref(),
+                            body: &body,
+                            marker: &marker,
+                            composer: composer.as_ref(),
+                        },
+                    );
+                }
+                Request::ReconcileUploadReceipts {
+                    generation,
+                    active_job_ids,
+                    ..
+                } => store.reconcile_upload_receipts(generation, &active_job_ids)?,
                 Request::Enqueue {
                     generation,
                     request_id,

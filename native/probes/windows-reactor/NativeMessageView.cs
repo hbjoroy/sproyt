@@ -16,6 +16,32 @@ using static Microsoft.UI.Reactor.Factories;
 
 namespace Sproyt.WindowsProbe;
 
+// Keep the virtualized row's message, viewer and presentation metadata in one
+// immutable snapshot. Stable message IDs preserve native controls and anchors.
+internal sealed class NativeMessagePresentation(NativeMessage message, bool raw, NativeAuthSnapshot viewer,
+    SproytPalette palette, NativeMessageActionScope? actionScope, bool rejected, bool interactive,
+    IReadOnlyList<NativeReactionChip> reactions, bool reactionsLoaded, string threadLabel, string actionState) : IEquatable<NativeMessagePresentation>
+{
+    internal NativeMessage Message { get; } = message;
+    internal bool Raw { get; } = raw;
+    internal NativeAuthSnapshot Viewer { get; } = viewer;
+    internal SproytPalette Palette { get; } = palette;
+    internal NativeMessageActionScope? ActionScope { get; } = actionScope;
+    internal bool Rejected { get; } = rejected;
+    internal bool Interactive { get; } = interactive;
+    internal IReadOnlyList<NativeReactionChip> Reactions { get; } = reactions;
+    internal bool ReactionsLoaded { get; } = reactionsLoaded;
+    internal string ThreadLabel { get; } = threadLabel;
+    private string ActionState { get; } = actionState;
+    public bool Equals(NativeMessagePresentation? other) => other is not null && Message == other.Message && Raw == other.Raw &&
+        Viewer == other.Viewer && Palette == other.Palette && ActionScope == other.ActionScope && Rejected == other.Rejected &&
+        Interactive == other.Interactive && ReactionsLoaded == other.ReactionsLoaded && ThreadLabel == other.ThreadLabel && ActionState == other.ActionState &&
+        Reactions.Count == other.Reactions.Count && Reactions.Zip(other.Reactions).All(pair => pair.First.Emoji == pair.Second.Emoji &&
+            pair.First.Count == pair.Second.Count && pair.First.Mine == pair.Second.Mine && pair.First.Names.SequenceEqual(pair.Second.Names));
+    public override bool Equals(object? value) => value is NativeMessagePresentation other && Equals(other);
+    public override int GetHashCode() => HashCode.Combine(Message, Raw, Viewer, Palette, ActionScope, Rejected, Interactive, ActionState);
+}
+
 internal static class NativeMessageView
 {
     internal static async Task<(BitmapImage Bitmap, double AspectRatio)> DecodeBitmapAsync(IRandomAccessStream stream, int maximumEdge, CancellationToken cancellation)
@@ -47,21 +73,119 @@ internal static class NativeMessageView
         return scope is not null && scope.UserId == viewer.UserId &&
             viewer.SessionStamp?.StartsWith(scope.FamilyStamp + ":", StringComparison.Ordinal) == true ? scope : null;
     }
-    internal static Element Render(ILiveApplication app, NativeMessage message, SproytPalette palette, NativeAuthSnapshot viewer)
+    internal static Element Render(ILiveApplication app, NativeMessage message, SproytPalette palette, NativeAuthSnapshot viewer, NativeRawMessageState rawState)
     {
-        var parts = NativeMessageContent.Parse(message.Body);
+        // Match the direct virtualized-row pattern used for message actions.
+        // A nested component's retained render can hide an external source
+        // choice even when the row factory itself has been invalidated.
+        bool raw = rawState.IsRaw(message.Id);
+        return VStack(4,
+            raw ? TextBlock(message.Body).FontFamily("Cascadia Mono").FontSize(13).TextWrapping().IsTextSelectionEnabled()
+                .Foreground(palette.Ink).AutomationId("native-message-raw-" + message.Id)
+                : RenderParts(app, message, palette, viewer),
+            Button(raw ? "Vis formatert" : "Vis råtekst", () =>
+            {
+                if (app.Authentication.UserId == viewer.UserId && app.Authentication.SessionStamp == viewer.SessionStamp) rawState.Toggle(message.Id);
+            }).MinHeight(32).Padding(4, 2).AutomationName(raw ? "Vis formatert melding" : "Vis den opphavlege meldingsteksten")
+                .AutomationId("native-message-raw-toggle-" + message.Id).HAlign(HorizontalAlignment.Left)
+        ).WithKey("body:" + message.Id);
+    }
+
+    internal static Element RenderParts(ILiveApplication app, NativeMessage message, SproytPalette palette, NativeAuthSnapshot viewer)
+    {
+        var parts = NativeMessageContent.ParseRichText(message.Body, NativeRichText.LiteralRanges(message.Body));
         var scope = ScopeFor(app.Media, viewer);
         return VStack(8, parts.Select<NativeContentPart, Element>((part, index) => part.Kind switch
         {
-            "text" => TextBlock(part.Text).FontSize(16).TextWrapping().IsTextSelectionEnabled().Foreground(palette.Ink),
+            "text" => NativeRichTextView.Render(part.Text, palette, async uri =>
+                { if (app.Authentication.UserId == viewer.UserId && app.Authentication.SessionStamp == viewer.SessionStamp) await Launcher.LaunchUriAsync(uri); }),
             "media" when part.ContentType!.StartsWith("image/", StringComparison.Ordinal) || part.ContentType.StartsWith("video/", StringComparison.Ordinal)
                 => Component<NativeMediaComponent, NativeMediaProps>(new(app.Media, scope, part, MessageLink(message), palette))
                     .WithKey($"{message.Id}:{index}:{scope?.FamilyStamp}:{part.MediaId}:{part.ContentType}:{part.Text}"),
+            "media" => Component<NativeAttachmentComponent, NativeAttachmentProps>(new(app.Media, scope, part, palette))
+                .WithKey($"attachment:{message.Id}:{index}:{scope?.FamilyStamp}:{part.MediaId}"),
             _ => VStack(4, TextBlock(part.Text).FontSize(16).SemiBold().TextWrapping().Foreground(palette.Ink),
                 Button(part.Kind == "media" ? "Opne vedlegget i Sprøyt" : "Opne i Sprøyt", async () => await Launcher.LaunchUriAsync(MessageLink(message)))
                     .AutomationName("Opne " + part.Text + " i Sprøyt")
                     .MinHeight(44).HAlign(HorizontalAlignment.Left)).Padding(12).Background(palette.Chrome).AutomationId("native-content-" + part.Kind),
         }).ToArray());
+    }
+}
+
+// Repeater recycling must not undo the user's source choice while a row's
+// height changes. This bounded UI state belongs to the conversation surface.
+internal sealed class NativeRawMessageState
+{
+    private string? _user, _family;
+    private readonly HashSet<string> _raw = [];
+    internal event Action? Changed;
+    internal void Bind(string? user, string? family)
+    { if (_user == user && _family == family) return; _user = user; _family = family; _raw.Clear(); }
+    internal bool IsRaw(string id) => _raw.Contains(id);
+    internal void Toggle(string id)
+    {
+        if (!_raw.Remove(id)) { if (_raw.Count == 128) _raw.Remove(_raw.First()); _raw.Add(id); }
+        Changed?.Invoke();
+    }
+}
+
+internal sealed record NativeAttachmentProps(NativeMediaLibrary? Library, NativeMediaScope? Scope, NativeContentPart Part, SproytPalette Palette);
+internal sealed class NativeAttachmentComponent : Component<NativeAttachmentProps>
+{
+    private readonly CancellationTokenSource _life = new();
+    private CancellationTokenSource? _download;
+    public NativeAttachmentComponent() { }
+    public override Element Render()
+    {
+        var (status, setStatus) = UseState("", threadSafe: true);
+        var (busy, setBusy) = UseState(false, threadSafe: true);
+        UseEffect(() =>
+        {
+            void Invalidated() { try { _download?.Cancel(); } catch (ObjectDisposedException) { } }
+            if (Props.Library is not null) Props.Library.Invalidated += Invalidated;
+            return () => { if (Props.Library is not null) Props.Library.Invalidated -= Invalidated; _life.Cancel(); _download?.Cancel(); };
+        }, Props.Scope?.FamilyStamp + ":" + Props.Part.MediaId);
+        bool Current() => !_life.IsCancellationRequested && Props.Library is not null && Props.Scope is not null && Props.Library.Current(Props.Scope);
+        async void Download()
+        {
+            if (busy || !Current() || Program.MainWindowId is not { } window) return;
+            setBusy(true); setStatus("Hentar vedlegget …");
+            using var cancellation = _download = CancellationTokenSource.CreateLinkedTokenSource(_life.Token);
+            string? staged = null;
+            try
+            {
+                using var file = await Props.Library!.OriginalAsync(Props.Part.MediaId!, Props.Scope!, null, cancellation.Token);
+                string extension = NativeUploadShell.DocumentExtension(file.ContentType);
+                if (file.ContentType != Props.Part.ContentType || !Current()) throw new OperationCanceledException();
+                var picker = new Microsoft.Windows.Storage.Pickers.FileSavePicker(window)
+                { SuggestedFileName = Path.GetFileNameWithoutExtension(NativeUploadDiskStore.SafeFileName(Props.Part.Text)), DefaultFileExtension = extension };
+                picker.FileTypeChoices.Add("Vedlegg", new List<string> { extension });
+                var chosen = await picker.PickSaveFileAsync();
+                if (chosen is null || !Current()) { setStatus(""); return; }
+                if (!string.Equals(Path.GetExtension(chosen.Path), extension, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Vel filtypen " + extension + " for dette vedlegget.");
+                string destination = Path.GetFullPath(chosen.Path);
+                staged = Path.Combine(Path.GetDirectoryName(destination)!, ".sproyt-download-" + Guid.NewGuid().ToString("N") + ".tmp");
+                await using (var input = new FileStream(file.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous))
+                await using (var output = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.WriteThrough))
+                { await input.CopyToAsync(output, 65536, cancellation.Token); await output.FlushAsync(cancellation.Token); output.Flush(true); }
+                if (!Current()) throw new OperationCanceledException();
+                File.Move(staged, destination, overwrite: true); staged = null;
+                setStatus("Vedlegget er lagra.");
+            }
+            catch (OperationCanceledException) { setStatus(""); }
+            catch { if (Current()) setStatus("Vedlegget kunne ikkje lagrast. Prøv igjen."); }
+            finally
+            {
+                if (staged is not null) { try { File.Delete(staged); } catch (IOException) { } }
+                if (ReferenceEquals(_download, cancellation)) _download = null;
+                setBusy(false);
+            }
+        }
+        return VStack(4, TextBlock(Props.Part.Text).SemiBold().TextWrapping().Foreground(Props.Palette.Ink),
+            Button(busy ? "Hentar …" : "Last ned vedlegget", Download).MinHeight(44).IsEnabled(!busy && Current())
+                .AutomationName("Last ned " + Props.Part.Text).AutomationId("native-attachment-download-" + Props.Part.MediaId),
+            TextBlock(status).TextWrapping().Foreground(Props.Palette.Muted).IsVisible(status.Length != 0)).Padding(8).Background(Props.Palette.Chrome);
     }
 }
 

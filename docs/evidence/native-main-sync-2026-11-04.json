@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-11-04T14:05:26.5839724+00:00",
+  "scope": "Synchronize existing native PR stack with current deployed main; no new native features",
+  "originalCanaryBaseline": "142f71888cdde11dec42a698432530e208f577bb",
+  "upstreamMain": "e3ac63e9c751289c7f6d1b5f0c17ba13b5cfee5d",
+  "liveVersions": [
+    {
+      "site": "canary",
+      "url": "https://sproyt-canary.bjoroy.me/versionz",
+      "observedUtc": "2026-11-04T13:58:21.6572597+00:00",
+      "status": 200,
+      "revision": "e3ac63e9c751289c7f6d1b5f0c17ba13b5cfee5d"
+    },
+    {
+      "site": "production",
+      "url": "https://sproyt.bjoroy.me/versionz",
+      "observedUtc": "2026-11-04T13:58:22.1251075+00:00",
+      "status": 200,
+      "revision": "e3ac63e9c751289c7f6d1b5f0c17ba13b5cfee5d"
+    }
+  ],
+  "upstreamCommits": [
+    {
+      "pullRequest": 329,
+      "revision": "55f8f9425cd610471792a06a99ad1e43fb60093a",
+      "change": "Verified signup/password recovery"
+    },
+    {
+      "pullRequest": 333,
+      "revision": "236b3c7cdc52553aae6341c8cd387e5c924b5755",
+      "change": "Horizontal padding inside composers"
+    },
+    {
+      "pullRequest": 335,
+      "revision": "e3ac63e9c751289c7f6d1b5f0c17ba13b5cfee5d",
+      "change": "Image viewer zoom measured against original dimensions"
+    }
+  ],
+  "stack": [
+    {
+      "pr": 330,
+      "before": "96425c13280605bd6ce06fa4ba747e98263bfe1d",
+      "branch": "codex/native-parity-foundation",
+      "integration": "c0e03de5726b5afcba225ea97ede2b087bc7c277"
+    },
+    {
+      "pr": 331,
+      "before": "9c0c456cf07037e316a44e9a114a367ef509bf34",
+      "branch": "codex/native-history-navigation",
+      "integration": "ce2669cc35fdb84f6e32e7d33e88dcbd6842ba2c"
+    },
+    {
+      "pr": 332,
+      "before": "7866b8d2b651474f8f06b8280f880978f41be8c1",
+      "branch": "codex/native-thread-actions",
+      "integration": "0febe556c7698677d900d70e5e13dc529db3d63a"
+    },
+    {
+      "pr": 334,
+      "before": "be843d03e212ca868afbec5947c54c84d5064277",
+      "branch": "codex/native-richtext-uploads",
+      "integration": "e0ef9d06760d106039073275bf6884e39ca95b0e"
+    }
+  ],
+  "mergeConflicts": 0,
+  "historyRewritten": false,
+  "upstreamFileComparison": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "deploy/authentik/kustomization.yaml",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "deploy/authentik/sproyt-email-recovery.yaml",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "deploy/authentik/z-sproyt-signup-recovery-v2.yaml",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "docs/signup-recovery-v2.md",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "frontend/src/ui/react-app.css",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "frontend/src/ui/react/image-viewer.tsx",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "frontend/tests/ui-image-viewer-gestures.spec.ts",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "frontend/tests/ui-react-media.spec.ts",
+      "matchesUpstream": false,
+      "note": "Preserves 88 native document-recipient test lines; all incoming main zoom assertions also merged."
+    },
+    {
+      "path": "tools/ci-scope.py",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "tools/issue-signup-recovery-grant.py",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "tools/test-ci-scope.py",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "tools/test-enrollment-continuation.py",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "tools/test-signup-recovery.py",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    },
+    {
+      "path": "tools/verify-signup-recovery-runtime.py",
+      "matchesUpstream": true,
+      "note": "Unmodified upstream content."
+    }
+  ],
+  "nativeAndServerFilesWithUnchangedPriorHashes": 67,
+  "nativeApiOrWireChanges": false,
+  "featureScopeExpanded": false,
+  "localChecks": {
+    "frontend": {
+      "log": "C:/Build/native-sync-20261104/frontend-test.log",
+      "failed": 0,
+      "build": true,
+      "passed": 211,
+      "typecheck": true
+    },
+    "chromium": {
+      "log": "C:/Build/native-sync-20261104/browser-test.log",
+      "failed": 0,
+      "scope": "Document recipients, existing image flow, updated original-scale and gesture regressions",
+      "passed": 23,
+      "isolation": "Final synced frontend bundle via Playwright route override, existing isolated backend API binary, synthetic document/WS fixtures; no production writes"
+    },
+    "ciScope": {
+      "log": "C:/Build/native-sync-20261104/ci-scope-test.log",
+      "passed": 24
+    },
+    "browserSharding": {
+      "log": "C:/Build/native-sync-20261104/browser-shards-test.log",
+      "passed": 3
+    }
+  },
+  "hostedChecks": "Latest synchronization commit checks are tracked in PRs #330, #331, #332 and #334; previous receipts remain historical evidence.",
+  "deploymentPerformed": false,
+  "productionDataChanged": false
+}

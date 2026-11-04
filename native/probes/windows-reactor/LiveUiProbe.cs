@@ -17,6 +17,13 @@ internal sealed class LiveUiFixture : ILiveApplication
     private readonly Dictionary<string, DraftView> _drafts = new() { ["channel-a"] = new("",0,0), ["channel-b"] = new("",0,0) };
     private readonly List<NativeMessage> _messages = [];
     private readonly List<QueuedMessage> _outbox = [];
+    private readonly List<NativeUploadJob> _uploadJobs = [];
+    internal bool HoldNextUpload { get; set; }
+    internal bool FailNextUpload { get; set; }
+    internal NativeUploadTarget? LastCapturedUploadTarget { get; private set; }
+    internal NativeUploadTarget? LastAddedUploadTarget { get; private set; }
+    internal IReadOnlyList<string> LastAddedUploadPaths { get; private set; } = [];
+    internal const string DocumentMediaId = "00000000-0000-0000-0000-000000000077";
     private readonly NativeMediaViewFixture _mediaFixture = new(User);
     private readonly NativeNavigationController _navigation = new();
     private readonly NativeThreadFeatureController _threads = new();
@@ -29,6 +36,7 @@ internal sealed class LiveUiFixture : ILiveApplication
     internal int MutationReadBacks { get; private set; }
     internal QueuedMessage? LastEnqueuedReply { get; private set; }
     internal NativeMessage? Message(string id) => _messages.FirstOrDefault(message => message.Id == id);
+    internal int AcceptedMessageCount => _messages.Count;
     internal List<(string Root, ulong Sequence)> ThreadReadReports { get; } = [];
     private readonly Dictionary<string, ulong> _lastRead = [];
     private readonly List<ulong> _readReports = [];
@@ -66,7 +74,9 @@ internal sealed class LiveUiFixture : ILiveApplication
         _navigation.UpdateChannels(Authentication.UserId!, Authentication.SessionStamp!, Channels);
         _threads.BindScope(Authentication.UserId, Authentication.SessionStamp);
     }
-    public LiveSnapshot Capture() { SyncNavigation(); return new(Authentication, Chat, Workspace, true, null, Navigation: _navigation.Capture(), Threads: _threads.Capture()); }
+    public LiveSnapshot Capture() { SyncNavigation(); return new(Authentication, Chat, Workspace, true, null, Navigation: _navigation.Capture(), Threads: _threads.Capture(),
+        Uploads: new(_uploadJobs.ToArray(), null, _uploadJobs.Any(job => job.State == NativeUploadState.Uploading), UploadFamily)); }
+    private string? UploadFamily => Authentication.SessionStamp is { } stamp && stamp.LastIndexOf(':') is int index && index > 0 ? stamp[..index] : null;
     public Task LoginAsync() => Task.CompletedTask;
     public NativeMediaLibrary? Media => _mediaFixture.Library;
     internal void AddMedia()
@@ -236,13 +246,91 @@ internal sealed class LiveUiFixture : ILiveApplication
     public Task SendComposerAsync(NativeMessageActionScope scope)
     {
         if (!ScopeCurrent(scope)) return Task.CompletedTask;
+        if (NativeUploadPresentation.BlocksSend(Capture().Uploads, scope.UserId, UploadFamily, scope.ChannelId, scope.ThreadRootId)) return Task.CompletedTask;
         string key = EnsureComposer(scope.ChannelId, scope.ThreadRootId), body = _drafts[key].Body;
         if (string.IsNullOrWhiteSpace(body)) return Task.CompletedTask;
         string id = Guid.NewGuid().ToString();
         LastEnqueuedReply = new(id, scope.ChannelId, body, "queued", scope.ThreadRootId);
         _messages.Add(new(id, scope.ChannelId, User, "UI-prøve", body, DateTimeOffset.UtcNow,
             _messages.Where(message => message.ChannelId == scope.ChannelId).Select(message => message.Sequence).DefaultIfEmpty(0UL).Max() + 1, scope.ThreadRootId));
-        Edit(key, ""); RefreshThread(); Changed?.Invoke(); return Task.CompletedTask;
+        ReplaceComposer(key, "", []); RefreshThread(); Changed?.Invoke(); return Task.CompletedTask;
+    }
+    public NativeUploadTarget? CaptureUploadTarget(NativeMessageActionScope scope)
+    {
+        if (!ScopeCurrent(scope) || UploadFamily is not string family) return null;
+        return LastCapturedUploadTarget = new(scope.UserId, family, scope.ChannelId, scope.ThreadRootId);
+    }
+    private bool UploadTargetCurrent(NativeUploadTarget target) => target.UserId == Authentication.UserId && target.FamilyStamp == UploadFamily && Channels.Any(channel => channel.Id == target.ChannelId);
+    public Task AddUploadFilesAsync(NativeUploadTarget target, IReadOnlyList<string> paths)
+    {
+        if (!UploadTargetCurrent(target)) return Task.CompletedTask;
+        LastAddedUploadTarget = target; LastAddedUploadPaths = paths.ToArray();
+        foreach (string path in paths)
+        {
+            string type = Path.GetExtension(path).ToLowerInvariant() switch { ".pdf" => "application/pdf", ".txt" => "text/plain", ".csv" => "text/csv", ".zip" => "application/zip", _ => "image/gif" };
+            AddSyntheticUpload(target, Path.GetFileName(path), type);
+        }
+        return Task.CompletedTask;
+    }
+    public Task AddUploadStreamAsync(NativeUploadTarget target, Stream stream, string fileName, string contentType)
+    {
+        if (UploadTargetCurrent(target)) { LastAddedUploadTarget = target; AddSyntheticUpload(target, fileName, contentType); }
+        return Task.CompletedTask;
+    }
+    private void AddSyntheticUpload(NativeUploadTarget target, string fileName, string contentType)
+    {
+        var source = new NativeUploadSource(Guid.NewGuid().ToString("D"), fileName, contentType, 2 * 1024 * 1024, new string('a', 64));
+        string id = Guid.NewGuid().ToString("D");
+        var job = new NativeUploadJob(id, target, source, id, UploadId: Guid.NewGuid().ToString("D"), NextChunk: 1, UploadedBytes: 1024 * 1024,
+            State: FailNextUpload ? NativeUploadState.Failed : NativeUploadState.Uploading, Error: FailNextUpload ? "Syntetisk opplastingsfeil." : null);
+        _uploadJobs.Add(job);
+        bool complete = !HoldNextUpload && !FailNextUpload; HoldNextUpload = FailNextUpload = false;
+        Changed?.Invoke(); if (complete) CompleteUpload(id);
+    }
+    internal void CompleteUpload(string id)
+    {
+        var job = _uploadJobs.FirstOrDefault(job => job.Id == id);
+        if (job is null || job.State == NativeUploadState.Cancelled || !UploadTargetCurrent(job.Target)) return;
+        string media = job.Source.ContentType.StartsWith("image/", StringComparison.Ordinal) ? NativeMediaViewFixture.Id : DocumentMediaId;
+        var attachment = new NativeUploadedAttachment(media, job.Source.FileName, job.Source.ContentType, job.Source.SizeBytes, job.Source.Sha256);
+        string key = EnsureComposer(job.Target.ChannelId, job.Target.ParentMessageId);
+        var draft = _drafts[key]; ReplaceComposer(key, draft.ComposerText, draft.Attachments.Append(attachment.Marker).ToArray());
+        _uploadJobs.RemoveAll(item => item.Id == id); Changed?.Invoke();
+    }
+    public Task RetryUploadAsync(string expectedUser, string expectedStamp, string jobId)
+    {
+        if (Authentication.UserId == expectedUser && Authentication.SessionStamp == expectedStamp) CompleteUpload(jobId);
+        return Task.CompletedTask;
+    }
+    public Task CancelUploadAsync(string expectedUser, string expectedStamp, string jobId)
+    {
+        if (Authentication.UserId == expectedUser && Authentication.SessionStamp == expectedStamp)
+        {
+            int index = _uploadJobs.FindIndex(job => job.Id == jobId);
+            if (index >= 0) _uploadJobs[index] = _uploadJobs[index] with { State = NativeUploadState.Cancelled, Error = null };
+            Changed?.Invoke();
+        }
+        return Task.CompletedTask;
+    }
+    public Task RemoveUploadAsync(string expectedUser, string expectedStamp, string jobId)
+    {
+        if (Authentication.UserId == expectedUser && Authentication.SessionStamp == expectedStamp) { _uploadJobs.RemoveAll(job => job.Id == jobId); Changed?.Invoke(); }
+        return Task.CompletedTask;
+    }
+    public void RemoveDraftAttachment(NativeMessageActionScope scope, int index, string expectedMarker)
+    {
+        if (!ScopeCurrent(scope)) return;
+        string key = EnsureComposer(scope.ChannelId, scope.ThreadRootId); var draft = _drafts[key];
+        if (index < 0 || index >= draft.Attachments.Count || draft.Attachments[index] != expectedMarker) return;
+        ReplaceComposer(key, draft.ComposerText, draft.Attachments.Where((_, item) => item != index).ToArray());
+    }
+    internal void PrepareContent(string source)
+    {
+        PrepareConversations(); _uploadJobs.Clear(); LastAddedUploadTarget = LastCapturedUploadTarget = null;
+        int index = _messages.FindIndex(message => message.Id == "conversation-root-one");
+        _messages[index] = _messages[index] with { Body = source };
+        _messages.Add(new("content-document", "channel-a", User, "Du", "[[media:" + DocumentMediaId + "|application/pdf|rettleiing.pdf]]", DateTimeOffset.UtcNow, 7));
+        Changed?.Invoke();
     }
     internal void PrepareConversations()
     {
@@ -309,12 +397,19 @@ internal sealed class LiveUiFixture : ILiveApplication
         if (index >= 0) _messages[index] = _messages[index] with { Body = _messages[index].Body + "\n" + string.Join("\n", Enumerable.Repeat("Meir innhald før leseposisjonen", 40)) };
         Changed?.Invoke();
     }
-    public void Edit(string channel, string body) { var old = _drafts[channel]; _drafts[channel] = new(body, old.Revision+1, old.Revision+1); Changed?.Invoke(); }
+    private void ReplaceComposer(string key, string text, IReadOnlyList<string> attachments)
+    {
+        var old = _drafts[key];
+        _drafts[key] = new(NativeSession.JoinComposer(text, attachments), old.Revision + 1, old.Revision + 1)
+            { ComposerText = text, Attachments = Array.AsReadOnly(attachments.ToArray()) };
+        Changed?.Invoke();
+    }
+    public void Edit(string channel, string body) => ReplaceComposer(channel, body, _drafts[channel].Attachments);
     public Task SendAsync(string channel)
     {
         string body = _drafts[channel].Body;
         _messages.Add(new(Guid.NewGuid().ToString(), channel, User, "UI-prøve", body, DateTimeOffset.Now, (ulong)_messages.Count+1));
-        Edit(channel, ""); return Task.CompletedTask;
+        ReplaceComposer(channel, "", []); return Task.CompletedTask;
     }
     public ValueTask DisposeAsync() { _mediaFixture.Dispose(); return ValueTask.CompletedTask; }
 }
@@ -361,7 +456,14 @@ internal static class LiveUiProbe
             await Until(() => Find<TextBox>(root,"live-composer").Text == "" && Program.Live.Chat.Messages.Count == 1);
             ((LiveUiFixture)Program.Live).AddMedia();
             ((LiveUiFixture)Program.Live).AddRejectedMessage();
-            await Until(() => Find<TextBlock>(root,"live-delivery-pending:fixture-rejected").Text == "Ikkje sendt — avvist");
+            await Until(() =>
+            {
+                // Adding media can put the durable row outside the repeater's
+                // realized range. Tail-follow itself is covered separately.
+                root.UpdateLayout(); var scroller = Find<ScrollViewer>(root, "live-history");
+                scroller.ChangeView(null, scroller.ScrollableHeight, null, true);
+                return Find<TextBlock>(root,"live-delivery-pending:fixture-rejected").Text == "Ikkje sendt - avvist";
+            });
             if (Program.Live.Capture().PendingSends != 0 || Program.Live.Capture().RejectedSends != 1 ||
                 Find<Button>(root,"live-delivery-retry").Visibility == Visibility.Visible)
                 throw new InvalidOperationException("A rejected send was presented as waiting for retry.");
@@ -455,11 +557,13 @@ internal static class LiveUiProbe
             CheckImage(Find<Image>(root,"native-image-"+NativeMediaViewFixture.GalleryId(23)),.5,Math.Min(320,root.ActualWidth-32));
             await LiveTimelineUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await LiveConversationUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
+            await LiveContentUiProbe.RunAsync(root, (LiveUiFixture)Program.Live!);
             await Program.PrepareShutdownAsync();
             File.WriteAllText(Path.Combine(folder,"live-ui-result.json"),JsonSerializer.Serialize(new
             {passed=true,scope="live_chat_view_fixture",actualWinUi=true,channelDrafts=true,sendBinding=true,compactComposer=true,circleGroups=true,decodedMediaPreview=true,boundedPreviewLeases=true,viewportPreviewGallery=24,viewportRelease=true,stablePreviewGeometry=true,rapidPreviewReentry=true,portraitAndLandscape=true,originalAspectRatio=true,responsivePreviewWidth=true,macroCard=true,temporaryOriginalCleanup=true,
                 timelinePaging=true,stableMessageAnchor=true,visibleReadOnly=true,navigationSearch=true,navigationDirectoryScopes=true,navigationBackForward=true,independentNavigationDrafts=true,variableHeightAnchor=true,
                 threadOpenClose=true,threadDirectory=true,independentThreadDrafts=true,parentBoundReply=true,threadVisibleReadOnly=true,messageEdit=true,messageDeleteConfirmation=true,deletedThreadParent=true,reactionToggle=true,uncertainReactionReadback=true,
+                nativeRichText=true,nativeTable=true,exactRawSource=true,literalCodeMarker=true,documentDownloadAction=true,rootAndThreadAttachmentChips=true,attachmentOnlySend=true,activeUploadBlocksSend=true,uploadCancelRetry=true,capturedPickerTarget=true,
                 productionAuthentication=false,actualTransport=false,storageAcceptance=false}));
             Program.CloseAfterShutdown(window);
         }
@@ -470,14 +574,15 @@ internal static class LiveUiProbe
             Environment.ExitCode=1; Program.CloseAfterShutdown(window);
         }
     }
-    private static async Task Until(Func<bool> condition)
+    private static async Task Until(Func<bool> condition, [System.Runtime.CompilerServices.CallerLineNumber] int sourceLine = 0)
     {
+        string? missing = null;
         for(int attempt=0;attempt<400;attempt++)
         {
-            try { if(condition())return; } catch(KeyNotFoundException) { /* The next native render may create the control. */ }
+            try { if(condition())return; } catch(KeyNotFoundException error) { missing = error.Message; }
             await Task.Delay(25);
         }
-        throw new InvalidOperationException("Live view fixture did not settle.");
+        throw new InvalidOperationException("Live view fixture did not settle at LiveUiProbe.cs:" + sourceLine + (missing is null ? "" : "; missing=" + missing));
     }
     private static T Find<T>(DependencyObject root,string id) where T:FrameworkElement
     {

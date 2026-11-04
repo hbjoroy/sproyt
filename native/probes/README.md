@@ -156,6 +156,19 @@ An older DLL rejects schema 3; a new DLL without thread opt-in refuses to open
 a profile containing thread drafts or queued replies. Rollback needs a tested
 client/library pair and compatible profile backup.
 
+The Windows content pilot also opts into `upload_drafts`. Schema 4 adds a
+per-account upload receipt and stores the editor text and ordered attachment
+markers with the target draft revision. A receipt-only lookup settles a lost
+local result during shutdown or removal of an older login family's job. A
+completed upload enters the captured draft. Sending still requires an explicit
+action and uses the existing eight-message outbox and 1024-byte wire-body limit.
+The schema 3 to 4 migration leaves existing queued payload bytes intact.
+
+The `rich-text-contracts`, `upload-contracts` and `upload-admission-contracts`
+probes cover rendering, transfer recovery and the native HTTP grant. The
+Windows workspace probe exercises the SQLite handoff through the actual DLL,
+including intervening edits, restart and missing receipts.
+
 ## Kotlin and Swift desktop bindings
 
 `run-language-probe.ps1` adds two desktop-language probes against the same

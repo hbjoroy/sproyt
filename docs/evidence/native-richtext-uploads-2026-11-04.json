@@ -1,0 +1,980 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-11-04T13:31:57.2630467+00:00",
+  "branch": "codex/native-richtext-uploads",
+  "baseline": "7866b8d2b651474f8f06b8280f880978f41be8c1",
+  "basePullRequest": "https://github.com/hbjoroy/sproyt/pull/332",
+  "testedSourceHead": "8aa038f0ade335dfdbeb933099677cd990924ea0",
+  "testedSourceDirty": true,
+  "sourceHashKind": "SHA256 of tested workspace file bytes before Git line-ending normalization",
+  "sourceHashes": [
+    {
+      "path": ".github/workflows/native-probe.yml",
+      "sha256": "78d05054a7143b96c122e4a3ded50b49c3a2ded80389b731ce0ac69236966cad"
+    },
+    {
+      "path": "frontend/src/app.ts",
+      "sha256": "cfd27e85ba83680c1684008c90c3168b28a68349b859b0860d6ff43fd9e676af"
+    },
+    {
+      "path": "frontend/src/ui/react/preview-media.tsx",
+      "sha256": "1dbaf90ad6ad72fb87b3c07f5e76815c498bc66866d31d285a1f1f9bfca86c2a"
+    },
+    {
+      "path": "frontend/tests/ui-react-media.spec.ts",
+      "sha256": "b778e655ad45c3ad157b2c0a54ba7182db353dce63204b836cc0051b7d1e5c69"
+    },
+    {
+      "path": "native/probes/client-core/src/lib.rs",
+      "sha256": "eb7883cae63b1728388bb7d5c6fab2a1e4ae46a51b2271f48db3bb6a20f936a6"
+    },
+    {
+      "path": "native/probes/client-core/src/store.rs",
+      "sha256": "0cc256c4a05ece61e237a4852d113031f69bdeee6693d5425c2b5f78b063f1b9"
+    },
+    {
+      "path": "native/probes/client-core/src/tests.rs",
+      "sha256": "b8e34d870febf03d5681ed86f20aa1f5eedcf6517f8299cd14d9f2496f17ec34"
+    },
+    {
+      "path": "native/probes/identity-client/NativeSessionProbe.cs",
+      "sha256": "d12e5a489736db95a78348c4006cd7020b1f87706de29dc12485d115ff75cbd4"
+    },
+    {
+      "path": "native/probes/identity-client/ProbeDiagnostics.cs",
+      "sha256": "1ee4d9cc9390a9b32e9549758e954348d3fe3dedcf3538cf28e37a17cc8eab5a"
+    },
+    {
+      "path": "native/probes/identity-client/Program.cs",
+      "sha256": "6321969c52decc0339e77c582b35f4a04a4d4f8d2a4faeaa95297da19a2a7a91"
+    },
+    {
+      "path": "native/probes/README.md",
+      "sha256": "b2bc4c21342ddf22626595be088039db554ea77e7d9515bee517b6d8b723d296"
+    },
+    {
+      "path": "native/probes/rich-text-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/rich-text-contracts/packages.lock.json",
+      "sha256": "dbed02cd606c03a905be106a45c321b926949f4ab75bc08bfa29c29644c32a63"
+    },
+    {
+      "path": "native/probes/rich-text-contracts/Program.cs",
+      "sha256": "6afd832836187614a240a90eb25e3ed3cba210d967988de4bcb955ac92cf50c7"
+    },
+    {
+      "path": "native/probes/rich-text-contracts/RichTextContracts.csproj",
+      "sha256": "e93cfad2a6440906cfe03d60f051382ea8892f4d2ac439c27c7c7fc5d92c78fd"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/Environment.cs",
+      "sha256": "70921f0b31a2673f75f92d083f8aea7e114b04aee6facb54201230e8fbe2290b"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/Program.cs",
+      "sha256": "dd4d1e6ad9c4ad5cb9586e853815db3819730238d9ff705a3c31abb8c0f053e4"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/README.md",
+      "sha256": "e92cc41153e538ff5e6c337aedb45f0a676e98c0509a1b895f69cfb7f945b2bf"
+    },
+    {
+      "path": "native/probes/upload-admission-contracts/UploadAdmissionContracts.csproj",
+      "sha256": "c7c7cd5bed8dadb49db5d53c1b54f7514a7dc8b6a4de98a159c94c72a1e0e1f9"
+    },
+    {
+      "path": "native/probes/upload-contracts/Fixtures.cs",
+      "sha256": "06399c51e90748d848cecb278ac15e94f80ec3c5d93d14c0009742afd846994e"
+    },
+    {
+      "path": "native/probes/upload-contracts/global.json",
+      "sha256": "9b9825e14735c9623a531d5235f714c1011e9ca1d87578a0879e534a12e8facf"
+    },
+    {
+      "path": "native/probes/upload-contracts/HttpContracts.cs",
+      "sha256": "e0a79440eaa033c693488324f9e61e756895807972e6b1fc50ecaad7284fccc3"
+    },
+    {
+      "path": "native/probes/upload-contracts/packages.lock.json",
+      "sha256": "a29c6aa8cfb81874ff8bb78dc369d7416f28c9b8cc47e99592bfc019b20c41eb"
+    },
+    {
+      "path": "native/probes/upload-contracts/Program.cs",
+      "sha256": "c9e033290d02dc43ec86038f0c04cea26413db33426ff333f0f7f862d36c5813"
+    },
+    {
+      "path": "native/probes/upload-contracts/README.md",
+      "sha256": "d7eaf1811ec449e92a20ec36714245e702d7e545dfca204877512bd466733fb4"
+    },
+    {
+      "path": "native/probes/upload-contracts/UploadContracts.csproj",
+      "sha256": "af9fb765dc751c84c8bd23963a40baa1df2952669aff46c1dc0657757b7a8516"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/ChatWorkspace.cs",
+      "sha256": "7ffc617599ba7519fd7f4beb3605c53c89f3f0e094e1e5617675ff71dc091df6"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveApplication.cs",
+      "sha256": "df75968562ae14e8a1b80c74cba1017b7dd5dc290b493211a20b4b8ac635bdac"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveContracts.cs",
+      "sha256": "caaf5a80a4e8e7d065da8ac8228cf886b25230d4c00c83bcc2964107763825a7"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveConversationApplication.cs",
+      "sha256": "781f8971108426616dcad9cdf0667234212ff6bb81a4d8bae5f013ef89695e2d"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/LiveUploadApplication.cs",
+      "sha256": "fb5488946b5cfceb6227a3680d5f843346589fbf2ac90048cfb67157d5a4303d"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/Models.cs",
+      "sha256": "4ff8fb246d3263dc93f7d935efb442668ec3d04297c45ea90e0b042c5729cb3a"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/NativeContentProbe.cs",
+      "sha256": "4c13b251582f96cacbc2eccdd767c16fb0650d166072360be02e8acd358bcab3"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/NativeMediaLibrary.cs",
+      "sha256": "b4551891e4350eaa91a2cba67587dceb91369d5e98a41fadd4e38de970d28540"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/NativeSession.cs",
+      "sha256": "69d7c08d564de3cb95dbc8ca578e254a690e6c0e0425e2ed2d7e52237ddeade7"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/NativeUploadDiskStore.cs",
+      "sha256": "9115b62520b9f85bbbe87b7ba7dfb4a071cc07f586e1fad83753e710e22b89e2"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/NativeUploadDiskStoreProbe.cs",
+      "sha256": "3b86401c5a945b57974e655d3d6528694e1e602e835d14bc0285da89c8c13c8f"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/NativeUploadPresentation.cs",
+      "sha256": "470b6fa05a5fc68e960401ac008391e3b686fa6f8f422f78679c67ad3460589f"
+    },
+    {
+      "path": "native/probes/windows-reactor/Core/WorkspaceProbe.cs",
+      "sha256": "4938d08da0dc7e3fdde0c76014a43709d06de55efb918575a117fedd549556b7"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/MessageActions/NativeMessageActionController.cs",
+      "sha256": "56e808bda11d592c93c319cbd6ee52aabace51a644e53e3e1dbcc9b01dbb0a9d"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/MessageActions/NativeMessageActionsView.cs",
+      "sha256": "b6a533cf24c5ac22ea0f987d113b00ddb795477147093741729d043148604d55"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/RichText/NativeRichText.cs",
+      "sha256": "284fe1ed375a693555ec7a6dcf30e524a855f399c356ab3b3c1f0c3d123d66a3"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/RichText/NativeRichTextView.cs",
+      "sha256": "9426e96fd83482b4cc570f3bd1bdcb0c26476bd27263698b3308d28469cb4e53"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Threads/NativeThreadView.cs",
+      "sha256": "58daf7d78abbe92cf21ed2fdd4e6640bc2a99c7187984b64d149b2ef9037052b"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Uploads/Core/NativeUploadContracts.cs",
+      "sha256": "d5cc11223fcc30b0dfa28c6e0bcff8f98da19bce08c218c883b42c0d32c28ff5"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Uploads/Core/NativeUploadHttpClient.cs",
+      "sha256": "a6b65509379900053134ee0ec94f8dd7d00ccb3703080ab09787b9cadc1dc696"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Uploads/Core/NativeUploadQueue.cs",
+      "sha256": "581adbd9619cde9df444501b5c20fce2359f4a209001ec284b7c00879f21b8df"
+    },
+    {
+      "path": "native/probes/windows-reactor/Features/Uploads/NativeUploadView.cs",
+      "sha256": "17c53f52396a33250c08128c60b907084c856c0032c9564919d7cbd2e04122e7"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveChatComponent.cs",
+      "sha256": "e80b3f857f403abd88928cd5b8f7131f1cd12f69df6ece5a02807f9d9ca6d939"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveContentUiProbe.cs",
+      "sha256": "dfd1ec6541d2c8125416a0150331a97ecdf379bb1d95d2ce18ca8d0aab5f9ecb"
+    },
+    {
+      "path": "native/probes/windows-reactor/LiveUiProbe.cs",
+      "sha256": "2e0aa9ac1304d1add1b00931ba65bc1334608525d2329d7d9b4b2c1bedcdcfd7"
+    },
+    {
+      "path": "native/probes/windows-reactor/NativeMediaViewFixture.cs",
+      "sha256": "b6cc3dc17a6b909d95b1efe4fabc8f83cc7d9663136d889a4c6fd860c0eb51d3"
+    },
+    {
+      "path": "native/probes/windows-reactor/NativeMessageView.cs",
+      "sha256": "159caa3fa89baa98daa1fd8e3caa32f09b8eee8facf62c3ba6f1b59f296e8b4c"
+    },
+    {
+      "path": "native/probes/windows-reactor/NativeUploadShell.cs",
+      "sha256": "e90e2c7ccb9f4df1b86faaec538b62c5c49b29c9c43ffca1f5639763c6589c71"
+    },
+    {
+      "path": "native/probes/windows-reactor/packages.lock.json",
+      "sha256": "4868ce2105a5c35d8323efe2e1affde95d972dd6e14d9057c2b3425606d73ded"
+    },
+    {
+      "path": "native/probes/windows-reactor/Program.cs",
+      "sha256": "68573a930eb7323bd842821927adbb82847f08452e81fcad2ac98c485816b3f4"
+    },
+    {
+      "path": "native/probes/windows-reactor/README.md",
+      "sha256": "f9a6ddf64a612d8989e7cb614d564af8269a532c859e73501e402ca70400e520"
+    },
+    {
+      "path": "native/probes/windows-reactor/Sproyt.ReactorProbe.csproj",
+      "sha256": "a593ae0ba98c3097681e608f662bf44097d569df697961efbbe724ea416ad3bd"
+    },
+    {
+      "path": "native/probes/windows-reactor/ThirdPartyNotices.txt",
+      "sha256": "6087fb068fbcd3bd39dc5530eb77a3a6b78d60b65ce17ca7112c4684cc2ead45"
+    },
+    {
+      "path": "native/session-client/NativeAuthSession.cs",
+      "sha256": "d938aea05eced6bc2afe11ebafa2cde036cb48e092b6a76fe314484db4e6a324"
+    },
+    {
+      "path": "native/session-client/NativeMessageContent.cs",
+      "sha256": "81129075bffb44eaa0dc80bb0270ac675df42426324a2810bf63baf80a64af59"
+    },
+    {
+      "path": "native/session-client/README.md",
+      "sha256": "90b463592967536677613f876a3cf390711605ef9a52c42171588f12604c248d"
+    },
+    {
+      "path": "src/auth.rs",
+      "sha256": "d50b4882bde06b688126f5725234a8d0f0c5d4f52f6bee7368bbd24f0a9aa307"
+    },
+    {
+      "path": "src/auth/tests/native_media_upload_tests.rs",
+      "sha256": "eb38be109b92464344a174ee7c58d1d6c3bfbb875093046491e9c71569876c30"
+    },
+    {
+      "path": "src/media_store.rs",
+      "sha256": "f00aeecfc00d235cbb29976cc041937610729f0fa8bc39075c191145ad09fd37"
+    },
+    {
+      "path": "src/media_store/attachments.rs",
+      "sha256": "4b13e39b831a7946191d938ccdc61de750319c8acf9741f4c32976ad856a5a8b"
+    },
+    {
+      "path": "src/web/media_uploads.rs",
+      "sha256": "91d62949097aee02d79d8b865a013f5e3cda38ca2e50d1848665052c69da22b3"
+    },
+    {
+      "path": "src/web/media.rs",
+      "sha256": "602e80649ef9b4e72d4e7d2a993142d9dcc908b691c17f6789292c87821839f4"
+    },
+    {
+      "path": "src/web/native.rs",
+      "sha256": "b3c431250584274e98fd56346bef4c61e88667abcbefff9c9907f5b4ecb7ccaa"
+    },
+    {
+      "path": "src/web/native/media_uploads.rs",
+      "sha256": "f960ec86db33761fa9b698b8721db0c9fd83f4197378da9d8897b6ad3ce512a1"
+    }
+  ],
+  "canaryBaseline": "142f71888cdde11dec42a698432530e208f577bb",
+  "canaryRebaselined": false,
+  "planning": {
+    "model": "Astra",
+    "parallelImplementationTracks": 4,
+    "tracks": [
+      "Native AST view and shared literal/rendered spans; inert code/HTML, explicit allowlisted links, raw original and Mermaid source",
+      "Native bearer and account admission before body; shared MediaStore permissions, quotas and TTL; download-only documents",
+      "Captured target and login family, immutable private source, resumable stable IDs/status, progress/cancel/retry and durable journal",
+      "Root/thread shell integration and schema-4 atomic receipt/revision/composer sidecar; exact suffix send guard, uncertain settlement and integrated WinUI evidence"
+    ]
+  },
+  "backend": {
+    "receipt": "C:/Build/native-content-final/backend/receipt.json",
+    "result": {
+      "schemaVersion": 1,
+      "recordedAtUtc": "2026-11-04T10:20:20.8694341+01:00",
+      "sourceBase": "0127731b98c453c9618af6980ce176a04021c8ea",
+      "sourceDirty": true,
+      "sourceHashes": [
+        {
+          "path": "docs/native-http-endpoint-register.md",
+          "matchesDelivered": true,
+          "sha256": "e98b69a22d2e082f6451fe2fc8a04521c0e13274fd0f3947ceb006e88bb19007"
+        },
+        {
+          "path": "src/auth.rs",
+          "matchesDelivered": true,
+          "sha256": "d50b4882bde06b688126f5725234a8d0f0c5d4f52f6bee7368bbd24f0a9aa307"
+        },
+        {
+          "path": "src/auth/tests/native_media_upload_tests.rs",
+          "matchesDelivered": true,
+          "sha256": "eb38be109b92464344a174ee7c58d1d6c3bfbb875093046491e9c71569876c30"
+        },
+        {
+          "path": "src/media_store.rs",
+          "matchesDelivered": true,
+          "sha256": "f00aeecfc00d235cbb29976cc041937610729f0fa8bc39075c191145ad09fd37"
+        },
+        {
+          "path": "src/media_store/attachments.rs",
+          "matchesDelivered": true,
+          "sha256": "4b13e39b831a7946191d938ccdc61de750319c8acf9741f4c32976ad856a5a8b"
+        },
+        {
+          "path": "src/web/media_uploads.rs",
+          "matchesDelivered": true,
+          "sha256": "91d62949097aee02d79d8b865a013f5e3cda38ca2e50d1848665052c69da22b3"
+        },
+        {
+          "path": "src/web/media.rs",
+          "matchesDelivered": true,
+          "sha256": "602e80649ef9b4e72d4e7d2a993142d9dcc908b691c17f6789292c87821839f4"
+        },
+        {
+          "path": "src/web/native.rs",
+          "matchesDelivered": true,
+          "sha256": "b3c431250584274e98fd56346bef4c61e88667abcbefff9c9907f5b4ecb7ccaa"
+        },
+        {
+          "path": "src/web/native/media_uploads.rs",
+          "matchesDelivered": true,
+          "sha256": "f960ec86db33761fa9b698b8721db0c9fd83f4197378da9d8897b6ad3ce512a1"
+        }
+      ],
+      "sourceMatchesDelivered": true,
+      "fmtPassed": true,
+      "clippyAllTargetsAllFeaturesWarningsAsErrorsPassed": true,
+      "newHttpUploadTestsPassed": 4,
+      "mediaStoreReportedPassed": 7,
+      "postgresGuardedTests": 2,
+      "postgresAccepted": false,
+      "mediaHttpImageTestsPassed": 7,
+      "nativePreferenceTestsPassed": 2,
+      "review": "No new backend blockers found",
+      "testExecutable": "C:/Build/native-content-final/backend/target/debug/deps/sproyt-025947ddf84167e5.exe",
+      "logs": [
+        "fmt.txt",
+        "clippy.txt",
+        "native-media-upload.txt",
+        "media-store.txt",
+        "media-http.txt",
+        "preferences.txt"
+      ],
+      "liveCanary": false,
+      "deploymentPerformed": false
+    }
+  },
+  "managed": {
+    "receipt": "C:/Build/native-content-final/managed/receipt.json",
+    "groupsPassed": 10,
+    "contracts": [
+      {
+        "group": "client",
+        "passed": true,
+        "log": "C:/Build/native-content-final/managed/client/run.txt",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final/managed/client/receipt.json",
+            "sha256": "b1c15d476eb07f42642fe0e8780c516844a5d8f35bb4ed2237043775232f6ee4",
+            "result": {
+              "passed": true,
+              "production_transport_source": true,
+              "local_websocket": true,
+              "synthetic_session_owner": true,
+              "live_credentials": false,
+              "live_canary": false,
+              "domain_rejections": true,
+              "uncertain_server_errors": true,
+              "correlated_errors_only": true,
+              "lost_ack_exact_wire_replay": true,
+              "duplicate_waiter_single_frame": true,
+              "account_change_rejects_late_result": true,
+              "complete_channel_metadata": true,
+              "thread_edit_delete_metadata": true,
+              "architecture": "Arm64"
+            }
+          }
+        ]
+      },
+      {
+        "group": "delivery",
+        "passed": true,
+        "log": "C:/Build/native-content-final/managed/delivery/run.txt",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final/managed/delivery/receipt.json",
+            "sha256": "24a55b7eb753c59204cd63fbf6ce2b670f254c7808a26c245aa0846e6b4245b3",
+            "result": {
+              "scope": "native_delivery_coordinator",
+              "passed": 16,
+              "actualTransport": false
+            }
+          }
+        ]
+      },
+      {
+        "group": "history",
+        "passed": true,
+        "log": "C:/Build/native-content-final/managed/history/run.txt",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final/managed/history/receipt.json",
+            "sha256": "0c285def80d11d2b65b45996a81a6e3c7d373439be6ef9368284dc8538019478",
+            "result": {
+              "passed": true,
+              "production_transport_source": true,
+              "local_websocket": true,
+              "synthetic_session_owner": true,
+              "live_canary": false,
+              "actual_credentials": false,
+              "oldest_cursor_includes_replies": true,
+              "roots_only": true,
+              "paging_retry_same_cursor": true,
+              "malformed_page_atomic": true,
+              "stable_ids_sequences": true,
+              "no_optimistic_read": true,
+              "measured_ids_only": true,
+              "inactive_offscreen_restore_read_suppressed": true,
+              "late_page_view_fence": true,
+              "account_revocation_fence": true,
+              "permission_loss_clears_projection": true,
+              "large_legal_messages": true,
+              "queued_repair_preserves_user_selection": true,
+              "read_denial_clears_current_only": true,
+              "disconnect_fences_completed_page": true,
+              "queued_selection_original_account": true,
+              "stale_history_cannot_resurrect": true,
+              "bounded_history_no_silent_eviction": true,
+              "maximum_roots": 2000,
+              "page_size": 50,
+              "architecture": "Arm64"
+            }
+          }
+        ]
+      },
+      {
+        "group": "navigation",
+        "passed": true,
+        "log": "C:/Build/native-content-final/managed/navigation/run.txt",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final/managed/navigation/tests/navigation-d3a272782df74f1da65d9237e4732d8d/receipt.json",
+            "sha256": "da980cd935e66f93c6c456c8b671fc89e58cc83dca42ceb90340905a1e8c3a1f",
+            "result": {
+              "passed": true,
+              "scope": "native_navigation_headless_contract",
+              "source": "linked production navigation controller",
+              "checks": [
+                "search keeps canonical channels",
+                "equal circle names retain distinct IDs",
+                "server metadata DM ranking",
+                "stable targets during interaction",
+                "back forward and precise targets",
+                "message/sequence/pixel anchor restoration",
+                "account and family fences",
+                "normal token rotation preserves navigation",
+                "late A-B-A result rejection",
+                "access loss prunes history and anchors",
+                "bounded history",
+                "account-owned optional preferences",
+                "storage failure remains navigable"
+              ],
+              "actualWinUi": false,
+              "actualTransport": false,
+              "actualDraftStorage": false
+            }
+          }
+        ]
+      },
+      {
+        "group": "conversation",
+        "passed": true,
+        "log": "C:/Build/native-content-final/managed/conversation/run.txt",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final/managed/conversation/receipt.json",
+            "sha256": "fc6faebde3c4d7cb22d414c2fe9eab6cd79891dae83c8d7f61426ff8d70e1d0a",
+            "result": {
+              "passed": true,
+              "production_transport_source": true,
+              "local_websocket": true,
+              "synthetic_session_owner": true,
+              "live_canary": false,
+              "threads_roots_replies_isolated": true,
+              "thread_generation_fence": true,
+              "read_ack_only": true,
+              "measured_reply_ids_only": true,
+              "stale_pages_preserve_tombstones_edits": true,
+              "mutation_ack_resource_validation": true,
+              "authoritative_readback_without_selection": true,
+              "reaction_snapshot_live_fence": true,
+              "duplicate_reaction_event_idempotent": true,
+              "uncertain_toggle_never_replayed": true,
+              "channel_account_scope_clear": true,
+              "thread_capacity_atomic": true,
+              "cold_thread_root_preserves_contiguous_history": true,
+              "readback_preserves_later_live_tombstone": true,
+              "oversized_frame_drained_without_reconnect": true,
+              "oversized_legal_thread_reports_capacity": true,
+              "send_parent_and_normalized_body_ack_fenced": true,
+              "account_revoked_before_mutation_write": true
+            }
+          }
+        ]
+      },
+      {
+        "group": "threads",
+        "passed": true,
+        "log": "C:/Build/native-content-final/managed/threads/run.txt",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final/managed/threads/tests/receipt.json",
+            "sha256": "e90082b31c4303a776ea8d33a1468372a27f3b12cc2f1879f2870531b3f2cffb",
+            "result": {
+              "passed": true,
+              "scope": "native_thread_feature_headless",
+              "checks": 10,
+              "productionOwner": true,
+              "actualWinUi": false,
+              "actualTransport": false,
+              "actualDraftStorage": false,
+              "accountVisitAndTransportFences": true,
+              "visibleRepliesOnly": true,
+              "noOptimisticRead": true,
+              "boundedReplies": 2000
+            }
+          }
+        ]
+      },
+      {
+        "group": "actions",
+        "passed": true,
+        "log": "C:/Build/native-content-final/managed/actions/run.txt",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final/managed/actions/receipt.json",
+            "sha256": "620c9e1e8ba23f7328ad8b80a5b2ca19d9b87555dc7f4355304041e1e8f4e7b9",
+            "result": {
+              "passed": true,
+              "scope": "native_message_action_contract",
+              "actualWinUi": false,
+              "actualTransport": false,
+              "checks": [
+                "own-message permission",
+                "attachment preservation",
+                "edit conflict",
+                "delete confirmation",
+                "Unicode reactions",
+                "uncertain readback without automatic write",
+                "stale visit and account callbacks"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "group": "rich-text",
+        "passed": true,
+        "log": "C:/Build/native-content-final/managed/rich-text/run.txt",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final/managed/rich-text/receipt.json",
+            "sha256": "54340bf501204b76d0e4c9ab42714b52f285a3f40f8b718d4ef42e034d92748e",
+            "result": {
+              "scope": "native_rich_text_contracts",
+              "passed": true,
+              "checks": [
+                "headings, nested emphasis, strike and soft breaks",
+                "GFM pipe table with semantic heading and safe link",
+                "ordered items, nested bullets, tasks and quotes",
+                "explicit web actions only, images stay text",
+                "literal HTML, code markers and exact fenced line endings",
+                "Mermaid source is inert and dice are bounded",
+                "complexity limits preserve a readable source fallback",
+                "managed attachment suffix is outside literal Markdown",
+                "bounded wire parsing and exact rendered attachment suffixes"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "group": "upload",
+        "passed": true,
+        "log": "C:/Build/native-content-final-review/race/repeat-8.log",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final-review/race/repeat-8-13b9684c-25ce-44ab-ac06-c8180f4e4e75/receipt.json",
+            "sha256": "5daaec17ff8357e73e262393367146056d1dcb9c592d35d17a5713a75dcb93ee",
+            "result": {
+              "passed": true,
+              "checks": 22,
+              "productionQueue": true,
+              "productionHttpAdapter": true,
+              "realWindowsSessionOwner": true,
+              "syntheticHttpServer": true,
+              "actualCanary": false,
+              "actualDraftStore": false,
+              "maximumJobs": 8,
+              "chunkBytes": 1048576,
+              "responseBytes": 16384,
+              "uploadDoesNotSendChat": true
+            }
+          }
+        ]
+      },
+      {
+        "group": "upload-admission",
+        "passed": true,
+        "log": "C:/Build/native-content-final-review/race/admission.log",
+        "receipts": [
+          {
+            "path": "C:/Build/native-content-final-review/race/admission.json",
+            "sha256": "dbc1038149ac2242faf1cc68f909ae982e9fb03883a347c31b064185a3f8fe03",
+            "result": {
+              "passed": true,
+              "actual_application_source": true,
+              "actual_queue_source": true,
+              "synthetic_auth_disk_workspace": true,
+              "stage_cancelled_on_offline_logout_user_family": true,
+              "admission_wait_cancelled": true,
+              "rotation_navigation_preserve_target": true,
+              "close_cancels_before_disk_disposal": true,
+              "stale_scope_registration_rejected": true,
+              "cancellation_outside_auth_gate": true,
+              "definitive_capacity_keeps_retryable_ready": true,
+              "unknown_handoff_preserved": true,
+              "old_family_retirement_waits_for_existing_receipt": true,
+              "uncertain_settlement_retains_job": true,
+              "account_change_fences_late_retirement": true,
+              "actual_network": false,
+              "actual_disk_journal": false,
+              "actual_winui": false
+            }
+          }
+        ]
+      }
+    ],
+    "targetedGroupsRerunAfterHostedRace": [
+      "upload",
+      "upload-admission"
+    ],
+    "repeatedUploadRuns": 9
+  },
+  "storage": {
+    "schema": 4,
+    "explicitOptIn": [
+      "draft_revisions",
+      "thread_targets",
+      "upload_drafts"
+    ],
+    "oldDllRejectsNewSchema": true,
+    "atomicAttachmentReceiptRevisionAndComposer": true,
+    "rootPayloadBytesPreserved": true,
+    "rustAllFeaturesTests": 34,
+    "log": "C:/Build/native-content-final-review/storage.log",
+    "clippyAndFmtPassed": true,
+    "clippyLog": "C:/Build/native-content-final-review/storage-clippy.log",
+    "fmtLog": "C:/Build/native-content-final-review/storage-fmt.log",
+    "actualWindowsDllAndDpapi": true
+  },
+  "windows": {
+    "receipt": "C:/Build/native-content-final/windows-after-race/runs/e4e22429a853405fa10d8fa0dee77f1d/receipt.json",
+    "result": {
+      "schema": 1,
+      "scope": "windows_reactor_local_feasibility",
+      "sourceRevision": "051a0828e6684d9e294f8daff396c990e46057d4",
+      "sourceDirty": true,
+      "architecture": "arm64",
+      "platform": "win-arm64",
+      "reactor": "0.1.0-preview.16",
+      "compiler": "Microsoft.Net.Compilers.Toolset 5.9.0",
+      "runtime": "win-arm64",
+      "nativeLibrarySha256": "ff9e817f16777846660e01d91afd0096c2153030159708f28c3c3e3b868e398f",
+      "executableSha256": "a6a2a9acf4310f8f3eb35f82167dc6b49de62bd9d479c8ae78cfc159235720d3",
+      "applicationPriSha256": "1c93954aab25ca97e589d93f2791562ac874ee8d0dbbfb7e4d5f6ad2b169afd2",
+      "coreTests": true,
+      "uiSmoke": {
+        "passed": true,
+        "architecture": "Arm64",
+        "materializedTextBlocks": 61,
+        "syntheticMessagesPerChannel": 1000,
+        "rasterizationScale": 2,
+        "keyboardViewportAvailable": true,
+        "compactWidthDip": 347,
+        "checks": [
+          "native WinUI tree",
+          "virtualization",
+          "editor identity and selection",
+          "independent drafts",
+          "reading position",
+          "light and dark semantic brushes",
+          "UI enqueue binding",
+          "own message visible",
+          "immediate send and navigation",
+          "debounced resize tail",
+          "resize preserves history reader",
+          "keyboard transition coalescing",
+          "overlay keyboard editor and tail visibility",
+          "no double keyboard inset",
+          "stable keyboard geometry",
+          "keyboard preserves history reader",
+          "compact layout",
+          "flush and reopen"
+        ],
+        "notTested": [
+          "physical keyboard and IME",
+          "touch",
+          "screen reader",
+          "visual screenshot approval",
+          "production"
+        ]
+      },
+      "uiResume": {
+        "passed": true,
+        "architecture": "Arm64",
+        "checks": [
+          "new app process",
+          "multiline editor hydration",
+          "second channel draft",
+          "queued message retained"
+        ]
+      },
+      "syntheticSessionUi": true,
+      "liveChatViewFixture": {
+        "passed": true,
+        "scope": "live_chat_view_fixture",
+        "actualWinUi": true,
+        "channelDrafts": true,
+        "sendBinding": true,
+        "compactComposer": true,
+        "circleGroups": true,
+        "decodedMediaPreview": true,
+        "boundedPreviewLeases": true,
+        "viewportPreviewGallery": 24,
+        "viewportRelease": true,
+        "stablePreviewGeometry": true,
+        "rapidPreviewReentry": true,
+        "portraitAndLandscape": true,
+        "originalAspectRatio": true,
+        "responsivePreviewWidth": true,
+        "macroCard": true,
+        "temporaryOriginalCleanup": true,
+        "timelinePaging": true,
+        "stableMessageAnchor": true,
+        "visibleReadOnly": true,
+        "navigationSearch": true,
+        "navigationDirectoryScopes": true,
+        "navigationBackForward": true,
+        "independentNavigationDrafts": true,
+        "variableHeightAnchor": true,
+        "threadOpenClose": true,
+        "threadDirectory": true,
+        "independentThreadDrafts": true,
+        "parentBoundReply": true,
+        "threadVisibleReadOnly": true,
+        "messageEdit": true,
+        "messageDeleteConfirmation": true,
+        "deletedThreadParent": true,
+        "reactionToggle": true,
+        "uncertainReactionReadback": true,
+        "nativeRichText": true,
+        "nativeTable": true,
+        "exactRawSource": true,
+        "literalCodeMarker": true,
+        "documentDownloadAction": true,
+        "rootAndThreadAttachmentChips": true,
+        "attachmentOnlySend": true,
+        "activeUploadBlocksSend": true,
+        "uploadCancelRetry": true,
+        "capturedPickerTarget": true,
+        "productionAuthentication": false,
+        "actualTransport": false,
+        "storageAcceptance": false
+      },
+      "publishDirectory": "C:\\Build\\native-content-final\\windows-after-race\\runs\\e4e22429a853405fa10d8fa0dee77f1d\\publish-win-arm64",
+      "notTested": [
+        "physical keyboard and IME",
+        "touch",
+        "screen reader",
+        "visual screenshot approval",
+        "production sync",
+        "production authentication",
+        "hard termination of the full WinUI process during live transport"
+      ]
+    }
+  },
+  "webDocumentCompatibility": {
+    "receipt": "C:/Build/native-content-final/frontend-compat/receipt.json",
+    "result": {
+      "schema": 1,
+      "scope": "frontend_document_consumer_compatibility",
+      "recordedUtc": "2026-11-04T13:30:35.3775592Z",
+      "baseHead": "8aa038f0ade335dfdbeb933099677cd990924ea0",
+      "sourceDirectory": "S:/Source/sproyt-native-content",
+      "sourceDirty": true,
+      "sourceFiles": [
+        {
+          "path": "frontend/src/app.ts",
+          "absolutePath": "S:\\Source\\sproyt-native-content\\frontend\\src\\app.ts",
+          "sha256": "cfd27e85ba83680c1684008c90c3168b28a68349b859b0860d6ff43fd9e676af",
+          "lastWriteUtc": "2026-11-04T12:53:22.7328925Z"
+        },
+        {
+          "path": "frontend/src/ui/react/preview-media.tsx",
+          "absolutePath": "S:\\Source\\sproyt-native-content\\frontend\\src\\ui\\react\\preview-media.tsx",
+          "sha256": "1dbaf90ad6ad72fb87b3c07f5e76815c498bc66866d31d285a1f1f9bfca86c2a",
+          "lastWriteUtc": "2026-11-04T12:53:22.7301177Z"
+        },
+        {
+          "path": "frontend/tests/ui-react-media.spec.ts",
+          "absolutePath": "S:\\Source\\sproyt-native-content\\frontend\\tests\\ui-react-media.spec.ts",
+          "sha256": "b778e655ad45c3ad157b2c0a54ba7182db353dce63204b836cc0051b7d1e5c69",
+          "lastWriteUtc": "2026-11-04T13:27:41.4594916Z"
+        }
+      ],
+      "bundleDirectory": "C:/Build/native-content-final/frontend-compat/dist",
+      "bundles": [
+        {
+          "path": "C:\\Build\\native-content-final\\frontend-compat\\dist\\app.js",
+          "bytes": 10425583,
+          "sha256": "2520b0a49830c0531f9274b83c90a328a7525639d46bb069dc87868e11835da6"
+        },
+        {
+          "path": "C:\\Build\\native-content-final\\frontend-compat\\dist\\client-store.js",
+          "bytes": 1490,
+          "sha256": "b1226e575e6f06bb4cb891fa686afbf6192f0ea3edbff3479881ae04fcb2d220"
+        }
+      ],
+      "frontend": {
+        "command": "npm run test",
+        "passed": true,
+        "typecheck": true,
+        "build": true,
+        "boundariesPassed": 211,
+        "boundariesFailed": 0,
+        "log": "C:/Build/native-content-final/frontend-compat/final-npm-test.log"
+      },
+      "browser": {
+        "browser": "chromium",
+        "passed": 3,
+        "failed": 0,
+        "durationSeconds": 11.6,
+        "scenarios": [
+          "react receives native document markers as explicit downloads without preview requests",
+          "legacy receives native document markers as explicit downloads without preview requests",
+          "React sends real attachment-only messages and opens a full-screen zoomable original"
+        ],
+        "lastRun": "C:/Build/native-content-final/frontend-compat/browser/results/.last-run.json",
+        "summary": "C:/Build/native-content-final/frontend-compat/browser-summary.txt",
+        "config": "C:/Build/native-content-final/frontend-compat/browser/playwright.config.cjs",
+        "harness": "C:/Build/native-content-final/frontend-compat/browser/compat.spec.cjs",
+        "serverBinary": "C:/Build/native-content-final/backend/target/debug/sproyt.exe",
+        "isolation": "Local backend process, unique local port and SQLite directory; no production requests.",
+        "frontendBundle": "Playwright route override served the freshly built final frontend bundle for /assets/app/*/app.js; source files were unchanged during browser execution. The existing backend embedded an earlier bundle; it supplied fixture APIs only.",
+        "documents": "Synthetic received WebSocket message markers and synthetic context-routed document HTTP responses. No real document upload. Download filename checked by native navigation to the captured link URL because Chromium download-attribute requests bypass Playwright routing.",
+        "images": "The existing image scenario used actual upload/send/original/download against the isolated local backend. No physical file picker interaction; synthetic generated image bytes.",
+        "notTested": [
+          "production",
+          "new document end-to-end upload over browser transport",
+          "direct document anchor-click response interception",
+          "physical user file dialogs"
+        ]
+      }
+    }
+  },
+  "identityHarnessDiagnostics": {
+    "receipt": "C:/Build/native-content-final-review/identity-diag/diagnostics-receipt.json",
+    "result": {
+      "schemaVersion": 1,
+      "scope": "identity_probe_safe_readiness_diagnostics",
+      "sourceHashes": [
+        {
+          "path": "native/probes/identity-client/Program.cs",
+          "sha256": "6321969c52decc0339e77c582b35f4a04a4d4f8d2a4faeaa95297da19a2a7a91"
+        },
+        {
+          "path": "native/probes/identity-client/NativeSessionProbe.cs",
+          "sha256": "d12e5a489736db95a78348c4006cd7020b1f87706de29dc12485d115ff75cbd4"
+        },
+        {
+          "path": "native/probes/identity-client/ProbeDiagnostics.cs",
+          "sha256": "1ee4d9cc9390a9b32e9549758e954348d3fe3dedcf3538cf28e37a17cc8eab5a"
+        }
+      ],
+      "receipts": {
+        "generic": "C:/Build/native-content-final-review/identity-diag/generic-b38a1481-8567-4b3d-9bf2-1240cffb690a/receipt.json",
+        "session": "C:/Build/native-content-final-review/identity-diag/session-ad5fbe55-713d-4326-81a9-d790d5cf9f1e/receipt.json"
+      },
+      "readinessDeadlineSeconds": 20,
+      "diagnosticObservationSeconds": 5,
+      "controlledSlowBroker": {
+        "delaySeconds": 21,
+        "exitCode": 1,
+        "observation": "late-ready",
+        "noSentinelLeak": true
+      }
+    }
+  },
+  "limits": {
+    "uploadJobs": 8,
+    "privateSpoolBytes": 536870912,
+    "uploadChunkBytes": 1048576,
+    "uploadControlReplyBytes": 16384,
+    "uploadJournalBytes": 32768,
+    "outbox": 8,
+    "durableDrafts": 8,
+    "bodyUtf8Bytes": 1024,
+    "clipboardEncodedInputBytes": 67108864,
+    "clipboardPixels": 16777216,
+    "richSourceUtf16Units": 65536,
+    "richBlocks": 128,
+    "richRuns": 1024,
+    "richTableCells": 256,
+    "richTableColumns": 12,
+    "mediaParts": 20,
+    "cardParts": 12
+  },
+  "staticChecks": {
+    "actionlint": true,
+    "gitDiffCheck": true,
+    "thirdPartyNoticeIncludedInPublish": true
+  },
+  "hostedChecks": {
+    "status": "pending; exact commit and final results tracked in pull request",
+    "initialFinding": {
+      "sourceHead": "051a0828e6684d9e294f8daff396c990e46057d4",
+      "run": "https://github.com/hbjoroy/sproyt/actions/runs/41813090500",
+      "finding": "An initial scope wake could dispatch an upload before its first journal acknowledgment.",
+      "resolution": "Serialize pump selection and active claim with journal mutations; stop active work at the next boundary after any journal failure. Both regressions were reproduced or forced with controlled gates, then all 22 upload checks passed nine times."
+    }
+  },
+  "notEstablished": [
+    "Live Canary two-user acceptance and actual Windows network authentication/upload round trip",
+    "Physical file picker/save dialog, clipboard, keyboard/IME, touch and screen reader acceptance",
+    "Graphical Mermaid rendering; current native view preserves inert Mermaid source",
+    "Drag and drop, OS share target and Office document support",
+    "PostgreSQL acceptance locally; two guarded tests do not establish a running PostgreSQL service",
+    "Visual screenshot approval and hard termination of the full WinUI process during live upload"
+  ],
+  "deploymentPerformed": false,
+  "realUserMessagesSent": false
+}

@@ -11,11 +11,12 @@ namespace Sproyt.WindowsProbe;
 
 internal sealed record NativeThreadDirectoryBindings(Action Close, Action Retry, Action<string> Open);
 
-internal sealed record NativeThreadDetailBindings(Func<NativeMessage, bool, Element> RenderMessage,
+internal sealed record NativeThreadDetailBindings(Func<NativeMessagePresentation, bool, Element> RenderMessage,
     string DraftBody, Action<string> DraftChanged, Action Send, Action Close, Action Retry,
     bool CanSend, bool ComposerEnabled = true, IReadOnlyList<NativeMessage>? PendingReplies = null,
     Action<ScrollViewer>? ViewportMounted = null, Action? ViewportUnmounted = null,
-    Action<TextBox>? ComposerMounted = null, Element? DeliveryNotice = null);
+    Action<TextBox>? ComposerMounted = null, Element? DeliveryNotice = null, Element? UploadTools = null,
+    Func<NativeMessage, NativeMessagePresentation>? PresentMessage = null);
 
 // The host supplies the same message renderer/actions used in the channel and
 // the durable, target-bound composer. This view owns neither tokens nor drafts.
@@ -62,6 +63,8 @@ internal static class NativeThreadView
             .Concat(thread?.Replies ?? [])
             .Concat((bindings.PendingReplies ?? []).Where(message => message.ChannelId == visit.ChannelId && message.ParentMessageId == rootId))
             .ToArray();
+        var presentations = messages.Select(message => bindings.PresentMessage?.Invoke(message)
+            ?? throw new InvalidOperationException("The host must freeze each thread row's presentation inputs.")).ToArray();
         var editor = TextBox(bindings.DraftBody, bindings.DraftChanged, placeholderText: "Skriv eit svar i tråden …")
             .AcceptsReturn(true).TextWrapping(TextWrapping.Wrap).MinHeight(44).MaxHeight(180)
             .AutomationName("Skriv eit svar i tråden").AutomationId("live-thread-composer")
@@ -88,18 +91,18 @@ internal static class NativeThreadView
                 TextBlock("Den opphavlege meldinga er ikkje lasta.").TextWrapping().Foreground(palette.Muted)
                     .Margin(16, 4).IsVisible(!state.Loading && state.Error is null && thread?.Root is null)
             ).Grid(row: 0),
-            LazyVStack<NativeMessage>(messages, message => message.Id, (message, _) =>
-                bindings.RenderMessage(message, message.Id == rootId))
+            LazyVStack<NativeMessagePresentation>(presentations, item => item.Message.Id, (item, _) =>
+                bindings.RenderMessage(item, item.Message.Id == rootId))
                 .AutomationName("Meldingar i tråden").AutomationId("live-thread-history")
                 .OnMount(element => { if (element is ScrollViewer scroller) bindings.ViewportMounted?.Invoke(scroller); })
                 .OnUnmount(_ => bindings.ViewportUnmounted?.Invoke())
                 .WithKey("live-thread-history-" + visit.ChannelId + "-" + rootId).Grid(row: 1),
             (bindings.DeliveryNotice ?? Empty()).Grid(row: 2),
-            Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
+            VStack(4, bindings.UploadTools ?? Empty(), Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
                 editor.Grid(column: 0),
                 Button("Send svar", bindings.Send).MinHeight(44).Padding(12, 8).Margin(8, 0, 0, 0)
                     .IsEnabled(bindings.CanSend).AutomationName("Send svar i tråden").AutomationId("live-thread-send").Grid(column: 1)
-            ).Padding(12, 8).Background(palette.Chrome).Grid(row: 3)
+            )).Padding(12, 8).Background(palette.Chrome).Grid(row: 3)
         ).Background(palette.Paper).AutomationId("live-thread-pane");
     }
 

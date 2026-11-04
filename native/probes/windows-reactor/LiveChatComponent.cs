@@ -33,6 +33,9 @@ internal sealed class LiveChatComponent : Component
     private long _lastThreadVisit = -1, _lastThreadGeneration = -1;
     private bool _threadSurfaceVisible;
     private readonly NativeMessageActionController _rootActions = new(), _threadActions = new();
+    private readonly NativeRawMessageState _rawMessages = new();
+    private bool _uploadChoosing;
+    private string? _uploadUiUser, _uploadUiFamily, _uploadUiError;
     private NativeTimelineContext? _timelineContext;
     private NativeScrollAnchor? _requestedAnchor;
     private bool _surfaceVisible, _previousSurfaceVisible;
@@ -46,6 +49,7 @@ internal sealed class LiveChatComponent : Component
         PilotComponent.InvalidateForClose = () => invalidate(Interlocked.Increment(ref _revision));
         var (dark, setDark) = UseState(Application.Current.RequestedTheme == ApplicationTheme.Dark);
         var (showList, setShowList) = UseState(false);
+        var (showUploads, setShowUploads) = UseState(false);
         bool wide = UseBreakpoint(800);
         UseEffect(() =>
         {
@@ -54,8 +58,10 @@ internal sealed class LiveChatComponent : Component
             if (app is not null) app.Changed += Changed;
             else _ = Program.OpenLiveAsync();
             _rootActions.Changed += Changed; _threadActions.Changed += Changed;
+            _rawMessages.Changed += Changed;
             return () => { Program.LiveStateChanged -= Changed; if (app is not null) app.Changed -= Changed;
                 _rootActions.Changed -= Changed; _threadActions.Changed -= Changed;
+                _rawMessages.Changed -= Changed;
                 _timeline?.Dispose(); _threadTimeline?.Dispose(); _discardDialog?.Hide(); WindowActivityChanged = null; };
         }, app is null ? "starting" : "ready");
         if (app is null)
@@ -91,13 +97,73 @@ internal sealed class LiveChatComponent : Component
         _rootActions.Bind(rootScope); if (rootScope is not null) _rootActions.Observe(rootScope, rows);
         _threadActions.Bind(threadScope); if (threadScope is not null) _threadActions.Observe(threadScope, threadRows);
         var messageCommands = new NativeMessageActionCommands(app.ExecuteMessageMutationAsync, app.ReadBackMessageMutationAsync);
+        string? family = auth.SessionStamp is { } currentStamp && currentStamp.LastIndexOf(':') > 0 ? currentStamp[..currentStamp.LastIndexOf(':')] : null;
+        _rawMessages.Bind(auth.UserId, family);
+        bool UploadBlocked(string targetChannel, string? parent) => NativeUploadPresentation.BlocksSend(state.Uploads, auth.UserId, family, targetChannel, parent);
         bool canSend = !state.ConfirmPendingSends && navigation is { Pending: false, Error: null } && chat.SelectedChannel == channel && draft is not null && !string.IsNullOrWhiteSpace(draft.Body) && Encoding.UTF8.GetByteCount(draft.Body) <= 1024 &&
+            NativeRichText.AttachmentSuffixVisible(draft.Body, draft.Attachments) && channel is not null && !UploadBlocked(channel, null) &&
             !Program.CloseAdmissionClosed && state.Workspace is { Ready: true, Closing: false, Sending: false, NeedsRetry: false } &&
             state.Workspace.Outbox.Count < 8 && auth.Phase is NativeAuthPhase.Active or NativeAuthPhase.Offline;
 
         async void Login() { if (!Program.CloseAdmissionClosed) await app.LoginAsync(); }
         async void Logout() { if (!Program.CloseAdmissionClosed) await app.LogoutAsync(); }
         async void Retry() { if (!Program.CloseAdmissionClosed) await app.ResumeAsync(); }
+        async Task ChooseUpload(NativeMessageActionScope captured, bool paste)
+        {
+            if (_uploadChoosing || Program.CloseAdmissionClosed) return;
+            _uploadChoosing = true; _uploadUiError = null;
+            invalidate(Interlocked.Increment(ref _revision));
+            try
+            {
+                setShowUploads(true);
+                if (paste) await NativeUploadShell.PasteAsync(app, captured); else await NativeUploadShell.PickAsync(app, captured);
+            }
+            catch
+            {
+                var latest = app.Authentication;
+                if (latest.UserId == captured.UserId && latest.SessionStamp is { } stamp && stamp.LastIndexOf(':') > 0 &&
+                    captured.SessionStamp.LastIndexOf(':') > 0 && stamp[..stamp.LastIndexOf(':')] == captured.SessionStamp[..captured.SessionStamp.LastIndexOf(':')])
+                { _uploadUiUser = captured.UserId; _uploadUiFamily = stamp[..stamp.LastIndexOf(':')]; _uploadUiError = "Fila eller biletet kunne ikkje hentast. Prøv Legg ved på nytt."; }
+            }
+            finally { _uploadChoosing = false; invalidate(Interlocked.Increment(ref _revision)); }
+        }
+        Element UploadTools(NativeMessageActionScope? scope, DraftView? composerDraft, bool thread)
+        {
+            var target = scope is not null && family is not null ? new NativeUploadTarget(scope.UserId, family, scope.ChannelId, scope.ThreadRootId) : null;
+            string prefix = thread ? "live-thread-" : "live-";
+            bool enabled = scope is not null && state.Uploads is not null && chat.Connected && auth.Phase == NativeAuthPhase.Active &&
+                !Program.CloseAdmissionClosed && !_uploadChoosing && navigation is { Pending: false, Error: null };
+            var chips = (composerDraft?.Attachments ?? []).Select((marker, index) =>
+            {
+                var attachment = NativeUploadPresentation.Attachment(marker);
+                return Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
+                    TextBlock(attachment.Text).TextWrapping().Foreground(palette.Ink).VAlign(VerticalAlignment.Center).Grid(column: 0),
+                    Button("Fjern", () => { if (scope is not null) app.RemoveDraftAttachment(scope, index, marker); }).MinHeight(36)
+                        .AutomationName("Fjern vedlegget " + attachment.Text).AutomationId(prefix + "draft-attachment-remove-" + index).Grid(column: 1))
+                    .AutomationId(prefix + "draft-attachment-" + index);
+            }).ToArray();
+            string? error = state.UploadError ?? (_uploadUiUser == auth.UserId && _uploadUiFamily == family ? _uploadUiError : null);
+            return VStack(4,
+                HStack(8,
+                    Button(_uploadChoosing ? "Klargjer …" : "Legg ved", async () => { if (scope is not null) await ChooseUpload(scope, false); })
+                        .MinHeight(36).AutomationName("Vel bilete, video eller vedlegg").AutomationId(prefix + "attach-files").IsEnabled(enabled),
+                    Button("Lim inn", async () => { if (scope is not null) await ChooseUpload(scope, true); })
+                        .MinHeight(36).AutomationName("Lim inn bilete eller filer").AutomationId(prefix + "paste-files").IsEnabled(enabled),
+                    Button("Opplastingar" + (state.Uploads?.Jobs.Count > 0 ? " (" + state.Uploads.Jobs.Count + ")" : ""), () => setShowUploads(!showUploads))
+                        .MinHeight(36).AutomationName("Vis opplastingskøen").AutomationId(prefix + "uploads-toggle")
+                        .IsVisible(state.Uploads?.Jobs.Count > 0 || state.Uploads?.StorageError is not null)),
+                ScrollViewer(VStack(2, chips)).MaxHeight(96).IsVisible(chips.Length > 0),
+                TextBlock(error ?? "").TextWrapping().Foreground(palette.Error).IsVisible(error is not null).AutomationId(prefix + "upload-error"),
+                Button("Prøv opplasting på nytt", Retry).MinHeight(36).IsVisible(state.Uploads is null && state.UploadError is not null)
+                    .AutomationName("Opne opplastingslageret på nytt"),
+                TextBlock("Avslutt kodeblokka eller HTML-teksten før du sender vedlegg.").TextWrapping().Foreground(palette.Error)
+                    .IsVisible(composerDraft is not null && !NativeRichText.AttachmentSuffixVisible(composerDraft.Body, composerDraft.Attachments)),
+                state.Uploads is { } uploads ? ScrollViewer(NativeUploadView.Render(uploads, target, palette,
+                    new(id => { if (auth.UserId is string user && auth.SessionStamp is string stamp) _ = app.RetryUploadAsync(user, stamp, id); },
+                        id => { if (auth.UserId is string user && auth.SessionStamp is string stamp) _ = app.CancelUploadAsync(user, stamp, id); },
+                        id => { if (auth.UserId is string user && auth.SessionStamp is string stamp) _ = app.RemoveUploadAsync(user, stamp, id); })))
+                    .MaxHeight(120).IsVisible(showUploads && (uploads.Jobs.Count > 0 || uploads.StorageError is not null)) : Empty());
+        }
         void RememberViewport()
         {
             var current = app.Capture().Navigation?.Current;
@@ -182,7 +248,8 @@ internal sealed class LiveChatComponent : Component
                 !latest.Workspace.Drafts.TryGetValue(channel, out var text) || string.IsNullOrWhiteSpace(text.Body) ||
                 Encoding.UTF8.GetByteCount(text.Body) > 1024 || latest.Workspace.Outbox.Count >= 8 ||
                 latest.Authentication.Phase is not (NativeAuthPhase.Active or NativeAuthPhase.Offline)) return;
-            if (rootScope is null) return;
+            if (rootScope is null || !NativeRichText.AttachmentSuffixVisible(text.Body, text.Attachments) ||
+                NativeUploadPresentation.BlocksSend(latest.Uploads, rootScope.UserId, family, rootScope.ChannelId, null)) return;
             await app.SendComposerAsync(rootScope);
             if (channel == app.Chat.SelectedChannel && app.Workspace?.Drafts[channel].Body == "")
                 _timeline?.RevealEnd();
@@ -242,31 +309,49 @@ internal sealed class LiveChatComponent : Component
             state.Workspace?.Outbox.Any(item => item.RequestId == message.Id[8..] && item.State == "rejected") == true;
         string MessageStatus(NativeMessage message) => IsRejected(message) ? "Ikkje sendt — avvist" :
             message.Id.StartsWith("pending:", StringComparison.Ordinal) ? "Lagra på denne eininga" : message.SentAt.ToLocalTime().ToString("HH:mm");
-        IReadOnlyList<NativeReactionChip> Chips(NativeMessage message) => (chat.Conversation?.Reactions ?? [])
-            .Where(item => item.MessageId == message.Id).Select(item => new NativeReactionChip(item.Emoji, item.Count, item.ReactedByMe,
-                item.UserIds.Select(user => user == auth.UserId ? auth.DisplayName ?? "Du" :
-                    rows.Concat(threadRows).FirstOrDefault(row => row.AuthorId == user)?.Author ?? "Brukar " + user).ToArray())).ToArray();
-        Element Message(NativeMessage message, bool inThread = false) => VStack(5,
+        var authorNames = rows.Concat(threadRows).GroupBy(message => message.AuthorId).ToDictionary(group => group.Key, group => group.First().Author);
+        var chipsByMessage = (chat.Conversation?.Reactions ?? []).GroupBy(reaction => reaction.MessageId).ToDictionary(group => group.Key,
+            group => (IReadOnlyList<NativeReactionChip>)group.Select(item => new NativeReactionChip(item.Emoji, item.Count, item.ReactedByMe,
+                item.UserIds.Select(user => user == auth.UserId ? auth.DisplayName ?? "Du" : authorNames.GetValueOrDefault(user) ?? "Brukar " + user).ToArray())).ToArray());
+        var summariesByMessage = (chat.Conversation?.ThreadSummaries ?? []).ToDictionary(summary => summary.RootMessageId);
+        string ActionState(NativeMessage message, NativeMessageActionScope? scope, bool inThread)
+        {
+            if (scope is null) return "unavailable";
+            var owner = inThread ? _threadActions : _rootActions;
+            bool canOpen = owner.CanOpen(scope, message);
+            if (owner.MessageId != message.Id) return canOpen ? "idle-enabled" : "idle-disabled";
+            return System.Text.Json.JsonSerializer.Serialize(new { owner.Mode, owner.Input, owner.Error, owner.Busy, owner.NeedsReadBack, owner.HasAttachments, owner.CanSave, canOpen });
+        }
+        NativeMessagePresentation Present(NativeMessage message, bool inThread = false) => new(message, _rawMessages.IsRaw(message.Id), auth,
+            palette, inThread ? threadScope : rootScope, IsRejected(message), auth.Phase == NativeAuthPhase.Active && chat.Connected &&
+                navigation is { Pending: false, Error: null } && (!inThread || threads is { Loading: false, Error: null, AtCapacity: false }),
+            chipsByMessage.GetValueOrDefault(message.Id) ?? [], chat.Conversation?.ReactionsLoaded == true,
+            summariesByMessage.TryGetValue(message.Id, out var summary) ? $"Tråd · {summary.ReplyCount} svar" : "Svar i tråd",
+            ActionState(message, inThread ? threadScope : rootScope, inThread));
+        Element Message(NativeMessagePresentation presentation, bool inThread = false)
+        {
+            var message = presentation.Message; var viewer = presentation.Viewer; var rowPalette = presentation.Palette;
+            return VStack(5,
             Border(Empty()).Height(1).Width(56).Background(palette.Rule).HAlign(HorizontalAlignment.Left),
             HStack(8, TextBlock(message.Author).FontSize(14).SemiBold().Foreground(palette.Ink),
-                TextBlock(MessageStatus(message)).FontSize(12).Foreground(IsRejected(message) ? palette.Error : palette.Muted)
+                TextBlock(presentation.Rejected ? "Ikkje sendt - avvist" : MessageStatus(message)).FontSize(12).Foreground(presentation.Rejected ? rowPalette.Error : rowPalette.Muted)
                     .AutomationId("live-delivery-" + message.Id)),
-            message.DeletedAt is null ? NativeMessageView.Render(app, message, palette, auth) : TextBlock("Meldinga er sletta.").Foreground(palette.Muted),
+            message.DeletedAt is null ? NativeMessageView.Render(app, message, rowPalette, viewer, _rawMessages) : TextBlock("Meldinga er sletta.").Foreground(rowPalette.Muted),
             TextBlock("Redigert").FontSize(12).Foreground(palette.Muted).IsVisible(message.EditedAt is not null && message.DeletedAt is null),
-            (inThread ? threadScope : rootScope) is { } actionScope
-                ? NativeMessageActionsView.Render(inThread ? _threadActions : _rootActions, actionScope, message, Chips(message), palette, messageCommands,
-                    chat.Conversation?.ReactionsLoaded == true, () => { _ = app.RefreshConversationAsync(actionScope); })
-                    .IsEnabled(auth.Phase == NativeAuthPhase.Active && chat.Connected &&
-                        navigation is { Pending: false, Error: null } && (!inThread || threads is { Loading: false, Error: null, AtCapacity: false }))
+            presentation.ActionScope is { } actionScope
+                ? NativeMessageActionsView.Render(inThread ? _threadActions : _rootActions, actionScope, message, presentation.Reactions, rowPalette, messageCommands,
+                    presentation.ReactionsLoaded, () => { _ = app.RefreshConversationAsync(actionScope); })
+                    .IsEnabled(presentation.Interactive)
                 : Empty(),
-            Button(chat.Conversation?.ThreadSummaries.FirstOrDefault(item => item.RootMessageId == message.Id) is { } summary
-                    ? $"Tråd · {summary.ReplyCount} svar" : "Svar i tråd", async () => await Navigate(new(message.ChannelId, ThreadId: message.Id)))
+            Button(presentation.ThreadLabel, async () => await Navigate(new(message.ChannelId, ThreadId: message.Id)))
                 .AutomationName("Opne tråden til meldinga").AutomationId("live-open-thread-" + message.Id).MinHeight(36)
                 .IsVisible(!inThread && !message.Id.StartsWith("pending:", StringComparison.Ordinal)).IsEnabled(chat.Connected && navigation is { Pending: false }),
             Button("Fjern avvist", async () => await DiscardRejected(message.Id[8..])).MinHeight(44)
                 .AutomationId("live-discard-" + message.Id).IsVisible(IsRejected(message))
         ).Padding(16, 8).AutomationId("live-message-" + message.Id).WithKey(message.Id);
-        var history = LazyVStack<NativeMessage>(rows, item => item.Id, (item, _) => Message(item))
+        }
+        var presentations = rows.Select(message => Present(message)).ToArray();
+        var history = LazyVStack<NativeMessagePresentation>(presentations, item => item.Message.Id, (item, _) => Message(item))
             .AutomationId("live-history").AutomationName("Meldingar")
             .OnMount(element =>
             {
@@ -290,9 +375,9 @@ internal sealed class LiveChatComponent : Component
         if (_timeline is not null) _requestedAnchor = null;
         _lastVisitGeneration = currentVisit?.Generation ?? -1; _lastViewGeneration = viewGeneration; _previousSurfaceVisible = _surfaceVisible;
 
-        var editor = TextBox(draft?.Body ?? "", text =>
+        var editor = TextBox(draft?.ComposerText ?? "", text =>
         {
-            if (channel is not null && app.Workspace?.Drafts.TryGetValue(channel, out var latest) == true && latest.Body != text)
+            if (channel is not null && app.Workspace?.Drafts.TryGetValue(channel, out var latest) == true && latest.ComposerText != text)
                 if (rootScope is not null) app.EditComposer(rootScope, text);
         }, placeholderText: "Skriv ei melding …").AcceptsReturn(true).TextWrapping(TextWrapping.Wrap).MinHeight(44).MaxHeight(180)
             .AutomationId("live-composer").AutomationName("Skriv ei melding")
@@ -312,10 +397,10 @@ internal sealed class LiveChatComponent : Component
             state.DeliveryRetryPending ? "Sendinga ventar før eit nytt forsøk. Teksten er teken vare på." :
             state.PendingSends > 0 ? $"{state.PendingSends} meldingar ventar på sendekvittering." : "");
         bool canRetryDelivery = state.ConfirmPendingSends || state.PendingSends > 0 || state.Error is not null;
-        var composer = Border(Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], editor.Grid(column: 0),
+        var composer = Border(VStack(4, UploadTools(rootScope, draft, false), Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], editor.Grid(column: 0),
             Button("↑", Send).AutomationId("live-send").AutomationName("Send meldinga").Size(48, 48).Margin(8, 0, 0, 0)
                 .Foreground(palette.AccentInk).Background(palette.Accent).IsEnabled(canSend).Grid(column: 1)
-        )).Padding(12).BorderThickness(new Thickness(0, 2, 0, 0)).BorderBrush(palette.Rule).Grid(row: 3);
+        ))).Padding(12).BorderThickness(new Thickness(0, 2, 0, 0)).BorderBrush(palette.Rule).Grid(row: 3);
         var conversation = Grid([GridSize.Star()], [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
             VStack(4, HStack(12, Button("←", () => { RememberViewport(); setShowList(true); }).AutomationName("Vis samtalar").Size(44, 44).IsVisible(!wide),
                 VStack(2, TextBlock(selected?.IsDirect == true ? "Direkte" : selected?.CircleName ?? "Felles").FontSize(12).Foreground(palette.Muted),
@@ -351,7 +436,8 @@ internal sealed class LiveChatComponent : Component
                 latest.Authentication.SessionStamp != threadScope.SessionStamp || latest.Navigation is not { Pending: false, Error: null, Current: { } nav } ||
                 nav.Generation != threadScope.ChannelVisit || latest.Workspace is not { Ready: true, Closing: false, Sending: false, NeedsRetry: false } workspace ||
                 !workspace.Drafts.TryGetValue(key, out var body) || string.IsNullOrWhiteSpace(body.Body) || Encoding.UTF8.GetByteCount(body.Body) > 1024 ||
-                workspace.Outbox.Count >= 8 || latest.ConfirmPendingSends) return;
+                workspace.Outbox.Count >= 8 || latest.ConfirmPendingSends || !NativeRichText.AttachmentSuffixVisible(body.Body, body.Attachments) ||
+                NativeUploadPresentation.BlocksSend(latest.Uploads, threadScope.UserId, family, threadScope.ChannelId, threadScope.ThreadRootId)) return;
             await app.SendComposerAsync(threadScope);
             if (app.Capture().Threads?.Visit?.Generation == threadScope.ThreadVisit && app.Workspace?.Drafts.GetValueOrDefault(key)?.Body == "")
                 _threadTimeline?.RevealEnd();
@@ -380,7 +466,8 @@ internal sealed class LiveChatComponent : Component
                     state.Workspace is { Ready: true, Closing: false } && !Program.CloseAdmissionClosed;
                 bool sendReply = enabled && !state.ConfirmPendingSends && navigation is { Pending: false, Error: null } &&
                     state.Workspace is { Sending: false, NeedsRetry: false } && state.Workspace.Outbox.Count < 8 &&
-                    !string.IsNullOrWhiteSpace(threadDraft!.Body) && Encoding.UTF8.GetByteCount(threadDraft.Body) <= 1024;
+                    !string.IsNullOrWhiteSpace(threadDraft!.Body) && Encoding.UTF8.GetByteCount(threadDraft.Body) <= 1024 &&
+                    NativeRichText.AttachmentSuffixVisible(threadDraft.Body, threadDraft.Attachments) && !UploadBlocked(featureVisit.ChannelId, featureVisit.RootMessageId);
                 if (_lastThreadVisit != featureVisit.Generation || _lastThreadGeneration != threads.Thread?.Generation)
                     _threadRequestedAnchor = threads.Anchor;
                 _threadTimelineContext = threadScope is not null && navigation?.Current is { } nav && _threadSurfaceVisible
@@ -390,7 +477,7 @@ internal sealed class LiveChatComponent : Component
                 _threadTimeline?.Update(_threadTimelineContext, _threadRequestedAnchor);
                 if (_threadTimeline is not null) _threadRequestedAnchor = null;
                 _lastThreadVisit = featureVisit.Generation; _lastThreadGeneration = threads.Thread?.Generation ?? -1;
-                feature = NativeThreadView.RenderDetail(threads, palette, new((message, _) => Message(message, true), threadDraft?.Body ?? "",
+                feature = NativeThreadView.RenderDetail(threads, palette, new((presentation, _) => Message(presentation, true), threadDraft?.ComposerText ?? "",
                     text => { if (threadScope is not null) app.EditComposer(threadScope, text); }, () => { _ = SendThread(); }, () => { _ = CloseThread(); }, RetryThread,
                     sendReply, enabled, pending,
                     scroller =>
@@ -415,7 +502,8 @@ internal sealed class LiveChatComponent : Component
                                 { if (state.ConfirmPendingSends && auth.UserId is string user && auth.SessionStamp is string stamp) await app.ConfirmPendingSendsAsync(user, stamp); else Retry(); })
                                 .AutomationName("Stadfest ventande meldingar eller oppdater samband").AutomationId("live-thread-delivery-retry").MinHeight(44)
                                 .IsVisible(state.ConfirmPendingSends || state.Error is not null)))
-                        .Padding(12, 4).IsVisible(state.ConfirmPendingSends || state.PendingSends > 0 || state.RejectedSends > 0 || state.Error is not null || Encoding.UTF8.GetByteCount(threadDraft?.Body ?? "") > 1024)));
+                        .Padding(12, 4).IsVisible(state.ConfirmPendingSends || state.PendingSends > 0 || state.RejectedSends > 0 || state.Error is not null || Encoding.UTF8.GetByteCount(threadDraft?.Body ?? "") > 1024),
+                    UploadTools(threadScope, threadDraft, true), message => Present(message, true)));
             }
         }
         else { _threadTimelineContext = null; _threadTimeline?.Update(null); _lastThreadVisit = _lastThreadGeneration = -1; }

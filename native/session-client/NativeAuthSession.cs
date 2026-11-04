@@ -24,6 +24,7 @@ internal sealed class NativeAuthSession : IDisposable
     private readonly SemaphoreSlim revokeGate = new(1, 1);
     private readonly WindowsProtectedJournal journal;
     private readonly HttpClient http;
+    private readonly HttpClient uploadHttp;
     private readonly NativeAuthConfig config;
     private readonly Func<string, Task>? checkpoint;
     private Stored state;
@@ -91,8 +92,11 @@ internal sealed class NativeAuthSession : IDisposable
     private NativeAuthSession(WindowsProtectedJournal journal, NativeAuthConfig config, Stored state, Func<string, Task>? checkpoint, HttpMessageHandler? handler)
     {
         this.journal = journal; this.config = config; this.state = state; this.checkpoint = checkpoint;
-        http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = config.Scope == "sproyt_native_v1" })
+        var pipeline = handler ?? new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = config.Scope == "sproyt_native_v1" };
+        http = new HttpClient(pipeline)
         { BaseAddress = new Uri(config.Broker), Timeout = TimeSpan.FromSeconds(12) };
+        uploadHttp = new HttpClient(pipeline, disposeHandler: false)
+        { BaseAddress = new Uri(config.Broker), Timeout = TimeSpan.FromSeconds(60) };
     }
     internal NativeAuthSnapshot Snapshot
     {
@@ -349,6 +353,54 @@ internal sealed class NativeAuthSession : IDisposable
     }
     private bool IdentityMatches(JsonElement root) => root.GetProperty("scope").GetString() == config.Scope && root.GetProperty("environment").GetString() == config.Environment && root.GetProperty("instance_id").GetString() == config.Instance && root.GetProperty("issuer").GetString() == config.Issuer;
 
+    // Uploads have a separate allowlist; adding them must not turn the command
+    // bearer seam into a general-purpose authenticated HTTP proxy.
+    internal async Task<HttpResponseMessage> SendUploadAsync(HttpRequestMessage request, NativeMediaScope scope, CancellationToken cancellationToken)
+    {
+        Require(UploadRequestAllowed(request) && MediaScopeCurrent(scope));
+        var credential = await TransportCredential(cancellationToken);
+        lock (gate)
+        {
+            Live(); Require(Current(credential.Lifecycle, credential.Grant) && MediaScopeCurrent(scope));
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Grant.AccessToken);
+            request.Headers.Add("X-Sproyt-Account", scope.UserId);
+        }
+        try
+        {
+            // Each operation captures a fresh concrete credential. Normal
+            // rotation can continue the same upload family; account/lifecycle
+            // replacement cannot expose its response to the consumer.
+            var response = await uploadHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!MediaScopeCurrent(scope)) { response.Dispose(); throw Failure(); }
+            if (response.StatusCode == HttpStatusCode.Unauthorized) Fence(credential.Lifecycle);
+            if (response.IsSuccessStatusCode && (!response.Headers.TryGetValues("X-Sproyt-Account", out var account) ||
+                !account.SequenceEqual(new[] { scope.UserId }))) { response.Dispose(); throw Failure(); }
+            return response;
+        }
+        finally { request.Headers.Authorization = null; request.Headers.Remove("X-Sproyt-Account"); }
+    }
+    private static bool UploadRequestAllowed(HttpRequestMessage request)
+    {
+        if (request.RequestUri is not { IsAbsoluteUri: false } uri || request.Headers.Authorization is not null ||
+            request.Headers.Contains("Proxy-Authorization") || request.Headers.Contains("Cookie") || request.Headers.Contains("X-Sproyt-Account") ||
+            request.Headers.Host is not null || request.Content?.Headers.Contains("Cookie") == true || request.Content?.Headers.Contains("Authorization") == true) return false;
+        var parts = uri.OriginalString.Split('/');
+        static bool Id(string value) => Guid.TryParseExact(value, "D", out var parsed) && parsed.ToString("D") == value;
+        if (parts.Length < 5 || parts[0] != "" || parts[1] != "api" || parts[2] != "v1" || parts[3] != "native") return false;
+        if (parts.Length == 6 && parts[4] == "media-uploads" && parts[5] == "config")
+            return request.Method == HttpMethod.Get && request.Content is null;
+        if (parts.Length == 7 && parts[4] == "channels" && Id(parts[5]) && parts[6] == "media-uploads")
+            return request.Method == HttpMethod.Post && request.Content?.Headers.ContentType?.MediaType == "application/json" && request.Content.Headers.ContentLength is > 0 and <= 4096;
+        if (parts.Length < 6 || parts[4] != "media-uploads" || !Id(parts[5])) return false;
+        if (parts.Length == 6) return (request.Method == HttpMethod.Get || request.Method == HttpMethod.Delete) && request.Content is null;
+        if (parts.Length == 7 && parts[6] == "complete") return request.Method == HttpMethod.Post && request.Content is null;
+        return parts.Length == 8 && parts[6] == "chunks" && uint.TryParse(parts[7], System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out uint index) && index.ToString(System.Globalization.CultureInfo.InvariantCulture) == parts[7] &&
+            request.Method == HttpMethod.Put && request.Content?.Headers.ContentType?.MediaType == "application/octet-stream" &&
+            request.Content.Headers.ContentLength is > 0 and <= 1024 * 1024 && request.Headers.TryGetValues("x-chunk-sha256", out var hashes) &&
+            hashes.Count() == 1 && hashes.Single() is { Length: 64 } hash && hash.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+    }
+
     private async Task<(Grant Grant, long Lifecycle)> TransportCredential(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested(); Require(config.Scope == "sproyt_native_v1");
@@ -412,6 +464,6 @@ internal sealed class NativeAuthSession : IDisposable
     private static InvalidOperationException Failure() => new("Native session operation failed.");
     public void Dispose()
     {
-        lock (gate) { if (disposed) return; disposed = true; state.Credential = null; state.Operation = null; state.PendingRevoke = null; state.AdditionalRevocations.Clear(); journal.Dispose(); http.Dispose(); }
+        lock (gate) { if (disposed) return; disposed = true; state.Credential = null; state.Operation = null; state.PendingRevoke = null; state.AdditionalRevocations.Clear(); journal.Dispose(); uploadHttp.Dispose(); http.Dispose(); }
     }
 }

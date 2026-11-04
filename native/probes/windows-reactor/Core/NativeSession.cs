@@ -50,7 +50,7 @@ public sealed class NativeSession : IAsyncDisposable
                 session._call = session.Export<CallNative>("sproyt_probe_call");
                 // Explicit opt-in: an older ABI-1 library rejects this unknown
                 // field instead of silently applying body-only draft removal.
-                var opened = session.Call(new { Op = "open", Database = actualDatabase, Account = account, DraftRevisions = true, ThreadTargets = true });
+                var opened = session.Call(new { Op = "open", Database = actualDatabase, Account = account, DraftRevisions = true, ThreadTargets = true, UploadDrafts = true });
                 if (!opened.TryGetProperty("handle", out var handle) || handle.ValueKind != JsonValueKind.Number ||
                     !handle.TryGetUInt64(out session._handle) || session._handle == 0)
                     throw Unknown("The native open reply did not contain a valid handle.");
@@ -75,13 +75,13 @@ public sealed class NativeSession : IAsyncDisposable
         return true;
     });
 
-    public Task<long> SaveDraftAsync(string channel, string body, string? parentMessageId = null) => _worker.Queue(() =>
+    public Task<long> SaveDraftAsync(string channel, string body, string? parentMessageId = null, DraftComposer? composer = null) => _worker.Queue(() =>
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentNullException.ThrowIfNull(body);
         var result = _clearEmptyDraft && body.Length == 0
             ? Call(new { Op = "clear_draft", Handle = _handle, Generation = _generation, Channel = channel, ParentMessageId = parentMessageId })
-            : Call(new { Op = "save_draft", Handle = _handle, Generation = _generation, Channel = channel, Body = body, ParentMessageId = parentMessageId });
+            : Call(new { Op = "save_draft", Handle = _handle, Generation = _generation, Channel = channel, Body = body, ParentMessageId = parentMessageId, Composer = composer });
         return RequiredRevision(result);
     });
 
@@ -105,6 +105,39 @@ public sealed class NativeSession : IAsyncDisposable
         {
             throw Unknown("The enqueue completed but its stored result could not be confirmed. Retain the same request ID.", exception);
         }
+    });
+
+    public Task<UploadDraftResult> AttachUploadAsync(ComposerTarget target, string jobId, string operationId, string body, string marker, DraftComposer? composer = null, bool receiptOnly = false) => _worker.Queue(() =>
+    {
+        // A receipt can outlive its original draft. Even a huge replacement in
+        // the editor must reach that lookup within the ABI request-size bound.
+        // 1025 ASCII bytes guarantee the same rejection on first application.
+        string boundedBody = body.Length > 1024 ? new string('x', 1025) : body;
+        var result = Call(new { Op = "attach_upload", Handle = _handle, Generation = _generation, JobId = jobId, OperationId = operationId, ReceiptOnly = receiptOnly,
+            Channel = target.ChannelId, target.ParentMessageId, Body = boundedBody, Marker = marker, Composer = body.Length > 1024 ? null : composer });
+        if (!result.TryGetProperty("already_applied", out var replay) || replay.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
+            !result.TryGetProperty("body", out var merged) || merged.ValueKind is not (JsonValueKind.Null or JsonValueKind.String))
+            throw Unknown("The native upload draft result was incomplete.");
+        var applied = new UploadDraftResult(replay.GetBoolean(), RequiredString(result, "operation_id"), merged.GetString(), RequiredRevision(result));
+        if (receiptOnly && !applied.AlreadyApplied) throw Unknown("Receipt lookup returned a new mutation.");
+        if (!applied.AlreadyApplied && (applied.OperationId != operationId || applied.Body != JoinAttachment(body, marker)))
+            throw Unknown("The committed upload draft did not match its operation.");
+        return applied;
+    });
+
+    public static string JoinComposer(string text, IReadOnlyList<string> attachments)
+    {
+        if (attachments.Count == 0) return text;
+        string separator = text.Length == 0 || text.EndsWith('\n') ? "" : "\n";
+        return text + separator + string.Join('\n', attachments);
+    }
+    internal static string JoinAttachment(string body, string marker) =>
+        body.Length == 0 || body.EndsWith('\n') ? body + marker : body + "\n" + marker;
+
+    public Task ReconcileUploadReceiptsAsync(IReadOnlyList<string> activeJobIds) => _worker.Queue(() =>
+    {
+        Call(new { Op = "reconcile_upload_receipts", Handle = _handle, Generation = _generation, ActiveJobIds = activeJobIds });
+        return true;
     });
 
     public ValueTask DisposeAsync() => new(_worker.CloseAsync());
@@ -158,8 +191,9 @@ public sealed class NativeSession : IAsyncDisposable
     private (StoreSnapshot Snapshot, ulong Generation) ReadSnapshot()
     {
         var result = Call(new { Op = "snapshot", Handle = _handle });
-        if (!result.TryGetProperty("schema", out var schema) || schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out int schemaVersion) || schemaVersion != 3 ||
+        if (!result.TryGetProperty("schema", out var schema) || schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out int schemaVersion) || schemaVersion != 4 ||
             !result.TryGetProperty("draft_revisions", out var revisionMode) || revisionMode.ValueKind != JsonValueKind.True ||
+            !result.TryGetProperty("upload_drafts", out var uploadMode) || uploadMode.ValueKind != JsonValueKind.True ||
             !result.TryGetProperty("thread_targets", out var targetMode) || targetMode.ValueKind != JsonValueKind.True ||
             RequiredString(result, "account") != _account ||
             !result.TryGetProperty("generation", out var generation) || generation.ValueKind != JsonValueKind.Number ||
@@ -174,7 +208,18 @@ public sealed class NativeSession : IAsyncDisposable
         foreach (var draft in draftArray.EnumerateArray())
         {
             RequireObject(draft, "draft");
-            drafts.Add(new Draft(RequiredString(draft, "channel"), RequiredString(draft, "body"), RequiredRevision(draft), OptionalParent(draft)));
+            var parsed = new Draft(RequiredString(draft, "channel"), RequiredString(draft, "body"), RequiredRevision(draft), OptionalParent(draft));
+            if (draft.TryGetProperty("attachments", out var markers))
+            {
+                if (markers.ValueKind != JsonValueKind.Array || !draft.TryGetProperty("composer_text", out var editor) ||
+                    editor.ValueKind != JsonValueKind.String) throw Unknown("Invalid draft attachment metadata.");
+                var attachments = markers.EnumerateArray().Select(m => m.ValueKind == JsonValueKind.String ? m.GetString()! :
+                    throw Unknown("Invalid draft marker.")).ToArray();
+                if (attachments.Length == 0 || JoinComposer(editor.GetString()!, attachments) != parsed.Body)
+                    throw Unknown("Attachment metadata did not reproduce the stored draft.");
+                parsed = parsed with { ComposerText = editor.GetString()!, Attachments = Array.AsReadOnly(attachments) };
+            }
+            drafts.Add(parsed);
         }
         var outbox = new List<QueuedMessage>();
         foreach (var item in outboxArray.EnumerateArray())

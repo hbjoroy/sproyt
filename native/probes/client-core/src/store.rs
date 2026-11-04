@@ -12,8 +12,46 @@ pub struct Store {
     connection: Connection,
     draft_revisions: bool,
     thread_targets: bool,
+    upload_drafts: bool,
     #[cfg(any(test, feature = "fault-injection"))]
     fault: Option<crate::fault::Fault>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Composer {
+    pub text: String,
+    pub attachments: Vec<String>,
+}
+
+impl Composer {
+    fn validate(&self, body: &str) -> Result<()> {
+        text(body)?;
+        let mut wire = self.text.clone();
+        for marker in &self.attachments {
+            validate_marker(marker)?;
+            if !wire.is_empty() && !wire.ends_with('\n') {
+                wire.push('\n');
+            }
+            wire.push_str(marker);
+            text(&wire)?;
+        }
+        if wire != body {
+            return Err("invalid_composer");
+        }
+        Ok(())
+    }
+}
+
+pub struct DraftAttachment<'a> {
+    pub job_id: &'a str,
+    pub operation_id: &'a str,
+    pub receipt_only: bool,
+    pub channel: &'a str,
+    pub parent: Option<&'a str>,
+    pub body: &'a str,
+    pub marker: &'a str,
+    pub composer: Option<&'a Composer>,
 }
 
 fn db<T>(result: rusqlite::Result<T>) -> Result<T> {
@@ -39,6 +77,42 @@ pub fn text(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_marker(marker: &str) -> Result<()> {
+    text(marker)?;
+    let fields = marker
+        .strip_prefix("[[media:")
+        .and_then(|s| s.strip_suffix("]]"))
+        .ok_or("invalid_media_marker")?;
+    let mut parts = fields.split('|');
+    let id = parts.next().unwrap_or_default();
+    let mime = parts.next().unwrap_or_default();
+    let valid_id = id.len() == 36
+        && id.bytes().enumerate().all(|(i, b)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        });
+    let valid_mime = mime.len() <= 128
+        && mime.split_once('/').is_some_and(|(major, minor)| {
+            !major.is_empty() && !minor.is_empty() && !minor.contains('/')
+        })
+        && mime
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/+.-".contains(&b));
+    if !valid_id
+        || !valid_mime
+        || parts.next().is_none()
+        || parts.next().is_some()
+        || fields.contains(['[', ']'])
+        || fields.chars().any(char::is_control)
+    {
+        return Err("invalid_media_marker");
+    }
+    Ok(())
+}
+
 impl Store {
     #[cfg(test)]
     pub fn open(path: &str, account: &str) -> Result<Self> {
@@ -54,12 +128,26 @@ impl Store {
         Self::open_with_options(path, account, draft_revisions, false)
     }
 
+    #[cfg(test)]
     pub fn open_with_options(
         path: &str,
         account: &str,
         draft_revisions: bool,
         thread_targets: bool,
     ) -> Result<Self> {
+        Self::open_with_capabilities(path, account, draft_revisions, thread_targets, false)
+    }
+
+    pub fn open_with_capabilities(
+        path: &str,
+        account: &str,
+        draft_revisions: bool,
+        thread_targets: bool,
+        upload_drafts: bool,
+    ) -> Result<Self> {
+        if upload_drafts && !(draft_revisions && thread_targets) {
+            return Err("upload_drafts_require_targets");
+        }
         identifier(account)?;
         if !Path::new(path).is_absolute() || path.len() > 4096 {
             return Err("invalid_path");
@@ -74,7 +162,7 @@ impl Store {
             db(connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive))?;
         let version: i64 = db(tx.pragma_query_value(None, "user_version", |row| row.get(0)))?;
         let application: i64 = db(tx.pragma_query_value(None, "application_id", |row| row.get(0)))?;
-        if !(0..=3).contains(&version) || (version != 0 && application != APPLICATION_ID) {
+        if !(0..=4).contains(&version) || (version != 0 && application != APPLICATION_ID) {
             return Err("unsupported_schema");
         }
         if version == 0 {
@@ -117,6 +205,18 @@ impl Store {
                 drop table drafts_v2;
                 PRAGMA user_version=3;"))?;
         }
+        if version < 4 {
+            db(tx.execute_batch("alter table drafts add column composer_text text; alter table drafts add column attachments_json text; create table upload_receipts(job_id text primary key, operation_id text not null, channel text not null, parent_message_id text not null, marker text not null, draft_revision integer not null check(draft_revision>=1)); PRAGMA user_version=4;"))?;
+        }
+        if !upload_drafts
+            && db(
+                tx.query_row("select exists(select 1 from upload_receipts) or exists(select 1 from drafts where attachments_json is not null)", [], |row| {
+                    row.get::<_, bool>(0)
+                }),
+            )?
+        {
+            return Err("upload_drafts_required");
+        }
         if !thread_targets {
             let threads: i64 = db(tx.query_row(
                 "select count(*) from drafts where parent_message_id<>''",
@@ -139,6 +239,7 @@ impl Store {
             connection,
             draft_revisions,
             thread_targets,
+            upload_drafts,
             #[cfg(any(test, feature = "fault-injection"))]
             fault: None,
         })
@@ -173,6 +274,7 @@ impl Store {
         self.save_target_draft(generation, channel, None, body)
     }
 
+    #[cfg(test)]
     pub fn save_target_draft(
         &mut self,
         generation: u64,
@@ -180,11 +282,40 @@ impl Store {
         parent: Option<&str>,
         body: &str,
     ) -> Result<u64> {
+        self.save_composer(generation, channel, parent, body, None)
+    }
+
+    pub fn save_composer(
+        &mut self,
+        generation: u64,
+        channel: &str,
+        parent: Option<&str>,
+        body: &str,
+        composer: Option<&Composer>,
+    ) -> Result<u64> {
+        if let Some(value) = composer {
+            if !self.upload_drafts {
+                return Err("upload_drafts_required");
+            }
+            value.validate(body)?;
+        }
         identifier(channel)?;
         self.validate_parent(parent)?;
         let parent = parent.unwrap_or("");
         text(body)?;
         let tx = self.transaction(generation)?;
+        let revision = Self::write_draft(&tx, channel, parent, body, composer)?;
+        db(tx.commit())?;
+        Ok(revision)
+    }
+
+    fn write_draft(
+        tx: &Transaction<'_>,
+        channel: &str,
+        parent: &str,
+        body: &str,
+        composer: Option<&Composer>,
+    ) -> Result<u64> {
         let count: i64 = db(tx.query_row(
             "select count(*) from drafts where channel<>?1 or parent_message_id<>?2",
             params![channel, parent],
@@ -193,10 +324,126 @@ impl Store {
         if count >= ITEM_LIMIT {
             return Err("capacity");
         }
-        let revision = Self::next_draft_revision(&tx)?;
-        db(tx.execute("insert into drafts(channel,parent_message_id,body,revision) values(?1,?2,?3,?4) on conflict(channel,parent_message_id) do update set body=excluded.body,revision=excluded.revision", params![channel, parent, body, revision as i64]))?;
-        db(tx.commit())?;
+        let revision = Self::next_draft_revision(tx)?;
+        let with_attachments = composer.filter(|value| !value.attachments.is_empty());
+        let editor_text = with_attachments.map(|value| value.text.as_str());
+        let markers = with_attachments.map(|value| json!(value.attachments).to_string());
+        db(tx.execute("insert into drafts(channel,parent_message_id,body,revision,composer_text,attachments_json) values(?1,?2,?3,?4,?5,?6)
+            on conflict(channel,parent_message_id) do update set body=excluded.body,revision=excluded.revision,
+            composer_text=excluded.composer_text,attachments_json=excluded.attachments_json", params![channel, parent, body, revision as i64, editor_text, markers]))?;
         Ok(revision)
+    }
+
+    pub fn attach_upload(
+        &mut self,
+        generation: u64,
+        attachment: DraftAttachment<'_>,
+    ) -> Result<Value> {
+        if !self.upload_drafts {
+            return Err("upload_drafts_required");
+        }
+        let DraftAttachment {
+            job_id,
+            operation_id,
+            receipt_only,
+            channel,
+            parent,
+            body,
+            marker,
+            composer,
+        } = attachment;
+        identifier(job_id)?;
+        identifier(operation_id)?;
+        identifier(channel)?;
+        self.validate_parent(parent)?;
+        validate_marker(marker)?;
+        #[cfg(any(test, feature = "fault-injection"))]
+        let fault = self.fault.take();
+        let parent = parent.unwrap_or("");
+        let tx = self.transaction(generation)?;
+        let receipt: Option<(String,String,String,String,i64)> = db(tx.query_row(
+            "select channel,parent_message_id,marker,operation_id,draft_revision from upload_receipts where job_id=?1",[job_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional())?;
+        if let Some((saved_channel, saved_parent, saved_marker, original_operation, revision)) =
+            receipt
+        {
+            if saved_channel != channel || saved_parent != parent || saved_marker != marker {
+                return Err("request_conflict");
+            }
+            // Replaying after the draft was sent or replaced must never write or return an old draft as current.
+            let current: Option<String> = db(tx.query_row("select body from drafts where channel=?1 and parent_message_id=?2 and revision=?3",
+                params![channel,parent,revision], |r| r.get(0)).optional())?;
+            return Ok(
+                json!({"already_applied":true,"operation_id":original_operation,"body":current,"revision":revision}),
+            );
+        }
+        if receipt_only {
+            // Shutdown/retirement must not create a new draft after logout.
+            return Err("receipt_not_found");
+        }
+        text(body)?;
+        if db(
+            tx.query_row("select count(*) from upload_receipts", [], |r| {
+                r.get::<_, i64>(0)
+            }),
+        )? >= 16
+        {
+            return Err("receipt_capacity");
+        }
+        let separator = if body.is_empty() || body.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        let merged = format!("{body}{separator}{marker}");
+        text(&merged)?;
+        if let Some(value) = composer {
+            value.validate(body)?;
+        }
+        let mut markers = composer
+            .map(|value| value.attachments.clone())
+            .unwrap_or_default();
+        markers.push(marker.to_owned());
+        let updated = Composer {
+            text: composer
+                .map_or(body, |value| value.text.as_str())
+                .to_owned(),
+            attachments: markers,
+        };
+        let revision = Self::write_draft(&tx, channel, parent, &merged, Some(&updated))?;
+        db(tx.execute("insert into upload_receipts(job_id,operation_id,channel,parent_message_id,marker,draft_revision) values(?1,?2,?3,?4,?5,?6)",
+            params![job_id,operation_id,channel,parent,marker,revision as i64]))?;
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::fault::hit(fault.as_ref(), crate::fault::Site::BeforeCommit, marker)?;
+        db(tx.commit())?;
+        #[cfg(any(test, feature = "fault-injection"))]
+        crate::fault::hit(fault.as_ref(), crate::fault::Site::AfterCommit, marker)?;
+        Ok(
+            json!({"already_applied":false,"operation_id":operation_id,"body":merged,"revision":revision}),
+        )
+    }
+
+    pub fn reconcile_upload_receipts(
+        &mut self,
+        generation: u64,
+        active_job_ids: &[String],
+    ) -> Result<()> {
+        if !self.upload_drafts {
+            return Err("upload_drafts_required");
+        }
+        if active_job_ids.len() > 16 {
+            return Err("capacity");
+        }
+        for job in active_job_ids {
+            identifier(job)?;
+        }
+        let active = serde_json::to_string(active_job_ids).map_err(|_| "serialization_error")?;
+        let tx = self.transaction(generation)?;
+        db(tx.execute(
+            "delete from upload_receipts where job_id not in (select value from json_each(?1))",
+            [active],
+        ))?;
+        db(tx.commit())
     }
 
     #[cfg(test)]
@@ -469,7 +716,7 @@ impl Store {
 
     pub fn invalidate(&mut self, generation: u64) -> Result<()> {
         let tx = self.transaction(generation)?;
-        db(tx.execute_batch("update identity set generation=generation+1,active=0 where id=1; delete from drafts; delete from outbox; delete from messages;"))?;
+        db(tx.execute_batch("update identity set generation=generation+1,active=0 where id=1; delete from drafts; delete from upload_receipts; delete from outbox; delete from messages;"))?;
         db(tx.commit())
     }
 
@@ -481,10 +728,14 @@ impl Store {
         ))?;
         let mut drafts = db(self
             .connection
-            .prepare("select channel,body,revision,parent_message_id from drafts order by channel,parent_message_id limit 8"))?;
+            .prepare("select channel,body,revision,parent_message_id,composer_text,attachments_json from drafts order by channel,parent_message_id limit 8"))?;
         let drafts = db(db(drafts.query_map([], |row| {
             let mut draft = json!({"channel":row.get::<_,String>(0)?,"body":row.get::<_,String>(1)?,"revision":row.get::<_,i64>(2)?});
             let parent: String = row.get(3)?;
+            if let Some(markers) = row.get::<_, Option<String>>(5)? {
+                draft["composer_text"] = json!(row.get::<_,String>(4)?);
+                draft["attachments"] = serde_json::from_str(&markers).map_err(|error| rusqlite::Error::FromSqlConversionFailure(5,rusqlite::types::Type::Text,Box::new(error)))?;
+            }
             if !parent.is_empty() { draft["parent_message_id"] = json!(parent); }
             Ok(draft)
         }))?
@@ -498,7 +749,7 @@ impl Store {
             .prepare("select id,revision,body,deleted from messages order by id limit 8"))?;
         let messages = db(db(messages.query_map([], |row| Ok(json!({"id":row.get::<_,String>(0)?,"revision":row.get::<_,i64>(1)?,"body":row.get::<_,String>(2)?,"deleted":row.get::<_,bool>(3)?}))))?.collect::<rusqlite::Result<Vec<_>>>())?;
         Ok(
-            json!({"schema":3,"draft_revisions":self.draft_revisions,"thread_targets":self.thread_targets,"account":account,"generation":generation,"active":active,"drafts":drafts,"outbox":outbox,"messages":messages}),
+            json!({"schema":4,"upload_drafts":self.upload_drafts,"draft_revisions":self.draft_revisions,"thread_targets":self.thread_targets,"account":account,"generation":generation,"active":active,"drafts":drafts,"outbox":outbox,"messages":messages}),
         )
     }
 

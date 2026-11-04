@@ -7,6 +7,11 @@ og [paritetsplanen](../../../docs/native-canary-parity-plan.md).
 Demo- og laboratorieavgrensingane nedanfor gjeld ikkje som status for alle
 modusar. Windows er første produktprioritet, deretter Android.
 
+For ein separat live-testprofil kan du leggje til
+`--data-dir "$env:LOCALAPPDATA/Sproyt/WindowsCanaryTest"` etter serveradressa.
+Bruk ein absolutt sti. Standardprofilen `WindowsCanary` blir då ikkje opna,
+og gamle utkast eller kømeldingar der blir ikkje sende av testinstansen.
+
 Ein lokal, køyrbar UI-pilot med **Microsoft.UI.Reactor 0.1.0-preview.16** og
 ekte WinUI 3-kontrollar. Reactor er C# med MVU, ikkje React/JavaScript eller ein
 nettlesar. Prøva er isolert frå dagens Sprøyt-klient og produksjon.
@@ -17,7 +22,7 @@ På Windows 11 med PowerShell 7, .NET SDK 10.0.301, Rust 1.96 og ein native
 C-kompilator for SQLite:
 
 ```powershell
-./native/probes/run-windows-reactor.ps1 -ArtifactsDirectory S:/Build/sproyt-reactor -UiSmoke -Launch
+./native/probes/run-windows-reactor.ps1 -ArtifactsDirectory C:/Build/sproyt-reactor -UiSmoke -Launch
 ```
 
 Runneren byggjer på den lokale maskina sin ARM64- eller x64-arkitektur, køyrer
@@ -125,3 +130,9 @@ avviste med kapasitetsstatus utan reconnect-løkke. Dette er framleis eit
 online pilotsnitt, med dei eksisterande grensene for utkast og sendekø.
 `conversation-contracts`, `thread-feature-contracts` og
 `message-action-contracts` supplerer den faktiske WinUI-prøva.
+
+## Riktekst og opplasting
+
+Meldingar i kanal og tråd viser Markdown/GFM med tabellar og kode. Bruk **Vis råtekst** for å sjå heile originalen. Mermaid blir vist som kjeldekode, HTML er inaktivt og eksterne bilete blir viste som plasshaldarar. Dokument av typen PDF, ZIP, UTF-8-tekst og CSV kan lagrast med ein filveljar.
+
+Vel **Legg ved** eller lim inn filer og bilete. Utklippstavlebilete blir koda som PNG etter kontroll av ei grense på 16 × 1024 × 1024 pikslar. Windows tek ein privat kopi før overføring, med høgst 512 MiB totalt og åtte jobbar per konto. Køen viser framdrift, avbrot og nytt forsøk. Eit ferdig vedlegg blir lagt i utkastet som vart valt ved start. Du kan fjerne det der eller velje **Send**. Er utkastet for stort, kan du frigjere plass og prøve igjen. Tekst og markørar må til saman få plass i 1024 UTF-8-byte.

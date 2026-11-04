@@ -6017,9 +6017,24 @@
         attachments.forEach((media) => {
           const figure = document.createElement("figure");
           figure.className = "message-media";
-          const element = media.contentType.startsWith("video/") ? document.createElement("video") : document.createElement("img");
           const participant = new URL(window.location.href).searchParams.get("participant");
           const authQuery = participant ? `?participant=${encodeURIComponent(participant)}` : "";
+          if (!media.contentType.startsWith("image/") && !media.contentType.startsWith("video/")) {
+            const caption = document.createElement("figcaption");
+            caption.textContent = media.name;
+            const download = document.createElement("a");
+            download.href = `/api/v1/media/${media.id}/download${authQuery}`;
+            // The server supplies the normalized filename and typed extension.
+            download.download = "";
+            download.textContent = "Last ned vedlegget";
+            download.setAttribute("aria-label", `Last ned ${media.name}`);
+            download.target = "_blank";
+            download.rel = "noopener noreferrer";
+            figure.append(caption, download);
+            target.append(figure);
+            return;
+          }
+          const element = media.contentType.startsWith("video/") ? document.createElement("video") : document.createElement("img");
           const originalUrl = `/api/v1/media/${media.id}${authQuery}`;
           element.src = media.contentType.startsWith("image/")
             ? `/api/v1/media/${media.id}/preview${authQuery}`

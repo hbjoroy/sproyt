@@ -12,6 +12,7 @@ internal static class Program
     internal static string? CanaryAcceptanceDirectory { get; private set; }
     internal static bool LiveMode { get; private set; }
     internal static bool LiveWindowActive { get; set; } = true;
+    internal static Microsoft.UI.WindowId? MainWindowId { get; private set; }
     internal static string? LiveError { get; private set; }
     internal static event Action? LiveStateChanged;
     private static string _liveServer = "";
@@ -48,6 +49,15 @@ internal static class Program
                 Environment.ExitCode = DesktopHandoffClient.Run(args[1], args[2], args[3]).GetAwaiter().GetResult();
                 return;
             }
+            // An explicit test profile keeps a Canary trial separate from an
+            // existing signed-in instance, its drafts and its durable outbox.
+            string? liveDataDirectory = null;
+            if (args.Length == 4 && args[0] == "--server" && args[2] == "--data-dir")
+            {
+                if (!Path.IsPathFullyQualified(args[3])) throw new ArgumentException("Use an absolute test-profile path.");
+                liveDataDirectory = Path.GetFullPath(args[3]);
+                args = args[..2];
+            }
             string library = LibraryPath;
             if (args.Length == 2 && args[0] == "--self-test")
             {
@@ -55,7 +65,10 @@ internal static class Program
                 Directory.CreateDirectory(testRoot);
                 string sessionResult = SessionProbe.RunAsync(Path.Combine(testRoot, $"session-{Guid.NewGuid():N}.sqlite"), library).GetAwaiter().GetResult();
                 string workspaceResult = WorkspaceProbe.RunAsync(Path.Combine(testRoot, $"workspace-{Guid.NewGuid():N}.sqlite"), library).GetAwaiter().GetResult();
-                File.WriteAllText(Path.Combine(testRoot, "core-result.txt"), sessionResult + Environment.NewLine + workspaceResult);
+                NativeUploadDiskStoreProbe.RunAsync(Path.Combine(testRoot, "upload-disk-" + Guid.NewGuid().ToString("N"))).GetAwaiter().GetResult();
+                NativeContentProbe.RunAsync().GetAwaiter().GetResult();
+                File.WriteAllText(Path.Combine(testRoot, "core-result.txt"), sessionResult + Environment.NewLine + workspaceResult +
+                    Environment.NewLine + "PASS upload private spool/DPAPI and rich-text/wire/editor contracts");
                 return;
             }
             UiResume = args.Length == 2 && args[0] == "--ui-resume";
@@ -69,7 +82,7 @@ internal static class Program
             CanaryAcceptanceDirectory = args.Length == 2 && args[0] == "--canary-acceptance" ? Path.GetFullPath(args[1]) : null;
             LiveUiProbeDirectory = args.Length == 2 && args[0] == "--live-ui-smoke" ? Path.GetFullPath(args[1]) : null;
             if (LiveMode) _liveServer = CanaryAcceptanceDirectory is not null ? "https://sproyt-canary.bjoroy.me/" : args[1];
-            DataDirectory = LiveUiProbeDirectory ?? (LiveMode ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsCanary")
+            DataDirectory = liveDataDirectory ?? LiveUiProbeDirectory ?? (LiveMode ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sproyt", "WindowsCanary")
                 : UiProbeDirectory is not null ? Path.Combine(UiProbeDirectory, "data") : args.Length == 2 && args[0] == "--data-dir"
                 ? Path.GetFullPath(args[1])
                 : sessionMode
@@ -89,6 +102,7 @@ internal static class Program
             }
             ReactorApp.WindowOpened += (_, window) =>
             {
+                MainWindowId = window.NativeWindow.AppWindow.Id;
                 var keyboard = Keyboard = new KeyboardViewport(window);
                 KeyboardViewportAvailable = keyboard.Available;
                 keyboard.Attach(PilotComponent.RootForClose as Microsoft.UI.Xaml.Controls.Grid);
@@ -102,7 +116,7 @@ internal static class Program
                         && Authentication is not null) _ = Authentication.ResumeAsync();
                 };
                 if (Authentication is not null) _ = Authentication.ResumeAsync();
-                window.Closed += (_, _) => { keyboard.Dispose(); Keyboard = null; };
+                window.Closed += (_, _) => { keyboard.Dispose(); Keyboard = null; MainWindowId = null; };
                 window.Closing += (_, closing) =>
                 {
                     if (_allowFinalClose) return;

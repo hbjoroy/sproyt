@@ -37,10 +37,11 @@ internal static class Program
         }
         catch (DesktopHandoffClient.Failure failure) { Console.Error.WriteLine($"FAIL desktop identity assertion line {failure.Line}"); return 1; }
         catch (ProbeFailure failure) { Console.Error.WriteLine($"FAIL isolated identity HTTP probe: assertion line {failure.Line}"); return 1; }
-        catch { Console.Error.WriteLine("FAIL isolated identity HTTP probe (details suppressed to protect transient proofs)"); return 1; }
+        catch (Exception error) { ProbeDiagnostics.Report(error); return 1; }
     }
     private static async Task Run(string executable, string database, string receipt)
     {
+        ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.HttpListener;
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
@@ -55,17 +56,17 @@ internal static class Program
         var callback = listener.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single() + "/return";
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var value in new[] { "--database", database, "--callback-uri", callback }) start.ArgumentList.Add(value);
+        ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.HttpBrokerLaunch;
         using var child = Process.Start(start)!;
         // Drain without forwarding server output: neither URLs nor transient proofs belong in logs.
         var stderr = child.StandardError.ReadToEndAsync();
         try
         {
-            using var readyTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            var line = new StringBuilder();
-            var unit = new char[1];
-            while (true) { Require(await child.StandardOutput.ReadAsync(unit.AsMemory(), readyTimeout.Token) == 1); if (unit[0] == '\n') break; line.Append(unit[0]); Require(line.Length <= 4096); }
-            Require(line.ToString().StartsWith("N01_READY ", StringComparison.Ordinal));
-            using var ready = JsonDocument.Parse(line.ToString()[10..]);
+            ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.HttpBrokerReady;
+            string line = await ProbeDiagnostics.ReadReadyAsync(child.StandardOutput);
+            Require(line.StartsWith("N01_READY ", StringComparison.Ordinal));
+            using var ready = JsonDocument.Parse(line[10..]);
+            ProbeDiagnostics.Phase = ProbeDiagnostics.Stage.HttpRequests;
             var address = ready.RootElement.GetProperty("address").GetString()!;
             var issuer = ready.RootElement.GetProperty("issuer").GetString()!;
             var origin = new Uri(address); Require(origin.Scheme == "http" && origin.Host == "127.0.0.1" && origin.AbsolutePath == "/");
