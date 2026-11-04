@@ -83,6 +83,21 @@ internal sealed class NativeMediaLibrary : IDisposable
     internal NativeMediaScope Capture() => _owner.MediaScope();
     internal NativeMediaScope? TryCapture() { try { return Capture(); } catch (InvalidOperationException) { return null; } }
     internal bool Current(NativeMediaScope scope) => !_disposed && _owner.MediaScopeCurrent(scope);
+    internal void PublishSavedFile(NativeMediaScope scope, string staged, string destination)
+    {
+        // The caller has flushed and closed its staging file beside the chosen
+        // destination. Only the final rename participates in auth admission.
+        _owner.ProjectSnapshot(_ =>
+        {
+            if (!Current(scope)) throw new OperationCanceledException();
+            lock (_gate)
+            {
+                if (_disposed || _family?.Scope != scope) throw new OperationCanceledException();
+                File.Move(staged, destination, overwrite: true);
+            }
+            return true;
+        });
+    }
     private CancellationTokenSource Link(NativeMediaScope scope, CancellationToken cancellation)
     {
         Family? retired = null;

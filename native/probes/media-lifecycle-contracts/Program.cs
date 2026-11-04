@@ -12,7 +12,8 @@ internal static class Program
         if (args.Length != 1 || !Path.IsPathFullyQualified(args[0])) throw new ArgumentException("Supply an absolute evidence directory.");
         string run = Path.Combine(args[0], "media-lifecycle-" + Guid.NewGuid().ToString("N"));
         var failures = new List<string>();
-        Func<string, Task>[] checks = [StaleFirstAdmission, ReentrantOriginalDuringRetirement, RotationAndSameAccountRelogin, AdmissionBeforeChangeNotification, ClosedWhileOriginalOpen];
+        Func<string, Task>[] checks = [StaleFirstAdmission, ReentrantOriginalDuringRetirement, RotationAndSameAccountRelogin, AdmissionBeforeChangeNotification, ClosedWhileOriginalOpen,
+            StalePublishPreservesDestination, PublishSerializesWithFamilyChange, SameFamilyCanOverwriteAfterRotation];
         foreach (var check in checks)
         {
             try { await check(Path.Combine(run, check.Method.Name)); }
@@ -114,5 +115,68 @@ internal static class Program
         file.Dispose();
         if (File.Exists(file.Path) || Directory.Exists(Path.GetDirectoryName(file.Path)))
             throw new IOException("A locked original or its private folder survived final release.");
+    }
+
+    private static async Task StalePublishPreservesDestination(string directory)
+    {
+        var owner = new NativeAuthSession(A);
+        using var media = new NativeMediaLibrary(owner, directory);
+        using var file = await Fetch(media, A);
+        string staged = Path.Combine(directory, "staged"), destination = Path.Combine(directory, "chosen");
+        File.Copy(file.Path, staged); File.WriteAllText(destination, "existing");
+        owner.Switch(A with { FamilyStamp = "3:another-family" });
+        try { media.PublishSavedFile(A, staged, destination); }
+        catch (OperationCanceledException)
+        {
+            if (File.ReadAllText(destination) != "existing" || File.ReadAllText(staged) != A.UserId)
+                throw new IOException("Rejected publication mutated the user's destination or consumed the staged file.");
+            return;
+        }
+        throw new IOException("An old family published a save after a same-account relogin.");
+    }
+
+    private static async Task PublishSerializesWithFamilyChange(string directory)
+    {
+        var owner = new NativeAuthSession(A);
+        using var media = new NativeMediaLibrary(owner, directory);
+        using var file = await Fetch(media, A);
+        string staged = Path.Combine(directory, "staged"), destination = Path.Combine(directory, "chosen");
+        File.Copy(file.Path, staged); File.WriteAllText(destination, "existing");
+        string? contentsAtSwitch = null;
+        Task switched = Task.CompletedTask;
+        owner.AfterNextScopeCheck(() =>
+        {
+            switched = Task.Run(() => owner.Switch(B, () => contentsAtSwitch = File.ReadAllText(destination)));
+            // If the authorization check releases its gate before rename, let
+            // B complete here, making a late A overwrite deterministic.
+            if (!owner.AuthGateHeld) switched.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        });
+        media.PublishSavedFile(A, staged, destination);
+        await switched.WaitAsync(TimeSpan.FromSeconds(5));
+        if (contentsAtSwitch != A.UserId || File.Exists(staged))
+            throw new IOException("The old family's save was published after the account switched.");
+    }
+
+    private static async Task SameFamilyCanOverwriteAfterRotation(string directory)
+    {
+        var owner = new NativeAuthSession(A);
+        using var media = new NativeMediaLibrary(owner, directory);
+        using var file = await Fetch(media, A);
+        string staged = Path.Combine(directory, "staged"), destination = Path.Combine(directory, "chosen");
+        File.Copy(file.Path, staged); File.WriteAllText(destination, "existing");
+        owner.Switch(A);
+        media.PublishSavedFile(A, staged, destination);
+        if (File.ReadAllText(destination) != A.UserId || File.Exists(staged))
+            throw new IOException("A current-family save did not replace the chosen file.");
+
+        File.WriteAllText(staged, "later");
+        media.Dispose();
+        try { media.PublishSavedFile(A, staged, destination); }
+        catch (OperationCanceledException)
+        {
+            if (File.ReadAllText(destination) != A.UserId) throw new IOException("A retired media library overwrote the chosen file.");
+            return;
+        }
+        throw new IOException("A disposed media library still admitted a save.");
     }
 }
