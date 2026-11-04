@@ -3,7 +3,8 @@ namespace Sproyt.WindowsProbe;
 // Presentation depends on this credential-free application boundary. Feature
 // modules share its snapshot and actions instead of creating transport owners.
 internal sealed record LiveSnapshot(NativeAuthSnapshot Authentication, NativeChatSnapshot Chat,
-    WorkspaceSnapshot? Workspace, bool ShowConversation, string? Error, bool ConfirmPendingSends = false)
+    WorkspaceSnapshot? Workspace, bool ShowConversation, string? Error, bool ConfirmPendingSends = false,
+    bool DeliveryRetryPending = false, NativeNavigationSnapshot? Navigation = null)
 {
     public int RejectedSends => Workspace?.Outbox.Count(item => item.State == "rejected") ?? 0;
     public int PendingSends => Workspace?.Outbox.Count(item => item.State != "rejected") ?? 0;
@@ -20,7 +21,17 @@ internal interface ILiveApplication : IAsyncDisposable
     Task LoginAsync();
     Task LogoutAsync();
     Task ResumeAsync();
+    Task RetryPendingSendsAsync(string expectedUser, string expectedStamp);
     Task SelectAsync(string channel);
+    Task NavigateAsync(NativeNavigationTarget target);
+    Task BackAsync();
+    Task ForwardAsync();
+    void SetNavigationQuery(string query);
+    void SetNavigationScope(NativeNavigationDirectoryScope scope);
+    void SetNavigationInteraction(bool interacting);
+    void RememberViewport(NativeNavigationVisit visit, NativeScrollAnchor anchor);
+    Task LoadOlderAsync(string channel, long viewGeneration, string expectedUser, string expectedStamp, NativeNavigationVisit visit);
+    Task MarkVisibleReadAsync(string channel, long viewGeneration, IReadOnlyList<string> messageIds, string expectedUser, string expectedStamp, NativeNavigationVisit visit);
     void Edit(string channel, string body);
     Task SendAsync(string channel);
     Task ConfirmPendingSendsAsync(string expectedUser, string expectedStamp);

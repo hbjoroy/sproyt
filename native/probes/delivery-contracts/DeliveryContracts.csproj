@@ -9,6 +9,8 @@
   <ItemGroup>
     <Compile Include="../windows-reactor/Core/Models.cs" Link="Production/Models.cs" />
     <Compile Include="../windows-reactor/Core/LiveDeliveryCoordinator.cs" Link="Production/LiveDeliveryCoordinator.cs" />
+    <Compile Include="../windows-reactor/Core/LiveDeliveryBackoff.cs" Link="Production/LiveDeliveryBackoff.cs" />
+    <Compile Include="../windows-reactor/Core/LiveDeliveryRetryWake.cs" Link="Production/LiveDeliveryRetryWake.cs" />
     <Compile Include="../../session-client/NativeCommandException.cs" Link="Production/NativeCommandException.cs" />
   </ItemGroup>
 </Project>

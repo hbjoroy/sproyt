@@ -6,6 +6,11 @@ Kolonnen «Native no» skildrar baseline før gjennomføringa. Nye leveransar og
 prøver blir førte i [implementasjonsstatusen](native-parity-implementation-status.md);
 eit nytt modellfelt eller API lukkar ikkje ei UI-rad åleine.
 
+Andre pulje 4. november leverer avgrensa delar av PAR-001/002/004/005/011:
+søk og intern navigasjon, paginert rothistorikk, synleg-lesing og retry/backoff.
+Sjå [implementasjonsstatusen](native-parity-implementation-status.md#andre-implementerte-snitt-dagleg-samtalebruk)
+for prøver og attståande delar. «Native no» under er framleis kartleggingsbaselinen.
+
 ## Baseline og tolking
 
 Målet er den deploya web-Canary-revisjonen `142f71888cdde11dec42a698432530e208f577bb`, som hovudagenten stadfesta gjennom live `/versionz`. Lokal HEAD ved kartlegging var `8715726e9fe11290f215a13cbc71261993942313`. Matrisen er lesen mot lokal kode og `git show`/`git grep` av den deploya revisjonen; differansen er kontrollert særskilt for panelbreidder, biletevisar, bileteverkstad og delingsmottak. Ingen checkout eller endring av eksisterande kode var nødvendig. Lokale, ucommitta family-app-endringar er ikkje del av Canary-baselinen.

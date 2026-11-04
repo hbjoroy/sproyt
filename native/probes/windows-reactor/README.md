@@ -88,3 +88,21 @@ ikkje testing av fysisk tastatur, IME, touch, skjermlesar eller visuell kvalitet
 Reactor er eksperimentell. Denne prøva tek ikkje stilling til ein endeleg
 Windows-produktplattform. Vidare produktarbeid følgjer paritetsplanen;
 full produksjonssynkronisering står framleis att.
+
+## Live-pilot: navigasjon, historikk og lesing
+
+Live-visinga har søk og krets-/DM-faner, tilbake/fram med separate utkast og
+meldingsanker, og ei handling for å laste eldre meldingar. Historikken er
+avgrensa til 2000 røter i minnet; kapasitet og sidefeil blir viste i samtalen.
+Berre faktisk synlege røter i eit aktivt vindauge kan bli melde lesne, og
+ulestindikatoren bruker stadfesta servertilstand.
+
+Uvisse sendingar bevarer ID og payload og ventar 2–60 sekund mellom automatiske
+forsøk. «Prøv sending» er eksplisitt manuell retry med ei minstegrense på eitt
+sekund. «Oppdater samband» og vindaugsaktivering omgår ikkje ventinga.
+
+Live-fixture-prøva måler faktiske virtualiserte rader ved eldre historikk,
+navigasjon og endra radhøgd, og kontrollerer at inaktivt vindauge ikkje sender
+lesekvitteringar. Transport- og timerkontraktane ligg i `history-contracts`,
+`navigation-contracts` og `delivery-contracts`; dei bruker syntetiske eigarar
+og kontrollerte feil. Full live-aksept og fysisk input står framleis att.
