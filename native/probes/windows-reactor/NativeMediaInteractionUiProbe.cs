@@ -21,7 +21,7 @@ internal static class NativeMediaInteractionUiProbe
         try
         {
             fixture.PrepareContent("Utkast for filslipp");
-            await Until("root drop host", () => LiveChatComponent.RootDropForProbe is not null && Find<TextBox>(root, "live-composer") is { IsLoaded: true });
+            await Until("fresh root drop host", () => LiveChatComponent.RootDropForProbe is not null && Find<TextBox>(root, "live-composer") is { IsLoaded: true, Text: "" });
             var host = Find<FrameworkElement>(root, "live-file-drop")!;
             Require(host.AllowDrop && IsAncestor(host, Find<TextBox>(root, "live-composer")!), "The file-drop host does not cover the root editor.");
             Find<TextBox>(root, "live-composer")!.Text = "Kanal A";
