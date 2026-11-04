@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../windows-reactor/Features/MessageActions/NativeMessageActionController.cs" Link="NativeMessageActionController.cs" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Compile Include="../../session-client/NativeChatClient*.cs" Link="Transport/%(Filename)%(Extension)" />
+    <Compile Include="../../session-client/NativeClientWire.cs" Link="Transport/NativeClientWire.cs" />
+    <Compile Include="../client-contracts/SyntheticSession.cs" Link="Fixture/SyntheticSession.cs" />
+    <Compile Include="../client-contracts/FixtureServer.cs" Link="Fixture/FixtureServer.cs" />
+    <Compile Include="../../session-client/NativeCommandException.cs" Link="NativeCommandException.cs" />
+  </ItemGroup>
+</Project>
