@@ -130,6 +130,64 @@ internal sealed class NativeRawMessageState
 }
 
 internal sealed record NativeAttachmentProps(NativeMediaLibrary? Library, NativeMediaScope? Scope, NativeContentPart Part, SproytPalette Palette);
+// Shared by documents and original image/video saves. The picker is explicit,
+// and account/family admission is rechecked after every asynchronous boundary.
+internal static class NativeMediaSave
+{
+    internal static Func<string, string, CancellationToken, Task<string?>>? PickDestinationForProbe { get; set; }
+    internal static Task<bool>? LastSaveForProbe { get; private set; }
+    internal static string Extension(string contentType) => contentType switch
+    {
+        "image/jpeg" => ".jpg", "image/png" => ".png", "image/webp" => ".webp", "image/gif" => ".gif",
+        "image/heic" => ".heic", "image/heif" => ".heif", "image/avif" => ".avif",
+        "video/mp4" => ".mp4", "video/quicktime" => ".mov", "video/webm" => ".webm", "video/x-matroska" => ".mkv",
+        "application/pdf" => ".pdf", "application/zip" => ".zip", "text/plain" => ".txt", "text/csv" => ".csv",
+        _ => throw new IOException("Denne vedleggstypen kan ikkje lagrast her.")
+    };
+    internal static Task<bool> SaveAsync(NativeMediaFile file, string name, NativeMediaLibrary library, NativeMediaScope scope, Func<bool> current, CancellationToken cancellation)
+    {
+        var task = SaveCoreAsync(file, name, library, scope, current, cancellation);
+        if (Program.LiveUiProbeDirectory is not null) LastSaveForProbe = task;
+        return task;
+    }
+    private static async Task<bool> SaveCoreAsync(NativeMediaFile file, string name, NativeMediaLibrary library, NativeMediaScope scope, Func<bool> current, CancellationToken cancellation)
+    {
+        if (!current() || Program.MainWindowId is not { } window) throw new OperationCanceledException();
+        string extension = Extension(file.ContentType);
+        string suggested = Path.GetFileNameWithoutExtension(NativeUploadDiskStore.SafeFileName(name));
+        if (string.IsNullOrWhiteSpace(suggested)) suggested = "Vedlegg";
+        string? chosenPath;
+        if (Program.LiveUiProbeDirectory is not null && PickDestinationForProbe is { } injected)
+            chosenPath = await injected(suggested + extension, file.ContentType, cancellation).WaitAsync(cancellation);
+        else
+        {
+            var picker = new Microsoft.Windows.Storage.Pickers.FileSavePicker(window)
+            { SuggestedFileName = suggested, DefaultFileExtension = extension };
+            picker.FileTypeChoices.Add("Vedlegg", new List<string> { extension });
+            chosenPath = (await picker.PickSaveFileAsync().AsTask(cancellation))?.Path;
+        }
+        cancellation.ThrowIfCancellationRequested();
+        if (!current()) throw new OperationCanceledException();
+        if (chosenPath is null) return false;
+        if (!string.Equals(Path.GetExtension(chosenPath), extension, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Vel filtypen " + extension + " for dette vedlegget.");
+        string destination = Path.GetFullPath(chosenPath);
+        string? staged = Path.Combine(Path.GetDirectoryName(destination)!, ".sproyt-download-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            await using (var input = new FileStream(file.Path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 65536, FileOptions.Asynchronous))
+            await using (var output = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.WriteThrough))
+            { await input.CopyToAsync(output, 65536, cancellation); await output.FlushAsync(cancellation); output.Flush(true); }
+            cancellation.ThrowIfCancellationRequested();
+            if (!current()) throw new OperationCanceledException();
+            library.PublishSavedFile(scope, staged, destination); staged = null; return true;
+        }
+        finally
+        {
+            if (staged is not null) { try { File.Delete(staged); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+        }
+    }
+}
 internal sealed class NativeAttachmentComponent : Component<NativeAttachmentProps>
 {
     private readonly CancellationTokenSource _life = new();
@@ -141,43 +199,29 @@ internal sealed class NativeAttachmentComponent : Component<NativeAttachmentProp
         var (busy, setBusy) = UseState(false, threadSafe: true);
         UseEffect(() =>
         {
-            void Invalidated() { try { _download?.Cancel(); } catch (ObjectDisposedException) { } }
+            void Invalidated() { if (Props.Library is not null && Props.Scope is not null && Props.Library.Current(Props.Scope)) return; try { _download?.Cancel(); } catch (ObjectDisposedException) { } }
             if (Props.Library is not null) Props.Library.Invalidated += Invalidated;
             return () => { if (Props.Library is not null) Props.Library.Invalidated -= Invalidated; _life.Cancel(); _download?.Cancel(); };
         }, Props.Scope?.FamilyStamp + ":" + Props.Part.MediaId);
-        bool Current() => !_life.IsCancellationRequested && Props.Library is not null && Props.Scope is not null && Props.Library.Current(Props.Scope);
+        var captured = Props;
+        bool Current() => !_life.IsCancellationRequested && captured.Library is not null && captured.Scope is not null &&
+            ReferenceEquals(Props.Library, captured.Library) && Props.Scope == captured.Scope && captured.Library.Current(captured.Scope);
         async void Download()
         {
-            if (busy || !Current() || Program.MainWindowId is not { } window) return;
+            if (busy || !Current()) return;
             setBusy(true); setStatus("Hentar vedlegget …");
             using var cancellation = _download = CancellationTokenSource.CreateLinkedTokenSource(_life.Token);
-            string? staged = null;
             try
             {
-                using var file = await Props.Library!.OriginalAsync(Props.Part.MediaId!, Props.Scope!, null, cancellation.Token);
-                string extension = NativeUploadShell.DocumentExtension(file.ContentType);
-                if (file.ContentType != Props.Part.ContentType || !Current()) throw new OperationCanceledException();
-                var picker = new Microsoft.Windows.Storage.Pickers.FileSavePicker(window)
-                { SuggestedFileName = Path.GetFileNameWithoutExtension(NativeUploadDiskStore.SafeFileName(Props.Part.Text)), DefaultFileExtension = extension };
-                picker.FileTypeChoices.Add("Vedlegg", new List<string> { extension });
-                var chosen = await picker.PickSaveFileAsync();
-                if (chosen is null || !Current()) { setStatus(""); return; }
-                if (!string.Equals(Path.GetExtension(chosen.Path), extension, StringComparison.OrdinalIgnoreCase))
-                    throw new IOException("Vel filtypen " + extension + " for dette vedlegget.");
-                string destination = Path.GetFullPath(chosen.Path);
-                staged = Path.Combine(Path.GetDirectoryName(destination)!, ".sproyt-download-" + Guid.NewGuid().ToString("N") + ".tmp");
-                await using (var input = new FileStream(file.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous))
-                await using (var output = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.WriteThrough))
-                { await input.CopyToAsync(output, 65536, cancellation.Token); await output.FlushAsync(cancellation.Token); output.Flush(true); }
-                if (!Current()) throw new OperationCanceledException();
-                File.Move(staged, destination, overwrite: true); staged = null;
-                setStatus("Vedlegget er lagra.");
+                using var file = await captured.Library!.OriginalAsync(captured.Part.MediaId!, captured.Scope!, null, cancellation.Token);
+                if (file.ContentType != captured.Part.ContentType || !Current()) throw new OperationCanceledException();
+                bool saved = await NativeMediaSave.SaveAsync(file, captured.Part.Text, captured.Library, captured.Scope!, Current, cancellation.Token);
+                if (Current()) setStatus(saved ? "Vedlegget er lagra." : "");
             }
             catch (OperationCanceledException) { setStatus(""); }
             catch { if (Current()) setStatus("Vedlegget kunne ikkje lagrast. Prøv igjen."); }
             finally
             {
-                if (staged is not null) { try { File.Delete(staged); } catch (IOException) { } }
                 if (ReferenceEquals(_download, cancellation)) _download = null;
                 setBusy(false);
             }
@@ -219,12 +263,15 @@ internal sealed class NativeMediaPresenter : IDisposable
     private readonly Microsoft.UI.Xaml.Controls.TextBlock _status;
     private readonly Microsoft.UI.Xaml.Controls.Button _open;
     private readonly Microsoft.UI.Xaml.Controls.Button _load;
+    private readonly Microsoft.UI.Xaml.Controls.Button _save;
     private readonly HyperlinkButton _web;
     private NativePreviewLease? _previewLease;
     private CancellationTokenSource? _previewCancellation;
     private ContentDialog? _dialog;
     private MediaPlayer? _player;
-    private bool _disposed, _opening, _loading, _visible, _waitingForCapacity;
+    private volatile bool _disposed;
+    private bool _opening, _saving, _loading, _visible, _waitingForCapacity;
+    internal static ContentDialog? ActiveDialogForProbe { get; private set; }
     internal StackPanel Root { get; }
     internal NativeMediaPresenter(NativeMediaProps props, Border host)
     {
@@ -236,8 +283,13 @@ internal sealed class NativeMediaPresenter : IDisposable
         _status = new() { FontSize = 13, Foreground = props.Palette.Muted, TextWrapping = TextWrapping.Wrap };
         _open = new() { MinHeight = 44, MinWidth = 44, HorizontalAlignment = HorizontalAlignment.Left, Content = video ? "▷ Spel av" : new SymbolIcon(Symbol.FullScreen) };
         AutomationProperties.SetName(_open, video ? "Spel av " + props.Part.Text : "Vis " + props.Part.Text + " i større vising");
+        AutomationProperties.SetAutomationId(_open, "native-media-open-" + props.Part.MediaId);
         ToolTipService.SetToolTip(_open, video ? "Spel av videoen" : "Vis biletet i større vising");
         _open.Click += async (_, _) => await OpenAsync();
+        _save = new() { Content = "Lagre original", MinHeight = 44, MinWidth = 44, HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetName(_save, "Lagre originalen til " + props.Part.Text);
+        AutomationProperties.SetAutomationId(_save, "native-media-save-" + props.Part.MediaId);
+        _save.Click += async (_, _) => await SaveAsync();
         _load = new() { Content = "Last førehandsvising", MinHeight = 44, Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left };
         _load.Click += async (_, _) => await PreviewAsync();
         if (!video)
@@ -257,7 +309,7 @@ internal sealed class NativeMediaPresenter : IDisposable
         filename.VerticalAlignment = VerticalAlignment.Center;
         Microsoft.UI.Xaml.Controls.Grid.SetColumn(_open, 1);
         caption.Children.Add(filename); caption.Children.Add(_open);
-        Root.Children.Add(caption); Root.Children.Add(_status); Root.Children.Add(_load);
+        Root.Children.Add(caption); Root.Children.Add(_save); Root.Children.Add(_status); Root.Children.Add(_load);
         _status.Visibility = Visibility.Collapsed;
         _web = new() { Content = "Opne meldinga i Sprøyt", NavigateUri = props.MessageLink, MinHeight = 44, Padding = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         Root.Children.Add(_web);
@@ -370,11 +422,11 @@ internal sealed class NativeMediaPresenter : IDisposable
     }
     private async Task OpenAsync()
     {
-        if (_opening || !Current) return;
-        _opening = true; _open.IsEnabled = false; Status("Hentar vedlegget …");
+        if (_opening || _saving || !Current) return;
+        _opening = true; _open.IsEnabled = false; _save.IsEnabled = false; Status("Hentar vedlegget …");
         try
         {
-            var progress = new Progress<long>(bytes => Post(() => Status($"Hentar vedlegget … {bytes / (1024 * 1024)} MiB")));
+            var progress = new Progress<long>(bytes => Post(() => { if (Current) Status($"Hentar vedlegget … {bytes / (1024 * 1024)} MiB"); }));
             using var file = await _props.Library!.OriginalAsync(_props.Part.MediaId!, _props.Scope!, progress, _life.Token);
             if (!Current) return;
             var stored = await StorageFile.GetFileFromPathAsync(file.Path);
@@ -382,6 +434,7 @@ internal sealed class NativeMediaPresenter : IDisposable
             if (!Current) return;
             FrameworkElement content;
             MediaSource? source = null;
+            NativeImageViewer? viewer = null;
             try
             {
                 if (file.ContentType.StartsWith("video/", StringComparison.Ordinal))
@@ -393,25 +446,59 @@ internal sealed class NativeMediaPresenter : IDisposable
                 }
                 else
                 {
-                    var decoded = await NativeMessageView.DecodeBitmapAsync(stream, 1600, _life.Token);
-                    content = new ScrollViewer { Content = new Microsoft.UI.Xaml.Controls.Image { Source = decoded.Bitmap, Stretch = Stretch.Uniform, MaxWidth = 900, MaxHeight = 650 }, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 1, MaxZoomFactor = 5, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+                    var decoded = await NativeImageViewer.DecodeAsync(stream, _life.Token);
+                    if (!Current) return;
+                    viewer = new(decoded, _props.Part.Text, file.Path, _props.Palette, () => Current,
+                        token => NativeMediaSave.SaveAsync(file, _props.Part.Text, _props.Library!, _props.Scope!, () => Current && viewer is { IsDisposed: false }, token),
+                        () => _dialog?.Hide(), _life.Token);
+                    content = viewer.Root;
                 }
                 if (!Current) return;
-                _dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = _props.Part.Text, Content = content, CloseButtonText = "Lukk", FullSizeDesired = true };
+                _dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = _props.Part.Text, Content = content,
+                    CloseButtonText = viewer is null ? "Lukk" : "", FullSizeDesired = true,
+                    RequestedTheme = _props.Palette == SproytPalette.Dark ? ElementTheme.Dark : ElementTheme.Light };
+                if (viewer is not null)
+                { _dialog.Resources["ContentDialogMaxWidth"] = 1100d; _dialog.Resources["ContentDialogMaxHeight"] = 950d; }
+                if (Program.LiveUiProbeDirectory is not null) ActiveDialogForProbe = _dialog;
                 Status("");
-                // The native presenter owns the dialog, playback and file lease;
-                // logout/unmount hides it and the finally block releases all three.
+                // Playback, dialog and private original lease have the same owner.
 #pragma warning disable REACTOR_DIALOG_001
                 await _dialog.ShowAsync();
 #pragma warning restore REACTOR_DIALOG_001
             }
-            finally { _player?.Pause(); if (_player is not null) _player.Source = null; _player?.Dispose(); _player = null; source?.Dispose(); _dialog = null; }
+            finally
+            {
+                viewer?.Dispose();
+                if (ReferenceEquals(ActiveDialogForProbe, _dialog)) ActiveDialogForProbe = null;
+                _player?.Pause(); if (_player is not null) _player.Source = null; _player?.Dispose(); _player = null; source?.Dispose(); _dialog = null;
+                if (viewer is not null) await viewer.WaitForSaveAsync();
+            }
         }
         catch (OperationCanceledException) { }
-        catch { if (!_disposed) { Status("Vedlegget kunne ikkje opnast. Du kan opne meldinga i Sprøyt."); _web.Visibility = Visibility.Visible; } }
-        finally { if (!_disposed) { _opening = false; _open.IsEnabled = true; } }
+        catch { if (Current) { Status("Vedlegget kunne ikkje opnast. Du kan opne meldinga i Sprøyt."); _web.Visibility = Visibility.Visible; } }
+        finally { _opening = false; if (Current) { _open.IsEnabled = true; _save.IsEnabled = true; } }
     }
-    private void Invalidated() => Post(() => { _life.Cancel(); StopPreview(); _player?.Pause(); _dialog?.Hide(); Status("Logg inn på nytt for å hente vedlegget."); _open.IsEnabled = false; _load.IsEnabled = false; });
+    private async Task SaveAsync()
+    {
+        if (_saving || _opening || !Current) return;
+        _saving = true; _save.IsEnabled = false; _open.IsEnabled = false; Status("Hentar originalen …");
+        try
+        {
+            using var file = await _props.Library!.OriginalAsync(_props.Part.MediaId!, _props.Scope!, null, _life.Token);
+            if (!Current) return;
+            bool saved = await NativeMediaSave.SaveAsync(file, _props.Part.Text, _props.Library!, _props.Scope!, () => Current, _life.Token);
+            if (Current) Status(saved ? "Originalen er lagra." : "");
+        }
+        catch (OperationCanceledException) { }
+        catch { if (Current) Status("Originalen kunne ikkje lagrast. Prøv igjen."); }
+        finally { _saving = false; if (Current) { _save.IsEnabled = true; _open.IsEnabled = true; } }
+    }
+    private void Invalidated() => Post(() =>
+    {
+        if (Current) return;
+        _life.Cancel(); StopPreview(); _player?.Pause(); _dialog?.Hide();
+        Status("Logg inn på nytt for å hente vedlegget."); _open.IsEnabled = false; _save.IsEnabled = false; _load.IsEnabled = false;
+    });
     public void Dispose()
     {
         if (_disposed) return;
