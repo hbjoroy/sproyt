@@ -159,6 +159,26 @@ static class Program
     }
     private static async Task Rejections()
     {
+        var invalid = new Commands(); var local = Profile(invalid); await local.LoadAsync(A);
+        foreach (string name in new[] { "   ", new string('x', 121), string.Concat(Enumerable.Repeat("🌿", 31)), "broken\ud800" })
+        {
+            local.EditName(A, name); await local.SaveNameAsync(A);
+            Check(invalid.NameWrites == 0 && local.Capture() is { HasUncertainWrite: false, Error: not null } && local.Capture().NameDraft == name,
+                "Invalid name dispatched a command, became uncertain, or discarded its private draft.");
+        }
+        local.EditName(A, string.Concat(Enumerable.Repeat("🌿", 30))); await local.SaveNameAsync(A);
+        Check(invalid.NameWrites == 1 && local.Capture().Error is null, "Exact UTF-8 name byte boundary was rejected.");
+        foreach (var value in new[] { (new string('x', 101), "🌿"), ("Status\ntext", "🌿"), ("Status", new string('x', 17)),
+            ("Status", "x\u0001y"), ("broken\ud800", "🌿") })
+        {
+            local.EditStatusText(A, value.Item1); local.EditStatusEmoji(A, value.Item2); await local.SaveStatusAsync(A);
+            Check(invalid.StatusWrites == 0 && local.Capture() is { HasUncertainWrite: false, Error: not null } &&
+                local.Capture().StatusTextDraft == value.Item1 && local.Capture().StatusEmojiDraft == value.Item2,
+                "Invalid status dispatched a command, became uncertain, or discarded a field.");
+        }
+        local.EditStatusText(A, string.Concat(Enumerable.Repeat("🌿", 100))); local.EditStatusEmoji(A, string.Concat(Enumerable.Repeat("🌿", 16)));
+        await local.SaveStatusAsync(A);
+        Check(invalid.StatusWrites == 1 && local.Capture().Error is null, "Unicode scalar boundaries were counted as UTF-16 units.");
         var command = new Commands { Name = (_, _, id, _) => throw NativeCommandException.FromServer(id, "validation_error", "Rejected") };
         var profile = Profile(command); await profile.LoadAsync(A); profile.EditName(A, "Rejected edit"); await profile.SaveNameAsync(A);
         Check(!profile.Capture().HasUncertainWrite && profile.Capture().Error is not null && profile.Capture().NameDraft == "Rejected edit", "Correlated rejection lost draft or became uncertain.");
