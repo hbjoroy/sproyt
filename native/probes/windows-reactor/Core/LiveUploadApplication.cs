@@ -9,7 +9,7 @@ internal sealed partial class LiveApplication
     private sealed record UploadScopeRegistration(NativeUploadQueue? Queue, NativeMediaScope? Scope, CancellationTokenSource? Staging);
     private UploadScopeRegistration? _uploadScopeRegistration;
     private bool _uploadInitializationFailed;
-    private sealed record UploadIssue(string UserId, string Family, string Message);
+    private sealed record UploadIssue(string UserId, string Family, string Message, NativeUploadTarget? Target = null);
     private UploadIssue? _uploadIssue;
 
     private bool UploadAdmitted(NativeUploadTarget target) => _authentication.ProjectSnapshot(auth =>
@@ -119,12 +119,18 @@ internal sealed partial class LiveApplication
         var target = new NativeUploadTarget(scope.UserId, family, scope.ChannelId, scope.ThreadRootId);
         return UploadAdmitted(target) ? target : null;
     });
+    private UploadIssue? CurrentUploadIssue(NativeAuthSnapshot auth) =>
+        _uploadIssue is { } issue && auth.UserId == issue.UserId && SendFamily(auth.SessionStamp) == issue.Family ? issue : null;
+
+    private static NativeUploadTarget? UploadIssueTarget(NativeUploadTarget target) =>
+        target.ChannelId.Length == 0 ? null : target;
+
     private void UploadFailed(NativeUploadTarget target, string message)
     {
         _authentication.ProjectSnapshot(auth =>
         {
             if (auth.UserId == target.UserId && SendFamily(auth.SessionStamp) == target.FamilyStamp)
-                _uploadIssue = new(target.UserId, target.FamilyStamp, message);
+                _uploadIssue = new(target.UserId, target.FamilyStamp, message, UploadIssueTarget(target));
             return true;
         });
         Notify();
@@ -132,7 +138,7 @@ internal sealed partial class LiveApplication
     private void ClearUploadIssue(NativeUploadTarget target) => _authentication.ProjectSnapshot(auth =>
     {
         if (auth.UserId == target.UserId && SendFamily(auth.SessionStamp) == target.FamilyStamp &&
-            _uploadIssue?.UserId == target.UserId && _uploadIssue.Family == target.FamilyStamp) _uploadIssue = null;
+            CurrentUploadIssue(auth) is { } issue && issue.Target == UploadIssueTarget(target)) _uploadIssue = null;
         return true;
     });
     private static string UploadFailureText(Exception failure) => failure switch
@@ -144,33 +150,32 @@ internal sealed partial class LiveApplication
         _ => "Fila kunne ikkje klargjerast. Kontroller lesetilgang og ledig diskplass. Maks lokal filstorleik er 512 MiB."
     };
 
-    public async Task AddUploadFilesAsync(NativeUploadTarget target, IReadOnlyList<string> paths)
+    public async Task AddUploadFilesAsync(NativeUploadTarget target, IReadOnlyList<string> paths) =>
+        await AddUploadFilesCountedAsync(target, paths);
+
+    public async Task<int> AddUploadFilesCountedAsync(NativeUploadTarget target, IReadOnlyList<string> paths)
     {
+        int accepted = 0;
         var queue = _uploads; var disk = _uploadDisk;
-        if (queue is null || disk is null || paths.Count == 0 || !UploadAdmitted(target)) return;
-        if (paths.Count > NativeUploadQueue.MaximumJobs) { UploadFailed(target, "Vel høgst åtte filer om gongen."); return; }
+        if (queue is null || disk is null || paths.Count == 0 || !UploadAdmitted(target)) return accepted;
+        if (paths.Count > NativeUploadQueue.MaximumJobs) { UploadFailed(target, "Vel høgst åtte filer om gongen."); return accepted; }
         using var staging = CaptureStaging(target, queue, disk);
-        if (staging is null) return;
+        if (staging is null) return accepted;
         bool admitted = false;
         try
         {
             await _uploadAdmission.WaitAsync(staging.Token); admitted = true;
             foreach (string path in paths)
             {
-                if (!ReferenceEquals(queue, _uploads) || !UploadAdmitted(target)) return;
+                if (!ReferenceEquals(queue, _uploads) || !UploadAdmitted(target)) return accepted;
                 NativeUploadSource? source = null;
                 try
                 {
                     source = await disk.StageFileAsync(path, staging.Token);
                     if (!ReferenceEquals(queue, _uploads) || !UploadAdmitted(target)) throw new OperationCanceledException();
                     await queue.EnqueueAsync(target, source, staging.Token);
+                    accepted++;
                     ClearUploadIssue(target);
-                }
-                catch (OperationCanceledException) { return; }
-                catch (Exception failure)
-                {
-                    UploadFailed(target, UploadFailureText(failure));
-                    return;
                 }
                 finally
                 {
@@ -182,7 +187,9 @@ internal sealed partial class LiveApplication
             }
         }
         catch (OperationCanceledException) { }
+        catch (Exception failure) { UploadFailed(target, UploadFailureText(failure)); }
         finally { if (admitted) _uploadAdmission.Release(); Notify(); }
+        return accepted;
     }
 
     public async Task AddUploadStreamAsync(NativeUploadTarget target, Stream stream, string fileName, string contentType)

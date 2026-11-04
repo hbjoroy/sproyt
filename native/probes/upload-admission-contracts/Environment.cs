@@ -60,11 +60,23 @@ internal sealed class NativeUploadDiskStore(string directory,string account,Func
     internal static NativeUploadJob[] NextLoadJobs = [];
     internal int ActiveStaging;
     internal bool Disposed;
+    internal bool FailJournal;
+    internal Action<string>? BeforeStage;
     public Task<IReadOnlyList<NativeUploadJob>> LoadAsync(CancellationToken cancellationToken)
     {if(string.IsNullOrEmpty(directory)||string.IsNullOrEmpty(account))throw new IOException("Invalid synthetic store owner");_jobs=Interlocked.Exchange(ref NextLoadJobs,[]);return Task.FromResult<IReadOnlyList<NativeUploadJob>>(_jobs);}
     public async Task SaveAsync(IReadOnlyList<NativeUploadJob> jobs,CancellationToken cancellationToken)
-    { cancellationToken.ThrowIfCancellationRequested(); _jobs=jobs.ToArray();await reconcile(jobs.Select(job=>job.Id).ToArray()); }
-    internal Task<NativeUploadSource> StageFileAsync(string path,CancellationToken cancellationToken) => StageAsync(new MemoryStream([1]),path,"text/plain",cancellationToken);
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (FailJournal) throw new IOException("Synthetic journal failure");
+        _jobs=jobs.ToArray();await reconcile(jobs.Select(job=>job.Id).ToArray());
+    }
+    internal async Task<NativeUploadSource> StageFileAsync(string path,CancellationToken cancellationToken)
+    {
+        BeforeStage?.Invoke(path);
+        using var stream = new MemoryStream([1]);
+        string type = Path.GetExtension(path) == ".docx" ? "application/octet-stream" : "text/plain";
+        return await StageAsync(stream, path, type, cancellationToken);
+    }
     internal async Task<NativeUploadSource> StageAsync(Stream stream,string name,string type,CancellationToken cancellationToken)
     {
         if(Disposed)throw new ObjectDisposedException(nameof(NativeUploadDiskStore));
@@ -104,6 +116,13 @@ internal sealed partial class LiveApplication
     internal void NavigateForProbe() => _selected=Probe.OtherChannel;
     internal NativeUploadTarget TargetForProbe() => CaptureUploadTarget(new(Probe.User,"1:family-a:1",Probe.Channel))!;
     internal NativeUploadSnapshot JobsForProbe() => _uploads!.Capture();
+    internal void BeforeStageForProbe(Action<string>? callback) => _uploadDisk!.BeforeStage = callback;
+    internal void FailJournalForProbe(bool fail) => _uploadDisk!.FailJournal = fail;
+    internal (string? Message, NativeUploadTarget? Target) IssueForProbe() => _authentication.ProjectSnapshot(auth =>
+    {
+        var issue = CurrentUploadIssue(auth);
+        return (issue?.Message, issue?.Target);
+    });
     internal async Task CloseForProbeAsync(){_closing=true;await CloseUploadsAsync();_lifetime.Dispose();}
     internal Task<bool> AttachForProbeAsync(string failure)
     { _workspace.AttachFailure=failure;return AttachCompletedUploadAsync(_workspace,new(Probe.User,"1:family-a",Probe.Channel),"job","marker"); }
