@@ -232,9 +232,10 @@ Den samla Windows ARM64-køyringa passerte med kjelde `9cf30f6`: faktisk
 Rust-DLL/SQLite/DPAPI, varige utkast, omstart/sesjonar og alle WinUI-prøvene.
 Dei nye kontraktgruppene har åtte geometriprøver, åtte livsløpsprøver og atten
 filslipp-prøver; i tillegg passerer den utvida prøva av faktisk applikasjon
-og kø ved stadfesta, delvis og uvisst opptak. Det siste opplastingselementet
+og kø ved stadfesta, delvis og uvisst opptak. Eit filslipp
 blir berre kvittert til Windows når minst éi fil faktisk vart stadfesta i køen.
 Delvis opptak blir oppgjeve som N av M, utan automatisk rollback eller retry.
 Kjeldebyte og program-DLL-hash er med i [kvitteringa](evidence/native-media-interaction-2026-11-04.json).
 README var einaste ucommitta native-fil under sluttkøyringa; ingen kompilert
 kode hadde lokale endringar. Full CI blir følgd i PR-en.
+
