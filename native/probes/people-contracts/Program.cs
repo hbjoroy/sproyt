@@ -123,6 +123,22 @@ static class Program
         Check(command.Self.StatusText == "Status draft" && command.Self.StatusEmoji == "🌿" && profile.Capture().NameDraft == "Newer edit", "Status save modified independent name draft.");
         await profile.ClearStatusAsync(A);
         Check(command.Self.StatusText == "" && command.Self.StatusEmoji == "" && profile.Capture().StatusTextDraft == "" && command.StatusWrites == 2, "Explicit status clear did not acknowledge empty fields.");
+        var echoes = new Commands(); var echoProfile = Profile(echoes); await echoProfile.LoadAsync(A);
+        echoProfile.EditName(A, "Echo name"); await echoProfile.SaveNameAsync(A);
+        string? nameNotice = echoProfile.Capture().Notice;
+        echoProfile.EditName(A, "Echo name");
+        Check(nameNotice is not null && echoProfile.Capture().Notice == nameNotice && echoProfile.Capture().Profile?.DisplayName == "Echo name",
+            "An identical native name echo erased the acknowledged notice.");
+        echoes.Self = echoes.Self with { DisplayName = "External clean name" }; await echoProfile.LoadAsync(A);
+        Check(echoProfile.Capture().NameDraft == "External clean name", "An identical name echo made a clean field dirty.");
+        echoProfile.EditStatusText(A, "Echo status"); echoProfile.EditStatusEmoji(A, "🌿"); await echoProfile.SaveStatusAsync(A);
+        string? statusNotice = echoProfile.Capture().Notice;
+        echoProfile.EditStatusText(A, "Echo status"); echoProfile.EditStatusEmoji(A, "🌿");
+        Check(statusNotice is not null && echoProfile.Capture().Notice == statusNotice && echoProfile.Capture().Profile?.StatusText == "Echo status",
+            "Identical native status echoes erased the acknowledged notice.");
+        echoes.Self = echoes.Self with { StatusText = "External clean status", StatusEmoji = "☀" }; await echoProfile.LoadAsync(A);
+        Check(echoProfile.Capture().StatusTextDraft == "External clean status" && echoProfile.Capture().StatusEmojiDraft == "☀",
+            "Identical status echoes made clean fields dirty.");
     }
     private static async Task ProfileReadback()
     {

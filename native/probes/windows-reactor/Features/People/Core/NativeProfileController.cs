@@ -29,17 +29,17 @@ internal sealed class NativeProfileController(IPersonalCommands commands) : Nati
     }
     internal void EditName(NativePersonalScope scope, string value)
     {
-        lock (Gate) { if (!Matches(scope)) return; _name = value; _nameDirty = _profile is null || value != _profile.DisplayName; _nameRevision++; _notice = null; }
+        lock (Gate) { if (!Matches(scope) || _name == value) return; _name = value; _nameDirty = _profile is null || value != _profile.DisplayName; _nameRevision++; _notice = null; }
         Notify();
     }
     internal void EditStatusText(NativePersonalScope scope, string value)
     {
-        lock (Gate) { if (!Matches(scope)) return; _text = value; _statusDirty = _profile is null || _text != _profile.StatusText || _emoji != _profile.StatusEmoji; _statusRevision++; _notice = null; }
+        lock (Gate) { if (!Matches(scope) || _text == value) return; _text = value; _statusDirty = _profile is null || _text != _profile.StatusText || _emoji != _profile.StatusEmoji; _statusRevision++; _notice = null; }
         Notify();
     }
     internal void EditStatusEmoji(NativePersonalScope scope, string value)
     {
-        lock (Gate) { if (!Matches(scope)) return; _emoji = value; _statusDirty = _profile is null || _text != _profile.StatusText || _emoji != _profile.StatusEmoji; _statusRevision++; _notice = null; }
+        lock (Gate) { if (!Matches(scope) || _emoji == value) return; _emoji = value; _statusDirty = _profile is null || _text != _profile.StatusText || _emoji != _profile.StatusEmoji; _statusRevision++; _notice = null; }
         Notify();
     }
     internal Task LoadAsync(NativePersonalScope scope) => ReadAsync(scope);
