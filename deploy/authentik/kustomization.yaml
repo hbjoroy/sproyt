@@ -8,5 +8,6 @@ configMapGenerator:
       - sproyt-invitation-canary.yaml
       - sproyt-invitation-canary-v2.yaml
       - sproyt-invitation-production.yaml
+      - z-sproyt-signup-recovery-v2.yaml
 generatorOptions:
   disableNameSuffixHash: true
