@@ -189,12 +189,19 @@ test("real React circle creates Prat once, creates scoped channel, edits Markdow
   expect(commands.find(item => item.type === "create_channel" && item.payload.name === "Turplan")?.payload.circle_id).toBeTruthy();
 });
 
-test("Felles creates a global channel with a global slug and exposes its members directly", async ({ page }) => {
+test("a Felles channel owner can add an existing user to an open channel", async ({ page, browser }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   const commands: Array<{ type: string; payload?: { name?: string; slug?: string; circle_id?: string | null } }> = [];
   page.on("websocket", socket => socket.on("framesent", ({ payload }) => commands.push(JSON.parse(String(payload)))));
   const participant = `community-global-${Date.now()}`;
   const preview = await enter(page, participant);
+  const candidateName = `${participant}-candidate`;
+  const candidate = await browser.newPage();
+  try {
+    await enter(candidate, candidateName);
+  } finally {
+    await candidate.close();
+  }
   await menu(preview, "Kanalar i Felles");
   const channels = destinationSurface(preview, "Kanalar i Felles", false);
   await channels.getByRole("button", { name: "Ny kanal i Felles", exact: true }).click();
@@ -220,7 +227,12 @@ test("Felles creates a global channel with a global slug and exposes its members
   await closeManagedDialog(page);
   await openChannelMenu(preview);
   await preview.getByRole("group", { name: "Kanalval: Felles prat" }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
-  await expect(details.getByLabel("Vel person", { exact: true })).toBeFocused();
+  const people = details.getByLabel("Vel person", { exact: true });
+  await expect(people).toBeFocused();
+  await people.selectOption({ label: candidateName });
+  await details.getByRole("button", { name: "Legg til", exact: true }).click();
+  await expect(details.getByText("Personen er lagd til.", { exact: true })).toBeVisible();
+  await expect(details.getByRole("listitem").filter({ hasText: candidateName })).toBeVisible();
 });
 
 test("Felles sends a global registration invitation without using a circle endpoint", async ({ page }) => {

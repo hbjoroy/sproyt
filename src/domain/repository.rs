@@ -1899,13 +1899,19 @@ impl ChatRepository for InMemoryChatRepository {
                 .memberships
                 .get(&(command.channel_id.clone(), command.actor))
                 .map(|m| &m.role);
-            if !Policy::can_moderate_channel(actor_role)
-                || !channel.circle_id.as_ref().is_some_and(|circle_id| {
-                    state
-                        .circle_memberships
-                        .contains_key(&(circle_id.clone(), command.user_id.clone()))
-                })
-            {
+            let eligible = match channel.circle_id {
+                Some(circle_id) => state
+                    .circle_memberships
+                    .contains_key(&(circle_id, command.user_id.clone())),
+                None => {
+                    channel.kind == ChannelKind::Public
+                        && state
+                            .users
+                            .get(&command.user_id)
+                            .is_some_and(|user| user.kind == super::PrincipalKind::Human)
+                }
+            };
+            if !Policy::can_moderate_channel(actor_role) || !eligible {
                 return Err(RepositoryError::PermissionDenied);
             }
             let membership = Membership {
@@ -1914,11 +1920,11 @@ impl ChatRepository for InMemoryChatRepository {
                 role: MembershipRole::Member,
                 last_read_sequence: ChannelSequence::new(0),
             };
-            state
+            Ok(state
                 .memberships
                 .entry((command.channel_id, command.user_id))
-                .or_insert(membership.clone());
-            Ok(membership)
+                .or_insert(membership)
+                .clone())
         })
     }
 

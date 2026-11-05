@@ -1735,7 +1735,15 @@ impl ChatRepository for SqliteChatRepository {
         command: AddChannelMember,
     ) -> RepositoryFuture<'a, Membership> {
         Box::pin(async move {
-            let allowed: Option<i64> = sqlx::query_scalar("select 1 from channels c join channel_memberships owner on owner.channel_id=c.id and owner.user_id=? and owner.role in ('owner','moderator') join circle_memberships target on target.circle_id=c.circle_id and target.user_id=? where c.id=?")
+            let allowed: Option<i64> = sqlx::query_scalar(
+                "select 1 from channels c
+                 join channel_memberships manager on manager.channel_id=c.id and manager.user_id=? and manager.role in ('owner','moderator')
+                 join users target on target.id=?
+                 where c.id=? and (
+                   (c.circle_id is null and c.kind='public' and target.kind='human')
+                   or exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=target.id)
+                 )",
+            )
                 .bind(command.actor.to_string()).bind(command.user_id.to_string()).bind(command.channel_id.to_string()).fetch_optional(&self.pool).await.map_err(sql_error)?;
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
