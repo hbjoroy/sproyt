@@ -12,16 +12,16 @@ use super::{
     CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel, DisplayName,
     EditMessage, EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation,
     JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
-    MediaVariant, Membership, MessageId, PersonalNote, PortableUserExport,
-    PrepareEnrollmentInvitation, RenameCircle, SavedStatus, SendMessage, SetCircleMemberRole,
-    ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
+    MediaVariant, Membership, MessageId, PersonalNote, PrepareEnrollmentInvitation, RenameCircle,
+    SavedStatus, SendMessage, SetCircleMemberRole, ThreadSummary, UpdateChannelDescription, User,
+    UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
     ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, EnrollmentInvitationState,
     ExportedChannel, ExportedCircle, InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT,
-    Policy, RepositoryError::NotFound, enrollment_email_hash, enrollment_token_hash,
-    generate_enrollment_token,
+    Policy, PortableUserExport, RepositoryError::NotFound, enrollment_email_hash,
+    enrollment_token_hash, generate_enrollment_token,
 };
 #[cfg(test)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -31,6 +31,8 @@ use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use uuid::Uuid;
+
+use super::account_export::AccountExportFuture;
 
 pub(crate) fn personal_channel(owner: UserId) -> Channel {
     let id = ChannelId::generate();
@@ -267,7 +269,41 @@ pub trait ChatRepository: Send + Sync + 'static {
         owner: UserId,
         source_id: MessageId,
     ) -> RepositoryFuture<'_, Option<MessageId>>;
-    fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
+    fn start_user_export(
+        &self,
+        actor: UserId,
+        deadline: tokio::time::Instant,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> AccountExportFuture<'_>;
+    #[cfg(test)]
+    fn export_user_data(&self, actor: UserId) -> RepositoryFuture<'_, PortableUserExport> {
+        Box::pin(async move {
+            use futures_util::{TryStreamExt, pin_mut};
+            let permit = std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+                .try_acquire_owned()
+                .expect("test export permit");
+            let export = self
+                .start_user_export(
+                    actor,
+                    tokio::time::Instant::now() + super::account_export::ACCOUNT_EXPORT_TIMEOUT,
+                    permit,
+                )
+                .await
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+            let stream = export.into_stream();
+            pin_mut!(stream);
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream
+                .try_next()
+                .await
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?
+            {
+                bytes.extend(chunk);
+            }
+            serde_json::from_slice(&bytes)
+                .map_err(|error| RepositoryError::Storage(error.to_string()))
+        })
+    }
     fn favorite_circles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<CircleId>>;
     fn set_circle_favorite<'a>(
         &'a self,
@@ -1245,6 +1281,15 @@ impl ChatRepository for InMemoryChatRepository {
             state.favorite_circles.insert(key);
             Ok(())
         })
+    }
+
+    fn start_user_export(
+        &self,
+        _actor: UserId,
+        _deadline: tokio::time::Instant,
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> AccountExportFuture<'_> {
+        Box::pin(async { Err(super::account_export::AccountExportError::Unavailable) })
     }
 
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
