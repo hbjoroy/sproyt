@@ -131,6 +131,12 @@ test("the personal area puts the note beside chat and switches panes on compact 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(chatTab).toHaveAttribute("aria-selected", "true");
   await expect(composer).toBeFocused();
+
+  await noteTab.click();
+  await app.getByRole("button", { name: /Området mitt.*Vis fullt namn og samtaleval/ }).click();
+  await app.getByRole("group", { name: "Samtaleinformasjon" }).getByRole("button", { name: "Gå til siste" }).click();
+  await expect(chatTab).toHaveAttribute("aria-selected", "true");
+  await expect(composer).toHaveValue("Utkast i chatloggen");
 });
 
 test("the note recovers its draft and resolves a concurrent edit", async ({ page }, { project }) => {

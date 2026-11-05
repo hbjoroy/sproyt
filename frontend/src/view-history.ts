@@ -194,6 +194,7 @@ export class ViewHistory {
     if (!this.#owner) return null;
     const next = record(state) ? entry(state[namespace], this.#owner) : null;
     if (!next || !this.#current || next.session !== this.#current.session) return null;
+    if (next.id !== this.#current.id && this.#current.target.kind === "conversation") this.#remember(this.#current);
     this.#current = next; this.#generation++; this.#publish(); return next.target;
   }
   adopt(target: ViewTarget) { this.#current = null; this.#maximum = 0; this.navigate(target, "replace"); }

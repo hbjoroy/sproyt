@@ -23,8 +23,8 @@ function root(sequence: number, channel = channelA): ChatMessage {
 /** A real application/DOM fixture. The socket exposes only this account's two
  * member channels; history pages, thread data and read receipts use real wire
  * messages. Layout and reading offsets are never replaced by fake geometry. */
-async function fixture(page: Page, start = `channel=${channelA}`, options: { waitForComposer?: boolean; threadRoot?: boolean } = {}) {
-  await page.setViewportSize({ width: 1440, height: 900 });
+async function fixture(page: Page, start = `channel=${channelA}`, options: { waitForComposer?: boolean; threadRoot?: boolean; width?: number; emptyDirectory?: boolean } = {}) {
+  await page.setViewportSize({ width: options.width ?? 1440, height: 900 });
   const messages = new Map([channelA, channelB].map(channel => [channel, Array.from({ length: 100 }, (_, index) => root(index + 1, channel))]));
   const reads = new Map([[channelA, 100], [channelB, 100]]);
   const commands: Command[] = [];
@@ -59,7 +59,7 @@ async function fixture(page: Page, start = `channel=${channelA}`, options: { wai
         case "list_my_circles": reply("circles_listed", { circles: [[{
           id: circleId, name: "Paros", slug: "paros", created_by: "peer", created_at: "2026-01-01T00:00:00Z"
         }, "member"]] }); break;
-        case "list_my_channels": reply("channels_listed", { channels: channels() }); break;
+        case "list_my_channels": reply("channels_listed", { channels: options.emptyDirectory ? [] : channels() }); break;
         case "list_mentions": reply("mentions_listed", { mentions: [{ read: false, channel_name: "Prat", message: messages.get(channelA)![19] }] }); break;
         case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
         case "subscribe_channel": {
@@ -194,6 +194,91 @@ test("browser thread traversal restores the channel position and both unsent dra
   await page.goForward();
   await expect(reply).toHaveValue("Uferdig svarutkast");
   await expect(composer).toHaveValue("Uferdig kanalutkast");
+  expect(errors).toEqual([]);
+});
+
+test("compact logo returns from the directory to the same reading position and open thread", async ({ page }) => {
+  const { app, composer, commands, errors } = await fixture(page, undefined, { width: 390 });
+  const logo = app.locator("button.sp-sproyt-brand-action");
+  const directory = app.getByRole("navigation", { name: "Samtalar", exact: true });
+  await composer.fill("Uferdig kanalutkast");
+  await readingAt(page, 95);
+  const saved = await anchor(timeline(page));
+  const channelUrl = page.url();
+  const subscriptions = commands.filter(command => command.type === "subscribe_channel").length;
+  await logo.click();
+  await expect(directory).toBeVisible();
+  await expect(composer).toBeHidden();
+  await logo.click();
+  await expect(composer).toHaveValue("Uferdig kanalutkast");
+  await expect(directory).toBeHidden();
+  await expect(page).toHaveURL(channelUrl);
+  await expectAnchor(timeline(page), saved);
+
+  await article(page, 95).getByRole("button", { name: "Svar i tråd", exact: true }).click();
+  const reply = app.getByRole("textbox", { name: "Svar i tråden", exact: true });
+  await expect(reply).toBeEnabled();
+  await reply.fill("Uferdig svarutkast");
+  const threadUrl = page.url();
+  const threadLoads = () => commands.filter(command => command.type === "load_thread").length;
+  await expect.poll(threadLoads).toBe(1);
+  await logo.click();
+  await expect(directory).toBeVisible();
+  await expect(reply).toBeHidden();
+  await logo.click();
+  await expect(reply).toHaveValue("Uferdig svarutkast");
+  await expect(page).toHaveURL(threadUrl);
+  expect(commands.filter(command => command.type === "subscribe_channel")).toHaveLength(subscriptions);
+  expect(threadLoads()).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test("compact logo from an inbox opens the directory and then returns to the conversation", async ({ page }) => {
+  const { app, composer, errors } = await fixture(page, undefined, { width: 390 });
+  await composer.fill("Utkast før innboksen");
+  const channelUrl = page.url();
+  await app.getByRole("button", { name: /^Innboks,/ }).click();
+  const inbox = destinationSurface(app, "Innboks", true);
+  await expect(inbox).toBeVisible();
+  await app.getByRole("button", { name: "Samtalar", exact: true }).click();
+  await expect(inbox).toBeHidden();
+  await expect(app.getByRole("navigation", { name: "Samtalar", exact: true })).toBeVisible();
+  await app.getByRole("button", { name: "Gå tilbake til førre samtale", exact: true }).press("Enter");
+  await expect(composer).toHaveValue("Utkast før innboksen");
+  await expect(page).toHaveURL(channelUrl);
+  expect(errors).toEqual([]);
+});
+
+test("compact logo returns to the most recently opened channel after browser Back", async ({ page }) => {
+  const { app, composer, errors } = await fixture(page, undefined, { width: 390 });
+  await app.getByRole("button", { name: "Samtalar", exact: true }).click();
+  const directory = app.getByRole("navigation", { name: "Samtalar", exact: true });
+  await directory.getByRole("button", { name: "# Tur", exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("channel")).toBe(channelB);
+  await composer.fill("Utkast i den nyopna kanalen");
+  const channelUrl = page.url();
+  await page.goBack();
+  await expect(directory).toBeVisible();
+  await app.getByRole("button", { name: "Gå tilbake til førre samtale", exact: true }).click();
+  await expect(page).toHaveURL(channelUrl);
+  await expect(composer).toHaveValue("Utkast i den nyopna kanalen");
+  expect(errors).toEqual([]);
+});
+
+test("compact logo leaves an empty directory open when there is no previous conversation", async ({ page }) => {
+  const { app, composer, commands, errors } = await fixture(page, "view=circles", {
+    width: 390, waitForComposer: false, emptyDirectory: true
+  });
+  const directory = app.getByRole("navigation", { name: "Samtalar", exact: true });
+  await expect(directory).toBeVisible();
+  await expect.poll(() => commands.some(command => command.type === "list_my_channels")).toBe(true);
+  const directoryUrl = page.url();
+  const logo = app.getByRole("button", { name: "Samtalar", exact: true });
+  await expect(logo).toBeDisabled();
+  await expect(directory).toBeVisible();
+  await expect(composer).toBeHidden();
+  await expect(page).toHaveURL(directoryUrl);
+  expect(commands.filter(command => command.type === "subscribe_channel")).toEqual([]);
   expect(errors).toEqual([]);
 });
 

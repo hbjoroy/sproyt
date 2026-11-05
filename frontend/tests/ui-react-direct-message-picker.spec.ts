@@ -209,9 +209,8 @@ test("an empty 320px account waits for both correlated directory replies before 
   await server.releaseChannels(); await expect(welcome).toHaveCount(0);
   await expect(app.getByText("Du har ingen kretsar enno.", { exact: true })).toHaveCount(0);
   await server.releaseCircles(); await expect(welcome).toHaveCount(1);
-  const back = app.getByRole("button", { name: "Samtalar", exact: true });
-  if (await back.isVisible()) await back.click();
   const nav = app.getByRole("navigation", { name: "Samtalar", exact: true });
+  await expect(nav).toBeVisible();
   await expect(nav.getByRole("button", { name: "Finn kretsar og kanalar", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "Bruk invitasjonslenkje eller kode", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "Kom i gang", exact: true })).toBeVisible();
