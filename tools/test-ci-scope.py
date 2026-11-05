@@ -35,7 +35,8 @@ class ScopeTests(unittest.TestCase):
             self.assertEqual(ci_scope.scope(paths)['recovery'], 'false')
 
     def test_shared_ui_and_http_contracts_get_complete_browser_suite(self):
-        for path in ('frontend/src/app.ts', 'frontend/src/ui/react/development-preview.tsx',
+        for path in ('frontend/src/app.ts', 'frontend/src/session.ts', 'frontend/src/connection.ts',
+                     'frontend/src/ui/react/development-preview.tsx', 'frontend/src/ui/react/conversation-view.tsx',
                      'src/server.rs', 'src/web/auth.rs', 'crates/sproyt-protocol/src/lib.rs',
                      'assets/index.html'):
             self.assertEqual(ci_scope.scope([path])['browser'], 'full', path)
@@ -58,6 +59,7 @@ class ScopeTests(unittest.TestCase):
         for row in matrix:
             self.assertIn('ui-react-direct-message-picker.spec.ts', row['files'])
             self.assertIn('ui-react-channel-popover-navigation.spec.ts', row['files'])
+            self.assertIn('ui-react-mobile.spec.ts', row['files'])
             self.assertFalse(row['all'])
 
     def test_changed_browser_contract_is_selected_exactly_without_backend(self):
@@ -98,6 +100,72 @@ class ScopeTests(unittest.TestCase):
         files = set(result['browser_matrix']['include'][0]['files'])
         self.assertTrue({'ui-react-direct-message-picker.spec.ts', 'ui-react-reactions.spec.ts'} <= files)
         self.assertEqual(ci_scope.scope(paths + ['frontend/src/ui/react/development-preview.tsx'])['browser'], 'full')
+
+    def test_bounded_presentation_selects_component_contracts_on_supported_engines(self):
+        smoke = {'ui-react-preview.spec.ts', 'ui-touch-controls.spec.ts'}
+        for path, contracts, webkit in (
+            ('frontend/src/ui/thread-directory.css',
+             {'ui-react-thread-directory.spec.ts', 'ui-react-thread-discovery.spec.ts', 'ui-react-reading.spec.ts'},
+             {'ui-react-thread-directory.spec.ts', 'ui-react-thread-discovery.spec.ts', 'ui-react-reading.spec.ts'}),
+            ('frontend/src/ui/react/work-item-supplements.tsx',
+             {'ui-react-work-item-supplements.spec.ts', 'ui-react-work-item-information.spec.ts'},
+             {'ui-react-work-item-supplements.spec.ts', 'ui-react-work-item-information.spec.ts'}),
+            ('frontend/src/ui/react/invitation-card.tsx', {'ui-react-invitations.spec.ts'}, set()),
+        ):
+            with self.subTest(path=path):
+                result = ci_scope.scope([path])
+                self.assertEqual((result['browser'], result['frontend'], result['backend'], result['recovery']),
+                                 ('related', 'true', 'false', 'false'))
+                matrix = {row['engine']: set(row['files']) for row in result['browser_matrix']['include']}
+                self.assertEqual(matrix, {'chromium': smoke | contracts, 'webkit': {'ui-touch-controls.spec.ts'} | webkit})
+
+    def test_mixed_layout_features_and_changed_specs_preserve_their_union(self):
+        paths = ['frontend/src/ui/react-app.css', 'frontend/src/ui/react/invitation-card.tsx',
+                 'frontend/src/ui/react/work-item-supplements.tsx', 'frontend/src/imagegen.ts',
+                 'frontend/tests/ui-react-settings-split-layout.spec.ts',
+                 'frontend/tests/ui-react-saved-emojis.spec.ts']
+        result = ci_scope.scope(paths)
+        self.assertEqual((result['browser'], result['backend'], result['recovery']), ('related', 'false', 'false'))
+        common = {'ui-react-mobile.spec.ts', 'ui-react-work-item-supplements.spec.ts',
+                  'ui-react-work-item-information.spec.ts', 'ui-react-imagegen-draft.spec.ts',
+                  'ui-react-saved-emojis.spec.ts', 'ui-touch-controls.spec.ts'}
+        chromium_only = {'ui-react-invitations.spec.ts', 'ui-react-settings-split-layout.spec.ts',
+                         'imagegen.spec.ts', 'ui-react-preview.spec.ts'}
+        for row in result['browser_matrix']['include']:
+            with self.subTest(engine=row['engine'], shard=row['shard']):
+                files = set(row['files'])
+                self.assertTrue(common <= files)
+                if row['engine'] == 'chromium':
+                    self.assertTrue(chromium_only <= files)
+                else:
+                    self.assertFalse(chromium_only & files)
+
+    def test_removed_or_unknown_ui_keeps_full_browser_coverage(self):
+        mapped = 'frontend/src/ui/react/invitation-card.tsx'
+        renamed = 'frontend/src/ui/react/work-item-supplements.tsx'
+        unknown = 'frontend/src/ui/react/connection-health.tsx'
+        changed_test = 'frontend/tests/ui-react-invitations.spec.ts'
+        self.assertTrue((ci_scope.ROOT / unknown).is_file())
+        self.assertEqual(ci_scope.scope([mapped, unknown])['browser'], 'full')
+        self.assertEqual(ci_scope.scope([renamed])['browser'], 'related')
+        is_file = Path.is_file
+        with patch.object(Path, 'is_file', lambda path: path != ci_scope.ROOT / mapped and is_file(path)):
+            for paths in ([mapped], [mapped, changed_test], [mapped, renamed]):
+                self.assertEqual(ci_scope.scope(paths)['browser'], 'full')
+
+    def test_nested_browser_spec_change_or_removal_selects_full_chromium(self):
+        root_spec = 'frontend/tests/ui-react-invitations.spec.ts'
+        nested = 'frontend/tests/specialized/ui-react-invitations.spec.ts'
+        self.assertTrue((ci_scope.ROOT / root_spec).is_file())
+        is_file = Path.is_file
+        for exists in (True, False):
+            with self.subTest(exists=exists), patch.object(Path, 'is_file', lambda path:
+                    exists if path == ci_scope.ROOT / nested else is_file(path)):
+                result = ci_scope.scope([root_spec, nested])
+                self.assertEqual(result['browser'], 'full')
+                chromium = [row for row in result['browser_matrix']['include'] if row['engine'] == 'chromium']
+                self.assertEqual(len(chromium), 4)
+                self.assertTrue(all(row['all'] for row in chromium))
 
     def test_canonical_design_system_requires_browser_without_database_restore(self):
         for path in ('packages/sproyt-ui/src/react/index.tsx', 'packages/sproyt-ui/src/vue/index.ts',

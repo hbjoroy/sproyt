@@ -14,7 +14,7 @@ on the PR and the release. Every selected browser job uses the real server.
 | Change | Local and PR review | Current automatic PR selection | Evidence before publishing, in addition to the delivery gates below |
 | --- | --- | --- | --- |
 | Documentation and UI skill bundle | Review instructions, examples and links. | Selector tests and identity-provider contracts. | No new application image is normally needed. If included in an application release, the other changes determine scope. |
-| Local presentation | Typecheck/build and exercise the affected component or browser behavior. Include compact layout, keyboard or visual checks when affected. | Frontend checks. Unmapped components get full browser coverage. CSS-only changes in the recognized UI directories get the layout suite. | Confirm the relevant behavior on the release revision. Targeted selection for more components belongs to [#348](https://github.com/hbjoroy/sproyt/issues/348). |
+| Local presentation | Typecheck/build and exercise the affected component or browser behavior. Include compact layout, keyboard or visual checks when affected. | Frontend checks and the exact mapped component contracts plus smoke. Unmapped components get full browser coverage. | Confirm the relevant behavior on the release revision. |
 | Global CSS | Check shared layouts, responsive breakpoints, focus, scrolling and touch in the affected views. | Recognized CSS-only changes get the layout suite in Chromium and its maintained WebKit subset. Legacy assets or mixed unclassified runtime code can select full. | Preserve cross-browser layout and interaction coverage, including affected mobile paths. |
 | Feature logic | Exercise feature rules, failure cases and the affected integration boundary. | Declared frontend features select their suites and smoke (imagegen has its own suite). Backend changes select Rust, PostgreSQL, codec and operational contracts, with browser coverage for shared contracts and recovery for selected paths. | Include the affected end-to-end flow where the change crosses a client/server boundary. |
 | Shared client state | Test navigation, focus, scrolling, drafts, reconnect or account isolation as affected. | Shared/unclassified frontend code selects full browser regression. Shared Rust/protocol changes can also select backend and recovery checks. | Keep broad browser coverage for shared state, transport and protocol changes. |
@@ -23,11 +23,13 @@ on the PR and the release. Every selected browser job uses the real server.
 | Build and runtime | Check the changed build/runtime contract, including deploy configuration or operational scripts where affected. | Unknown build, dependency and configuration paths fall back to full. Explicit CI-policy-only, codec-only and dedicated native paths have narrower rules. | Retain delivery checks. Exercise actual rollout and rollback in isolation for changes that affect those paths. |
 
 The current selector reads the whole ancestor-to-head diff, including deletions
-and both sides of renames. Changed browser specs are added to bounded selections,
-and mapped features combine their test sets. Missing suite references fail
-selection. Missing, invalid or non-ancestor baselines, version tags, scheduled
-runs and `force_full=true` select full regression. Full means all Chromium specs
-and the maintained iPhone WebKit suite, split across four and two isolated jobs.
+and both sides of renames. Changed top-level browser specs are added to bounded
+selections, and mixed changes combine the relevant feature, layout and imagegen
+sets. Removed frontend files and changed nested specs use full selection. Missing
+suite references fail selection. Missing, invalid or non-ancestor baselines,
+version tags, scheduled runs and `force_full=true` select full regression.
+Full means all Chromium specs and the maintained iPhone WebKit suite, split
+across four and two isolated jobs.
 Bounded browser selections run in Chromium and intersect with the maintained
 WebKit suite. Quality builds the frontend and browser server once for all
 shards. Each job installs its selected engine, uses the same-run artifact and
@@ -38,8 +40,28 @@ frontend build and boundary checks. The dedicated
 [native interoperability workflow](../.github/workflows/native-probe.yml)
 has its own path-filtered PR and main-push triggers.
 
-[#348](https://github.com/hbjoroy/sproyt/issues/348) owns more precise UI mappings,
-with shared state and global interactions retaining broader coverage.
+### Bounded UI examples
+
+The [#348](https://github.com/hbjoroy/sproyt/issues/348) mappings follow the
+component imports and the paths that exercise the rendered controls.
+
+| Representative change | Why these browser contracts apply |
+| --- | --- |
+| Thread-directory stylesheet | Only the thread directory imports this stylesheet. Directory, thread discovery and reading specs cover opening and closing the directory, finding threads and returning to reading. Both engines run these specs. |
+| Work-item supplements | Registration and the work-item task view share supplement rendering. The supplements spec covers adding and reviewing supplements. The information spec checks the adjacent task view's drafts and requester/reviewer controls. Both engines run these specs. |
+| Invitation card | The preview renders the card in channel and thread messages. The invitation spec exercises accept and decline across those surfaces in Chromium. WebKit keeps its existing touch smoke coverage. |
+
+The exact stylesheet mapping applies while its selectors affect only the thread
+directory. If effects extend outside that component, update the mapping and use
+the cross-browser layout suite or full regression as the changed boundary
+requires. Shared application, session, connection and conversation views keep
+full browser coverage.
+
+The selector now schedules three browser jobs for the thread stylesheet
+(previously four) and two each for work-item supplements and the invitation
+card (previously six each). Shared CSS still selects four jobs. These counts
+describe selection. CI duration is measured separately.
+
 [#349](https://github.com/hbjoroy/sproyt/issues/349) owns risk-based backend
 selection, including the auth coverage gap and the current coupling of codec
 and operational checks to every backend change. Until those changes land, use
