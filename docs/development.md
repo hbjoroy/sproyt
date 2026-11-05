@@ -28,7 +28,7 @@ cargo run
 
 Cargo runs the local frontend build automatically whenever its TypeScript
 sources or lockfile change. Run the explicit TypeScript check before sharing a
-change; it gives clearer diagnostics than the bundler.
+TypeScript change. It gives clearer diagnostics than the bundler.
 
 The portable browser-policy core is checked natively by the workspace tests and
 is compiled to WebAssembly by the application build. Install the target once
@@ -64,22 +64,29 @@ authentication and a dedicated local SQLite database. It verifies that the
 browser receives the CSP-protected module, establishes a real WebSocket
 connection, and sends a message through the rendered UI.
 
-Install Chromium once, then run the contract:
+Install Chromium once. For a focused run, build the frontend and pass the
+relevant Playwright spec to the runner from `frontend/`.
 
 ```powershell
 npx --prefix frontend playwright install chromium
-npm --prefix frontend run test:e2e
+Push-Location frontend
+npm run build
+node scripts/test-e2e.mjs smoke.spec.ts --project chromium
+Pop-Location
 ```
 
 Each run reserves a free local port and creates an isolated database below
 `frontend/.playwright/run-*/sproyt.sqlite`. The harness stops its complete
-server process tree and removes that directory after success or failure. CI
-installs Chromium with its Linux dependencies and uploads trace/report material
-only after a failing browser contract.
+server process tree and removes that directory after success or failure. The
+full local entry point is `npm --prefix frontend run test:e2e`. CI installs the
+engine each job uses and collects timing reports, plus traces on failures.
 
-## Fast local quality gate
+## Local and pull request checks
 
-Run before opening a pull request:
+Choose local checks for the changed area using the
+[CI change matrix](ci-iteration-strategy.md#change-matrix). For a Rust change,
+start with formatting and the relevant package or test filter. To reproduce
+the selected backend CI gate locally, use the full commands below.
 
 ```powershell
 cargo fmt --all --check
@@ -89,19 +96,16 @@ cargo test --all-targets --all-features --locked
 
 The test suite keeps tests that do not need an external database fast and
 isolated. Chat-domain conformance runs against the in-memory adapter, the full
-chat/process/agent contract runs against SQLite locally, and CI also executes
-that full contract against PostgreSQL 17.
+chat/process/agent contract runs against SQLite locally, and the selected
+PostgreSQL CI job runs it against PostgreSQL 17.
 
-Pull requests run the fast quality gate plus the PostgreSQL repository
-contract. Non-documentation pushes to `main` run the same fast gates, so an
-ordinary merge does not wait for two image builds and an ephemeral cluster.
-The dependency audit, backup/restore drill, ARM64 and native image builds, Helm
-verification, kind install/scale/rollback, SBOM generation, and vulnerability
-scan form the full release gate. It runs every Monday at 03:17 UTC, for `v*`
-release tags, and when an operator starts the CI workflow manually. Run it
-explicitly for the exact revision being considered for a production release;
-scheduled evidence is a regression sentinel, not authorization to deploy a
-different commit.
+The `CI` workflow selects pull request checks from the full change range and
+runs the identity-provider contract scripts in Quality after successful
+selection. Its push trigger is limited to `v*` tags. The separate native
+interoperability workflow runs on `main` pushes that match its path filters. See the
+[delivery phases](ci-iteration-strategy.md#delivery-phases) for scheduled
+regression, release tags and manual dispatch, and the
+[release checklist](release-checklist.md) for publication of an exact revision.
 
 ## PostgreSQL schema check
 
@@ -131,7 +135,9 @@ Application replicas do not apply schema changes implicitly when starting.
 
 ## Dependency audit
 
-CI runs `cargo audit` against `Cargo.lock`. To run the same check locally:
+The CI security audit runs `cargo audit` against `Cargo.lock` for manual
+dispatches, weekly CI and `v*` release tags. The local equivalent uses the
+same advisory exception.
 
 ```powershell
 cargo install cargo-audit --locked
