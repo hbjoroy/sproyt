@@ -12,9 +12,9 @@ use super::{
     CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel, DisplayName,
     EditMessage, EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation,
     JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
-    MediaVariant, Membership, MessageId, PortableUserExport, PrepareEnrollmentInvitation,
-    RenameCircle, SavedStatus, SendMessage, SetCircleMemberRole, ThreadSummary,
-    UpdateChannelDescription, User, UserId, UserProfile, UserTask,
+    MediaVariant, Membership, MessageId, PersonalNote, PortableUserExport,
+    PrepareEnrollmentInvitation, RenameCircle, SavedStatus, SendMessage, SetCircleMemberRole,
+    ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
@@ -31,6 +31,36 @@ use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use uuid::Uuid;
+
+pub(crate) fn personal_channel(owner: UserId) -> Channel {
+    let id = ChannelId::generate();
+    Channel {
+        slug: super::ChannelSlug::new(format!("personal-{}", id.as_uuid().simple()))
+            .expect("generated personal channel slug"),
+        name: DisplayName::new("Området mitt").expect("personal channel name"),
+        kind: super::ChannelKind::Private,
+        circle_id: None,
+        id,
+        created_by: owner,
+    }
+}
+
+pub(crate) fn personal_link_body(
+    channel_id: &ChannelId,
+    message_id: MessageId,
+    sequence: ChannelSequence,
+    parent_id: Option<MessageId>,
+) -> super::MessageBody {
+    let mut link = format!(
+        "/?channel={channel_id}&message={}&sequence={}",
+        message_id.as_uuid(),
+        u64::from(sequence)
+    );
+    if let Some(parent_id) = parent_id {
+        link.push_str(&format!("&thread={}", parent_id.as_uuid()));
+    }
+    super::MessageBody::new(format!("[Lagra melding]({link})")).expect("canonical message link")
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PresenceLease {
@@ -223,6 +253,19 @@ pub trait ChatRepository: Send + Sync + 'static {
         emoji: String,
         saved: bool,
     ) -> RepositoryFuture<'a, ()>;
+    fn open_personal_space(&self, owner: UserId) -> RepositoryFuture<'_, Channel>;
+    fn personal_note(&self, owner: UserId) -> RepositoryFuture<'_, PersonalNote>;
+    fn save_personal_note(
+        &self,
+        owner: UserId,
+        note: PersonalNote,
+    ) -> RepositoryFuture<'_, PersonalNote>;
+    /// Returns the ID of a new log message, or None when the link already exists.
+    fn save_personal_link(
+        &self,
+        owner: UserId,
+        source_id: MessageId,
+    ) -> RepositoryFuture<'_, Option<MessageId>>;
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
     fn favorite_circles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<CircleId>>;
     fn set_circle_favorite<'a>(
@@ -506,6 +549,103 @@ impl Default for InMemoryChatRepository {
 impl ChatRepository for InMemoryChatRepository {
     fn health_check(&self) -> RepositoryFuture<'_, ()> {
         Box::pin(async { Ok(()) })
+    }
+
+    fn open_personal_space(&self, owner: UserId) -> RepositoryFuture<'_, Channel> {
+        Box::pin(async move { self.lock_state()?.open_personal_space(owner) })
+    }
+
+    fn personal_note(&self, owner: UserId) -> RepositoryFuture<'_, PersonalNote> {
+        Box::pin(async move {
+            self.lock_state()?
+                .personal_spaces
+                .get(&owner)
+                .map(|(_, note)| note.clone())
+                .ok_or(NotFound)
+        })
+    }
+
+    fn save_personal_note(
+        &self,
+        owner: UserId,
+        note: PersonalNote,
+    ) -> RepositoryFuture<'_, PersonalNote> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let (_, current) = state
+                .personal_spaces
+                .get_mut(&owner)
+                .ok_or(RepositoryError::Conflict)?;
+            if current.revision != note.revision {
+                return Err(RepositoryError::Conflict);
+            }
+            *current = PersonalNote {
+                revision: note.revision + 1,
+                ..note
+            };
+            Ok(current.clone())
+        })
+    }
+
+    fn save_personal_link(
+        &self,
+        owner: UserId,
+        source_id: MessageId,
+    ) -> RepositoryFuture<'_, Option<MessageId>> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let source = state
+                .messages
+                .values()
+                .flatten()
+                .find(|message| {
+                    message.id == source_id
+                        && message.deleted_at.is_none()
+                        && state
+                            .memberships
+                            .contains_key(&(message.channel_id.clone(), owner.clone()))
+                })
+                .cloned()
+                .ok_or(NotFound)?;
+            let channel_id = state.open_personal_space(owner.clone())?.id;
+            let key = (owner.clone(), source_id);
+            if let Some(existing) = state.personal_saved_links.get(&key)
+                && state
+                    .messages
+                    .get(&channel_id)
+                    .into_iter()
+                    .flatten()
+                    .any(|message| &message.id == existing && message.deleted_at.is_none())
+            {
+                return Ok(None);
+            }
+            let message_id = MessageId::generate();
+            let message = ChatMessage {
+                id: message_id,
+                channel_id: channel_id.clone(),
+                parent_message_id: None,
+                sender_id: owner.clone(),
+                sender_display_name: state
+                    .users
+                    .get(&owner)
+                    .ok_or(NotFound)?
+                    .display_name
+                    .clone(),
+                sequence: state.next_sequence(&channel_id)?,
+                body: personal_link_body(
+                    &source.channel_id,
+                    source.id,
+                    source.sequence,
+                    source.parent_message_id,
+                ),
+                sent_at: persisted_now(),
+                edited_at: None,
+                deleted_at: None,
+            };
+            state.messages.entry(channel_id).or_default().push(message);
+            state.personal_saved_links.insert(key, message_id);
+            Ok(Some(message_id))
+        })
     }
     fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
         Box::pin(async move {
@@ -1140,6 +1280,10 @@ impl ChatRepository for InMemoryChatRepository {
                     let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
                     Some(ExportedChannel {
                         channel: ChannelSummary {
+                            is_personal: state
+                                .personal_spaces
+                                .get(&actor)
+                                .is_some_and(|(id, _)| id == &channel.id),
                             direct_activity: None,
                             id: channel.id.clone(),
                             slug: channel.slug.clone(),
@@ -1192,6 +1336,10 @@ impl ChatRepository for InMemoryChatRepository {
                 signup_ordinal: state.signup_ordinals.get(&actor).copied(),
                 saved_emojis: state.saved_emojis.get(&actor).cloned().unwrap_or_default(),
                 favorite_circles,
+                personal_note: state
+                    .personal_spaces
+                    .get(&actor)
+                    .map(|(_, note)| note.clone()),
                 saved_statuses: state
                     .saved_statuses
                     .get(&actor)
@@ -1781,7 +1929,13 @@ impl ChatRepository for InMemoryChatRepository {
                 .channels
                 .get(&key.0)
                 .ok_or(RepositoryError::NotFound)?;
-            if channel.circle_id.is_some() && channel.name.as_str().eq_ignore_ascii_case("Prat") {
+            if state
+                .personal_spaces
+                .get(&key.1)
+                .is_some_and(|(id, _)| id == &key.0)
+                || (channel.circle_id.is_some()
+                    && channel.name.as_str().eq_ignore_ascii_case("Prat"))
+            {
                 return Err(RepositoryError::PermissionDenied);
             }
             let role = state
@@ -1811,6 +1965,10 @@ impl ChatRepository for InMemoryChatRepository {
                 .filter_map(|membership| {
                     let channel = state.channels.get(&membership.channel_id)?;
                     Some(ChannelSummary {
+                        is_personal: state
+                            .personal_spaces
+                            .get(&actor)
+                            .is_some_and(|(id, _)| id == &channel.id),
                         direct_activity: None,
                         id: channel.id.clone(),
                         slug: channel.slug.clone(),
@@ -2555,6 +2713,8 @@ struct RepositoryState {
     channels: HashMap<ChannelId, Channel>,
     channels_by_slug: HashMap<super::ChannelSlug, ChannelId>,
     channel_descriptions: HashMap<ChannelId, String>,
+    personal_spaces: HashMap<UserId, (ChannelId, PersonalNote)>,
+    personal_saved_links: HashMap<(UserId, MessageId), MessageId>,
     direct_conversations: HashMap<(UserId, UserId), ChannelId>,
     direct_group_conversations: HashMap<ChannelId, ChannelId>,
     direct_expansions: HashMap<(ChannelId, UserId), ChannelId>,
@@ -2595,6 +2755,35 @@ struct StoredEnrollmentInvitation {
 
 #[cfg(test)]
 impl RepositoryState {
+    fn open_personal_space(&mut self, owner: UserId) -> Result<Channel, RepositoryError> {
+        if !self
+            .users
+            .get(&owner)
+            .is_some_and(|user| user.kind == super::PrincipalKind::Human)
+        {
+            return Err(RepositoryError::PermissionDenied);
+        }
+        if let Some((channel_id, _)) = self.personal_spaces.get(&owner) {
+            return self.channels.get(channel_id).cloned().ok_or(NotFound);
+        }
+        let channel = personal_channel(owner.clone());
+        self.channels.insert(channel.id.clone(), channel.clone());
+        self.channels_by_slug
+            .insert(channel.slug.clone(), channel.id.clone());
+        self.memberships.insert(
+            (channel.id.clone(), owner.clone()),
+            Membership {
+                channel_id: channel.id.clone(),
+                user_id: owner.clone(),
+                role: MembershipRole::Member,
+                last_read_sequence: ChannelSequence::default(),
+            },
+        );
+        self.personal_spaces
+            .insert(owner, (channel.id.clone(), PersonalNote::default()));
+        Ok(channel)
+    }
+
     fn resolve_channel_ref(&self, channel: &ChannelRef) -> Result<ChannelId, RepositoryError> {
         match channel {
             ChannelRef::Id(channel_id) if self.channels.contains_key(channel_id) => {

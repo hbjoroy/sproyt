@@ -102,7 +102,7 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
       groups.push(Object.freeze({ id, name, circle, conversations: Object.freeze(conversations) }));
     }
   };
-  appendGroup("scope:shared", "Felles", null, channels.filter(channel => !channel.circle_id && !channel.is_direct));
+  appendGroup("scope:shared", "Felles", null, channels.filter(channel => !channel.circle_id && !channel.is_direct && !channel.is_personal));
   for (const circle of circles) {
     appendGroup(`circle:${circle.id}`, circle.name, circle,
       channels.filter(channel => channel.circle_id === circle.id && !channel.is_direct));
@@ -146,7 +146,8 @@ export function projectConversationSnapshot(source: ConversationSnapshotSource) 
     selection: Object.freeze({ channelId: source.activeChannelId, circleId: source.activeCircleId,
       rootScope: source.activeRootScope, inboxKind: source.activeInboxKind }),
     activeChannel,
-    title: activeChannel ? (activeChannel.is_direct ? source.directChannelLabel(activeChannel) : `# ${activeChannel.name}`) : "Prat",
+    title: activeChannel ? (activeChannel.is_personal ? activeChannel.name : activeChannel.is_direct
+      ? source.directChannelLabel(activeChannel) : `# ${activeChannel.name}`) : "Prat",
     timeline: Object.freeze({ channelId: source.activeChannelId,
       retainedDeletedRootIds,
       messages: orderedMessages(timelineMessages, source.activeChannelId, null),

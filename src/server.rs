@@ -258,6 +258,20 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         )
         .route("/api/v1/me/favorite-circles", get(favorite_circles))
         .route(
+            "/api/v1/me/personal-space",
+            post(crate::web::personal_space::open),
+        )
+        .route(
+            "/api/v1/me/personal-space/note",
+            get(crate::web::personal_space::note)
+                .put(crate::web::personal_space::save_note)
+                .layer(DefaultBodyLimit::max(512 * 1024)),
+        )
+        .route(
+            "/api/v1/me/personal-space/saved-links/{message_id}",
+            post(crate::web::personal_space::save_link),
+        )
+        .route(
             "/api/v1/me/favorite-circles/{circle_id}",
             axum::routing::put(add_favorite_circle).delete(remove_favorite_circle),
         )

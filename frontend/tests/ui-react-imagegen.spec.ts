@@ -217,3 +217,21 @@ for (const width of [320, 390, 1440]) for (const colorScheme of ["light", "dark"
     await expect(input).toHaveValue("Meldingsutkastet er bevart");
   });
 }
+
+test("a generated image is reviewed and attached in the personal chat log", async ({ page }) => {
+  const state = await fixture(page);
+  await page.goto("/?participant=react-image-personal");
+  const app = page.locator("#sproyt-react-preview");
+  await app.getByRole("button", { name: "Området mitt", exact: true }).click();
+  await expect(app.getByRole("heading", { name: "Området mitt", exact: true })).toBeVisible();
+  const personalChannel = new URL(page.url()).searchParams.get("channel");
+  const input = app.getByRole("textbox", { name: "Skriv melding", exact: true });
+  await expect(input).toBeEnabled();
+  await input.fill('/imagegen literal "A private seascape"');
+  await app.getByRole("button", { name: /^Send/ }).click();
+  const inbox = app.getByRole("region", { name: "Private biletmeldingar" });
+  await inbox.getByRole("button", { name: "Godta", exact: true }).click();
+  await expect(app.getByRole("button", { name: "Fjern generated.png" })).toBeEnabled();
+  expect(state.submissions[0]?.channel_id).toBe(personalChannel);
+  expect(state.sent.filter(command => command.type === "send_message")).toEqual([]);
+});

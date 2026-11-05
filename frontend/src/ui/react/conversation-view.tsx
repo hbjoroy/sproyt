@@ -33,6 +33,7 @@ export interface ConversationNavigationProps {
   readonly query: string;
   readonly onQueryChange: (query: string) => void;
   readonly onSelect: (id: string) => void;
+  readonly personalShortcut?: ReactNode;
   readonly actions?: ReactNode;
   readonly footer?: ReactNode;
 }
@@ -277,6 +278,7 @@ export interface ConversationViewProps {
   readonly title: string;
   readonly context?: string;
   readonly contextActions?: ReactNode;
+  readonly note?: ReactNode;
   readonly onBack: () => void;
   readonly timeline: TimelineProps;
   /** Host-owned composer adapter preserves drafts and attachment-only sending. */
@@ -304,6 +306,7 @@ export function ConversationView(props: ConversationViewProps) {
             <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 className="sp-heading">{props.title}</h1></div>
             <div className="sp-conversation-toolbar">{props.contextActions}</div>
           </header>}
+          {props.note}
           {props.emptyContent ?? <><ConversationTimeline {...props.timeline} />{props.composer}</>}
         </section>
         {props.thread}

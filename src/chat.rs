@@ -426,6 +426,40 @@ impl ChatEngine {
         Ok(channel)
     }
 
+    pub async fn open_personal_space(
+        &self,
+        owner: UserId,
+    ) -> Result<crate::domain::Channel, ChatError> {
+        Ok(self.repository.open_personal_space(owner).await?)
+    }
+
+    pub async fn personal_note(
+        &self,
+        owner: UserId,
+    ) -> Result<crate::domain::PersonalNote, ChatError> {
+        Ok(self.repository.personal_note(owner).await?)
+    }
+
+    pub async fn save_personal_note(
+        &self,
+        owner: UserId,
+        note: crate::domain::PersonalNote,
+    ) -> Result<crate::domain::PersonalNote, ChatError> {
+        Ok(self.repository.save_personal_note(owner, note).await?)
+    }
+
+    pub async fn save_personal_link(
+        &self,
+        owner: UserId,
+        source: MessageId,
+    ) -> Result<bool, ChatError> {
+        let Some(message_id) = self.repository.save_personal_link(owner, source).await? else {
+            return Ok(false);
+        };
+        self.announce_persisted_message(message_id).await?;
+        Ok(true)
+    }
+
     pub async fn export_user_data(
         &self,
         actor: UserId,
