@@ -21,15 +21,14 @@ use crate::domain::{
     ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent, ChatMessage, ChatRepository, Circle,
     CircleId, CircleInvitation, CircleMembership, CircleRole, CreateChannel, CreateChatInvitation,
     CreateCircle, CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel,
-    DisplayName, EditMessage, EnrollmentInvitation, EnrollmentInvitationState, ExportedChannel,
-    ExportedCircle, Handle, InboxMention, InvitationId, InvitationPreview, InvitationResponse,
-    InvitationTarget, InvitationTokenCommand, IssuedChatInvitation, IssuedEnrollmentInvitation,
-    IssuedInvitation, JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId,
-    MediaObject, MediaUpload, MediaVariant, Membership, MembershipRole, MessageBody, MessageId,
-    PORTABLE_USER_EXPORT_FORMAT, Policy, PortableUserExport, PrepareEnrollmentInvitation,
-    PresenceLease, RenameCircle, RepositoryError, RepositoryFuture, SavedStatus, SendMessage,
-    SetCircleMemberRole, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
-    enrollment_email_hash, enrollment_token_hash, generate_enrollment_token,
+    DisplayName, EditMessage, EnrollmentInvitation, EnrollmentInvitationState, Handle,
+    InboxMention, InvitationId, InvitationPreview, InvitationResponse, InvitationTarget,
+    InvitationTokenCommand, IssuedChatInvitation, IssuedEnrollmentInvitation, IssuedInvitation,
+    JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
+    MediaVariant, Membership, MembershipRole, MessageBody, MessageId, Policy,
+    PrepareEnrollmentInvitation, PresenceLease, RenameCircle, RepositoryError, RepositoryFuture,
+    SavedStatus, SendMessage, SetCircleMemberRole, UpdateChannelDescription, User, UserId,
+    UserProfile, UserTask, enrollment_email_hash, enrollment_token_hash, generate_enrollment_token,
 };
 use crate::integration::{
     AlertState, DeliveryResult, GRAFANA_PROVIDER, IncomingAlert, IncomingReport, IntegrationFuture,
@@ -1130,106 +1129,68 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
-    fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
+    fn start_user_export(
+        &self,
+        actor: UserId,
+        deadline: tokio::time::Instant,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> crate::domain::account_export::AccountExportFuture<'_> {
+        use crate::domain::account_export::{AccountExport, AccountExportError};
+
         Box::pin(async move {
-            let mut tx = self.pool.begin().await.map_err(sql_error)?;
-            sqlx::query("set transaction isolation level repeatable read read only")
-                .execute(&mut *tx)
+            // One locally active export uses one connection. A pool of one
+            // cannot reserve any capacity for chat during a download.
+            if self.pool.options().get_max_connections() < 2 {
+                return Err(AccountExportError::Unavailable);
+            }
+            let mut tx = tokio::time::timeout_at(deadline, async {
+                let mut tx = self.pool.begin().await.map_err(sql_error)?;
+                for sql in [
+                    "set transaction isolation level repeatable read read only",
+                    "set local statement_timeout = '10s'",
+                    "set local idle_in_transaction_session_timeout = '120s'",
+                ] {
+                    sqlx::query(sql)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(sql_error)?;
+                }
+
+                // The one-key namespace is disjoint from the two-int global
+                // slots. Transaction ownership releases both on rollback.
+                let account_admitted = sqlx::query_scalar::<_, bool>(
+                    "select pg_try_advisory_xact_lock(hashtextextended($1, 731594721))",
+                )
+                .bind(actor.to_string())
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(sql_error)?;
-            let row = sqlx::query("select id, kind, display_name, handle, external_provider, external_subject, created_at from users where id=$1")
-                .bind(*actor.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)?
-                .ok_or(RepositoryError::NotFound)?;
-            let kind: String = row.try_get("kind").map_err(storage)?;
-            let user = User {
-                id: UserId::from_uuid(row.try_get("id").map_err(storage)?),
-                kind: crate::domain::PrincipalKind::parse(&kind)
-                    .ok_or_else(|| storage("invalid principal kind"))?,
-                display_name: DisplayName::new(
-                    row.try_get::<String, _>("display_name").map_err(storage)?,
-                )
-                .map_err(storage)?,
-                handle: row
-                    .try_get::<Option<String>, _>("handle")
-                    .map_err(storage)?
-                    .map(Handle::new)
-                    .transpose()
-                    .map_err(storage)?,
-                external_provider: row.try_get("external_provider").map_err(storage)?,
-                external_subject: row.try_get("external_subject").map_err(storage)?,
-                created_at: row.try_get("created_at").map_err(storage)?,
-            };
-            let signup_ordinal = sqlx::query_scalar::<_, i64>(
-                "select ordinal from signup_ordinals where user_id = $1",
-            )
-            .bind(*actor.as_uuid())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(sql_error)?
-            .map(|ordinal| u64::try_from(ordinal).map_err(|_| storage("invalid signup ordinal")))
-            .transpose()?;
-            let circle_rows = sqlx::query("select c.id,c.slug,c.name,c.created_by,c.created_at,m.role from circles c join circle_memberships m on m.circle_id=c.id where m.user_id=$1 order by c.slug")
-                .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
-            let circles = circle_rows
-                .into_iter()
-                .map(circle_with_role)
-                .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
-                .collect::<Result<Vec<_>, _>>()?;
-            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
-                .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
-            let summaries = channel_rows
-                .into_iter()
-                .map(channel_summary)
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut channels = Vec::with_capacity(summaries.len());
-            for channel in summaries {
-                let rows = sqlx::query("select id,channel_id,parent_message_id,sender_id,sender_display_name,sequence,body,created_at,edited_at,deleted_at from messages where channel_id=$1 order by sequence")
-                    .bind(*channel.id.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
-                channels.push(ExportedChannel {
-                    channel,
-                    messages: rows
-                        .into_iter()
-                        .map(chat_message)
-                        .collect::<Result<Vec<_>, _>>()?,
-                });
-            }
-            let saved_emojis = sqlx::query_scalar(
-                "select emoji from personal_emojis where user_id=$1 order by slot",
-            )
-            .bind(*actor.as_uuid())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(sql_error)?;
-            let saved_statuses = sqlx::query(r#"select text,emoji,save_count,last_used_at from personal_statuses where user_id=$1 order by save_count desc,last_used_at desc,text collate "C",emoji collate "C""#)
-                .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?
-                .into_iter().map(saved_status_from_row).collect::<Result<Vec<_>, _>>()?;
-            let agent_memories =
-                crate::chatbot::memory::repository::export_memory!(tx, true, actor);
-            let favorite_circles = sqlx::query_scalar::<_, Uuid>("select circle_id from circle_memberships where user_id=$1 and is_favorite order by circle_id")
-                .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?
-                .into_iter().map(CircleId::from_uuid).collect();
-            let personal_note = sqlx::query_as(
-                "select note_markdown,note_revision from personal_spaces where owner_id=$1",
-            )
-            .bind(*actor.as_uuid())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(sql_error)?
-            .map(|(markdown, revision)| crate::domain::PersonalNote { markdown, revision });
-            tx.commit().await.map_err(sql_error)?;
-            Ok(PortableUserExport {
-                format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
-                exported_at: Utc::now(),
-                user,
-                signup_ordinal,
-                saved_emojis,
-                saved_statuses,
-                favorite_circles,
-                personal_note,
-                circles,
-                channels,
-                agent_memories,
+                if !account_admitted {
+                    return Err(AccountExportError::Busy);
+                }
+                for slot in 0..2 {
+                    let admitted =
+                        sqlx::query_scalar::<_, bool>("select pg_try_advisory_xact_lock($1, $2)")
+                            .bind(731594721_i32)
+                            .bind(slot)
+                            .fetch_one(&mut *tx)
+                            .await
+                            .map_err(sql_error)?;
+                    if admitted {
+                        return Ok(tx);
+                    }
+                }
+                Err(AccountExportError::Busy)
             })
+            .await
+            .map_err(|_| AccountExportError::Timeout)??;
+            Ok(AccountExport::start(
+                deadline,
+                permit,
+                |writer| async move {
+                    super::account_export::write_account_export!(tx, true, actor, writer)
+                },
+            ))
         })
     }
 
