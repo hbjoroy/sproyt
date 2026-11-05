@@ -75,6 +75,28 @@ async function navigation(app: Locator) {
   return result;
 }
 
+test("the personal shortcut stays at the bottom while the conversation menu scrolls", async ({ page }) => {
+  const { app } = await fixture(page);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 600 });
+    const nav = await navigation(app);
+    const more = nav.getByRole("button", { name: /Andre kretsar/ });
+    if (await more.getAttribute("aria-expanded") === "false") await more.click();
+    const list = nav.locator(".sp-product-navigation");
+    const shortcut = nav.getByRole("button", { name: "Området mitt", exact: true });
+    await expect(shortcut).toBeInViewport({ ratio: 1 });
+    const before = (await shortcut.boundingBox())!;
+    const menu = (await nav.boundingBox())!;
+    expect(menu.y + menu.height - before.y - before.height).toBeLessThan(24);
+    expect(await list.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    })).toBeGreaterThan(0);
+    await expect(shortcut).toBeInViewport({ ratio: 1 });
+    expect((await shortcut.boundingBox())!.y).toBeCloseTo(before.y, 0);
+  }
+});
+
 test("many circles start compact, retain pins and expansion, and search opens matches temporarily", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 844 });
   const { app, commands } = await fixture(page);

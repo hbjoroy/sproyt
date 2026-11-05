@@ -1,5 +1,8 @@
 /* Account-local product navigation; semantic colors follow both Sprøyt themes. */
-.sp-theme .sp-product-navigation { min-width: 0; inline-size: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; }
+.sp-theme .sp-sidebar:has(> .sp-product-nav-layout) { padding: 0; overflow: hidden; }
+.sp-theme .sp-product-nav-layout { block-size: 100%; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.sp-theme .sp-product-navigation { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: .75rem; overflow: auto; padding: 1rem; }
+.sp-theme .sp-product-nav-shortcut { padding: .25rem 1rem .5rem; border-top: 1px solid var(--sp-line); }
 .sp-theme .sp-product-navigation [hidden] { display: none; }
 .sp-theme .sp-product-nav-tabs { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); border-bottom: 1px solid var(--sp-line); }
 .sp-theme .sp-product-nav-tabs > button { min-width: 0; min-height: 44px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: .3rem; padding: .45rem .2rem; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--sp-muted); font-size: .8125rem; cursor: pointer; overflow-wrap: anywhere; }
