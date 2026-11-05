@@ -129,6 +129,23 @@ test("two visits to the same conversation restore distinct anchors and retain un
   assert.equal((f.port.history.state as {otherFeature:string}).otherFeature, "keep");
 });
 
+test("browser Back to the directory remembers the outgoing thread and its reading positions", () => {
+  const f = fixture(); f.history.bindOwner("alice");
+  const directory: ViewTarget = { kind: "directory", scope: "circles" };
+  const thread: ViewTarget = { kind: "conversation", channelId: "a", threadId: "root" };
+  const positions = [...anchor("a-10", 10), { key: "thread:root", position: {
+    anchorId: "reply-12", sequence: 12, anchorOffset: -8, distanceFromBottom: 80
+  } }];
+  f.history.navigate(directory);
+  f.history.navigate(thread);
+  f.history.capture(positions);
+  f.history.back();
+  assert.deepEqual(f.history.restore(f.port.history.state), directory);
+  assert.deepEqual(f.history.getSnapshot().recent[0]?.target, thread);
+  f.history.openRecent(thread);
+  assert.deepEqual(f.history.getSnapshot().positions, positions);
+});
+
 test("refresh publications do not grow history; a new branch clears forward traversal", () => {
   const f = fixture(); f.history.bindOwner("alice"); f.history.navigate(channel("a"));
   for (let i = 0; i < 5; i++) f.history.navigate(channel("a"));

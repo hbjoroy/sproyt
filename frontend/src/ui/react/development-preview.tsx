@@ -670,6 +670,11 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       if (historyState.target?.kind !== "directory" || historyState.target.scope !== scope) host.navigateView({ kind: "directory", scope });
       view = "list"; update();
     };
+    const showingDirectory = !pageKey && view === "list";
+    const previousConversation = showingDirectory ? historyState.recent.find(({ target }) =>
+      target.kind === "conversation" && snapshot.channels.some(channel => channel.id === target.channelId))?.target : undefined;
+    const onLogoPress = previousConversation ? () => host.openRecentView(previousConversation)
+      : showingDirectory ? undefined : backToConversations;
     const openCommunity = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "circles" } } });
     const newDirect = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "people" } } });
     const openInvitation = () => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "accept-invitation" } } });
@@ -749,7 +754,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       {host.navigationNotice() && <Status tone="error">{host.navigationNotice()}</Status>}
       {host.hasLegacyDraft() && <Status>Eit eldre lokalt utkast manglar kontomerking. <Button onClick={host.recoverLegacyDraft}>Hent eldre utkast</Button></Status>}
       <HeaderActions navigationKey={historyState.entryId} connection={host.connectionHealth()}
-        onConversations={backToConversations}
+        onLogoPress={onLogoPress} logoLabel={previousConversation ? "Gå tilbake til førre samtale" : "Samtalar"}
         onLatest={channelScroll.goToLatest}
         onSettings={() => host.navigateView({ kind: "management", page: { kind: "overview" } })}
         primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
