@@ -24,7 +24,12 @@ on:
         required: false
         type: string
       force_full:
-        description: Run full browser and backup/restore regression checks
+        description: Run full application regression (recovery is selected separately)
+        required: false
+        default: false
+        type: boolean
+      force_recovery:
+        description: Rehearse backup/restore for a concrete recovery risk
         required: false
         default: false
         type: boolean
@@ -86,6 +91,7 @@ jobs:
         env:
           CI_BASE_REVISION: ${{ inputs.base_revision }}
           CI_FORCE_FULL: ${{ inputs.force_full }}
+          CI_FORCE_RECOVERY: ${{ inputs.force_recovery }}
         run: python3 tools/ci-scope.py --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
 
   quality:

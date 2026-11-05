@@ -65,10 +65,6 @@ OPERATIONS_SOURCES = BOOTSTRAP | {
     'src/auth.rs', 'src/main_tests/mcp.rs', 'src/operations.rs', 'src/web/auth.rs',
     'src/web/browser.rs', 'src/web/mcp.rs', 'src/web/system.rs',
 }
-RECOVERY_SOURCES = BOOTSTRAP | {
-    'src/media_store.rs', 'src/media_worker.rs', 'src/native_sessions/db.rs', 'src/operations.rs', 'src/web/account.rs',
-}
-RECOVERY_PREFIXES = ('migrations/', 'src/db/', 'src/domain/', 'src/media_store/', 'src/operations/')
 CHECK_FLAGS = ('backend', 'postgres', 'recovery', 'codec', 'auth', 'operations')
 # Bound only reviewed paths. Shared shells and state retain full regression.
 FEATURES = [
@@ -123,10 +119,17 @@ def result(browser, reason, extra=(), *, frontend=True, **checks):
 
 
 def full_checks(reason):
-    return result('full', reason, **dict.fromkeys(CHECK_FLAGS, True))
+    return result('full', reason, **{key: True for key in CHECK_FLAGS if key != 'recovery'})
 
 
 def scope(paths, force_full=False):
+    selected = application_scope(paths, force_full)
+    # Recovery has its own risk decision, including when application scope is broad.
+    selected['recovery'] = str(bool(set(paths) & RECOVERY_TOOLS)).lower()
+    return selected
+
+
+def application_scope(paths, force_full=False):
     paths = {p for p in paths if not (p.endswith('.md') or p.startswith(('docs/', '.agents/skills/sproyt-ui/')))}
     if force_full:
         return full_checks('full regression requested, backend path changed structurally or baseline unavailable')
@@ -163,7 +166,6 @@ def scope(paths, force_full=False):
     checks = {
         'backend': bool(backend_paths),
         'postgres': bool(backend_paths - RUST_ONLY),
-        'recovery': bool(paths & (RECOVERY_SOURCES | RECOVERY_TOOLS) or any(p.startswith(RECOVERY_PREFIXES) for p in paths)),
         'codec': codec_tools or bool(paths & CODEC_SOURCES) or any(p.startswith('src/media_store/') for p in paths),
         'auth': auth_tools or application_auth,
         'operations': operations_tools or bool(paths & OPERATIONS_SOURCES) or any(p.startswith('src/operations/') for p in paths),
@@ -208,17 +210,16 @@ def scope(paths, force_full=False):
     return result('full', 'shared or unclassified frontend logic', **checks)
 
 
-def change_range(event_name, event, ref, manual_base, force_full):
-    if force_full or event_name == 'schedule' or ref.startswith('refs/tags/'):
-        return [], True
+def event_base(event_name, event, manual_base):
     if event_name == 'pull_request':
-        base = event.get('pull_request', {}).get('base', {}).get('sha', '')
-    elif event_name == 'push':
-        base = event.get('before', '')
-    elif event_name == 'workflow_dispatch':
-        base = manual_base
-    else:
-        return [], True
+        return event.get('pull_request', {}).get('base', {}).get('sha', '')
+    if event_name == 'push':
+        return event.get('before', '')
+    return manual_base if event_name == 'workflow_dispatch' else ''
+
+
+def change_range(event_name, event, ref, manual_base, force_full):
+    base = event_base(event_name, event, manual_base)
     if not re.fullmatch(r'[0-9a-f]{40}', base) or base == '0' * 40:
         return [], True
     try:
@@ -237,9 +238,42 @@ def change_range(event_name, event, ref, manual_base, force_full):
         paths = [path for _, path in entries]
         structural_backend_change = any(status != 'M' and path.startswith(BACKEND_PREFIXES) and not path.endswith('.md')
                                         for status, path in entries)
-        return paths, structural_backend_change
+        return paths, force_full or ref.startswith('refs/tags/') or structural_backend_change
     except (OSError, subprocess.CalledProcessError, UnicodeError):
         return [], True
+
+
+def recovery_reason(paths, event_name, force_recovery=False, base=''):
+    if force_recovery:
+        return 'explicit recovery-risk rehearsal requested'
+    if event_name == 'schedule':
+        return 'weekly recovery rehearsal'
+    if set(paths) & RECOVERY_TOOLS:
+        return 'backup/restore fixtures or post-restore cleanup changed'
+    for path in paths:
+        if path.startswith('migrations/') and path.endswith('.sql'):
+            migration = ROOT / path
+            if not migration.is_file():
+                return 'migration removed; recovery compatibility must be checked'
+            if re.search(r'^\s*--\s*ci-recovery:\s*required\b',
+                         migration.read_text(encoding='utf-8'), re.MULTILINE):
+                return 'migration declares a recovery risk'
+    if '.github/workflows/ci.yml' in paths:
+        # Only changes to the drill itself invalidate its evidence, not every CI edit.
+        pattern = r'^  recovery-drill:\n.*?(?=^  [a-zA-Z][\w-]*:|\Z)'
+        current = re.search(pattern, (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8'),
+                            re.MULTILINE | re.DOTALL)
+        try:
+            if not re.fullmatch(r'[0-9a-f]{40}', base):
+                raise ValueError('no comparison revision for changed recovery workflow')
+            previous = subprocess.check_output(['git', 'show', f'{base}:.github/workflows/ci.yml'],
+                                               text=True, encoding='utf-8')
+            before = re.search(pattern, previous, re.MULTILINE | re.DOTALL)
+            if current is None or before is None or current.group() != before.group():
+                return 'backup/restore job changed'
+        except (OSError, subprocess.CalledProcessError, UnicodeError, ValueError):
+            return 'changed recovery workflow could not be compared'
+    return ''
 
 
 def main():
@@ -249,10 +283,16 @@ def main():
     args = parser.parse_args()
     event_path = os.environ.get('GITHUB_EVENT_PATH')
     event = json.loads(Path(event_path).read_text(encoding='utf-8')) if event_path else {}
-    paths, full = change_range(os.environ.get('GITHUB_EVENT_NAME', ''), event,
+    event_name = os.environ.get('GITHUB_EVENT_NAME', '')
+    paths, full = change_range(event_name, event,
                               os.environ.get('GITHUB_REF', ''), os.environ.get('CI_BASE_REVISION', ''),
                               os.environ.get('CI_FORCE_FULL', '').lower() == 'true')
     selected = scope(paths, full)
+    recovery = recovery_reason(paths, event_name,
+                               os.environ.get('CI_FORCE_RECOVERY', '').lower() == 'true',
+                               event_base(event_name, event, os.environ.get('CI_BASE_REVISION', '')))
+    selected['recovery'] = str(bool(recovery)).lower()
+    selected['recovery_reason'] = recovery or 'no recovery trigger; review risk outside automatic path selection'
     print(json.dumps({**selected, 'changed_files': len(paths)}))
     if args.github_output:
         with open(args.github_output, 'a', encoding='utf-8') as output:
@@ -265,7 +305,8 @@ def main():
                           f"Rust: **{selected['backend']}**; PostgreSQL: **{selected['postgres']}**; "
                           f"backup/restore: **{selected['recovery']}**; codec: **{selected['codec']}**; "
                           f"auth: **{selected['auth']}**; operations: **{selected['operations']}**. "
-                          f"{selected['reason']}. Browser jobs: **{len(selected['browser_matrix']['include'])}**.\n")
+                          f"{selected['reason']}. Browser jobs: **{len(selected['browser_matrix']['include'])}**.\n\n"
+                          f"Recovery decision: {selected['recovery_reason']}.\n")
 
 
 if __name__ == '__main__':

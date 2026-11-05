@@ -1,6 +1,8 @@
 """Regression checks for omissions that could weaken release validation."""
 from contextlib import chdir
 import importlib.util
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -85,17 +87,18 @@ class ScopeTests(unittest.TestCase):
 
     def test_migration_combines_with_auth_and_codec_without_losing_any_gate(self):
         result = ci_scope.scope(['migrations/postgres/0072_personal_spaces.sql', 'src/auth.rs', 'src/media_store/preview.rs'])
-        for flag in ('auth', 'backend', 'postgres', 'recovery', 'codec'):
+        for flag in ('auth', 'backend', 'postgres', 'codec'):
             self.assertEqual(result[flag], 'true', flag)
         self.assertEqual(result['browser'], 'full')
 
-    def test_dependencies_unknown_paths_and_missing_baseline_run_every_risk_gate(self):
+    def test_dependencies_unknown_paths_and_missing_baseline_keep_application_gates(self):
         for paths, force_full in ((['Cargo.lock'], False), (['new-runtime.cfg'], False),
                                   (['src/unclassified.rs'], False), ([], True)):
             with self.subTest(paths=paths, force_full=force_full):
                 result = ci_scope.scope(paths, force_full)
                 self.assertEqual(result['browser'], 'full')
-                for flag in ('auth', 'backend', 'postgres', 'recovery', 'operations', 'codec'):
+                self.assertEqual(result['recovery'], 'false')
+                for flag in ('auth', 'backend', 'postgres', 'operations', 'codec'):
                     self.assertEqual(result[flag], 'true', flag)
 
     def test_shared_ui_and_http_contracts_get_complete_browser_suite(self):
@@ -105,11 +108,11 @@ class ScopeTests(unittest.TestCase):
                      'assets/index.html'):
             self.assertEqual(ci_scope.scope([path])['browser'], 'full', path)
 
-    def test_database_migrations_and_runtime_dependencies_keep_restore(self):
+    def test_database_migrations_and_runtime_dependencies_do_not_imply_restore(self):
         for path in ('migrations/0058_next.sql', 'src/db/postgres.rs', 'src/domain/repository.rs',
                      'src/main.rs', 'Cargo.lock', 'crates/sproyt-client-core/Cargo.toml',
                      'Dockerfile', 'helm/sproyt/templates/job.yaml', '.github/workflows/other.yml'):
-            self.assertEqual(ci_scope.scope([path])['recovery'], 'true', path)
+            self.assertEqual(ci_scope.scope([path])['recovery'], 'false', path)
 
     def test_frontend_changes_do_not_need_database_restore(self):
         self.assertEqual(ci_scope.scope(['frontend/src/app.ts'])['recovery'], 'false')
@@ -144,14 +147,14 @@ class ScopeTests(unittest.TestCase):
 
     def test_full_regression_keeps_all_engines_and_backend_gates(self):
         result = ci_scope.scope([], True)
-        self.assertEqual((result['backend'], result['recovery']), ('true', 'true'))
+        self.assertEqual((result['backend'], result['recovery']), ('true', 'false'))
         rows = result['browser_matrix']['include']
         self.assertEqual([r['shard'] for r in rows if r['engine'] == 'chromium'], ['1/4', '2/4', '3/4', '4/4'])
         self.assertEqual([r['shard'] for r in rows if r['engine'] == 'webkit'], ['1/2', '2/2'])
 
     def test_css_mixed_with_backend_migration_does_not_skip_backend(self):
         result = ci_scope.scope(['frontend/src/ui/react-app.css', 'migrations/0071_next.sql'])
-        self.assertEqual((result['backend'], result['recovery']), ('true', 'true'))
+        self.assertEqual((result['backend'], result['recovery']), ('true', 'false'))
 
     def test_unit_test_only_does_not_launch_browser(self):
         result = ci_scope.scope(['frontend/tests/boundaries.test.ts', 'frontend/src/direct-activity.test.ts'])
@@ -239,7 +242,7 @@ class ScopeTests(unittest.TestCase):
 
     def test_unknown_files_and_full_regression_fail_closed(self):
         self.assertEqual(ci_scope.scope(['new-runtime.cfg'])['browser'], 'full')
-        self.assertEqual(ci_scope.scope([], True)['recovery'], 'true')
+        self.assertEqual(ci_scope.scope([], True)['recovery'], 'false')
 
     def test_docs_have_no_expensive_checks(self):
         self.assertEqual(ci_scope.scope(['docs/running.md'])['browser'], 'none')
@@ -249,7 +252,7 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(ci_scope.scope(paths)['browser'], 'none')
         self.assertEqual(ci_scope.scope(paths)['recovery'], 'false')
         self.assertEqual(ci_scope.scope(paths + ['src/imagegen.rs'])['browser'], 'full')
-        self.assertEqual(ci_scope.scope(paths, True)['recovery'], 'true')
+        self.assertEqual(ci_scope.scope(paths, True)['recovery'], 'false')
 
     def test_missing_invalid_and_tag_baselines_select_full(self):
         for event, ref, base in (('workflow_dispatch', 'refs/heads/main', ''),
@@ -264,7 +267,7 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(ci_scope.scope(paths)['recovery'], 'false')
         for added in ('Dockerfile', 'src/web/media.rs', 'frontend/src/app.ts', 'migrations/0065_media.sql'):
             self.assertEqual(ci_scope.scope(paths + [added])['browser'], 'full', added)
-        self.assertEqual(ci_scope.scope(paths, True)['recovery'], 'true')
+        self.assertEqual(ci_scope.scope(paths, True)['recovery'], 'false')
 
     def test_non_ancestor_release_baseline_selects_full(self):
         with patch.object(ci_scope.subprocess, 'run') as run:
@@ -285,9 +288,9 @@ class ScopeTests(unittest.TestCase):
                       'frontend/src/app.ts', 'migrations/0065_media.sql', 'native/apps/android/build.gradle',
                       '.github/workflows/ci.yml', 'native/unknown-runtime.cfg'):
             result = ci_scope.scope(paths + [added])
-            self.assertEqual((result['browser'], result['recovery']), ('full', 'true'), added)
+            self.assertEqual((result['browser'], result['recovery']), ('full', 'false'), added)
         result = ci_scope.scope(paths, True)
-        self.assertEqual((result['browser'], result['recovery']), ('full', 'true'))
+        self.assertEqual((result['browser'], result['recovery']), ('full', 'false'))
 
     def test_pull_request_and_push_use_the_event_base(self):
         with patch.object(ci_scope.subprocess, 'run') as run, patch.object(ci_scope.subprocess, 'check_output') as diff:
@@ -307,7 +310,7 @@ class ScopeTests(unittest.TestCase):
                     paths, full = ci_scope.change_range('workflow_dispatch', {}, '', 'a' * 40, False)
                     self.assertEqual(paths, ['src/imagegen_prompt.rs', 'src/imagegen.rs'])
                     self.assertTrue(full)
-                    self.assertEqual(ci_scope.scope(paths, full)['recovery'], 'true')
+                    self.assertEqual(ci_scope.scope(paths, full)['recovery'], 'false')
             self.assertIn('--name-status', diff.call_args.args[0])
 
     def test_malformed_name_status_range_fails_closed(self):
@@ -338,6 +341,73 @@ class ScopeTests(unittest.TestCase):
             paths, full = ci_scope.change_range('workflow_dispatch', {}, '', base, False)
             self.assertEqual(set(paths), {source.as_posix(), target.as_posix()})
             self.assertTrue(full)
+
+
+class RecoveryTests(unittest.TestCase):
+    def test_weekly_and_explicit_recovery_are_independent_of_application_scope(self):
+        self.assertTrue(ci_scope.recovery_reason([], 'schedule'))
+        self.assertTrue(ci_scope.recovery_reason([], 'workflow_dispatch', True))
+        for event in ('pull_request', 'push', 'workflow_dispatch'):
+            self.assertFalse(ci_scope.recovery_reason([], event))
+        for path in ci_scope.RECOVERY_TOOLS:
+            self.assertTrue(ci_scope.recovery_reason([path], 'pull_request'))
+            self.assertEqual(ci_scope.scope([path], True)['recovery'], 'true')
+
+    def test_additive_migration_keeps_integration_checks_and_can_declare_recovery_risk(self):
+        with TemporaryDirectory() as directory, patch.object(ci_scope, 'ROOT', Path(directory)):
+            path = 'migrations/postgres/9999_change.sql'
+            migration = Path(directory) / path
+            migration.parent.mkdir(parents=True)
+            migration.write_text('ALTER TABLE messages ADD COLUMN label TEXT;\n', encoding='utf-8')
+            self.assertFalse(ci_scope.recovery_reason([path], 'pull_request'))
+            migration.write_text('-- ci-recovery: required; changes restored data interpretation\n'
+                                 'ALTER TABLE messages DROP COLUMN label;\n', encoding='utf-8')
+            self.assertTrue(ci_scope.recovery_reason([path], 'pull_request'))
+            migration.unlink()
+            self.assertTrue(ci_scope.recovery_reason([path], 'pull_request'))
+        selected = ci_scope.scope([path])
+        self.assertEqual((selected['backend'], selected['postgres']), ('true', 'true'))
+
+    def test_recovery_job_diff_ignores_unrelated_workflow_edits(self):
+        with TemporaryDirectory() as directory, patch.object(ci_scope, 'ROOT', Path(directory)):
+            path = '.github/workflows/ci.yml'
+            workflow = Path(directory) / path
+            workflow.parent.mkdir(parents=True)
+            previous = 'jobs:\n  recovery-drill:\n    steps: [dump, restore]\n  other:\n    name: old\n'
+            workflow.write_text(previous.replace('name: old', 'name: new'), encoding='utf-8')
+            with patch.object(ci_scope.subprocess, 'check_output', return_value=previous):
+                self.assertFalse(ci_scope.recovery_reason([path], 'pull_request', base='a' * 40))
+                workflow.write_text(previous.replace('[dump, restore]', '[dump, restore, verify]'), encoding='utf-8')
+                self.assertTrue(ci_scope.recovery_reason([path], 'pull_request', base='a' * 40))
+            self.assertTrue(ci_scope.recovery_reason([path], 'pull_request'))
+
+    def test_force_full_preserves_paths_for_independent_recovery_selection(self):
+        with patch.object(ci_scope.subprocess, 'run') as run, patch.object(ci_scope.subprocess, 'check_output') as diff:
+            run.return_value.returncode = 0
+            diff.return_value = b'M\0tools/verify-media-recovery.sql\0'
+            paths, full = ci_scope.change_range('workflow_dispatch', {}, '', 'a' * 40, True)
+            self.assertTrue(full)
+            self.assertTrue(ci_scope.recovery_reason(paths, 'workflow_dispatch'))
+
+    def test_cli_outputs_and_summary_distinguish_full_application_and_recovery(self):
+        with TemporaryDirectory() as directory:
+            event = Path(directory) / 'event.json'
+            event.write_text('{}', encoding='utf-8')
+            for event_name, force_recovery, expected in (('workflow_dispatch', 'false', 'false'),
+                                                        ('workflow_dispatch', 'true', 'true'),
+                                                        ('schedule', 'false', 'true'),
+                                                        ('push', 'false', 'false')):
+                output = Path(directory) / 'output'
+                summary = Path(directory) / 'summary'
+                env = {**os.environ, 'GITHUB_EVENT_PATH': str(event), 'GITHUB_EVENT_NAME': event_name,
+                       'GITHUB_REF': 'refs/tags/v1', 'CI_BASE_REVISION': '', 'CI_FORCE_FULL': 'true',
+                       'CI_FORCE_RECOVERY': force_recovery}
+                selected = json.loads(subprocess.check_output(
+                    [sys.executable, str(ci_scope.ROOT / 'tools/ci-scope.py'), '--github-output', str(output),
+                     '--summary', str(summary)], env=env, text=True))
+                self.assertEqual((selected['backend'], selected['recovery']), ('true', expected))
+                self.assertIn('Recovery decision:', summary.read_text(encoding='utf-8'))
+                self.assertIn(f'recovery={expected}', output.read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

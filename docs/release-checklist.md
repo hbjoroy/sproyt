@@ -69,8 +69,10 @@ separately using the [deployment runbook](operations.md#deployment-rollback-and-
       rolling upgrade and application rollback evidence. Verify that the
       previous image works after any forward migration. Use the
       [deployment runbook](operations.md#deployment-rollback-and-incident-response).
-- [ ] For backup or migration changes, record recovery duration and integrity
-      checks from an isolated restore. Use the
+- [ ] For changes affecting backup or recovery compatibility, record recovery
+      duration and integrity checks from an isolated restore, or link still-valid
+      evidence. Ordinary additive migrations require upgrade and compatibility
+      checks; a restore drill is required only when recovery assumptions change. Use the
       [backup and restore runbook](operations.md#backup-and-restore-drill).
 - [ ] Feature kill switches and ordinary-chat behaviour without Heart pass.
 

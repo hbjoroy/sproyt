@@ -50,14 +50,21 @@ selector labels required by the cluster through each `additionalLabels` map.
 ## Backup and restore drill
 
 Use the managed PostgreSQL provider's encrypted point-in-time recovery when
-available. Also take a logical backup before a schema migration:
+available. Before an actual schema migration, verify a sufficiently recent,
+usable recovery point against the project's recovery objectives. Take a logical
+backup when the existing recovery point is insufficient:
 
 ```sh
 pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL" --file sproyt.dump
 ```
 
-Quarterly and when backup or migration behaviour changes, the release owner
-restores into an isolated database and namespace.
+Quarterly and when recovery assumptions change, the release owner restores into
+an isolated database and namespace. This includes backup tooling and incompatible
+data or storage changes. Ordinary UI releases, no-op migration jobs and additive
+migrations do not each require a new backup or restore drill. Keep scheduled
+backups/PITR running; backup cadence and restore-test cadence are separate decisions.
+The weekly CI drill uses synthetic data and follows the
+[independent recovery policy](ci-iteration-strategy.md#independent-recovery-decision).
 
 ```sh
 createdb sproyt_restore

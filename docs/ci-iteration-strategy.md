@@ -17,9 +17,9 @@ on the PR and the release. Every selected browser job uses the real server.
 | Local presentation | Typecheck/build and exercise the affected component or browser behavior. Include compact layout, keyboard or visual checks when affected. | Frontend checks and the exact mapped component contracts plus smoke. Unmapped components get full browser coverage. | Confirm the relevant behavior on the release revision. |
 | Global CSS | Check shared layouts, responsive breakpoints, focus, scrolling and touch in the affected views. | Recognized CSS-only changes get the layout suite in Chromium and its maintained WebKit subset. Legacy assets or mixed unclassified runtime code can select full. | Preserve cross-browser layout and interaction coverage, including affected mobile paths. |
 | Feature logic | Exercise feature rules, failure cases and the affected integration boundary. | Declared frontend features select their suites and smoke (imagegen has its own suite). Backend changes select the whole Rust gate. Separate PostgreSQL, codec and operator checks follow the affected contracts. | Include the affected end-to-end flow where the change crosses a client/server boundary. |
-| Shared client state | Test navigation, focus, scrolling, drafts, reconnect or account isolation as affected. | Shared/unclassified frontend code selects full browser regression. Shared Rust/protocol changes can also select backend and recovery checks. | Keep broad browser coverage for shared state, transport and protocol changes. |
+| Shared client state | Test navigation, focus, scrolling, drafts, reconnect or account isolation as affected. | Shared/unclassified frontend code selects full browser regression. Shared Rust/protocol changes also select backend checks. Recovery is assessed separately. | Keep broad browser coverage for shared state, transport and protocol changes. |
 | Auth and access | Test both allowed and denied paths, session recovery and account isolation. Use the configured provider where integration matters. | Provider-only paths select provider contracts. Application auth and access paths select full browser regression plus the Rust and PostgreSQL integration gates. | Verify affected session, authorization and provider behavior, including live-provider evidence when the change affects that boundary. |
-| Persistence and migrations | Exercise old and new data, upgrade compatibility, failure recovery and restore as affected. | Migration, database, domain and selected runtime paths get Rust, PostgreSQL and backup/restore. Shared paths also select full browser checks. | Verify forward migration, compatibility with the rollback image and integrity after restore when the change affects durable data. |
+| Persistence and migrations | Exercise old and new data, upgrade compatibility, failure recovery and restore as affected. | Migration, database and domain paths get Rust and PostgreSQL. Shared paths also select full browser checks. Restore follows the independent recovery policy below. | Verify forward migration and compatibility with the rollback image. Require restore evidence when recovery assumptions change. |
 | Build and runtime | Check the changed build/runtime contract, including deploy configuration or operational scripts where affected. | Unknown build, dependency and configuration paths fall back to full. Explicit CI-policy-only, codec-only and dedicated native paths have narrower rules. | Retain delivery checks. Exercise actual rollout and rollback in isolation for changes that affect those paths. |
 
 The current selector reads the whole ancestor-to-head diff, including deletions
@@ -70,10 +70,10 @@ boundaries.
 - **Rust.** Keep formatting, Clippy and the locked all-targets, all-features
   suite together for backend changes. Shared modules and integration tests cross
   feature boundaries. The selector has no per-test Rust filters.
-- **PostgreSQL and recovery.** The repository job covers real PostgreSQL
+- **PostgreSQL.** The repository job covers real PostgreSQL
   contracts and upgrade compatibility. Keep it for backend changes unless a
   reviewed file has no database integration, such as imagegen prompt
-  interpretation. Backup/restore follows persistence, migration and recovery paths.
+  interpretation. Backup/restore has a separate decision below.
 - **Auth and access.** CI keeps the provider contracts in Quality. The separate
   OIDC discovery verifier fixture follows provider and application auth paths.
   Changes to application auth and access code also
@@ -87,6 +87,36 @@ boundaries.
 Use the union for mixed risks. Unknown changes and additions, deletions or type
 changes in backend files keep full regression. A rename contributes both paths.
 
+### Independent recovery decision
+
+Full application regression does not imply a backup/restore drill. Ordinary UI,
+backend, dependency and release changes, including a missing baseline or a new
+tag, do not alone invalidate recovery evidence. Additive migrations retain Rust,
+PostgreSQL and upgrade compatibility checks without automatically running restore.
+
+The synthetic CI drill runs weekly, on changes to the recovery SQL fixtures or
+post-restore cleanup, and when the `recovery-drill` job itself changes. Other
+workflow edits do not trigger it when the job can be compared with the baseline.
+Removing a migration also selects recovery. A migration that affects recovery
+must include `-- ci-recovery: required` with a short reason. This is an explicit
+review decision, not an SQL safety classifier.
+
+For other recovery risks, dispatch CI with `force_recovery=true` and a verified
+`base_revision`, with publication disabled for a rehearsal. Examples include
+changed dump/restore tooling, database version or storage format, recovery
+credentials, encryption, and incompatible data transformations. Record the
+reason and successful run in the release evidence. When the change range is
+unavailable, the release owner must assess these risks explicitly; broad
+application checks cannot replace that assessment. Check the recovery decision
+in the workflow summary before accepting a release.
+
+Reuse documented recovery evidence while the relevant mechanism, data contract
+and environment assumptions remain valid. Reusing an image for promotion does
+not require another drill. The selector does not yet deduplicate recovery checks
+across PR and publish runs when both include a recovery-triggering change.
+The weekly synthetic drill complements the quarterly operational restore in the
+[runbook](operations.md#backup-and-restore-drill); it does not create a production backup.
+
 ## Delivery phases
 
 - **Local and PR.** Use the matrix for focused feedback. PR CI always tests the
@@ -97,7 +127,7 @@ changes in backend files keep full regression. A rename contributes both paths.
   with `publish_image=true`, or use a reviewed `v*` release tag. The canonical
   run validates the exact application revision. Pass the last verified application
   revision as `base_revision` to cover the full release interval, or omit it for
-  full checks. A PR run validates its PR revision. Merging does not trigger an
+  full application checks. Recovery is selected independently. A PR run validates its PR revision. Merging does not trigger an
   additional automatic main-push run of `CI`. Verify the run's head SHA before
   accepting its artifacts. Publication requires successful selection,
   quality, browser gate, dependency audit and ARM64 delivery. PostgreSQL and
@@ -115,7 +145,7 @@ changes in backend files keep full regression. A rename contributes both paths.
 - **Weekly regression.** Monday at 03:17 UTC, run full browser, backend,
   PostgreSQL, recovery, dependency and ARM64 delivery checks without publishing.
   CI/release reviews failures and omissions, including regressions missed by
-  scoped runs. A manual `force_full=true` dispatch with both publish inputs off
+  scoped runs. A manual `force_full=true` and `force_recovery=true` dispatch with both publish inputs off
   provides the same breadth without publishing.
 
 ## Rollout and rollback
