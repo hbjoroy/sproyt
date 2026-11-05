@@ -159,11 +159,12 @@ for (const hasReplies of [false, true]) test(`ordinary members have useful overf
     await entry.getByRole("button", { name: "Fleire meldingsval", exact: true }).click();
     const menu = entry.getByRole("dialog", { name: "Meldingsval", exact: true });
     await expect(menu.getByRole("button", { name: "Kopier lenkje til meldinga", exact: true })).toBeVisible();
+    await expect(menu.getByRole("button", { name: "Ta vare på", exact: true })).toBeVisible();
     await expect(menu.getByRole("button", { name: "Rediger", exact: true })).toHaveCount(0);
     await expect(menu.getByRole("button", { name: "Slett", exact: true })).toHaveCount(0);
     await expect(menu.getByRole("button", { name: "Arbeidssaker", exact: true })).toHaveCount(0);
     const buttons = menu.locator(".sp-message-menu-dialog").getByRole("button");
-    await expect(buttons).toHaveCount(threadAction ? 2 : 1);
+    await expect(buttons).toHaveCount(threadAction ? 3 : 2);
     if (threadAction) await expect(menu.getByRole("button", { name: threadAction, exact: true })).toBeVisible();
     else {
       await expect(menu.getByRole("button", { name: "Start tråd", exact: true })).toHaveCount(0);
