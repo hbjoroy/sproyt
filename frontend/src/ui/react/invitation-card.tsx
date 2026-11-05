@@ -2,6 +2,7 @@ import { Button } from "@sproyt/ui/react";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { InvitationCards } from "../../application/invitation-cards";
 
+// Invitation cards render inline in channel and thread messages.
 export function InvitationCard({ token, host }: { readonly token: string; readonly host: InvitationCards }) {
   const subscribe = useCallback((listener: () => void) => host.subscribe(token, listener), [host, token]);
   const getSnapshot = useCallback(() => host.get(token), [host, token]);
