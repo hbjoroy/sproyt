@@ -14,7 +14,8 @@ async function enter(page: Page, participant: string) {
   return { app, composer, headers: { "x-sproyt-account": account } };
 }
 
-test("saving a thread reply produces one private log entry that opens the original thread", async ({ page }, { project }) => {
+test("saved thread replies show the current original and open its thread", async ({ page }, { project }) => {
+  test.setTimeout(60_000);
   const participant = `personal-saved-links-${project.name}`;
   const message = `Melding med eit svar som skal takast vare på (${project.name})`;
   const { app, composer, headers } = await enter(page, participant);
@@ -38,13 +39,78 @@ test("saving a thread reply produces one private log entry that opens the origin
 
   await app.getByRole("button", { name: "Området mitt", exact: true }).click();
   await expect(composer).toBeEnabled();
-  const saved = app.getByRole("link", { name: "Lagra melding", exact: true });
+  const quote = app.locator(".sp-saved-message-quote");
+  await expect(quote).toHaveText("Svar som skal takast vare på");
+  const saved = app.getByRole("link", { name: /Opne originalmeldinga.*Felles.*# General.*Tråd/ });
   await expect(saved).toHaveCount(1);
   const href = new URL((await saved.getAttribute("href"))!, page.url());
   expect(href.searchParams.get("message")).toBe(sourceId);
   expect(href.searchParams.get("thread")).toBe(rootId);
   await saved.click();
   await expect(reply).toBeVisible();
+
+  await reply.getByRole("button", { name: "Fleire meldingsval" }).click();
+  await thread.getByRole("button", { name: "Rediger", exact: true }).click();
+  const edit = app.getByRole("dialog", { name: "Rediger melding" });
+  await edit.getByRole("textbox", { name: "Melding", exact: true }).fill("**Oppdatert svar**");
+  await edit.getByRole("button", { name: "Lagre", exact: true }).click();
+  const edited = thread.locator(`[data-message-id="${sourceId}"]`);
+  await expect(edited.getByText("Oppdatert svar", { exact: true })).toBeVisible();
+  await edited.getByRole("button", { name: "Lukk meldingsvala" }).click();
+  await app.getByRole("button", { name: "Området mitt", exact: true }).click();
+  await expect(quote.locator("strong")).toHaveText("Oppdatert svar");
+
+  // A pre-existing saved entry has the old Markdown link body.
+  await composer.fill(`[Lagra melding](${href.pathname}${href.search})`);
+  await app.locator(".sp-channel-pane").getByRole("button", { name: /^Send / }).click();
+  await expect(quote.locator("strong")).toHaveText(["Oppdatert svar", "Oppdatert svar"]);
+
+  await saved.first().click();
+  await edited.getByRole("button", { name: "Fleire meldingsval" }).click();
+  await thread.getByRole("button", { name: "Slett", exact: true }).click();
+  await app.getByRole("dialog", { name: "Slett melding" }).getByRole("button", { name: "Slett melding" }).click();
+  await expect(edited).toHaveCount(0);
+  await app.getByRole("button", { name: "Området mitt", exact: true }).click();
+  await expect(app.getByText("Originalmeldinga er utilgjengeleg.", { exact: true })).toHaveCount(2);
+  await expect(quote).toHaveCount(0);
+});
+
+test("source messages require the current account and membership of the original channel", async ({ page, browser }, { project }) => {
+  test.setTimeout(45_000);
+  const participant = `personal-source-owner-${project.name}`;
+  const { app, composer, headers } = await enter(page, participant);
+  await app.getByRole("button", { name: "Området mitt", exact: true }).click();
+  await expect(app.getByRole("heading", { name: "Området mitt", exact: true })).toBeVisible();
+  await expect(composer).toBeEnabled();
+  const body = "Ei privat melding";
+  await composer.fill(body);
+  await app.locator(".sp-channel-pane").getByRole("button", { name: /^Send / }).click();
+  const original = app.locator(".sp-channel-pane [data-message-id]").filter({ has: page.getByText(body, { exact: true }) });
+  await expect(original).toBeVisible();
+  const channelId = new URL(page.url()).searchParams.get("channel");
+  const id = await original.getAttribute("data-message-id");
+  const sequence = await original.getAttribute("data-message-sequence");
+  const endpoint = `/api/v1/me/personal-space/sources/${channelId}/${id}/${sequence}`;
+  const allowed = await page.request.get(`${endpoint}?participant=${participant}`, { headers });
+  expect(allowed.status()).toBe(200);
+  expect(allowed.headers()["cache-control"]).toBe("private, no-store");
+  expect(await allowed.json()).toMatchObject({ body });
+  const wrongSequence = await page.request.get(
+    `/api/v1/me/personal-space/sources/${channelId}/${id}/${Number(sequence) + 1}?participant=${participant}`, { headers });
+  expect(wrongSequence.status()).toBe(404);
+
+  const outsider = await browser.newPage();
+  try {
+    const otherParticipant = `personal-source-outsider-${project.name}`;
+    const other = await enter(outsider, otherParticipant);
+    const denied = await outsider.request.get(`${endpoint}?participant=${otherParticipant}`, { headers: other.headers });
+    const wrongAccount = await outsider.request.get(`${endpoint}?participant=${otherParticipant}`, { headers });
+    expect(denied.status()).toBe(404);
+    expect(await denied.text()).not.toContain(body);
+    expect(wrongAccount.status()).toBe(403);
+  } finally {
+    await outsider.close();
+  }
 });
 
 test("the personal area puts the note beside chat and switches panes on compact screens", async ({ page }, { project }) => {

@@ -2,8 +2,11 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { Button, Status } from "@sproyt/ui/react";
 import { HttpError } from "../../api";
-import type { PersonalNote, PersonalSpaceApi } from "../../personal-space";
-import { MarkdownContent } from "./markdown-content";
+import type { PersonalMessageReference, PersonalNote, PersonalSpaceApi } from "../../personal-space";
+import type { ChatMessage } from "../../types";
+import { viewHref } from "../../view-history";
+import { MarkdownContent, markdownTextFromMessage } from "./markdown-content";
+import { PreviewMediaContent } from "./preview-media";
 
 export function PersonalSpaceShortcut({ active, ready, onOpen }: {
   active: boolean; ready: boolean; onOpen: () => Promise<void>;
@@ -20,6 +23,57 @@ export function PersonalSpaceShortcut({ active, ready, onOpen }: {
         finally { setPending(false); }
       }}>Området mitt</Button>
     {error && <Status tone="error">Området kunne ikkje opnast. Prøv igjen.</Status>}
+  </div>;
+}
+
+export function SavedMessagePreview({ api, owner, reference, location }: {
+  api: PersonalSpaceApi; owner: string; reference: PersonalMessageReference; location?: string;
+}) {
+  const preview = useRef<HTMLDivElement>(null);
+  const [source, setSource] = useState<ChatMessage | null>();
+  const { channelId, messageId, sequence } = reference;
+  useEffect(() => {
+    const request = new AbortController();
+    let visible = false;
+    let pending = false;
+    const load = () => {
+      if (!visible || pending || document.visibilityState === "hidden") return;
+      pending = true;
+      void api.sourceMessage(owner, { channelId, messageId, sequence }, request.signal).then(message => {
+        if (!request.signal.aborted) setSource(message);
+      }, () => {
+        if (!request.signal.aborted) setSource(null);
+      }).finally(() => { pending = false; });
+    };
+    // Long histories can contain many saved entries. Fetch them as they come into view.
+    const observer = new IntersectionObserver(entries => {
+      const wasVisible = visible;
+      visible = entries.at(-1)?.isIntersecting ?? false;
+      if (!wasVisible && visible) load();
+    });
+    if (preview.current) observer.observe(preview.current);
+    window.addEventListener("focus", load);
+    document.addEventListener("visibilitychange", load);
+    return () => {
+      window.removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", load);
+      observer.disconnect();
+      request.abort();
+    };
+  }, [api, owner, channelId, messageId, sequence]);
+
+  const threadId = source ? source.parent_message_id ?? undefined : reference.threadId;
+  const href = viewHref({ kind: "conversation", channelId, messageId, sequence, threadId }, window.location.href);
+  const origin = source ? [source.sender_display_name, location, threadId ? "Tråd" : undefined].filter(Boolean).join(" · ") : "";
+  return <div ref={preview} className="sp-saved-message">
+    {source ? <blockquote className="sp-saved-message-quote sp-message-content">
+      <MarkdownContent source={markdownTextFromMessage(source.body)} />
+      <PreviewMediaContent body={source.body} mediaOnly />
+    </blockquote> : <div className="sp-saved-message-source" role="status">
+      {source === null ? "Originalmeldinga er utilgjengeleg." : "Hentar originalmeldinga …"}
+    </div>}
+    <a className="sp-saved-message-source" href={href} title="Opne originalmeldinga"
+      aria-label={origin ? `Opne originalmeldinga · ${origin}` : undefined}>{origin || "Opne originalmeldinga"}</a>
   </div>;
 }
 

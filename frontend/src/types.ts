@@ -139,6 +139,10 @@ type WireMessage = Omit<ChatMessage, "parent_message_id" | "edited_at" | "delete
 const isOptionalNullableString = (value: unknown): value is string | null | undefined => value === undefined || isNullableString(value);
 const isMessage = (value: unknown): value is WireMessage => objectWith(value, { id: isString, channel_id: isString, parent_message_id: isOptionalNullableString, sender_id: isString, sender_display_name: isString, body: isString, sequence: isCount, sent_at: isString, edited_at: isOptionalNullableString, deleted_at: isOptionalNullableString });
 const messageFromWire = (message: WireMessage): ChatMessage => ({ ...message, parent_message_id: message.parent_message_id ?? null, edited_at: message.edited_at ?? null, deleted_at: message.deleted_at ?? null });
+export function decodeChatMessage(value: unknown): ChatMessage {
+  if (!isMessage(value)) throw new Error("Ugyldig melding.");
+  return messageFromWire(value);
+}
 const isMembership = (value: unknown): value is Membership => objectWith(value, { channel_id: isString, user_id: isString, role: (v) => isOneOf(v, ["owner", "moderator", "member", "observer"]), last_read_sequence: isCount });
 const isSummary = (value: unknown): value is ThreadSummary => objectWith(value, { root_message_id: isString, reply_count: isCount, unread_count: isCount, latest_sequence: isCount });
 const isReaction = (value: unknown): value is MessageReactionSummary => objectWith(value, { message_id: isString, emoji: isString, count: isCount, reacted_by_me: isBoolean, user_ids: isStringArray });

@@ -57,8 +57,8 @@ import { AgentPlaceDiscovery } from "./agent-place-discovery";
 import { AgentPlaceCard } from "./agent-place-card";
 import type { AgentGeoapifyRollApi } from "../../agent-geoapify-roll";
 import { AgentGeoapifyCard } from "./agent-geoapify-card";
-import type { PersonalSpaceApi } from "../../personal-space";
-import { PersonalSpaceShortcut } from "./personal-space";
+import { personalMessageReference, type PersonalSpaceApi } from "../../personal-space";
+import { PersonalSpaceShortcut, SavedMessagePreview } from "./personal-space";
 
 const PLACE_LOOKUP_MARKER = "Opne stadssøket for ferske barforslag.";
 
@@ -895,11 +895,20 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       },
       // React owns all visible message content, including Markdown, Mermaid,
       // media and invitation cards. The host supplies state and commands only.
-      renderContent: message => host.renderMode() === "raw"
-        ? <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.body}</pre>
-        : <><PreviewMessageContent host={host} message={message} place={owner && channelId && !pageKey && view === "detail"
+      renderContent: message => {
+        if (host.renderMode() === "raw") {
+          return <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.body}</pre>;
+        }
+        if (personal && owner) {
+          const reference = personalMessageReference(message.body, window.location.origin);
+          if (reference) return <SavedMessagePreview key={`${owner}:${accountEpoch}:${message.body}`}
+            api={host.personalSpace} owner={owner} reference={reference}
+            location={snapshot.channelChoices.find(choice => choice.id === reference.channelId)?.name} />;
+        }
+        return <><PreviewMessageContent host={host} message={message} place={owner && channelId && !pageKey && view === "detail"
           ? { status: placeDiscovery.status(message.id) ?? "pending", googleAvailable: placeDiscovery.googleAvailable(message.id), geoapifyAvailable: placeDiscovery.geoapifyAvailable(message.id), owner, epoch: accountEpoch, channelId,
-            admitted: placeAdmitted, retry: () => placeDiscovery.retry(message.id) } : undefined} /><PreviewMediaContent body={message.body} mediaOnly /></>
+            admitted: placeAdmitted, retry: () => placeDiscovery.retry(message.id) } : undefined} /><PreviewMediaContent body={message.body} mediaOnly /></>;
+      }
     },
     renderComposer: target => <div className="sp-composer-dock" key={`${target.channelId}:${target.parentMessageId ?? ""}`}>
       {Boolean(target.parentMessageId) === Boolean(snapshot.thread) && <PreviewImageGeneration owner={host.imageGeneration} channelId={snapshot.selection.channelId} />}
