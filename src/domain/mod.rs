@@ -15,4 +15,5 @@ pub use repository::InMemoryChatRepository;
 pub use repository::MEDIA_READ_BLOCK_BYTES;
 pub use repository::{ChatRepository, PresenceLease, RepositoryError, RepositoryFuture};
 pub use repository::{THREAD_ROOT_PREVIEW_BATCH_MAX, ThreadRootPreview};
+pub(crate) use repository::{personal_channel, personal_link_body};
 pub use sproyt_protocol::*;

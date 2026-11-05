@@ -57,6 +57,8 @@ import { AgentPlaceDiscovery } from "./agent-place-discovery";
 import { AgentPlaceCard } from "./agent-place-card";
 import type { AgentGeoapifyRollApi } from "../../agent-geoapify-roll";
 import { AgentGeoapifyCard } from "./agent-geoapify-card";
+import type { PersonalSpaceApi } from "../../personal-space";
+import { PersonalNotePanel, PersonalSpaceShortcut } from "./personal-space";
 
 const PLACE_LOOKUP_MARKER = "Opne stadssøket for ferske barforslag.";
 
@@ -81,6 +83,8 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly workItems: WorkItemApi;
   readonly processPilotIdentity: () => string;
   readonly imageGeneration: ImageGenerationOwner;
+  readonly personalSpace: PersonalSpaceApi;
+  readonly openPersonalSpace: (owner: string) => Promise<void>;
   readonly chatAgents: CircleChatAgentApi;
   readonly legacyContainer: HTMLElement;
   readonly runtime: ApplicationRuntime;
@@ -437,11 +441,34 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
   const [apps, setApps] = useState<readonly WorkApplication[]>([]);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [savingLink, setSavingLink] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState("");
+  const owner = host.community.selfId();
+  const accountEpoch = host.accountEpoch();
   useEffect(() => {
     if (!linkCopied) return;
     const timer = window.setTimeout(() => setLinkCopied(false), 3000);
     return () => window.clearTimeout(timer);
   }, [linkCopied]);
+  useEffect(() => {
+    if (!saveFeedback) return;
+    const timer = window.setTimeout(() => setSaveFeedback(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [saveFeedback]);
+  async function saveLink() {
+    if (!owner || savingLink) return;
+    const admitted = () => host.community.selfId() === owner && host.accountEpoch() === accountEpoch;
+    setSavingLink(true);
+    setSaveFeedback("");
+    try {
+      const created = await host.personalSpace.saveLink(owner, message.id);
+      if (admitted()) setSaveFeedback(created ? "Lagra i Området mitt." : "Lenkja ligg allereie i Området mitt.");
+    } catch {
+      if (admitted()) setSaveFeedback("Lenkja kunne ikkje lagrast. Prøv igjen.");
+    } finally {
+      if (admitted()) setSavingLink(false);
+    }
+  }
   const messageLink = viewHref({ kind: "conversation", channelId: message.channel_id, messageId: message.id,
     sequence: message.sequence, ...(message.parent_message_id ? { threadId: message.parent_message_id } : {}) }, window.location.href);
   const [issueOpen, setIssueOpen] = useState(false);
@@ -487,11 +514,15 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
           void navigator.clipboard?.writeText(messageLink).then(() => setLinkCopied(true), () => setLinkOpen(true));
           if (!navigator.clipboard) setLinkOpen(true);
         }}>Kopier lenkje til meldinga</Button>
+        {owner && !message.deleted_at && <Button variant="quiet" disabled={savingLink} onClick={() => {
+          close(); void saveLink();
+        }}>Ta vare på</Button>}
         <PreviewMessageMutations message={message} host={host} />
         {canHaveWorkItems
           && <WorkItemMenuAction host={host} message={message} hasApplications={apps.length > 0} hasExistingItems={hasExistingItems} onOpen={() => { close(); setIssueOpen(true); }} />}
       </>} />
     {linkCopied && <span className="sp-copy-link-notice" role="status">Lenkja er kopiert.</span>}
+    {saveFeedback && <span className="sp-copy-link-notice" role="status">{saveFeedback}</span>}
     {linkOpen && <Dialog open title="Lenkje til meldinga" onClose={() => setLinkOpen(false)}>
       <TextField label="Meldingslenkje" value={messageLink} readOnly onFocus={event => event.currentTarget.select()} />
       <p>Merk og kopier lenkja. Ho opnar denne meldinga for dei som har tilgang til samtalen.</p>
@@ -630,7 +661,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       loading: host.threadLoad().loading,
       revealMessageId: scrollIntent.threadRevealMessageId
     });
-    const compactContext = snapshot.activeChannel?.is_direct ? snapshot.activeChannel.direct_user_id ? "Direkte" : "Gruppesamtale" : snapshot.activeChannel?.circle_id
+    const personal = !!snapshot.activeChannel?.is_personal;
+    const compactContext = personal ? "Privat chatlogg" : snapshot.activeChannel?.is_direct ? snapshot.activeChannel.direct_user_id ? "Direkte" : "Gruppesamtale" : snapshot.activeChannel?.circle_id
       ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel?.circle_id)?.name ?? "Vennekrets"
       : snapshot.activeChannel ? "Felles" : undefined;
     const backToConversations = () => {
@@ -699,6 +731,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         {!snapshot.directory.ready && <Button variant="quiet" onClick={host.retryDirectory}>Prøv igjen</Button>}
         <Button variant="quiet" onClick={backToConversations}>Vis samtalar</Button></div> : undefined,
     ownerId: owner ?? undefined,
+    personalShortcut: owner && <PersonalSpaceShortcut key={`${owner}:${accountEpoch}`} active={personal && historyState.target?.kind === "conversation"}
+      ready={snapshot.directory.ready} onOpen={() => host.openPersonalSpace(owner)} />,
+    note: owner && <PersonalNotePanel key={`${owner}:${accountEpoch}`} active={personal} owner={owner} api={host.personalSpace} />,
     favorites: host.favorites,
     directoryScope: historyState.target?.kind === "directory" ? historyState.target.scope : undefined,
     onDirectoryScopeChange: scope => host.navigateView({ kind: "directory", scope }),
@@ -725,8 +760,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
           onBack={() => { if (host.viewHistory.getSnapshot().entryId === historyState.entryId && host.community.selfId() === owner) host.backFromManagement(); }} /></>}
         compactActions={(open, close) => <>
           <ThreadDirectoryTrigger compact snapshot={snapshot} onOpen={() => { close(); openThreadDirectory(); }} />
-          {snapshot.activeChannel?.is_direct ? directMembers(true) : <ChannelActions compact inlineOpen={open} onInlineClose={close}
-            snapshot={snapshot} host={host} onDetails={openDetails} />}
+          {!personal && (snapshot.activeChannel?.is_direct ? directMembers(true) : <ChannelActions compact inlineOpen={open} onInlineClose={close}
+            snapshot={snapshot} host={host} onDetails={openDetails} />)}
         </>}
         compactConversation={view === "detail" && snapshot.activeChannel && !pageKey ? {
           context: compactContext, title: snapshot.title, onBack: backToConversations,
@@ -771,7 +806,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       key={`${host.community.selfId() ?? ""}:${group.id}`} group={group} snapshot={snapshot} host={host.community}
       onNavigate={page => host.navigateView({ kind: "management", page })}
       onSelect={channelId => { reactionPicker.close(); host.navigateView({ kind: "conversation", channelId }); view = "detail"; update(); }} />,
-    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ThreadDirectoryTrigger snapshot={snapshot} onOpen={openThreadDirectory} />{directMembers()}<ChannelActions snapshot={snapshot} host={host} onDetails={openDetails} /></>,
+    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ThreadDirectoryTrigger snapshot={snapshot} onOpen={openThreadDirectory} />{directMembers()}{!personal && <ChannelActions snapshot={snapshot} host={host} onDetails={openDetails} />}</>,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}

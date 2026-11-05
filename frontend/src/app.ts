@@ -1,4 +1,5 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
+      import { PersonalSpaceApi } from "./personal-space";
       import { uploadMediaChunks } from "./media-upload";
       import { ProcessPilotApi } from "./process-pilot";
       import { ThreadPreviewApi } from "./thread-previews";
@@ -816,6 +817,24 @@
         refreshSession: () => sessionController.refresh(true),
         participant: () => new URLSearchParams(window.location.search).get("participant")
       });
+      const personalSpace = new PersonalSpaceApi(http, () => currentParticipantId, () => accountGeneration);
+      async function openPersonalSpace(owner: string): Promise<void> {
+        const epoch = directNavigationEpoch;
+        const account = accountGeneration;
+        if (owner !== currentParticipantId) return;
+        let channel = knownChannels.find(item => item.is_personal);
+        if (!channel) {
+          const base = await personalSpace.open(owner);
+          if (owner !== currentParticipantId || account !== accountGeneration) return;
+          channel = knownChannels.find(item => item.id === base.id);
+          if (!channel) {
+            channel = { ...channelFromBase(base, "member"), is_personal: true };
+            knownChannels.push(channel);
+          }
+          sendCommand("list_my_channels");
+        }
+        if (epoch === directNavigationEpoch) navigateView({ kind: "conversation", channelId: channel.id });
+      }
       const imageGeneration = createImageGeneration({
         http, before: sendForm, toolbar: composerTools, identity: () => currentParticipantId || "", connected: () => connectionSupervisor.snapshot().connected,
         channel: () => activeChannelId || "", channelName: (id) => knownChannels.find(channel => channel.id === id)?.name || "Opphavleg kanal",
@@ -3225,7 +3244,7 @@
           : channel.name;
         conversationCircle.textContent = channel.circle_id
           ? (knownCircles.get(channel.circle_id)?.name || "Vennekrets")
-          : (channel.is_direct ? "Direktemelding" : "Felles");
+          : channel.is_personal ? "Privat chatlogg" : (channel.is_direct ? "Direktemelding" : "Felles");
         conversationCircle.hidden = false;
         const status = profileStatus(peer);
         if (!peer || !status) return;
@@ -4520,7 +4539,7 @@
           return true;
         };
         let rendered = 0;
-        const shared = knownChannels.filter((channel) => !channel.circle_id && !channel.is_direct);
+        const shared = knownChannels.filter((channel) => !channel.circle_id && !channel.is_direct && !channel.is_personal);
         const direct = knownChannels.filter((channel) => channel.is_direct);
         const personal = knownChannels.filter((channel) => !channel.is_direct && channel.circle_id);
         if (shared.some((channel) => matches(channel.name))) {
@@ -4561,7 +4580,7 @@
         bottomCircleContent.replaceChildren();
         const activeCircle = activeCircleId ? knownCircles.get(activeCircleId) : undefined;
         const activeChannel = knownChannels.find((channel) => channel.id === activeChannelId);
-        const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.is_direct);
+        const sharedChannels = knownChannels.filter((channel) => !channel.circle_id && !channel.is_direct && !channel.is_personal);
         const directChannels = knownChannels.filter((channel) => channel.is_direct);
         const showingShared = !activeCircle && activeRootScope === "shared";
         const showingDirect = !activeCircle && activeRootScope === "direct";
@@ -6451,6 +6470,8 @@
               capabilities: () => availableClientFeatures
             }),
             imageGeneration,
+            personalSpace,
+            openPersonalSpace,
             chatAgents: circleChatAgentsApi,
             agentLocations: agentLocationApi,
             threadPreviews,

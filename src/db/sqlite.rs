@@ -545,6 +545,133 @@ impl ChatRepository for SqliteChatRepository {
         })
     }
 
+    fn open_personal_space(&self, owner: UserId) -> RepositoryFuture<'_, Channel> {
+        Box::pin(async move {
+            let mut tx = self
+                .pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(sql_error)?;
+            let channel = open_personal_space(&mut tx, owner).await?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(channel)
+        })
+    }
+
+    fn personal_note(&self, owner: UserId) -> RepositoryFuture<'_, crate::domain::PersonalNote> {
+        Box::pin(async move {
+            let (markdown, revision) = sqlx::query_as(
+                "select note_markdown,note_revision from personal_spaces where owner_id=?",
+            )
+            .bind(owner.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?
+            .ok_or(RepositoryError::NotFound)?;
+            Ok(crate::domain::PersonalNote { markdown, revision })
+        })
+    }
+
+    fn save_personal_note(
+        &self,
+        owner: UserId,
+        note: crate::domain::PersonalNote,
+    ) -> RepositoryFuture<'_, crate::domain::PersonalNote> {
+        Box::pin(async move {
+            let revision = sqlx::query_scalar("update personal_spaces set note_markdown=?,note_revision=note_revision+1 where owner_id=? and note_revision=? returning note_revision")
+                .bind(&note.markdown)
+                .bind(owner.to_string())
+                .bind(note.revision)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::Conflict)?;
+            Ok(crate::domain::PersonalNote { revision, ..note })
+        })
+    }
+
+    fn save_personal_link(
+        &self,
+        owner: UserId,
+        source_id: MessageId,
+    ) -> RepositoryFuture<'_, Option<MessageId>> {
+        Box::pin(async move {
+            let mut tx = self
+                .pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(sql_error)?;
+            let channel = open_personal_space(&mut tx, owner.clone()).await?;
+            let source: Option<(String, i64, Option<String>)> = sqlx::query_as(
+                "select m.channel_id,m.sequence,m.parent_message_id from messages m join channel_memberships cm on cm.channel_id=m.channel_id where m.id=? and cm.user_id=? and m.deleted_at is null",
+            )
+            .bind(source_id.as_uuid().to_string())
+            .bind(owner.to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let (source_channel, source_sequence, parent) =
+                source.ok_or(RepositoryError::NotFound)?;
+            let source_channel_id =
+                ChannelId::from_uuid(Uuid::parse_str(&source_channel).map_err(storage)?);
+            let existing = sqlx::query_scalar::<_, i64>(
+                "select 1 from personal_saved_links s join messages m on m.id=s.log_message_id where s.owner_id=? and s.source_message_id=? and m.deleted_at is null",
+            )
+            .bind(owner.to_string())
+            .bind(source_id.as_uuid().to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            if existing.is_some() {
+                tx.commit().await.map_err(sql_error)?;
+                return Ok(None);
+            }
+            let parent = parent
+                .as_deref()
+                .map(Uuid::parse_str)
+                .transpose()
+                .map_err(storage)?
+                .map(MessageId::from_uuid);
+            let body = crate::domain::personal_link_body(
+                &source_channel_id,
+                source_id,
+                ChannelSequence::try_from(source_sequence).map_err(storage)?,
+                parent,
+            );
+            let channel_id = channel.id.to_string();
+            let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence=next_sequence+1 where channel_id=? returning next_sequence-1")
+                .bind(&channel_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            let message_id = MessageId::generate();
+            let now = persisted_now();
+            // The canonical link contains no mentions or attachments.
+            sqlx::query("insert into messages (id,channel_id,sender_id,sender_display_name,sequence,body,created_at) select ?,?,id,display_name,?,?,? from users where id=?")
+                .bind(message_id.as_uuid().to_string())
+                .bind(&channel_id)
+                .bind(sequence)
+                .bind(body.as_str())
+                .bind(now)
+                .bind(owner.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("insert into personal_saved_links (id,owner_id,source_channel_id,source_message_id,log_message_id,saved_at) values (?,?,?,?,?,?) on conflict(owner_id,source_message_id) do update set log_message_id=excluded.log_message_id,saved_at=excluded.saved_at")
+                .bind(Uuid::now_v7().to_string())
+                .bind(owner.to_string())
+                .bind(source_channel)
+                .bind(source_id.as_uuid().to_string())
+                .bind(message_id.as_uuid().to_string())
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(Some(message_id))
+        })
+    }
+
     fn open_direct_channel<'a>(
         &'a self,
         actor: UserId,
@@ -907,7 +1034,7 @@ impl ChatRepository for SqliteChatRepository {
                 .map(circle_with_role)
                 .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
                 .collect::<Result<Vec<_>, _>>()?;
-            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,case when exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id) then 1 else 0 end as is_direct,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
+            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,case when exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id) then 1 else 0 end as is_direct,case when exists(select 1 from personal_spaces p where p.channel_id=c.id) then 1 else 0 end as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
                 .bind(actor.to_string()).bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?;
             let summaries = channel_rows
                 .into_iter()
@@ -940,6 +1067,14 @@ impl ChatRepository for SqliteChatRepository {
             let favorite_circles = sqlx::query_scalar::<_, String>("select circle_id from circle_memberships where user_id=? and is_favorite=1 order by circle_id")
                 .bind(actor.to_string()).fetch_all(&mut *transaction).await.map_err(sql_error)?
                 .into_iter().map(|id| Uuid::parse_str(&id).map(CircleId::from_uuid).map_err(storage)).collect::<Result<Vec<_>, _>>()?;
+            let personal_note = sqlx::query_as(
+                "select note_markdown,note_revision from personal_spaces where owner_id=?",
+            )
+            .bind(actor.to_string())
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(sql_error)?
+            .map(|(markdown, revision)| crate::domain::PersonalNote { markdown, revision });
             transaction.commit().await.map_err(sql_error)?;
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
@@ -949,6 +1084,7 @@ impl ChatRepository for SqliteChatRepository {
                 saved_emojis,
                 saved_statuses,
                 favorite_circles,
+                personal_note,
                 circles,
                 channels,
                 agent_memories,
@@ -1612,18 +1748,18 @@ impl ChatRepository for SqliteChatRepository {
 
     fn leave_channel<'a>(&'a self, command: LeaveChannel) -> RepositoryFuture<'a, ()> {
         Box::pin(async move {
-            let row: Option<(String, String, Option<String>)> = sqlx::query_as(
-                "select m.role,c.name,c.circle_id from channel_memberships m join channels c on c.id=m.channel_id where m.channel_id = ? and m.user_id = ?",
+            let row: Option<(String, String, Option<String>, i64)> = sqlx::query_as(
+                "select m.role,c.name,c.circle_id,case when exists(select 1 from personal_spaces p where p.channel_id=c.id) then 1 else 0 end from channel_memberships m join channels c on c.id=m.channel_id where m.channel_id = ? and m.user_id = ?",
             )
             .bind(command.channel_id.to_string())
             .bind(command.actor.to_string())
             .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?;
-            let Some((role, name, circle_id)) = row else {
+            let Some((role, name, circle_id, is_personal)) = row else {
                 return Err(RepositoryError::NotFound);
             };
-            if circle_id.is_some() && name.eq_ignore_ascii_case("Prat") {
+            if is_personal != 0 || (circle_id.is_some() && name.eq_ignore_ascii_case("Prat")) {
                 return Err(RepositoryError::PermissionDenied);
             }
             let role = MembershipRole::parse(&role);
@@ -1657,7 +1793,7 @@ impl ChatRepository for SqliteChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,case when exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id) then 1 else 0 end as is_direct,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=? then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,case when exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id) then 1 else 0 end as is_direct,case when exists(select 1 from personal_spaces p where p.channel_id=c.id) then 1 else 0 end as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=? order by c.slug")
                 .bind(actor.to_string()).bind(actor.to_string())
                 .fetch_all(&self.pool)
                 .await
@@ -3391,6 +3527,56 @@ async fn load_membership(
     })
 }
 
+async fn open_personal_space(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    owner: UserId,
+) -> Result<Channel, RepositoryError> {
+    let human = sqlx::query_scalar::<_, i64>("select 1 from users where id=? and kind='human'")
+        .bind(owner.to_string())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    if human.is_none() {
+        return Err(RepositoryError::PermissionDenied);
+    }
+    let existing = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by from personal_spaces p join channels c on c.id=p.channel_id where p.owner_id=?")
+        .bind(owner.to_string())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    if let Some(row) = existing {
+        return channel_from_row(row);
+    }
+    let channel = crate::domain::personal_channel(owner.clone());
+    sqlx::query("insert into channels (id,slug,name,kind,created_by) values (?,?,?,'private',?)")
+        .bind(channel.id.to_string())
+        .bind(channel.slug.as_str())
+        .bind(channel.name.as_str())
+        .bind(owner.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    sqlx::query("insert into channel_sequences (channel_id) values (?)")
+        .bind(channel.id.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    // A member can use chat and media and has no delegation rights.
+    sqlx::query("insert into channel_memberships (channel_id,user_id,role) values (?,?,'member')")
+        .bind(channel.id.to_string())
+        .bind(owner.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    sqlx::query("insert into personal_spaces (owner_id,channel_id) values (?,?)")
+        .bind(owner.to_string())
+        .bind(channel.id.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    Ok(channel)
+}
+
 fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, RepositoryError> {
     let id: String = row.try_get("id").map_err(storage)?;
     let slug: String = row.try_get("slug").map_err(storage)?;
@@ -3418,6 +3604,7 @@ fn channel_summary(row: sqlx::sqlite::SqliteRow) -> Result<ChannelSummary, Repos
             .transpose()
             .map_err(storage)?,
         is_direct: is_direct != 0,
+        is_personal: row.try_get::<i64, _>("is_personal").map_err(storage)? != 0,
         description,
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,

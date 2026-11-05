@@ -29,11 +29,13 @@ export interface ConversationHostBindings {
   readonly onCloseThread: () => void;
   /** Scope/inbox/create/discover commands remain available outside channel rows. */
   readonly navigationActions: ReactNode;
+  readonly personalShortcut?: ReactNode;
   readonly navigationFooter?: ReactNode;
   /** Includes circle membership and each channel's notification controls. */
   readonly renderGroupActions?: (group: ConversationSnapshotGroup) => ReactNode;
   readonly renderConversationAction?: (conversation: ConversationSnapshotGroup["conversations"][number]) => ReactNode;
   readonly contextActions?: ReactNode;
+  readonly note?: ReactNode;
   readonly emptyContent?: ReactNode;
   readonly onFindChannels?: () => void;
   readonly onInvitation?: () => void;
@@ -74,7 +76,7 @@ function ThreadTimeline(props: TimelineProps) {
 export function createConversationViewProps(snapshot: ConversationSnapshot, host: ConversationHostBindings): ConversationViewProps {
   const channelId = snapshot.selection.channelId;
   const channel = snapshot.activeChannel;
-  const context = channel?.is_direct ? channel.direct_user_id ? "Direkte" : "Gruppesamtale" : channel?.circle_id
+  const context = channel?.is_personal ? "Privat chatlogg" : channel?.is_direct ? channel.direct_user_id ? "Direkte" : "Gruppesamtale" : channel?.circle_id
     ? snapshot.circles.find(circle => circle.id === channel.circle_id)?.name ?? "Vennekrets"
     : channel ? "Felles" : undefined;
   const thread = snapshot.thread;
@@ -82,7 +84,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
   return {
     runtime: host.runtime, theme: host.theme, view: host.view, pageKey: host.pageKey, header: host.header,
     title: snapshot.title, context, emptyContent: host.emptyContent,
-    contextActions: host.contextActions, onBack: host.onBack,
+    contextActions: host.contextActions, onBack: host.onBack, note: host.note,
     navigation: {
       favorites: host.favorites,
       directoryReady: snapshot.directory.ready, directoryError: snapshot.directory.error,
@@ -101,7 +103,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
         actions: host.renderGroupActions?.(group)
       })),
       selectedId: channelId, query: snapshot.query, onQueryChange: host.onQueryChange,
-      onSelect: host.onSelect, actions: host.navigationActions, footer: host.navigationFooter
+      onSelect: host.onSelect, actions: host.navigationActions, footer: host.navigationFooter, personalShortcut: host.personalShortcut
     },
     timeline: {
       ...host.message, ...host.timeline,

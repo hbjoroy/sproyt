@@ -256,6 +256,8 @@ pub struct ChannelSummary {
     /// remains populated only for one-to-one conversations.
     #[serde(default)]
     pub is_direct: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_personal: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct_activity: Option<DirectActivity>,
     #[serde(default)]
@@ -393,6 +395,12 @@ pub struct SavedStatus {
     pub last_used_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PersonalNote {
+    pub markdown: String,
+    pub revision: i64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PortableUserExport {
     pub format: String,
@@ -408,6 +416,8 @@ pub struct PortableUserExport {
     /// Private account preference; membership deletion removes the favorite.
     #[serde(default)]
     pub favorite_circles: Vec<CircleId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal_note: Option<PersonalNote>,
     pub circles: Vec<ExportedCircle>,
     pub channels: Vec<ExportedChannel>,
     /// Own agent memory, filtered by current source-channel access in the same

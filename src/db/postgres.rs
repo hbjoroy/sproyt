@@ -706,6 +706,124 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn open_personal_space(&self, owner: UserId) -> RepositoryFuture<'_, Channel> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let channel = open_personal_space(&mut tx, owner).await?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(channel)
+        })
+    }
+
+    fn personal_note(&self, owner: UserId) -> RepositoryFuture<'_, crate::domain::PersonalNote> {
+        Box::pin(async move {
+            let (markdown, revision) = sqlx::query_as(
+                "select note_markdown,note_revision from personal_spaces where owner_id=$1",
+            )
+            .bind(*owner.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?
+            .ok_or(RepositoryError::NotFound)?;
+            Ok(crate::domain::PersonalNote { markdown, revision })
+        })
+    }
+
+    fn save_personal_note(
+        &self,
+        owner: UserId,
+        note: crate::domain::PersonalNote,
+    ) -> RepositoryFuture<'_, crate::domain::PersonalNote> {
+        Box::pin(async move {
+            let revision = sqlx::query_scalar("update personal_spaces set note_markdown=$1,note_revision=note_revision+1 where owner_id=$2 and note_revision=$3 returning note_revision")
+                .bind(&note.markdown)
+                .bind(*owner.as_uuid())
+                .bind(note.revision)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)?
+                .ok_or(RepositoryError::Conflict)?;
+            Ok(crate::domain::PersonalNote { revision, ..note })
+        })
+    }
+
+    fn save_personal_link(
+        &self,
+        owner: UserId,
+        source_id: MessageId,
+    ) -> RepositoryFuture<'_, Option<MessageId>> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            let channel = open_personal_space(&mut tx, owner.clone()).await?;
+            let source: Option<(Uuid, i64, Option<Uuid>)> = sqlx::query_as(
+                "select m.channel_id,m.sequence,m.parent_message_id from messages m join channel_memberships cm on cm.channel_id=m.channel_id where m.id=$1 and cm.user_id=$2 and m.deleted_at is null for share of m,cm",
+            )
+            .bind(*source_id.as_uuid())
+            .bind(*owner.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let (source_channel, source_sequence, parent) =
+                source.ok_or(RepositoryError::NotFound)?;
+            let source_channel_id = ChannelId::from_uuid(source_channel);
+            let existing = sqlx::query_scalar::<_, i32>(
+                "select 1 from personal_saved_links s join messages m on m.id=s.log_message_id where s.owner_id=$1 and s.source_message_id=$2 and m.deleted_at is null",
+            )
+            .bind(*owner.as_uuid())
+            .bind(*source_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            if existing.is_some() {
+                tx.commit().await.map_err(sql_error)?;
+                return Ok(None);
+            }
+            let parent = parent.map(MessageId::from_uuid);
+            let body = crate::domain::personal_link_body(
+                &source_channel_id,
+                source_id,
+                ChannelSequence::try_from(source_sequence).map_err(storage)?,
+                parent,
+            );
+            let channel_id = *channel.id.as_uuid();
+            let sequence: i64 = sqlx::query_scalar("update channel_sequences set next_sequence=next_sequence+1 where channel_id=$1 returning next_sequence-1")
+                .bind(channel_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            let message_id = MessageId::generate();
+            let now = persisted_now();
+            // The canonical link contains no mentions or attachments.
+            sqlx::query("insert into messages (id,channel_id,sender_id,sender_display_name,sequence,body,created_at) select $1,$2,id,display_name,$3,$4,$5 from users where id=$6")
+                .bind(*message_id.as_uuid())
+                .bind(channel_id)
+                .bind(sequence)
+                .bind(body.as_str())
+                .bind(now)
+                .bind(*owner.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("insert into personal_saved_links (id,owner_id,source_channel_id,source_message_id,log_message_id,saved_at) values ($1,$2,$3,$4,$5,$6) on conflict(owner_id,source_message_id) do update set log_message_id=excluded.log_message_id,saved_at=excluded.saved_at")
+                .bind(Uuid::now_v7())
+                .bind(*owner.as_uuid())
+                .bind(source_channel)
+                .bind(*source_id.as_uuid())
+                .bind(*message_id.as_uuid())
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            sqlx::query("select pg_notify('sproyt_messages', $1)")
+                .bind(message_id.as_uuid().to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(Some(message_id))
+        })
+    }
+
     fn open_direct_channel<'a>(
         &'a self,
         actor: UserId,
@@ -1057,7 +1175,7 @@ impl ChatRepository for PostgresChatRepository {
                 .map(circle_with_role)
                 .map(|result| result.map(|(circle, role)| ExportedCircle { circle, role }))
                 .collect::<Result<Vec<_>, _>>()?;
-            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let channel_rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
             let summaries = channel_rows
                 .into_iter()
@@ -1090,6 +1208,14 @@ impl ChatRepository for PostgresChatRepository {
             let favorite_circles = sqlx::query_scalar::<_, Uuid>("select circle_id from circle_memberships where user_id=$1 and is_favorite order by circle_id")
                 .bind(*actor.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?
                 .into_iter().map(CircleId::from_uuid).collect();
+            let personal_note = sqlx::query_as(
+                "select note_markdown,note_revision from personal_spaces where owner_id=$1",
+            )
+            .bind(*actor.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?
+            .map(|(markdown, revision)| crate::domain::PersonalNote { markdown, revision });
             tx.commit().await.map_err(sql_error)?;
             Ok(PortableUserExport {
                 format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
@@ -1099,6 +1225,7 @@ impl ChatRepository for PostgresChatRepository {
                 saved_emojis,
                 saved_statuses,
                 favorite_circles,
+                personal_note,
                 circles,
                 channels,
                 agent_memories,
@@ -1736,18 +1863,18 @@ impl ChatRepository for PostgresChatRepository {
 
     fn leave_channel<'a>(&'a self, command: LeaveChannel) -> RepositoryFuture<'a, ()> {
         Box::pin(async move {
-            let row: Option<(String, String, Option<uuid::Uuid>)> = sqlx::query_as(
-                "select m.role,c.name,c.circle_id from channel_memberships m join channels c on c.id=m.channel_id where m.channel_id = $1 and m.user_id = $2",
+            let row: Option<(String, String, Option<uuid::Uuid>, bool)> = sqlx::query_as(
+                "select m.role,c.name,c.circle_id,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) from channel_memberships m join channels c on c.id=m.channel_id where m.channel_id = $1 and m.user_id = $2",
             )
             .bind(*command.channel_id.as_uuid())
             .bind(*command.actor.as_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?;
-            let Some((role, name, circle_id)) = row else {
+            let Some((role, name, circle_id, is_personal)) = row else {
                 return Err(RepositoryError::NotFound);
             };
-            if circle_id.is_some() && name.eq_ignore_ascii_case("Prat") {
+            if is_personal || (circle_id.is_some() && name.eq_ignore_ascii_case("Prat")) {
                 return Err(RepositoryError::PermissionDenied);
             }
             let role = MembershipRole::parse(&role);
@@ -1782,7 +1909,7 @@ impl ChatRepository for PostgresChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
                 .await
@@ -3591,6 +3718,63 @@ async fn load_membership(
     })
 }
 
+async fn open_personal_space(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner: UserId,
+) -> Result<Channel, RepositoryError> {
+    // Serialize creation and saved-link writes across server instances.
+    let human = sqlx::query_scalar::<_, i32>(
+        "select 1 from users where id=$1 and kind='human' for no key update",
+    )
+    .bind(*owner.as_uuid())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(sql_error)?;
+    if human.is_none() {
+        return Err(RepositoryError::PermissionDenied);
+    }
+    let existing = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by from personal_spaces p join channels c on c.id=p.channel_id where p.owner_id=$1")
+        .bind(*owner.as_uuid())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    if let Some(row) = existing {
+        return channel_from_row(row);
+    }
+    let channel = crate::domain::personal_channel(owner.clone());
+    sqlx::query(
+        "insert into channels (id,slug,name,kind,created_by) values ($1,$2,$3,'private',$4)",
+    )
+    .bind(*channel.id.as_uuid())
+    .bind(channel.slug.as_str())
+    .bind(channel.name.as_str())
+    .bind(*owner.as_uuid())
+    .execute(&mut **tx)
+    .await
+    .map_err(sql_error)?;
+    sqlx::query("insert into channel_sequences (channel_id) values ($1)")
+        .bind(*channel.id.as_uuid())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    // A member can use chat and media and has no delegation rights.
+    sqlx::query(
+        "insert into channel_memberships (channel_id,user_id,role) values ($1,$2,'member')",
+    )
+    .bind(*channel.id.as_uuid())
+    .bind(*owner.as_uuid())
+    .execute(&mut **tx)
+    .await
+    .map_err(sql_error)?;
+    sqlx::query("insert into personal_spaces (owner_id,channel_id) values ($1,$2)")
+        .bind(*owner.as_uuid())
+        .bind(*channel.id.as_uuid())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+    Ok(channel)
+}
+
 fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let id: uuid::Uuid = row.try_get("id").map_err(storage)?;
     let slug: String = row.try_get("slug").map_err(storage)?;
@@ -3612,6 +3796,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
         circle_id: circle_id.map(CircleId::from_uuid),
         direct_user_id: direct_user_id.map(UserId::from_uuid),
         is_direct,
+        is_personal: row.try_get::<bool, _>("is_personal").map_err(storage)?,
         description,
         role: MembershipRole::parse(&role).ok_or_else(|| storage("invalid membership role"))?,
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,
