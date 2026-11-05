@@ -110,6 +110,8 @@ test("source supplements retry exactly, recover from conflict and require explic
   expect(server.additions[3].expected_revision).toBe(3); expect(server.additions[3].request_id).not.toBe(server.additions[2].request_id);
   await dialog.getByRole("button", { name: "Lukk saksregistrering", exact: true }).click();
   await expect(review).toContainText("Ny informasjon eller endring", { timeout: 10_000 });
+  await expect(review.locator(".sp-work-item-information").filter({ hasText: "Ny informasjon eller endring" }))
+    .toContainText("Eit nytt utkast", { timeout: 10_000 });
   await expect(question).toHaveValue("Kva nettlesar?"); await expect(review.getByRole("combobox", { name: "Prioritet", exact: true })).toHaveValue("high");
   const send = review.getByRole("button", { name: "Send spørsmål", exact: true });
   await expect(send).toBeDisabled(); expect(server.submissions).toHaveLength(0);
