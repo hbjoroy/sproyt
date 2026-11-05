@@ -1,4 +1,5 @@
 //! Read-only, bounded Weather-Service adapter. No model-selected URLs or GPS.
+// CI measurement #350: comment-only weather adapter change.
 use super::*;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
