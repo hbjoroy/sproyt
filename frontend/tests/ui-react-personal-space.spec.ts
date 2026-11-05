@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function enter(page: Page, participant: string) {
+  await page.setViewportSize({ width: 1440, height: 900 });
   let account = "";
   page.on("websocket", socket => socket.on("framereceived", frame => {
     const event = JSON.parse(String(frame.payload));
@@ -13,18 +14,19 @@ async function enter(page: Page, participant: string) {
   return { app, composer, headers: { "x-sproyt-account": account } };
 }
 
-test("saving a thread reply produces one private log entry that opens the original thread", async ({ page }) => {
-  const participant = "personal-saved-links";
+test("saving a thread reply produces one private log entry that opens the original thread", async ({ page }, { project }) => {
+  const participant = `personal-saved-links-${project.name}`;
+  const message = `Melding med eit svar som skal takast vare på (${project.name})`;
   const { app, composer, headers } = await enter(page, participant);
-  await composer.fill("Melding med eit svar som skal takast vare på");
-  await composer.press("Enter");
-  const root = app.locator(".sp-channel-pane [data-message-id]").filter({ hasText: "Melding med eit svar som skal takast vare på" });
+  await composer.fill(message);
+  await app.locator(".sp-channel-pane").getByRole("button", { name: /^Send / }).click();
+  const root = app.locator(".sp-channel-pane [data-message-id]").filter({ hasText: message });
   await root.getByRole("button", { name: "Svar i tråd", exact: true }).click();
   const rootId = await root.getAttribute("data-message-id");
   const thread = app.locator(".sp-thread-pane");
   const input = thread.getByRole("textbox", { name: "Svar i tråden" });
   await input.fill("Svar som skal takast vare på");
-  await input.press("Enter");
+  await thread.getByRole("button", { name: /^Send / }).click();
   const reply = thread.locator("[data-message-id]").filter({ has: page.getByText("Svar som skal takast vare på", { exact: true }) });
   await reply.getByRole("button", { name: "Fleire meldingsval" }).click();
   await thread.getByRole("button", { name: "Ta vare på", exact: true }).click();
@@ -45,32 +47,117 @@ test("saving a thread reply produces one private log entry that opens the origin
   await expect(reply).toBeVisible();
 });
 
-test("the note expands on mobile, recovers its draft and resolves a concurrent edit", async ({ page }) => {
-  const participant = "personal-note-editor";
-  const { app, composer, headers } = await enter(page, participant);
+test("the personal area puts the note beside chat and switches panes on compact screens", async ({ page }, { project }) => {
+  const { app, composer } = await enter(page, `personal-responsive-layout-${project.name}`);
   await app.getByRole("button", { name: "Området mitt", exact: true }).click();
-  await expect(composer).toBeEnabled();
+  const note = app.locator(".sp-personal-note");
+  const timeline = app.locator(".sp-channel-pane .sp-timeline");
+  const chatTab = app.getByRole("tab", { name: "Chatlogg", exact: true });
+  const noteTab = app.getByRole("tab", { name: "Notat", exact: true });
+  await expect(chatTab).toBeHidden();
+  await expect(note).toBeVisible();
+  await expect(timeline).toBeVisible();
+  await expect(composer).toBeVisible();
+  const noteAside = (await note.boundingBox())!;
+  const chatAside = (await timeline.boundingBox())!;
+  expect(noteAside.x).toBeGreaterThanOrEqual(chatAside.x + chatAside.width - 1);
+  expect(noteAside.y).toBeLessThan(chatAside.y + chatAside.height);
+  expect(noteAside.y + noteAside.height).toBeGreaterThan(chatAside.y);
+
+  await note.getByRole("button", { name: "Maksimer", exact: true }).click();
+  await expect(composer).toBeHidden();
+  const noteExpanded = (await note.boundingBox())!;
+  expect(noteExpanded.x).toBeLessThanOrEqual(chatAside.x + 1);
+  expect(noteExpanded.x + noteExpanded.width).toBeGreaterThanOrEqual(noteAside.x + noteAside.width - 1);
+  await note.getByRole("button", { name: "Minimer", exact: true }).click();
+  await expect(composer).toBeVisible();
+  expect((await note.boundingBox())!.x).toBeCloseTo(noteAside.x, 0);
+
+  await note.getByRole("button", { name: "Maksimer", exact: true }).click();
+  await app.locator(".sp-context").getByRole("button", { name: "Gå til siste", exact: true }).click();
+  await expect(composer).toBeVisible();
+
+  await page.setViewportSize({ width: 980, height: 900 });
+  await expect(app.locator(".sp-sidebar")).toBeVisible();
+  await expect(chatTab).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  const note = app.getByRole("region", { name: "Notat", exact: true });
+  const chatPanel = app.getByRole("tabpanel", { name: "Chatlogg", exact: true });
+  const notePanel = app.getByRole("tabpanel", { name: "Notat", exact: true });
+  await expect(app.getByRole("tablist", { name: "Området mitt", exact: true })).toBeVisible();
+  await chatTab.click();
+  await expect(chatTab).toHaveAttribute("aria-selected", "true");
+  await expect(noteTab).toHaveAttribute("aria-selected", "false");
+  await expect(chatPanel).toBeVisible();
+  await expect(notePanel).toBeHidden();
+  await expect(chatTab).toHaveAttribute("aria-controls", (await chatPanel.getAttribute("id"))!);
+  await composer.fill("Utkast i chatloggen");
+
+  await chatTab.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(noteTab).toBeFocused();
+  await expect(noteTab).toHaveAttribute("aria-selected", "true");
+  await expect(chatTab).toHaveAttribute("aria-selected", "false");
+  await expect(notePanel).toBeVisible();
+  await expect(chatPanel).toBeHidden();
+  await expect(composer).toBeHidden();
+  await expect(noteTab).toHaveAttribute("aria-controls", (await notePanel.getAttribute("id"))!);
+  await expect(note.getByRole("button", { name: "Maksimer", exact: true })).toBeHidden();
+  await note.getByRole("button", { name: "Rediger", exact: true }).click();
+  const editor = note.getByRole("textbox", { name: "Notat i Markdown" });
+  await editor.fill("# Utkast i notatet");
+
+  await noteTab.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(chatTab).toBeFocused();
+  await expect(composer).toBeVisible();
+  await expect(composer).toHaveValue("Utkast i chatloggen");
+  await expect(notePanel).toBeHidden();
+  await noteTab.click();
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveValue("# Utkast i notatet");
+
+  await chatTab.click();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(composer).toBeVisible();
+  await chatTab.waitFor({ state: "hidden" });
+  await editor.focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(noteTab).toHaveAttribute("aria-selected", "true");
+  await expect(editor).toBeFocused();
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(composer).toBeVisible();
+  await composer.focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(chatTab).toHaveAttribute("aria-selected", "true");
+  await expect(composer).toBeFocused();
+});
+
+test("the note recovers its draft and resolves a concurrent edit", async ({ page }, { project }) => {
+  const participant = `personal-note-editor-${project.name}`;
+  const { app, headers } = await enter(page, participant);
+  await app.getByRole("button", { name: "Området mitt", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const noteTab = app.getByRole("tab", { name: "Notat", exact: true });
+  const note = app.locator(".sp-personal-note");
+  await noteTab.click();
   await note.getByRole("button", { name: "Rediger", exact: true }).click();
   const editor = note.getByRole("textbox", { name: "Notat i Markdown" });
   await editor.fill("# Mi sjekkliste\n\n- [x] Prøvd");
-  await note.getByRole("button", { name: "Maksimer" }).click();
-  await expect(composer).toBeHidden();
   await note.getByRole("button", { name: "Vis", exact: true }).click();
   await expect(note.getByRole("heading", { name: "Mi sjekkliste" })).toBeVisible();
-  await note.getByRole("button", { name: "Minimer" }).click();
-  await expect(composer).toBeVisible();
 
   const endpoint = `/api/v1/me/personal-space/note?participant=${participant}`;
   const otherEdit = await page.request.put(endpoint, { headers, data: { markdown: "Nyare versjon", revision: 0 } });
   expect(await otherEdit.json()).toEqual({ markdown: "Nyare versjon", revision: 1 });
   await page.reload();
+  await noteTab.click();
   await expect(editor).toHaveValue("# Mi sjekkliste\n\n- [x] Prøvd");
   await expect(note.getByText(/Notatet vart endra ein annan stad/)).toBeVisible();
   await note.getByRole("button", { name: "Lagre mitt utkast" }).click();
   await expect(note.getByText("Notatet er lagra.", { exact: true })).toBeVisible();
   await page.reload();
+  await noteTab.click();
   await expect(note.getByRole("heading", { name: "Mi sjekkliste" })).toBeVisible();
 
   const foreign = await page.request.get("/api/v1/me/personal-space/note?participant=personal-note-outsider", { headers });

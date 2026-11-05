@@ -35,7 +35,7 @@ export interface ConversationHostBindings {
   readonly renderGroupActions?: (group: ConversationSnapshotGroup) => ReactNode;
   readonly renderConversationAction?: (conversation: ConversationSnapshotGroup["conversations"][number]) => ReactNode;
   readonly contextActions?: ReactNode;
-  readonly note?: ReactNode;
+  readonly personalSpace?: ConversationViewProps["personalSpace"];
   readonly emptyContent?: ReactNode;
   readonly onFindChannels?: () => void;
   readonly onInvitation?: () => void;
@@ -84,7 +84,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
   return {
     runtime: host.runtime, theme: host.theme, view: host.view, pageKey: host.pageKey, header: host.header,
     title: snapshot.title, context, emptyContent: host.emptyContent,
-    contextActions: host.contextActions, onBack: host.onBack, note: host.note,
+    contextActions: host.contextActions, onBack: host.onBack, personalSpace: host.personalSpace, isPersonal: channel?.is_personal,
     navigation: {
       favorites: host.favorites,
       directoryReady: snapshot.directory.ready, directoryError: snapshot.directory.error,

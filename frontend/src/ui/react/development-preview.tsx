@@ -58,7 +58,7 @@ import { AgentPlaceCard } from "./agent-place-card";
 import type { AgentGeoapifyRollApi } from "../../agent-geoapify-roll";
 import { AgentGeoapifyCard } from "./agent-geoapify-card";
 import type { PersonalSpaceApi } from "../../personal-space";
-import { PersonalNotePanel, PersonalSpaceShortcut } from "./personal-space";
+import { PersonalSpaceShortcut } from "./personal-space";
 
 const PLACE_LOOKUP_MARKER = "Opne stadssøket for ferske barforslag.";
 
@@ -558,6 +558,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let renderedOwner = host.community.selfId();
   let renderedOwnerEpoch = 0;
   let renderedEntry = "";
+  let personalLatestRequest = 0;
   let memberFocus: { owner: string; channelId: string; historyEntryId: string } | null = null;
   let threadFocus: { owner: string | null; messageId: string; element: HTMLElement } | null = null;
   const reactionPicker = createPreviewReactionPicker(host);
@@ -662,6 +663,13 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       revealMessageId: scrollIntent.threadRevealMessageId
     });
     const personal = !!snapshot.activeChannel?.is_personal;
+    const goToLatest = () => {
+      if (personal) {
+        personalLatestRequest++;
+        update();
+      }
+      channelScroll.goToLatest();
+    };
     const compactContext = personal ? "Privat chatlogg" : snapshot.activeChannel?.is_direct ? snapshot.activeChannel.direct_user_id ? "Direkte" : "Gruppesamtale" : snapshot.activeChannel?.circle_id
       ? snapshot.circles.find(circle => circle.id === snapshot.activeChannel?.circle_id)?.name ?? "Vennekrets"
       : snapshot.activeChannel ? "Felles" : undefined;
@@ -733,7 +741,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     ownerId: owner ?? undefined,
     personalShortcut: owner && <PersonalSpaceShortcut key={`${owner}:${accountEpoch}`} active={personal && historyState.target?.kind === "conversation"}
       ready={snapshot.directory.ready} onOpen={() => host.openPersonalSpace(owner)} />,
-    note: owner && <PersonalNotePanel key={`${owner}:${accountEpoch}`} active={personal} owner={owner} api={host.personalSpace} />,
+    personalSpace: owner ? { owner, accountKey: `${owner}:${accountEpoch}`, api: host.personalSpace,
+      chatKey: `${owner}:${accountEpoch}:${historyState.entryId}:${personalLatestRequest}` } : undefined,
     favorites: host.favorites,
     directoryScope: historyState.target?.kind === "directory" ? historyState.target.scope : undefined,
     onDirectoryScopeChange: scope => host.navigateView({ kind: "directory", scope }),
@@ -750,7 +759,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       {host.hasLegacyDraft() && <Status>Eit eldre lokalt utkast manglar kontomerking. <Button onClick={host.recoverLegacyDraft}>Hent eldre utkast</Button></Status>}
       <HeaderActions navigationKey={historyState.entryId} connection={host.connectionHealth()}
         onConversations={backToConversations}
-        onLatest={channelScroll.goToLatest}
+        onLatest={goToLatest}
         onSettings={() => host.navigateView({ kind: "management", page: { kind: "overview" } })}
         primary={<><ViewHistoryControls history={host.viewHistory} snapshot={snapshot}
         onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />
@@ -806,7 +815,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       key={`${host.community.selfId() ?? ""}:${group.id}`} group={group} snapshot={snapshot} host={host.community}
       onNavigate={page => host.navigateView({ kind: "management", page })}
       onSelect={channelId => { reactionPicker.close(); host.navigateView({ kind: "conversation", channelId }); view = "detail"; update(); }} />,
-    contextActions: <><Button variant="quiet" onClick={channelScroll.goToLatest}>Gå til siste</Button><ThreadDirectoryTrigger snapshot={snapshot} onOpen={openThreadDirectory} />{directMembers()}{!personal && <ChannelActions snapshot={snapshot} host={host} onDetails={openDetails} />}</>,
+    contextActions: <><Button variant="quiet" onClick={goToLatest}>Gå til siste</Button><ThreadDirectoryTrigger snapshot={snapshot} onOpen={openThreadDirectory} />{directMembers()}{!personal && <ChannelActions snapshot={snapshot} host={host} onDetails={openDetails} />}</>,
     renderConversationAction: conversation => conversation.notifications ? <ChannelNotificationControl
       channelId={conversation.id} channelName={conversation.channel.name}
       enabled={conversation.notifications.enabled} pending={conversation.notifications.pending}

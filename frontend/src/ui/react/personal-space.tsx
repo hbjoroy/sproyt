@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { Button, Status } from "@sproyt/ui/react";
 import { HttpError } from "../../api";
 import type { PersonalNote, PersonalSpaceApi } from "../../personal-space";
@@ -22,7 +23,89 @@ export function PersonalSpaceShortcut({ active, ready, onOpen }: {
   </div>;
 }
 
-export function PersonalNotePanel({ active, api, owner }: { active: boolean; api: PersonalSpaceApi; owner: string }) {
+export interface PersonalSpaceLayout {
+  readonly owner: string;
+  readonly accountKey: string;
+  readonly api: PersonalSpaceApi;
+  readonly chatKey: string;
+}
+
+export function PersonalSpacePanes({ space, active, chat }: {
+  space?: PersonalSpaceLayout; active: boolean; chat: ReactNode;
+}) {
+  const id = useId();
+  const container = useRef<HTMLDivElement>(null);
+  const chatPane = useRef<HTMLDivElement>(null);
+  const notePane = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(false);
+  const chatKey = space?.chatKey;
+  const [selection, setSelection] = useState<{ chatKey: typeof chatKey; pane: "chat" | "note" | "expanded" }>({ chatKey, pane: "chat" });
+  const pane = selection.chatKey === chatKey ? selection.pane : "chat";
+  if (selection.chatKey !== chatKey) setSelection({ chatKey, pane });
+  const compact = active && !wide;
+  const expanded = active && wide && pane === "expanded";
+  const tab = pane === "chat" ? "chat" : "note";
+
+  useLayoutEffect(() => {
+    const element = container.current;
+    if (!active || !element) return;
+    let wasWide = false;
+    function measure(width: number) {
+      if (width === 0) return;
+      // Allow room for the note alongside a usable timeline and composer.
+      const nextWide = width >= 780;
+      if (wasWide && !nextWide) {
+        const focused = document.activeElement;
+        if (chatPane.current?.contains(focused)) {
+          setSelection(current => current.pane === "chat" ? current : { ...current, pane: "chat" });
+        } else if (notePane.current?.contains(focused)) {
+          setSelection(current => current.pane === "chat" ? { ...current, pane: "note" } : current);
+        }
+      }
+      wasWide = nextWide;
+      setWide(nextWide);
+    }
+    measure(element.getBoundingClientRect().width);
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) measure(entry.contentRect.width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [active]);
+
+  function tabKey(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? "chat" : event.key === "End" ? "note" : tab === "chat" ? "note" : "chat";
+    setSelection({ chatKey, pane: next });
+    document.getElementById(`${id}-${next}-tab`)?.focus();
+  }
+
+  return <div className="sp-conversation-panes" ref={container}
+    data-personal-layout={active ? wide ? "wide" : "compact" : undefined} data-note-expanded={expanded || undefined}>
+    {compact && <div className="sp-product-nav-tabs sp-personal-tabs" role="tablist" aria-label="Området mitt">
+      {(["chat", "note"] as const).map(value => <button key={value} type="button" role="tab"
+        id={`${id}-${value}-tab`} aria-selected={tab === value} aria-controls={`${id}-${value}-panel`}
+        tabIndex={tab === value ? 0 : -1} onKeyDown={tabKey} onClick={() => setSelection({ chatKey, pane: value })}>
+        {value === "chat" ? "Chatlogg" : "Notat"}
+      </button>)}
+    </div>}
+    <div className="sp-conversation-chat" ref={chatPane} hidden={expanded || (compact && tab !== "chat")}
+      role={compact ? "tabpanel" : undefined} id={`${id}-chat-panel`} aria-labelledby={compact ? `${id}-chat-tab` : undefined}>
+      {chat}
+    </div>
+    <div className="sp-conversation-note" ref={notePane} hidden={!active || (compact && tab !== "note")}
+      role={compact ? "tabpanel" : undefined} id={`${id}-note-panel`} aria-labelledby={compact ? `${id}-note-tab` : undefined}>
+      {space && <PersonalNotePanel key={space.accountKey} active={active} api={space.api} owner={space.owner}
+        expanded={expanded} onToggleExpanded={active && wide
+          ? () => setSelection({ chatKey, pane: expanded ? "note" : "expanded" }) : undefined} />}
+    </div>
+  </div>;
+}
+
+function PersonalNotePanel({ active, api, owner, expanded, onToggleExpanded }: {
+  active: boolean; api: PersonalSpaceApi; owner: string; expanded: boolean; onToggleExpanded?: () => void;
+}) {
   const heading = useId();
   const editor = useRef<HTMLTextAreaElement>(null);
   const loading = useRef(false);
@@ -30,7 +113,6 @@ export function PersonalNotePanel({ active, api, owner }: { active: boolean; api
   const [note, setNote] = useState<PersonalNote | null>(null);
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [draftStorageFailed, setDraftStorageFailed] = useState(false);
@@ -126,14 +208,13 @@ export function PersonalNotePanel({ active, api, owner }: { active: boolean; api
     }
   }
 
-  return <section className="sp-personal-note" hidden={!active} data-expanded={active && expanded}
-    aria-labelledby={heading}>
+  return <section className="sp-personal-note" aria-labelledby={heading}>
     <div className="sp-personal-note-header">
       <h2 id={heading}>Notat</h2>
       <div className="sp-personal-note-actions">
         {note && <Button variant="quiet" disabled={saving} onClick={() => setEditing(!editing)}>{editing ? "Vis" : "Rediger"}</Button>}
-        <Button variant="quiet" aria-expanded={expanded} aria-controls={`${heading}-content`}
-          onClick={() => setExpanded(!expanded)}>{expanded ? "Minimer" : "Maksimer"}</Button>
+        {onToggleExpanded && <Button variant="quiet" aria-expanded={expanded} aria-controls={`${heading}-content`}
+          onClick={onToggleExpanded}>{expanded ? "Minimer" : "Maksimer"}</Button>}
         {note && dirty && <Button variant="primary" busy={saving} disabled={tooLong || !!conflict}
           onClick={() => void save(note.revision)}>Lagre</Button>}
       </div>
