@@ -81,26 +81,29 @@ export function PersonalSpacePanes({ space, active, chat }: {
     document.getElementById(`${id}-${next}-tab`)?.focus();
   }
 
-  return <div className="sp-conversation-panes" ref={container}
-    data-personal-layout={active ? wide ? "wide" : "compact" : undefined} data-note-expanded={expanded || undefined}>
-    {compact && <div className="sp-product-nav-tabs sp-personal-tabs" role="tablist" aria-label="Området mitt">
-      {(["chat", "note"] as const).map(value => <button key={value} type="button" role="tab"
-        id={`${id}-${value}-tab`} aria-selected={tab === value} aria-controls={`${id}-${value}-panel`}
-        tabIndex={tab === value ? 0 : -1} onKeyDown={tabKey} onClick={() => setSelection({ chatKey, pane: value })}>
-        {value === "chat" ? "Chatlogg" : "Notat"}
-      </button>)}
-    </div>}
-    <div className="sp-conversation-chat" ref={chatPane} hidden={expanded || (compact && tab !== "chat")}
-      role={compact ? "tabpanel" : undefined} id={`${id}-chat-panel`} aria-labelledby={compact ? `${id}-chat-tab` : undefined}>
-      {chat}
+  return <>
+    {!active && chat}
+    <div className="sp-personal-panes" ref={container} hidden={!active}
+      data-personal-layout={active ? wide ? "wide" : "compact" : undefined} data-note-expanded={expanded || undefined}>
+      {compact && <div className="sp-product-nav-tabs sp-personal-tabs" role="tablist" aria-label="Området mitt">
+        {(["chat", "note"] as const).map(value => <button key={value} type="button" role="tab"
+          id={`${id}-${value}-tab`} aria-selected={tab === value} aria-controls={`${id}-${value}-panel`}
+          tabIndex={tab === value ? 0 : -1} onKeyDown={tabKey} onClick={() => setSelection({ chatKey, pane: value })}>
+          {value === "chat" ? "Chatlogg" : "Notat"}
+        </button>)}
+      </div>}
+      {active && <div className="sp-personal-chat-pane" ref={chatPane} hidden={expanded || (compact && tab !== "chat")}
+        role={compact ? "tabpanel" : undefined} id={`${id}-chat-panel`} aria-labelledby={compact ? `${id}-chat-tab` : undefined}>
+        {chat}
+      </div>}
+      <div className="sp-personal-note-pane" ref={notePane} hidden={compact && tab !== "note"}
+        role={compact ? "tabpanel" : undefined} id={`${id}-note-panel`} aria-labelledby={compact ? `${id}-note-tab` : undefined}>
+        {space && <PersonalNotePanel key={space.accountKey} active={active} api={space.api} owner={space.owner}
+          expanded={expanded} onToggleExpanded={active && wide
+            ? () => setSelection({ chatKey, pane: expanded ? "note" : "expanded" }) : undefined} />}
+      </div>
     </div>
-    <div className="sp-conversation-note" ref={notePane} hidden={!active || (compact && tab !== "note")}
-      role={compact ? "tabpanel" : undefined} id={`${id}-note-panel`} aria-labelledby={compact ? `${id}-note-tab` : undefined}>
-      {space && <PersonalNotePanel key={space.accountKey} active={active} api={space.api} owner={space.owner}
-        expanded={expanded} onToggleExpanded={active && wide
-          ? () => setSelection({ chatKey, pane: expanded ? "note" : "expanded" }) : undefined} />}
-    </div>
-  </div>;
+  </>;
 }
 
 function PersonalNotePanel({ active, api, owner, expanded, onToggleExpanded }: {

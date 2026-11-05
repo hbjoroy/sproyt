@@ -310,7 +310,7 @@ export function ConversationView(props: ConversationViewProps) {
             <div className="sp-conversation-toolbar">{props.contextActions}</div>
           </header>}
           <PersonalSpacePanes space={props.personalSpace} active={Boolean(props.personalSpace && props.isPersonal)}
-            chat={!props.emptyContent && <><ConversationTimeline {...props.timeline} />{props.composer}</>} />
+            chat={props.emptyContent == null && <><ConversationTimeline {...props.timeline} />{props.composer}</>} />
           {props.emptyContent}
         </section>
         {props.thread}
