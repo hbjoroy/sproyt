@@ -192,8 +192,8 @@ changed in this audit.
 
 ## Iteration budget
 
-These initial warm-cache targets for PR feedback on GitHub-hosted runners
-will be evaluated against measured results in #350.
+These warm-cache targets apply to PR feedback on GitHub-hosted runners.
+See [measured iterations](#measured-iterations) for the #350 samples.
 
 | PR class | Median elapsed to PR feedback | Median total runner time |
 | --- | ---: | ---: |
@@ -219,3 +219,101 @@ cache storage pressure, and the API did not retain a verified eviction order.
 The workflow caches Cargo dependencies without workspace binaries, with only
 main writing those archives. Separate ARM64 web and worker BuildKit scopes
 retain intermediate layers. Keep cache state visible when comparing runs.
+
+## Measured iterations
+
+Run durations below come from the GitHub Actions job API for each run's latest
+attempt. Wall time runs from workflow creation to the last executed job
+completing. Initial queue runs from creation to the first job starting and
+excludes trigger delays. Maximum job queue uses each job's own creation time,
+which separates prerequisite waits. Runner time sums executed job durations,
+excluding skips. Measured setup sums the time before the browser test step in
+each browser job and explicit checkout, service, toolchain and cache setup
+steps elsewhere. Installation inside combined build/test steps is included in
+runner time and has no separate setup measurement. Revisions are the
+checked-out merge SHA for PRs and the checkout SHA for dispatches. Cache warmth
+refers to observed restores of Cargo dependencies, npm and Playwright where
+selected. BuildKit is tracked separately.
+
+| Actual run | Checkout / selection base | Selected checks and cache evidence | Wall | Runner-min | Queue initial / max job | Setup total |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| [Documentation PR](https://github.com/hbjoroy/sproyt/actions/runs/41991336688) | `12ff651` / `f1a6393` | Selector, provider contracts and browser gate. App caches unused. | 0:28 | 0.4 | 2 / 2 s | 5 s |
+| [Shared CSS PR](https://github.com/hbjoroy/sproyt/actions/runs/41795884569) | `c81d5dd` / `55f8f94` | Frontend and layout, four browser jobs. Cargo, npm and both engines restored. | 5:45 | 13.5 | 3 / 2 s | 203 s |
+| [Shared navigation PR](https://github.com/hbjoroy/sproyt/actions/runs/42001790199) | `f5f29f0` / `a8786c7` | Frontend and full browser, six jobs. Cargo, npm and both engines restored. | 11:45 | 45.2 | 2 / 3 s | 307 s |
+| [Cold delivery](https://github.com/hbjoroy/sproyt/actions/runs/40768799498) | `982cc9a` / `73672da` | Full browser, audit and delivery. Browser caches missed and ARM64 dependencies compiled without reusable BuildKit layers. | 19:28 | 61.9 | 3 / 3 s | 433 s |
+| [Scoped publication](https://github.com/hbjoroy/sproyt/actions/runs/42003483944) | `6147980` / `f1a6393` | Frontend, full browser, audit and delivery. Cargo, npm and browsers restored. BuildKit reused layers and rebuilt application code. | 12:21 | 50.2 | 5 / 4 s | 306 s |
+| [UI probe, earlier policy](https://github.com/hbjoroy/sproyt/actions/runs/42037942044) | `8b2a36b` / `02fd556` | Frontend and full browser, six jobs. Cargo, npm and both engines restored. | 12:14 | 43.5 | 3 / 2 s | 280 s |
+| [UI probe, policy at `861a903`](https://github.com/hbjoroy/sproyt/actions/runs/42037947947) | `5affa6c` / `861a903` | Frontend, invitation contracts and smoke in Chromium, touch smoke in WebKit. Cargo, npm and both engines restored. | 9:08 | 11.2 | 2 / 3 s | 468 s |
+| [Backend weather probe](https://github.com/hbjoroy/sproyt/actions/runs/42037973984) | `ecdfc02` / `861a903` | Whole Rust and PostgreSQL passed. Cargo and npm restored in both jobs. | 5:58 | 8.7 | 3 / 6 s | 63 s |
+
+The documentation sample met its 3 minute and 5 runner-minute targets. The
+shared navigation PR illustrates the runner cost of full browser coverage.
+The CSS and cold delivery runs serve as context for their respective paths.
+
+The controlled UI comparison uses the same one-line comment in
+`invitation-card.tsx` and identical application and test trees based on
+`861a903`. The earlier-policy base restores the workflow and selector from
+`c1fc39b`. The `861a903` policy uses #348 and #349. Both probes are PR
+checks without publication.
+
+Both UI runs passed their selected gates with the same cache keys restored.
+Wall time fell by 3:06 (25%) and runner time by 32.4 minutes (74%). The
+bounded sample met the 12 minute and 25 runner-minute targets. One pair
+measures this invitation-card change. The median for bounded UI PRs needs
+more samples. WebKit's install step took 367 seconds despite a browser cache
+restore, and its selected test step took 18 seconds. The bounded selection
+already uses one job per engine, with no extra per-engine shards to remove.
+Measured setup accounted for 70% of this run's runner time. Retain both engine
+checks and revisit dependency installation if this delay recurs.
+
+The backend probe uses a comment-only change in `src/chatbot/weather.rs`.
+The earlier selector evaluated locally against that path selects Rust,
+PostgreSQL, codec and operator checks. The hosted run at `861a903` retained Rust and
+PostgreSQL and explicitly excluded codec, operator, auth, recovery and browser
+work. The earlier selection provides a gate comparison. The backend timing
+sample covers the workflow at `861a903`.
+
+## Delivery verification evidence
+
+- **Publication and promotion.** The scoped publication above checked the
+  complete 12-file interval at the exact merged revision and recorded immutable
+  web and worker tags. PostgreSQL and recovery were explicitly excluded.
+  [Canary #315](https://github.com/hbjoroy/rocket-applications/pull/315) and
+  [production #316](https://github.com/hbjoroy/rocket-applications/pull/316)
+  converged on the same chart pin and published web digest
+  `sha256:bafe6e5da791a1dd840980f62e415404101f3c9d070f9675b9dafcc75820b80d`.
+  Live Argo and public readiness/revision checks verified one Canary and two
+  production web replicas. Canary's successful operation used an earlier
+  revision with an identical Helm tree and converged on the expected pin.
+  Both used the existing shared worker. The
+  production GitOps change also advanced its separately verified migration pin
+  for the existing shared schema.
+- **Failure handling and baselines.** A
+  [real publication attempt](https://github.com/hbjoroy/sproyt/actions/runs/41655794377)
+  passed the browser shards but skipped publication after the worker image
+  scan failed. The [next run](https://github.com/hbjoroy/sproyt/actions/runs/41659894821)
+  passed after the [Expat fix](https://github.com/hbjoroy/sproyt/pull/328).
+  Local evaluation of the browser gate shell and publication condition at `861a903`
+  covered eight and 43 cases respectively, including selected failure,
+  cancellation and unexpected skip. Local selector checks against actual Git
+  history selected the bounded suite with a valid ancestor and full checks for
+  missing, malformed, unavailable and non-ancestor baselines.
+- **Weekly regression.** The
+  [2 November scheduled run](https://github.com/hbjoroy/sproyt/actions/runs/41436299970)
+  passed all six browser shards, Rust, PostgreSQL, recovery, codec, operations,
+  dependency audit and ARM64 delivery. Both publish jobs skipped. This run
+  predates #348 and #349. A later
+  [broad publication](https://github.com/hbjoroy/sproyt/actions/runs/42036588378)
+  ran the updated workflow for the 22-file interval from `6147980` to
+  `861a903`. The selector chose all risk gates from the valid baseline.
+  All gates and publication passed in 16:24 wall time and 62.7 runner-minutes.
+
+The measurements above pin the policy before
+[#367](https://github.com/hbjoroy/sproyt/pull/367), which subsequently separated
+recovery selection from full application regression. Browser selection is
+unchanged. At `97ec380`, missing or invalid baselines select full application
+checks; recovery follows the independent decision described above.
+Ten local Git/selector probes passed for this revision, including baseline
+fallback, independent forced recovery and weekly recovery. The eight browser
+gate cases and 43 publication-condition cases also passed: selected recovery
+failure, cancellation or skip still blocks publication.
