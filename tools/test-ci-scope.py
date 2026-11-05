@@ -1,7 +1,10 @@
 """Regression checks for omissions that could weaken release validation."""
+from contextlib import chdir
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +20,7 @@ class ScopeTests(unittest.TestCase):
             result = ci_scope.scope(paths)
             self.assertEqual((result['browser'], result['backend'], result['frontend'], result['recovery']),
                              ('none', 'false', 'false', 'false'), paths)
+            self.assertEqual(result['auth'], 'true', paths)
         result = ci_scope.scope(sorted(ci_scope.IDENTITY | ci_scope.POLICY))
         self.assertEqual(result['browser'], 'none')
         self.assertEqual(ci_scope.scope(['deploy/authentik/unknown.yaml'])['browser'], 'full')
@@ -33,6 +37,66 @@ class ScopeTests(unittest.TestCase):
         for paths in (['src/imagegen.rs'], ['src/chatbot/weather_followup.rs']):
             self.assertEqual(ci_scope.scope(paths)['browser'], 'none')
             self.assertEqual(ci_scope.scope(paths)['recovery'], 'false')
+
+    def test_prompt_interpretation_runs_the_whole_rust_gate_without_unrelated_jobs(self):
+        result = ci_scope.scope(['src/imagegen_prompt.rs'])
+        self.assertEqual(result['browser'], 'none')
+        self.assertEqual(result['backend'], 'true')
+        for flag in ('postgres', 'recovery', 'auth', 'operations', 'codec'):
+            self.assertEqual(result[flag], 'false', flag)
+
+    def test_backend_feature_retains_postgres_without_codec_or_operational_checks(self):
+        result = ci_scope.scope(['src/chatbot/weather_followup.rs'])
+        self.assertEqual((result['backend'], result['postgres']), ('true', 'true'))
+        self.assertEqual((result['codec'], result['operations']), ('false', 'false'))
+
+    def test_codec_selection_follows_preview_and_media_runtime_dependencies(self):
+        for path in ('src/media_store/preview.rs', 'src/media_worker.rs', 'tools/verify-media-runtime.sh'):
+            self.assertEqual(ci_scope.scope([path])['codec'], 'true', path)
+
+    def test_standalone_operator_and_codec_contracts_keep_distinct_gates(self):
+        operations = ci_scope.scope(['tools/verify-production-rollout.sh'])
+        codec = ci_scope.scope(['tools/verify-media-runtime.sh'])
+        self.assertEqual((operations['operations'], operations['codec']), ('true', 'false'))
+        self.assertEqual((codec['operations'], codec['codec']), ('false', 'true'))
+        for result in (operations, codec):
+            self.assertEqual(result['browser'], 'none')
+            for flag in ('frontend', 'backend', 'postgres', 'recovery'):
+                self.assertEqual(result[flag], 'false', flag)
+        combined = ci_scope.scope(['tools/mcp-load.mjs', 'tools/verify-media-runtime.sh'])
+        self.assertEqual((combined['operations'], combined['codec']), ('true', 'true'))
+        oidc = ci_scope.scope(['tools/verify-oidc-provider.sh'])
+        self.assertEqual((oidc['auth'], oidc['operations'], oidc['backend'], oidc['postgres']),
+                         ('true', 'true', 'false', 'false'))
+
+    def test_recovery_fixture_change_exercises_restore_without_the_postgres_repository_job(self):
+        result = ci_scope.scope(['tools/verify-media-recovery.sql'])
+        self.assertEqual((result['recovery'], result['postgres'], result['backend']), ('true', 'false', 'false'))
+        self.assertEqual((result['browser'], result['frontend'], result['codec'], result['operations']),
+                         ('none', 'false', 'false', 'false'))
+
+    def test_auth_source_and_adapter_keep_browser_and_postgres_integration(self):
+        for path in ('src/auth.rs', 'src/web/auth.rs', 'src/native_sessions.rs'):
+            with self.subTest(path=path):
+                result = ci_scope.scope([path])
+                self.assertEqual((result['auth'], result['backend'], result['postgres']), ('true', 'true', 'true'))
+                self.assertEqual(result['browser'], 'full')
+                self.assertEqual(result['codec'], 'false')
+
+    def test_migration_combines_with_auth_and_codec_without_losing_any_gate(self):
+        result = ci_scope.scope(['migrations/postgres/0072_personal_spaces.sql', 'src/auth.rs', 'src/media_store/preview.rs'])
+        for flag in ('auth', 'backend', 'postgres', 'recovery', 'codec'):
+            self.assertEqual(result[flag], 'true', flag)
+        self.assertEqual(result['browser'], 'full')
+
+    def test_dependencies_unknown_paths_and_missing_baseline_run_every_risk_gate(self):
+        for paths, force_full in ((['Cargo.lock'], False), (['new-runtime.cfg'], False),
+                                  (['src/unclassified.rs'], False), ([], True)):
+            with self.subTest(paths=paths, force_full=force_full):
+                result = ci_scope.scope(paths, force_full)
+                self.assertEqual(result['browser'], 'full')
+                for flag in ('auth', 'backend', 'postgres', 'recovery', 'operations', 'codec'):
+                    self.assertEqual(result[flag], 'true', flag)
 
     def test_shared_ui_and_http_contracts_get_complete_browser_suite(self):
         for path in ('frontend/src/app.ts', 'frontend/src/session.ts', 'frontend/src/connection.ts',
@@ -228,20 +292,52 @@ class ScopeTests(unittest.TestCase):
     def test_pull_request_and_push_use_the_event_base(self):
         with patch.object(ci_scope.subprocess, 'run') as run, patch.object(ci_scope.subprocess, 'check_output') as diff:
             run.return_value.returncode = 0
-            diff.return_value = b'src/imagegen.rs\0'
+            diff.return_value = b'M\0src/imagegen.rs\0'
             for event, payload in (('pull_request', {'pull_request': {'base': {'sha': 'b' * 40}}}),
                                    ('push', {'before': 'b' * 40})):
                 self.assertEqual(ci_scope.change_range(event, payload, '', '', False), (['src/imagegen.rs'], False))
                 self.assertIn('b' * 40, diff.call_args.args[0])
 
-    def test_complete_range_includes_deletions_and_renamed_originals(self):
+    def test_complete_range_preserves_risky_path_statuses(self):
         with patch.object(ci_scope.subprocess, 'run') as run, patch.object(ci_scope.subprocess, 'check_output') as diff:
             run.return_value.returncode = 0
-            diff.return_value = b'migrations/0057_old.sql\0src/imagegen.rs\0'
-            paths, full = ci_scope.change_range('workflow_dispatch', {}, '', 'a' * 40, False)
-            self.assertFalse(full)
-            self.assertEqual(ci_scope.scope(paths)['recovery'], 'true')
-            self.assertIn('--no-renames', diff.call_args.args[0])
+            for status in (b'A', b'D', b'T'):
+                with self.subTest(status=status):
+                    diff.return_value = status + b'\0src/imagegen_prompt.rs\0M\0src/imagegen.rs\0'
+                    paths, full = ci_scope.change_range('workflow_dispatch', {}, '', 'a' * 40, False)
+                    self.assertEqual(paths, ['src/imagegen_prompt.rs', 'src/imagegen.rs'])
+                    self.assertTrue(full)
+                    self.assertEqual(ci_scope.scope(paths, full)['recovery'], 'true')
+            self.assertIn('--name-status', diff.call_args.args[0])
+
+    def test_malformed_name_status_range_fails_closed(self):
+        with patch.object(ci_scope.subprocess, 'run') as run, patch.object(ci_scope.subprocess, 'check_output') as diff:
+            run.return_value.returncode = 0
+            for payload in (b'M\0src/auth.rs', b'R100\0src/old.rs\0src/new.rs\0', b'M\0\0'):
+                with self.subTest(payload=payload):
+                    diff.return_value = payload
+                    self.assertEqual(ci_scope.change_range('workflow_dispatch', {}, '', 'a' * 40, False), ([], True))
+
+    def test_git_range_reports_both_ends_of_backend_rename(self):
+        def git(*args):
+            return subprocess.check_output(['git', *args], text=True).strip()
+
+        with TemporaryDirectory() as directory, chdir(directory):
+            git('init', '--quiet')
+            source = Path('src/imagegen_prompt.rs')
+            source.parent.mkdir()
+            source.write_text('fn prompt() {}\n', encoding='utf-8')
+            git('add', '--', str(source))
+            git('-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid',
+                'commit', '--quiet', '--no-gpg-sign', '-m', 'Baseline')
+            base = git('rev-parse', 'HEAD')
+            target = Path('src/new_prompt.rs')
+            git('mv', '--', str(source), str(target))
+            git('-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid',
+                'commit', '--quiet', '--no-gpg-sign', '-m', 'Rename')
+            paths, full = ci_scope.change_range('workflow_dispatch', {}, '', base, False)
+            self.assertEqual(set(paths), {source.as_posix(), target.as_posix()})
+            self.assertTrue(full)
 
 
 if __name__ == '__main__':

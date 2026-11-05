@@ -16,9 +16,9 @@ on the PR and the release. Every selected browser job uses the real server.
 | Documentation and UI skill bundle | Review instructions, examples and links. | Selector tests and identity-provider contracts. | No new application image is normally needed. If included in an application release, the other changes determine scope. |
 | Local presentation | Typecheck/build and exercise the affected component or browser behavior. Include compact layout, keyboard or visual checks when affected. | Frontend checks and the exact mapped component contracts plus smoke. Unmapped components get full browser coverage. | Confirm the relevant behavior on the release revision. |
 | Global CSS | Check shared layouts, responsive breakpoints, focus, scrolling and touch in the affected views. | Recognized CSS-only changes get the layout suite in Chromium and its maintained WebKit subset. Legacy assets or mixed unclassified runtime code can select full. | Preserve cross-browser layout and interaction coverage, including affected mobile paths. |
-| Feature logic | Exercise feature rules, failure cases and the affected integration boundary. | Declared frontend features select their suites and smoke (imagegen has its own suite). Backend changes select Rust, PostgreSQL, codec and operational contracts, with browser coverage for shared contracts and recovery for selected paths. | Include the affected end-to-end flow where the change crosses a client/server boundary. |
+| Feature logic | Exercise feature rules, failure cases and the affected integration boundary. | Declared frontend features select their suites and smoke (imagegen has its own suite). Backend changes select the whole Rust gate. Separate PostgreSQL, codec and operator checks follow the affected contracts. | Include the affected end-to-end flow where the change crosses a client/server boundary. |
 | Shared client state | Test navigation, focus, scrolling, drafts, reconnect or account isolation as affected. | Shared/unclassified frontend code selects full browser regression. Shared Rust/protocol changes can also select backend and recovery checks. | Keep broad browser coverage for shared state, transport and protocol changes. |
-| Auth and access | Test both allowed and denied paths, session recovery and account isolation. Use the configured provider where integration matters. | Provider-only paths select provider contracts. Application auth follows path rules, so direct changes to `src/auth.rs` can select backend checks without browser checks. | Verify affected session, authorization and provider behavior explicitly. Add relevant browser/integration evidence when current automation omits it. |
+| Auth and access | Test both allowed and denied paths, session recovery and account isolation. Use the configured provider where integration matters. | Provider-only paths select provider contracts. Application auth and access paths select full browser regression plus the Rust and PostgreSQL integration gates. | Verify affected session, authorization and provider behavior, including live-provider evidence when the change affects that boundary. |
 | Persistence and migrations | Exercise old and new data, upgrade compatibility, failure recovery and restore as affected. | Migration, database, domain and selected runtime paths get Rust, PostgreSQL and backup/restore. Shared paths also select full browser checks. | Verify forward migration, compatibility with the rollback image and integrity after restore when the change affects durable data. |
 | Build and runtime | Check the changed build/runtime contract, including deploy configuration or operational scripts where affected. | Unknown build, dependency and configuration paths fall back to full. Explicit CI-policy-only, codec-only and dedicated native paths have narrower rules. | Retain delivery checks. Exercise actual rollout and rollback in isolation for changes that affect those paths. |
 
@@ -62,11 +62,30 @@ The selector now schedules three browser jobs for the thread stylesheet
 card (previously six each). Shared CSS still selects four jobs. These counts
 describe selection. CI duration is measured separately.
 
-[#349](https://github.com/hbjoroy/sproyt/issues/349) owns risk-based backend
-selection, including the auth coverage gap and the current coupling of codec
-and operational checks to every backend change. Until those changes land, use
-the actual selection and supply any missing required evidence. Run full
-regression when the change boundary or baseline is uncertain.
+### Backend risk selection
+
+The [#349](https://github.com/hbjoroy/sproyt/issues/349) gates follow these
+boundaries.
+
+- **Rust.** Keep formatting, Clippy and the locked all-targets, all-features
+  suite together for backend changes. Shared modules and integration tests cross
+  feature boundaries. The selector has no per-test Rust filters.
+- **PostgreSQL and recovery.** The repository job covers real PostgreSQL
+  contracts and upgrade compatibility. Keep it for backend changes unless a
+  reviewed file has no database integration, such as imagegen prompt
+  interpretation. Backup/restore follows persistence, migration and recovery paths.
+- **Auth and access.** CI keeps the provider contracts in Quality. The separate
+  OIDC discovery verifier fixture follows provider and application auth paths.
+  Changes to application auth and access code also
+  exercise real-server browser session, reconnect and permission coverage and
+  the existing native grant and repository contracts.
+- **Codec and operator checks.** Codec verification follows the isolated media
+  worker and its decoder, preview, dependency and build/runtime boundaries.
+  Operator fixtures follow changes to operational configuration, verifiers and
+  their app or MCP contracts.
+
+Use the union for mixed risks. Unknown changes and additions, deletions or type
+changes in backend files keep full regression. A rename contributes both paths.
 
 ## Delivery phases
 
@@ -102,9 +121,10 @@ regression when the change boundary or baseline is uncertain.
 ## Rollout and rollback
 
 - **Automated.** CI checks Helm lint, rendering and delivery contracts, and
-  backend selections exercise the production rollout verifier against fixtures.
-  Selected PostgreSQL jobs exercise repository, upgrade and backup/restore
-  contracts. These checks cover manifests, verifier behavior and data contracts.
+  selected operator checks exercise the production rollout verifier against
+  fixtures. The PostgreSQL repository and recovery jobs cover upgrade and
+  backup/restore contracts. These checks cover manifests, verifier behavior and
+  data contracts.
 - **Manual.** The release owner verifies actual Canary and production rollout
   using the [release checklist](release-checklist.md), records evidence and
   identifies the last verified rollback digest. Changes to the chart, migration,
