@@ -68,57 +68,14 @@ class BrowserShardTests(unittest.TestCase):
                     self.assertNotEqual(subprocess.run(['bash', '-e', '-c', script], env=env).returncode, 0)
         publish = workflow.split('  publish-image:\n', 1)[1].split('    runs-on:', 1)[0]
         for condition in ("needs.quality.result == 'success'", "needs.browser-gate.result == 'success'",
-                          "needs.delivery-arm64.result == 'success'", "needs.security-audit.result == 'success'"):
+                          "needs.delivery-arm64.result == 'success'", "needs.security-audit.result == 'success'",
+                          "needs.changes.outputs.backend == 'false' && needs.postgres-schema.result == 'skipped'",
+                          "needs.changes.outputs.recovery == 'false' && needs.recovery-drill.result == 'skipped'"):
             self.assertIn(condition, publish)
         self.assertIn('      - browser-gate\n', publish)
         self.assertNotIn('continue-on-error', browser)
         self.assertNotIn('branches: [main]', workflow.split('permissions:', 1)[0])
         self.assertIn('needs: [quality, browser-gate]', workflow.split('  publish-heart-image:\n', 1)[1])
-
-
-    def test_database_job_publication_guards_require_success_or_explicit_scope_skip(self):
-        workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
-        publish = workflow.split('  publish-image:\n', 1)[1].split('    runs-on:', 1)[0]
-        condition, dependencies = publish.split('    needs:\n', 1)
-        condition = ' '.join(condition.split())
-        for job, flag in (('postgres-schema', 'postgres'), ('recovery-drill', 'recovery')):
-            with self.subTest(job=job):
-                self.assertIn(f'{flag}: ${{{{ steps.scope.outputs.{flag} }}}}', workflow)
-                self.assertIn(f'      - {job}\n', dependencies)
-                # Read the workflow's accepted results and skip flag from its actual gate.
-                guard = re.search(rf"&& \(needs\.{job}\.result == '(\w+)' \|\| "
-                                  rf"\(needs\.changes\.outputs\.{flag} == '(\w+)' && "
-                                  rf"needs\.{job}\.result == '(\w+)'\)\)", condition)
-                self.assertIsNotNone(guard)
-                required_result, skip_flag, skip_result = guard.groups()
-                for scope, outcome, permits in (
-                        ('true', 'success', True), ('true', 'skipped', False),
-                        ('true', 'failure', False), ('true', 'cancelled', False),
-                        ('false', 'skipped', True), ('false', 'failure', False),
-                        ('false', 'cancelled', False), ('', 'skipped', False),
-                        ('unknown', 'skipped', False)):
-                    with self.subTest(scope=scope, outcome=outcome):
-                        allowed = outcome == required_result or (scope == skip_flag and outcome == skip_result)
-                        self.assertEqual(allowed, permits)
-                definition = workflow.split(f'  {job}:\n', 1)[1].split('    runs-on:', 1)[0]
-                self.assertIn(f"if: needs.changes.outputs.{flag} == 'true'", definition)
-
-    def test_quality_runs_whole_rust_and_independently_gates_specialized_contracts(self):
-        workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
-        quality = workflow.split('  quality:\n', 1)[1].split('  browser:\n', 1)[0]
-        for name, flag, command in (
-                ('Check formatting', 'backend', 'cargo fmt --all --check'),
-                ('Lint all targets and features', 'backend', 'cargo clippy --all-targets --all-features -- -D warnings'),
-                ('Run Rust tests', 'backend', 'cargo test --all-targets --all-features --locked'),
-                ('Verify isolated codec runtime and large-image preview', 'codec', 'bash tools/verify-media-runtime.sh'),
-                ('Validate OIDC verifier contract', 'auth', 'bash tools/test-oidc-provider-verifier.sh'),
-                ('Validate operational contracts', 'operations', 'node tools/test-mcp-load.mjs')):
-            with self.subTest(name=name):
-                step = quality.split(f'      - name: {name}\n', 1)[1].split('      - name:', 1)[0]
-                self.assertIn(f"if: needs.changes.outputs.{flag} == 'true'\n", step)
-                self.assertIn(command + '\n', step)
-        node = quality.split('      - name: Install pinned Node.js\n', 1)[1].split('      - name:', 1)[0]
-        self.assertIn("if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.operations == 'true'", node)
 
 
 if __name__ == '__main__':

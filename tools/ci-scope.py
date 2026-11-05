@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Choose CI checks from a complete, known change range."""
+"""Choose browser/recovery checks from a complete, known change range."""
 import argparse
 import json
 import os
@@ -26,51 +26,6 @@ IDENTITY = {'deploy/authentik/kustomization.yaml',
             'tools/test-invitation-canary-v2.py', 'tools/requirements-authentik-tests.txt',
             'tools/test-signup-recovery.py', 'tools/issue-signup-recovery-grant.py',
             'tools/verify-signup-recovery-runtime.py'}
-OIDC_TOOLS = {'tools/verify-oidc-provider.sh', 'tools/test-oidc-provider-verifier.sh',
-              'tools/fixtures/authentik-discovery.json'}
-OPERATIONS_TOOLS = {'tools/verify-production-rollout.sh', 'tools/test-production-rollout-verifier.sh',
-                    'tools/mcp-load.mjs', 'tools/test-mcp-load.mjs'}
-CODEC_TOOLS = {'tools/verify-media-runtime.sh'}
-RECOVERY_TOOLS = {'tools/seed-media-recovery.sql', 'tools/verify-media-recovery.sql',
-                  'tools/reset-agent-memory-after-restore.sql'}
-BACKEND_PREFIXES = ('src/', 'crates/', 'migrations/')
-BACKEND_FILES = {
-    'src/agent.rs', 'src/auth.rs', 'src/chat.rs', 'src/chatbot.rs', 'src/config.rs', 'src/enrollment.rs',
-    'src/github.rs', 'src/imagegen.rs', 'src/imagegen_prompt.rs', 'src/integration.rs', 'src/main.rs',
-    'src/media_store.rs', 'src/media_worker.rs', 'src/native_sessions.rs', 'src/notification.rs',
-    'src/operations.rs', 'src/process.rs', 'src/process_pilot.rs', 'src/protocol.rs', 'src/server.rs',
-    'src/work_items.rs', 'src/ws.rs',
-}
-BACKEND_DIRECTORIES = (
-    'src/auth/', 'src/chatbot/', 'src/db/', 'src/domain/', 'src/imagegen/', 'src/main_tests/',
-    'src/media_store/', 'src/native_sessions/', 'src/operations/', 'src/web/', 'src/work_items/',
-    'crates/sproyt-client-core/', 'crates/sproyt-protocol/', 'migrations/',
-)
-# Prompt interpretation does not own persistence. Keep repository coverage for its callers.
-RUST_ONLY = {'src/imagegen_prompt.rs'}
-BOOTSTRAP = {'src/config.rs', 'src/main.rs', 'src/server.rs'}
-AUTH_SOURCES = BOOTSTRAP | {
-    'src/agent.rs', 'src/auth.rs', 'src/chatbot/channel_access.rs', 'src/domain/onboarding.rs',
-    'src/domain/policy.rs', 'src/enrollment.rs', 'src/native_sessions.rs', 'src/web/account.rs',
-    'src/web/agents.rs', 'src/web/auth.rs', 'src/web/browser.rs', 'src/web/enrollment.rs',
-    'src/web/http.rs', 'src/web/mcp.rs', 'src/web/native.rs', 'src/web/native_chat.rs',
-    'src/web/socket.rs', 'src/web/stream.rs', 'src/ws.rs',
-}
-AUTH_PREFIXES = ('src/auth/', 'src/native_sessions/', 'src/web/native/')
-CODEC_SOURCES = BOOTSTRAP | {
-    'src/chatbot/agent_images.rs', 'src/chatbot/vision.rs', 'src/media_store.rs', 'src/media_worker.rs',
-    'src/web/media.rs', 'src/web/media_uploads.rs', 'src/web/native/media_uploads.rs',
-}
-OPERATIONS_SOURCES = BOOTSTRAP | {
-    'src/auth.rs', 'src/main_tests/mcp.rs', 'src/operations.rs', 'src/web/auth.rs',
-    'src/web/browser.rs', 'src/web/mcp.rs', 'src/web/system.rs',
-}
-RECOVERY_SOURCES = BOOTSTRAP | {
-    'src/media_store.rs', 'src/media_worker.rs', 'src/native_sessions/db.rs', 'src/operations.rs', 'src/web/account.rs',
-}
-RECOVERY_PREFIXES = ('migrations/', 'src/db/', 'src/domain/', 'src/media_store/', 'src/operations/')
-CHECK_FLAGS = ('backend', 'postgres', 'recovery', 'codec', 'auth', 'operations')
-# Bound only reviewed paths. Shared shells and state retain full regression.
 FEATURES = [
     ({'frontend/src/direct-conversation.ts', 'frontend/src/direct-activity.ts',
       'frontend/src/ui/react/direct-message-picker.tsx', 'frontend/src/ui/react/new-direct-message.tsx'},
@@ -83,11 +38,8 @@ FEATURES = [
     ({'frontend/src/agent-place-lookup.ts'}, {'ui-react-place-lookup.spec.ts', 'ui-react-agent-location.spec.ts'}),
     ({'frontend/src/ui/react/device-setup-reminders.tsx', 'frontend/src/ui/react/device-setup-notice.tsx'},
      {'ui-react-device-setup-notice.spec.ts', 'ui-react-device-setup-integration.spec.ts', 'ui-react-notifications.spec.ts'}),
-    ({'frontend/src/ui/react/thread-directory.tsx', 'frontend/src/ui/thread-directory.css'},
+    ({'frontend/src/ui/react/thread-directory.tsx'},
      {'ui-react-thread-directory.spec.ts', 'ui-react-thread-discovery.spec.ts', 'ui-react-reading.spec.ts'}),
-    ({'frontend/src/ui/react/invitation-card.tsx'}, {'ui-react-invitations.spec.ts'}),
-    ({'frontend/src/ui/react/work-item-supplements.tsx'},
-     {'ui-react-work-item-supplements.spec.ts', 'ui-react-work-item-information.spec.ts'}),
 ]
 
 
@@ -116,96 +68,70 @@ def browser_matrix(browser, extra=()):
     return {'include': rows}
 
 
-def result(browser, reason, extra=(), *, frontend=True, **checks):
-    return {'browser': browser, 'frontend': str(frontend).lower(),
-            **{key: str(checks.get(key, False)).lower() for key in CHECK_FLAGS}, 'reason': reason,
+def result(browser, recovery, backend, reason, extra=(), frontend=True, codec=False):
+    return {'browser': browser, 'recovery': str(recovery).lower(),
+            'backend': str(backend).lower(), 'frontend': str(frontend).lower(),
+            'codec': str(codec or backend).lower(), 'reason': reason,
             'browser_matrix': browser_matrix(browser, extra)}
 
 
-def full_checks(reason):
-    return result('full', reason, **dict.fromkeys(CHECK_FLAGS, True))
-
-
 def scope(paths, force_full=False):
-    paths = {p for p in paths if not (p.endswith('.md') or p.startswith(('docs/', '.agents/skills/sproyt-ui/')))}
+    paths = [p for p in paths if not (p.endswith('.md') or p.startswith(('docs/', '.agents/skills/sproyt-ui/')))]
     if force_full:
-        return full_checks('full regression requested, backend path changed structurally or baseline unavailable')
+        return result('full', True, True, 'full regression requested or baseline unavailable')
     if not paths:
-        return result('none', 'documentation/skill only', frontend=False)
-    if paths <= POLICY:
-        return result('none', 'CI policy only; selector and workflow contracts apply', frontend=False)
-    standalone_tools = IDENTITY | OIDC_TOOLS | CODEC_TOOLS | OPERATIONS_TOOLS
-    auth_tools = bool(paths & (IDENTITY | OIDC_TOOLS))
-    operations_tools = bool(paths & (OPERATIONS_TOOLS | OIDC_TOOLS))
-    codec_tools = bool(paths & CODEC_TOOLS)
-    if paths <= POLICY | standalone_tools:
-        return result('none', 'standalone provider, codec or operational contracts', frontend=False,
-                      auth=auth_tools, codec=codec_tools, operations=operations_tools)
-    if paths & IDENTITY:
-        return full_checks('identity provider changes mixed with application or other runtime changes')
+        return result('none', False, False, 'documentation/skill only', frontend=False)
+    if set(paths) <= POLICY:
+        return result('none', False, False, 'CI policy only; selector and workflow contracts apply', frontend=False)
+    if set(paths) <= POLICY | IDENTITY:
+        return result('none', False, False, 'provider-only identity contracts; no application image changes', frontend=False)
+    if set(paths) <= POLICY | {'tools/verify-media-runtime.sh'}:
+        return result('none', False, False, 'isolated codec contract', frontend=False, codec=True)
 
     def native_probe(path):
         return path.startswith(('native/probes/', 'native/session-client/')) or path == '.github/workflows/native-probe.yml'
     selector_tests = {'tools/ci-scope.py', 'tools/test-ci-scope.py'}
     if any(native_probe(p) for p in paths) and all(native_probe(p) or p in selector_tests for p in paths):
-        return result('none', 'dedicated native interoperability workflow', frontend=False)
+        return result('none', False, False, 'dedicated native interoperability workflow', frontend=False)
 
-    known = BACKEND_PREFIXES + ('frontend/', 'assets/', 'packages/sproyt-ui/')
-    if any((not p.startswith(known) and p not in POLICY | standalone_tools | RECOVERY_TOOLS)
+    known = ('src/', 'frontend/', 'assets/', 'crates/', 'migrations/', 'packages/sproyt-ui/')
+    if any((not p.startswith(known) and p not in POLICY and p != 'tools/verify-media-runtime.sh')
            or p.endswith(('Cargo.toml', 'Cargo.lock')) for p in paths):
-        return full_checks('build, dependencies, configuration or unclassified changes')
+        return result('full', True, True, 'build, dependencies, configuration or unclassified changes')
 
-    backend_paths = {p for p in paths if p.startswith(BACKEND_PREFIXES)}
-    if any(not p.startswith(BACKEND_DIRECTORIES) and p not in BACKEND_FILES for p in backend_paths):
-        return full_checks('unclassified backend source')
-
-    application_auth = bool(paths & AUTH_SOURCES or any(p.startswith(AUTH_PREFIXES) for p in paths))
-    checks = {
-        'backend': bool(backend_paths),
-        'postgres': bool(backend_paths - RUST_ONLY),
-        'recovery': bool(paths & (RECOVERY_SOURCES | RECOVERY_TOOLS) or any(p.startswith(RECOVERY_PREFIXES) for p in paths)),
-        'codec': codec_tools or bool(paths & CODEC_SOURCES) or any(p.startswith('src/media_store/') for p in paths),
-        'auth': auth_tools or application_auth,
-        'operations': operations_tools or bool(paths & OPERATIONS_SOURCES) or any(p.startswith('src/operations/') for p in paths),
-    }
-    if application_auth:
-        return result('full', 'application identity, session or access contract', **checks)
-    shared = any(p in {'src/chat.rs', 'src/protocol.rs'} or p.startswith(('src/domain/', 'crates/'))
+    backend = any(p.startswith(('src/', 'crates/', 'migrations/')) for p in paths)
+    recovery = any(p.startswith(('migrations/', 'src/db', 'src/domain/', 'src/operations/'))
+                   or p == 'src/main.rs' for p in paths)
+    codec = 'tools/verify-media-runtime.sh' in paths
+    shared = any(p == 'src/server.rs' or p.startswith(('src/domain/', 'crates/'))
                  or (p.startswith('src/web/') and p != 'src/web/imagegen.rs')
                  or p.startswith('assets/') for p in paths)
-    if shared or paths & (POLICY | EXECUTION):
-        return result('full', 'shared contract or mixed CI policy', **checks)
+    if shared or set(paths) & (POLICY | EXECUTION):
+        return result('full', recovery, backend, 'shared contract or mixed CI policy', codec=codec)
 
     frontend = [p for p in paths if p.startswith(('frontend/', 'packages/sproyt-ui/'))]
     if not frontend:
-        return result('none', 'selected backend or recovery contracts', frontend=bool(backend_paths), **checks)
-    changed_specs = {p for p in frontend if re.fullmatch(r'frontend/tests/[^/]+\.spec\.ts', p)}
-    changed_tests = {Path(p).name for p in changed_specs}
+        return result('none', recovery, backend, 'backend feature; Rust and PostgreSQL contracts', codec=codec)
+    changed_tests = [Path(p).name for p in frontend if p.startswith('frontend/tests/') and p.endswith('.spec.ts')]
     if any(not (ROOT / p).is_file() for p in frontend):
-        return result('full', 'removed frontend contract', **checks)
-    runtime = {p for p in frontend if not p.endswith('.test.ts')} - changed_specs
+        return result('full', recovery, backend, 'removed frontend contract', codec=codec)
+    runtime = [p for p in frontend if not (p.endswith('.test.ts') or (p.startswith('frontend/tests/') and p.endswith('.spec.ts')))]
     if not runtime:
-        return result('related' if changed_tests else 'none',
-                      'changed browser contracts plus core smoke', changed_tests, **checks)
+        return result('related' if changed_tests else 'none', recovery, backend,
+                      'changed browser contracts plus core smoke', changed_tests, codec=codec)
+    if all(p.endswith('.css') and p.startswith(('frontend/src/ui/', 'packages/sproyt-ui/src/')) for p in runtime):
+        return result('layout', recovery, backend, 'CSS layout and cross-browser interaction contracts', changed_tests, codec=codec)
+    image_frontend = {'frontend/src/imagegen.ts', 'frontend/src/ui/react/preview-imagegen.tsx'}
+    if all(p in image_frontend for p in runtime):
+        return result('imagegen', recovery, backend, 'imagegen, media drafts and composer contracts', changed_tests, codec=codec)
     covered, related = set(), set(changed_tests)
     for sources, tests in FEATURES:
-        if runtime & sources:
+        if set(runtime) & sources:
             covered |= sources
             related |= tests
-    layout = {p for p in runtime - covered
-              if p.endswith('.css') and p.startswith(('frontend/src/ui/', 'packages/sproyt-ui/src/'))}
-    if runtime == layout:
-        return result('layout', 'CSS layout and cross-browser interaction contracts', changed_tests, **checks)
-    imagegen = runtime & {'frontend/src/imagegen.ts', 'frontend/src/ui/react/preview-imagegen.tsx'}
-    if runtime == imagegen:
-        return result('imagegen', 'imagegen, media drafts and composer contracts', changed_tests, **checks)
-    if runtime <= covered | layout | imagegen:
-        if layout:
-            related.update(SUITES['layout'])
-        if imagegen:
-            related.update(SUITES['imagegen'])
-        return result('related', 'bounded feature contracts plus core smoke', sorted(related), **checks)
-    return result('full', 'shared or unclassified frontend logic', **checks)
+    if set(runtime) <= covered:
+        return result('related', recovery, backend, 'bounded feature contracts plus core smoke', sorted(related), codec=codec)
+    return result('full', recovery, backend, 'shared or unclassified frontend logic', codec=codec)
 
 
 def change_range(event_name, event, ref, manual_base, force_full):
@@ -226,18 +152,9 @@ def change_range(event_name, event, ref, manual_base, force_full):
         if subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
             return [], True
-        diff = subprocess.check_output(
-            ['git', 'diff', '--name-status', '--no-renames', '-z', base, 'HEAD'])
-        fields = diff.decode('utf-8').split('\0')
-        if fields.pop() or len(fields) % 2:
-            return [], True
-        entries = list(zip(fields[::2], fields[1::2]))
-        if any(status not in {'A', 'D', 'M', 'T'} or not path for status, path in entries):
-            return [], True
-        paths = [path for _, path in entries]
-        structural_backend_change = any(status != 'M' and path.startswith(BACKEND_PREFIXES) and not path.endswith('.md')
-                                        for status, path in entries)
-        return paths, structural_backend_change
+        paths = subprocess.check_output(
+            ['git', 'diff', '--name-only', '--no-renames', '-z', base, 'HEAD'])
+        return paths.decode('utf-8').rstrip('\0').split('\0') if paths else [], False
     except (OSError, subprocess.CalledProcessError, UnicodeError):
         return [], True
 
@@ -256,15 +173,13 @@ def main():
     print(json.dumps({**selected, 'changed_files': len(paths)}))
     if args.github_output:
         with open(args.github_output, 'a', encoding='utf-8') as output:
-            for key in ('browser', 'frontend', *CHECK_FLAGS):
+            for key in ('browser', 'recovery', 'backend', 'frontend', 'codec'):
                 output.write(f'{key}={selected[key]}\n')
             output.write('browser_matrix=' + json.dumps(selected['browser_matrix'], separators=(',', ':')) + '\n')
     if args.summary:
         with open(args.summary, 'a', encoding='utf-8') as summary:
             summary.write(f"### Selected release checks\n\nBrowser: **{selected['browser']}**; "
-                          f"Rust: **{selected['backend']}**; PostgreSQL: **{selected['postgres']}**; "
-                          f"backup/restore: **{selected['recovery']}**; codec: **{selected['codec']}**; "
-                          f"auth: **{selected['auth']}**; operations: **{selected['operations']}**. "
+                          f"Rust/PostgreSQL: **{selected['backend']}**; backup/restore: **{selected['recovery']}**. "
                           f"{selected['reason']}. Browser jobs: **{len(selected['browser_matrix']['include'])}**.\n")
 
 

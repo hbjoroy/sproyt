@@ -62,11 +62,8 @@ jobs:
       browser: ${{ steps.scope.outputs.browser }}
       recovery: ${{ steps.scope.outputs.recovery }}
       backend: ${{ steps.scope.outputs.backend }}
-      postgres: ${{ steps.scope.outputs.postgres }}
       frontend: ${{ steps.scope.outputs.frontend }}
       codec: ${{ steps.scope.outputs.codec }}
-      auth: ${{ steps.scope.outputs.auth }}
-      operations: ${{ steps.scope.outputs.operations }}
       browser_matrix: ${{ steps.scope.outputs.browser_matrix }}
     steps:
       - uses: actions/checkout@v6
@@ -96,7 +93,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install pinned Node.js
-        if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.operations == 'true'
+        if: needs.changes.outputs.frontend == 'true'
         uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
@@ -183,14 +180,11 @@ jobs:
           python3 tools/test-invitation-canary-v2.py
           python3 tools/test-signup-recovery.py
 
-      - name: Validate OIDC verifier contract
-        if: needs.changes.outputs.auth == 'true'
-        run: bash tools/test-oidc-provider-verifier.sh
-
       - name: Validate operational contracts
-        if: needs.changes.outputs.operations == 'true'
+        if: needs.changes.outputs.backend == 'true'
         run: |
           docker compose config --quiet
+          bash tools/test-oidc-provider-verifier.sh
           bash tools/test-production-rollout-verifier.sh
           node tools/test-mcp-load.mjs
 
@@ -277,7 +271,7 @@ jobs:
   postgres-schema:
     name: PostgreSQL repository contract
     needs: changes
-    if: needs.changes.outputs.postgres == 'true'
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -710,7 +704,7 @@ jobs:
       needs.quality.result == 'success' &&
       needs.browser-gate.result == 'success' &&
       (needs.postgres-schema.result == 'success' ||
-      (needs.changes.outputs.postgres == 'false' && needs.postgres-schema.result == 'skipped')) &&
+      (needs.changes.outputs.backend == 'false' && needs.postgres-schema.result == 'skipped')) &&
       needs.security-audit.result == 'success' &&
       needs.delivery-arm64.result == 'success' &&
       (needs.recovery-drill.result == 'success' ||
