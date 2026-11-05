@@ -14,8 +14,12 @@ export function DraftComposer({ value, onChange, onSend, label, leading, tools,
     const element = field.current;
     if (!element || !element.clientWidth || !element.getClientRects().length) return;
     const available = window.visualViewport?.height ?? window.innerHeight;
+    const style = getComputedStyle(element);
+    const minHeight = parseFloat(style.minHeight);
+    const fourLines = 4 * parseFloat(style.lineHeight) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    const maxHeight = Math.min(fourLines, Math.max(76, available * .32));
     element.style.height = "0px";
-    element.style.height = `${Math.min(Math.max(44, element.scrollHeight), Math.max(76, Math.min(240, available * .32)))}px`;
+    element.style.height = `${Math.max(minHeight, Math.min(element.scrollHeight, maxHeight))}px`;
   };
   useLayoutEffect(resize, [value]);
   useLayoutEffect(() => {

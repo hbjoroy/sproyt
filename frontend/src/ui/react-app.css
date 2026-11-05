@@ -317,8 +317,6 @@
 .sp-scope-menu:popover-open { display: grid; grid-auto-rows: max-content; align-content: start; gap: 0; }
 .sp-scope-menu-action.sp-button { padding: .35rem .5rem; justify-content: flex-start; gap: .65rem; min-width: 0; min-height: 44px; height: auto; text-align: left; white-space: normal; }
 .sp-scope-menu-symbol { display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; flex-shrink: 0; font-size: 1.2rem; }
-.sp-scope-menu-agent-actions { display: flex; min-width: 0; }
-.sp-scope-menu-agent-actions > .sp-button { flex: 1; gap: .35rem; }
 
 .sp-community-channel-row { display: flex; gap: .25rem; min-width: 0; }
 .sp-community-channel-row > .sp-button:first-child { flex: 1; min-width: 0; justify-content: space-between; gap: .5rem; }
@@ -575,6 +573,13 @@
 #sproyt-react-preview .sp-composer { margin-inline: 1rem; }
 #sproyt-react-preview .sp-draft-composer .sp-textarea { padding-inline: .5rem; }
 #sproyt-react-preview .sp-draft-composer .sp-textarea:focus-visible { outline: 2px solid var(--sp-text); outline-offset: -2px; }
+@media (pointer: fine) {
+  @container sp-app (min-width: 901px) {
+    #sproyt-react-preview .sp-draft-composer { padding-block: .25rem; }
+    #sproyt-react-preview .sp-draft-composer .sp-textarea { min-height: 36px; padding-block: .25rem; }
+    #sproyt-react-preview .sp-draft-composer .sp-composer-footer > .sp-button { min-width: 36px; min-height: 36px; }
+  }
+}
 @container sp-app (max-width: 900px) {
   #sproyt-react-preview .sp-timeline { padding-inline: .5rem; }
   #sproyt-react-preview .sp-composer { margin-inline: .5rem; }
