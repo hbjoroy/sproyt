@@ -26,6 +26,7 @@ IDENTITY = {'deploy/authentik/kustomization.yaml',
             'tools/test-invitation-canary-v2.py', 'tools/requirements-authentik-tests.txt',
             'tools/test-signup-recovery.py', 'tools/issue-signup-recovery-grant.py',
             'tools/verify-signup-recovery-runtime.py'}
+# Bound only reviewed paths. Shared shells and state retain full regression.
 FEATURES = [
     ({'frontend/src/direct-conversation.ts', 'frontend/src/direct-activity.ts',
       'frontend/src/ui/react/direct-message-picker.tsx', 'frontend/src/ui/react/new-direct-message.tsx'},
@@ -38,8 +39,11 @@ FEATURES = [
     ({'frontend/src/agent-place-lookup.ts'}, {'ui-react-place-lookup.spec.ts', 'ui-react-agent-location.spec.ts'}),
     ({'frontend/src/ui/react/device-setup-reminders.tsx', 'frontend/src/ui/react/device-setup-notice.tsx'},
      {'ui-react-device-setup-notice.spec.ts', 'ui-react-device-setup-integration.spec.ts', 'ui-react-notifications.spec.ts'}),
-    ({'frontend/src/ui/react/thread-directory.tsx'},
+    ({'frontend/src/ui/react/thread-directory.tsx', 'frontend/src/ui/thread-directory.css'},
      {'ui-react-thread-directory.spec.ts', 'ui-react-thread-discovery.spec.ts', 'ui-react-reading.spec.ts'}),
+    ({'frontend/src/ui/react/invitation-card.tsx'}, {'ui-react-invitations.spec.ts'}),
+    ({'frontend/src/ui/react/work-item-supplements.tsx'},
+     {'ui-react-work-item-supplements.spec.ts', 'ui-react-work-item-information.spec.ts'}),
 ]
 
 
@@ -112,24 +116,31 @@ def scope(paths, force_full=False):
     frontend = [p for p in paths if p.startswith(('frontend/', 'packages/sproyt-ui/'))]
     if not frontend:
         return result('none', recovery, backend, 'backend feature; Rust and PostgreSQL contracts', codec=codec)
-    changed_tests = [Path(p).name for p in frontend if p.startswith('frontend/tests/') and p.endswith('.spec.ts')]
+    changed_specs = {p for p in frontend if re.fullmatch(r'frontend/tests/[^/]+\.spec\.ts', p)}
+    changed_tests = {Path(p).name for p in changed_specs}
     if any(not (ROOT / p).is_file() for p in frontend):
         return result('full', recovery, backend, 'removed frontend contract', codec=codec)
-    runtime = [p for p in frontend if not (p.endswith('.test.ts') or (p.startswith('frontend/tests/') and p.endswith('.spec.ts')))]
+    runtime = {p for p in frontend if not p.endswith('.test.ts')} - changed_specs
     if not runtime:
         return result('related' if changed_tests else 'none', recovery, backend,
                       'changed browser contracts plus core smoke', changed_tests, codec=codec)
-    if all(p.endswith('.css') and p.startswith(('frontend/src/ui/', 'packages/sproyt-ui/src/')) for p in runtime):
-        return result('layout', recovery, backend, 'CSS layout and cross-browser interaction contracts', changed_tests, codec=codec)
-    image_frontend = {'frontend/src/imagegen.ts', 'frontend/src/ui/react/preview-imagegen.tsx'}
-    if all(p in image_frontend for p in runtime):
-        return result('imagegen', recovery, backend, 'imagegen, media drafts and composer contracts', changed_tests, codec=codec)
     covered, related = set(), set(changed_tests)
     for sources, tests in FEATURES:
-        if set(runtime) & sources:
+        if runtime & sources:
             covered |= sources
             related |= tests
-    if set(runtime) <= covered:
+    layout = {p for p in runtime - covered
+              if p.endswith('.css') and p.startswith(('frontend/src/ui/', 'packages/sproyt-ui/src/'))}
+    if runtime == layout:
+        return result('layout', recovery, backend, 'CSS layout and cross-browser interaction contracts', changed_tests, codec=codec)
+    imagegen = runtime & {'frontend/src/imagegen.ts', 'frontend/src/ui/react/preview-imagegen.tsx'}
+    if runtime == imagegen:
+        return result('imagegen', recovery, backend, 'imagegen, media drafts and composer contracts', changed_tests, codec=codec)
+    if runtime <= covered | layout | imagegen:
+        if layout:
+            related.update(SUITES['layout'])
+        if imagegen:
+            related.update(SUITES['imagegen'])
         return result('related', recovery, backend, 'bounded feature contracts plus core smoke', sorted(related), codec=codec)
     return result('full', recovery, backend, 'shared or unclassified frontend logic', codec=codec)
 
