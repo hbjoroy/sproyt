@@ -69,9 +69,8 @@ async function fixture(page: Page, start = `channel=${channelId(29)}`, ranked = 
 }
 
 async function navigation(app: Locator) {
-  const back = app.getByRole("button", { name: "Samtalar", exact: true });
-  if (await back.isVisible()) await back.click();
   const result = app.getByRole("navigation", { name: "Samtalar", exact: true });
+  if (!await result.isVisible()) await app.getByRole("button", { name: "Samtalar", exact: true }).click();
   await expect(result).toBeVisible();
   return result;
 }
