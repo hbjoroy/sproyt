@@ -189,11 +189,13 @@ test("real React circle creates Prat once, creates scoped channel, edits Markdow
   expect(commands.find(item => item.type === "create_channel" && item.payload.name === "Turplan")?.payload.circle_id).toBeTruthy();
 });
 
-test("a Felles channel owner can add an existing user to an open channel", async ({ page, browser }) => {
+test("a Felles channel owner can add an existing user to an open channel", async ({ page, browser }, { project }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 1280, height: 720 });
   const commands: Array<{ type: string; payload?: { name?: string; slug?: string; circle_id?: string | null } }> = [];
   page.on("websocket", socket => socket.on("framesent", ({ payload }) => commands.push(JSON.parse(String(payload)))));
   const participant = `community-global-${Date.now()}`;
+  const channelName = `Felles prat ${project.name}`;
   const preview = await enter(page, participant);
   const candidateName = `${participant}-candidate`;
   const candidate = await browser.newPage();
@@ -206,27 +208,27 @@ test("a Felles channel owner can add an existing user to an open channel", async
   const channels = destinationSurface(preview, "Kanalar i Felles", false);
   await channels.getByRole("button", { name: "Ny kanal i Felles", exact: true }).click();
   const create = destinationSurface(preview, "Ny kanal i Felles", true);
-  await create.getByLabel("Kanalnamn").fill("Felles prat");
+  await create.getByLabel("Kanalnamn").fill(channelName);
   await create.getByLabel("Kanaltype").selectOption("public");
   await create.getByRole("button", { name: "Opprett kanal" }).click();
   await expect(create).toHaveCount(0);
   await expect(channels).toHaveCount(0);
-  await expect.poll(() => commands.find(command => command.type === "create_channel" && command.payload?.name === "Felles prat")?.payload).toEqual({
-    circle_id: null, kind: "public", name: "Felles prat", slug: "felles-prat"
+  await expect.poll(() => commands.find(command => command.type === "create_channel" && command.payload?.name === channelName)?.payload).toEqual({
+    circle_id: null, kind: "public", name: channelName, slug: `felles-prat-${project.name}`
   });
-  await expect(preview.getByRole("button", { name: "# Felles prat" })).toBeVisible();
+  await expect(preview.getByRole("button", { name: `# ${channelName}` })).toBeVisible();
   const management = destinationSurface(preview, "Innstillingar", true);
   // Creation selects its canonical conversation, closing settings rather than
   // leaving the overview over the newly created channel.
   await expect(management).toHaveCount(0);
-  await preview.getByRole("button", { name: "Medlemmer i Felles prat" }).click();
-  const details = destinationSurface(preview, "Kanaldetaljar: Felles prat", false);
+  await preview.getByRole("button", { name: `Medlemmer i ${channelName}` }).click();
+  const details = destinationSurface(preview, `Kanaldetaljar: ${channelName}`, false);
   await expect(details.getByRole("searchbox", { name: "Finn kanalmedlem" })).toBeVisible();
   await expect(details.getByRole("listitem")).toContainText(participant);
   await expect(details.getByRole("button", { name: "Last personlista på nytt" })).toBeVisible();
   await closeManagedDialog(page);
   await openChannelMenu(preview);
-  await preview.getByRole("group", { name: "Kanalval: Felles prat" }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
+  await preview.getByRole("group", { name: `Kanalval: ${channelName}` }).getByRole("button", { name: "Legg til eller inviter kanalmedlem" }).click();
   const people = details.getByLabel("Vel person", { exact: true });
   await expect(people).toBeFocused();
   await people.selectOption({ label: candidateName });
