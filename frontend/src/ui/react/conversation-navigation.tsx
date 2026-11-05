@@ -200,10 +200,9 @@ function AccountNavigation(props: NavigationProps) {
     event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-scope="${next}"]`)?.focus();
   }
 
-  return <div ref={navigation} className="sp-product-navigation">
+  const directory = <div className="sp-product-navigation">
     <TextField label="Finn samtale" type="search" value={props.query}
       onChange={event => props.onQueryChange(event.currentTarget.value)} />
-    {props.personalShortcut}
     <div className="sp-product-nav-tabs" role="tablist" aria-label="Samtalar">
       {(["circles", "direct"] as const).map(value => <button key={value} type="button" role="tab"
         id={`${id}-${value}-tab`} data-scope={value} aria-selected={scope === value} aria-controls={`${id}-${value}-panel`}
@@ -253,5 +252,9 @@ function AccountNavigation(props: NavigationProps) {
     {props.onFindChannels && !(scope === "circles" && props.directoryReady !== false && !searching && sharedGroups.length + circles.length === 0)
       && <Button variant="quiet" className="sp-product-nav-guide" onClick={props.onFindChannels}>Finn kretsar og kanalar</Button>}
     {props.footer && <div className="sp-product-nav-footer">{props.footer}</div>}
+  </div>;
+  return <div ref={navigation} className="sp-product-nav-layout">
+    {directory}
+    {props.personalShortcut && <div className="sp-product-nav-shortcut">{props.personalShortcut}</div>}
   </div>;
 }
