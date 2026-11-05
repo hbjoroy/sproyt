@@ -6,6 +6,16 @@ mod config;
 mod db;
 mod domain;
 mod enrollment;
+#[allow(
+    dead_code,
+    reason = "Family app foundation is exercised by contract tests before the HTTP routes are enabled"
+)]
+mod family_apps;
+#[allow(
+    dead_code,
+    reason = "Open Drinks authorization adapter is exercised by contract tests before the HTTP routes are enabled"
+)]
+mod family_apps_adapter;
 mod github;
 mod imagegen;
 mod imagegen_prompt;

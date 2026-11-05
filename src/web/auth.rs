@@ -805,6 +805,7 @@ mod tests {
                 issuer: "https://auth.example".to_owned(),
                 subject: "new-user".to_owned(),
                 email: email.map(str::to_owned),
+                verified_email: email.map(str::to_owned),
                 user,
             },
             set_cookie: "sproyt_session=session; Path=/".to_owned(),
