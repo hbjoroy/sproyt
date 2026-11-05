@@ -228,7 +228,7 @@ test("a generated image is reviewed and attached in the personal chat log", asyn
   const input = app.getByRole("textbox", { name: "Skriv melding", exact: true });
   await expect(input).toBeEnabled();
   await input.fill('/imagegen literal "A private seascape"');
-  await input.press("Enter");
+  await app.getByRole("button", { name: /^Send/ }).click();
   const inbox = app.getByRole("region", { name: "Private biletmeldingar" });
   await inbox.getByRole("button", { name: "Godta", exact: true }).click();
   await expect(app.getByRole("button", { name: "Fjern generated.png" })).toBeEnabled();
