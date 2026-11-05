@@ -542,6 +542,9 @@
 .sp-theme .sp-personal-note-markdown :where(p, ul, ol, pre, blockquote, h1, h2, h3, h4, h5, h6) { margin-block: .5rem; }
 .sp-theme .sp-personal-note-markdown :where(h1, h2) { font-size: 1.35rem; }
 .sp-theme .sp-personal-note-conflict .sp-button { margin: .25rem .5rem .25rem 0; }
+.sp-theme .sp-saved-message-quote { margin: 0 0 .2rem; padding-inline-start: .65rem; border-inline-start: 2px solid var(--sp-line); }
+.sp-theme .sp-saved-message-source { color: var(--sp-muted); font-size: .8125rem; overflow-wrap: anywhere; }
+.sp-theme a.sp-saved-message-source:hover, .sp-theme a.sp-saved-message-source:focus-visible { color: var(--sp-text); }
 .sp-theme .sp-view-history-in-menu { display: none; }
 .sp-theme .sp-view-history-in-menu > button { display: none; }
 @container sp-app (max-width: 900px) {

@@ -272,6 +272,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             post(crate::web::personal_space::save_link),
         )
         .route(
+            "/api/v1/me/personal-space/sources/{channel_id}/{message_id}/{sequence}",
+            get(crate::web::personal_space::source_message),
+        )
+        .route(
             "/api/v1/me/favorite-circles/{circle_id}",
             axum::routing::put(add_favorite_circle).delete(remove_favorite_circle),
         )

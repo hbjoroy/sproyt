@@ -27,6 +27,7 @@ import "./share-target.test";
 import "../src/process-pilot.test";
 import "../src/work-items.test";
 import "../src/view-history.test";
+import "../src/personal-space.test";
 import "../src/connection-presentation.test";
 import "./inbox-counts.test";
 import "../src/circle-favorites.test";

@@ -59,7 +59,8 @@ pub(crate) fn personal_link_body(
     if let Some(parent_id) = parent_id {
         link.push_str(&format!("&thread={}", parent_id.as_uuid()));
     }
-    super::MessageBody::new(format!("[Lagra melding]({link})")).expect("canonical message link")
+    // Keep a clickable link for clients that only render Markdown.
+    super::MessageBody::new(format!("[[[Lagra melding]({link})]]")).expect("canonical message link")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
