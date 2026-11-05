@@ -10,14 +10,15 @@ export interface CompactConversationHeader {
 }
 
 /** Keep the same controls and open dialogs mounted across compact/list layouts. */
-export function HeaderActions({ children, primary, compactActions, compactConversation, navigationKey, onSettings, onConversations, onLatest, connection }: {
+export function HeaderActions({ children, primary, compactActions, compactConversation, navigationKey, onSettings, onLogoPress, logoLabel, onLatest, connection }: {
   readonly children: ReactNode;
   readonly primary?: ReactNode;
   readonly compactActions?: (open: boolean, close: () => void) => ReactNode;
   readonly compactConversation?: CompactConversationHeader;
   readonly navigationKey?: string;
   readonly onSettings: () => void;
-  readonly onConversations: () => void;
+  readonly onLogoPress?: () => void;
+  readonly logoLabel: string;
   readonly onLatest: () => void;
   readonly connection: ConnectionHealthState;
 }) {
@@ -67,8 +68,8 @@ export function HeaderActions({ children, primary, compactActions, compactConver
       <span className="sp-sproyt-brand-label">Sprøyt</span>
     </span>
     <Button className="sp-sproyt-brand sp-sproyt-brand-action" variant="symbol"
-      aria-label="Samtalar" title={`Samtalar. ${connection.label}`} aria-describedby={`${id}-connection`}
-      onClick={() => { setConversationOpen(false); onConversations(); }}>
+      aria-label={logoLabel} title={`${logoLabel}. ${connection.label}`} aria-describedby={`${id}-connection`}
+      disabled={!onLogoPress} onClick={() => { setConversationOpen(false); onLogoPress?.(); }}>
       <img src="/assets/sproyt-wave-icon-512.png" alt="" aria-hidden="true" />
       <ConnectionLogoMark phase={connection.phase} />
     </Button>

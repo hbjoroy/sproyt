@@ -513,12 +513,15 @@
           const channel = knownChannels.find(channel => channel.id === target.channelId);
           if (!channel) { navigationNotice = "Denne samtalen er ikkje tilgjengeleg for kontoen din. Vel ei anna samtale."; pendingMessageLink = null; return; }
           pendingMessageLink = null; messageLinkHistoryRequestId = null; messageLinkSearchPages = 0;
+          const keepActiveThread = restored && target.threadId === activeThreadRootId
+            && channel.id === activeChannelId && channel.id === connectionSupervisor.snapshot().subscribedChannelId;
           selectChannel(channel);
           const hasPosition = restored && viewHistory.getSnapshot().positions.some(p => p.key === `channel:${channel.id}`);
           if (target.messageId && !hasPosition) navigateToMessage({ channelId: channel.id, messageId: target.messageId,
             sequence: target.sequence ?? null, threadId: target.threadId ?? null });
-          else if (target.threadId) openThread(target.threadId);
-          else closeThreadState();
+          else if (target.threadId) {
+            if (!keepActiveThread) openThread(target.threadId);
+          } else closeThreadState();
         });
         refreshDevelopmentPreview();
         if (restored) {
