@@ -56,12 +56,13 @@ available. Also take a logical backup before a schema migration:
 pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL" --file sproyt.dump
 ```
 
-Quarterly, restore into an isolated database and namespace:
+Quarterly and when backup or migration behaviour changes, the release owner
+restores into an isolated database and namespace.
 
 ```sh
 createdb sproyt_restore
 pg_restore --exit-on-error --no-owner --no-acl --dbname sproyt_restore sproyt.dump
-SPROYT_DATABASE_URL=postgres://.../sproyt_restore sproyt migrate
+DATABASE_URL=postgres://.../sproyt_restore sproyt migrate
 ```
 
 Start the same immutable image used in production against the restored
@@ -73,15 +74,17 @@ operator in the release evidence.
 
 ## Deployment, rollback, and incident response
 
-1. Manually run the full CI workflow for the exact release revision (or create
-   its `v*` release tag), then retain the rendered manifest, SBOM, and
-   vulnerability report. Ordinary `main` CI is intentionally only the fast
-   quality and PostgreSQL gate.
-2. Back up PostgreSQL and run the pre-upgrade migration Job once.
-3. Deploy by immutable image digest. Confirm migration Job success, both
-   probes, and that public `/versionz` reports the GitOps application revision
-   before admitting traffic.
-4. Smoke-test login, create/list channel, send, reconnect/catch-up, and logout.
+1. Use the [CI delivery policy](ci-iteration-strategy.md#delivery-phases) and
+   [release checklist](release-checklist.md) to publish the reviewed revision
+   or promote the verified canary digest. Retain the corresponding delivery
+   evidence.
+2. Back up PostgreSQL before a schema change. When applicable, confirm the
+   pre-upgrade migration Job runs once and succeeds.
+3. Deploy by immutable image digest. Confirm the GitOps revision in Argo CD,
+   the application and worker rollout, and public health and readiness. Check
+   that `/versionz` reports the expected application commit.
+4. Smoke-test login, create/list channel, send and receive between two users,
+   reconnect/catch-up, and logout.
 5. Watch readiness, errors, latency, restarts, PostgreSQL connections, and
    storage for at least 15 minutes.
 
@@ -91,16 +94,28 @@ work through Axum's graceful-shutdown path, and sends WebSocket close code
 before Kubernetes may terminate the container. Keep the chart's
 `terminationGracePeriodSeconds` at or above the application grace period.
 
-The delivery CI job also creates an ephemeral kind cluster, loads the exact
-image built by that job, installs the Helm release at two replicas against
-PostgreSQL 17, checks both probes, scales to one replica, and rolls back to the
-first two-replica revision. `tools/kind-smoke.sh` is the executable evidence for
-that install/scale/rollback gate.
+The ARM64 delivery CI job lints and renders Helm and validates the delivery
+contract. The selected PostgreSQL and recovery jobs cover application-level
+multi-replica behaviour and database recovery. See the
+[rollout and rollback policy](ci-iteration-strategy.md#rollout-and-rollback)
+for automated coverage, manual evidence and the deferred kind job.
 
-For application regressions, roll back the Deployment to the previous image.
-Migrations must remain expand-and-contract compatible; never roll a database
-schema backward as the first response. Disable an incomplete capability with
-its feature flag. If integrity may be affected, stop writes by scaling the
+For changes that affect chart, migration, runtime or rollout and rollback
+behaviour, the release owner exercises the applicable fresh install, forward
+migration, two-replica rolling upgrade and application rollback paths in an
+isolated cluster before promotion.
+Record candidate and rollback digests, chart revision, migration Job results,
+ready replicas and probe results. Confirm the previous image works with the
+forward schema. [`tools/kind-smoke.sh`](../tools/kind-smoke.sh) can exercise
+install, scale and Helm revision rollback with one preloaded compatible web
+image and development authentication in a disposable cluster. Retain results
+when the rehearsal is performed.
+
+For application regressions, restore the last verified image digests and
+compatible chart and values in GitOps, then verify Argo CD and runtime
+readiness. Keep the database on the forward schema. Migrations must remain
+expand-and-contract compatible. Disable an incomplete capability with its
+feature flag. If integrity may be affected, stop writes by scaling the
 Deployment to zero, preserve logs and a fresh database snapshot, then restore
 or repair from an isolated copy.
 
@@ -141,10 +156,10 @@ many quiet channels, reconnect/catch-up, rolling restart, and a temporarily
 unavailable database. Pass only when the objectives above hold, sequences stay
 unique and contiguous, and recovery creates no duplicate acknowledged message.
 
-CI runs two fast `sproyt.chat.v1` recovery baselines. The SQLite
-`websocket_capacity_reconnect_and_service_restart_gate` sends 40 durable
-messages, enforces the 750 ms p99 send objective, restarts the application
-service, and requires exact cursor catch-up within five seconds. The PostgreSQL
+When backend checks are selected, CI runs two fast `sproyt.chat.v1` recovery
+baselines. The SQLite `websocket_capacity_reconnect_and_service_restart_gate`
+sends 40 durable messages, enforces the 750 ms p99 send objective, restarts the
+application service, and requires exact cursor catch-up within five seconds. The PostgreSQL
 `postgres_two_replica_realtime_and_restart_catch_up_gate` starts two independent
 application processes with separate LISTEN connections, proves live delivery
 between them, stops one process, accepts a message on the surviving replica,

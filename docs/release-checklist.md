@@ -1,110 +1,84 @@
 # Production release gate
 
-Attach durable links or artifacts for every checked item. A release is not
-production-ready based only on a successful build.
+Attach durable links or artifacts for every checked item. Use the
+[CI change matrix](ci-iteration-strategy.md#change-matrix) to determine which
+checks apply and record the evidence for the exact revision or digest.
 
-Before building a new release, manually dispatch `CI` from the exact `main`
-commit with `publish_image` enabled, or push its reviewed `v*` release tag.
-Manual publish dispatches from other refs are rejected. The publish job waits
-for all selected checks and publishes the tested ARM64 image under the
-immutable commit tag. Record the digest from the
-`registry-evidence-<commit>` artifact. Pull requests select checks from the
-changed areas. Merging does not start a duplicate `main` push run: the canonical
-publish dispatch validates the exact merged revision before publishing. A direct
-push to `main` is therefore not release evidence. Weekly and explicitly forced
-runs retain full regression without publishing an image.
+## Publish a new release
 
-## Choose checks from the change
+Use a `CI` dispatch from `main` with `publish_image=true`, or a reviewed `v*`
+release tag. The workflow rejects publish dispatches from other refs.
+Confirm the run SHA is the reviewed release commit. For a dispatch, supply the
+last verified application revision as `base_revision` so selection covers the
+entire change range. See the
+[delivery phases](ci-iteration-strategy.md#delivery-phases) for full-regression
+triggers and the checks required for publication.
 
-Promotion from a healthy canary uses the same immutable image digest and chart
-revision. Validate the changed production values and Application, then verify
-Argo, ready replicas, public readiness and revision after rollout. Do not
-rebuild the image or repeat application UI/restore CI for this promotion.
-Migration, backup, authentication or network changes require their own checks.
-
-For a new release, pass `base_revision` as the last verified application
-revision. CI examines **all** changes between that ancestor and the release:
-
-- Backend feature changes run the Rust and PostgreSQL contracts without a full
-  browser suite unless shared HTTP/UI/protocol contracts changed.
-- Imagegen frontend changes run imagegen, media-draft and composer-validation
-  browser contracts, including the original `/imagegen` validation behavior.
-- CSS changes run layout, navigation, composer and message interaction contracts
-  in Chromium and WebKit. Bounded frontend features (DM, reactions, Markdown,
-  device setup, place lookup and thread directory) run their declared contracts
-  plus core smoke tests. Changed browser specs are included explicitly.
-- Shared/unclassified frontend logic, HTTP, protocol and legacy HTML changes run
-  full Chromium and the maintained mobile WebKit suite. Full regression is split
-  across four Chromium and two WebKit jobs, each with a separate database/server.
-- Frontend-only changes still build and exercise the real backend binary but do
-  not rerun unchanged Rust unit/Clippy/PostgreSQL or codec tests. Backend or
-  unknown changes retain those checks. UI skill archives are documentation,
-  not database changes.
-- Database, migrations, domain persistence, runtime operations, dependencies,
-  build/configuration and unclassified changes retain the backup/restore drill.
-  Ordinary imagegen or frontend changes do not need that drill.
-- Missing/invalid/non-ancestor baselines, version tags, weekly CI and
-  `force_full=true` retain the complete browser and recovery regression gate.
-- Changes confined to the CI selector/workflow run selector regression and
-  workflow validation; they do not require application UI or database restore
-  testing. Mixing policy changes with application code retains the full gate.
-
-Every published image still passes ARM64 compilation, Helm delivery validation,
-identity checks, SBOM and vulnerability scanning. Lint/unit/PostgreSQL and browser
-checks follow the complete change range. The workflow summary records selected
-checks. Publication accepts skipped PostgreSQL/recovery/browser jobs only when
-scope selection explicitly says they were unnecessary; failed or cancelled
-selected checks never permit publication. Heart publication also waits for the
-selected browser gate. See [CI iteration strategy](ci-iteration-strategy.md).
-
-```powershell
-gh workflow run ci.yml --ref main -f publish_image=true -f base_revision=<last-verified-40-character-revision>
+```bash
+gh workflow run ci.yml --ref main -f publish_image=true -f base_revision="$LAST_VERIFIED_REVISION"
 ```
+
+Set `LAST_VERIFIED_REVISION` to the full 40-character revision. Retain the scope
+summary and delivery evidence. Record the registry manifest digests for the
+application and media worker from `registry-evidence-<commit>`.
 
 Observe long CI waits with a bounded watcher and report meaningful stage changes.
 Avoid duplicate watchers, minute-by-minute model polling, redundant local full
 test runs and repeated narrative updates while an external queue is unchanged.
 
+## Promote the verified canary
+
+Use the healthy canary's immutable image digests and chart revision. Validate
+the changed production values and Argo CD Application, then verify Argo CD,
+ready replicas, public readiness and revision after rollout. Reuse the existing
+application CI evidence for those digests. Apply the matrix and the
+[rollout and rollback policy](ci-iteration-strategy.md#rollout-and-rollback)
+to any changed migration, backup, authentication, network or rollout behaviour.
+
 For the read-only cluster and public-boundary portion, run from a current
-checkout and pass the deployed application and GitOps revisions explicitly:
+checkout and pass the deployed application revision, digest and GitOps revision
+explicitly.
 
 ```bash
-bash tools/verify-production-rollout.sh \
-  4abef10a7435cd549d749b8e4a1f08d46f106234 \
-  sha256:54f862678ddc780ea0811d4f19aac95749ceb52ecf89a1f194004ae224091e92 \
-  4e9823d718c928a8ef2b43d6dbd3ef370e2aae9b
+bash tools/verify-production-rollout.sh "$APP_REVISION" "$APP_DIGEST" "$GITOPS_REVISION"
 ```
 
 The verifier does not read Secrets or mutate the cluster. It verifies internal
 Kubernetes state and uses the real public Cloudflare path for health and
-readiness; Kubernetes API-server service proxy traffic may correctly be denied
-by NetworkPolicy and is not a production client path. Retain the JSON output
-with the release evidence. It deliberately does not replace the authenticated
-two-user browser journey below.
+readiness. NetworkPolicy may deny Kubernetes API-server service proxy traffic.
+Retain the JSON output with the release evidence. Record worker rollout,
+migration Job status when applicable, and authenticated browser smoke checks
+separately using the [deployment runbook](operations.md#deployment-rollback-and-incident-response).
 
 ## Build and security
 
-- [ ] Format, Clippy, unit, SQLite, and PostgreSQL contract tests pass.
+- [ ] The publish workflow passed all selected checks. The scope summary
+      accounts for skipped backend, browser and restore checks.
 - [ ] OCI image is addressed by digest and built from the reviewed commit.
 - [ ] SBOM is retained and no unaccepted high/critical finding remains.
-- [ ] OIDC discovery, callback, logout, invalid state/nonce, and key rotation
-      are tested against the configured Authentik provider using the evidence
-      procedure in `authentik.md`.
+- [ ] For authentication or provider changes, test OIDC discovery, callback,
+      logout, invalid state/nonce and key rotation against the configured
+      Authentik provider using the [evidence procedure](authentik.md#live-acceptance).
 - [ ] Kubernetes secrets are external to source and rendered CI artifacts.
 - [ ] Log/trace sample contains no private content, credentials, or tokens.
 
 ## Recovery and compatibility
 
-- [ ] Fresh install, migration, two-replica smoke test, and rolling upgrade pass.
-- [ ] Previous application image works after the forward migration.
-- [ ] Backup restore drill records recovery duration and integrity checks.
+- [ ] For changes that affect chart, migration, runtime or rollout and rollback
+      behaviour, record the applicable isolated install, migration, two-replica
+      rolling upgrade and application rollback evidence. Verify that the
+      previous image works after any forward migration. Use the
+      [deployment runbook](operations.md#deployment-rollback-and-incident-response).
+- [ ] For backup or migration changes, record recovery duration and integrity
+      checks from an isolated restore. Use the
+      [backup and restore runbook](operations.md#backup-and-restore-drill).
 - [ ] Feature kill switches and ordinary-chat behaviour without Heart pass.
 
 ## Performance and operations
 
-- [ ] The CI WebSocket capacity/reconnect baseline passes, and pre-release
-      two-replica load/reconnect evidence meets the objectives in
-      `operations.md`.
+- [ ] Retain selected CI WebSocket capacity/reconnect evidence. Before a
+      material traffic increase, record two-replica load/reconnect evidence
+      against the [operations objectives](operations.md#initial-service-objectives).
 - [ ] Dashboard, alerts, on-call owner, and incident channel are recorded.
 - [ ] Browser WebSocket, session-refresh and upload outcome panels show no
       unexplained regression during the rollout observation window.
