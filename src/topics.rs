@@ -22,7 +22,10 @@ use crate::{
     chatbot::sql,
     config::{DatabaseConfig, DatabaseKind},
     db::{sql_error, storage},
-    domain::{ChannelId, MediaId, MembershipRole, Policy, RepositoryError, UserId},
+    domain::{
+        ChannelId, ChannelSequence, ChatMessage, DisplayName, MediaId, MembershipRole, MessageBody,
+        MessageId, Policy, RepositoryError, UserId,
+    },
 };
 
 const PAGE_SIZE: usize = 30;
@@ -68,13 +71,62 @@ struct TopicPill {
 }
 
 #[derive(Serialize, sqlx::FromRow)]
-pub(crate) struct TopicMatch {
+struct TopicMatchPreview {
     message_id: String,
     parent_message_id: Option<String>,
     sequence: i64,
     sender_display_name: String,
     body: String,
     created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct TopicMatch {
+    #[serde(flatten)]
+    preview: TopicMatchPreview,
+    message: ChatMessage,
+}
+
+#[derive(sqlx::FromRow)]
+struct TopicMatchRow {
+    #[sqlx(flatten)]
+    preview: TopicMatchPreview,
+    channel_id: String,
+    sender_id: String,
+    message_sender_display_name: String,
+    message_body: String,
+    sent_at: DateTime<Utc>,
+    edited_at: Option<DateTime<Utc>>,
+    deleted_at: Option<DateTime<Utc>>,
+}
+
+impl TopicMatchRow {
+    fn into_match(self) -> Result<TopicMatch, RepositoryError> {
+        let message = ChatMessage {
+            id: MessageId::from_uuid(Uuid::parse_str(&self.preview.message_id).map_err(storage)?),
+            channel_id: ChannelId::new(self.channel_id).map_err(storage)?,
+            parent_message_id: self
+                .preview
+                .parent_message_id
+                .as_deref()
+                .map(Uuid::parse_str)
+                .transpose()
+                .map_err(storage)?
+                .map(MessageId::from_uuid),
+            sender_id: UserId::new(self.sender_id).map_err(storage)?,
+            sender_display_name: DisplayName::new(self.message_sender_display_name)
+                .map_err(storage)?,
+            body: MessageBody::new(self.message_body).map_err(storage)?,
+            sequence: ChannelSequence::try_from(self.preview.sequence).map_err(storage)?,
+            sent_at: self.sent_at,
+            edited_at: self.edited_at,
+            deleted_at: self.deleted_at,
+        };
+        Ok(TopicMatch {
+            preview: self.preview,
+            message,
+        })
+    }
 }
 
 #[derive(Serialize)]
@@ -121,7 +173,10 @@ const TOPIC_PILLS: &str = "
 
 const TOPIC_MATCHES: &str = "
     select cast(m.id as text) as message_id,cast(m.parent_message_id as text) as parent_message_id,
-           m.sequence,source.sender_display_name,substr(source.body,1,1200) as body,source.created_at
+           m.sequence,source.sender_display_name,substr(source.body,1,1200) as body,source.created_at,
+           cast(m.channel_id as text) as channel_id,cast(m.sender_id as text) as sender_id,
+           m.sender_display_name as message_sender_display_name,m.body as message_body,
+           m.created_at as sent_at,m.edited_at,m.deleted_at
     from (
         select distinct e.message_id,e.sequence from channel_topic_evidence e
         join channel_topic_settings setting on setting.channel_id=e.channel_id and setting.enabled
@@ -363,8 +418,8 @@ impl TopicStore {
         before: i64,
     ) -> Result<TopicPage, RepositoryError> {
         self.access(actor, channel).await?;
-        let mut matches = with_pool!(self, |pool, pg| {
-            sqlx::query_as::<_, TopicMatch>(&statement(TOPIC_MATCHES, pg))
+        let mut rows = with_pool!(self, |pool, pg| {
+            sqlx::query_as::<_, TopicMatchRow>(&statement(TOPIC_MATCHES, pg))
                 .bind(actor.to_string())
                 .bind(channel.to_string())
                 .bind(key)
@@ -373,12 +428,16 @@ impl TopicStore {
                 .await
                 .map_err(sql_error)?
         });
-        let next_before = if matches.len() > PAGE_SIZE {
-            matches.truncate(PAGE_SIZE);
-            matches.last().map(|message| message.sequence)
+        let next_before = if rows.len() > PAGE_SIZE {
+            rows.truncate(PAGE_SIZE);
+            rows.last().map(|row| row.preview.sequence)
         } else {
             None
         };
+        let matches = rows
+            .into_iter()
+            .map(TopicMatchRow::into_match)
+            .collect::<Result<_, _>>()?;
         Ok(TopicPage {
             matches,
             next_before,

@@ -1,11 +1,11 @@
 import { HttpClient } from "./api";
-import { decodeChatMessage, isRecord } from "./types";
+import { decodeChatMessage, isRecord, type ChatMessage } from "./types";
 
 export type ChannelTopic = Readonly<{ key: string; label: string; count: number }>;
 export type ChannelTopicSummary = Readonly<{ enabled: boolean; can_manage: boolean; topics: readonly ChannelTopic[] }>;
 export type ChannelTopicMatch = Readonly<{
   message_id: string; parent_message_id: string | null; sequence: number;
-  sender_display_name: string; body: string; created_at: string;
+  message: ChatMessage;
 }>;
 export type ChannelTopicPage = Readonly<{ matches: readonly ChannelTopicMatch[]; next_before: number | null }>;
 
@@ -20,17 +20,19 @@ function decodeSummary(value: unknown): ChannelTopicSummary {
   return { enabled: value.enabled, can_manage: value.can_manage, topics: topics.slice(0, 6) };
 }
 
-function decodePage(value: unknown): ChannelTopicPage {
+function decodePage(value: unknown, channelId: string): ChannelTopicPage {
   if (!isRecord(value) || !Array.isArray(value.matches) || (value.next_before !== null && typeof value.next_before !== "number"))
     throw new Error("Ugyldige emnetreff");
   const matches = value.matches.map((match: unknown) => {
     if (!isRecord(match) || typeof match.message_id !== "string"
       || (match.parent_message_id !== null && typeof match.parent_message_id !== "string")
-      || typeof match.sequence !== "number" || typeof match.sender_display_name !== "string"
-      || typeof match.body !== "string" || typeof match.created_at !== "string")
+      || typeof match.sequence !== "number")
       throw new Error("Ugyldig emnetreff");
-    return { message_id: match.message_id, parent_message_id: match.parent_message_id, sequence: match.sequence,
-      sender_display_name: match.sender_display_name, body: match.body, created_at: match.created_at };
+    const message = decodeChatMessage(match.message);
+    if (message.channel_id !== channelId || message.id !== match.message_id || message.sequence !== match.sequence
+      || message.parent_message_id !== match.parent_message_id || message.deleted_at)
+      throw new Error("Svaret gjeld ei anna melding.");
+    return { message_id: match.message_id, parent_message_id: match.parent_message_id, sequence: match.sequence, message };
   });
   return { matches, next_before: value.next_before };
 }
@@ -74,7 +76,7 @@ export class ChannelTopicsApi {
   matches(owner: string, channelId: string, topic: string, before: number | null, signal: AbortSignal) {
     const query = new URLSearchParams({ topic });
     if (before !== null) query.set("before", String(before));
-    return this.#request(owner, `${this.#path(channelId)}/matches?${query}`, decodePage, { signal });
+    return this.#request(owner, `${this.#path(channelId)}/matches?${query}`, value => decodePage(value, channelId), { signal });
   }
 
   context(owner: string, channelId: string, match: ChannelTopicMatch, signal: AbortSignal) {
