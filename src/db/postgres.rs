@@ -1811,7 +1811,13 @@ impl ChatRepository for PostgresChatRepository {
         command: AddChannelMember,
     ) -> RepositoryFuture<'a, Membership> {
         Box::pin(async move {
-            let allowed: Option<i32> = sqlx::query_scalar("select 1 from channels c join channel_memberships owner on owner.channel_id=c.id and owner.user_id=$1 and owner.role in ('owner','moderator') join circle_memberships target on target.circle_id=c.circle_id and target.user_id=$2 where c.id=$3")
+            let allowed: Option<i32> = sqlx::query_scalar(
+                "select 1 from channels c join channel_memberships owner on owner.channel_id=c.id \
+                 and owner.user_id=$1 and owner.role in ('owner','moderator') where c.id=$3 and (\
+                   (c.circle_id is null and c.kind in ('public','local') \
+                    and exists(select 1 from users u where u.id=$2 and u.kind='human')) \
+                   or exists(select 1 from circle_memberships target where target.circle_id=c.circle_id and target.user_id=$2))",
+            )
                 .bind(*command.actor.as_uuid()).bind(*command.user_id.as_uuid()).bind(*command.channel_id.as_uuid()).fetch_optional(&self.pool).await.map_err(sql_error)?;
             if allowed.is_none() {
                 return Err(RepositoryError::PermissionDenied);
