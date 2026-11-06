@@ -1,6 +1,6 @@
 {
   "webkit": [
-    "ui-react-community.spec.ts",
+    "ui-react-felles-discovery.spec.ts",
     "ui-react-layout-refinement.spec.ts",
     "ui-react-panel-resize.spec.ts",
     "ui-react-badge.spec.ts",
