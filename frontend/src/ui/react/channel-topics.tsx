@@ -3,9 +3,7 @@ import { Button, Status } from "@sproyt/ui/react";
 import { HttpError } from "../../api";
 import type { ChannelTopic, ChannelTopicMatch, ChannelTopicPage, ChannelTopicSummary, ChannelTopicsApi } from "../../channel-topics";
 import type { ChatMessage } from "../../types";
-import { ConversationTimeline, formatMessageDateTime, type TimelineProps } from "./conversation-view";
-import { markdownTextFromMessage } from "./markdown-content";
-import { personalMessageReference } from "../../personal-space";
+import { ConversationTimeline, type TimelineProps } from "./conversation-view";
 
 type TopicScope = Readonly<{ api: ChannelTopicsApi; owner: string; channelId: string }>;
 
@@ -63,12 +61,6 @@ export function ChannelTopicSetting({ api, owner, channelId }: TopicScope) {
 
 type Results = ChannelTopicPage & { readonly loading: boolean; readonly error: boolean };
 const emptyResults: Results = { matches: [], next_before: null, loading: false, error: false };
-
-function resultText(body: string) {
-  if (personalMessageReference(body, window.location.origin)) return "Lagra melding";
-  return markdownTextFromMessage(body).replace(/!?\[([^\]\n]*)\]\([^\s)]+\)/gu, "$1")
-    .replace(/^\s*(?:#{1,6}|>|[-*])\s+/gmu, "").trim() || "Melding med vedlegg";
-}
 
 export function ChannelTopics({ api, owner, channelId, timeline, resetRequest, active, onThread }: TopicScope & {
   readonly timeline: TimelineProps;
@@ -142,7 +134,8 @@ export function ChannelTopics({ api, owner, channelId, timeline, resetRequest, a
   const available = summary?.enabled ? summary.topics : [];
   const topics = selected && !available.some(topic => topic.key === selected.key) ? [...available.slice(0, 5), selected] : available;
   const hidden = Boolean(selectedKey);
-  const latestMessages = activeContext && contextMessages ? new Map(timeline.messages.map(message => [message.id, message])) : null;
+  const latestMessages = hidden ? new Map(timeline.messages.map(message => [message.id, message])) : null;
+  const resultMessages = results.matches.map(match => latestMessages?.get(match.message_id) ?? match.message);
   const contextRows = contextMessages?.map(message => latestMessages?.get(message.id) ?? message);
   const targetRemoved = activeContext && latestMessages?.get(activeContext.message_id)?.deleted_at;
   return <>
@@ -153,29 +146,22 @@ export function ChannelTopics({ api, owner, channelId, timeline, resetRequest, a
     </div>}
     <ConversationTimeline {...timeline} id={hidden ? undefined : resultId} hidden={hidden} />
     {selected && <div className="sp-topic-viewport" id={resultId}>
-        <div className="sp-topic-results" ref={activeResults} hidden={Boolean(activeContext)}
-          aria-label={`Meldingar om ${selected.label}`} aria-busy={results.loading}>
-          {results.matches.length > 0 && <ul>{results.matches.map(match => <li key={match.message_id}>
-            <Button variant="quiet" onClick={event => {
-              if (match.parent_message_id) onThread(match);
-              else {
-                openedFrom.current = event.currentTarget;
-                setContextMessages(undefined);
-                setContextError(false);
-                setContext(match);
-              }
-            }}>
-              <span className="sp-topic-result-meta"><strong>{match.sender_display_name}</strong>
-                <time dateTime={match.created_at}>{formatMessageDateTime(match.created_at)}</time></span>
-              <span className="sp-topic-result-body">{resultText(match.body)}</span>
-            </Button>
-          </li>)}</ul>}
-          {results.loading && <Status>Lastar emnetreff …</Status>}
-          {!results.loading && !results.error && results.matches.length === 0 && <Status>Ingen meldingar med dette emnet.</Status>}
-          {results.error && <Status tone="error">Emnetreffa kunne ikkje lastast. <Button onClick={() => loadPage(selected.key, results.next_before)}>Prøv igjen</Button></Status>}
-          {results.next_before !== null && !results.error && <Button busy={results.loading}
-            onClick={() => loadPage(selected.key, results.next_before)}>Last eldre treff</Button>}
-        </div>
+        <ConversationTimeline {...timeline} id={undefined} hidden={Boolean(activeContext)} items={undefined} notices={undefined}
+          messages={resultMessages} viewportRef={activeResults} onScroll={undefined} unreadAfterSequence={undefined}
+          loading={results.loading} error={results.error ? "Emnetreffa kunne ikkje lastast." : undefined}
+          onRetry={() => loadPage(selected.key, results.next_before)} hasOlder={results.next_before !== null}
+          onLoadOlder={() => loadPage(selected.key, results.next_before)}
+          matches={{ label: `Meldingar om ${selected.label}`, onOpen(message, anchor) {
+            const match = results.matches.find(item => item.message_id === message.id);
+            if (!match) return;
+            if (match.parent_message_id) onThread(match);
+            else {
+              openedFrom.current = anchor;
+              setContextMessages(undefined);
+              setContextError(false);
+              setContext(match);
+            }
+          } }} />
         {activeContext && <section className="sp-topic-context" aria-label="Meldinga i samtalen">
           <div className="sp-topic-context-header"><Button variant="quiet" onClick={() => {
             setContext(undefined);
