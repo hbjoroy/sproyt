@@ -1,23 +1,27 @@
 //! Server-only GitHub App transport. Never log credentials or approved issue text.
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use rsa::{
-    RsaPrivateKey,
-    pkcs1::DecodeRsaPrivateKey,
-    pkcs1v15::SigningKey,
-    pkcs8::DecodePrivateKey,
-    signature::{SignatureEncoding, Signer},
+use pkcs1::{
+    RsaPublicKey,
+    der::{Decode, SecretDocument},
+};
+use ring::{
+    rand::SystemRandom,
+    signature::{RSA_PKCS1_SHA256, RsaKeyPair},
 };
 use serde_json::{Value, json};
-use sha2::Sha256;
 use std::{sync::Arc, time::Duration};
+use zeroize::Zeroizing;
+
+#[cfg(test)]
+mod signing_tests;
 
 #[derive(Clone)]
 pub(crate) struct GitHub {
     http: reqwest::Client,
     base: String,
     app_id: String,
-    key: Arc<SigningKey<Sha256>>,
+    key: Arc<RsaKeyPair>,
 }
 
 #[derive(Clone)]
@@ -43,12 +47,12 @@ pub(crate) enum CreateError {
 impl GitHub {
     #[cfg(test)]
     pub(crate) fn test_client(base: String) -> Self {
-        Self::new(
-            "1".into(),
-            RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap(),
-            base,
-        )
-        .unwrap()
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+
+        let private_key = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
+        let der = private_key.to_pkcs1_der().unwrap();
+        let key = RsaKeyPair::from_der(der.as_bytes()).unwrap();
+        Self::new("1".into(), key, base).unwrap()
     }
     pub fn from_env() -> Result<Option<Self>, &'static str> {
         let app = std::env::var("SPROYT_GITHUB_APP_ID").ok();
@@ -56,21 +60,39 @@ impl GitHub {
         match (app, path) {
             (None, None) => Ok(None),
             (Some(app), Some(path)) if app.parse::<u64>().is_ok_and(|id| id > 0) => {
-                let pem = std::fs::read_to_string(path).map_err(|_| "GitHub key cannot be read")?;
-                let key = RsaPrivateKey::from_pkcs1_pem(&pem)
-                    .or_else(|_| RsaPrivateKey::from_pkcs8_pem(&pem))
-                    .map_err(|_| "GitHub key is invalid")?;
-                use rsa::traits::PublicKeyParts;
-                if key.n().bits() < 2048 {
-                    return Err("GitHub key is too small");
-                }
+                let pem = Zeroizing::new(
+                    std::fs::read_to_string(path).map_err(|_| "GitHub key cannot be read")?,
+                );
+                let key = Self::parse_key(&pem)?;
                 Ok(Some(Self::new(app, key, "https://api.github.com".into())?))
             }
             _ => Err("GitHub App ID and private key path must be configured together"),
         }
     }
 
-    fn new(app_id: String, key: RsaPrivateKey, base: String) -> Result<Self, &'static str> {
+    fn parse_key(pem: &str) -> Result<RsaKeyPair, &'static str> {
+        let (label, der) = SecretDocument::from_pem(pem).map_err(|_| "GitHub key is invalid")?;
+        let key = match label {
+            "RSA PRIVATE KEY" => RsaKeyPair::from_der(der.as_bytes()),
+            "PRIVATE KEY" => RsaKeyPair::from_pkcs8(der.as_bytes()),
+            _ => return Err("GitHub key must be an RSA PKCS#1 or PKCS#8 PEM"),
+        }
+        .map_err(|_| "GitHub RSA key is invalid or unsupported (expected 2048–4096 bits)")?;
+        // ring's minimum check rounds the public modulus up to whole bytes.
+        let public =
+            RsaPublicKey::from_der(key.public().as_ref()).map_err(|_| "GitHub key is invalid")?;
+        let modulus = public.modulus.as_bytes();
+        let bits = modulus.len() * 8
+            - modulus
+                .first()
+                .map_or(0, |byte| byte.leading_zeros() as usize);
+        if bits < 2048 {
+            return Err("GitHub key is too small");
+        }
+        Ok(key)
+    }
+
+    fn new(app_id: String, key: RsaKeyPair, base: String) -> Result<Self, &'static str> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::none())
@@ -81,18 +103,26 @@ impl GitHub {
             http,
             base,
             app_id,
-            key: Arc::new(SigningKey::new(key)),
+            key: Arc::new(key),
         })
     }
 
-    fn jwt(&self) -> String {
+    fn jwt(&self) -> Result<String, &'static str> {
         let now = Utc::now().timestamp();
         let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
         let claims = URL_SAFE_NO_PAD
             .encode(json!({"iat":now-60,"exp":now+300,"iss":self.app_id}).to_string());
         let input = format!("{header}.{claims}");
-        let signature = self.key.sign(input.as_bytes());
-        format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature.to_bytes()))
+        let mut signature = vec![0; self.key.public().modulus_len()];
+        self.key
+            .sign(
+                &RSA_PKCS1_SHA256,
+                &SystemRandom::new(),
+                input.as_bytes(),
+                &mut signature,
+            )
+            .map_err(|_| "GitHub App JWT signing failed")?;
+        Ok(format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature)))
     }
 
     fn request(&self, method: reqwest::Method, path: &str, token: &str) -> reqwest::RequestBuilder {
@@ -130,8 +160,9 @@ impl GitHub {
     }
 
     pub async fn token(&self, target: &Destination) -> Result<String, &'static str> {
+        let jwt = self.jwt()?;
         let response = Self::response(self.request(reqwest::Method::POST,
-            &format!("/app/installations/{}/access_tokens", target.installation), &self.jwt())
+            &format!("/app/installations/{}/access_tokens", target.installation), &jwt)
             .json(&json!({"repository_ids":[target.repository_id],"permissions":{"issues":"write","metadata":"read"}}))).await?;
         let repositories = response["repositories"]
             .as_array()
