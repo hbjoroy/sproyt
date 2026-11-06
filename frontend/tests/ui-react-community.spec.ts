@@ -164,7 +164,15 @@ test("Finn kanalar i Felles discovers an open channel and joins it from another 
   const publicId = await createChannelViaUi(page, publicName);
   await createChannelViaUi(page, privateName, { kind: "private" });
   await createCircle(creator, circleName);
-  await createChannelViaUi(page, circleChannel, { circleName });
+  await openCircleNavigation(creator);
+  const circle = circleGroup(creator, circleName);
+  await circle.getByRole("button", { name: `Val for ${circleName}`, exact: true }).click();
+  await circle.getByRole("button", { name: `Ny kanal i ${circleName}`, exact: true }).click();
+  const create = destinationSurface(creator, `Ny kanal i ${circleName}`, true);
+  await create.getByLabel("Kanalnamn").fill(circleChannel);
+  await create.getByLabel("Kanaltype").selectOption("public");
+  await create.getByRole("button", { name: "Opprett kanal", exact: true }).click();
+  await expect(create).toHaveCount(0);
 
   const scopes: unknown[] = [];
   page.on("websocket", socket => socket.on("framesent", ({ payload }) => {
