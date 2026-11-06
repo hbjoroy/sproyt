@@ -1170,11 +1170,10 @@ mod tests {
         pilot.store.execute("insert into process_pilot_runs(id,channel_id,actor_id,assignee_id,request_id,instance_id,status) values(?,?uuid,?uuid,?uuid,?,?,'waiting')", &[run.clone(),channel.clone(),owner.to_string(),owner.to_string(),Uuid::now_v7().to_string(),Uuid::now_v7().to_string()]).await.unwrap();
         pilot.store.execute("insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values(?uuid,?uuid,?uuid,'Tester',1,?)", &[message.clone(),channel.clone(),owner.to_string(),format!("[[process-task:{task}]]")]).await.unwrap();
         pilot.store.execute("insert into process_pilot_tasks(id,run_id,message_id,node_id,status,command_id,delivery_status) values(?,?,?uuid,'first','pending',?,'pending')", &[task.clone(),run.clone(),message.clone(),command.clone()]).await.unwrap();
-        let audits = pilot
-            .store
-            .values("select cast(count(*) as text) from audit_events", &[])
-            .await
-            .unwrap();
+        let audit_history = "select cast(sequence as text) || '|' || coalesce(cast(actor_id as text),'') || '|' ||
+            action || '|' || target_kind || '|' || target_id || '|' || cast(payload as text) || '|' ||
+            cast(occurred_at as text) from audit_events order by sequence";
+        let audits = pilot.store.values(audit_history, &[]).await.unwrap();
         match &pilot.store {
             Store::Sqlite(pool) => sqlx::migrate!("./migrations/sqlite")
                 .run(pool)
@@ -1185,14 +1184,9 @@ mod tests {
                 .await
                 .unwrap(),
         }
-        assert_eq!(
-            pilot
-                .store
-                .values("select cast(count(*) as text) from audit_events", &[])
-                .await
-                .unwrap(),
-            audits
-        );
+        let upgraded_audits = pilot.store.values(audit_history, &[]).await.unwrap();
+        // Provisioning can append audit events. Every historical row must survive unchanged.
+        assert_eq!(upgraded_audits.get(..audits.len()), Some(audits.as_slice()));
         assert_eq!(pilot.store.values("select id || '|' || heart_task_id || '|' || command_id || '|' || delivery_status from process_pilot_tasks", &[]).await.unwrap(),vec![format!("{task}|{task}|{command}|pending")]);
         assert_eq!(
             pilot
