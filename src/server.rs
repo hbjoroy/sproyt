@@ -62,6 +62,7 @@ use crate::{
 
 #[derive(Clone)]
 pub(super) struct AppState {
+    pub(super) topics: Option<crate::topics::TopicStore>,
     pub(super) native_sessions: Option<crate::native_sessions::NativeSessions>,
     pub(super) media_store: Option<crate::media_store::MediaStore>,
     pub(super) auth: AuthService,
@@ -144,6 +145,9 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         service.start_worker(operations.subscribe_shutdown());
     }
     let chat = ChatEngine::start(repositories.chat);
+    let topics =
+        crate::topics::TopicStore::connect(config.database(), postgres_pool.as_ref()).await?;
+    crate::topics::spawn(topics.clone(), operations.subscribe_shutdown());
     let chat_agents =
         crate::chatbot::CircleChatAgents::from_env(config.database(), postgres_pool.as_ref())
             .await?;
@@ -165,6 +169,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     let native_sessions =
         crate::native_sessions::NativeSessions::from_env(&config, postgres_pool.as_ref()).await?;
     let state = AppState {
+        topics: Some(topics),
         native_sessions,
         media_store,
         process_pilot,
@@ -203,6 +208,18 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
 pub(super) fn build_router(state: AppState, operations: OperationalState) -> Router {
     let request_id_header = HeaderName::from_static("x-request-id");
     Router::new()
+        .route(
+            "/api/v1/channels/{channel_id}/topics",
+            get(crate::web::topics::list).put(crate::web::topics::set_enabled),
+        )
+        .route(
+            "/api/v1/channels/{channel_id}/topics/matches",
+            get(crate::web::topics::matches),
+        )
+        .route(
+            "/api/v1/channels/{channel_id}/topics/context",
+            get(crate::web::topic_context::topic_context),
+        )
         .merge(crate::web::native::routes())
         .route("/api/v1/native/ws", get(crate::web::native_chat::socket))
         .route(

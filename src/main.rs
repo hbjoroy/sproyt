@@ -19,6 +19,7 @@ mod process;
 mod process_pilot;
 mod protocol;
 mod server;
+mod topics;
 mod web;
 mod work_items;
 mod ws;
