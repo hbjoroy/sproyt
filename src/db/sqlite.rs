@@ -1631,22 +1631,36 @@ impl ChatRepository for SqliteChatRepository {
     fn list_joinable_channels<'a>(
         &'a self,
         actor: UserId,
-        circle_id: CircleId,
+        circle_id: Option<CircleId>,
     ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>> {
         Box::pin(async move {
-            let member: Option<i64> = sqlx::query_scalar(
-                "select 1 from circle_memberships where circle_id=? and user_id=?",
+            let circle_id = circle_id.map(|id| id.to_string());
+            let admitted = sqlx::query_scalar::<_, i64>(
+                "select 1 from users where id=?1 and (?2 is null or exists(select 1 from circle_memberships cm where cm.circle_id=?2 and cm.user_id=?1))",
             )
-            .bind(circle_id.to_string())
             .bind(actor.to_string())
+            .bind(circle_id.as_deref())
             .fetch_optional(&self.pool)
             .await
             .map_err(sql_error)?;
-            if member.is_none() {
+            if admitted.is_none() {
                 return Err(RepositoryError::PermissionDenied);
             }
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by,c.description from channels c join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=? left join channel_memberships m on m.channel_id=c.id and m.user_id=? where c.circle_id=? and c.kind!='private' and m.user_id is null order by c.slug")
-                .bind(actor.to_string()).bind(actor.to_string()).bind(circle_id.to_string()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            let rows = sqlx::query(
+                "select c.id,c.slug,c.name,c.kind,c.circle_id,c.created_by,c.description
+                 from channels c
+                 where ((?2 is null and c.circle_id is null) or c.circle_id=?2)
+                   and c.kind in ('public','local')
+                   and exists(select 1 from users u where u.id=?1)
+                   and (?2 is null or exists(select 1 from circle_memberships cm where cm.circle_id=?2 and cm.user_id=?1))
+                   and not exists(select 1 from channel_memberships m where m.channel_id=c.id and m.user_id=?1)
+                 order by c.slug",
+            )
+            .bind(actor.to_string())
+            .bind(circle_id.as_deref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(sql_error)?;
             rows.into_iter()
                 .map(discoverable_channel_from_row)
                 .collect()

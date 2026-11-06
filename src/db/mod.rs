@@ -1061,6 +1061,79 @@ where
         })
         .await
         .unwrap();
+    let mut global_channels = Vec::new();
+    for (slug, kind) in [
+        ("public", ChannelKind::Public),
+        ("local", ChannelKind::Local),
+        ("private", ChannelKind::Private),
+    ] {
+        global_channels.push(
+            repository
+                .create_channel(CreateChannel {
+                    actor: actor.clone(),
+                    slug: ChannelSlug::new(format!("felles-{slug}-{suffix}")).unwrap(),
+                    name: DisplayName::new(format!("Felles {slug}")).unwrap(),
+                    kind,
+                    circle_id: None,
+                })
+                .await
+                .unwrap(),
+        );
+    }
+    let [public, local, private] = global_channels.as_slice() else {
+        unreachable!();
+    };
+    let discoverable = repository
+        .list_joinable_channels(outsider.clone(), None)
+        .await
+        .unwrap();
+    assert!(discoverable.iter().any(|item| item.channel.id == public.id));
+    assert!(discoverable.iter().any(|item| item.channel.id == local.id));
+    assert!(discoverable.iter().all(|item| {
+        item.channel.circle_id.is_none()
+            && item.channel.kind != ChannelKind::Private
+            && item.channel.id != private.id
+    }));
+    assert!(
+        !repository
+            .list_joinable_channels(actor.clone(), None)
+            .await
+            .unwrap()
+            .iter()
+            .any(|item| item.channel.id == public.id || item.channel.id == local.id)
+    );
+    assert_eq!(
+        repository
+            .list_joinable_channels(
+                UserId::named(format!("chat-contract-unknown-{suffix}")),
+                None
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .list_joinable_channels(outsider.clone(), Some(circle.id.clone()))
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    let joined = repository
+        .join_channel(JoinChannel {
+            actor: outsider.clone(),
+            channel: ChannelRef::Id(public.id.clone()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(joined.channel_id, public.id);
+    assert!(
+        !repository
+            .list_joinable_channels(outsider.clone(), None)
+            .await
+            .unwrap()
+            .iter()
+            .any(|item| item.channel.id == public.id)
+    );
+
     assert_eq!(
         repository
             .list_circle_user_profiles(outsider.clone(), circle.id.clone())
@@ -1087,7 +1160,7 @@ where
     );
     assert!(
         repository
-            .list_joinable_channels(member.clone(), circle.id.clone())
+            .list_joinable_channels(member.clone(), Some(circle.id.clone()))
             .await
             .unwrap()
             .iter()

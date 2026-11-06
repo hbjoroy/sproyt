@@ -3883,7 +3883,7 @@
 
         if (event.type === "joinable_channels_listed") {
           const channels = event.payload.channels.map((item) => channelFromBase(item.channel, "member", item.description));
-          if (managedCircleId && channels.every((channel) => channel.circle_id === managedCircleId)) {
+          if (!developmentPreviewActive && managedCircleId && channels.every((channel) => channel.circle_id === managedCircleId)) {
             renderManagedJoinableChannels(channels);
           }
           updateOnboardingButtons();

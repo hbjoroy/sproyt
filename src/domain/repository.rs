@@ -380,7 +380,7 @@ pub trait ChatRepository: Send + Sync + 'static {
     fn list_joinable_channels<'a>(
         &'a self,
         actor: UserId,
-        circle_id: CircleId,
+        circle_id: Option<CircleId>,
     ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>>;
     fn add_channel_member<'a>(
         &'a self,
@@ -1897,21 +1897,24 @@ impl ChatRepository for InMemoryChatRepository {
     fn list_joinable_channels<'a>(
         &'a self,
         actor: UserId,
-        circle_id: CircleId,
+        circle_id: Option<CircleId>,
     ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>> {
         Box::pin(async move {
             let state = self.lock_state()?;
-            if !state
-                .circle_memberships
-                .contains_key(&(circle_id.clone(), actor.clone()))
+            if !state.users.contains_key(&actor)
+                || circle_id.as_ref().is_some_and(|id| {
+                    !state
+                        .circle_memberships
+                        .contains_key(&(id.clone(), actor.clone()))
+                })
             {
                 return Err(RepositoryError::PermissionDenied);
             }
-            Ok(state
+            let mut channels: Vec<_> = state
                 .channels
                 .values()
                 .filter(|channel| {
-                    channel.circle_id.as_ref() == Some(&circle_id)
+                    channel.circle_id == circle_id
                         && channel.kind != ChannelKind::Private
                         && !state
                             .memberships
@@ -1925,7 +1928,11 @@ impl ChatRepository for InMemoryChatRepository {
                         .unwrap_or_default(),
                     channel: channel.clone(),
                 })
-                .collect())
+                .collect();
+            channels.sort_unstable_by(|left, right| {
+                left.channel.slug.as_str().cmp(right.channel.slug.as_str())
+            });
+            Ok(channels)
         })
     }
 

@@ -119,6 +119,27 @@ mod tests {
     fn assert_server_event<T: super::ServerEventDto>() {}
 
     #[test]
+    fn list_joinable_channels_accepts_missing_and_null_circle_scope() {
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({"circle_id": null}),
+        ] {
+            let frame =
+                serde_json::from_value::<ClientEnvelope<crate::ClientCommand>>(serde_json::json!({
+                    "protocol": PROTOCOL_ID,
+                    "request_id": "felles",
+                    "type": "list_joinable_channels",
+                    "payload": payload
+                }))
+                .unwrap();
+            assert!(matches!(
+                frame.command,
+                crate::ClientCommand::ListJoinableChannels { circle_id: None }
+            ));
+        }
+    }
+
+    #[test]
     fn golden_client_json_is_stable_and_round_trips() {
         assert_client_command::<ClientCommand>();
         let frame = ClientEnvelope {
