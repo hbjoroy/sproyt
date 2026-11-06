@@ -26,7 +26,7 @@ export interface CommunityHost {
   setCircleMemberRole(circleId: string, userId: string, role: "member" | "moderator"): Promise<void>;
   renameCircle(circleId: string, name: string): Promise<void>;
   createChannel(circleId: string | null, name: string, kind: "public" | "local" | "private"): Promise<void>;
-  joinable(circleId: string): Promise<Array<{ id: string; name: string; description: string }>>;
+  joinable(circleId: string | null): Promise<Array<{ id: string; name: string; description: string }>>;
   join(channelId: string): Promise<void>;
   leaveChannel(channelId: string): Promise<void>;
   leaveCircle(circleId: string): Promise<void>;
@@ -259,16 +259,34 @@ function ScopeChannels({ host, circle, channels, onClose, onNavigate, onSelectCh
     const frame = requestAnimationFrame(() => nameField.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   }, [createOnly]);
-  const [joinable, setJoinable] = useState<Array<{ id: string; name: string; description: string }>>([]);
-  const [confirm, setConfirm] = useState(false); const op = useOperation();
-  const load = () => circle && op.run(async () => setJoinable(await host.joinable(circle.id)));
-  useEffect(() => { if (circle && !createOnly) void load(); }, [circle?.id]);
+  const [joinable, setJoinable] = useState<Array<{ id: string; name: string; description: string }>>();
+  const [confirm, setConfirm] = useState(false);
+  const circleId = circle?.id ?? null;
+  const scope = useCommunityViewScope(host, circleId ?? "Felles");
+  const op = useOperation(scope.capture);
+  const load = () => op.run(async admitted => {
+    const channels = await host.joinable(circleId);
+    if (admitted()) setJoinable(channels);
+  });
+  useEffect(() => { if (!createOnly && scope.owner) void load(); }, [circleId, createOnly, scope.owner]);
   const scopeName = circle?.name ?? "Felles";
   return <>
-    {!createOnly && <><h3>Kanalar du er med i</h3><div className="sp-community-channel-list">{channels.filter(channel => !channel.is_direct && channel.circle_id === (circle?.id ?? null)).map(channel => <div className="sp-community-channel-row" key={channel.id}>
+    {!createOnly && <><h3>Kanalar du er med i</h3><div className="sp-community-channel-list">{channels.filter(channel => !channel.is_direct && !channel.is_personal && channel.circle_id === circleId).map(channel => <div className="sp-community-channel-row" key={channel.id}>
       <Button variant="quiet" onClick={() => onSelectChannel ? onSelectChannel(channel.id) : onNavigate({ kind: "channel", channelId: channel.id })}><span># {channel.name}</span><span>{onSelectChannel ? "Gå inn" : "Vis medlemmer"}</span></Button>
       {onSelectChannel && <Button variant="quiet" aria-label={`Medlemmer i ${channel.name}`} title={`Medlemmer i ${channel.name}`} onClick={() => onNavigate({ kind: "channel", channelId: channel.id })}><span aria-hidden="true">⋯</span></Button>}
     </div>)}</div></>}
+    {!createOnly && <section aria-label="Finn opne kanalar"><h3>Finn opne kanalar</h3>
+      <Button onClick={() => void load()} busy={op.busy}>Last kanalar på nytt</Button>
+      {!joinable && !op.error && <Status>Hentar opne kanalar …</Status>}
+      {joinable?.length === 0 && !op.busy && !op.error && <p>Ingen fleire opne kanalar akkurat no.</p>}
+      {joinable?.map(channel => <section key={channel.id}><h4>{channel.name}</h4><Markdown text={channel.description} />
+        <Button disabled={op.busy} onClick={() => void op.run(async admitted => {
+          await host.join(channel.id);
+          // The routed host opens the joined channel after refreshing memberships.
+          if (!onSelectChannel && admitted()) onClose();
+        })}>Bli med i {channel.name}</Button>
+      </section>)}
+    </section>}
     {onSelectChannel && !createOnly ? <Button variant="quiet" onClick={() => onNavigate({ kind: "create-channel", circleId: circle?.id ?? null })}>Ny kanal i {scopeName}</Button> : <section aria-label="Ny kanal"><h3>Ny kanal i {scopeName}</h3><form onSubmit={event => { event.preventDefault(); void op.run(async () => { await host.createChannel(circle?.id ?? null, name.trim(), kind); onClose(); }); }}>
       <TextField ref={nameField} label="Kanalnamn" value={name} required onChange={event => setName(event.target.value)} />
       <label htmlFor="community-kind">Kanaltype</label><select id="community-kind" value={kind} onChange={event => setKind(event.target.value as typeof kind)}><option value="private">Privat</option><option value="public">Open</option><option value="local">Lokal</option></select>
@@ -277,9 +295,7 @@ function ScopeChannels({ host, circle, channels, onClose, onNavigate, onSelectCh
     {!createOnly && !circle && <section aria-label="Registreringsinvitasjon til Sprøyt"><h3>Inviter ny brukar til Sprøyt</h3>
       <Button onClick={() => onNavigate({ kind: "global-invite" })}>Lag registreringsinvitasjon</Button>
     </section>}
-    {!createOnly && circle && <><h3>Finn opne kanalar</h3><Button onClick={() => void load()} busy={op.busy}>Last kanalar på nytt</Button>
-      {!joinable.length && <p>Ingen fleire opne kanalar akkurat no.</p>}
-      {joinable.map(channel => <section key={channel.id}><h4>{channel.name}</h4><Markdown text={channel.description} /><Button disabled={op.busy} onClick={() => void op.run(async () => { await host.join(channel.id); onClose(); })}>Bli med i {channel.name}</Button></section>)}
+    {!createOnly && circle && <>
       <Button variant="danger" disabled={op.busy} onClick={() => setConfirm(true)}>{circle.role === "owner" ? "Slett vennekrets" : "Forlat vennekrets"}</Button>
       {confirm && <div role="group" aria-label="Stadfest kretsendring"><p>{circle.role === "owner" ? `Slett ${circle.name} og all chat- og prosesshistorikk permanent?` : `Forlat ${circle.name}? Du mistar tilgang til kanalane i kretsen.`}</p><Button onClick={() => setConfirm(false)}>Avbryt</Button><Button variant="danger" disabled={op.busy} onClick={() => void op.run(async () => { await (circle.role === "owner" ? host.deleteCircle(circle.id) : host.leaveCircle(circle.id)); onClose(); })}>Ja, {circle.role === "owner" ? "slett kretsen" : "forlat kretsen"}</Button></div>}</>}
     {op.feedback}

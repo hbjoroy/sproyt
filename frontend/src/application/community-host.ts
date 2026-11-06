@@ -79,7 +79,12 @@ export function createCommunityHost(deps: {
       if (!slug) throw new Error("Kanalnamnet må innehalde bokstavar eller tal.");
       await request("channel_created", () => deps.send("create_channel", { circle_id: id, name: trimmed, kind, slug }));
     },
-    joinable: async id => { circle(id); return (await request("joinable_channels_listed", () => deps.send("list_joinable_channels", { circle_id: id }))).payload.channels.map(item => ({ id: item.channel.id, name: item.channel.name, description: item.description })); },
+    joinable: async id => {
+      if (id !== null) circle(id);
+      const { payload } = await request("joinable_channels_listed", () => deps.send("list_joinable_channels", { circle_id: id }));
+      return payload.channels.filter(item => item.channel.circle_id === id)
+        .map(item => ({ id: item.channel.id, name: item.channel.name, description: item.description }));
+    },
     join: async id => { await request("membership_joined", () => deps.send("join_channel", { channel: { type: "id", value: id } })); },
     leaveChannel: async id => { channel(id); await request("membership_left", () => deps.send("leave_channel", { channel_id: id })); },
     leaveCircle: async id => { if (circle(id).role === "owner") throw new Error("Eigaren kan ikkje forlate kretsen."); await request("circle_left", () => deps.send("leave_circle", { circle_id: id })); },

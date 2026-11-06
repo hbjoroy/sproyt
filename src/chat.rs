@@ -833,7 +833,7 @@ impl ChatEngine {
     pub async fn list_joinable_channels(
         &self,
         actor: UserId,
-        circle_id: crate::domain::CircleId,
+        circle_id: Option<crate::domain::CircleId>,
     ) -> Result<Vec<crate::domain::DiscoverableChannel>, ChatError> {
         self.repository
             .list_joinable_channels(actor, circle_id)
