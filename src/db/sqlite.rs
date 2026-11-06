@@ -1667,6 +1667,26 @@ impl ChatRepository for SqliteChatRepository {
         })
     }
 
+    fn resolve_channel_references(
+        &self,
+        actor: UserId,
+        source: ChannelId,
+        slugs: Vec<ChannelSlug>,
+    ) -> RepositoryFuture<'_, Vec<crate::domain::ResolvedChannelReference>> {
+        Box::pin(async move {
+            use super::channel_references::{ChannelReferenceRow, decode, statement};
+            let encoded = serde_json::to_string(&slugs).map_err(storage)?;
+            let rows = sqlx::query_as::<_, ChannelReferenceRow>(&statement(false))
+                .bind(actor.to_string())
+                .bind(source.to_string())
+                .bind(encoded)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(sql_error)?;
+            decode(rows)
+        })
+    }
+
     fn add_channel_member<'a>(
         &'a self,
         command: AddChannelMember,

@@ -7,8 +7,8 @@ use std::{fmt, future::Future, pin::Pin, time::Duration as StdDuration};
 
 use super::{
     AcceptCircleInvitation, AcceptEnrollmentInvitation, ActivateEnrollmentInvitation,
-    AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSummary, ChatEvent, ChatMessage,
-    Circle, CircleId, CircleMembership, CircleRole, CreateChannel, CreateCircle,
+    AddChannelMember, Channel, ChannelId, ChannelSequence, ChannelSlug, ChannelSummary, ChatEvent,
+    ChatMessage, Circle, CircleId, CircleMembership, CircleRole, CreateChannel, CreateCircle,
     CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel, DisplayName,
     EditMessage, EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation,
     JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
@@ -18,10 +18,10 @@ use super::{
 };
 #[cfg(test)]
 use super::{
-    ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, EnrollmentInvitationState,
-    ExportedChannel, ExportedCircle, InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT,
-    Policy, PortableUserExport, RepositoryError::NotFound, enrollment_email_hash,
-    enrollment_token_hash, generate_enrollment_token,
+    ChannelKind, ChannelRef, CircleInvitation, EnrollmentInvitationState, ExportedChannel,
+    ExportedCircle, InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT, Policy,
+    PortableUserExport, RepositoryError::NotFound, enrollment_email_hash, enrollment_token_hash,
+    generate_enrollment_token,
 };
 #[cfg(test)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -77,6 +77,16 @@ pub type RepositoryFuture<'a, T> =
 
 /// Maximum bytes returned by one media read, regardless of original size.
 pub const MEDIA_READ_BLOCK_BYTES: usize = 1024 * 1024;
+
+pub const CHANNEL_REFERENCE_BATCH_MAX: usize = 64;
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct ResolvedChannelReference {
+    pub id: ChannelId,
+    pub slug: ChannelSlug,
+    pub name: DisplayName,
+    pub is_member: bool,
+}
 
 pub const THREAD_ROOT_PREVIEW_BATCH_MAX: usize = 30;
 
@@ -382,6 +392,12 @@ pub trait ChatRepository: Send + Sync + 'static {
         actor: UserId,
         circle_id: Option<CircleId>,
     ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>>;
+    fn resolve_channel_references(
+        &self,
+        actor: UserId,
+        source: ChannelId,
+        slugs: Vec<ChannelSlug>,
+    ) -> RepositoryFuture<'_, Vec<ResolvedChannelReference>>;
     fn add_channel_member<'a>(
         &'a self,
         command: AddChannelMember,
@@ -1933,6 +1949,60 @@ impl ChatRepository for InMemoryChatRepository {
                 left.channel.slug.as_str().cmp(right.channel.slug.as_str())
             });
             Ok(channels)
+        })
+    }
+
+    fn resolve_channel_references(
+        &self,
+        actor: UserId,
+        source: ChannelId,
+        mut slugs: Vec<ChannelSlug>,
+    ) -> RepositoryFuture<'_, Vec<ResolvedChannelReference>> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let source = state
+                .channels
+                .get(&source)
+                .ok_or(RepositoryError::PermissionDenied)?;
+            if !state
+                .memberships
+                .contains_key(&(source.id.clone(), actor.clone()))
+                || source.circle_id.as_ref().is_some_and(|circle| {
+                    !state
+                        .circle_memberships
+                        .contains_key(&(circle.clone(), actor.clone()))
+                })
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            slugs.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+            slugs.dedup();
+            let mut resolved = Vec::new();
+            for slug in slugs {
+                let alias = source.circle_id.as_ref().and_then(|circle| {
+                    ChannelSlug::new(format!("{}-{slug}", circle.as_uuid().simple())).ok()
+                });
+                let mut targets = std::iter::once(&slug)
+                    .chain(alias.iter())
+                    .filter_map(|slug| state.channels_by_slug.get(slug))
+                    .filter_map(|id| state.channels.get(id))
+                    .filter(|target| {
+                        target.circle_id == source.circle_id && target.kind != ChannelKind::Private
+                    });
+                if let Some(target) = targets.next()
+                    && targets.next().is_none()
+                {
+                    resolved.push(ResolvedChannelReference {
+                        id: target.id.clone(),
+                        slug,
+                        name: target.name.clone(),
+                        is_member: state
+                            .memberships
+                            .contains_key(&(target.id.clone(), actor.clone())),
+                    });
+                }
+            }
+            Ok(resolved)
         })
     }
 

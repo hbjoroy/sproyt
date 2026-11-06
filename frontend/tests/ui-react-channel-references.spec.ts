@@ -1,0 +1,45 @@
+import { expect, test } from "@playwright/test";
+import { createChannelViaUi } from "./support/channel-setup";
+
+test("channel references resolve in message text and ask before joining an open channel", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const suffix = Date.now();
+  const app = page.locator("#sproyt-react-preview");
+  const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
+  await page.goto(`/?participant=reference-creator-${suffix}&ui=react`);
+  await expect(composer).toBeEnabled();
+  const name = `Reference target ${suffix}`;
+  const slug = `reference-target-${suffix}`;
+  const target = await createChannelViaUi(page, name);
+  await createChannelViaUi(page, `Private reference ${suffix}`, { kind: "private" });
+  const privateSlug = `private-reference-${suffix}`;
+  await page.goto(`/?participant=reference-viewer-${suffix}&ui=react`);
+  await expect(composer).toBeEnabled();
+  const source = new URL(page.url()).searchParams.get("channel");
+  expect(source).toBeTruthy();
+  const lookup = page.waitForRequest(request => request.method() === "POST"
+    && request.url().includes(`/channels/${source}/channel-references`) && request.postDataJSON().slugs.includes(slug));
+  await composer.fill(`Sjå #${slug.toUpperCase()} og #${privateSlug}. \\#${slug.toUpperCase()} \\#escaped-only \`#code-only\` [#label-only](https://example.test/#url-only)`);
+  await app.getByRole("button", { name: /^Send(?:\s|$)/ }).click();
+  expect((await lookup).postDataJSON()).toEqual({ slugs: [slug, privateSlug] });
+  const content = app.locator(".sp-message-content").filter({ hasText: `#${privateSlug}` });
+  const link = content.getByRole("link", { name: `#${slug.toUpperCase()}`, exact: true });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveCount(1);
+  await expect(content.getByRole("link", { name: `#${privateSlug}`, exact: true })).toHaveCount(0);
+  await expect(content.locator("code")).toHaveText("#code-only");
+  await expect(content.getByRole("link", { name: "#label-only" })).toHaveAttribute("href", "https://example.test/#url-only");
+  await link.click();
+  const confirm = app.getByRole("dialog", { name: `Bli med i ${name}` });
+  await expect(confirm).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("channel")).toBe(source);
+  await confirm.getByRole("button", { name: "Bli med og opne kanalen" }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("channel")).toBe(target);
+  await expect(composer).toBeEnabled();
+  await page.goBack();
+  await expect(link).toHaveAttribute("href", new RegExp(`channel=${target}(?:&|$)`));
+  await link.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("channel")).toBe(target);
+  await expect(confirm).toHaveCount(0);
+});

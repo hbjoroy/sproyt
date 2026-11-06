@@ -50,6 +50,24 @@ Retain the JSON output with the release evidence. Record worker rollout,
 migration Job status when applicable, and authenticated browser smoke checks
 separately using the [deployment runbook](operations.md#deployment-rollback-and-incident-response).
 
+## Announce each production rollout
+
+After the production rollout and smoke checks pass, publish one short Nynorsk
+line about the main delivery as Sprøyt in the open Felles channel
+**Nyhende i Sprøyt**. Do this for each new production application revision,
+including maintenance releases. The canary stage uses the normal release evidence.
+
+```bash
+bash tools/publish-production-release-news.sh \
+  "$APP_REVISION" "$APP_DIGEST" "$GITOPS_REVISION" "$SUMMARY_FILE"
+```
+
+The release operator needs permission to execute the publisher in the production
+application pod. The wrapper rechecks the rollout and the public revision before
+calling the publisher. Keep the summary file to one line of at most 280 characters.
+Retain the returned JSON with the rollout evidence. Retry with the same file and
+revision if the result is lost.
+
 ## Build and security
 
 - [ ] The publish workflow passed all selected checks. The scope summary
@@ -93,3 +111,5 @@ separately using the [deployment runbook](operations.md#deployment-rollback-and-
 - [ ] Retention, backup deletion lag, export access policy, and privacy owner are accepted.
 - [ ] Release owner records image digest, chart version, migration set, rollout
       observation, and rollback target.
+- [ ] Sprøyt posted the main delivery in **Nyhende i Sprøyt** after production
+      verification. The evidence includes the revision and message ID.

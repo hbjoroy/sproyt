@@ -1,4 +1,5 @@
 mod account_export;
+mod channel_references;
 mod postgres;
 mod sqlite;
 
@@ -1125,6 +1126,41 @@ where
         .await
         .unwrap();
     assert_eq!(joined.channel_id, public.id);
+    let resolved = repository
+        .resolve_channel_references(
+            outsider.clone(),
+            public.id.clone(),
+            vec![
+                public.slug.clone(),
+                local.slug.clone(),
+                private.slug.clone(),
+                circle_channel.slug.clone(),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolved.len(), 2);
+    assert!(
+        resolved
+            .iter()
+            .any(|target| target.id == public.id && target.is_member)
+    );
+    assert!(
+        resolved
+            .iter()
+            .any(|target| target.id == local.id && !target.is_member)
+    );
+    assert_eq!(
+        repository
+            .resolve_channel_references(
+                outsider.clone(),
+                local.id.clone(),
+                vec![public.slug.clone()]
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+
     assert!(
         !repository
             .list_joinable_channels(outsider.clone(), None)
@@ -1183,6 +1219,60 @@ where
         })
         .await
         .unwrap();
+    let alias = ChannelSlug::new(format!(
+        "turprat-{}",
+        suffix.chars().take(24).collect::<String>()
+    ))
+    .unwrap();
+    let prefixed = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("{}-{alias}", circle.id.as_uuid().simple())).unwrap(),
+            name: DisplayName::new("Turprat").unwrap(),
+            kind: ChannelKind::Public,
+            circle_id: Some(circle.id.clone()),
+        })
+        .await
+        .unwrap();
+    let resolved = repository
+        .resolve_channel_references(
+            member.clone(),
+            circle_channel.id.clone(),
+            vec![
+                alias.clone(),
+                alias.clone(),
+                prefixed.slug.clone(),
+                public.slug.clone(),
+                later_circle_channel.slug.clone(),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolved.len(), 2);
+    assert!(
+        resolved
+            .iter()
+            .all(|target| target.id == prefixed.id && !target.is_member)
+    );
+    assert!(resolved.iter().any(|target| target.slug == alias));
+    assert!(resolved.iter().any(|target| target.slug == prefixed.slug));
+    repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: alias.clone(),
+            name: DisplayName::new("Another Turprat").unwrap(),
+            kind: ChannelKind::Local,
+            circle_id: Some(circle.id.clone()),
+        })
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .resolve_channel_references(member.clone(), circle_channel.id.clone(), vec![alias])
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert!(
         !repository
             .list_channels_for_user(member.clone())

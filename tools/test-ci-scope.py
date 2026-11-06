@@ -58,6 +58,7 @@ class ScopeTests(unittest.TestCase):
 
     def test_standalone_operator_and_codec_contracts_keep_distinct_gates(self):
         operations = ci_scope.scope(['tools/verify-production-rollout.sh'])
+        self.assertEqual(operations, ci_scope.scope(['tools/publish-production-release-news.sh']))
         codec = ci_scope.scope(['tools/verify-media-runtime.sh'])
         self.assertEqual((operations['operations'], operations['codec']), ('true', 'false'))
         self.assertEqual((codec['operations'], codec['codec']), ('false', 'true'))
@@ -70,6 +71,11 @@ class ScopeTests(unittest.TestCase):
         oidc = ci_scope.scope(['tools/verify-oidc-provider.sh'])
         self.assertEqual((oidc['auth'], oidc['operations'], oidc['backend'], oidc['postgres']),
                          ('true', 'true', 'false', 'false'))
+
+    def test_release_news_source_runs_publication_and_operational_contracts(self):
+        result = ci_scope.scope(['src/release_news.rs'])
+        self.assertEqual((result['operations'], result['backend'], result['postgres']),
+                         ('true', 'true', 'true'))
 
     def test_recovery_fixture_change_exercises_restore_without_the_postgres_repository_job(self):
         result = ci_scope.scope(['tools/verify-media-recovery.sql'])

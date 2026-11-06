@@ -40,6 +40,7 @@
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
       import { NavigationController, readMessageLink, type MessageLink } from "./navigation";
       import { ChannelTopicsApi } from "./channel-topics";
+      import { ChannelReferenceApi } from "./channel-references";
       import { ViewHistory, readViewTarget, type ViewTarget, type ViewPosition } from "./view-history";
       import { managementParent, type ManagementTarget } from "./application/management-target";
       import { clientCapabilities } from "./application/client-capabilities";
@@ -70,6 +71,7 @@
       let reactionSnapshot: { requestId: string; channelId: string; dirty: boolean } | null = null;
       const developmentReactionErrors = new Map<string, string>();
       const communityRequests = createCommunityRequests();
+      const referenceJoinIntents = new Map<string, () => boolean>();
       const previewInboxRequests = new Map<string, PreviewInboxRequest>();
       function isMermaidApi(value: unknown): value is MermaidApi {
         return isRecord(value) && typeof value.initialize === "function" && typeof value.run === "function";
@@ -616,7 +618,7 @@
       document.addEventListener("click", event => {
         if (!event.defaultPrevented && event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
           const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
-          if (anchor && !anchor.download && (!anchor.target || anchor.target === "_self")) {
+          if (anchor && !anchor.hasAttribute("data-channel-reference") && !anchor.download && (!anchor.target || anchor.target === "_self")) {
             const url = new URL(anchor.href);
             const target = url.origin === window.location.origin && url.pathname === "/" ? readViewTarget(url.href) : null;
             if (target) { event.preventDefault(); navigateView(target); return; }
@@ -823,6 +825,7 @@
       });
       const personalSpace = new PersonalSpaceApi(http, () => currentParticipantId, () => accountGeneration);
       const channelTopics = new ChannelTopicsApi(http, () => currentParticipantId, () => accountGeneration);
+      const channelReferences = new ChannelReferenceApi(http);
       async function openPersonalSpace(owner: string): Promise<void> {
         const epoch = directNavigationEpoch;
         const account = accountGeneration;
@@ -3806,6 +3809,7 @@
           sendCommand("list_my_circles");
           sendCommand("list_my_channels");
           pendingInvitationChannel = event.payload.invitation.channel.id;
+          pendingReferenceJoin = null;
           return;
         }
         if (event.type === "circle_invitation_accepted") {
@@ -3842,9 +3846,13 @@
           const restored = knownChannels.find((channel) => channel.id === restoredChannelId);
           // Reconnects (including silent OIDC refresh) must keep the active
           // conversation. The requested slug is only a startup fallback.
+          if (pendingReferenceJoin && !pendingReferenceJoin()) {
+            pendingInvitationChannel = null;
+            pendingReferenceJoin = null;
+          }
           const invited = knownChannels.find((channel) => channel.id === pendingInvitationChannel);
           const next = invited || current || restored || requested || knownChannels[0];
-          if (invited) pendingInvitationChannel = null;
+          if (invited) { pendingInvitationChannel = null; pendingReferenceJoin = null; }
           if (pendingViewTarget && !invited) {
             const target = pendingViewTarget; pendingViewTarget = null;
             // Settings/inbox URLs may still retain a conversation underneath.
@@ -3893,7 +3901,11 @@
         }
 
         if (event.type === "membership_joined") {
-          pendingInvitationChannel = event.payload.membership.channel_id;
+          const referenceJoin = event.request_id ? referenceJoinIntents.get(event.request_id) : undefined;
+          if (!referenceJoin || referenceJoin()) {
+            pendingInvitationChannel = event.payload.membership.channel_id;
+            pendingReferenceJoin = referenceJoin ?? null;
+          }
           if (circleChannelDialog.open) circleChannelDialog.close();
           sendCommand("list_my_channels");
           if (circleSelect.value) sendCommand("list_joinable_channels", { circle_id: circleSelect.value });
@@ -6021,6 +6033,7 @@
       }
 
       let pendingInvitationChannel: string | null = null;
+      let pendingReferenceJoin: (() => boolean) | null = null;
 
       function renderMessageBody(source: string, target: HTMLElement): void {
         const token = /\[\[media:([0-9a-f-]{36})\|([^|\]]+)\|([^\]]*)\]\]/gi;
@@ -6477,6 +6490,18 @@
             imageGeneration,
             personalSpace,
             channelTopics,
+            channelReferences,
+            async joinReferencedChannel(channelId, admitted) {
+              let requestId: string | null = null;
+              try {
+                await communityRequests.request("membership_joined", () => {
+                  if (!admitted()) return null;
+                  requestId = sendCommand("join_channel", { channel: { type: "id", value: channelId } });
+                  if (requestId) referenceJoinIntents.set(requestId, admitted);
+                  return requestId;
+                });
+              } finally { if (requestId) referenceJoinIntents.delete(requestId); }
+            },
             openPersonalSpace,
             chatAgents: circleChatAgentsApi,
             agentLocations: agentLocationApi,

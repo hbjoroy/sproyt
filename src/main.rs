@@ -18,6 +18,7 @@ mod operations;
 mod process;
 mod process_pilot;
 mod protocol;
+mod release_news;
 mod server;
 mod topics;
 mod web;
@@ -66,6 +67,10 @@ use web::assets::{PWA_MANIFEST, SERVICE_WORKER, WAVE_LOGO_192, WAVE_LOGO_512};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() == Some("release-news") {
+        return release_news::run(args).await;
+    }
     server::run().await
 }
 
