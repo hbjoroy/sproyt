@@ -7,8 +7,8 @@ Release evidence includes the audit output and the advisory database revision.
 
 **Scope.** This exception applies to `rsa 0.9.10` for OIDC public-key
 verification and synthetic test keys. OpenID Connect verifies provider ID-token
-signatures with public JWKs. The normal dependency graph also reaches `rsa`
-through `web-push-native → jwt-simple → superboring`. Sproyt uses ES256 for VAPID.
+signatures with public JWKs. Web Push no longer depends on `web-push-native`,
+`jwt-simple` or `superboring`; its ES256 signer uses P-256 directly.
 The optional SQLx MySQL path appears in the lockfile and is absent from the
 normal graph. The direct `rsa` dependency is test-only. The advisory reports
 possible private-key recovery from timing
@@ -72,15 +72,63 @@ Review the tool version at each release and whenever upstream advisory data
 needs a newer parser or a tool security/correctness fix is published.
 [CI audit](../.github/workflows/ci.yml).
 
-The unfiltered audit at RustSec revision `26fd2d43` found 14 advisories with
-the previous lockfile. After compatible dependency updates, it reports
-RUSTSEC-2023-0071 and RUSTSEC-2026-0387, with no informational warnings.
-The second finding affects `crypto-bigint 0.5.5` through `elliptic-curve`
-and `p256`. Web Push uses that path for private VAPID signing and ephemeral
-P-256 key agreement. The advisory lists a fix in `crypto-bigint 0.7.6` or
-later, outside the current dependency range. The review did not establish a
-practical attack on this deployment. RUSTSEC-2026-0387 has no exception and
-blocks Sprøyt application publication while it remains in the audited graph.
-Security/release and the Web Push owner track remediation in #372.
+The initial unfiltered audit at RustSec revision `26fd2d43` found 14 advisories.
+The compatible updates in #352 left RUSTSEC-2023-0071 and RUSTSEC-2026-0387.
+The second finding affected `crypto-bigint 0.5.5` through `elliptic-curve`
+and `p256`, including Web Push private VAPID signing and ephemeral P-256 key
+agreement. OIDC public verification also retained the old dependency. The
+review did not establish a practical attack on this deployment. The advisory
+lists a fix in `crypto-bigint 0.7.6` or later. No exception was granted;
+the release gate blocked application publication until remediation in #372.
 [RustSec advisory for crypto-bigint](https://rustsec.org/advisories/RUSTSEC-2026-0387.html),
 [remediation issue](https://github.com/hbjoroy/sproyt/issues/372).
+
+## Web Push crypto remediation (#372)
+
+Mozilla `ece 2.4.2` owns the RFC 8188/8291 payload format. A small backend adapter
+uses stable RustCrypto P-256 for key validation, ephemeral ECDH and VAPID ES256,
+and established HKDF-SHA256/AES-GCM implementations for the ECE primitives.
+The application does not implement elliptic-curve or integer arithmetic.
+The default OpenSSL backend is disabled, preserving the existing Windows and
+ARM64 musl build requirements. Upgrading to `openidconnect 4.1.0` removes the
+other legacy P-256/P-384 path; upstream identifies that release as the same
+advisory's fix. `web-push-native 0.5.0` and `web-push 0.11.0` still depended on
+the old crypto chain when evaluated, so merely replacing their versions was
+insufficient.
+[Mozilla ECE](https://docs.rs/ece/2.4.2/ece/),
+[OpenID Connect release](https://github.com/ramosbugs/openidconnect-rs/releases/tag/4.1.0).
+
+The remediated lockfile contains `crypto-bigint 0.7.10` and no `0.5.5`.
+On 6 November 2026, `cargo-audit 0.22.2` against freshly fetched RustSec revision
+`26fd2d43f7280a1fb925a3743ec463017afe7119` passed with only the existing
+RUSTSEC-2023-0071 exception and no warnings. The release workflow must repeat
+the fresh audit for the actual release revision; this removes the known #372
+blocker without asserting that a release has been published or deployed.
+
+The existing VAPID scalar/public point and stored browser subscriptions retain
+their format and identity. Startup checks that configured keys form a valid
+matching pair. Invalid stored subscription keys and oversized encrypted
+messages fail before HTTP delivery. The sender retains the ES256 claims,
+12-hour JWT/TTL, no-redirect HTTP policy and existing delivery/retry semantics.
+The HTTPS/provider allowlist is rechecked at dispatch as well as subscription
+admission, so invalid stored endpoints fail before any outbound request.
+The Mozilla backend is installed once before encryption, and the encrypted
+request is bounded to one Web Push record within 4096 bytes.
+[Configuration and upgrade](running.md#enable-push-notifications),
+[RFC 8291 restrictions](https://www.rfc-editor.org/rfc/rfc8291.html#section-4),
+[VAPID identity](https://www.rfc-editor.org/rfc/rfc8292.html#section-4.2).
+
+Protocol acceptance uses public synthetic key material, the published RFC 8291
+example and a local HTTP receiver. An independent `ring` oracle verifies the
+actual VAPID JWT and decrypts the delivered payload using its own P-256 ECDH,
+HKDF and AES-GCM. Negative cases cover mismatched/invalid keys, authentication
+and ciphertext changes, oversized messages, expired subscriptions, retryable
+responses and redirects. These tests do not claim real-provider or OS/device
+delivery. Preserve the existing #170 operational evidence and record a dated
+target-device/provider check for the release that enables this implementation;
+do not rotate production keys or send unsolicited notifications as a test.
+
+Security/release and the notification capability owner maintain this adapter.
+Recheck its backend initialization, key compatibility and independent protocol
+tests when the ECE, curve, KDF or AEAD interfaces change. The existing RSA
+exception remains scoped above; RUSTSEC-2026-0387 has no ignore.

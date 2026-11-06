@@ -58,8 +58,9 @@ separately using the [deployment runbook](operations.md#deployment-rollback-and-
 - [ ] SBOM is retained and no unaccepted high/critical finding remains.
 - [ ] Fresh RustSec audit passed with only reviewed exceptions; retain the
       advisory database revision and audit-tool version. Check
-      [security exceptions and blockers](security-exceptions.md), including
-      the unresolved Web Push finding in [#372](https://github.com/hbjoroy/sproyt/issues/372).
+      [security exceptions and remediation evidence](security-exceptions.md).
+      For the Web Push update, retain the existing VAPID identity and distinguish
+      protocol test evidence from real-device/provider acceptance in #170.
 - [ ] For authentication or provider changes, test OIDC discovery, callback,
       logout, invalid state/nonce and key rotation against the configured
       Authentik provider using the [evidence procedure](authentik.md#live-acceptance).
