@@ -17,7 +17,7 @@ use crate::{
     web::http::{WsQuery, auth_error_response, authenticate_http, chat_error_response},
 };
 
-async fn authenticated_user(
+pub(crate) async fn authenticated_user(
     state: &AppState,
     query: WsQuery,
     headers: &HeaderMap,

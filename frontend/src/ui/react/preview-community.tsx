@@ -38,6 +38,7 @@ export interface CommunityHost {
   enroll(circleId: string, email: string, name: string): Promise<{ url: string; expiresAt: string }>;
   enrollGlobal(email: string, name: string): Promise<{ url: string; expiresAt: string }>;
   renderIntegration?: (channelId: string) => ReactNode;
+  renderTopicSetting?: (channelId: string) => ReactNode;
 }
 
 function useOperation(capture?: () => () => boolean) {
@@ -148,6 +149,7 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
       <p className="sp-direct-conversation-kind">{channel.direct_user_id ? "Direktemelding" : "Gruppesamtale"}</p>
       <p>Dette er ei samtale mellom medlemmene nedanfor. Vanlege kanaltypar og kanalroller gjeld ikkje her.</p>
       <p>Om du nemner ein ny person med @, kan du starte ei ny gruppesamtale. Den opphavlege samtalen og meldingane hennar blir bevarte.</p>
+      {host.renderTopicSetting?.(channel.id)}
     </section> : <section aria-label="Kanalomtale" role="tabpanel" id={`${sectionId}-panel-about`} aria-labelledby={`${sectionId}-tab-about`} hidden={section !== "about"} tabIndex={0}>
       <h3>Om {channel.name}</h3>
       {channel.description ? <Markdown text={channel.description} /> : <p>Ingen kanalomtale enno.</p>}
@@ -156,6 +158,7 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
         <textarea id="community-description" value={description} onChange={event => setDescription(event.target.value)} rows={4} />
         <Button type="submit" busy={op.busy}>Lagre omtale</Button>
       </form>}
+      {section === "about" && host.renderTopicSetting?.(channel.id)}
     </section>}
     <section aria-label="Kanalmedlemmer" role={direct ? undefined : "tabpanel"} id={`${sectionId}-panel-members`} aria-labelledby={direct ? undefined : `${sectionId}-tab-members`} hidden={!direct && section !== "members"} tabIndex={0}>
     {!direct && <h3>Medlemmer</h3>}

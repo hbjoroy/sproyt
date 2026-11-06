@@ -10,6 +10,14 @@
 {{- if and .Values.config.chatAgentsEnabled (not .Values.config.vllmUrl) }}
 {{- fail "config.chatAgentsEnabled requires config.vllmUrl" }}
 {{- end }}
+{{- if .Values.config.channelTopicsWorkerEnabled }}
+{{- if not .Values.config.channelTopicsModel }}
+{{- fail "config.channelTopicsWorkerEnabled requires config.channelTopicsModel" }}
+{{- end }}
+{{- if not (or .Values.config.channelTopicsModelUrl .Values.config.vllmUrl) }}
+{{- fail "channel topics require config.channelTopicsModelUrl or config.vllmUrl" }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,6 +25,11 @@ metadata:
   labels:
     {{- include "sproyt.labels" . | nindent 4 }}
 data:
+  SPROYT_CHANNEL_TOPICS_WORKER_ENABLED: {{ .Values.config.channelTopicsWorkerEnabled | default false | quote }}
+  SPROYT_CHANNEL_TOPICS_MODEL: {{ .Values.config.channelTopicsModel | default "" | quote }}
+  {{- with .Values.config.channelTopicsModelUrl }}
+  SPROYT_CHANNEL_TOPICS_MODEL_URL: {{ . | quote }}
+  {{- end }}
   SPROYT_MEDIA_CHUNK_UPLOADS_ENABLED: {{ .Values.mediaUploads.enabled | quote }}
   {{- if .Values.mediaUploads.enabled }}
   SPROYT_MEDIA_MAX_FILE_BYTES: {{ required "mediaUploads.maxFileBytes is required" .Values.mediaUploads.maxFileBytes | quote }}

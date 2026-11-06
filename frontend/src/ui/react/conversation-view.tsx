@@ -46,6 +46,8 @@ export function ConversationNavigation(props: ConversationNavigationProps) {
 }
 
 export interface TimelineProps {
+  readonly id?: string;
+  readonly hidden?: boolean;
   readonly channelId: string | null;
   readonly parentMessageId?: string | null;
   readonly messages: readonly ChatMessage[];
@@ -97,7 +99,7 @@ export function ConversationTimeline(props: TimelineProps) {
   const visibleIds = new Set(messages.map(message => message.id));
   const visibleEntries = entries.filter(item => item.type === "system"
     || visibleIds.has(item.message.id));
-  return <div className="sp-timeline" ref={props.viewportRef} onScroll={props.onScroll}
+  return <div className="sp-timeline" id={props.id} hidden={props.hidden} ref={props.viewportRef} onScroll={props.onScroll}
     aria-label={props.parentMessageId ? "Svar i tråden" : "Meldingar"} aria-busy={props.loading || undefined}>
     {props.hasOlder && !props.error && props.onLoadOlder && <Button busy={props.loading} disabled={props.loading} onClick={props.onLoadOlder}>Last eldre meldingar</Button>}
     {props.error && <Status tone="error">{props.error}{props.onRetry && <Button onClick={props.onRetry}>Prøv igjen</Button>}</Status>}
@@ -284,6 +286,7 @@ export interface ConversationViewProps {
   readonly isPersonal?: boolean;
   readonly onBack: () => void;
   readonly timeline: TimelineProps;
+  readonly renderTimeline?: (timeline: TimelineProps) => ReactNode;
   /** Host-owned composer adapter preserves drafts and attachment-only sending. */
   readonly composer: ReactNode;
   /** Supply a ThreadPane; the channel stays mounted underneath on narrow views. */
@@ -310,7 +313,7 @@ export function ConversationView(props: ConversationViewProps) {
             <div className="sp-conversation-toolbar">{props.contextActions}</div>
           </header>}
           <PersonalSpacePanes space={props.personalSpace} active={Boolean(props.personalSpace && props.isPersonal)}
-            chat={props.emptyContent == null && <><ConversationTimeline {...props.timeline} />{props.composer}</>} />
+            chat={props.emptyContent == null && <>{props.renderTimeline?.(props.timeline) ?? <ConversationTimeline {...props.timeline} />}{props.composer}</>} />
           {props.emptyContent}
         </section>
         {props.thread}
