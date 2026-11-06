@@ -325,7 +325,7 @@ where
         .await
         .unwrap();
     let later_human_ordinal = repository
-        .signup_ordinal(later_human)
+        .signup_ordinal(later_human.clone())
         .await
         .unwrap()
         .unwrap();
@@ -391,6 +391,56 @@ where
         })
         .await
         .unwrap();
+    assert_eq!(
+        repository
+            .add_channel_member(AddChannelMember {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                user_id: later_human.clone(),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied),
+        "a circle channel still requires circle membership"
+    );
+    for kind in [
+        ChannelKind::Public,
+        ChannelKind::Local,
+        ChannelKind::Private,
+    ] {
+        let unscoped = repository
+            .create_channel(CreateChannel {
+                actor: actor.clone(),
+                slug: ChannelSlug::new(format!("chat-{}-{suffix}", kind.as_str())).unwrap(),
+                name: DisplayName::new("Unscoped channel").unwrap(),
+                kind: kind.clone(),
+                circle_id: None,
+            })
+            .await
+            .unwrap();
+        let result = repository
+            .add_channel_member(AddChannelMember {
+                actor: actor.clone(),
+                channel_id: unscoped.id.clone(),
+                user_id: later_human.clone(),
+            })
+            .await;
+        if kind == ChannelKind::Private {
+            assert_eq!(result, Err(RepositoryError::PermissionDenied));
+            continue;
+        }
+        assert_eq!(result.unwrap().user_id, later_human);
+        assert_eq!(
+            repository
+                .add_channel_member(AddChannelMember {
+                    actor: later_human.clone(),
+                    channel_id: unscoped.id,
+                    user_id: actor.clone(),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied),
+            "ordinary channel members cannot add people"
+        );
+    }
     let general_id = match repository
         .create_channel(CreateChannel {
             actor: actor.clone(),
