@@ -54,8 +54,9 @@ test("Finn kanalar i Felles discovers an open channel and joins it from another 
   await expect(discovery).not.toContainText(circleChannel);
   await join.click();
   await expect.poll(() => new URL(page.url()).searchParams.get("channel")).toBe(publicId);
-  const afterJoin = await openDiscovery();
-  await expect(afterJoin.getByRole("button", { name: `# ${publicName} Gå inn`, exact: true })).toBeVisible();
-  await expect(afterJoin.getByText("Hentar opne kanalar …")).toHaveCount(0);
+  await expect(viewer.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
+  await page.goBack();
+  await expect(channels.getByRole("button", { name: `# ${publicName} Gå inn`, exact: true })).toBeVisible();
+  await expect(channels.getByText("Hentar opne kanalar …")).toHaveCount(0);
   await expect(join).toHaveCount(0);
 });

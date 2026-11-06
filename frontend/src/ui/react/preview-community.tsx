@@ -277,7 +277,11 @@ function ScopeChannels({ host, circle, channels, onClose, onNavigate, onSelectCh
       {!joinable && !op.error && <Status>Hentar opne kanalar …</Status>}
       {joinable?.length === 0 && !op.busy && !op.error && <p>Ingen fleire opne kanalar akkurat no.</p>}
       {joinable?.map(channel => <section key={channel.id}><h4>{channel.name}</h4><Markdown text={channel.description} />
-        <Button disabled={op.busy} onClick={() => void op.run(async admitted => { await host.join(channel.id); if (admitted()) onClose(); })}>Bli med i {channel.name}</Button>
+        <Button disabled={op.busy} onClick={() => void op.run(async admitted => {
+          await host.join(channel.id);
+          // The routed host opens the joined channel after refreshing memberships.
+          if (!onSelectChannel && admitted()) onClose();
+        })}>Bli med i {channel.name}</Button>
       </section>)}
     </section>}
     {onSelectChannel && !createOnly ? <Button variant="quiet" onClick={() => onNavigate({ kind: "create-channel", circleId: circle?.id ?? null })}>Ny kanal i {scopeName}</Button> : <section aria-label="Ny kanal"><h3>Ny kanal i {scopeName}</h3><form onSubmit={event => { event.preventDefault(); void op.run(async () => { await host.createChannel(circle?.id ?? null, name.trim(), kind); onClose(); }); }}>
