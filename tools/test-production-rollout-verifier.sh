@@ -22,6 +22,11 @@ case "$*" in
   *"get endpointslice"*)
     printf '%s\n' '{"items":[{"endpoints":[{"conditions":{"ready":true}},{"conditions":{"ready":true}}]}]}'
     ;;
+  "-n sproyt exec -i deployment/sproyt-sproyt -c sproyt -- /app/sproyt release-news ${MOCK_RELEASE_REVISION:-}")
+    printf 'exec\n' >> "$MOCK_EXEC_LOG"
+    [[ $(cat) == "$MOCK_RELEASE_SUMMARY" ]]
+    printf '{"status":"published","revision":"%s","messageId":"mock-message"}\n' "$MOCK_RELEASE_REVISION"
+    ;;
   *) echo "unexpected kubectl call: $*" >&2; exit 1 ;;
 esac
 EOF
@@ -79,4 +84,23 @@ if bash "$repo_root/tools/verify-production-rollout.sh" "$revision" "$digest" "$
   exit 1
 fi
 
-echo "production rollout verifier contract passed"
+export MOCK_RELEASE_REVISION=$revision
+export MOCK_EXEC_LOG="$mock_dir/release-exec"
+export MOCK_RELEASE_SUMMARY='Kanallenkjer er klare.'
+printf '%s\n' "$MOCK_RELEASE_SUMMARY" > "$mock_dir/summary.txt"
+if bash "$repo_root/tools/publish-production-release-news.sh" "$revision" "$digest" "$gitops" "$mock_dir/summary.txt" \
+  >/dev/null 2>&1; then
+  echo "publisher accepted an unexpected public application revision" >&2
+  exit 1
+fi
+[[ ! -e "$MOCK_EXEC_LOG" ]]
+
+unset MOCK_PUBLIC_REVISION
+result=$(SPROYT_PUBLIC_URL=https://sproyt-canary.bjoroy.me \
+  bash "$repo_root/tools/publish-production-release-news.sh" "$revision" "$digest" "$gitops" "$mock_dir/summary.txt")
+jq -e --arg revision "$revision" \
+  '.rollout.publicRevision == $revision and .releaseNews.revision == $revision and .releaseNews.messageId == "mock-message"' \
+  >/dev/null <<<"$result"
+[[ $(cat "$MOCK_EXEC_LOG") == exec ]]
+
+echo "production rollout verifier and release news publisher contracts passed"

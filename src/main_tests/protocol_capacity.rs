@@ -1643,7 +1643,11 @@ fn browser_refreshes_unread_summaries_when_a_background_tab_returns() {
 
 #[test]
 fn browser_linkifies_safe_web_urls_without_expanding_messages() {
-    assert!(APP_BUNDLE.contains("remarkPlugins: [remarkGfm]"));
+    assert!(
+        APP_BUNDLE
+            .lines()
+            .any(|line| { line.contains("remarkPlugins:") && line.contains("[remarkGfm") })
+    );
     assert!(APP_BUNDLE.contains("target: \"_blank\""));
     assert!(APP_BUNDLE.contains("rel: \"noopener noreferrer\""));
     assert!(APP_BUNDLE.contains("referrerPolicy: \"no-referrer\""));

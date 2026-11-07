@@ -841,6 +841,21 @@ impl ChatEngine {
             .map_err(ChatError::from)
     }
 
+    pub async fn resolve_channel_references(
+        &self,
+        actor: UserId,
+        source: ChannelId,
+        slugs: Vec<ChannelSlug>,
+    ) -> Result<Vec<crate::domain::ResolvedChannelReference>, ChatError> {
+        if slugs.len() > crate::domain::CHANNEL_REFERENCE_BATCH_MAX {
+            return Err(RepositoryError::Conflict.into());
+        }
+        self.repository
+            .resolve_channel_references(actor, source, slugs)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn add_channel_member(
         &self,
         actor: UserId,

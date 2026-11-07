@@ -192,6 +192,17 @@ operator in the release evidence.
    reconnect/catch-up, and logout.
 5. Watch readiness, errors, latency, restarts, PostgreSQL connections, and
    storage for at least 15 minutes.
+6. Publish the short production announcement using the
+   [release checklist](release-checklist.md#announce-each-production-rollout).
+
+The release news publisher uses the existing reserved Sprøyt agent and ordinary
+chat persistence. It requires the production pod configuration, checks that the
+binary revision is live at the public production URL, and resolves the unique
+open Felles channel named **Nyhende i Sprøyt**. A publication receipt is recorded
+in the same transaction as the chat message and survives message deletion. It
+makes retries with the same revision and summary idempotent, including
+concurrent retries. A different summary for an already announced revision is
+rejected.
 
 On `SIGTERM`, Sproyt first marks readiness false, stops accepting new HTTP
 work through Axum's graceful-shutdown path, and sends WebSocket close code

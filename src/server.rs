@@ -318,6 +318,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             axum::routing::put(enable_channel_notifications).delete(disable_channel_notifications),
         )
         .route(
+            "/api/v1/channels/{id}/channel-references",
+            post(crate::web::channel_references::resolve).layer(DefaultBodyLimit::max(8192)),
+        )
+        .route(
             "/api/v1/channels/{id}/thread-root-previews",
             post(crate::web::thread_previews::list).layer(DefaultBodyLimit::max(4096)),
         )

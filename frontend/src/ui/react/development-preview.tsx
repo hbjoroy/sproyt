@@ -27,7 +27,8 @@ import { PreviewImageGeneration } from "./preview-imagegen";
 import type { ImageGenerationOwner } from "../../imagegen";
 import { PreviewInboxes, type PreviewInboxHost, type PreviewInboxState } from "./preview-inboxes";
 import { HeaderActions } from "./header-actions";
-import { MarkdownContent, markdownTextFromMessage } from "./markdown-content";
+import { MarkdownContent, markdownTextFromMessage, type MessageChannelReferences } from "./markdown-content";
+import { ChannelReferenceDiscovery, type ChannelReferenceApi } from "../../channel-references";
 import { processTaskId, type ProcessPilotApi } from "../../process-pilot";
 import { ProcessPilotChannelAction, ProcessTaskMessage } from "./process-pilot";
 import { NavigationScopeActions } from "./navigation-scope-actions";
@@ -87,6 +88,8 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly imageGeneration: ImageGenerationOwner;
   readonly personalSpace: PersonalSpaceApi;
   readonly channelTopics: ChannelTopicsApi;
+  readonly channelReferences: ChannelReferenceApi;
+  readonly joinReferencedChannel: (channelId: string, admitted: () => boolean) => Promise<void>;
   readonly openPersonalSpace: (owner: string) => Promise<void>;
   readonly chatAgents: CircleChatAgentApi;
   readonly legacyContainer: HTMLElement;
@@ -356,7 +359,8 @@ function ChannelActions({ snapshot, host, compact = false, inlineOpen, onInlineC
     {dialogHost ? createPortal(dialogs, dialogHost) : dialogs}
   </>;
 }
-function PreviewMessageContent({ host, message, place }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage;
+function PreviewMessageContent({ host, message, place, channelReferences }: { readonly host: DevelopmentPreviewHost; readonly message: ChatMessage;
+  readonly channelReferences?: MessageChannelReferences;
   readonly place?: { status: "pending" | "yes" | "no" | "error"; googleAvailable: boolean; geoapifyAvailable: boolean; owner: string; epoch: number; channelId: string; admitted: () => boolean; retry: () => void } }) {
   const workTask = workItemTaskId(message.body);
   if (workTask) return <WorkItemTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${workTask}`} api={host.workItems} taskId={workTask} messageId={message.id} />;
@@ -365,7 +369,7 @@ function PreviewMessageContent({ host, message, place }: { readonly host: Develo
   const taskId = processTaskId(message.body);
   if (taskId) return <ProcessTaskMessage key={`${host.processPilotIdentity()}:${message.id}:${taskId}`} api={host.processPilot} taskId={taskId} messageId={message.id} />;
   return <div className="sp-message-content">
-    <MarkdownContent source={markdownTextFromMessage(message.body)} />
+    <MarkdownContent source={markdownTextFromMessage(message.body)} channelReferences={channelReferences} />
     {invitationTokensFromMessage(message.body).map((token, index) => <InvitationCard key={`${token}-${index}`} token={token} host={host.invitations} />)}
     {place?.status === "yes" && place.googleAvailable && <AgentPlaceCard key={`${place.epoch}:${place.owner}:${place.channelId}:${message.id}:${message.body}:${message.edited_at ?? ""}`}
       api={host.agentPlaceLookup} owner={place.owner} channelId={place.channelId} messageId={message.id} admitted={place.admitted} />}
@@ -567,6 +571,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let threadFocus: { owner: string | null; messageId: string; element: HTMLElement } | null = null;
   const reactionPicker = createPreviewReactionPicker(host);
   const placeDiscovery = new AgentPlaceDiscovery(host.agentPlaceLookup, () => update());
+  const channelReferenceDiscovery = new ChannelReferenceDiscovery(host.channelReferences, () => update());
   const restorePosition = (key: string) => host.appUpdate.resumePosition(host.processPilotIdentity(), key);
   const captureReadingPosition = () => host.viewHistory.capture(captureUpdatePosition());
   const channelScroll = createTimelineScrollController({ onNearStart: host.loadOlder, onVisibleMessages: host.acknowledgeVisible, restorePosition, onPositionChanged: captureReadingPosition });
@@ -579,6 +584,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     window.removeEventListener("pagehide", captureReadingPosition);
     reactionPicker.close();
     placeDiscovery.dispose();
+    channelReferenceDiscovery.scope(null);
     channelScroll.dispose();
     threadScroll.dispose();
     unsubscribe();
@@ -613,7 +619,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       ? `${owner}:${historyState.entryId}` : undefined;
     const channelId = snapshot.activeChannel?.id ?? null;
     const accountEpoch = host.accountEpoch();
-    const placeAdmitted = () => !disposed && Boolean(owner && channelId) && host.community.selfId() === owner
+    const conversationAdmitted = () => !disposed && Boolean(owner && channelId) && host.community.selfId() === owner
       && host.accountEpoch() === accountEpoch && host.snapshot().activeChannel?.id === channelId
       && host.snapshot().channels.some(channel => channel.id === channelId)
       && !["management", "inbox", "directory"].includes(host.viewHistory.getSnapshot().target?.kind ?? "");
@@ -628,7 +634,31 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       else if (historyState.target?.kind === "conversation") view = "detail";
     }
     placeDiscovery.sync(!pageKey && view === "detail" ? owner : null, !pageKey && view === "detail" ? channelId : null,
-      accountEpoch, placeCandidates, placeAdmitted);
+      accountEpoch, placeCandidates, conversationAdmitted);
+    const source = snapshot.activeChannel;
+    const referenceScope = owner && source && !source.is_direct && !source.is_personal && !pageKey && view === "detail"
+      ? { owner, epoch: accountEpoch, channelId: source.id } : null;
+    const referenceAdmitted = () => conversationAdmitted() && host.viewHistory.getSnapshot().entryId === historyState.entryId;
+    channelReferenceDiscovery.scope(referenceScope);
+    const channelReferences: MessageChannelReferences | undefined = referenceScope && source ? {
+      scopeKey: JSON.stringify(referenceScope),
+      find: slug => channelReferenceDiscovery.find(referenceScope, slug),
+      collect: slugs => channelReferenceDiscovery.collect(source.id, slugs, conversationAdmitted),
+      href: channel => viewHref(channel.is_member ? { kind: "conversation", channelId: channel.id }
+        : { kind: "management", page: { kind: "community", destination: source.circle_id
+          ? { kind: "channels", circleId: source.circle_id } : { kind: "global-channels" } } }, window.location.href, true),
+      async open(channel) {
+        const current = await channelReferenceDiscovery.refresh(source.id, channel, referenceAdmitted);
+        if (current?.is_member && referenceAdmitted()) host.navigateView({ kind: "conversation", channelId: current.id });
+        return current;
+      },
+      async join(channel) {
+        const current = await channelReferenceDiscovery.refresh(source.id, channel, referenceAdmitted);
+        if (!current || !referenceAdmitted()) throw new Error("Kanallenkja er ikkje lenger tilgjengeleg.");
+        if (current.is_member) host.navigateView({ kind: "conversation", channelId: current.id });
+        else await host.joinReferencedChannel(current.id, referenceAdmitted);
+      }
+    } : undefined;
     if (!resumedThread && snapshot.selection.channelId && !snapshot.timeline.loading) {
       resumedThread = true;
       const rootId = host.appUpdate.resumeThread(host.processPilotIdentity(), snapshot.selection.channelId);
@@ -925,9 +955,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
             api={host.personalSpace} owner={owner} reference={reference}
             location={snapshot.channelChoices.find(choice => choice.id === reference.channelId)?.name} />;
         }
-        return <><PreviewMessageContent host={host} message={message} place={owner && channelId && !pageKey && view === "detail"
+        return <><PreviewMessageContent host={host} message={message} channelReferences={message.channel_id === source?.id ? channelReferences : undefined} place={owner && channelId && !pageKey && view === "detail"
           ? { status: placeDiscovery.status(message.id) ?? "pending", googleAvailable: placeDiscovery.googleAvailable(message.id), geoapifyAvailable: placeDiscovery.geoapifyAvailable(message.id), owner, epoch: accountEpoch, channelId,
-            admitted: placeAdmitted, retry: () => placeDiscovery.retry(message.id) } : undefined} /><PreviewMediaContent body={message.body} mediaOnly /></>;
+            admitted: conversationAdmitted, retry: () => placeDiscovery.retry(message.id) } : undefined} /><PreviewMediaContent body={message.body} mediaOnly /></>;
       }
     },
     renderComposer: target => <div className="sp-composer-dock" key={`${target.channelId}:${target.parentMessageId ?? ""}`}>

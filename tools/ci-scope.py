@@ -29,6 +29,7 @@ IDENTITY = {'deploy/authentik/kustomization.yaml',
 OIDC_TOOLS = {'tools/verify-oidc-provider.sh', 'tools/test-oidc-provider-verifier.sh',
               'tools/fixtures/authentik-discovery.json'}
 OPERATIONS_TOOLS = {'tools/verify-production-rollout.sh', 'tools/test-production-rollout-verifier.sh',
+                    'tools/publish-production-release-news.sh',
                     'tools/mcp-load.mjs', 'tools/test-mcp-load.mjs'}
 CODEC_TOOLS = {'tools/verify-media-runtime.sh'}
 RECOVERY_TOOLS = {'tools/seed-media-recovery.sql', 'tools/verify-media-recovery.sql',
@@ -38,7 +39,7 @@ BACKEND_FILES = {
     'src/agent.rs', 'src/auth.rs', 'src/chat.rs', 'src/chatbot.rs', 'src/config.rs', 'src/enrollment.rs',
     'src/github.rs', 'src/imagegen.rs', 'src/imagegen_prompt.rs', 'src/integration.rs', 'src/main.rs',
     'src/media_store.rs', 'src/media_worker.rs', 'src/native_sessions.rs', 'src/notification.rs',
-    'src/operations.rs', 'src/process.rs', 'src/process_pilot.rs', 'src/protocol.rs', 'src/server.rs',
+    'src/operations.rs', 'src/process.rs', 'src/process_pilot.rs', 'src/protocol.rs', 'src/release_news.rs', 'src/server.rs',
     'src/work_items.rs', 'src/ws.rs',
 }
 BACKEND_DIRECTORIES = (
@@ -62,7 +63,7 @@ CODEC_SOURCES = BOOTSTRAP | {
     'src/web/media.rs', 'src/web/media_uploads.rs', 'src/web/native/media_uploads.rs',
 }
 OPERATIONS_SOURCES = BOOTSTRAP | {
-    'src/auth.rs', 'src/main_tests/mcp.rs', 'src/operations.rs', 'src/web/auth.rs',
+    'src/auth.rs', 'src/main_tests/mcp.rs', 'src/operations.rs', 'src/release_news.rs', 'src/web/auth.rs',
     'src/web/browser.rs', 'src/web/mcp.rs', 'src/web/system.rs',
 }
 CHECK_FLAGS = ('backend', 'postgres', 'recovery', 'codec', 'auth', 'operations')
