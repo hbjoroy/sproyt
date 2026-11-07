@@ -179,3 +179,30 @@ test("members can filter with no channel topic setting control", async ({ page }
   await expect(app.getByRole("switch", { name: "Vis automatiske emne" })).toHaveCount(0);
   expect(writes).toEqual([]);
 });
+
+for (const width of [390, 1440]) test(`channel menu labels share a text edge at ${width}px`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 900 });
+  const { app } = await setup(page);
+  const menu = await openChannelMenu(app);
+  const textEdge = (element: HTMLElement) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) if (node.textContent?.trim()) {
+      const range = document.createRange(); range.selectNodeContents(node);
+      return range.getBoundingClientRect().left;
+    }
+    throw new Error("menu action needs a label");
+  };
+  const edge = await menu.getByRole("button", { name: "Kanaldetaljar", exact: true }).evaluate(textEdge);
+  const more = menu.locator("summary", { hasText: "Fleire val" });
+  expect(await more.evaluate(textEdge)).toBeCloseTo(edge, 0);
+  expect((await more.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  if (width <= 900) {
+    const latest = app.locator(".sp-mobile-conversation-name").getByRole("button", { name: "Gå til siste", exact: true });
+    expect(await latest.evaluate(textEdge)).toBeCloseTo(edge, 0);
+    expect((await latest.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const threads = app.locator(".sp-mobile-conversation-name").getByRole("button", { name: "Trådar i samtalen", exact: true });
+    expect(await threads.evaluate(textEdge)).toBeCloseTo(edge, 0);
+    await app.screenshot({ path: info.outputPath("compact-menu.png") });
+  }
+});
