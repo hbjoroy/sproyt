@@ -341,7 +341,7 @@ impl ChatEngine {
 
     pub async fn store_media(&self, upload: MediaUpload) -> Result<MediaObject, ChatError> {
         use sha2::{Digest, Sha256};
-        let sha256 = format!("{:x}", Sha256::digest(&upload.content));
+        let sha256 = hex::encode(Sha256::digest(&upload.content));
         self.repository
             .store_media(upload, sha256)
             .await

@@ -8,8 +8,8 @@ use std::{
 use std::sync::Mutex;
 
 use aes_gcm::{
-    Aes256Gcm, Nonce,
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    Aes256Gcm,
+    aead::{Aead, KeyInit},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use openidconnect::{
@@ -785,10 +785,12 @@ impl CookieCodec {
 
     fn seal<T: Serialize>(&self, value: &T) -> Result<String, AuthError> {
         let plaintext = serde_json::to_vec(value).map_err(AuthError::external)?;
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let mut nonce = [0u8; 12];
+        getrandom::fill(&mut nonce)
+            .map_err(|_| AuthError::External("session randomness unavailable".to_owned()))?;
         let encrypted = self
             .primary
-            .encrypt(&nonce, plaintext.as_ref())
+            .encrypt(&nonce.into(), plaintext.as_ref())
             .map_err(|_| AuthError::External("session encryption failed".to_owned()))?;
         let mut output = nonce.to_vec();
         output.extend_from_slice(&encrypted);
@@ -803,9 +805,10 @@ impl CookieCodec {
             return Err(AuthError::Unauthorized);
         }
         let (nonce, encrypted) = data.split_at(12);
+        let nonce: [u8; 12] = nonce.try_into().map_err(|_| AuthError::Unauthorized)?;
         self.readers
             .iter()
-            .find_map(|cipher| cipher.decrypt(Nonce::from_slice(nonce), encrypted).ok())
+            .find_map(|cipher| cipher.decrypt(&nonce.into(), encrypted).ok())
             .and_then(|plaintext| serde_json::from_slice(&plaintext).ok())
             .ok_or(AuthError::Unauthorized)
     }
@@ -921,6 +924,7 @@ impl From<TextValidationError> for AuthError {
 mod tests {
     mod native_media_upload_tests;
     mod native_notification_preferences_tests;
+    mod session_crypto_tests;
 
     use super::*;
     use axum::{
@@ -930,6 +934,7 @@ mod tests {
         response::IntoResponse,
         routing::{get, post},
     };
+    use rsa::sha2::{Digest, Sha256};
     use rsa::{
         RsaPrivateKey, RsaPublicKey,
         pkcs1v15::SigningKey,
@@ -937,7 +942,6 @@ mod tests {
         signature::{SignatureEncoding, Signer},
         traits::PublicKeyParts,
     };
-    use sha2::{Digest, Sha256};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[derive(Clone)]

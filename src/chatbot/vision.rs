@@ -53,7 +53,7 @@ fn supported(kind: &str) -> bool {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn parse(raw: &str) -> Result<Snapshot> {

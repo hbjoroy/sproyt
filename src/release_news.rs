@@ -155,7 +155,7 @@ async fn publish(
     revision: &str,
     body: MessageBody,
 ) -> Result<Publication> {
-    let summary_digest = format!("{:x}", Sha256::digest(body.as_str()));
+    let summary_digest = hex::encode(Sha256::digest(body.as_str()));
     if let Some(previous) = previous_publication(pool, revision, &summary_digest).await? {
         return Ok(previous);
     }

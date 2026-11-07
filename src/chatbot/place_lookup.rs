@@ -173,7 +173,7 @@ impl PlaceLookupDescriptor {
         digest.update(serde_json::to_vec(self).expect("string-only descriptor serializes"));
         digest.update(b"\0");
         digest.update(self.provider_query().unwrap_or_default().as_bytes());
-        format!("{:x}", digest.finalize())
+        hex::encode(digest.finalize())
     }
 }
 

@@ -52,7 +52,7 @@ pub(crate) fn asset_fingerprint(build_revision: &str, asset: &[u8]) -> String {
     if revision_is_safe {
         return build_revision.to_owned();
     }
-    format!("{:x}", Sha256::digest(asset))
+    hex::encode(Sha256::digest(asset))
 }
 
 pub(crate) fn client_store_fingerprint(build_revision: &str, client_store: &[u8]) -> String {
@@ -217,4 +217,19 @@ async fn dice_sprites_are_versioned_transparent_pngs_and_unknown_paths_are_rejec
         dice_sprite(Path("../secret".into())).await.status(),
         axum::http::StatusCode::NOT_FOUND
     );
+}
+
+#[cfg(test)]
+mod fingerprint_compatibility_tests {
+    use super::asset_fingerprint;
+
+    #[test]
+    fn sha256_fingerprint_keeps_leading_zeros_and_lowercase_wire_format() {
+        // Independent fixed SHA-256 vector whose first output byte is zero.
+        assert_eq!(
+            asset_fingerprint("unknown", b"286"),
+            "00328ce57bbc14b33bd6695bc8eb32cdf2fb5f3a7d89ec14a42825e15d39df60"
+        );
+        assert_eq!(asset_fingerprint("abcdef123456", b"286"), "abcdef123456");
+    }
 }

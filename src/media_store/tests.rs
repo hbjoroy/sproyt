@@ -51,7 +51,7 @@ fn input(size: u64) -> NewUpload {
     }
 }
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 async fn contract<R: ChatRepository>(repository: &R, store: &MediaStore) {

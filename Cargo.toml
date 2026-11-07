@@ -12,14 +12,15 @@ resolver = "3"
 [dependencies]
 async-stream = "0.3"
 axum = { version = "0.8", features = ["ws", "multipart"] }
-aes-gcm = "0.10"
-base64 = "0.22"
+aes-gcm = "0.11.1"
+base64 = "0.23.1"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 ece = { version = "2.4.2", default-features = false }
 futures-util = "0.3"
-getrandom = "0.3"
-hkdf = "0.12"
+getrandom = "0.4.3"
+hkdf = "0.13"
+hex = "0.4.3"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 kamadak-exif = "0.6.1"
 http = "1"
@@ -31,11 +32,11 @@ ring = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sproyt-protocol = { path = "crates/sproyt-protocol" }
-sha2 = "0.10"
+sha2 = "0.11"
 sqlx = { version = "0.8", features = ["chrono", "migrate", "postgres", "runtime-tokio-rustls", "sqlite", "uuid"] }
 tokio = { version = "1", features = ["fs", "io-util", "process", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 thiserror = "2"
-tower-http = { version = "0.6", features = ["request-id", "trace"] }
+tower-http = { version = "0.7.1", features = ["request-id", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["serde", "v5", "v7"] }
@@ -44,6 +45,5 @@ unicode-segmentation = "1.12"
 zeroize = "1"
 
 [dev-dependencies]
-hmac = "0.12"
 rsa = { version = "0.9", features = ["sha2"] }
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }

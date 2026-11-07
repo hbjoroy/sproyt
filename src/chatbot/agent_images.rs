@@ -32,7 +32,7 @@ pub(super) fn enabled() -> bool {
 use sha2::{Digest, Sha256};
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 macro_rules! plan {
