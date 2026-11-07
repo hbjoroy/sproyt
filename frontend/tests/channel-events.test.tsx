@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HttpClient } from "../src/api";
-import { ChannelEventsApi, decodeChannelEvent, type ChannelEvent } from "../src/channel-events";
+import { ChannelEventsApi, EventReferenceDiscovery, decodeChannelEvent, type ChannelEvent } from "../src/channel-events";
 import { EventReferencesContext } from "../src/ui/react/event-references";
 import { MarkdownContent } from "../src/ui/react/markdown-content";
 import corpus from "../../docs/fixtures/event-references.json" with { type: "json" };
@@ -67,4 +67,22 @@ test("event SDK bounds collection pages with account-bound admission and aborts 
   const pending = stale.detail(owner, channel, event.id);
   epoch++; owner = "other"; complete(Response.json(event));
   await assert.rejects(pending, /Kontoen vart endra/u);
+});
+test("responses stay paged with exact aggregate counts and reference discovery cannot publish after channel disposal", async () => {
+  const requests: string[] = [];
+  let complete!: (response: Response) => void;
+  const api = new ChannelEventsApi(new HttpClient({ fetch: async input => {
+    requests.push(String(input));
+    if (String(input).includes("/responses")) return Response.json({ responses: [], next_after: "more-people", counts: { attending: 201, declined: 2, following: 3, unanswered: 42 } });
+    return new Promise<Response>(resolve => { complete = resolve; });
+  } }), () => "owner", () => 1);
+  const page = await api.responses("owner", channel, event.id, new AbortController().signal);
+  assert.equal(requests.length, 1); assert.equal(page.next_after, "more-people"); assert.equal(page.counts?.unanswered, 42);
+  let published = 0;
+  const discovery = new EventReferenceDiscovery(api, "owner", channel, () => published++);
+  discovery.collect(new Set(["konsert"]));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  discovery.dispose(); complete(Response.json({ events: [event] }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(published, 0); assert.deepEqual(discovery.events(), []);
 });

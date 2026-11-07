@@ -7,6 +7,7 @@ const circleId = "00000000-0000-7000-8000-000000008711";
 const channelId = "00000000-0000-7000-8000-000000008712";
 const agentId = "00000000-0000-7000-8000-000000008713";
 async function setup(page: Page, channelRole: string, circleRole: string, withAgent = false) {
+  await page.route("**/api/v1/me/favorite-circles?**", route => route.fulfill({ json: [] }));
   const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
   await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
   let currentRole = channelRole, hidden = false;
@@ -14,12 +15,12 @@ async function setup(page: Page, channelRole: string, circleRole: string, withAg
   const roles = new Map([["channel-settings-owner", channelRole], [memberId, "member"]]);
   const governanceWrites: unknown[] = [];
   const governance = () => ({ hidden, members: [...roles].map(([user_id, role]) => ({ user_id, role })) });
-  await page.route("**/api/v1/channels/*/governance", route => route.fulfill({ json: governance() }));
-  await page.route("**/api/v1/channels/*/hidden", route => {
+  await page.route("**/api/v1/channels/*/governance?**", route => route.fulfill({ json: governance() }));
+  await page.route("**/api/v1/channels/*/hidden?**", route => {
     const body = route.request().postDataJSON(); governanceWrites.push(body); hidden = body.hidden;
     return route.fulfill({ json: governance() });
   });
-  await page.route("**/api/v1/channels/*/members/*/role", route => {
+  await page.route("**/api/v1/channels/*/members/*/role?**", route => {
     const body = route.request().postDataJSON(); governanceWrites.push(body);
     const user = decodeURIComponent(route.request().url().split("/").at(-2)!); roles.set(user, body.role);
     if (user === "channel-settings-owner") currentRole = body.role;
@@ -65,13 +66,14 @@ async function setup(page: Page, channelRole: string, circleRole: string, withAg
 
 
 test("moderator can hide globally and step down; no authority remains after fresh revocation", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   const server = await setup(page, "moderator", "member");
   await server.surface.getByRole("button", { name: "Gøym kanalen for alle", exact: true }).click();
   await expect(server.surface.getByRole("button", { name: "Vis kanalen for alle", exact: true })).toBeVisible();
   const hidden = page.getByRole("button", { name: "Gøymde kanalar (1)", exact: true });
   await expect(hidden).toHaveAttribute("aria-expanded", "false");
   await hidden.click();
-  await expect(page.getByRole("button", { name: "Innstillingskrets · Privat kanalflate", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Innstillingskrets · # Privat kanalflate", exact: true })).toBeVisible();
   await server.surface.getByRole("tab", { name: "Medlemmer", exact: true }).click();
   await server.surface.getByRole("button", { name: "Gjer Kari til moderator", exact: true }).click();
   await expect(server.surface.getByRole("button", { name: "Fjern moderatorrettar for Kari", exact: true })).toHaveCount(0);

@@ -1,7 +1,7 @@
 -- Additive event domain; old channel membership writers remain authoritative.
 create table channel_events (
  id text primary key, channel_id uuid not null references channels(id) on delete cascade,
- creator_id uuid not null references users(id), code text not null,
+ creator_id uuid not null references users(id), code text collate "C" not null,
  title text not null, starts_at text not null, ends_at text, timezone text not null,
  location text, description text not null, cancelled integer not null default 0,
  revision integer not null default 1, updated_at text not null, cover_media_id uuid,
@@ -10,7 +10,7 @@ create table channel_events (
 create index channel_events_recent on channel_events(channel_id,starts_at desc,id);
 create table channel_event_codes (
  channel_id uuid not null references channels(id) on delete cascade,
- code text not null, event_id text not null references channel_events(id) on delete cascade,
+ code text collate "C" not null, event_id text not null references channel_events(id) on delete cascade,
  primary key(channel_id,code)
 );
 create table channel_event_responses (

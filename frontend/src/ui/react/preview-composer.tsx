@@ -9,6 +9,7 @@ import { PreviewAttachments } from "./preview-media";
 import type { AgentLocationApi } from "../../agent-locations";
 import { AgentLocationSharingDialog } from "./agent-location-sharing";
 import { useEventReferences } from "./event-references";
+import type { ChannelEvent } from "../../channel-events";
 
 export interface PreviewMention {
   readonly id: string;
@@ -65,8 +66,21 @@ export function PreviewComposer({ host, target }: {
   const eventMatch = !dismissed && !composing.current && caret !== null
     ? state.value.slice(0, caret).match(/(?:^|\s)#arr:([a-z0-9-]*)$/iu) : null;
   const eventQuery = eventMatch?.[1]?.toLowerCase();
+  const [eventSuggestions, setEventSuggestions] = useState<{ query: string; events: readonly ChannelEvent[] }>();
+  const [eventSuggestionError, setEventSuggestionError] = useState(false);
+  useEffect(() => {
+    if (!eventQuery || eventQuery.length > 48 || !eventReferences?.suggest || state.disabled || state.busy) return;
+    const controller = new AbortController(); setEventSuggestionError(false);
+    const timer = window.setTimeout(() => {
+      void eventReferences.suggest!(eventQuery, controller.signal).then(events => {
+        if (!controller.signal.aborted) setEventSuggestions({ query: eventQuery, events });
+      }, () => { if (!controller.signal.aborted) setEventSuggestionError(true); });
+    }, 150);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [eventQuery, eventReferences?.suggest, state.disabled, state.busy]);
+  const candidateEvents = [...new Map([...(eventReferences?.events ?? []), ...(eventSuggestions && eventSuggestions.query === eventQuery ? eventSuggestions.events : [])].map(event => [event.id, event])).values()];
   const matches: readonly PreviewMention[] = state.disabled || state.busy ? [] : eventQuery !== undefined
-    ? (eventReferences?.events ?? []).filter(event => !event.cancelled && event.code.startsWith(eventQuery))
+    ? candidateEvents.filter(event => !event.cancelled && (event.code.startsWith(eventQuery) || event.aliases.some(code => code.startsWith(eventQuery))))
       .sort((left, right) => left.title.localeCompare(right.title)).slice(0, 12)
       .map(event => ({ id: event.id, name: event.title, handle: event.code, eventCode: event.code, expandsDirect: false }))
     : query === undefined ? [] : host.mentionCandidates(target)
@@ -190,6 +204,7 @@ export function PreviewComposer({ host, target }: {
       hint={state.sendOnEnter ? "Enter sender · Shift+Enter gir ny linje" : "Bruk Send for å sende"}
       leading={<>
         {emojiSaveError && <Status tone="error">{emojiSaveError}</Status>}
+        {eventQuery && eventSuggestionError && <Status tone="error">Arrangementsforslaga kunne ikkje lastast. Du kan framleis skrive koden eller opne Arrangement-fana.</Status>}
         {matches.length > 0 && <div id={listId} role="listbox" aria-label={eventQuery !== undefined ? "Arrangementsforslag" : "Omtaleforslag"}>
           {matches.map((person, index) => <Button key={person.id} id={`${listId}-${index}`} role="option"
             aria-selected={index === selectedIndex} onPointerDown={event => event.preventDefault()}

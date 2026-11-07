@@ -40,6 +40,7 @@ async fn context(
 pub(crate) struct Page {
     after: Option<String>,
     before: Option<i64>,
+    prefix: Option<String>,
 }
 pub(crate) async fn list(
     State(s): State<AppState>,
@@ -49,6 +50,13 @@ pub(crate) async fn list(
     h: HeaderMap,
 ) -> Result<Response, Response> {
     let (a, e) = context(&s, q, &h).await?;
+    if let Some(prefix) = page.prefix {
+        return Ok(response(
+            e.suggestions(&a, &c.to_string(), &prefix)
+                .await
+                .map_err(fail)?,
+        ));
+    }
     Ok(response(
         e.list(&a, &c.to_string(), page.after.as_deref().unwrap_or(""))
             .await

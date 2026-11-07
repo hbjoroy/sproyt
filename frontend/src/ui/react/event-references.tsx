@@ -4,19 +4,20 @@ import type { ChannelEvent } from "../../channel-events";
 export type EventReferences = Readonly<{
   events: readonly ChannelEvent[];
   collect?(codes: ReadonlySet<string>): void;
+  suggest?(prefix: string, signal: AbortSignal): Promise<readonly ChannelEvent[]>;
   href(event: ChannelEvent): string;
   open(event: ChannelEvent): void;
 }>;
 export const EventReferencesContext = createContext<EventReferences | null>(null);
 export const useEventReferences = () => useContext(EventReferencesContext);
 export const EventBridgeContext = createContext<{
-  publish(references: Pick<EventReferences, "events" | "collect">): void;
+  publish(references: Pick<EventReferences, "events" | "collect" | "suggest">): void;
   request: { id: string } | null;
 } | null>(null);
 
 /** Share the active channel's already-authorized discovery with its thread pane. */
 export function ChannelEventBoundary({ children, href }: { children: ReactNode; href(event: ChannelEvent): string }) {
-  const [references, setReferences] = useState<Pick<EventReferences, "events" | "collect">>({ events: [] });
+  const [references, setReferences] = useState<Pick<EventReferences, "events" | "collect" | "suggest">>({ events: [] });
   const [request, setRequest] = useState<{ id: string } | null>(null);
   return <EventBridgeContext.Provider value={{ publish: setReferences, request }}>
     <EventReferencesContext.Provider value={{ ...references, href, open: event => setRequest({ id: event.id }) }}>{children}</EventReferencesContext.Provider>

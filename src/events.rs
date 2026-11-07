@@ -4,8 +4,9 @@ use crate::{
     domain::RepositoryError,
     topics::TopicStore,
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Datelike, SecondsFormat, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Column, Row};
 use std::collections::BTreeMap;
@@ -14,6 +15,47 @@ type Result<T> = std::result::Result<T, RepositoryError>;
 type Record = BTreeMap<String, Option<String>>;
 #[derive(Clone)]
 pub(crate) struct EventStore(pub TopicStore);
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EventCursor {
+    v: u8,
+    as_of: String,
+    bucket: u8,
+    starts_at: String,
+    id: String,
+}
+impl EventCursor {
+    fn decode(raw: &str) -> Result<Self> {
+        if raw.len() > 512 {
+            return Err(RepositoryError::Conflict);
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(raw)
+            .map_err(|_| RepositoryError::Conflict)?;
+        let value: Self = serde_json::from_slice(&bytes).map_err(|_| RepositoryError::Conflict)?;
+        let canonical = |s: &str| {
+            DateTime::parse_from_rfc3339(s).is_ok_and(|date| {
+                date.with_timezone(&Utc)
+                    .to_rfc3339_opts(SecondsFormat::Millis, true)
+                    == s
+                    && (1..=9999).contains(&date.year())
+            })
+        };
+        if value.v != 1
+            || value.bucket > 2
+            || !uuid::Uuid::parse_str(&value.id).is_ok_and(|id| id.to_string() == value.id)
+            || !canonical(&value.as_of)
+            || !canonical(&value.starts_at)
+        {
+            return Err(RepositoryError::Conflict);
+        }
+        Ok(value)
+    }
+    fn encode(&self) -> Result<String> {
+        Ok(URL_SAFE_NO_PAD.encode(serde_json::to_vec(self).map_err(storage)?))
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -253,22 +295,90 @@ impl EventStore {
             json!({"images":images.iter().take(200).map(|r|json!({"media_id":value(r,"media_id"),"contributor_id":value(r,"contributor_id")})).collect::<Vec<_>>(),"next_after":if images.len()>200{Some(value(&images[199],"media_id"))}else{None}}),
         )
     }
+    async fn attention_count(&self, actor: &str, channel: &str) -> Result<i64> {
+        let rows=self.query("select cast(count(*) as text) as count from channel_events e join channel_event_responses r on r.event_id=e.id where e.channel_id=?uuid and r.user_id=?uuid and r.status in ('attending','following') and r.seen_revision<e.revision",&[channel.into(),actor.into()]).await?;
+        value(&rows[0], "count").parse().map_err(storage)
+    }
     pub(crate) async fn list(&self, actor: &str, channel: &str, after: &str) -> Result<Value> {
-        let mut events = self
-            .summaries(
-                actor,
-                channel,
-                "e.id>? order by e.id limit 101",
-                vec![after.into()],
+        let cursor = if after.is_empty() {
+            None
+        } else {
+            Some(EventCursor::decode(after)?)
+        };
+        let as_of = cursor.as_ref().map(|c| c.as_of.clone()).unwrap_or_else(now);
+        let bucket = "(case when e.cancelled<>0 then 2 when coalesce(e.ends_at,e.starts_at)>? then 0 else 1 end)";
+        let (condition, mut args) = if let Some(cursor) = cursor {
+            let compare = if cursor.bucket == 0 { ">" } else { "<" };
+            (
+                format!(
+                    "({bucket}>cast(? as integer) or ({bucket}=cast(? as integer) and (e.starts_at{compare}? or (e.starts_at=? and e.id>?))))"
+                ),
+                vec![
+                    as_of.clone(),
+                    cursor.bucket.to_string(),
+                    as_of.clone(),
+                    cursor.bucket.to_string(),
+                    cursor.starts_at.clone(),
+                    cursor.starts_at,
+                    cursor.id,
+                ],
             )
-            .await?;
+        } else {
+            ("true".into(), Vec::new())
+        };
+        let clause = format!(
+            "{condition} order by {bucket},case when e.cancelled=0 and coalesce(e.ends_at,e.starts_at)>? then e.starts_at end asc,case when e.cancelled<>0 or coalesce(e.ends_at,e.starts_at)<=? then e.starts_at end desc,e.id asc limit 101"
+        );
+        args.extend([as_of.clone(), as_of.clone(), as_of.clone()]);
+        let mut events = self.summaries(actor, channel, &clause, args).await?;
         let next = if events.len() > 100 {
-            Some(events[99]["id"].clone())
+            let event = &events[99];
+            let start = event["starts_at"].as_str().unwrap();
+            let end = event["ends_at"].as_str().unwrap_or(start);
+            let bucket = if event["cancelled"] == true {
+                2
+            } else if end > as_of.as_str() {
+                0
+            } else {
+                1
+            };
+            Some(
+                EventCursor {
+                    v: 1,
+                    as_of,
+                    bucket,
+                    starts_at: start.into(),
+                    id: event["id"].as_str().unwrap().into(),
+                }
+                .encode()?,
+            )
         } else {
             None
         };
         events.truncate(100);
-        Ok(json!({"events":events,"next_after":next}))
+        let attention = self.attention_count(actor, channel).await?;
+        self.access(actor, channel).await?;
+        Ok(json!({"events":events,"next_after":next,"attention_count":attention}))
+    }
+    pub(crate) async fn suggestions(
+        &self,
+        actor: &str,
+        channel: &str,
+        prefix: &str,
+    ) -> Result<Value> {
+        let prefix = prefix.to_ascii_lowercase();
+        if prefix.len() > 48
+            || !prefix
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        {
+            return Err(RepositoryError::Conflict);
+        }
+        // The alias primary key supplies a bounded index range, including old
+        // codes. Empty prefix still reads at most twelve alias rows.
+        let upper = format!("{prefix}~");
+        let events=self.summaries(actor,channel,"e.id in (select event_id from channel_event_codes where channel_id=?uuid and code>=? and code<? order by code limit 12) order by e.code",vec![channel.into(),prefix,upper]).await?;
+        Ok(json!({"events":events,"next_after":null}))
     }
     pub(crate) async fn save(
         &self,
@@ -354,10 +464,23 @@ impl EventStore {
         after: &str,
     ) -> Result<Value> {
         self.detail(actor, channel, id).await?;
-        let rows=self.query("select cast(r.user_id as text) as user_id,u.display_name,r.status from channel_event_responses r join users u on u.id=r.user_id where r.event_id=? and cast(r.user_id as text)>? order by r.user_id limit 201",&[id.into(),after.into()]).await?;
+        // Current humans default to unanswered; former members only retain history.
+        let candidates = "with candidates as (select m.user_id from channel_memberships m join channels c on c.id=m.channel_id join users u on u.id=m.user_id where m.channel_id=?uuid and u.kind='human' and (c.circle_id is null or exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=m.user_id)) union select r.user_id from channel_event_responses r join channel_events e on e.id=r.event_id join users u on u.id=r.user_id where r.event_id=? and e.channel_id=?uuid and coalesce(e.ends_at,e.starts_at)<=? and u.kind='human')";
+        let base_args = vec![channel.into(), id.into(), channel.into(), now()];
+        let mut args = base_args.clone();
+        args.extend([id.into(), after.into()]);
+        let rows=self.query(&format!("{candidates} select cast(u.id as text) as user_id,u.display_name,coalesce(r.status,'unanswered') as status from candidates a join users u on u.id=a.user_id left join channel_event_responses r on r.user_id=a.user_id and r.event_id=? where cast(u.id as text)>? order by u.id limit 201"),&args).await?;
+        let mut args = base_args;
+        args.push(id.into());
+        let totals=self.query(&format!("{candidates} select coalesce(r.status,'unanswered') as status,cast(count(*) as text) as count from candidates a left join channel_event_responses r on r.user_id=a.user_id and r.event_id=? group by coalesce(r.status,'unanswered')"),&args).await?;
+        let mut counts = json!({"attending":0,"declined":0,"following":0,"unanswered":0});
+        for row in totals {
+            counts[value(&row, "status")] =
+                json!(value(&row, "count").parse::<i64>().map_err(storage)?);
+        }
         self.access(actor, channel).await?;
         Ok(
-            json!({"responses":rows.iter().take(200).map(|r|json!({"user_id":value(r,"user_id"),"display_name":value(r,"display_name"),"status":value(r,"status")})).collect::<Vec<_>>(),"next_after":if rows.len()>200{Some(value(&rows[199],"user_id"))}else{None}}),
+            json!({"responses":rows.iter().take(200).map(|r|json!({"user_id":value(r,"user_id"),"display_name":value(r,"display_name"),"status":value(r,"status")})).collect::<Vec<_>>(),"counts":counts,"next_after":if rows.len()>200{Some(value(&rows[199],"user_id"))}else{None}}),
         )
     }
     pub(crate) async fn image(
@@ -522,6 +645,22 @@ mod tests {
         );
     }
     #[test]
+    fn list_cursor_requires_canonical_utc_and_identity() {
+        let mut cursor = EventCursor {
+            v: 1,
+            as_of: "2026-11-07T12:00:00.000Z".into(),
+            bucket: 0,
+            starts_at: "2026-11-08T12:00:00.000Z".into(),
+            id: "abcdefab-cdef-4abc-8abc-abcdefabcdef".into(),
+        };
+        assert!(EventCursor::decode(&cursor.encode().unwrap()).is_ok());
+        cursor.as_of = "2026-11-07T13:00:00.000+01:00".into();
+        assert!(EventCursor::decode(&cursor.encode().unwrap()).is_err());
+        cursor.as_of = "2026-11-07T12:00:00.000Z".into();
+        cursor.id.make_ascii_uppercase();
+        assert!(EventCursor::decode(&cursor.encode().unwrap()).is_err());
+    }
+    #[test]
     fn event_validation() {
         let mut e = EventInput {
             title: "Gig".into(),
@@ -565,7 +704,7 @@ mod database_tests {
         for id in [&owner, &member] {
             s.execute(
                 "insert into users(id,kind,display_name) values(?uuid,'human','Event test')",
-                &[id.clone()],
+                std::slice::from_ref(id),
             )
             .await
             .unwrap();
@@ -654,6 +793,13 @@ mod database_tests {
         .unwrap();
         assert!(s.rsvp(&member, &c, future, "attending").await.is_err());
         assert!(s.detail(&member, &c, past).await.is_err());
+        let future_roster = s.responses(&owner, &c, future, "").await.unwrap();
+        assert_eq!(future_roster["responses"].as_array().unwrap().len(), 1);
+        assert_eq!(future_roster["counts"]["unanswered"], 1);
+        let past_roster = s.responses(&owner, &c, past, "").await.unwrap();
+        assert_eq!(past_roster["responses"].as_array().unwrap().len(), 2);
+        assert_eq!(past_roster["counts"]["following"], 1);
+
         s.execute(
             "insert into channel_memberships(channel_id,user_id,role) values(?uuid,?uuid,'member')",
             &[c.clone(), member.clone()],
@@ -671,7 +817,8 @@ mod database_tests {
         s.rsvp(&member, &c, future, "attending").await.unwrap();
         s.rsvp(&member, &c, future, "attending").await.unwrap();
         let responses = s.responses(&owner, &c, future, "").await.unwrap();
-        assert_eq!(responses["responses"].as_array().unwrap().len(), 1);
+        assert_eq!(responses["counts"]["attending"], 1);
+        assert_eq!(responses["counts"]["unanswered"], 1);
         s.rsvp(&member, &c, future, "unanswered").await.unwrap();
         assert_eq!(
             s.detail(&member, &c, future).await.unwrap()["my_rsvp"],
@@ -685,7 +832,7 @@ mod database_tests {
         s.save(&owner, &c, None, input("one", 1)).await.unwrap();
         s.execute(
             "update channel_topic_settings set enabled=false where channel_id=?uuid",
-            &[c.clone()],
+            std::slice::from_ref(&c),
         )
         .await
         .unwrap();
@@ -710,6 +857,108 @@ mod database_tests {
         );
         let removed = s.image(&member, &c, id, &media, true).await.unwrap();
         assert!(removed["cover_media_id"].is_null());
+    }
+    async fn prefix_suggestions_beyond_first_page_contract(
+        setup: (EventStore, String, String, String),
+    ) {
+        let (s, owner, _, c) = setup;
+        for n in 0..101 {
+            s.save(&owner, &c, None, input(&format!("event-{n:03}"), 1))
+                .await
+                .unwrap();
+        }
+        let event = s.save(&owner, &c, None, input("zebra", 2)).await.unwrap();
+        let id = event["id"].as_str().unwrap();
+        s.save(&owner, &c, Some(id), input("renamed-zebra", 2))
+            .await
+            .unwrap();
+        let first = s.list(&owner, &c, "").await.unwrap();
+        assert_eq!(first["events"].as_array().unwrap().len(), 100);
+        assert!(
+            !first["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["id"] == id)
+        );
+        let matched = s.suggestions(&owner, &c, "ZEB").await.unwrap();
+        assert_eq!(matched["events"].as_array().unwrap().len(), 1);
+        assert_eq!(matched["events"][0]["id"], id);
+        assert!(s.suggestions(&owner, &c, "%bad").await.is_err());
+        assert!(
+            s.suggestions(&owner, &c, "").await.unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .len()
+                <= 12
+        );
+    }
+    async fn globally_ordered_pagination_contract(setup: (EventStore, String, String, String)) {
+        let (s, owner, _, c) = setup;
+        let past_start = Utc::now() - chrono::Duration::days(2);
+        let mut expected = std::collections::HashSet::new();
+        for n in 0..101 {
+            let mut event = input(&format!("past-{n:03}"), -2);
+            event.starts_at = past_start;
+            let event = s.save(&owner, &c, None, event).await.unwrap();
+            expected.insert(event["id"].as_str().unwrap().to_owned());
+        }
+        let first = s.save(&owner, &c, None, input("soon", 1)).await.unwrap();
+        let second = s.save(&owner, &c, None, input("later", 2)).await.unwrap();
+        let cancelled = s
+            .save(&owner, &c, None, input("cancelled", 1))
+            .await
+            .unwrap();
+        let cancelled_id = cancelled["id"].as_str().unwrap();
+        s.rsvp(&owner, &c, cancelled_id, "following").await.unwrap();
+        s.cancel(&owner, &c, cancelled_id).await.unwrap();
+        for event in [&first, &second, &cancelled] {
+            expected.insert(event["id"].as_str().unwrap().to_owned());
+        }
+        let page = s.list(&owner, &c, "").await.unwrap();
+        assert_eq!(page["events"][0]["id"], first["id"]);
+        assert_eq!(page["events"][1]["id"], second["id"]);
+        assert_eq!(page["attention_count"], 1);
+        assert!(
+            !page["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["id"] == cancelled_id)
+        );
+        let mut seen = Vec::new();
+        let mut after = String::new();
+        for _ in 0..10 {
+            let page = s.list(&owner, &c, &after).await.unwrap();
+            seen.extend(
+                page["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| e["id"].as_str().unwrap().to_owned()),
+            );
+            match page["next_after"].as_str() {
+                Some(cursor) => after = cursor.into(),
+                None => break,
+            }
+        }
+        assert_eq!(seen.len(), expected.len());
+        assert_eq!(
+            seen.iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+            expected
+        );
+        assert_eq!(seen.last().unwrap(), cancelled_id);
+        assert!(s.list(&owner, &c, "not-a-valid-cursor").await.is_err());
+    }
+    #[tokio::test]
+    async fn globally_ordered_pagination() {
+        globally_ordered_pagination_contract(fixture().await).await;
+    }
+    #[tokio::test]
+    async fn prefix_suggestions_beyond_first_page() {
+        prefix_suggestions_beyond_first_page_contract(fixture().await).await;
     }
     #[tokio::test]
     async fn aliases_rights_material_notice_and_acknowledgment() {
@@ -769,6 +1018,8 @@ mod database_tests {
         .await;
         first_event_enables_topics_only_once_contract(seed(s.clone()).await).await;
         image_channel_owner_and_cover_guards_contract(seed(s.clone()).await).await;
+        prefix_suggestions_beyond_first_page_contract(seed(s.clone()).await).await;
+        globally_ordered_pagination_contract(seed(s.clone()).await).await;
 
         pool.close().await;
         sqlx::query(&format!("drop schema {schema} cascade"))
@@ -891,7 +1142,10 @@ mod http_tests {
         let event: Value = event.json().await.unwrap();
         let event_id = event["id"].as_str().unwrap();
         let message_id = uuid::Uuid::now_v7().to_string();
-        let body = format!("**Rich message** #arr:gig {}", "full content ".repeat(200));
+        let body = format!(
+            "**Rich message** #arr:gig {}end",
+            "full content ".repeat(200)
+        );
         for (sequence, text) in [(1, body.as_str()), (2, "`#arr:gig`"), (3, "\\#arr:gig")] {
             let id = if sequence == 1 {
                 message_id.clone()
@@ -963,7 +1217,7 @@ mod export_tests {
         let channel = uuid::Uuid::now_v7().to_string();
         s.execute(
             "insert into users(id,kind,display_name) values(?uuid,'human','Exporter')",
-            &[owner.clone()],
+            std::slice::from_ref(&owner),
         )
         .await
         .unwrap();

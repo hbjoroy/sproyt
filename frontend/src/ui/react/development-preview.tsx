@@ -572,6 +572,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let renderedEntry = "";
   let personalLatestRequest = 0;
   let topicResetRequest = 0;
+  let eventsTabOpen = false;
+  let workspacePageOpen = false;
   let memberFocus: { owner: string; channelId: string; historyEntryId: string } | null = null;
   let threadFocus: { owner: string | null; messageId: string; element: HTMLElement } | null = null;
   const reactionPicker = createPreviewReactionPicker(host);
@@ -630,7 +632,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       && !["management", "inbox", "directory"].includes(host.viewHistory.getSnapshot().target?.kind ?? "");
     const placeCandidates = [...snapshot.timeline.messages, ...(snapshot.thread?.root ? [snapshot.thread.root] : []), ...(snapshot.thread?.replies ?? [])]
       .filter(message => !message.deleted_at && message.body === PLACE_LOOKUP_MARKER).map(message => ({ id: message.id, revision: JSON.stringify([message.body, message.edited_at ?? null]) }));
-    channelScroll.setPaused(Boolean(pageKey));
+    workspacePageOpen = Boolean(pageKey);
+    channelScroll.setPaused(workspacePageOpen || eventsTabOpen);
     threadScroll.setPaused(Boolean(pageKey));
     if (!snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && historyState.target?.kind !== "conversation") view = "list";
     if (historyState.entryId !== renderedEntry) {
@@ -905,10 +908,10 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     },
     renderDiscussion: owner && source && !source.is_direct && !source.is_personal ? discussion => <ChannelEventBoundary
       key={`${owner}:${accountEpoch}:${source.id}`} href={event => eventHref(source.id, event.id)}>{discussion}</ChannelEventBoundary> : undefined,
-    renderChannel: owner && source && !source.is_direct && !source.is_personal ? (chat, timeline) => <ChannelEventSpace
-      key={`${owner}:${accountEpoch}:${source.id}`} api={host.channelEvents} owner={owner} channelId={source.id} chat={chat} timeline={timeline}
+    renderChannel: owner && source && !source.is_direct && !source.is_personal ? (chat, timeline, composer) => <ChannelEventSpace
+      key={`${owner}:${accountEpoch}:${source.id}`} api={host.channelEvents} owner={owner} channelId={source.id} chat={chat} composer={composer} timeline={timeline}
       uploadImage={(file, progress) => host.uploadEventImage(source.id, file, progress)}
-      onTabChange={events => { channelScroll.setPaused(events || Boolean(pageKey)); }} /> : undefined,
+      onTabChange={events => { eventsTabOpen = events; channelScroll.setPaused(events || workspacePageOpen); }} /> : undefined,
     renderTimeline: owner && snapshot.activeChannel ? timeline => <ChannelTopics
       key={`${owner}:${accountEpoch}:${snapshot.activeChannel!.id}`} api={host.channelTopics} owner={owner}
       channelId={snapshot.activeChannel!.id} timeline={timeline} resetRequest={topicResetRequest} active={!pageKey && view === "detail"}

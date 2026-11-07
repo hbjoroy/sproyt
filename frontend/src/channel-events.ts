@@ -43,7 +43,9 @@ export class ChannelEventsApi {
     return this.#request(owner, channelId, after ? `?after=${encodeURIComponent(after)}` : "", value => {
       if (!isRecord(value) || !Array.isArray(value.events)) throw new Error("Ugyldig arrangementsoversikt.");
       if (value.next_after !== null && typeof value.next_after !== "string") throw new Error("Ugyldig arrangementsmarkør.");
-      return { events: value.events.map(event => decodeChannelEvent(event, channelId)), next_after: value.next_after };
+      if (value.attention_count !== undefined && (!Number.isSafeInteger(value.attention_count) || Number(value.attention_count) < 0)) throw new Error("Ugyldig arrangementsvarsel.");
+      return { events: value.events.map(event => decodeChannelEvent(event, channelId)), next_after: value.next_after,
+        attention_count: typeof value.attention_count === "number" ? value.attention_count : null };
     }, { signal });
   }
   references(owner: string, channelId: string, codes: readonly string[], signal: AbortSignal) {
@@ -51,6 +53,12 @@ export class ChannelEventsApi {
       if (!isRecord(value) || !Array.isArray(value.events)) throw new Error("Ugyldige arrangementsreferansar.");
       return value.events.map(event => decodeChannelEvent(event, channelId));
     }, { method: "POST", body: JSON.stringify({ codes: codes.slice(0, 50) }), signal });
+  }
+  suggestions(owner: string, channelId: string, prefix: string, signal: AbortSignal) {
+    return this.#request(owner, channelId, `?prefix=${encodeURIComponent(prefix)}`, value => {
+      if (!isRecord(value) || !Array.isArray(value.events) || value.events.length > 12) throw new Error("Ugyldige arrangementsforslag.");
+      return value.events.map(event => decodeChannelEvent(event, channelId));
+    }, { signal });
   }
   detail(owner: string, channelId: string, id: string, signal?: AbortSignal) {
     return this.#request(owner, channelId, `/${encodeURIComponent(id)}`, value => decodeChannelEvent(value, channelId), { signal });
@@ -66,21 +74,15 @@ export class ChannelEventsApi {
   removeImage(owner: string, channelId: string, id: string, mediaId: string) {
     return this.#request(owner, channelId, `/${encodeURIComponent(id)}/images/${encodeURIComponent(mediaId)}`, value => decodeChannelEvent(value, channelId), { method: "DELETE" });
   }
-  async responses(owner: string, channelId: string, id: string, signal: AbortSignal) {
-    const people: EventPerson[] = [];
-    let after: string | null = null;
-    const cursors = new Set<string>();
-    do {
-      const page: { responses: EventPerson[]; next_after: string | null } = await this.#request(owner, channelId, `/${encodeURIComponent(id)}/responses${after ? `?after=${encodeURIComponent(after)}` : ""}`, value => {
+  responses(owner: string, channelId: string, id: string, signal: AbortSignal, after: string | null = null) {
+    return this.#request(owner, channelId, `/${encodeURIComponent(id)}/responses${after ? `?after=${encodeURIComponent(after)}` : ""}`, value => {
       if (!isRecord(value) || !Array.isArray(value.responses) || value.responses.some(person => !isRecord(person)
         || typeof person.user_id !== "string" || typeof person.display_name !== "string" || !eventResponses.includes(person.status as EventResponse))) throw new Error("Ugyldige deltakarsvar.");
       if (value.next_after !== null && typeof value.next_after !== "string") throw new Error("Ugyldig svarmarkør.");
-      return { responses: value.responses as EventPerson[], next_after: value.next_after };
+      const counts = isRecord(value.counts) && eventResponses.every(status => Number.isSafeInteger(value.counts && (value.counts as Record<string, unknown>)[status]) && Number((value.counts as Record<string, unknown>)[status]) >= 0)
+        ? value.counts as Record<EventResponse, number> : null;
+      return { responses: value.responses as EventPerson[], next_after: value.next_after, counts };
     }, { signal });
-      people.push(...page.responses); after = page.next_after;
-      if (after) { if (cursors.has(after)) throw new Error("Ugyldig svarmarkør."); cursors.add(after); }
-    } while (after && !signal.aborted);
-    return people;
   }
   images(owner: string, channelId: string, id: string, after: string, signal: AbortSignal) {
     return this.#request(owner, channelId, `/${encodeURIComponent(id)}/images?after=${encodeURIComponent(after)}`, value => {

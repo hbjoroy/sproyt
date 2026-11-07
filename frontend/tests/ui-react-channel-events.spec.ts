@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
+import { eventImage } from "./support/event-image";
 
 const owner = "events-viewer";
 const channel = "00000000-0000-7000-8000-000000009911";
@@ -7,7 +8,9 @@ const eventId = "00000000-0000-7000-8000-000000009912";
 const mediaId = "00000000-0000-7000-8000-000000009913";
 const date = "2026-01-01T00:00:00Z";
 const row = (id: string, sequence: number, body: string) => ({ id, channel_id: channel, parent_message_id: null, sequence, body, sent_at: date, sender_id: owner, sender_display_name: "Nora" });
-async function setup(page: Page, deep = false) {
+async function setup(page: Page, deep = false, offPage = false) {
+  const image = await eventImage(page);
+  await page.route("**/api/v1/me/favorite-circles?**", route => route.fulfill({ json: [] }));
   const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
   await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
   let event = { id: eventId, channel_id: channel, creator_id: channel, title: "Konsert med eit langt og lesbart namn", code: "konsert", aliases: ["gammal"],
@@ -15,9 +18,12 @@ async function setup(page: Page, deep = false) {
     revision: 2, updated_at: date, cover_media_id: mediaId as string | null, my_rsvp: "following", can_manage: true, needs_attention: true, images: [{ media_id: mediaId, contributor_id: owner }], images_next_after: null };
   let revoked = false;
   const changes: string[] = [];
+  const prefixes: string[] = [];
   await page.route(new RegExp(`/api/v1/channels/${channel}/events(?:[/?]|$)`), route => {
     if (revoked) return route.fulfill({ status: 403, json: { error: "Tilgangen er fjerna" } });
     const path = new URL(route.request().url()).pathname;
+    const prefix = new URL(route.request().url()).searchParams.get("prefix");
+    if (prefix !== null) { prefixes.push(prefix); return route.fulfill({ json: { events: [event], next_after: null } }); }
     expect(route.request().headers()["x-sproyt-account"]).toBe(owner);
     if (path.endsWith("/responses")) return route.fulfill({ json: { responses: [{ user_id: owner, display_name: "Nora", status: event.my_rsvp }], next_after: null } });
     if (path.endsWith("/references")) return route.fulfill({ json: { events: [event] } });
@@ -31,11 +37,11 @@ async function setup(page: Page, deep = false) {
       else if (path.endsWith("/images")) event = { ...event, images: [{ media_id: mediaId, contributor_id: owner }] };
       return route.fulfill({ json: event });
     }
-    return route.fulfill({ json: path.endsWith("/events") ? { events: [event], next_after: null } : event });
+    return route.fulfill({ json: path.endsWith("/events") ? offPage ? { events: Array.from({ length: 100 }, (_, index) => ({ ...event, id: `00000000-0000-7000-8000-${String(index + 20000).padStart(12, "0")}`, title: `Andre arrangement ${index}`, code: `event-${index}`, aliases: [], needs_attention: false })), next_after: "next-page", attention_count: 7 } : { events: [event], next_after: null, attention_count: event.needs_attention ? 1 : 0 } : event });
   });
   await page.route(new RegExp(`/api/v1/channels/${channel}/topics(?:[/?]|$)`), route => route.fulfill({ json: { enabled: false, can_manage: true, topics: [] } }));
   await page.route(new RegExp(`/api/v1/media/${mediaId}(?:[/?]|$)`), route => new URL(route.request().url()).pathname.endsWith("/status")
-    ? route.fulfill({ json: { state: "legacy" } }) : route.fulfill({ contentType: "image/png", body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6aQAAAAASUVORK5CYII=", "base64") }));
+    ? route.fulfill({ json: { state: "legacy" } }) : route.fulfill({ contentType: "image/png", body: image }));
   await page.routeWebSocket(/\/ws(?:\?|$)/, socket => socket.onMessage(data => {
     const command = JSON.parse(String(data));
     const reply = (type: string, payload: unknown = {}) => socket.send(JSON.stringify({ protocol: "sproyt.chat.v1", type, request_id: command.request_id, payload }));
@@ -48,7 +54,7 @@ async function setup(page: Page, deep = false) {
       case "list_channel_users": reply("channel_users_listed", { channel_id: channel, users: [] }); break;
       case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
       case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
-      case "subscribe_channel": reply("subscription_started", { channel_id: channel, history: [row("latest", 10, "Hei #arr:gammal")] }); break;
+      case "subscribe_channel": reply("subscription_started", { channel_id: channel, history: [row("latest", 10, offPage ? "Hei kanalen" : "Hei #arr:gammal")] }); break;
       case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: [] }); break;
       case "list_channel_reactions": reply("channel_reactions_listed", { channel_id: channel, reactions: [] }); break;
     }
@@ -56,7 +62,7 @@ async function setup(page: Page, deep = false) {
   await page.goto(`/?participant=${owner}&channel=${channel}&ui=react${deep ? `&event=${eventId}` : ""}`);
   const app = page.locator("#sproyt-react-preview");
   await expect(app.getByRole("tab", { name: /Arrangement/ })).toBeVisible();
-  return { app, changes, revoke: () => { revoked = true; } };
+  return { app, changes, prefixes, revoke: () => { revoked = true; } };
 }
 
 for (const [width, theme] of [[320, "light"], [390, "dark"], [1440, "light"]] as const) {
@@ -88,7 +94,9 @@ for (const [width, theme] of [[320, "light"], [390, "dark"], [1440, "light"]] as
     await expect(app.getByRole("radio", { name: "Deltek", exact: true })).toBeChecked();
     await app.getByRole("button", { name: "Alle arrangement", exact: false }).click();
     await screenshot("list");
-    await app.getByRole("tab", { name: "Meldingar", exact: true }).click();
+    await app.getByRole("tab", { name: /Arrangement/ }).focus();
+    await page.keyboard.press("ArrowLeft");
+    await expect(app.getByRole("tab", { name: "Meldingar", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(composer).toHaveValue("Utkast #arr:konsert ");
     const pills = app.getByRole("group", { name: "Arrangement i meldingane" });
     await pills.getByRole("button", { name: "#arr:konsert", exact: true }).click();
@@ -115,4 +123,15 @@ test("event deep link reload, editing failure and membership revocation clear pr
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect(app.getByText(/Arrangementet kunne ikkje lastast/)).toBeVisible();
   await expect(app.getByRole("heading", { level: 2, name: "Ny konsert" })).toHaveCount(0);
+});
+test("prefix autocomplete finds an event beyond the first hundred without loading the whole channel", async ({ page }) => {
+  const { app, prefixes } = await setup(page, false, true);
+  await expect(app.getByText("Hei kanalen", { exact: true })).toBeVisible();
+  await expect(app.getByRole("tab", { name: "Arrangement (7 endra)", exact: true })).toBeVisible();
+  const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
+  await composer.fill("#arr:ko");
+  await expect(app.getByRole("listbox", { name: "Arrangementsforslag" }).getByRole("option", { name: /Konsert med/ })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(composer).toHaveValue("#arr:konsert ");
+  expect(prefixes).toEqual(["ko"]);
 });

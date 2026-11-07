@@ -25,14 +25,14 @@ function mediaUrl(id: string, original = false) {
 }
 export function eventWhen(event: ChannelEvent) {
   try {
-    const format = new Intl.DateTimeFormat("nn-NO", { dateStyle: "medium", timeStyle: "short", timeZone: event.timezone });
+    const format = new Intl.DateTimeFormat(["nb-NO", "en-GB"], { dateStyle: "medium", timeStyle: "short", timeZone: event.timezone, hourCycle: "h23" });
     return `${format.format(new Date(event.starts_at))}${event.ends_at ? ` – ${format.format(new Date(event.ends_at))}` : ""} · ${event.timezone}`;
   } catch { return `${event.starts_at} · ${event.timezone}`; }
 }
 
 /** Both panes stay mounted: drafts, attachment state and timeline scroll survive tab switches. */
-export function ChannelEventSpace({ api, owner, channelId, chat, timeline, uploadImage, onTabChange }: Scope & {
-  chat: ReactNode; timeline: TimelineProps; uploadImage(file: File, progress: (text: string) => void): Promise<string>;
+export function ChannelEventSpace({ api, owner, channelId, chat, composer, timeline, uploadImage, onTabChange }: Scope & {
+  chat: ReactNode; composer?: ReactNode; timeline: TimelineProps; uploadImage(file: File, progress: (text: string) => void): Promise<string>;
   onTabChange?(events: boolean): void;
 }) {
   const bridge = useContext(EventBridgeContext);
@@ -43,10 +43,13 @@ export function ChannelEventSpace({ api, owner, channelId, chat, timeline, uploa
   const [selectedId, setSelectedId] = useState<string | null>(initial);
   const [tab, setTab] = useState<"chat" | "events">(() => initial() ? "events" : "chat");
   const [events, setEvents] = useState<readonly ChannelEvent[]>([]);
+  const eventsRef = useRef(events); eventsRef.current = events;
+  const [attentionCount, setAttentionCount] = useState<number | null>(null);
   const [referenceVersion, setReferenceVersion] = useState(0);
   const discovery = useMemo(() => new EventReferenceDiscovery(api, owner, channelId, () => setReferenceVersion(value => value + 1)), [api, owner, channelId]);
   useEffect(() => () => discovery.dispose(), [discovery]);
   const collect = useCallback((codes: ReadonlySet<string>) => discovery.collect(codes), [discovery]);
+  const suggest = useCallback((prefix: string, signal: AbortSignal) => api.suggestions(owner, channelId, prefix, signal), [api, owner, channelId]);
   const referenceEvents = useMemo(() => [...new Map([...discovery.events(), ...events].map(event => [event.id, event])).values()], [events, discovery, referenceVersion]);
   const [nextAfter, setNextAfter] = useState<string | null>(null);
   const [after, setAfter] = useState<string | null>(null);
@@ -60,7 +63,7 @@ export function ChannelEventSpace({ api, owner, channelId, chat, timeline, uploa
   const id = useId();
   const current = useRef(true);
   const reload = () => setRevision(value => value + 1);
-  useEffect(() => { bridge?.publish({ events: referenceEvents, collect }); }, [referenceEvents, collect, bridge?.publish]);
+  useEffect(() => { bridge?.publish({ events: referenceEvents, collect, suggest }); }, [referenceEvents, collect, suggest, bridge?.publish]);
   useEffect(() => {
     const event = referenceEvents.find(event => event.id === bridge?.request?.id);
     if (event) open(event);
@@ -70,7 +73,7 @@ export function ChannelEventSpace({ api, owner, channelId, chat, timeline, uploa
     const controller = new AbortController();
     setLoadingMore(true);
     void api.list(owner, channelId, controller.signal, after).then(value => {
-      if (!controller.signal.aborted) { setEvents(previous => after ? [...new Map([...previous, ...value.events].map(event => [event.id, event])).values()] : value.events); setNextAfter(value.next_after); setLoaded(true); setLoadingMore(false); setError(""); }
+      if (!controller.signal.aborted) { setEvents(previous => after ? [...new Map([...previous, ...value.events].map(event => [event.id, event])).values()] : value.events); setAttentionCount(value.attention_count); setNextAfter(value.next_after); setLoaded(true); setLoadingMore(false); setError(""); }
     }, cause => {
       if (controller.signal.aborted) return;
       if (denied(cause)) { setEvents([]); discovery.dispose(); setReferenceVersion(value => value + 1); setEditing(null); }
@@ -99,20 +102,27 @@ export function ChannelEventSpace({ api, owner, channelId, chat, timeline, uploa
     setSelectedId(event.id); setTab("events"); setEditing(null); updateUrl(event.id);
     requestAnimationFrame(() => root.current?.querySelector<HTMLElement>(".sp-events-panel h2")?.focus());
   }
-  function upsert(event: ChannelEvent) { setEvents(previous => [event, ...previous.filter(item => item.id !== event.id)]); }
-  return <EventReferencesContext.Provider value={{ events: referenceEvents, collect, href: event => eventHref(channelId, event.id), open }}>
+  function upsert(event: ChannelEvent) {
+    const previous = eventsRef.current.find(item => item.id === event.id);
+    if (previous && previous.needs_attention !== event.needs_attention) setAttentionCount(count => count === null ? null : Math.max(0, count + (event.needs_attention ? 1 : -1)));
+    setEvents(previous => [event, ...previous.filter(item => item.id !== event.id)]);
+  }
+  function revoke() { setEvents([]); setAttentionCount(0); discovery.dispose(); setReferenceVersion(value => value + 1); setEditing(null); }
+  const attention = attentionCount ?? events.filter(event => event.needs_attention).length;
+  return <EventReferencesContext.Provider value={{ events: referenceEvents, collect, suggest, href: event => eventHref(channelId, event.id), open }}>
     <style>{css}</style>
     <div className="sp-channel-events" ref={root}>
       <div className="sp-channel-tabs" role="tablist" aria-label="Innhald i kanalen">
-        <Button id={`${id}-chat-tab`} role="tab" aria-selected={tab === "chat"} aria-controls={`${id}-chat`} onClick={() => { setTab("chat"); updateUrl(null); }}
-          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("events"); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-events-tab"]`)?.focus(); } }}>Meldingar</Button>
-        <Button id={`${id}-events-tab`} role="tab" aria-selected={tab === "events"} aria-controls={`${id}-events`} onClick={() => { setTab("events"); updateUrl(selectedId); }}
-          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("chat"); updateUrl(null); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-chat-tab"]`)?.focus(); } }}>Arrangement{events.some(event => event.needs_attention) ? ` (${events.filter(event => event.needs_attention).length} endra)` : ""}</Button>
+        <Button id={`${id}-chat-tab`} role="tab" tabIndex={tab === "chat" ? 0 : -1} aria-selected={tab === "chat"} aria-controls={`${id}-chat`} onClick={() => { setTab("chat"); updateUrl(null); }}
+          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("events"); updateUrl(selectedId); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-events-tab"]`)?.focus(); } }}>Meldingar</Button>
+        <Button id={`${id}-events-tab`} role="tab" tabIndex={tab === "events" ? 0 : -1} aria-selected={tab === "events"} aria-controls={`${id}-events`} onClick={() => { setTab("events"); updateUrl(selectedId); }}
+          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("chat"); updateUrl(null); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-chat-tab"]`)?.focus(); } }}>Arrangement{attention > 0 ? ` (${attention} endra)` : ""}</Button>
       </div>
       <div className="sp-event-chat" id={`${id}-chat`} role="tabpanel" aria-labelledby={`${id}-chat-tab`} hidden={tab !== "chat"} inert={tab !== "chat"}>
         <EventPills events={events} selected={filter} onSelect={setFilter} more={nextAfter !== null} loading={loadingMore} onLoadMore={() => setAfter(nextAfter)} />
         <div className="sp-event-chat" hidden={Boolean(filter)} inert={Boolean(filter)}>{chat}</div>
-        {filter && <EventMessageResults key={filter} api={api} owner={owner} channelId={channelId} eventId={filter} timeline={timeline} onDenied={() => { setEvents([]); setFilter(null); }} />}
+        {filter && <EventMessageResults key={filter} api={api} owner={owner} channelId={channelId} eventId={filter} timeline={timeline} onDenied={() => { revoke(); setFilter(null); }} />}
+        {composer}
       </div>
       <section className="sp-events-panel" id={`${id}-events`} role="tabpanel" aria-labelledby={`${id}-events-tab`} hidden={tab !== "events"} inert={tab !== "events"}>
         <div className="sp-events-inner">
@@ -125,7 +135,7 @@ export function ChannelEventSpace({ api, owner, channelId, chat, timeline, uploa
               upsert(created); setEditing(null); open(created); reload();
             }} /> : selectedId ? <EventDetail key={selectedId} api={api} owner={owner} channelId={channelId} eventId={selectedId}
               refresh={revision} onUpdate={upsert} onEdit={setEditing} uploadImage={uploadImage}
-              onDenied={() => setEvents([])} onBack={() => { setSelectedId(null); updateUrl(null); }} /> : <>
+              onDenied={revoke} onBack={() => { setSelectedId(null); updateUrl(null); }} /> : <>
             <div className="sp-event-actions"><h2 tabIndex={-1}>Arrangement</h2><Button variant="primary" onClick={() => setEditing("new")} disabled={Boolean(error)}>Nytt arrangement</Button></div>
             <p>Alle i kanalen kan opprette arrangement og bidra med bilete.</p>
             {loaded && !events.length && !error && <p>Ingen arrangement enno. Lag det første og inviter kanalen.</p>}
@@ -208,6 +218,8 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
 }) {
   const [event, setEvent] = useState<ChannelEvent>();
   const [people, setPeople] = useState<readonly EventPerson[]>([]);
+  const [peopleNext, setPeopleNext] = useState<string | null>(null);
+  const [peopleCounts, setPeopleCounts] = useState<Record<EventResponse, number> | null>(null);
   const [error, setError] = useState("");
   const [peopleError, setPeopleError] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -218,7 +230,11 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
   const [confirmCancel, setConfirmCancel] = useState(false);
   const alive = useRef(true);
   const imageRequest = useRef<AbortController | null>(null);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; imageRequest.current?.abort(); }; }, []);
+  const peopleRequest = useRef<AbortController | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const heading = useRef<HTMLHeadingElement | null>(null);
+  useEffect(() => { if (event) heading.current?.focus({ preventScroll: true }); }, [Boolean(event)]);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; imageRequest.current?.abort(); peopleRequest.current?.abort(); }; }, []);
   useEffect(() => {
     const controller = new AbortController();
     void api.detail(owner, channelId, eventId, controller.signal).then(value => {
@@ -229,11 +245,12 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
   }, [api, owner, channelId, eventId, refresh, attempt]);
   useEffect(() => {
     const controller = new AbortController(); setPeopleError(false);
-    void api.responses(owner, channelId, eventId, controller.signal).then(value => { if (!controller.signal.aborted) setPeople(value); }, cause => {
+    peopleRequest.current?.abort(); peopleRequest.current = controller;
+    void api.responses(owner, channelId, eventId, controller.signal).then(value => { if (!controller.signal.aborted) { setPeople(value.responses); setPeopleNext(value.next_after); setPeopleCounts(value.counts); } }, cause => {
       if (!controller.signal.aborted) { setPeopleError(true); if (denied(cause)) { setPeople([]); setEvent(undefined); onDenied(); } }
     });
     return () => controller.abort();
-  }, [api, owner, channelId, eventId, event?.revision, event?.my_rsvp, attempt]);
+  }, [api, owner, channelId, eventId, event?.revision, event?.my_rsvp, attempt, refresh]);
   async function mutate(action: () => Promise<ChannelEvent>) {
     setBusy(true); setError("");
     try { const value = await action(); if (alive.current) { setEvent(value); onUpdate(value); setAttempt(value => value + 1); } }
@@ -245,27 +262,33 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
     {error && <Status tone="error">{error} <Button onClick={() => setAttempt(value => value + 1)}>Prøv igjen</Button></Status>}
     {!event && !error && <Status>Lastar arrangement …</Status>}
     {event && <>
-      <h2 tabIndex={-1}>{event.title}</h2>
+      <h2 ref={heading} tabIndex={-1}>{event.title}</h2>
       {event.cancelled && <Status>Arrangementet er avlyst.</Status>}
-      {event.revision > 1 && <p className="sp-event-notice" role="status">Arrangementet er oppdatert {new Date(event.updated_at).toLocaleString("nn-NO")} (versjon {event.revision}).{["attending", "following"].includes(event.my_rsvp) ? " Du deltek eller følgjer: sjå gjennom tid, stad og omtale." : ""}</p>}
       {event.needs_attention && <div className="sp-event-notice" role="status"><p>Arrangementet er endra sidan du svarte. Sjå gjennom tid, stad og omtale.</p><Button disabled={busy} onClick={() => void mutate(() => api.change(owner, channelId, event.id, "acknowledge"))}>Markér som lesen</Button></div>}
       <p>{eventWhen(event)}</p>{event.location && <p>{event.location}</p>}
+      <fieldset className="sp-event-response" disabled={busy || event.cancelled}><legend>Ditt svar</legend>{eventResponses.map(response => <label key={response}>
+        <input type="radio" name={`rsvp-${event.id}`} value={response} checked={event.my_rsvp === response} onChange={() => void mutate(() => api.change(owner, channelId, event.id, "rsvp", { status: response }))} />{responseLabels[response]}</label>)}</fieldset>
+      <p>Bruk <code>#arr:{event.code}</code> for å merke ei melding med dette arrangementet.</p>
       {event.cover_media_id && <PreviewImage className="sp-event-cover" id={event.cover_media_id} name={`Forside for ${event.title}`} />}
       <MarkdownContent source={event.description} />
-      <p>Bruk <code>#arr:{event.code}</code> for å merke ei melding med dette arrangementet.</p>
       <div className="sp-event-actions"><Button onClick={() => { void navigator.clipboard.writeText(`#arr:${event.code}`).then(() => setCopied(true), () => setError("Kopiering feila. Marker og kopier koden ovanfor.")); }}>{copied ? "Kopiert" : "Kopier #arr-kode"}</Button>
         <a href={eventHref(channelId, event.id)}>Detaljlenkje</a>
         {event.can_manage && <><Button disabled={busy} onClick={() => onEdit(event)}>Rediger</Button>{!event.cancelled && <Button disabled={busy} onClick={() => setConfirmCancel(true)}>Avlys arrangement</Button>}</>}
       </div>
       {confirmCancel && <div className="sp-event-notice"><p>Avlyse {event.title}? Arrangementet og tidlegare svar blir bevarte.</p><Button variant="danger" disabled={busy} onClick={() => { setConfirmCancel(false); void mutate(() => api.change(owner, channelId, event.id, "cancel")); }}>Stadfest avlysing</Button><Button onClick={() => setConfirmCancel(false)}>Behald arrangementet</Button></div>}
-      <fieldset className="sp-event-response" disabled={busy || event.cancelled}><legend>Ditt svar</legend>{eventResponses.map(response => <label key={response}>
-        <input type="radio" name={`rsvp-${event.id}`} value={response} checked={event.my_rsvp === response} onChange={() => void mutate(() => api.change(owner, channelId, event.id, "rsvp", { status: response }))} />{responseLabels[response]}</label>)}</fieldset>
       <section aria-label="Deltakarsvar"><h3>Deltakarsvar</h3>{peopleError ? <Status tone="error">Deltakarsvara kunne ikkje lastast. <Button onClick={() => setAttempt(value => value + 1)}>Prøv igjen</Button></Status> : eventResponses.map(response => {
         const respondents = people.filter(person => person.status === response);
-        return <details key={response}><summary>{responseLabels[response]} ({respondents.length})</summary>{respondents.length ? <ul>{respondents.map(person => <li key={person.user_id}>{person.display_name}</li>)}</ul> : <p>Ingen registrerte svar.</p>}</details>;
-      })}</section>
+        return <details key={response}><summary>{responseLabels[response]} ({peopleCounts?.[response] ?? respondents.length}{!peopleCounts && peopleNext ? "+" : ""})</summary>{respondents.length ? <ul>{respondents.map(person => <li key={person.user_id}>{person.display_name}</li>)}</ul> : <p>{peopleNext ? "Last fleire for å sjå fleire namn." : "Ingen registrerte svar."}</p>}</details>;
+      })}{peopleNext && <Button disabled={busy} onClick={() => {
+        peopleRequest.current?.abort(); const controller = new AbortController(); peopleRequest.current = controller; setBusy(true);
+        void api.responses(owner, channelId, eventId, controller.signal, peopleNext).then(page => {
+          if (!controller.signal.aborted) { setPeople(previous => [...new Map([...previous, ...page.responses].map(person => [person.user_id, person])).values()]); setPeopleNext(page.next_after); setPeopleCounts(page.counts); }
+        }, cause => { if (!controller.signal.aborted) { setPeopleError(true); if (denied(cause)) { setEvent(undefined); setPeople([]); onDenied(); } } })
+          .finally(() => { if (!controller.signal.aborted) setBusy(false); });
+      }}>Vis fleire deltakarar</Button>}</section>
       <section aria-label="Biletbibliotek"><h3>Biletbibliotek</h3><p>Alle i kanalen kan bidra. Du kan fjerne eigne bilete; arrangementsansvarlege kan administrere alle.</p>
-        <label className="sp-label">Legg til bilete<input type="file" accept="image/*" multiple disabled={busy} onChange={action => {
+        <Button disabled={busy} onClick={() => fileInput.current?.click()}>Legg til bilete</Button>
+        <input ref={fileInput} aria-label="Legg til bilete" hidden type="file" accept="image/*" multiple disabled={busy} onChange={action => {
           const files = [...(action.currentTarget.files ?? [])]; action.currentTarget.value = "";
           if (!files.length) return;
           void mutate(async () => {
@@ -278,7 +301,7 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
             }
             return updated;
           });
-        }} /></label>
+        }} />
         {status && <Status>{status}</Status>}
         {!event.images.length && <p>Ingen bilete enno.</p>}
         <div className="sp-event-gallery">{event.images.map(image => <figure key={image.media_id}><Button variant="quiet" aria-label="Opne bilete" onClick={() => setLightbox(image.media_id)}><PreviewImage id={image.media_id} name="Bilete frå arrangementet" /></Button><figcaption>
@@ -339,7 +362,7 @@ function EventEditor({ event, onSave, onClose }: { event?: ChannelEvent; onSave(
     {!event && <p>Det første arrangementet aktiverer automatiske emne i kanalen. Eit seinare moderatorval om å slå dei av blir respektert. #arr-filter fungerer alltid.</p>}
     {event && <p>Vesentlege endringar får ein ny versjon synleg for dei som deltek eller følgjer arrangementet.</p>}
     <label htmlFor={`${id}-title`}>Tittel<input autoFocus id={`${id}-title`} required maxLength={160} value={draft.title} disabled={busy} onChange={action => field("title", action.currentTarget.value)} /></label>
-    <label htmlFor={`${id}-code`}>Kode i kanalen<input id={`${id}-code`} required pattern="[a-z0-9-]{1,48}" maxLength={48} value={draft.code} disabled={busy} onChange={action => field("code", action.currentTarget.value.toLowerCase())} aria-describedby={`${id}-code-help`} /><span id={`${id}-code-help`}>Unik kode med små bokstavar, tal og bindestrek. Til dømes konsert → #arr:konsert.</span></label>
+    <label htmlFor={`${id}-code`}>Kode i kanalen<input id={`${id}-code`} aria-label="Kode i kanalen" required pattern="[a-z0-9-]{1,48}" maxLength={48} value={draft.code} disabled={busy} onChange={action => field("code", action.currentTarget.value.toLowerCase())} aria-describedby={`${id}-code-help`} /><span id={`${id}-code-help`}>Unik kode med små bokstavar, tal og bindestrek. Til dømes konsert → #arr:konsert.</span></label>
     <label htmlFor={`${id}-zone`}>Tidssone<input id={`${id}-zone`} required value={draft.timezone} disabled={busy} onChange={action => field("timezone", action.currentTarget.value)} placeholder="Europe/Oslo" /></label>
     <label htmlFor={`${id}-start`}>Start<input id={`${id}-start`} type="datetime-local" required value={draft.start} disabled={busy} onChange={action => field("start", action.currentTarget.value)} /></label>
     <label htmlFor={`${id}-end`}>Slutt (valfritt)<input id={`${id}-end`} type="datetime-local" value={draft.end} disabled={busy} onChange={action => field("end", action.currentTarget.value)} /></label>
