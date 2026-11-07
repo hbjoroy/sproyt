@@ -1,5 +1,7 @@
 {
   "webkit": [
+    "ui-react-channel-events.spec.ts",
+    "ui-react-channel-governance.spec.ts",
     "ui-react-circle-processes.spec.ts",
     "ui-react-channel-references.spec.ts",
     "ui-react-felles-discovery.spec.ts",
@@ -45,6 +47,8 @@
     "ui-react-channel-topics.spec.ts"
   ],
   "layout": [
+    "ui-react-channel-events.spec.ts",
+    "ui-react-channel-governance.spec.ts",
     "ui-react-circle-processes.spec.ts",
     "ui-react-layout-refinement.spec.ts",
     "ui-react-panel-resize.spec.ts",

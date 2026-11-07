@@ -15,6 +15,9 @@ import { DirectMessagePicker, useCommunityViewScope } from "./direct-message-pic
 import type { CommunityDestination } from "../../application/management-target";
 export type { CommunityDestination } from "../../application/management-target";
 export interface CommunityHost {
+  channelGovernance?(channelId: string): Promise<import("../../channel-governance").ChannelGovernance>;
+  hideChannel?(channelId: string, hidden: boolean): Promise<import("../../channel-governance").ChannelGovernance>;
+  channelMemberRole?(channelId: string, userId: string, role: "member" | "moderator"): Promise<import("../../channel-governance").ChannelGovernance>;
   chatAgents?: CircleChatAgentApi;
   agentMemory?: AgentMemoryApi;
   circleProcesses?: CircleProcessApi;
@@ -81,6 +84,11 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
   const [selected, setSelected] = useState("");
   const [description, setDescription] = useState(channel.description);
   const [loaded, setLoaded] = useState(false);
+  const governanceKey = JSON.stringify([channel.id, channel.role, channel.hidden, scope.owner]);
+  const [governanceState, setGovernanceState] = useState<{ key: string; value: import("../../channel-governance").ChannelGovernance }>();
+  const governance = governanceState?.key === governanceKey ? governanceState.value : undefined;
+  const setGovernance = (value: import("../../channel-governance").ChannelGovernance | undefined) => setGovernanceState(value ? { key: governanceKey, value } : undefined);
+  const [governanceError, setGovernanceError] = useState("");
   const [confirmLeave, setConfirmLeave] = useState(false);
   const op = useOperation(scope.capture);
   const memberField = useRef<HTMLSelectElement>(null);
@@ -105,6 +113,27 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
   };
   const direct = !!channel.is_direct;
   const manager = !direct && ["owner", "moderator"].includes(channel.role);
+  const currentRole = governance?.members.find(member => member.user_id === scope.owner)?.role;
+  const governanceManager = !direct && (currentRole === "owner" || currentRole === "moderator");
+  useEffect(() => {
+    let disposed = false, generation = 0;
+    const admitted = scope.capture();
+    const refresh = async () => {
+      const request = ++generation;
+      setGovernance(undefined);
+      if (direct || !host.channelGovernance) return;
+      try {
+        const result = await host.channelGovernance(channel.id);
+        if (!disposed && request === generation && admitted()) { setGovernance(result); setGovernanceError(""); }
+      } catch (error) {
+        if (!disposed && request === generation && admitted()) setGovernanceError(error instanceof Error ? error.message : "Kunne ikkje hente kanalrettane.");
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 10_000);
+    window.addEventListener("focus", refresh);
+    return () => { disposed = true; window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, [channel.id, channel.role, channel.hidden, scope.owner]);
   useEffect(() => {
     if (!focusMemberAction || section !== "members" || !loaded || op.busy || memberActionFocused.current || direct) return;
     const frame = requestAnimationFrame(() => {
@@ -154,6 +183,17 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
       {host.renderTopicSetting?.(channel.id)}
     </section> : <section aria-label="Kanalomtale" role="tabpanel" id={`${sectionId}-panel-about`} aria-labelledby={`${sectionId}-tab-about`} hidden={section !== "about"} tabIndex={0}>
       <h3>Om {channel.name}</h3>
+      {governance?.hidden && <p>Kanalen er gøymd for alle. Medlemskap, meldingar og varsel er bevarte.</p>}
+      {governanceManager && host.hideChannel && <section aria-label="Synlegheit for kanalen">
+        <Button variant="quiet" disabled={op.busy} onClick={() => void op.run(async admitted => {
+          const hidden = !governance!.hidden;
+          setGovernance(undefined);
+          const result = await host.hideChannel!(channel.id, hidden);
+          if (admitted()) setGovernance(result);
+        }, governance?.hidden ? "Kanalen er synleg att." : "Kanalen er gøymd for alle.")}>{governance?.hidden ? "Vis kanalen for alle" : "Gøym kanalen for alle"}</Button>
+        <p>Gøymde kanalar ligg samla nedst i kanaloversikta. Varsel og tilgang blir bevarte.</p>
+      </section>}
+      {governanceError && <Status tone="error">{governanceError}</Status>}
       {channel.description ? <Markdown text={channel.description} /> : <p>Ingen kanalomtale enno.</p>}
       {channel.role === "owner" && <form onSubmit={event => { event.preventDefault(); void op.run(() => host.description(channel.id, description), "Omtalen er lagra."); }}>
         <label htmlFor="community-description">Kanalomtale (Markdown)</label>
@@ -168,9 +208,22 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
     {(!direct || op.error) && <Button variant="quiet" onClick={() => void load()} busy={op.busy}>{direct ? "Prøv igjen" : "Last personlista på nytt"}</Button>}
     {!loaded && !op.error && <Status>Hentar medlemmer …</Status>}
     {loaded && <PersonList people={visible.map(person => ({ id: person.id, name: person.display_name, detail: [person.handle ? `@${person.handle}` : "", person.status_emoji, person.status_text].filter(Boolean).join(" · ") }))}
-      emptyLabel="Ingen personar passar søket." actions={person => person.id === scope.owner ? null
-        : <Button className="sp-community-direct" variant="quiet" aria-label={`${existingDirectChannel(snapshot.channels, person.id) ? "Opne" : "Start"} samtale med ${person.name}`} title={`${existingDirectChannel(snapshot.channels, person.id) ? "Opne" : "Start"} samtale med ${person.name}`}
-          disabled={op.busy} onClick={() => void openPerson(person.id)}><span aria-hidden="true">→</span></Button>} />}
+      emptyLabel="Ingen personar passar søket." actions={person => <>
+        {person.id !== scope.owner && <Button className="sp-community-direct" variant="quiet" aria-label={`${existingDirectChannel(snapshot.channels, person.id) ? "Opne" : "Start"} samtale med ${person.name}`} title={`${existingDirectChannel(snapshot.channels, person.id) ? "Opne" : "Start"} samtale med ${person.name}`} disabled={op.busy} onClick={() => void openPerson(person.id)}>↗</Button>}
+        {(() => {
+          const role = governance?.members.find(member => member.user_id === person.id)?.role;
+          if (!role || direct) return null;
+          const grant = governanceManager && role !== "owner" && role !== "moderator";
+          const revoke = role === "moderator" && (currentRole === "owner" || (person.id === scope.owner && currentRole === "moderator"));
+          return <><span>{role === "owner" ? "Eigar" : role === "moderator" ? "Moderator" : ""}</span>
+            {(grant || revoke) && host.channelMemberRole && <Button variant="quiet" disabled={op.busy} onClick={() => void op.run(async admitted => {
+              setGovernance(undefined);
+              const result = await host.channelMemberRole!(channel.id, person.id, grant ? "moderator" : "member");
+              if (admitted()) setGovernance(result);
+            }, grant ? "Moderatorrettane er tildelte." : "Moderatorrettane er fjerna.")}>{grant ? `Gjer ${person.name} til moderator` : person.id === scope.owner ? "Tre ut som moderator" : `Fjern moderatorrettar for ${person.name}`}</Button>}</>;
+        })()}
+      </>} />}
+
     {manager && <section aria-label="Legg til kanalmedlem">
       <h3>Legg til kanalmedlem</h3>
       <label htmlFor="community-member">Vel person</label>

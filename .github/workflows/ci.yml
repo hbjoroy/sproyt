@@ -338,6 +338,7 @@ jobs:
           TEST_DATABASE_URL="$SPROYT_POSTGRES_TEST_URL" cargo test native_sessions::tests::postgres_ --locked -- --test-threads=1
           cargo test media_store::tests::postgres_ --locked -- --test-threads=1
           cargo test topics::tests::postgres_ --locked -- --test-threads=1
+          cargo test events::database_tests::postgres_channel_events_contract --locked -- --test-threads=1
           cargo test release_news::tests::postgres_ --locked -- --test-threads=1
           cargo test process::overview::tests::postgres_circle_processes_contract --locked -- --test-threads=1
           cargo test postgres_saved_status_history_contract --locked

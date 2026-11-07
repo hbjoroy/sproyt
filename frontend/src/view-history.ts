@@ -3,7 +3,7 @@ import type { ReadingPosition } from "./ui/react/timeline-scroll";
 
 export type ViewTarget =
   | { kind: "directory"; scope: "circles" | "direct" }
-  | { kind: "conversation"; channelId: string; threadId?: string; messageId?: string; sequence?: number }
+  | { kind: "conversation"; channelId: string; threadId?: string; messageId?: string; sequence?: number; eventId?: string }
   | { kind: "inbox"; inbox: "unread" | "mentions" | "tasks" }
   | { kind: "management"; page: ManagementTarget };
 export type ViewPosition = { key: string; position: ReadingPosition };
@@ -53,9 +53,9 @@ export function readViewTarget(href: string): ViewTarget | null {
     return null;
   }
   if (!id(channelId)) return null;
-  const messageId = p.get("message"), threadId = p.get("thread"), sequence = Number(p.get("sequence"));
+  const messageId = p.get("message"), threadId = p.get("thread"), sequence = Number(p.get("sequence")), eventId = p.get("event");
   return { kind: "conversation", channelId, ...(id(messageId) ? { messageId } : {}),
-    ...(id(threadId) ? { threadId } : {}), ...(id(messageId) && integer(sequence) ? { sequence } : {}) };
+    ...(id(threadId) ? { threadId } : {}), ...(id(messageId) && integer(sequence) ? { sequence } : {}), ...(id(eventId) ? { eventId } : {}) };
 }
 
 /** Shareable destinations contain no account identity, auth flow or invitation token. */
@@ -68,6 +68,7 @@ export function viewHref(target: ViewTarget, base: string, internal = false): st
   if (target.kind === "directory") p.set("view", target.scope);
   else if (target.kind === "conversation") {
     p.set("channel", target.channelId);
+    if (target.eventId) p.set("event", target.eventId);
     if (target.messageId) p.set("message", target.messageId);
     if (target.sequence && target.messageId) p.set("sequence", String(target.sequence));
     if (target.threadId) p.set("thread", target.threadId);
@@ -100,7 +101,7 @@ const targetKey = (target: ViewTarget) => viewHref(target, "https://navigation.i
 function safeTarget(value: unknown): ViewTarget | null {
   if (!record(value)) return null;
   if (value.kind === "conversation" && (!id(value.channelId) || (value.messageId !== undefined && !id(value.messageId))
-    || (value.threadId !== undefined && !id(value.threadId)) || (value.sequence !== undefined && !integer(value.sequence)))) return null;
+    || (value.threadId !== undefined && !id(value.threadId)) || (value.eventId !== undefined && !id(value.eventId)) || (value.sequence !== undefined && !integer(value.sequence)))) return null;
   try {
     const parsed = readViewTarget(viewHref(value as ViewTarget, "https://navigation.invalid/"));
     return parsed && targetKey(parsed) === targetKey(value as ViewTarget) ? parsed : null;

@@ -25,6 +25,28 @@ pub(crate) fn bounded_export_text(column: &str, bytes: usize, pg: bool) -> Strin
     format!("case when {length}<={bytes} then {column} end as {column}")
 }
 
+pub(crate) fn string_record<R>(
+    row: R,
+    keys: &[&str],
+) -> Result<serde_json::Value, crate::domain::RepositoryError>
+where
+    R: sqlx::Row,
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+    for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+{
+    let mut record = serde_json::Map::new();
+    for key in keys {
+        let value: Option<String> = row.try_get(*key).map_err(super::sql_error)?;
+        record.insert(
+            (*key).into(),
+            value
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    Ok(serde_json::Value::Object(record))
+}
+
 macro_rules! write_account_export {
     ($tx:ident, $pg:expr, $actor:ident, $writer:ident) => {{
         use super::account_export::export_rows;
@@ -86,7 +108,7 @@ macro_rules! write_account_export {
         let channel_query = sql("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,
             (select case when d.user_a_id=?uuid then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,
             (exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,
-            exists(select 1 from personal_spaces p where p.channel_id=c.id) as is_personal,
+            exists(select 1 from personal_spaces p where p.channel_id=c.id) as is_personal, c.hidden,
             m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence
             from channels c join channel_memberships m on m.channel_id=c.id
             where m.user_id=?uuid and (cast(? as text) is null or c.slug>?) order by c.slug limit 1", $pg);
@@ -127,6 +149,16 @@ macro_rules! write_account_export {
             prefix = b",{\"channel\":";
         }
 
+        $writer.token(b"],\"events_created\":[").await?;
+        let description=super::account_export::bounded_export_text("description",20000,$pg);
+        let query=sql(&format!("select id,cast(channel_id as text) as channel_id,code,title,starts_at,ends_at,timezone,location,{description},cast(cancelled as text) as cancelled,cast(revision as text) as revision,updated_at,cast(cover_media_id as text) as cover_media_id from channel_events where creator_id=?uuid order by id"),$pg);
+        export_rows!($writer,$tx,sqlx::query(&query).bind(&actor_id),|row| super::account_export::string_record(row,&["id","channel_id","code","title","starts_at","ends_at","timezone","location","description","cancelled","revision","updated_at","cover_media_id"]));
+        $writer.token(b"],\"event_responses\":[").await?;
+        let query=sql("select event_id,status,updated_at,cast(seen_revision as text) as seen_revision from channel_event_responses where user_id=?uuid order by event_id",$pg);
+        export_rows!($writer,$tx,sqlx::query(&query).bind(&actor_id),|row| super::account_export::string_record(row,&["event_id","status","updated_at","seen_revision"]));
+        $writer.token(b"],\"event_image_contributions\":[").await?;
+        let query=sql("select event_id,cast(media_id as text) as media_id from channel_event_images where contributor_id=?uuid order by event_id,media_id",$pg);
+        export_rows!($writer,$tx,sqlx::query(&query).bind(&actor_id),|row| super::account_export::string_record(row,&["event_id","media_id"]));
         $writer.token(b"],\"agent_memories\":[").await?;
         let mut prefix: &'static [u8] = b"";
         crate::chatbot::memory::repository::for_each_export_memory!($tx, $pg, $actor, view, {

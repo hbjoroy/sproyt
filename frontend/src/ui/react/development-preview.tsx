@@ -60,6 +60,9 @@ import type { AgentGeoapifyRollApi } from "../../agent-geoapify-roll";
 import { AgentGeoapifyCard } from "./agent-geoapify-card";
 import { personalMessageReference, type PersonalSpaceApi } from "../../personal-space";
 import { PersonalSpaceShortcut, SavedMessagePreview } from "./personal-space";
+import { ChannelEventSpace, eventHref } from "./channel-events";
+import { ChannelEventBoundary } from "./event-references";
+import type { ChannelEventsApi } from "../../channel-events";
 import type { ChannelTopicsApi } from "../../channel-topics";
 import { ChannelTopics, ChannelTopicSetting } from "./channel-topics";
 
@@ -87,6 +90,8 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly processPilotIdentity: () => string;
   readonly imageGeneration: ImageGenerationOwner;
   readonly personalSpace: PersonalSpaceApi;
+  readonly channelEvents: ChannelEventsApi;
+  readonly uploadEventImage: (channelId: string, file: File, progress: (text: string) => void) => Promise<string>;
   readonly channelTopics: ChannelTopicsApi;
   readonly channelReferences: ChannelReferenceApi;
   readonly joinReferencedChannel: (channelId: string, admitted: () => boolean) => Promise<void>;
@@ -898,6 +903,12 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       viewportRef: channelScroll.viewportRef,
       onScroll: channelScroll.onScroll
     },
+    renderDiscussion: owner && source && !source.is_direct && !source.is_personal ? discussion => <ChannelEventBoundary
+      key={`${owner}:${accountEpoch}:${source.id}`} href={event => eventHref(source.id, event.id)}>{discussion}</ChannelEventBoundary> : undefined,
+    renderChannel: owner && source && !source.is_direct && !source.is_personal ? (chat, timeline) => <ChannelEventSpace
+      key={`${owner}:${accountEpoch}:${source.id}`} api={host.channelEvents} owner={owner} channelId={source.id} chat={chat} timeline={timeline}
+      uploadImage={(file, progress) => host.uploadEventImage(source.id, file, progress)}
+      onTabChange={events => { channelScroll.setPaused(events || Boolean(pageKey)); }} /> : undefined,
     renderTimeline: owner && snapshot.activeChannel ? timeline => <ChannelTopics
       key={`${owner}:${accountEpoch}:${snapshot.activeChannel!.id}`} api={host.channelTopics} owner={owner}
       channelId={snapshot.activeChannel!.id} timeline={timeline} resetRequest={topicResetRequest} active={!pageKey && view === "detail"}

@@ -4,6 +4,7 @@ import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button, Dialog, Status } from "@sproyt/ui/react";
 import type { ChannelReference } from "../../channel-references";
+import { eventReferencePlugin, useEventReferences } from "./event-references";
 
 const mediaToken = /\[\[media:[0-9a-f-]{36}\|[^|\]]+\|[^\]]*\]\]/giu;
 const invitationToken = /\[\[invite:[A-Za-z0-9_-]{32,128}\]\]/gu;
@@ -101,6 +102,12 @@ const ChannelReferencesContext = createContext<MessageChannelReferences | undefi
 
 function MarkdownAnchor({ node, children, href, ...props }: ComponentProps<"a"> & ExtraProps) {
   const references = useContext(ChannelReferencesContext);
+  const events = useEventReferences();
+  const eventId = node?.properties["data-event-reference"];
+  const event = typeof eventId === "string" ? events?.events.find(item => item.id === eventId) : undefined;
+  if (events && event) return <a {...props} href={href} data-event-reference={event.id} onClick={action => {
+    if (action.button === 0 && !action.ctrlKey && !action.metaKey && !action.shiftKey && !action.altKey) { action.preventDefault(); events.open(event); }
+  }}>{children}</a>;
   const slug = node?.properties["data-channel-reference"];
   const channel = typeof slug === "string" ? references?.find(slug) : undefined;
   if (references && channel)
@@ -140,6 +147,7 @@ function channelReferencePlugin(source: string, references: MessageChannelRefere
           if (rawTokens[sourceIndex]![2]!.length % 2 === 1) continue;
         }
         const slug = match[2]!.toLowerCase();
+        if (slug === "arr" && text[match.index + match[0].length] === ":") continue;
         if (candidates.size < 64) candidates.add(slug);
         const channel = references.find(slug);
         if (!channel) continue;
@@ -192,7 +200,9 @@ function ChannelReferenceLink({ channel, href, references, children }: {
 export function MarkdownContent({ source, className, channelReferences }: {
   readonly source: string; readonly className?: string; readonly channelReferences?: MessageChannelReferences;
 }) {
+  const events = useEventReferences();
   const candidates = new Set<string>();
+  const eventCandidates = new Set<string>();
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!channelReferences || !viewport.current || !candidates.size) return;
@@ -203,8 +213,16 @@ export function MarkdownContent({ source, className, channelReferences }: {
     observer.observe(viewport.current);
     return () => observer.disconnect();
   }, [source, channelReferences?.scopeKey]);
-  const render = (value: string) => <Markdown remarkPlugins={channelReferences
-    ? [remarkGfm, channelReferencePlugin(value, channelReferences, candidates)] : [remarkGfm]} components={components}>{value}</Markdown>;
+  useEffect(() => {
+    if (!events?.collect || !viewport.current || !eventCandidates.size) return;
+    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) events.collect?.(eventCandidates); });
+    observer.observe(viewport.current);
+    return () => observer.disconnect();
+  }, [source, events?.collect]);
+  const render = (value: string) => <Markdown remarkPlugins={[
+    remarkGfm, ...(events ? [eventReferencePlugin(value, events, eventCandidates)] : []),
+    ...(channelReferences ? [channelReferencePlugin(value, channelReferences, candidates)] : [])
+  ]} components={components}>{value}</Markdown>;
   if (!source.trim()) return null;
   // New shared place answers stay ordinary Markdown for other clients. Keep
   // provider detail available without repeating it above the compact result list.

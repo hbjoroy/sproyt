@@ -245,6 +245,9 @@ impl Eq for DirectActivity {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSummary {
+    /// Globally hidden from the ordinary directory, without changing access.
+    #[serde(default)]
+    pub hidden: bool,
     pub id: ChannelId,
     pub slug: ChannelSlug,
     pub name: DisplayName,
@@ -267,6 +270,18 @@ pub struct ChannelSummary {
     pub last_read_sequence: ChannelSequence,
     #[serde(default)]
     pub latest_sequence: ChannelSequence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChannelGovernance {
+    pub hidden: bool,
+    pub members: Vec<ChannelMemberRole>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChannelMemberRole {
+    pub user_id: UserId,
+    pub role: MembershipRole,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -424,6 +439,12 @@ pub struct PortableUserExport {
     /// snapshot as the rest of the account export.
     #[serde(default)]
     pub agent_memories: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub events_created: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub event_responses: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub event_image_contributions: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

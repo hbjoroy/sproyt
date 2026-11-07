@@ -70,6 +70,34 @@ impl fmt::Debug for ChatEngine {
 }
 
 impl ChatEngine {
+    pub(crate) async fn channel_governance(
+        &self,
+        actor: crate::domain::UserId,
+        channel: crate::domain::ChannelId,
+    ) -> Result<crate::domain::ChannelGovernance, crate::domain::RepositoryError> {
+        self.repository.channel_governance(actor, channel).await
+    }
+    pub(crate) async fn set_channel_hidden(
+        &self,
+        actor: crate::domain::UserId,
+        channel: crate::domain::ChannelId,
+        hidden: bool,
+    ) -> Result<(), crate::domain::RepositoryError> {
+        self.repository
+            .set_channel_hidden(actor, channel, hidden)
+            .await
+    }
+    pub(crate) async fn set_channel_member_role(
+        &self,
+        actor: crate::domain::UserId,
+        channel: crate::domain::ChannelId,
+        user: crate::domain::UserId,
+        role: crate::domain::MembershipRole,
+    ) -> Result<(), crate::domain::RepositoryError> {
+        self.repository
+            .set_channel_member_role(actor, channel, user, role)
+            .await
+    }
     pub fn start(repository: Arc<dyn ChatRepository>) -> Self {
         let (mailbox, receiver) = mpsc::channel(MAILBOX_CAPACITY);
         if let Some(mut notifications) = repository.subscribe_messages() {

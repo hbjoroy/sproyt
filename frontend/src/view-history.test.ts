@@ -25,6 +25,11 @@ const anchor = (anchorId: string, sequence: number) => [{ key: "channel:a", posi
 
 const agentId = "00000000-0000-7000-8000-000000001001";
 const agentChannel = "00000000-0000-7000-8000-000000001002";
+test("event deep links survive canonical history serialization and retain channel scope", () => {
+  const target: ViewTarget = { kind: "conversation", channelId: "channel-one", eventId: "event-one" };
+  assert.deepEqual(readViewTarget(viewHref(target, "https://chat.test/?event=old&invite=secret")), target);
+  assert.equal(readViewTarget("https://chat.test/?event=event-one"), null);
+});
 test("agent settings panels and resource context round-trip as independent destinations", () => {
   const pages: ManagementTarget[] = [
     { kind: "chat-agents", circleId: "c" },

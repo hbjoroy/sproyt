@@ -27,3 +27,6 @@ pub(crate) mod thread_previews;
 pub(crate) mod topic_context;
 pub(crate) mod topics;
 pub(crate) mod work_items;
+
+pub(crate) mod channel_governance;
+pub(crate) mod events;

@@ -1,0 +1,215 @@
+[
+  {
+    "name": "plain",
+    "source": "#arr:gig",
+    "codes": [
+      "gig"
+    ]
+  },
+  {
+    "name": "uppercase",
+    "source": "#ARR:GIG",
+    "codes": [
+      "gig"
+    ]
+  },
+  {
+    "name": "punctuation",
+    "source": "(#arr:gig) [#arr:party] {#arr:last}",
+    "codes": [
+      "gig",
+      "party",
+      "last"
+    ]
+  },
+  {
+    "name": "embedded",
+    "source": "abc#arr:gig x/#arr:party :#arr:last",
+    "codes": []
+  },
+  {
+    "name": "unicode",
+    "source": "#arr:gig\u00f8 #arr:gig_foo #arr:gig-foo",
+    "codes": [
+      "gig-foo"
+    ]
+  },
+  {
+    "name": "unicode-prefix",
+    "source": "\u00f8#arr:gig",
+    "codes": []
+  },
+  {
+    "name": "escaped",
+    "source": "\\#arr:no #arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "even-slash",
+    "source": "\\\\#arr:no #arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "mixed-escaped",
+    "source": "\\#arr:gig #arr:gig",
+    "codes": [
+      "gig"
+    ]
+  },
+  {
+    "name": "inline-code",
+    "source": "`#arr:no` #arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "double-code",
+    "source": "``#arr:no `x` `` #arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "fenced",
+    "source": "```rust\n#arr:no\n```\n#arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "tilde-fenced",
+    "source": "~~~\n#arr:no\n~~~\n#arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "indented",
+    "source": "    #arr:no\n\n#arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "list-code",
+    "source": "- Item\n\n      #arr:no\n\n#arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "link",
+    "source": "[#arr:no](https://example.test/#arr:no) #arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "image",
+    "source": "![#arr:no](https://example.test/image.png) #arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "reference-link",
+    "source": "[#arr:no][ref]\n\n[ref]: https://example.test/#arr:no\n\n#arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "html-block",
+    "source": "<div>\n#arr:no\n</div>\n\n#arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "html-attribute",
+    "source": "<span title=\"#arr:no\">hello</span> #arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "repeated",
+    "source": "#arr:gig #arr:gig #arr:party",
+    "codes": [
+      "gig",
+      "party"
+    ]
+  },
+  {
+    "name": "emphasis",
+    "source": "**#arr:gig** and *#arr:party*",
+    "codes": [
+      "gig",
+      "party"
+    ]
+  },
+  {
+    "name": "overlong",
+    "source": "#arr:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "codes": []
+  },
+  {
+    "name": "channel",
+    "source": "#channel #arr:gig",
+    "codes": [
+      "gig"
+    ]
+  },
+  {
+    "name": "nested-code",
+    "source": "> ```\n> #arr:no\n> ```\n\n#arr:yes",
+    "codes": [
+      "yes"
+    ]
+  },
+  {
+    "name": "gfm-table",
+    "source": "| Event |\n| --- |\n| #arr:gig |",
+    "codes": [
+      "gig"
+    ]
+  },
+  {
+    "name": "hard-break",
+    "source": "#arr:gig  \n#arr:party",
+    "codes": [
+      "gig",
+      "party"
+    ]
+  },
+  {
+    "name": "entity-prefix",
+    "source": "&#35;arr:gig",
+    "codes": []
+  },
+  {
+    "name": "entity-code",
+    "source": "#arr:gi&#103;",
+    "codes": []
+  },
+  {
+    "name": "escaped-colon",
+    "source": "#arr\\:gig",
+    "codes": []
+  },
+  {
+    "name": "ampersand-suffix",
+    "source": "#arr:gig&more",
+    "codes": []
+  },
+  {
+    "name": "entity-suffix",
+    "source": "#arr:gig&amp;",
+    "codes": []
+  }
+]

@@ -209,6 +209,62 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
     let request_id_header = HeaderName::from_static("x-request-id");
     Router::new()
         .route(
+            "/api/v1/channels/{channel}/governance",
+            get(crate::web::channel_governance::get),
+        )
+        .route(
+            "/api/v1/channels/{channel}/hidden",
+            axum::routing::put(crate::web::channel_governance::set_hidden),
+        )
+        .route(
+            "/api/v1/channels/{channel}/members/{user}/role",
+            axum::routing::put(crate::web::channel_governance::set_role),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events",
+            get(crate::web::events::list).post(crate::web::events::create),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/references",
+            post(crate::web::events::references),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}",
+            get(crate::web::events::detail).put(crate::web::events::update),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}/cancel",
+            post(crate::web::events::cancel),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}/acknowledge",
+            post(crate::web::events::acknowledge),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}/rsvp",
+            axum::routing::put(crate::web::events::rsvp),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}/responses",
+            get(crate::web::events::responses),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}/images",
+            get(crate::web::events::images).post(crate::web::events::add_image),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}/images/{media}",
+            axum::routing::delete(crate::web::events::remove_image),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}/cover",
+            axum::routing::put(crate::web::events::cover),
+        )
+        .route(
+            "/api/v1/channels/{channel}/events/{event}/messages",
+            get(crate::web::events::messages),
+        )
+        .route(
             "/api/v1/channels/{channel_id}/topics",
             get(crate::web::topics::list).put(crate::web::topics::set_enabled),
         )

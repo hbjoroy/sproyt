@@ -10,7 +10,7 @@ function mediaUrl(id: string, suffix: "" | "/preview" | "/download" = "") {
   return `/api/v1/media/${id}${suffix}${participant ? `?participant=${encodeURIComponent(participant)}` : ""}`;
 }
 
-function PreviewImage({ id, name }: { id: string; name: string }) {
+export function PreviewImage({ id, name, className }: { id: string; name: string; className?: string }) {
   const image = useRef<HTMLImageElement>(null);
   const [state, setState] = useState("pending");
   useEffect(() => {
@@ -38,7 +38,7 @@ function PreviewImage({ id, name }: { id: string; name: string }) {
     return () => { active = false; observer.disconnect(); controller.abort(); if (timer) clearTimeout(timer); };
   }, [id]);
   const url = mediaUrl(id, "/preview");
-  return <><img ref={image} src={state === "ready" ? `${url}${url.includes("?") ? "&" : "?"}ready=1` : url} alt={name} loading="lazy" />
+  return <><img ref={image} className={className} src={state === "ready" ? `${url}${url.includes("?") ? "&" : "?"}ready=1` : url} alt={name} loading="lazy" />
     {state === "failed" && <span role="status">Førehandsvisinga kunne ikkje lagast. Originalen er tilgjengeleg.</span>}</>;
 }
 

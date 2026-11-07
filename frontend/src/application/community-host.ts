@@ -5,9 +5,12 @@ import type { EnrollmentApi } from "../api";
 import { isEnrollmentNotConfigured } from "../api";
 import type { Channel, Circle, ClientCommand, ClientCommandArguments } from "../types";
 import type { CommunityHost } from "../ui/react/preview-community";
+import { ChannelGovernanceApi } from "../channel-governance";
+import type { HttpClient } from "../api";
 import type { createCommunityRequests } from "./community-requests";
 
 export function createCommunityHost(deps: {
+  http?: HttpClient;
   requests: ReturnType<typeof createCommunityRequests>;
   send: <T extends ClientCommand["type"]>(type: T, ...args: ClientCommandArguments<T>) => string | null;
   openDirect(userId: string): string | null;
@@ -23,6 +26,7 @@ export function createCommunityHost(deps: {
   agentMemory?: AgentMemoryApi;
   circleProcesses?: CircleProcessApi;
 }): CommunityHost {
+  const governance = deps.http ? new ChannelGovernanceApi(deps.http, deps.selfId, () => deps.requests.generation) : undefined;
   const capture = () => {
     const owner = deps.selfId(), generation = deps.requests.generation;
     return () => {
@@ -51,6 +55,17 @@ export function createCommunityHost(deps: {
     return value;
   };
   return {
+    channelGovernance: governance ? id => governance.request(id) : undefined,
+    hideChannel: governance ? async (id, hidden) => {
+      const result = await governance.request(id, "/hidden", { hidden });
+      await request("channels_listed", () => deps.send("list_my_channels"));
+      return result;
+    } : undefined,
+    channelMemberRole: governance ? async (id, userId, role) => {
+      const result = await governance.request(id, `/members/${encodeURIComponent(userId)}/role`, { role });
+      await request("channels_listed", () => deps.send("list_my_channels"));
+      return result;
+    } : undefined,
     chatAgents: deps.chatAgents,
     agentMemory: deps.agentMemory,
     circleProcesses: deps.circleProcesses,
