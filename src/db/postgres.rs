@@ -1905,12 +1905,88 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn set_channel_hidden(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        hidden: bool,
+    ) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            if sqlx::query("update channels set hidden=hidden where id=$1 and not exists(select 1 from direct_conversations where channel_id=$1) and not exists(select 1 from direct_group_conversations where channel_id=$1) and not exists(select 1 from personal_spaces where channel_id=$1)").bind(*channel.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?.rows_affected()!=1 { return Err(RepositoryError::PermissionDenied); }
+            sqlx::query("select user_id from channel_memberships where channel_id=$1 order by user_id for update").bind(*channel.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
+            let result=sqlx::query("update channels set hidden=$1 where id=$2 and exists(select 1 from channel_memberships where channel_id=$2 and user_id=$3 and role in ('owner','moderator'))").bind(hidden).bind(*channel.as_uuid()).bind(*actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            if result.rows_affected() != 1 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let payload = serde_json::json!({"hidden":hidden});
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'channel.visibility_changed','channel',$2,$3)").bind(*actor.as_uuid()).bind(channel.to_string()).bind(payload).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("select pg_notify('sproyt_circle_updates','')")
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+    fn set_channel_member_role(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        user: UserId,
+        role: MembershipRole,
+    ) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            if !matches!(role, MembershipRole::Member | MembershipRole::Moderator) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            if sqlx::query("update channels set hidden=hidden where id=$1 and not exists(select 1 from direct_conversations where channel_id=$1) and not exists(select 1 from direct_group_conversations where channel_id=$1) and not exists(select 1 from personal_spaces where channel_id=$1)").bind(*channel.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?.rows_affected()!=1 { return Err(RepositoryError::PermissionDenied); }
+            sqlx::query("select user_id from channel_memberships where channel_id=$1 order by user_id for update").bind(*channel.as_uuid()).fetch_all(&mut *tx).await.map_err(sql_error)?;
+            let result=sqlx::query("update channel_memberships set role=$1 where channel_id=$2 and user_id=$3 and role<>'owner' and exists(select 1 from channel_memberships a where a.channel_id=$2 and a.user_id=$4 and (($1='moderator' and a.role in ('owner','moderator')) or ($1='member' and channel_memberships.role='moderator' and (a.role='owner' or (a.role='moderator' and a.user_id=$3)))))").bind(role.as_str()).bind(*channel.as_uuid()).bind(*user.as_uuid()).bind(*actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            if result.rows_affected() != 1 {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let payload = serde_json::json!({"user_id":user,"role":role});
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'channel.member_role_changed','channel',$2,$3)").bind(*actor.as_uuid()).bind(channel.to_string()).bind(payload).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("select pg_notify('sproyt_circle_updates','')")
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+    fn channel_governance(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+    ) -> RepositoryFuture<'_, crate::domain::ChannelGovernance> {
+        Box::pin(async move {
+            let rows=sqlx::query("select c.hidden,m.user_id,m.role from channels c join channel_memberships a on a.channel_id=c.id join channel_memberships m on m.channel_id=c.id where c.id=$1 and a.user_id=$2 order by m.user_id").bind(*channel.as_uuid()).bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            let row = rows.first().ok_or(RepositoryError::PermissionDenied)?;
+            let hidden = row.try_get("hidden").map_err(storage)?;
+            let members = rows
+                .into_iter()
+                .map(|row| {
+                    Ok(crate::domain::ChannelMemberRole {
+                        user_id: UserId::from_uuid(row.try_get("user_id").map_err(storage)?),
+                        role: MembershipRole::parse(
+                            &row.try_get::<String, _>("role").map_err(storage)?,
+                        )
+                        .ok_or_else(|| storage("invalid membership role"))?,
+                    })
+                })
+                .collect::<Result<Vec<_>, RepositoryError>>()?;
+            Ok(crate::domain::ChannelGovernance { hidden, members })
+        })
+    }
     fn list_channels_for_user<'a>(
         &'a self,
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,c.hidden,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
                 .await
@@ -3796,6 +3872,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
+        hidden: row.try_get("hidden").map_err(storage)?,
         direct_activity: None,
         id: ChannelId::from_uuid(id),
         slug: ChannelSlug::new(slug).map_err(storage)?,

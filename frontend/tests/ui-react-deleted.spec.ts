@@ -7,7 +7,7 @@ const message = (sequence: number, deleted = false, parent: string | null = null
   sequence, sent_at: `2025-01-${sequence === 1 ? "01" : "02"}T12:00:00Z`, edited_at: null,
   deleted_at: deleted ? "2025-02-01T12:00:00Z" : null
 });
-const timeline = (page: Page) => page.locator("#sproyt-react-preview .sp-channel-pane > .sp-timeline");
+const timeline = (page: Page) => page.locator("#sproyt-react-preview .sp-channel-pane .sp-timeline[aria-label='Meldingar']");
 
 async function server(page: Page, messages: ChatMessage[], link = "", replies: ChatMessage[] = [], initialRead = messages.at(-1)?.sequence ?? 0) {
   let socket: WebSocketRoute;

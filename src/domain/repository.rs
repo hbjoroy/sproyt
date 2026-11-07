@@ -403,6 +403,24 @@ pub trait ChatRepository: Send + Sync + 'static {
         command: AddChannelMember,
     ) -> RepositoryFuture<'a, Membership>;
     fn leave_channel<'a>(&'a self, command: LeaveChannel) -> RepositoryFuture<'a, ()>;
+    fn channel_governance(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+    ) -> RepositoryFuture<'_, super::ChannelGovernance>;
+    fn set_channel_hidden(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        hidden: bool,
+    ) -> RepositoryFuture<'_, ()>;
+    fn set_channel_member_role(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        user: UserId,
+        role: super::MembershipRole,
+    ) -> RepositoryFuture<'_, ()>;
     fn list_channels_for_user<'a>(
         &'a self,
         actor: UserId,
@@ -1342,6 +1360,7 @@ impl ChatRepository for InMemoryChatRepository {
                     let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
                     Some(ExportedChannel {
                         channel: ChannelSummary {
+                            hidden: state.hidden_channels.contains(&channel.id),
                             is_personal: state
                                 .personal_spaces
                                 .get(&actor)
@@ -1410,6 +1429,9 @@ impl ChatRepository for InMemoryChatRepository {
                 circles,
                 channels,
                 agent_memories: Vec::new(),
+                events_created: Vec::new(),
+                event_responses: Vec::new(),
+                event_image_contributions: Vec::new(),
             })
         })
     }
@@ -2081,6 +2103,100 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn channel_governance(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+    ) -> RepositoryFuture<'_, super::ChannelGovernance> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            if !state.memberships.contains_key(&(channel.clone(), actor)) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            Ok(super::ChannelGovernance {
+                hidden: state.hidden_channels.contains(&channel),
+                members: state
+                    .memberships
+                    .values()
+                    .filter(|m| m.channel_id == channel)
+                    .map(|m| super::ChannelMemberRole {
+                        user_id: m.user_id.clone(),
+                        role: m.role.clone(),
+                    })
+                    .collect(),
+            })
+        })
+    }
+    fn set_channel_hidden(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        hidden: bool,
+    ) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let role = state
+                .memberships
+                .get(&(channel.clone(), actor))
+                .ok_or(RepositoryError::PermissionDenied)?
+                .role
+                .clone();
+            if !matches!(role, MembershipRole::Owner | MembershipRole::Moderator)
+                || state.direct_conversations.values().any(|id| id == &channel)
+                || state.direct_group_conversations.contains_key(&channel)
+                || state.personal_spaces.values().any(|(id, _)| id == &channel)
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if hidden {
+                state.hidden_channels.insert(channel);
+            } else {
+                state.hidden_channels.remove(&channel);
+            }
+            let _ = self.circle_updates.send(());
+            Ok(())
+        })
+    }
+    fn set_channel_member_role(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        user: UserId,
+        role: MembershipRole,
+    ) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let current = state
+                .memberships
+                .get(&(channel.clone(), actor.clone()))
+                .ok_or(RepositoryError::PermissionDenied)?
+                .role
+                .clone();
+            if state.direct_conversations.values().any(|id| id == &channel)
+                || state.direct_group_conversations.contains_key(&channel)
+                || state.personal_spaces.values().any(|(id, _)| id == &channel)
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            let target = state
+                .memberships
+                .get_mut(&(channel, user.clone()))
+                .ok_or(RepositoryError::PermissionDenied)?;
+            let grant = role == MembershipRole::Moderator
+                && matches!(current, MembershipRole::Owner | MembershipRole::Moderator);
+            let revoke = role == MembershipRole::Member
+                && target.role == MembershipRole::Moderator
+                && (current == MembershipRole::Owner
+                    || (actor == user && current == MembershipRole::Moderator));
+            if target.role == MembershipRole::Owner || !(grant || revoke) {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            target.role = role;
+            let _ = self.circle_updates.send(());
+            Ok(())
+        })
+    }
+
     fn list_channels_for_user<'a>(
         &'a self,
         actor: UserId,
@@ -2094,6 +2210,7 @@ impl ChatRepository for InMemoryChatRepository {
                 .filter_map(|membership| {
                     let channel = state.channels.get(&membership.channel_id)?;
                     Some(ChannelSummary {
+                        hidden: state.hidden_channels.contains(&channel.id),
                         is_personal: state
                             .personal_spaces
                             .get(&actor)
@@ -2848,6 +2965,7 @@ struct RepositoryState {
     direct_group_conversations: HashMap<ChannelId, ChannelId>,
     direct_expansions: HashMap<(ChannelId, UserId), ChannelId>,
     memberships: HashMap<(ChannelId, UserId), Membership>,
+    hidden_channels: HashSet<ChannelId>,
     messages: HashMap<ChannelId, Vec<ChatMessage>>,
     next_sequences: HashMap<ChannelId, ChannelSequence>,
     users: HashMap<UserId, User>,

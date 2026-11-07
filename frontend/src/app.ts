@@ -39,6 +39,7 @@
       import { createSseSocketFactory } from "./sse-socket";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
       import { NavigationController, readMessageLink, type MessageLink } from "./navigation";
+      import { ChannelEventsApi } from "./channel-events";
       import { ChannelTopicsApi } from "./channel-topics";
       import { ChannelReferenceApi } from "./channel-references";
       import { CircleProcessApi } from "./circle-processes";
@@ -825,6 +826,7 @@
         participant: () => new URLSearchParams(window.location.search).get("participant")
       });
       const personalSpace = new PersonalSpaceApi(http, () => currentParticipantId, () => accountGeneration);
+      const channelEvents = new ChannelEventsApi(http, () => currentParticipantId, () => accountGeneration);
       const channelTopics = new ChannelTopicsApi(http, () => currentParticipantId, () => accountGeneration);
       const channelReferences = new ChannelReferenceApi(http);
       async function openPersonalSpace(owner: string): Promise<void> {
@@ -3708,6 +3710,7 @@
         }
         if (event.type === "circle_member_role_changed") { sendCommand("list_my_circles"); return; }
         if (event.type === "circles_changed") {
+          sendCommand("list_my_channels");
           sendCommand("list_my_circles");
           return;
         }
@@ -6490,6 +6493,14 @@
             }),
             imageGeneration,
             personalSpace,
+            channelEvents,
+            async uploadEventImage(channelId, file, progress) {
+              const response = await postMediaFile(channelId, file, file.name || "arrangement.png", progress);
+              if (!response.ok) throw new Error(await uploadFailureMessage(response, file.name || "biletet"));
+              const media = mediaFromUpload(await response.json());
+              if (!media || !media.content_type.startsWith("image/")) throw new Error("Opplastinga gav ikkje eit gyldig bilete.");
+              return media.id;
+            },
             channelTopics,
             channelReferences,
             async joinReferencedChannel(channelId, admitted) {
@@ -6575,6 +6586,7 @@
               });
             },
             community: createCommunityHost({
+              http,
               requests: communityRequests, send: sendCommand, openDirect: openDirectChannel,
               openDirectForDelivery: userId => {
                 const requestId = openDirectChannel(userId);

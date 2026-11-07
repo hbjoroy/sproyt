@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 
 type Panel = "sidebar" | "thread";
@@ -31,8 +31,8 @@ function readWidths(): Widths {
 }
 
 /** Host layout only: resizing never republishes application state or remounts a pane. */
-export function PanelResizers({ discussionRef, threadOpen }: {
-  discussionRef: RefObject<HTMLDivElement | null>; threadOpen: boolean;
+export function PanelResizers({ discussion, threadOpen }: {
+  discussion: HTMLDivElement | null; threadOpen: boolean;
 }) {
   const [layout, setLayout] = useState<Layout | null>(null);
   const current = useRef<Layout | null>(null);
@@ -60,7 +60,6 @@ export function PanelResizers({ discussionRef, threadOpen }: {
   };
 
   useLayoutEffect(() => {
-    const discussion = discussionRef.current;
     const workspace = discussion?.closest<HTMLElement>(".sp-workspace");
     if (!discussion || !workspace) return;
     widths.current = readWidths();
@@ -118,7 +117,7 @@ export function PanelResizers({ discussionRef, threadOpen }: {
       discussion.removeAttribute("data-resizable-thread");
       discussion.style.removeProperty("--sp-thread-width");
     };
-  }, [discussionRef]);
+  }, [discussion]);
 
   useLayoutEffect(() => { finishDrag(); measure.current?.(); }, [threadOpen]);
 

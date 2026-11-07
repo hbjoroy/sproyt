@@ -1,0 +1,39 @@
+.sp-channel-events { display:flex; flex:1; min-height:0; min-width:0; flex-direction:column; }
+.sp-channel-tabs,.sp-event-actions,.sp-event-pills { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.sp-channel-tabs { border-bottom:1px solid var(--sp-line); padding:4px 12px; }
+.sp-channel-tabs [aria-selected=true],.sp-event-pills [aria-pressed=true] { text-decoration:underline; text-underline-offset:5px; }
+.sp-event-chat { display:flex; flex:1; min-height:0; flex-direction:column; }
+.sp-event-chat[hidden],.sp-events-panel[hidden] { display:none; }
+.sp-events-panel { overflow:auto; padding:16px; min-width:0; flex:1; }
+.sp-events-inner { width:100%; max-width:860px; margin-inline:auto; overflow-wrap:anywhere; }
+.sp-event-list { list-style:none; margin:0; padding:0; }
+.sp-event-list li { border-top:1px solid var(--sp-line); padding:12px 0; }
+.sp-event-list h3,.sp-event-detail h2 { margin:0 0 6px; }
+.sp-event-list p { margin:4px 0; }
+.sp-event-form { display:grid; gap:12px; }
+.sp-event-form label { display:grid; gap:5px; min-width:0; }
+.sp-event-form input,.sp-event-form textarea { width:100%; min-width:0; box-sizing:border-box; padding:10px; font:inherit; color:var(--sp-text); background:var(--sp-canvas); border:1px solid var(--sp-line); border-radius:2px; }
+.sp-event-form textarea { min-height:140px; resize:vertical; }
+.sp-event-gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr)); gap:12px; margin-block:16px; }
+.sp-event-gallery figure { margin:0; min-width:0; }
+.sp-event-gallery img,.sp-event-cover { width:100%; max-height:360px; object-fit:contain; }
+.sp-event-cover { max-height:220px; }
+.sp-event-gallery figcaption { display:flex; flex-wrap:wrap; gap:4px; }
+.sp-event-pills { padding:6px 12px; border-bottom:1px solid var(--sp-line); }
+.sp-event-pills details { position:relative; }
+.sp-event-pills summary { cursor:pointer; padding:10px; }
+.sp-event-pills details[open] > div { position:absolute; z-index:5; right:0; max-height:260px; overflow:auto; min-width:220px; background:var(--sp-canvas); border:1px solid var(--sp-line); box-shadow:0 4px 12px #0002; }
+.sp-event-pills details[open] > div button { display:block; width:100%; text-align:start; }
+.sp-event-results { flex:1; display:flex; min-height:0; flex-direction:column; }
+.sp-event-results[hidden] { display:none; }
+.sp-event-notice { border-inline-start:3px solid var(--sp-accent); padding:8px 12px; }
+.sp-event-response { margin:12px 0; }
+.sp-event-response legend { font-weight:600; }
+.sp-event-response label { display:inline-flex; align-items:center; gap:6px; min-height:44px; margin-inline-end:12px; }
+@container (max-width:430px) { .sp-events-panel { padding:12px; } .sp-event-pills { padding-inline:8px; } }
+/* On short screens, recover surrounding whitespace while retaining every
+   tab, writing control and its full touch target. */
+@media (max-height:430px) {
+  .sp-channel-tabs { padding-block:0; }
+  #sproyt-react-preview .sp-channel-events .sp-composer { margin-bottom:0; padding-block:.125rem; }
+}

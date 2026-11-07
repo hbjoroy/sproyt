@@ -116,6 +116,17 @@ pub(crate) fn storage(error: impl std::fmt::Display) -> RepositoryError {
 
 pub(crate) fn sql_error(error: sqlx::Error) -> RepositoryError {
     match &error {
+        sqlx::Error::Database(database)
+            if matches!(database.code().as_deref(), Some("40P01" | "40001")) =>
+        {
+            RepositoryError::Conflict
+        }
+        sqlx::Error::Database(database) if database.message() == "SPROYT_EVENT_CODE" => {
+            RepositoryError::Conflict
+        }
+        sqlx::Error::Database(database) if database.message() == "SPROYT_EVENT_MEMBERSHIP" => {
+            RepositoryError::PermissionDenied
+        }
         sqlx::Error::Database(database) if database.message() == "SPROYT_MEDIA_QUOTA" => {
             RepositoryError::Quota
         }
@@ -279,6 +290,7 @@ where
     verify_saved_status_history_contract(repository, suffix).await;
     verify_circle_favorites_contract(repository, suffix).await;
     verify_circle_moderator_contract(repository, suffix).await;
+    verify_channel_governance_contract(repository, suffix).await;
     verify_enrollment_invitation_contract(repository, &format!("{suffix}-enrollment")).await;
     let actor = UserId::named(format!("chat-contract-actor-{suffix}"));
     repository
@@ -3545,5 +3557,316 @@ async fn verify_circle_moderator_contract<R: ChatRepository>(repository: &R, suf
             .unwrap()
             .iter()
             .any(|(id, _)| *id == moderator)
+    );
+}
+
+#[cfg(test)]
+async fn verify_channel_governance_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+    use crate::domain::*;
+    use chrono::Utc;
+    let owner = UserId::named(format!("governance-owner-{suffix}"));
+    let moderator = UserId::named(format!("governance-mod-{suffix}"));
+    let member = UserId::named(format!("governance-member-{suffix}"));
+    let outsider = UserId::named(format!("governance-outsider-{suffix}"));
+    for id in [&owner, &moderator, &member, &outsider] {
+        repository
+            .upsert_user(User {
+                id: id.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Governance contract").unwrap(),
+                handle: None,
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+    // The outsider owns the circle, but that does not confer private-channel authority.
+    let circle = repository
+        .create_circle(CreateCircle {
+            actor: outsider.clone(),
+            slug: ChannelSlug::new(format!("governance-{suffix}")).unwrap(),
+            name: DisplayName::new("Governance circle").unwrap(),
+        })
+        .await
+        .unwrap();
+    for id in [&owner, &moderator, &member] {
+        let invitation = repository
+            .create_circle_invitation(CreateCircleInvitation {
+                actor: outsider.clone(),
+                circle_id: circle.id.clone(),
+            })
+            .await
+            .unwrap();
+        repository
+            .accept_circle_invitation(AcceptCircleInvitation {
+                actor: id.clone(),
+                token: invitation.token,
+            })
+            .await
+            .unwrap();
+    }
+    let channel = repository
+        .create_channel(CreateChannel {
+            actor: owner.clone(),
+            slug: ChannelSlug::new(format!("governance-private-{suffix}")).unwrap(),
+            name: DisplayName::new("Private governance").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: Some(circle.id.clone()),
+        })
+        .await
+        .unwrap();
+    for id in [&moderator, &member] {
+        repository
+            .add_channel_member(AddChannelMember {
+                actor: owner.clone(),
+                channel_id: channel.id.clone(),
+                user_id: id.clone(),
+            })
+            .await
+            .unwrap();
+    }
+    let original = repository
+        .append_message(SendMessage {
+            actor: owner.clone(),
+            channel_id: channel.id.clone(),
+            parent_message_id: None,
+            body: MessageBody::new("History survives hiding").unwrap(),
+        })
+        .await
+        .unwrap();
+
+    for actor in [&member, &outsider] {
+        assert_eq!(
+            repository
+                .set_channel_hidden(actor.clone(), channel.id.clone(), true)
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
+        assert_eq!(
+            repository
+                .set_channel_member_role(
+                    actor.clone(),
+                    channel.id.clone(),
+                    moderator.clone(),
+                    MembershipRole::Moderator
+                )
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
+    }
+    assert_eq!(
+        repository
+            .channel_governance(outsider.clone(), channel.id.clone())
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .set_channel_member_role(
+                owner.clone(),
+                channel.id.clone(),
+                outsider.clone(),
+                MembershipRole::Moderator
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .set_channel_member_role(
+                owner.clone(),
+                channel.id.clone(),
+                owner.clone(),
+                MembershipRole::Moderator
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .set_channel_member_role(
+                owner.clone(),
+                channel.id.clone(),
+                member.clone(),
+                MembershipRole::Owner
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    repository
+        .set_channel_member_role(
+            owner.clone(),
+            channel.id.clone(),
+            moderator.clone(),
+            MembershipRole::Moderator,
+        )
+        .await
+        .unwrap();
+    repository
+        .set_channel_member_role(
+            moderator.clone(),
+            channel.id.clone(),
+            member.clone(),
+            MembershipRole::Moderator,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .set_channel_member_role(
+                moderator.clone(),
+                channel.id.clone(),
+                member.clone(),
+                MembershipRole::Member
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    let mut updates = repository.subscribe_circle_updates().unwrap();
+    repository
+        .set_channel_hidden(moderator.clone(), channel.id.clone(), true)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), updates.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    for actor in [&owner, &moderator, &member] {
+        let summary = repository
+            .list_channels_for_user(actor.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == channel.id)
+            .unwrap();
+        assert!(
+            summary.hidden,
+            "visibility is global and preserves directory membership"
+        );
+        assert!(
+            repository
+                .channel_governance(actor.clone(), channel.id.clone())
+                .await
+                .unwrap()
+                .hidden
+        );
+    }
+    assert_eq!(
+        repository
+            .load_recent_messages(LoadRecentMessages {
+                actor: member.clone(),
+                channel_id: channel.id.clone(),
+                limit: MessageLimit::DEFAULT,
+                after: None,
+                before: None
+            })
+            .await
+            .unwrap()[0]
+            .id,
+        original.id
+    );
+    repository
+        .append_message(SendMessage {
+            actor: member.clone(),
+            channel_id: channel.id.clone(),
+            parent_message_id: None,
+            body: MessageBody::new("Hidden is writable").unwrap(),
+        })
+        .await
+        .unwrap();
+    repository
+        .set_channel_member_role(
+            moderator.clone(),
+            channel.id.clone(),
+            moderator.clone(),
+            MembershipRole::Member,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .set_channel_hidden(moderator.clone(), channel.id.clone(), false)
+            .await,
+        Err(RepositoryError::PermissionDenied),
+        "revoked cached moderator authority must not work"
+    );
+    assert_eq!(
+        repository
+            .set_channel_member_role(
+                moderator.clone(),
+                channel.id.clone(),
+                moderator.clone(),
+                MembershipRole::Moderator
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    repository
+        .set_channel_member_role(
+            owner.clone(),
+            channel.id.clone(),
+            member.clone(),
+            MembershipRole::Member,
+        )
+        .await
+        .unwrap();
+    repository
+        .set_channel_hidden(owner.clone(), channel.id.clone(), false)
+        .await
+        .unwrap();
+    assert!(
+        !repository
+            .channel_governance(member.clone(), channel.id.clone())
+            .await
+            .unwrap()
+            .hidden
+    );
+    repository
+        .leave_channel(LeaveChannel {
+            actor: member.clone(),
+            channel_id: channel.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .channel_governance(member.clone(), channel.id.clone())
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .set_channel_member_role(
+                owner.clone(),
+                channel.id.clone(),
+                member.clone(),
+                MembershipRole::Moderator
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied),
+        "grant cannot recreate membership"
+    );
+    let direct = repository
+        .open_direct_channel(owner.clone(), moderator.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .set_channel_hidden(owner.clone(), direct.id.clone(), true)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .set_channel_member_role(
+                owner.clone(),
+                direct.id,
+                moderator,
+                MembershipRole::Moderator
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
     );
 }

@@ -158,7 +158,7 @@ for (const width of [1280, 390]) {
     await expect(app.locator(".sp-connection-health:not(.sp-connection-health-details)")).toHaveCount(0);
     await expect(app.locator(".sp-connection-status, .sp-connection-dot")).toHaveCount(0);
     await composer.fill("Bevar dette gjennom sambandsreparasjonen");
-    const timeline = app.locator(".sp-channel-pane > .sp-timeline");
+    const timeline = app.locator(".sp-channel-pane .sp-timeline[aria-label='Meldingar']");
     await expect(timeline.locator('[data-message-id="recovery-message-20"]')).toBeAttached();
     await timeline.evaluate(element => {
       const message = element.querySelector<HTMLElement>('[data-message-id="recovery-message-20"]')!;

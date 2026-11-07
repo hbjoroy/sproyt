@@ -108,7 +108,7 @@ async function fixture(page: Page, start = `channel=${channelA}`, options: { wai
   };
 }
 
-const timeline = (page: Page) => page.locator("#sproyt-react-preview .sp-channel-pane > .sp-timeline");
+const timeline = (page: Page) => page.locator("#sproyt-react-preview .sp-channel-pane .sp-timeline[aria-label='Meldingar']");
 const article = (page: Page, sequence: number) => timeline(page).locator(`[data-message-id="${messageId(sequence)}"]`);
 const frame = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 async function anchor(viewport: Locator) {

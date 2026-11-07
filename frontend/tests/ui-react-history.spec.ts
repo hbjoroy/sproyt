@@ -52,7 +52,7 @@ async function historyServer(page: Page, messages: ChatMessage[], options: { lin
     });
   });
   await page.goto(`/?participant=history-regression&channel=history${options.link ?? ""}`);
-  const timeline = page.locator("#sproyt-react-preview .sp-channel-pane > .sp-timeline");
+  const timeline = page.locator("#sproyt-react-preview .sp-channel-pane .sp-timeline[aria-label='Meldingar']");
   await expect(page.locator("#sproyt-react-preview").getByRole("textbox", { name: "Skriv melding" })).toBeEnabled();
   return { timeline, requests, mode: (next: typeof mode) => { mode = next; },
     release: () => { if (!held) throw new Error("No held page"); respond(held); held = null; mode = "normal"; },

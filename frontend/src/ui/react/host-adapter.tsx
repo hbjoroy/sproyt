@@ -43,6 +43,8 @@ export interface ConversationHostBindings {
   readonly message: MessagePresentation;
   readonly timeline?: TimelineControls;
   readonly renderTimeline?: ConversationViewProps["renderTimeline"];
+  readonly renderChannel?: ConversationViewProps["renderChannel"];
+  readonly renderDiscussion?: ConversationViewProps["renderDiscussion"];
   readonly threadTimeline?: TimelineControls & { readonly loading?: boolean; readonly hasOlder?: boolean };
   /** Must preserve accepted-send clearing, retries and attachment-only sending.
    * No bundled text-only Composer is silently substituted by this adapter. */
@@ -98,7 +100,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
         // Notification subscriptions are not a mute policy. Do not map disabled
         // notifications to the library's `muted` appearance.
         conversations: group.conversations.map(item => ({ id: item.id, name: item.name, unread: item.unread,
-          directActivity: item.channel.direct_activity,
+          directActivity: item.channel.direct_activity, hidden: item.channel.hidden,
           directGroup: !!item.channel.is_direct && !item.channel.direct_user_id,
           action: host.renderConversationAction?.(item) })),
         actions: host.renderGroupActions?.(group)
@@ -113,7 +115,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
       retainedDeletedRootIds: snapshot.timeline.retainedDeletedRootIds,
       loading: snapshot.timeline.loading, hasOlder: snapshot.timeline.hasOlder, error: snapshot.timeline.error, notices: snapshot.timeline.notices
     },
-    renderTimeline: host.renderTimeline,
+    renderTimeline: host.renderTimeline, renderChannel: host.renderChannel, renderDiscussion: host.renderDiscussion,
     composer: channelId !== null && snapshot.activeChannel !== null
       ? host.renderComposer({ channelId, parentMessageId: null }) : null,
     thread: threadVisible ? <ThreadPane title="Tråd" context={snapshot.title} closeLabel="Lukk tråden"

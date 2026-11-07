@@ -77,7 +77,7 @@ async function fixture(page: Page, options: { holdMentions?: boolean } = {}) {
   } };
 }
 
-const timeline = (page: Page) => page.locator("#sproyt-react-preview .sp-channel-pane > .sp-timeline");
+const timeline = (page: Page) => page.locator("#sproyt-react-preview .sp-channel-pane .sp-timeline[aria-label='Meldingar']");
 const frame = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 async function ordinaryPage(page: Page, title: string) {
   const region = page.locator(".sp-main [data-workspace-page]");

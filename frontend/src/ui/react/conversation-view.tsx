@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useRef, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode, Ref } from "react";
 import { AppShell, Button, ConversationList, Message, Status, TextField, Theme } from "@sproyt/ui/react";
 import type { Conversation, ThemeMode } from "@sproyt/ui/react";
@@ -15,7 +15,7 @@ import type { PersonalSpaceLayout } from "./personal-space";
 export interface ConversationGroup {
   readonly id: string;
   readonly name: string;
-  readonly conversations: readonly (Omit<Conversation, "group"> & { readonly action?: ReactNode; readonly directActivity?: import("../../types").DirectActivity | null; readonly directGroup?: boolean })[];
+  readonly conversations: readonly (Omit<Conversation, "group"> & { readonly action?: ReactNode; readonly directActivity?: import("../../types").DirectActivity | null; readonly directGroup?: boolean; readonly hidden?: boolean })[];
   readonly actions?: ReactNode;
 }
 
@@ -301,6 +301,8 @@ export interface ConversationViewProps {
   readonly onBack: () => void;
   readonly timeline: TimelineProps;
   readonly renderTimeline?: (timeline: TimelineProps) => ReactNode;
+  readonly renderChannel?: (chat: ReactNode, timeline: TimelineProps, composer: ReactNode) => ReactNode;
+  readonly renderDiscussion?: (discussion: ReactNode) => ReactNode;
   /** Host-owned composer adapter preserves drafts and attachment-only sending. */
   readonly composer: ReactNode;
   /** Supply a ThreadPane; the channel stays mounted underneath on narrow views. */
@@ -312,13 +314,11 @@ export interface ConversationViewProps {
 
 export function ConversationView(props: ConversationViewProps) {
   const snapshot = useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
-  const discussion = useRef<HTMLDivElement>(null);
-  return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
-    <WorkspacePageProvider pageKey={props.pageKey}>
-    <AppShell view={props.pageKey ? "detail" : props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
-      header={<>{props.header}<span className="sp-sr" role="status" aria-atomic="true">{snapshot.connection.status}</span></>}>
-      <WorkspacePageOutlet />
-      <div ref={discussion} className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
+  // A channel/account boundary can replace this node. Observers and portal
+  // targets must follow that replacement rather than retaining a detached pane.
+  const [discussion, setDiscussion] = useState<HTMLDivElement | null>(null);
+  const timeline = props.renderTimeline?.(props.timeline) ?? <ConversationTimeline {...props.timeline} />;
+  const content = <div ref={setDiscussion} className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
         hidden={!!props.pageKey} inert={!!props.pageKey} aria-hidden={props.pageKey ? true : undefined}>
         <section className="sp-channel-pane" aria-label={props.title}>
           {!props.emptyContent && <header className="sp-context">
@@ -327,12 +327,18 @@ export function ConversationView(props: ConversationViewProps) {
             <div className="sp-conversation-toolbar">{props.contextActions}</div>
           </header>}
           <PersonalSpacePanes space={props.personalSpace} active={Boolean(props.personalSpace && props.isPersonal)}
-            chat={props.emptyContent == null && <>{props.renderTimeline?.(props.timeline) ?? <ConversationTimeline {...props.timeline} />}{props.composer}</>} />
+            chat={props.emptyContent == null && (props.renderChannel?.(timeline, props.timeline, props.composer) ?? <>{timeline}{props.composer}</>)} />
           {props.emptyContent}
         </section>
         {props.thread}
-      </div>
-      <PanelResizers discussionRef={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
+      </div>;
+  return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
+    <WorkspacePageProvider pageKey={props.pageKey}>
+    <AppShell view={props.pageKey ? "detail" : props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
+      header={<>{props.header}<span className="sp-sr" role="status" aria-atomic="true">{snapshot.connection.status}</span></>}>
+      <WorkspacePageOutlet />
+      {props.renderDiscussion?.(content) ?? content}
+      <PanelResizers discussion={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
     </AppShell>
     {props.overlays}
     </WorkspacePageProvider>

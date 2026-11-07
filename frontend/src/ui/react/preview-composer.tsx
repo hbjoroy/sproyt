@@ -8,12 +8,15 @@ import { DraftComposer } from "./draft-composer";
 import { PreviewAttachments } from "./preview-media";
 import type { AgentLocationApi } from "../../agent-locations";
 import { AgentLocationSharingDialog } from "./agent-location-sharing";
+import { useEventReferences } from "./event-references";
+import type { ChannelEvent } from "../../channel-events";
 
 export interface PreviewMention {
   readonly id: string;
   readonly name: string;
   readonly handle: string;
   readonly expandsDirect: boolean;
+  readonly eventCode?: string;
 }
 
 export type PreviewComposerState = ComposerSnapshot;
@@ -36,6 +39,7 @@ export interface PreviewComposerHost {
 export function PreviewComposer({ host, target }: {
   host: PreviewComposerHost; target: ComposerTarget;
 }) {
+  const eventReferences = useEventReferences();
   const composing = useRef(false);
   const container = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -59,7 +63,27 @@ export function PreviewComposer({ host, target }: {
   const match = !dismissed && !composing.current && caret !== null
     ? state.value.slice(0, caret).match(/(?:^|\s)@([\p{L}\p{N}_.-]*)$/u) : null;
   const query = match?.[1]?.toLocaleLowerCase();
-  const matches = query === undefined || state.disabled || state.busy ? [] : host.mentionCandidates(target)
+  const eventMatch = !dismissed && !composing.current && caret !== null
+    ? state.value.slice(0, caret).match(/(?:^|\s)#arr:([a-z0-9-]*)$/iu) : null;
+  const eventQuery = eventMatch?.[1]?.toLowerCase();
+  const [eventSuggestions, setEventSuggestions] = useState<{ query: string; events: readonly ChannelEvent[] }>();
+  const [eventSuggestionError, setEventSuggestionError] = useState(false);
+  useEffect(() => {
+    if (!eventQuery || eventQuery.length > 48 || !eventReferences?.suggest || state.disabled || state.busy) return;
+    const controller = new AbortController(); setEventSuggestionError(false);
+    const timer = window.setTimeout(() => {
+      void eventReferences.suggest!(eventQuery, controller.signal).then(events => {
+        if (!controller.signal.aborted) setEventSuggestions({ query: eventQuery, events });
+      }, () => { if (!controller.signal.aborted) setEventSuggestionError(true); });
+    }, 150);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [eventQuery, eventReferences?.suggest, state.disabled, state.busy]);
+  const candidateEvents = [...new Map([...(eventReferences?.events ?? []), ...(eventSuggestions && eventSuggestions.query === eventQuery ? eventSuggestions.events : [])].map(event => [event.id, event])).values()];
+  const matches: readonly PreviewMention[] = state.disabled || state.busy ? [] : eventQuery !== undefined
+    ? candidateEvents.filter(event => !event.cancelled && (event.code.startsWith(eventQuery) || event.aliases.some(code => code.startsWith(eventQuery))))
+      .sort((left, right) => left.title.localeCompare(right.title)).slice(0, 12)
+      .map(event => ({ id: event.id, name: event.title, handle: event.code, eventCode: event.code, expandsDirect: false }))
+    : query === undefined ? [] : host.mentionCandidates(target)
     .filter(person => person.handle.toLocaleLowerCase().startsWith(query))
     .sort((left, right) => left.name.localeCompare(right.name));
   const selectedIndex = Math.min(selected, Math.max(0, matches.length - 1));
@@ -84,7 +108,9 @@ export function PreviewComposer({ host, target }: {
     queueMicrotask(restoreCaret);
   };
   const selectMention = (person: PreviewMention) => {
-    if (person.expandsDirect) {
+    if (person.eventCode && caret !== null && eventQuery !== undefined) {
+      replaceSelection(`#arr:${person.eventCode} `, caret - eventQuery.length - 5, caret);
+    } else if (person.expandsDirect) {
       setDismissed(true);
       setExpansion(person);
     } else if (caret !== null && query !== undefined) {
@@ -178,11 +204,12 @@ export function PreviewComposer({ host, target }: {
       hint={state.sendOnEnter ? "Enter sender · Shift+Enter gir ny linje" : "Bruk Send for å sende"}
       leading={<>
         {emojiSaveError && <Status tone="error">{emojiSaveError}</Status>}
-        {matches.length > 0 && <div id={listId} role="listbox" aria-label="Omtaleforslag">
+        {eventQuery && eventSuggestionError && <Status tone="error">Arrangementsforslaga kunne ikkje lastast. Du kan framleis skrive koden eller opne Arrangement-fana.</Status>}
+        {matches.length > 0 && <div id={listId} role="listbox" aria-label={eventQuery !== undefined ? "Arrangementsforslag" : "Omtaleforslag"}>
           {matches.map((person, index) => <Button key={person.id} id={`${listId}-${index}`} role="option"
             aria-selected={index === selectedIndex} onPointerDown={event => event.preventDefault()}
             onClick={() => selectMention(person)}>
-            {person.name} · @{person.handle}{person.expandsDirect ? " · Ny gruppesamtale" : ""}
+            {person.name} · {person.eventCode ? "#arr:" : "@"}{person.handle}{person.expandsDirect ? " · Ny gruppesamtale" : ""}
           </Button>)}
         </div>}
         {(state.media.length > 0 || state.uploadStatus) && <PreviewAttachments media={state.media} status={state.uploadStatus}
