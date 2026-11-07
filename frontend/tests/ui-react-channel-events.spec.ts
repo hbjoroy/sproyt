@@ -19,11 +19,15 @@ async function setup(page: Page, deep = false, offPage = false) {
   let revoked = false;
   const changes: string[] = [];
   const prefixes: string[] = [];
+  const collectionReads: (string | null)[] = [];
   await page.route(new RegExp(`/api/v1/channels/${channel}/events(?:[/?]|$)`), route => {
     if (revoked) return route.fulfill({ status: 403, json: { error: "Tilgangen er fjerna" } });
     const path = new URL(route.request().url()).pathname;
     const prefix = new URL(route.request().url()).searchParams.get("prefix");
     if (prefix !== null) { prefixes.push(prefix); return route.fulfill({ json: { events: [event], next_after: null } }); }
+    const after = new URL(route.request().url()).searchParams.get("after");
+    if (path.endsWith("/events")) collectionReads.push(after);
+    if (offPage && after) return route.fulfill({ json: { events: [event], next_after: null, attention_count: 7 } });
     expect(route.request().headers()["x-sproyt-account"]).toBe(owner);
     if (path.endsWith("/responses")) return route.fulfill({ json: { responses: [{ user_id: owner, display_name: "Nora", status: event.my_rsvp }], next_after: null } });
     if (path.endsWith("/references")) return route.fulfill({ json: { events: [event] } });
@@ -62,7 +66,7 @@ async function setup(page: Page, deep = false, offPage = false) {
   await page.goto(`/?participant=${owner}&channel=${channel}&ui=react${deep ? `&event=${eventId}` : ""}`);
   const app = page.locator("#sproyt-react-preview");
   await expect(app.getByRole("tab", { name: /Arrangement/ })).toBeVisible();
-  return { app, changes, prefixes, revoke: () => { revoked = true; } };
+  return { app, changes, prefixes, collectionReads, revoke: () => { revoked = true; } };
 }
 
 for (const [width, theme] of [[320, "light"], [390, "dark"], [1440, "light"]] as const) {
@@ -134,4 +138,27 @@ test("prefix autocomplete finds an event beyond the first hundred without loadin
   await page.keyboard.press("Enter");
   await expect(composer).toHaveValue("#arr:konsert ");
   expect(prefixes).toEqual(["ko"]);
+});
+test("background refresh preserves explicitly loaded event pages and reading position", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    localStorage.setItem("sproyt.device-notice.install.dismissed", "1");
+    localStorage.setItem("sproyt.device-notice.notifications.dismissed", "1");
+  });
+  await page.clock.install();
+  const { app, collectionReads } = await setup(page, false, true);
+  await app.getByRole("tab", { name: /Arrangement/ }).click();
+  await app.getByRole("button", { name: "Last fleire arrangement", exact: true }).click();
+  const later = app.getByRole("link", { name: "Konsert med eit langt og lesbart namn", exact: true });
+  await later.scrollIntoViewIfNeeded();
+  await expect(later).toBeVisible();
+  const panel = app.locator(".sp-events-panel");
+  const before = await panel.evaluate(element => element.scrollTop);
+  expect(before).toBeGreaterThan(0);
+  await page.clock.fastForward(31_000);
+  await expect(later).toBeVisible();
+  expect(await panel.evaluate(element => element.scrollTop)).toBe(before);
+  expect(collectionReads).toEqual([null, "next-page"]);
+  await app.getByRole("button", { name: "Oppdater arrangement", exact: true }).click();
+  await expect.poll(() => collectionReads.length).toBe(3);
 });

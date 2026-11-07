@@ -83,11 +83,13 @@ export function ChannelEventSpace({ api, owner, channelId, chat, composer, timel
     return () => controller.abort();
   }, [api, owner, channelId, revision, after]);
   useEffect(() => {
-    const refresh = () => { if (document.visibilityState === "visible") { setAfter(null); reload(); } };
+    // Explicitly paged history stays where the reader left it. Refreshing that
+    // collection is a visible action rather than a timer discarding old pages.
+    const refresh = () => { if (document.visibilityState === "visible" && after === null) reload(); };
     const timer = window.setInterval(() => { if (tab === "events") refresh(); }, 30_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [tab]);
+  }, [tab, after]);
   useEffect(() => { onTabChange?.(tab === "events"); return () => onTabChange?.(false); }, [tab]);
   useEffect(() => {
     const pop = () => { const event = initial(); setSelectedId(event); setTab(event ? "events" : "chat"); setEditing(null); };
@@ -136,7 +138,8 @@ export function ChannelEventSpace({ api, owner, channelId, chat, composer, timel
             }} /> : selectedId ? <EventDetail key={selectedId} api={api} owner={owner} channelId={channelId} eventId={selectedId}
               refresh={revision} onUpdate={upsert} onEdit={setEditing} uploadImage={uploadImage}
               onDenied={revoke} onBack={() => { setSelectedId(null); updateUrl(null); }} /> : <>
-            <div className="sp-event-actions"><h2 tabIndex={-1}>Arrangement</h2><Button variant="primary" onClick={() => setEditing("new")} disabled={Boolean(error)}>Nytt arrangement</Button></div>
+            <div className="sp-event-actions"><h2 tabIndex={-1}>Arrangement</h2><Button variant="primary" onClick={() => setEditing("new")} disabled={Boolean(error)}>Nytt arrangement</Button>
+              {after !== null && <Button onClick={() => { setAfter(null); reload(); }}>Oppdater arrangement</Button>}</div>
             <p>Alle i kanalen kan opprette arrangement og bidra med bilete.</p>
             {loaded && !events.length && !error && <p>Ingen arrangement enno. Lag det første og inviter kanalen.</p>}
             {(["Komande", "Tidlegare", "Avlyste"] as const).map(group => {
