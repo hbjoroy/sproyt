@@ -33,10 +33,13 @@ docker run --rm --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-r
     if test "$format" = heic; then
       # Alpine splits HEIC encoding from decoding. Install the encoder only to
       # create the fixture, then remove it before testing the shipped decoder.
+      # Match the installed decoder; Alpine replaces package revisions in place.
+      libheif_version=$(sed -n "/^P:libheif$/,/^$/s/^V://p" /worker-root/lib/apk/db/installed)
+      test -n "$libheif_version"
       apk --root /worker-root --arch x86_64 --no-scripts --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
         --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
-        add libheif-x265=1.23.4-r0
+        add "libheif-x265=$libheif_version"
     fi
     chroot /worker-root /usr/bin/vips copy /tmp/portrait.v /tmp/sample.$format
     if test "$format" = heic; then
