@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { createChannelViaUi } from "./support/channel-setup";
 
 test.use({ viewport: { width: 1500, height: 900 }, isMobile: false });
 
@@ -92,6 +93,25 @@ test("thread and sidebar widths share available space without losing drafts or c
   await expect(view.threadDivider).toHaveAttribute("aria-valuenow", desired!);
   await expect(reply).toHaveValue("Trådutkast");
   await expect(view.composer).toHaveValue("Kanalutkast");
+});
+
+test("thread resizing follows the current discussion after a channel boundary replaces its DOM", async ({ page }) => {
+  const view = await openConversation(page);
+  await openThread(page, view);
+  await expect(view.threadDivider).toBeVisible();
+  const previous = await view.app.locator(".sp-discussion").elementHandle();
+  await view.sidebar.focus(); await view.sidebar.press("Shift+ArrowRight");
+  const sidebarWidth = await view.sidebar.getAttribute("aria-valuenow");
+  await createChannelViaUi(page, `Ny justerbar kanal ${Date.now()}`);
+  expect(await previous!.evaluate(element => element.isConnected)).toBe(false);
+  await openThread(page, view);
+  await expect(view.threadDivider).toBeVisible();
+  await expect(view.sidebar).toHaveAttribute("aria-valuenow", sidebarWidth!);
+  expect(await view.threadDivider.evaluate(element => element.isConnected && element.parentElement?.classList.contains("sp-discussion"))).toBe(true);
+  const thread = view.app.locator(".sp-thread-pane");
+  const before = (await thread.boundingBox())!.width;
+  await drag(page, view.threadDivider, -40);
+  await expect.poll(async () => (await thread.boundingBox())!.width).toBeCloseTo(before + 40, 0);
 });
 
 test("responsive transitions clamp panel sizes and restore the desktop preference", async ({ page }) => {

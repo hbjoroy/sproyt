@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useRef, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode, Ref } from "react";
 import { AppShell, Button, ConversationList, Message, Status, TextField, Theme } from "@sproyt/ui/react";
 import type { Conversation, ThemeMode } from "@sproyt/ui/react";
@@ -314,9 +314,11 @@ export interface ConversationViewProps {
 
 export function ConversationView(props: ConversationViewProps) {
   const snapshot = useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
-  const discussion = useRef<HTMLDivElement>(null);
+  // A channel/account boundary can replace this node. Observers and portal
+  // targets must follow that replacement rather than retaining a detached pane.
+  const [discussion, setDiscussion] = useState<HTMLDivElement | null>(null);
   const timeline = props.renderTimeline?.(props.timeline) ?? <ConversationTimeline {...props.timeline} />;
-  const content = <div ref={discussion} className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
+  const content = <div ref={setDiscussion} className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
         hidden={!!props.pageKey} inert={!!props.pageKey} aria-hidden={props.pageKey ? true : undefined}>
         <section className="sp-channel-pane" aria-label={props.title}>
           {!props.emptyContent && <header className="sp-context">
@@ -336,7 +338,7 @@ export function ConversationView(props: ConversationViewProps) {
       header={<>{props.header}<span className="sp-sr" role="status" aria-atomic="true">{snapshot.connection.status}</span></>}>
       <WorkspacePageOutlet />
       {props.renderDiscussion?.(content) ?? content}
-      <PanelResizers discussionRef={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
+      <PanelResizers discussion={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
     </AppShell>
     {props.overlays}
     </WorkspacePageProvider>
