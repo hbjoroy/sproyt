@@ -256,6 +256,7 @@ impl TopicModel {
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": content}
             ],
+            "response_format": {"type": "json_object"},
             "max_tokens": 240,
             "temperature": 0
         });
@@ -455,6 +456,7 @@ mod tests {
         assert_eq!(requests.len(), MAX_IMAGES + 1);
         for request in requests.iter() {
             assert_eq!(request["model"], "mock");
+            assert_eq!(request["response_format"]["type"], "json_object");
             assert!(request.get("tools").is_none());
             assert!(request.get("tool_choice").is_none());
         }

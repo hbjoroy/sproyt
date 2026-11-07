@@ -134,14 +134,13 @@ async fn topics_contract(store: &TopicStore) {
         &[&source],
     )
     .await;
-    let bookmark = message(
-        store,
-        &personal,
-        &owner,
-        1,
-        "A link to the original message",
-    )
-    .await;
+    let saved_body = crate::domain::personal_link_body(
+        &shared,
+        MessageId::from_uuid(Uuid::parse_str(&source).unwrap()),
+        ChannelSequence::new(1),
+        None,
+    );
+    let bookmark = message(store, &personal, &owner, 1, saved_body.as_str()).await;
     execute(
         store, "insert into personal_saved_links(id,owner_id,source_channel_id,source_message_id,log_message_id,saved_at)
                  values(?uuid,?uuid,?uuid,?uuid,?uuid,current_timestamp)",
@@ -179,7 +178,13 @@ async fn topics_contract(store: &TopicStore) {
 
     // A saved source's label must stay with the saved entry. Reusing that
     // label on another message would bypass the original source's access check.
-    let ordinary = message(store, &personal, &owner, 2, "Notes about boats").await;
+    let media_id = MediaId::generate();
+    let media_body = format!(
+        "{}
+[[media:{media_id}|image/jpeg|boat.jpg]]",
+        "a".repeat(1200)
+    );
+    let ordinary = message(store, &personal, &owner, 2, &media_body).await;
     let ordinary_job = store.claim_due(false).await.unwrap().unwrap();
     assert_eq!(ordinary_job.message_id, ordinary);
     assert!(
@@ -195,6 +200,15 @@ async fn topics_contract(store: &TopicStore) {
         .complete(&ordinary_job, &["Boats".into()], &[])
         .await
         .unwrap();
+    let media_results = store
+        .matches(&owner, &personal, "boats", i64::MAX)
+        .await
+        .unwrap();
+    let media_match = &media_results.matches[0];
+    assert_eq!(media_match.preview.body.len(), 1200);
+    assert_eq!(media_match.message.body.as_str(), media_body);
+    let media_json = serde_json::to_value(media_match).unwrap();
+    assert_eq!(media_json["message"]["body"], media_body);
     let probe = message(store, &personal, &owner, 3, "More notes").await;
     let probe_job = store.claim_due(false).await.unwrap().unwrap();
     assert_eq!(probe_job.message_id, probe);
@@ -218,9 +232,18 @@ async fn topics_contract(store: &TopicStore) {
         .matches(&owner, &personal, "birds", i64::MAX)
         .await
         .unwrap();
-    assert_eq!(results.matches[0].message_id, bookmark);
-    assert_eq!(results.matches[0].body, "Original bird observation");
-    assert_eq!(results.matches[0].sender_display_name, "Source author");
+    let saved_match = &results.matches[0];
+    assert_eq!(saved_match.preview.message_id, bookmark);
+    assert_eq!(saved_match.preview.body, "Original bird observation");
+    assert_eq!(saved_match.preview.sender_display_name, "Source author");
+    assert_eq!(saved_match.message.channel_id, personal);
+    assert_eq!(saved_match.message.sender_id, owner);
+    assert_eq!(saved_match.message.body, saved_body);
+    let saved_json = serde_json::to_value(saved_match).unwrap();
+    assert_eq!(saved_json["message_id"], bookmark);
+    assert_eq!(saved_json["body"], "Original bird observation");
+    assert_eq!(saved_json["message"]["id"], bookmark);
+    assert_eq!(saved_json["message"]["body"], saved_body.as_str());
 
     // Source membership removal immediately hides labels, counts and matches,
     // including from an old link already indexed before removal.
@@ -258,6 +281,7 @@ async fn topics_contract(store: &TopicStore) {
             .await
             .unwrap()
             .matches[0]
+            .preview
             .message_id,
         bookmark
     );
@@ -360,7 +384,7 @@ async fn topics_contract(store: &TopicStore) {
         .await
         .unwrap();
     assert_eq!(first.matches.len(), 30);
-    assert_eq!(first.matches[0].sequence, 32);
+    assert_eq!(first.matches[0].preview.sequence, 32);
     assert_eq!(first.next_before, Some(3));
     let second = store
         .matches(
@@ -372,7 +396,7 @@ async fn topics_contract(store: &TopicStore) {
         .await
         .unwrap();
     assert_eq!(second.matches.len(), 1);
-    assert_eq!(second.matches[0].sequence, 2);
+    assert_eq!(second.matches[0].preview.sequence, 2);
     assert_eq!(second.next_before, None);
 }
 

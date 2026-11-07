@@ -8,17 +8,20 @@ const message = (id: string, sequence: number, body: string, parent_message_id: 
   id, channel_id: channel, parent_message_id, sequence, body, sent_at: date,
   sender_id: "other", sender_display_name: "Nora"
 });
-const hit = (row: ReturnType<typeof message>) => ({
+const hit = (row: ReturnType<typeof message>, summary = row.body) => ({
   message_id: row.id, parent_message_id: row.parent_message_id,
-  sequence: row.sequence, body: row.body, sender_display_name: row.sender_display_name, created_at: date
+  sequence: row.sequence, body: summary, sender_display_name: row.sender_display_name, created_at: date, message: row
 });
 const latest = message("latest", 10000, "Dette er den nyaste meldinga.");
 const older = message("older", 8, "Tur frå den eldre historia.");
 const neighbor = message("neighbor", 9, "Nabomelding frå same samtale.");
-const reply = message("reply", 10, "Fjelltur i tråden.", older.id);
+const replyText = "Fjelltur i tråden.";
+const mediaId = "00000000-0000-7000-8000-000000008814";
+const image = (name: string) => `[[media:${mediaId}|image/png|${name}]]`;
+const reply = message("reply", 10, `${replyText}\n\n${image("tur.png")}`, older.id);
 const sourceChannel = "00000000-0000-7000-8000-000000008812";
 const sourceId = "00000000-0000-7000-8000-000000008813";
-const source = { ...message(sourceId, 4, older.body), channel_id: sourceChannel };
+const source = { ...message(sourceId, 4, `${older.body}\n\n${image("lagra.png")}`), channel_id: sourceChannel };
 const saved = { ...older, body: `[Lagra melding](/?channel=${sourceChannel}&message=${sourceId}&sequence=4)` };
 
 async function setup(page: Page, canManage = true, personal = false) {
@@ -27,6 +30,10 @@ async function setup(page: Page, canManage = true, personal = false) {
   const cursors: (string | null)[] = [];
   if (personal) await page.route(`**/api/v1/me/personal-space/sources/${sourceChannel}/${sourceId}/4?**`, route =>
     route.fulfill({ json: source }));
+  await page.route(new RegExp(`/api/v1/media/${mediaId}(?:[/?]|$)`), route =>
+    new URL(route.request().url()).pathname.endsWith("/status") ? route.fulfill({ json: { state: "legacy" } })
+      : route.fulfill({ contentType: "image/png",
+        body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6aQAAAAASUVORK5CYII=", "base64") }));
   await page.route(new RegExp(`/api/v1/channels/${channel}/topics(?:[/?]|$)`), route => {
     const url = new URL(route.request().url());
     expect(route.request().headers()["x-sproyt-account"]).toBe(owner);
@@ -34,8 +41,8 @@ async function setup(page: Page, canManage = true, personal = false) {
       expect(url.searchParams.get("topic")).toBe("tur");
       const before = url.searchParams.get("before");
       cursors.push(before);
-      return route.fulfill({ json: before ? { matches: [hit(older)], next_before: null }
-        : { matches: [hit(reply)], next_before: 10 } });
+      return route.fulfill({ json: before ? { matches: [hit(personal ? saved : older, older.body)], next_before: null }
+        : { matches: [hit(reply, replyText)], next_before: 10 } });
     }
     if (url.pathname.endsWith("/context")) {
       expect(url.searchParams.get("message_id")).toBe(older.id);
@@ -101,8 +108,23 @@ test("topic pills page server history and open old context with the composer dra
   await page.keyboard.press("Enter");
   await expect(pills.getByRole("button", { name: "Tur", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(app.getByText(latest.body)).toBeHidden();
+  const results = app.getByLabel("Meldingar om Tur");
+  const directImage = results.getByRole("img", { name: "tur.png", exact: true });
+  await expect(directImage).toBeVisible();
+  await expect.poll(() => directImage.evaluate(node => (node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await results.getByRole("button", { name: "Vis tur.png i full storleik" }).click();
+  const viewer = app.getByRole("dialog", { name: "tur.png" });
+  await expect(viewer).toBeVisible();
+  await viewer.getByRole("button", { name: "Lukk bilete" }).click();
   await app.getByRole("button", { name: "Last eldre treff" }).click();
-  const oldHit = app.getByRole("button", { name: new RegExp(older.body) });
+  const oldResult = results.locator('[data-message-id="older"]');
+  const oldHit = results.getByRole("button", { name: "Opne i samtalen", exact: true });
+  await oldResult.scrollIntoViewIfNeeded();
+  await expect(oldResult.getByText(older.body)).toBeVisible();
+  await expect(oldResult.getByRole("link", { name: /^Opne originalmeldinga/ })).toHaveAttribute("href", new RegExp(sourceId));
+  const savedImage = oldResult.getByRole("img", { name: "lagra.png", exact: true });
+  await savedImage.scrollIntoViewIfNeeded();
+  await expect.poll(() => savedImage.evaluate(node => (node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
   await expect(oldHit).toBeVisible();
   await capturePreview(page, app, process.env.SPROYT_TOPICS_SCREENSHOT);
   await oldHit.click();
@@ -119,10 +141,10 @@ test("topic pills page server history and open old context with the composer dra
   await expect(app.getByText(latest.body)).toBeVisible();
   await expect(composer).toHaveValue("Utkast");
   await pills.getByRole("button", { name: "Tur", exact: true }).click();
-  await app.getByRole("button", { name: new RegExp(reply.body) }).click();
+  await results.getByRole("button", { name: "Opne i tråden", exact: true }).click();
   const thread = app.getByRole("region", { name: "Tråd", exact: true });
   await expect(thread.getByRole("button", { name: "Lukk tråden" })).toBeVisible();
-  await expect(thread.getByText(reply.body)).toBeVisible();
+  await expect(thread.getByText(replyText)).toBeVisible();
   await thread.getByRole("button", { name: "Lukk tråden" }).click();
   await app.getByRole("button", { name: /Privat chatlogg, Området mitt/ }).click();
   await app.getByRole("button", { name: "Chatlogginnstillingar" }).click();
