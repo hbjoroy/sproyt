@@ -42,6 +42,7 @@ pub struct AuthenticatedPrincipal {
     pub issuer: String,
     pub subject: String,
     pub email: Option<String>,
+    pub verified_email: Option<String>,
 }
 
 #[derive(Clone)]
@@ -462,13 +463,16 @@ impl OidcService {
         {
             return Err(AuthError::Unauthorized);
         }
-        let principal = principal(
+        let mut principal = principal(
             &self.issuer,
             &subject,
             display_name,
             preferred_username,
             email,
         )?;
+        if claims.email_verified() == Some(true) {
+            principal.verified_email = principal.email.clone();
+        }
         let now = now_seconds();
         // The ID token expiry validates the authentication assertion. The
         // access token has its own lifetime, supplied by the token endpoint,
@@ -491,6 +495,7 @@ impl OidcService {
                             .as_ref()
                             .map(|handle| handle.to_string()),
                         email: principal.email.clone(),
+                        email_verified: principal.verified_email.is_some(),
                         refresh_token: refresh_token.secret().to_owned(),
                         expires_at: refresh_expires_at,
                     })
@@ -509,6 +514,7 @@ impl OidcService {
                 .as_ref()
                 .map(|handle| handle.to_string()),
             email: principal.email.clone(),
+            email_verified: principal.verified_email.is_some(),
             // Do not put the provider access token in a browser cookie.  Real
             // Authentik access tokens can be large enough that adding normal
             // profile claims pushes the encrypted cookie past the browser's
@@ -539,13 +545,19 @@ impl OidcService {
         let value = read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
         let claims: SessionClaims = self.codec.open(value)?;
         validate_session_claims(&claims, &self.issuer)?;
-        principal(
+        let verified_email = claims
+            .email_verified
+            .then(|| claims.email.clone())
+            .flatten();
+        let mut identity = principal(
             &claims.issuer,
             &claims.subject,
             &claims.display_name,
             claims.preferred_username.as_deref(),
             claims.email,
-        )
+        )?;
+        identity.verified_email = verified_email;
+        Ok(identity)
     }
 
     fn session_refresh_after(&self, cookie_header: Option<&str>) -> Result<u64, AuthError> {
@@ -621,36 +633,45 @@ impl OidcService {
         cookie_header: Option<&str>,
         preserve_uncertain: bool,
     ) -> Result<SessionRenewal, AuthError> {
-        let (issuer, subject, display_name, preferred_username, email, refresh_token) =
-            if let Some(value) = read_cookie(cookie_header, REFRESH_COOKIE) {
-                let claims: RefreshClaims = self.codec.open(value)?;
-                validate_refresh_claims(&claims.issuer, claims.expires_at, &self.issuer)?;
-                (
-                    claims.issuer,
-                    claims.subject,
-                    claims.display_name,
-                    claims.preferred_username,
-                    claims.email,
-                    claims.refresh_token,
-                )
-            } else {
-                let value =
-                    read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
-                let claims: SessionClaims = self.codec.open(value)?;
-                let refresh_expires_at = claims.refresh_expires_at.unwrap_or(claims.expires_at);
-                validate_refresh_claims(&claims.issuer, refresh_expires_at, &self.issuer)?;
-                let refresh_token = claims.refresh_token.ok_or_else(|| {
-                    AuthError::Unsupported("session has no refresh token".to_owned())
-                })?;
-                (
-                    claims.issuer,
-                    claims.subject,
-                    claims.display_name,
-                    claims.preferred_username,
-                    claims.email,
-                    refresh_token,
-                )
-            };
+        let (
+            issuer,
+            subject,
+            display_name,
+            preferred_username,
+            email,
+            email_verified,
+            refresh_token,
+        ) = if let Some(value) = read_cookie(cookie_header, REFRESH_COOKIE) {
+            let claims: RefreshClaims = self.codec.open(value)?;
+            validate_refresh_claims(&claims.issuer, claims.expires_at, &self.issuer)?;
+            (
+                claims.issuer,
+                claims.subject,
+                claims.display_name,
+                claims.preferred_username,
+                claims.email,
+                claims.email_verified,
+                claims.refresh_token,
+            )
+        } else {
+            let value =
+                read_cookie(cookie_header, SESSION_COOKIE).ok_or(AuthError::Unauthorized)?;
+            let claims: SessionClaims = self.codec.open(value)?;
+            let refresh_expires_at = claims.refresh_expires_at.unwrap_or(claims.expires_at);
+            validate_refresh_claims(&claims.issuer, refresh_expires_at, &self.issuer)?;
+            let refresh_token = claims
+                .refresh_token
+                .ok_or_else(|| AuthError::Unsupported("session has no refresh token".to_owned()))?;
+            (
+                claims.issuer,
+                claims.subject,
+                claims.display_name,
+                claims.preferred_username,
+                claims.email,
+                claims.email_verified,
+                refresh_token,
+            )
+        };
         // A provider may legitimately omit a refresh token even when
         // `offline_access` was requested. The sealed session remains valid
         // until its bounded expiry, so this is not an authentication failure.
@@ -680,6 +701,7 @@ impl OidcService {
             display_name,
             preferred_username,
             email: email.clone(),
+            email_verified,
             // See the callback path: an access token is not needed to resume
             // the local session and must not bloat the browser cookie.
             access_token: None,
@@ -694,6 +716,7 @@ impl OidcService {
             display_name: renewed.display_name.clone(),
             preferred_username: renewed.preferred_username.clone(),
             email,
+            email_verified,
             refresh_token: token
                 .refresh_token()
                 .map_or(refresh_token, |token| token.secret().to_owned()),
@@ -729,6 +752,8 @@ struct SessionClaims {
     #[serde(default)]
     email: Option<String>,
     #[serde(default)]
+    email_verified: bool,
+    #[serde(default)]
     access_token: Option<String>,
     #[serde(default)]
     refresh_token: Option<String>,
@@ -746,6 +771,8 @@ struct RefreshClaims {
     preferred_username: Option<String>,
     #[serde(default)]
     email: Option<String>,
+    #[serde(default)]
+    email_verified: bool,
     refresh_token: String,
     expires_at: u64,
 }
@@ -841,6 +868,7 @@ fn principal(
         issuer: issuer.to_owned(),
         subject: subject.to_owned(),
         email,
+        verified_email: None,
     })
 }
 
@@ -1187,6 +1215,7 @@ mod tests {
             display_name: "Alice".to_owned(),
             preferred_username: None,
             email: None,
+            email_verified: false,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
             expires_at: now_seconds() + 60,
@@ -1214,6 +1243,7 @@ mod tests {
             display_name: "An Authentik User With A Normal Display Name".to_owned(),
             preferred_username: Some(preferred_username.to_owned()),
             email: Some("user.with.a.long.local.part@example.test".to_owned()),
+            email_verified: false,
             access_token: None,
             refresh_token: None,
             expires_at: now_seconds() + 300,
@@ -1269,6 +1299,7 @@ mod tests {
 
         assert_eq!(opened.subject, "alice");
         assert!(opened.email.is_none());
+        assert!(!opened.email_verified);
         assert!(opened.access_token.is_none());
 
         #[derive(Serialize)]
@@ -1291,6 +1322,7 @@ mod tests {
             .unwrap();
         let opened: RefreshClaims = codec.open(&sealed).unwrap();
         assert!(opened.email.is_none());
+        assert!(!opened.email_verified);
     }
 
     #[test]
@@ -1305,6 +1337,7 @@ mod tests {
             display_name: "Alice".to_owned(),
             preferred_username: None,
             email: None,
+            email_verified: false,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
             expires_at: now_seconds() + 60,
@@ -1333,6 +1366,7 @@ mod tests {
             display_name: "Alice".to_owned(),
             preferred_username: None,
             email: None,
+            email_verified: false,
             access_token: Some("test-token".to_owned()),
             refresh_token: None,
             expires_at: now_seconds().saturating_sub(1),
@@ -1432,6 +1466,7 @@ mod tests {
                 display_name: "Authentik User".to_owned(),
                 preferred_username: None,
                 email: None,
+                email_verified: false,
                 access_token: Some("valid-access-token".to_owned()),
                 refresh_token: None,
                 expires_at: now_seconds() + 60,
@@ -1451,6 +1486,7 @@ mod tests {
                 display_name: "Expired Authentik User".to_owned(),
                 preferred_username: None,
                 email: None,
+                email_verified: false,
                 access_token: Some("expired-access-token".to_owned()),
                 refresh_token: Some("refresh-a".to_owned()),
                 expires_at: now_seconds().saturating_sub(1),
@@ -1470,6 +1506,7 @@ mod tests {
                 display_name: "Suspended Authentik User".to_owned(),
                 preferred_username: None,
                 email: None,
+                email_verified: false,
                 access_token: Some("expired-access-token".to_owned()),
                 refresh_token: Some("refresh-a".to_owned()),
                 expires_at: now_seconds().saturating_sub(1),
@@ -1550,6 +1587,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(enrollment_complete.return_to, "/");
+        assert_eq!(
+            enrollment_complete.principal.verified_email.as_deref(),
+            Some("authentik.user@example.test")
+        );
+        let verified_session = auth
+            .authenticate_session(Some(&enrollment_complete.set_cookie))
+            .await
+            .unwrap();
+        assert_eq!(
+            verified_session.verified_email,
+            enrollment_complete.principal.verified_email
+        );
+        let verified_renewal = auth
+            .renew_session(enrollment_complete.set_refresh_cookie.as_deref())
+            .await
+            .unwrap();
+        assert_eq!(
+            auth.authenticate_session(Some(&verified_renewal.set_cookie))
+                .await
+                .unwrap()
+                .verified_email,
+            verified_session.verified_email
+        );
+        assert!(complete.principal.verified_email.is_none());
         assert_eq!(
             enrollment_complete.enrollment_token.as_deref(),
             Some("enrollment-token_123456")

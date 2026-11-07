@@ -1,0 +1,231 @@
+{
+  "contract_version": "0.1.0-proposed",
+  "description": "Consumer fixtures; acceptance_cases are required server tests, not claimed results.",
+  "snapshot": {
+    "binding_id": "binding-a",
+    "items": [
+      {
+        "subject_id": "app-subject-a",
+        "display_name": "Alice",
+        "response": {
+          "participation": "yes"
+        },
+        "app_attributes": {},
+        "revision": 1,
+        "updated_at": "2026-10-31T12:00:00Z"
+      },
+      {
+        "subject_id": "app-subject-b",
+        "display_name": "Bob",
+        "response": {
+          "participation": "no"
+        },
+        "app_attributes": {},
+        "revision": 1,
+        "updated_at": "2026-10-31T12:00:00Z"
+      }
+    ],
+    "changes_cursor": 0
+  },
+  "changes": {
+    "items": [
+      {
+        "sequence": 1,
+        "event_id": "event-1",
+        "kind": "response.upserted",
+        "subject_id": "app-subject-a",
+        "revision": 2,
+        "member": {
+          "subject_id": "app-subject-a",
+          "display_name": "Alice",
+          "response": {
+            "participation": "no"
+          },
+          "app_attributes": {},
+          "revision": 2,
+          "updated_at": "2026-10-31T12:00:00Z"
+        }
+      },
+      {
+        "sequence": 2,
+        "event_id": "event-2",
+        "kind": "attributes.updated",
+        "subject_id": "app-subject-a",
+        "revision": 3,
+        "member": {
+          "subject_id": "app-subject-a",
+          "display_name": "Alice",
+          "response": {
+            "participation": "no"
+          },
+          "app_attributes": {
+            "participant_ref": "od-participant-a"
+          },
+          "revision": 3,
+          "updated_at": "2026-10-31T12:00:00Z"
+        }
+      },
+      {
+        "sequence": 3,
+        "event_id": "event-3",
+        "kind": "response.revoked",
+        "subject_id": "app-subject-b",
+        "revision": 2
+      },
+      {
+        "sequence": 3,
+        "event_id": "event-3",
+        "kind": "response.revoked",
+        "subject_id": "app-subject-b",
+        "revision": 2
+      },
+      {
+        "sequence": 4,
+        "event_id": "event-4",
+        "kind": "response.revoked",
+        "subject_id": "app-subject-b",
+        "revision": 2
+      },
+      {
+        "sequence": 5,
+        "event_id": "event-5",
+        "kind": "response.revoked",
+        "subject_id": "app-subject-a",
+        "revision": 4
+      }
+    ],
+    "next_cursor": 5,
+    "has_more": false
+  },
+  "expected_after_changes": {
+    "members": {},
+    "revisions": {
+      "app-subject-a": 4,
+      "app-subject-b": 2
+    },
+    "cursor": 5
+  },
+  "delayed_upsert_after_revocation": {
+    "sequence": 1,
+    "event_id": "delayed-old",
+    "kind": "response.upserted",
+    "subject_id": "app-subject-a",
+    "revision": 2,
+    "member": {
+      "subject_id": "app-subject-a",
+      "display_name": "Alice",
+      "response": {
+        "participation": "no"
+      },
+      "app_attributes": {},
+      "revision": 2,
+      "updated_at": "2026-10-31T12:00:00Z"
+    }
+  },
+  "approval": {
+    "request": {
+      "state": "01234567890123456789012345678901",
+      "sproyt_user_id": "sproyt-user-a",
+      "channel_id": "channel-a",
+      "session_id": "session-a",
+      "expires_at": "2026-10-31T12:05:00Z"
+    },
+    "exchange": {
+      "approval_code": "single-use-code",
+      "state": "01234567890123456789012345678901",
+      "sproyt_user_id": "sproyt-user-a",
+      "channel_id": "channel-a",
+      "session_id": "session-a"
+    },
+    "response": {
+      "authorization_id": "authorization-a",
+      "app_user_id": "od-user-a",
+      "state": "01234567890123456789012345678901",
+      "sproyt_user_id": "sproyt-user-a",
+      "channel_id": "channel-a",
+      "session_id": "session-a",
+      "session_name": "Canary tasting",
+      "session_admin": true,
+      "verified_email": "moderator@example.invalid",
+      "expires_at": "2026-10-31T12:05:00Z"
+    }
+  },
+  "acceptance_cases": [
+    {
+      "case": "first_link_same_verified_email",
+      "result": "allow_after_both_current_admin_checks"
+    },
+    {
+      "case": "first_link_email_present_but_unverified_either_side",
+      "result": "reject"
+    },
+    {
+      "case": "first_link_different_verified_emails",
+      "result": "reject"
+    },
+    {
+      "case": "linked_internal_ids_email_later_changes",
+      "result": "do_not_relink_or_merge_by_email"
+    },
+    {
+      "case": "sprout_circle_moderator_without_private_channel_access",
+      "result": "reject"
+    },
+    {
+      "case": "open_drinks_session_visible_but_not_admin",
+      "result": "reject"
+    },
+    {
+      "case": "allowlisted_session_without_user_approval",
+      "result": "reject"
+    },
+    {
+      "case": "expired_replayed_or_context_swapped_approval",
+      "result": "reject"
+    },
+    {
+      "case": "unanswered_member",
+      "result": "no_exported_row"
+    },
+    {
+      "case": "withdraw_or_leave_after_snapshot_before_read",
+      "result": "no_stale_payload_minimal_tombstone"
+    },
+    {
+      "case": "rejoin_without_new_answer",
+      "result": "no_exported_row"
+    },
+    {
+      "case": "attributes_write_after_withdraw",
+      "result": "reject"
+    },
+    {
+      "case": "same_write_key_body_after_timeout",
+      "result": "same_effect_and_receipt"
+    },
+    {
+      "case": "same_write_key_changed_body",
+      "result": "409_idempotency_conflict"
+    },
+    {
+      "case": "snapshot_or_cursor_expired",
+      "result": "410_then_replace_from_new_snapshot"
+    },
+    {
+      "case": "binding_disabled",
+      "result": "403_and_client_clears_cached_binding"
+    },
+    {
+      "case": "credential_revoked",
+      "result": "401_and_client_stops_and_clears_access"
+    },
+    {
+      "case": "cross_app_or_binding_media",
+      "result": "reject"
+    },
+    {
+      "case": "parallel_database_transactions",
+      "result": "per_binding_serial_sequence_no_missed_late_commit"
+    }
+  ]
+}
