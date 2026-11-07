@@ -6,7 +6,7 @@ macro_rules! contract {
     ($name:ident,$connect:expr,$migrations:literal,$list:ident) => {
         #[tokio::test]
         async fn $name() {
-            let Some(pool)=$connect else{return};
+            let Some(pool)=($connect) else{return};
             sqlx::migrate!($migrations).run(&pool).await.unwrap();
             let [owner,moderator,member,agent,circle,other,channel,hidden,cross,application,binding,message,work,export_route,change,legacy,pilot,task,change_task,foreign_task]=std::array::from_fn::<_,20,_>(|_|Uuid::now_v7());
             // All interpolation below is generated UUIDs/static fixture text.

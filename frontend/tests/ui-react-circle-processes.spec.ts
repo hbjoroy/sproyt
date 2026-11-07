@@ -3,6 +3,7 @@ import { destinationSurface } from "./support/destination-surface";
 
 const first = "00000000-0000-7000-8000-000000003420", second = "00000000-0000-7000-8000-000000003421";
 const channel = "00000000-0000-7000-8000-000000003422";
+const otherChannel = "00000000-0000-7000-8000-000000003423";
 function process(id = "pilot:one", title = "Planlegg sommartreffet i den lange vennekretsen") {
   return { id, kind: "pilot", title, channel_id: channel, channel_name: "Planlegging og praktiske avklaringar",
     status: "failed", definition_name: "event-planning", runtime: "v2", projection: true,
@@ -11,7 +12,10 @@ function process(id = "pilot:one", title = "Planlegg sommartreffet i den lange v
     remaining_steps: null, steps_truncated: true, history_truncated: false };
 }
 async function fixture(page: Page, role: "owner" | "moderator" | "member" = "moderator") {
-  let identity = "process-moderator", circleRole = role;
+  let identity = "process-moderator", circleRole = role, channelPresent = true;
+  const channels = () => (channelPresent ? [channel, otherChannel] : [otherChannel]).map(id => ({ id, slug: id,
+    name: id === channel ? "Planlegging" : "Arbeidsprosessar", circle_id: first, direct_user_id: null, is_direct: false,
+    kind: "public", role: "member", description: "", last_read_sequence: 0, latest_sequence: 0 }));
   let emit = (_type: string, _payload?: unknown) => {};
   await page.routeWebSocket(/\/ws(?:\?|$)/, route => {
     emit = (type, payload) => route.send(JSON.stringify({ protocol: "sproyt.chat.v1", type, payload }));
@@ -23,7 +27,7 @@ async function fixture(page: Page, role: "owner" | "moderator" | "member" = "mod
         case "ping": reply("pong"); break;
         case "list_users": reply("users_listed", { users: [] }); break;
         case "list_my_circles": reply("circles_listed", { circles: [first, second].map((id, index) => [{ id, slug: id, name: index ? "Andre krets" : "Prosesskrets", created_by: identity, created_at: "2026-01-01T00:00:00Z" }, circleRole]) }); break;
-        case "list_my_channels": reply("channels_listed", { channels: [{ id: channel, slug: "planning", name: "Planlegging", circle_id: first, direct_user_id: null, is_direct: false, kind: "public", role: "member", description: "", last_read_sequence: 0, latest_sequence: 0 }] }); break;
+        case "list_my_channels": reply("channels_listed", { channels: channels() }); break;
         case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
         case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
         case "subscribe_channel": reply("subscription_started", { channel_id: command.payload.channel_id, history: [] }); break;
@@ -33,7 +37,9 @@ async function fixture(page: Page, role: "owner" | "moderator" | "member" = "mod
       }
     });
   });
-  return { revoke: () => { circleRole = "member"; emit("circles_changed"); }, switchAccount: () => { identity = "another-account"; emit("hello", { participant_id: identity }); } };
+  return { revoke: () => { circleRole = "member"; emit("circles_changed"); },
+    revokeChannel: () => { channelPresent = false; emit("membership_left", { channel_id: channel }); },
+    switchAccount: () => { identity = "another-account"; emit("hello", { participant_id: identity }); } };
 }
 async function openCircle(page: Page) {
   await page.goto(`/?participant=process-moderator&view=settings&section=circle&circle=${first}&channel=${channel}`);
@@ -147,4 +153,25 @@ test("ordinary members have no process overview or lookup", async ({ page }) => 
   await expect(circle.getByText("Krets / Prosesskrets · Medlem")).toBeVisible();
   await expect(circle.getByRole("region", { name: "Prosessar", exact: true })).toHaveCount(0);
   expect(requests).toBe(0);
+});
+
+for (const pending of [false, true]) test(`channel revocation clears ${pending ? "pending" : "rendered"} rows while circle moderator remains`, async ({ page }) => {
+  const server = await fixture(page);
+  let revoked = false, release: (() => Promise<void>) | undefined;
+  await page.route(/\/api\/v1\/circles\/[^/]+\/processes\?/, async route => {
+    if (revoked) return route.fulfill({ json: { processes: [], next_cursor: null } });
+    // Deliberately display a different channel: a hidden task-channel membership
+    // can govern a work process whose returned source channel remains unchanged.
+    const snapshot = { processes: [{ ...process("work_review:secret", "Fortruleg arbeidsprosess"), channel_id: otherChannel }], next_cursor: null };
+    if (!pending) return route.fulfill({ json: snapshot });
+    await new Promise<void>(resolve => { release = async () => { await route.fulfill({ json: snapshot }).catch(() => {}); resolve(); }; });
+  });
+  const circle = await openCircle(page), overview = circle.getByRole("region", { name: "Prosessar", exact: true });
+  if (pending) await expect.poll(() => Boolean(release)).toBe(true);
+  else await expect(overview.getByText("Fortruleg arbeidsprosess", { exact: true })).toBeVisible();
+  revoked = true; server.revokeChannel();
+  await expect(circle).toContainText("Krets / Prosesskrets · Moderator");
+  await expect(circle.getByRole("region", { name: "Prosessar", exact: true })).toContainText("Ingen opne prosessar i kanalane du har tilgang til.");
+  if (release) await release();
+  await expect(page.getByText("Fortruleg arbeidsprosess", { exact: true })).toHaveCount(0);
 });
