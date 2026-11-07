@@ -184,7 +184,7 @@ type Command = { type: string; request_id: string; payload: { channel_id?: strin
 const root = (channel: string, sequence: number): ChatMessage => ({ id: `${channel}-${sequence}`, channel_id: channel,
   parent_message_id: null, sender_id: "reader", sender_display_name: "Lesar", body: `Melding ${sequence} ${"kontekst ".repeat(55)}`,
   sequence, sent_at: "2025-01-01T12:00:00Z", edited_at: null, deleted_at: null });
-const viewport = (page: Page) => page.locator("#sproyt-react-preview .sp-channel-pane > .sp-timeline");
+const viewport = (page: Page) => page.locator("#sproyt-react-preview .sp-channel-pane .sp-timeline[aria-label='Meldingar']");
 async function select(page: Page, channel: string) {
   const back = page.getByRole("button", { name: "Samtalar", exact: true });
   if (await back.isVisible()) await back.click();
@@ -614,7 +614,7 @@ test("channel return waits for a media-clamped anchor instead of following the t
   // Theme changes publish synchronously through the real host. A publication
   // before ResizeObserver must not save this temporary distance from bottom.
   await theme.evaluate(button => {
-    const timeline = document.querySelector<HTMLElement>("#sproyt-react-preview .sp-channel-pane > .sp-timeline")!;
+    const timeline = document.querySelector<HTMLElement>("#sproyt-react-preview .sp-channel-pane .sp-timeline[aria-label='Meldingar']")!;
     [...timeline.querySelectorAll<HTMLElement>("[data-message-id]")].at(-1)!.style.paddingBottom = "160px";
     (button as HTMLButtonElement).click();
   });

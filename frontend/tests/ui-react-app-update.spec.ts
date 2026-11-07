@@ -126,7 +126,7 @@ test("menu update uses a real new worker and code revision while preserving draf
     await expect(composer).toHaveValue("Utkastet skal stå etter oppdatering");
     await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
     expect(await page.evaluate(() => (globalThis as any).fixtureCodeRevision)).toBe("old");
-    const timeline = preview.locator(".sp-channel-pane > .sp-timeline");
+    const timeline = preview.locator(".sp-channel-pane .sp-timeline[aria-label='Meldingar']:visible");
     await timeline.evaluate(element => { element.dispatchEvent(new WheelEvent("wheel", { deltaY: -600 })); element.scrollTop = 1300; element.dispatchEvent(new Event("scroll")); });
     const captureAnchor = () => timeline.evaluate(element => {
       const bounds = element.getBoundingClientRect();

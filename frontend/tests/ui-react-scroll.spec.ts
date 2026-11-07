@@ -48,7 +48,7 @@ test("React timeline loads older history at the top and keeps the visible messag
   });
   await page.goto("/?participant=playwright-scroll-reader&ui=react", { waitUntil: "domcontentloaded" });
   const preview = page.locator("#sproyt-react-preview");
-  const timeline = preview.locator(".sp-channel-pane > .sp-timeline");
+  const timeline = preview.locator(".sp-channel-pane .sp-timeline[aria-label='Meldingar']");
   // A new reader starts at first unread. Explicitly read to the end, then open
   // a new session so this contract exercises manual paging from the latest page.
   await expect(preview.getByRole("button", { name: "Gå til siste", exact: true }).filter({ visible: true })).toBeVisible();
