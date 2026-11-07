@@ -74,7 +74,7 @@ jobs:
       operations: ${{ steps.scope.outputs.operations }}
       browser_matrix: ${{ steps.scope.outputs.browser_matrix }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Reject publication from unreviewed branches
@@ -99,11 +99,11 @@ jobs:
     needs: changes
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install pinned Node.js
         if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.operations == 'true'
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -166,7 +166,7 @@ jobs:
 
       - name: Share same-revision browser server
         if: needs.changes.outputs.browser != 'none'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: browser-server-${{ github.sha }}
           path: browser-server.tar.gz
@@ -217,14 +217,14 @@ jobs:
       SPROYT_E2E_WEBKIT: "1"
       SPROYT_E2E_SERVER_BINARY: ${{ github.workspace }}/.ci-browser-server/sproyt
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm --prefix frontend ci
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: browser-server-${{ github.sha }}
       - name: Unpack tested server
@@ -236,7 +236,7 @@ jobs:
         id: playwright-version
         run: node -e "const fs=require('node:fs'); const {version}=require('./frontend/node_modules/playwright-core/package.json'); fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version='+version+'\n');"
       - name: Cache requested browser binary
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ matrix.engine }}-${{ steps.playwright-version.outputs.version }}
@@ -250,7 +250,7 @@ jobs:
         run: python3 tools/summarize-browser-tests.py frontend/test-results/results.json
       - name: Retain browser evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: browser-${{ matrix.project }}-${{ matrix.index }}-${{ github.run_attempt }}
           path: |
@@ -304,10 +304,10 @@ jobs:
       SPROYT_POSTGRES_TEST_URL: postgres://sproyt:sproyt-ci@127.0.0.1:5432/sproyt
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install pinned Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -389,10 +389,10 @@ jobs:
       CARGO_AUDIT_VERSION: 0.22.2
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache Cargo tools and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/cargo-audit
@@ -441,9 +441,9 @@ jobs:
       SPROYT_ENV: test
       SPROYT_AUTH_MODE: development
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install pinned Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -518,7 +518,7 @@ jobs:
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from agent_location_shares")" = "0"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from circle_chat_agent_jobs where id='01900000-0000-7000-8000-000000000009' and status='skipped' and reply_body is null and error_code='location_restore_reset'")" = "1"
           test "$(psql "$DATABASE_URL" --tuples-only --no-align --command "select count(*) from messages where body='restore-evidence'")" = "1"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: recovery-drill-backup
           path: sproyt.dump
@@ -532,7 +532,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Helm
         uses: azure/setup-helm@v5
@@ -674,13 +674,13 @@ jobs:
 
       - name: Retain media worker vulnerability report even when the gate fails
         if: always() && steps.worker-scan.outputs.sarif != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: media-worker-vulnerabilities
           path: ${{ steps.worker-scan.outputs.sarif }}
 
       - name: Upload delivery evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: delivery-evidence
           path: |
@@ -696,7 +696,7 @@ jobs:
           docker save --output sproyt-media-worker-arm64.tar local/sproyt-media-worker-arm64:${{ github.sha }}
 
       - name: Upload tested ARM64 release image
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-image-${{ github.sha }}
           path: |
@@ -742,7 +742,7 @@ jobs:
       REGCTL_IMAGE: regclient/regctl:v0.11.5@sha256:dbe356c6cf9f8f85e302b9e47fed481ef3f1b04807350e99b02ab2cadee0a993
     steps:
       - name: Download tested ARM64 release image
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-image-${{ github.sha }}
 
@@ -820,7 +820,7 @@ jobs:
             '{image: $image, digest: $digest, revision: $revision}' > worker-registry-evidence.json
 
       - name: Upload registry evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: registry-evidence-${{ github.sha }}
           path: |
@@ -901,7 +901,7 @@ jobs:
             > heart-registry-evidence.json
 
       - name: Upload only non-secret registry evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: heart-registry-evidence-${{ inputs.heart_revision }}
           path: heart-registry-evidence.json
