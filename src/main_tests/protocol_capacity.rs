@@ -19,6 +19,9 @@ use tokio_tungstenite::{
 
 type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
+#[path = "circle_process_overview.rs"]
+mod circle_process_overview_tests;
+
 #[tokio::test]
 async fn chunk_upload_http_preserves_large_video_and_enforces_admission() {
     use crate::domain::{ChannelKind, ChannelSlug, DisplayName};

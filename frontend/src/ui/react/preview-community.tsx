@@ -5,6 +5,7 @@ import { Button, PersonList, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import type { AgentMemoryApi } from "../../agent-memory";
+import type { CircleProcessApi } from "../../circle-processes";
 import type { Channel, Circle, UserProfile } from "../../types";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
 import { MarkdownContent } from "./markdown-content";
@@ -16,6 +17,7 @@ export type { CommunityDestination } from "../../application/management-target";
 export interface CommunityHost {
   chatAgents?: CircleChatAgentApi;
   agentMemory?: AgentMemoryApi;
+  circleProcesses?: CircleProcessApi;
   selfId(): string | null;
   users(): Promise<UserProfile[]>;
   members(channelId: string): Promise<UserProfile[]>;

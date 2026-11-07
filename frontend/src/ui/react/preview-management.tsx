@@ -17,12 +17,18 @@ import { AgentSettingsDrafts } from "./agent-settings-drafts";
 import { GettingStarted } from "./getting-started";
 import { ThreadDirectory } from "./thread-directory";
 import type { ThreadPreviewApi } from "../../thread-previews";
+import { CircleProcesses } from "./circle-processes";
 
 export type { ManagementTarget } from "../../application/management-target";
 type SettingsRow = { label: string; detail: string; target: ManagementTarget; aliases?: string };
 const directory: ManagementTarget = { kind: "community", destination: { kind: "circles" } };
 const administrator = (role: string) => role === "owner" || role === "moderator";
 const roleName = (role: string) => role === "owner" ? "Eigar" : role === "moderator" ? "Moderator" : "Medlem";
+// Process projections can include work whose source and task channels differ.
+// Fence every circle membership, rather than only a row's displayed channel.
+const processMembershipScope = (snapshot: ConversationSnapshot, circleId: string) => JSON.stringify(
+  snapshot.channels.filter(channel => channel.circle_id === circleId)
+    .map(channel => [channel.id, channel.role]).sort((a, b) => a[0]!.localeCompare(b[0]!)));
 
 /** A single controlled destination, with a local fallback for standalone previews.
  * Opening this directory creates no invitation, credential or process. */
@@ -160,6 +166,7 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
   const threadChannelId = active?.kind === "community" && active.destination.kind === "channel-threads"
     ? active.destination.channelId : null;
   const accessEpoch = circle ? circleScopes.current.entries.get(circle.id)?.epoch : undefined;
+  const processMembership = circle ? processMembershipScope(snapshot, circle.id) : "";
   let available = true;
   if (active && "circleId" in active) {
     available = Boolean(circle) && (active.kind !== "chat-agents" || administrator(circle!.role))
@@ -269,6 +276,10 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
           {community.agentMemory && row({ label: "Mitt agentminne", detail: "Sjå, rett og slett ditt eige minne", target: { kind: "memory", circleId: circle.id } })}
           {circle.role === "owner" && row({ label: "Endre kretsnamn", detail: "Namnet alle medlemmene ser", target: { kind: "community", destination: { kind: "rename-circle", circleId: circle.id } } })}
         </section>
+        {administrator(circle.role) && community.circleProcesses && selfId && <CircleProcesses
+          key={`${selfId}:${circle.id}:${accessEpoch}:${processMembership}`} api={community.circleProcesses} circleId={circle.id} owner={selfId}
+          admitted={() => agentScopeCurrent(circle.id, accessEpoch)
+            && processMembershipScope(latestSnapshot.current, circle.id) === processMembership} />}
       </div>
     </DestinationPage>}
     {isDirectory && available && <CircleDirectory key={`${selfId}:${activeKey}`} onRetry={onRetryDirectory} invitationOnly={active?.kind === "community" && active.destination.kind === "accept-invitation"} snapshot={snapshot} host={community} onClose={close} row={row} />}

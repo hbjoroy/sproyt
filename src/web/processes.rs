@@ -537,3 +537,51 @@ pub(crate) async fn configure_process_role(
         Err(error) => repository_response(error),
     }
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CircleProcessesQuery {
+    participant: Option<String>,
+    limit: Option<u32>,
+    after: Option<String>,
+    state: Option<String>,
+}
+
+pub(crate) async fn circle_processes(
+    State(state): State<AppState>,
+    Path(circle): Path<uuid::Uuid>,
+    Query(query): Query<CircleProcessesQuery>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, axum::response::Response> {
+    use axum::http::{StatusCode, header::CACHE_CONTROL};
+    let actor = crate::web::personal_space::authenticated_user(
+        &state,
+        WsQuery {
+            participant: query.participant,
+        },
+        &headers,
+    )
+    .await?
+    .id;
+    let all = match query.state.as_deref() {
+        None | Some("open") => false,
+        Some("all") => true,
+        _ => return Err(StatusCode::BAD_REQUEST.into_response()),
+    };
+    let query = crate::process::CircleProcessQuery {
+        actor,
+        circle: crate::domain::CircleId::from_uuid(circle),
+        limit: query.limit.unwrap_or(20),
+        all,
+        after: query.after,
+    };
+    query
+        .validate()
+        .map_err(|_| StatusCode::BAD_REQUEST.into_response())?;
+    let page = state
+        .processes
+        .circle_processes(query)
+        .await
+        .map_err(repository_response)?;
+    Ok(([(CACHE_CONTROL, "private, no-store")], Json(page)).into_response())
+}

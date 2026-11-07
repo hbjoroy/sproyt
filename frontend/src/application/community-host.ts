@@ -1,5 +1,6 @@
 import type { CircleChatAgentApi } from "../chat-agents";
 import type { AgentMemoryApi } from "../agent-memory";
+import type { CircleProcessApi } from "../circle-processes";
 import type { EnrollmentApi } from "../api";
 import { isEnrollmentNotConfigured } from "../api";
 import type { Channel, Circle, ClientCommand, ClientCommandArguments } from "../types";
@@ -20,6 +21,7 @@ export function createCommunityHost(deps: {
   enrollment: EnrollmentApi;
   chatAgents?: CircleChatAgentApi;
   agentMemory?: AgentMemoryApi;
+  circleProcesses?: CircleProcessApi;
 }): CommunityHost {
   const capture = () => {
     const owner = deps.selfId(), generation = deps.requests.generation;
@@ -51,6 +53,7 @@ export function createCommunityHost(deps: {
   return {
     chatAgents: deps.chatAgents,
     agentMemory: deps.agentMemory,
+    circleProcesses: deps.circleProcesses,
     selfId: deps.selfId,
     users: async () => (await request("users_listed", () => deps.send("list_users"))).payload.users,
     members: async id => (await request("channel_users_listed", () => deps.send("list_channel_users", { channel_id: id }))).payload.users,

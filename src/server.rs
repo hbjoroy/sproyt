@@ -468,6 +468,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             "/api/v1/process-pilot/tasks/{id}/complete",
             post(crate::web::process_pilot::complete),
         )
+        .route(
+            "/api/v1/circles/{id}/processes",
+            get(crate::web::processes::circle_processes),
+        )
         .route("/api/v1/processes/{id}", get(get_process))
         .route("/api/v1/processes/{id}/inspect", post(inspect_process))
         .route("/api/v1/processes/{id}/messages", post(correlate_process))
