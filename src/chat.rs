@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 #[cfg(test)]
 use crate::domain::PrincipalKind;
+use crate::domain::account_export::{ACCOUNT_EXPORT_TIMEOUT, AccountExport, AccountExportError};
 use crate::domain::{
     AcceptCircleInvitation, AcceptEnrollmentInvitation, AcceptedChatInvitation,
     ActivateEnrollmentInvitation, ChannelId, ChannelKind, ChannelRef, ChannelSequence, ChannelSlug,
@@ -59,6 +60,7 @@ fn is_reaction_emoji(value: &str) -> bool {
 pub struct ChatEngine {
     mailbox: mpsc::Sender<Command>,
     repository: Arc<dyn ChatRepository>,
+    export_slot: Arc<tokio::sync::Semaphore>,
 }
 
 impl fmt::Debug for ChatEngine {
@@ -188,6 +190,7 @@ impl ChatEngine {
         Self {
             mailbox,
             repository,
+            export_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
@@ -460,14 +463,20 @@ impl ChatEngine {
         Ok(true)
     }
 
-    pub async fn export_user_data(
-        &self,
-        actor: UserId,
-    ) -> Result<crate::domain::PortableUserExport, ChatError> {
-        self.repository
-            .export_user_data(actor)
+    pub async fn start_user_export(&self, user: User) -> Result<AccountExport, AccountExportError> {
+        let permit = self
+            .export_slot
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| AccountExportError::Busy)?;
+        let deadline = tokio::time::Instant::now() + ACCOUNT_EXPORT_TIMEOUT;
+        let actor = user.id.clone();
+        tokio::time::timeout_at(deadline, self.repository.upsert_user(user))
             .await
-            .map_err(ChatError::from)
+            .map_err(|_| AccountExportError::Timeout)??;
+        self.repository
+            .start_user_export(actor, deadline, permit)
+            .await
     }
 
     pub async fn favorite_circles(&self, actor: UserId) -> Result<Vec<CircleId>, ChatError> {
@@ -824,7 +833,7 @@ impl ChatEngine {
     pub async fn list_joinable_channels(
         &self,
         actor: UserId,
-        circle_id: crate::domain::CircleId,
+        circle_id: Option<crate::domain::CircleId>,
     ) -> Result<Vec<crate::domain::DiscoverableChannel>, ChatError> {
         self.repository
             .list_joinable_channels(actor, circle_id)

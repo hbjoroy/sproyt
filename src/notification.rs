@@ -6,9 +6,13 @@ use sqlx::{PgPool, Postgres, Row, Sqlite, SqlitePool, Transaction};
 use tokio::sync::watch;
 use tracing::{info, warn};
 use uuid::Uuid;
-use web_push_native::{
-    Auth, WebPushBuilder, jwt_simple::algorithms::ES256KeyPair, p256::PublicKey,
-};
+use zeroize::Zeroizing;
+
+#[cfg(test)]
+#[path = "notification/push_tests.rs"]
+mod push_tests;
+mod web_push;
+use web_push::PushSender;
 
 use crate::{
     config::{DatabaseConfig, DatabaseKind},
@@ -26,13 +30,6 @@ pub struct NotificationService {
     store: NotificationStore,
     sender: Option<Arc<PushSender>>,
     public_key: Option<String>,
-}
-
-#[derive(Clone)]
-struct PushSender {
-    private_key: Vec<u8>,
-    subject: String,
-    client: reqwest::Client,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -144,25 +141,15 @@ impl NotificationService {
         let subject = std::env::var("SPROYT_VAPID_SUBJECT").ok();
         let sender = match (private_key, subject) {
             (Some(private_key), Some(subject)) => {
-                let private_key = URL_SAFE_NO_PAD.decode(private_key).map_err(|_| {
-                    RepositoryError::Storage("SPROYT_VAPID_PRIVATE_KEY is not base64url".into())
+                let private_key = Zeroizing::new(private_key);
+                let public_key = public_key.as_deref().ok_or_else(|| {
+                    RepositoryError::Storage("SPROYT_VAPID_PUBLIC_KEY is required".into())
                 })?;
-                if private_key.len() != 32
-                    || !(subject.starts_with("mailto:") || subject.starts_with("https://"))
-                {
-                    return Err(RepositoryError::Storage(
-                        "invalid VAPID configuration".into(),
-                    ));
-                }
-                Some(Arc::new(PushSender {
-                    private_key,
+                Some(Arc::new(PushSender::new(
+                    &private_key,
+                    public_key,
                     subject,
-                    client: reqwest::Client::builder()
-                        .timeout(Duration::from_secs(15))
-                        .redirect(reqwest::redirect::Policy::none())
-                        .build()
-                        .map_err(storage)?,
-                }))
+                )?))
             }
             (None, None) => None,
             _ => {
@@ -171,11 +158,6 @@ impl NotificationService {
                 ));
             }
         };
-        if sender.is_some() && public_key.is_none() {
-            return Err(RepositoryError::Storage(
-                "SPROYT_VAPID_PUBLIC_KEY is required".into(),
-            ));
-        }
         Ok(Self {
             store,
             sender,
@@ -699,62 +681,6 @@ pub(crate) async fn enqueue_message_sqlite(
     Ok(())
 }
 
-impl PushSender {
-    async fn deliver(&self, job: &PushJob) -> DeliveryResult {
-        let result = (|| {
-            let key_pair =
-                ES256KeyPair::from_bytes(&self.private_key).map_err(|error| error.to_string())?;
-            let peer = PublicKey::from_sec1_bytes(
-                &URL_SAFE_NO_PAD
-                    .decode(&job.p256dh)
-                    .map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| error.to_string())?;
-            let auth = URL_SAFE_NO_PAD
-                .decode(&job.auth)
-                .map_err(|error| error.to_string())?;
-            let builder = WebPushBuilder::new(
-                job.endpoint
-                    .parse()
-                    .map_err(|error: http::uri::InvalidUri| error.to_string())?,
-                peer,
-                Auth::clone_from_slice(&auth),
-            )
-            .with_vapid(&key_pair, &self.subject);
-            let title = match job.kind.as_str() {
-                "mention" => format!("{} omtalte deg", job.sender),
-                "thread_reply" => format!("Svar i tråd frå {}", job.sender),
-                "channel_message" => format!("{} i #{}", job.sender, job.channel_name),
-                _ => format!("Melding frå {}", job.sender),
-            };
-            let payload = serde_json::to_vec(&serde_json::json!({"web_push":8030,"notification":{"title":title,"body":notification_body(&job.body),"navigate":notification_path(job),"tag":format!("message-{}",job.message_id)}})).map_err(|error| error.to_string())?;
-            builder.build(payload).map_err(|error| error.to_string())
-        })();
-        let request = match result {
-            Ok(request) => request,
-            Err(error) => return DeliveryResult::Retry(error),
-        };
-        let (parts, body) = request.into_parts();
-        match self
-            .client
-            .request(parts.method, parts.uri.to_string())
-            .headers(parts.headers)
-            .body(body)
-            .send()
-            .await
-        {
-            Ok(response) if response.status().is_success() => DeliveryResult::Delivered,
-            Ok(response) if matches!(response.status().as_u16(), 404 | 410) => {
-                DeliveryResult::Expired
-            }
-            Ok(response) => {
-                DeliveryResult::Retry(format!("push service returned {}", response.status()))
-            }
-            Err(error) => DeliveryResult::Retry(error.to_string()),
-        }
-    }
-}
-
 fn validate_subscription(input: &PushSubscriptionInput) -> Result<(), RepositoryError> {
     validate_endpoint(&input.endpoint)?;
     let public_key = URL_SAFE_NO_PAD
@@ -763,16 +689,13 @@ fn validate_subscription(input: &PushSubscriptionInput) -> Result<(), Repository
     let auth = URL_SAFE_NO_PAD
         .decode(&input.keys.auth)
         .map_err(|_| RepositoryError::Conflict)?;
-    if public_key.len() != 65
-        || PublicKey::from_sec1_bytes(&public_key).is_err()
-        || auth.len() != 16
-    {
+    if !web_push::valid_public_key(&public_key) || auth.len() != 16 {
         return Err(RepositoryError::Conflict);
     }
     Ok(())
 }
 
-fn validate_endpoint(value: &str) -> Result<(), RepositoryError> {
+fn validate_endpoint(value: &str) -> Result<reqwest::Url, RepositoryError> {
     if value.len() > 4096 {
         return Err(RepositoryError::Conflict);
     }
@@ -794,7 +717,7 @@ fn validate_endpoint(value: &str) -> Result<(), RepositoryError> {
     {
         return Err(RepositoryError::Conflict);
     }
-    Ok(())
+    Ok(endpoint)
 }
 
 fn push_job_pg(row: sqlx::postgres::PgRow) -> Result<PushJob, RepositoryError> {

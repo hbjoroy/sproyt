@@ -1,3 +1,4 @@
+mod account_export;
 mod postgres;
 mod sqlite;
 
@@ -324,7 +325,7 @@ where
         .await
         .unwrap();
     let later_human_ordinal = repository
-        .signup_ordinal(later_human)
+        .signup_ordinal(later_human.clone())
         .await
         .unwrap()
         .unwrap();
@@ -390,6 +391,74 @@ where
         })
         .await
         .unwrap();
+    assert_eq!(
+        repository
+            .add_channel_member(AddChannelMember {
+                actor: actor.clone(),
+                channel_id: channel.id.clone(),
+                user_id: later_human.clone(),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied),
+        "a circle channel still requires circle membership"
+    );
+    for kind in [
+        ChannelKind::Public,
+        ChannelKind::Local,
+        ChannelKind::Private,
+    ] {
+        let unscoped = repository
+            .create_channel(CreateChannel {
+                actor: actor.clone(),
+                slug: ChannelSlug::new(format!("chat-{}-{suffix}", kind.as_str())).unwrap(),
+                name: DisplayName::new("Unscoped channel").unwrap(),
+                kind: kind.clone(),
+                circle_id: None,
+            })
+            .await
+            .unwrap();
+        let result = repository
+            .add_channel_member(AddChannelMember {
+                actor: actor.clone(),
+                channel_id: unscoped.id.clone(),
+                user_id: later_human.clone(),
+            })
+            .await;
+        if kind == ChannelKind::Private {
+            assert_eq!(result, Err(RepositoryError::PermissionDenied));
+            continue;
+        }
+        assert_eq!(result.unwrap().user_id, later_human);
+        assert_eq!(
+            repository
+                .add_channel_member(AddChannelMember {
+                    actor: later_human.clone(),
+                    channel_id: unscoped.id,
+                    user_id: actor.clone(),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied),
+            "ordinary channel members cannot add people"
+        );
+    }
+    let direct = repository
+        .open_direct_channel(actor.clone(), later_human.clone())
+        .await
+        .unwrap();
+    let personal = repository.open_personal_space(actor.clone()).await.unwrap();
+    for restricted in [direct, personal] {
+        assert_eq!(
+            repository
+                .add_channel_member(AddChannelMember {
+                    actor: actor.clone(),
+                    channel_id: restricted.id,
+                    user_id: later_human.clone(),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied),
+            "direct and personal channels do not allow membership management"
+        );
+    }
     let general_id = match repository
         .create_channel(CreateChannel {
             actor: actor.clone(),
@@ -1010,6 +1079,79 @@ where
         })
         .await
         .unwrap();
+    let mut global_channels = Vec::new();
+    for (slug, kind) in [
+        ("public", ChannelKind::Public),
+        ("local", ChannelKind::Local),
+        ("private", ChannelKind::Private),
+    ] {
+        global_channels.push(
+            repository
+                .create_channel(CreateChannel {
+                    actor: actor.clone(),
+                    slug: ChannelSlug::new(format!("felles-{slug}-{suffix}")).unwrap(),
+                    name: DisplayName::new(format!("Felles {slug}")).unwrap(),
+                    kind,
+                    circle_id: None,
+                })
+                .await
+                .unwrap(),
+        );
+    }
+    let [public, local, private] = global_channels.as_slice() else {
+        unreachable!();
+    };
+    let discoverable = repository
+        .list_joinable_channels(outsider.clone(), None)
+        .await
+        .unwrap();
+    assert!(discoverable.iter().any(|item| item.channel.id == public.id));
+    assert!(discoverable.iter().any(|item| item.channel.id == local.id));
+    assert!(discoverable.iter().all(|item| {
+        item.channel.circle_id.is_none()
+            && item.channel.kind != ChannelKind::Private
+            && item.channel.id != private.id
+    }));
+    assert!(
+        !repository
+            .list_joinable_channels(actor.clone(), None)
+            .await
+            .unwrap()
+            .iter()
+            .any(|item| item.channel.id == public.id || item.channel.id == local.id)
+    );
+    assert_eq!(
+        repository
+            .list_joinable_channels(
+                UserId::named(format!("chat-contract-unknown-{suffix}")),
+                None
+            )
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    assert_eq!(
+        repository
+            .list_joinable_channels(outsider.clone(), Some(circle.id.clone()))
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    let joined = repository
+        .join_channel(JoinChannel {
+            actor: outsider.clone(),
+            channel: ChannelRef::Id(public.id.clone()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(joined.channel_id, public.id);
+    assert!(
+        !repository
+            .list_joinable_channels(outsider.clone(), None)
+            .await
+            .unwrap()
+            .iter()
+            .any(|item| item.channel.id == public.id)
+    );
+
     assert_eq!(
         repository
             .list_circle_user_profiles(outsider.clone(), circle.id.clone())
@@ -1036,6 +1178,15 @@ where
         })
         .await
         .unwrap();
+    let owner_membership = repository
+        .add_channel_member(AddChannelMember {
+            actor: actor.clone(),
+            channel_id: shared_channel.id.clone(),
+            user_id: actor.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(owner_membership.role, crate::domain::MembershipRole::Owner);
     for _ in 0..2 {
         let membership = repository
             .add_channel_member(AddChannelMember {
@@ -1061,7 +1212,7 @@ where
     let private_channel = repository
         .create_channel(CreateChannel {
             actor: actor.clone(),
-            slug: ChannelSlug::new(format!("chat-private-{suffix}")).unwrap(),
+            slug: ChannelSlug::new(format!("chat-private-outsider-{suffix}")).unwrap(),
             name: DisplayName::new("Private channel").unwrap(),
             kind: ChannelKind::Private,
             circle_id: None,
@@ -1088,7 +1239,7 @@ where
     );
     assert!(
         repository
-            .list_joinable_channels(member.clone(), circle.id.clone())
+            .list_joinable_channels(member.clone(), Some(circle.id.clone()))
             .await
             .unwrap()
             .iter()

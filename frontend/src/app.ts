@@ -39,6 +39,7 @@
       import { createSseSocketFactory } from "./sse-socket";
       import { createDurableOutbox, DurableOutboxError, type DurableMedia, type DurableSend } from "./durable-outbox";
       import { NavigationController, readMessageLink, type MessageLink } from "./navigation";
+      import { ChannelTopicsApi } from "./channel-topics";
       import { ViewHistory, readViewTarget, type ViewTarget, type ViewPosition } from "./view-history";
       import { managementParent, type ManagementTarget } from "./application/management-target";
       import { clientCapabilities } from "./application/client-capabilities";
@@ -821,6 +822,7 @@
         participant: () => new URLSearchParams(window.location.search).get("participant")
       });
       const personalSpace = new PersonalSpaceApi(http, () => currentParticipantId, () => accountGeneration);
+      const channelTopics = new ChannelTopicsApi(http, () => currentParticipantId, () => accountGeneration);
       async function openPersonalSpace(owner: string): Promise<void> {
         const epoch = directNavigationEpoch;
         const account = accountGeneration;
@@ -3883,7 +3885,7 @@
 
         if (event.type === "joinable_channels_listed") {
           const channels = event.payload.channels.map((item) => channelFromBase(item.channel, "member", item.description));
-          if (managedCircleId && channels.every((channel) => channel.circle_id === managedCircleId)) {
+          if (!developmentPreviewActive && managedCircleId && channels.every((channel) => channel.circle_id === managedCircleId)) {
             renderManagedJoinableChannels(channels);
           }
           updateOnboardingButtons();
@@ -6474,6 +6476,7 @@
             }),
             imageGeneration,
             personalSpace,
+            channelTopics,
             openPersonalSpace,
             chatAgents: circleChatAgentsApi,
             agentLocations: agentLocationApi,

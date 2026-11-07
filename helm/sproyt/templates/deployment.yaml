@@ -46,6 +46,13 @@ spec:
             - configMapRef:
                 name: {{ include "sproyt.fullname" . }}
           env:
+            {{- if .Values.secret.channelTopicsExistingSecret }}
+            - name: SPROYT_CHANNEL_TOPICS_MODEL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.channelTopicsExistingSecret }}
+                  key: {{ .Values.secret.channelTopicsApiKeyKey }}
+            {{- end }}
             {{- if .Values.github.existingSecret }}
             - name: SPROYT_GITHUB_APP_ID
               valueFrom:

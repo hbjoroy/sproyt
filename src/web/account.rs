@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    domain::{ChannelId, CircleId},
+    domain::{ChannelId, CircleId, account_export::AccountExportError},
     notification::{NotificationPreferences, PushSubscriptionInput},
     operations::ClientEvent,
     server::AppState,
@@ -340,25 +340,18 @@ pub(crate) async fn export_my_data(
         Ok(principal) => principal,
         Err(error) => return auth_error_response(error),
     };
-    if let Err(error) = state.chat.ensure_user(principal.user.clone()).await {
-        return chat_error_response(error);
-    }
-    let export = match state.chat.export_user_data(principal.user.id.clone()).await {
-        Ok(export) => export,
-        Err(error) => return chat_error_response(error),
-    };
-    let body = match serde_json::to_vec_pretty(&export) {
-        Ok(body) => body,
-        Err(_) => return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
     let filename = format!(
         "attachment; filename=\"sproyt-export-{}.json\"",
         principal.user.id
     );
+    let export = match state.chat.start_user_export(principal.user).await {
+        Ok(export) => export,
+        Err(error) => return export_error_response(error),
+    };
     let Ok(disposition) = HeaderValue::from_str(&filename) else {
         return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    let mut response = body.into_response();
+    let mut response = axum::body::Body::from_stream(export.into_stream()).into_response();
     response.headers_mut().insert(
         axum::http::header::CONTENT_TYPE,
         HeaderValue::from_static("application/json; charset=utf-8"),
@@ -374,6 +367,34 @@ pub(crate) async fn export_my_data(
         HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
+    response
+}
+
+fn export_error_response(error: AccountExportError) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+
+    let mut response = match error {
+        AccountExportError::Busy => (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, "5")],
+            "Ein dataeksport køyrer allereie. Prøv igjen om litt.",
+        )
+            .into_response(),
+        AccountExportError::Unavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Dataeksport er mellombels utilgjengeleg. Prøv igjen seinare.",
+        )
+            .into_response(),
+        AccountExportError::Timeout => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "Dataeksporten tok for lang tid. Prøv igjen seinare.",
+        )
+            .into_response(),
+        AccountExportError::Repository(error) => repository_response(error),
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 

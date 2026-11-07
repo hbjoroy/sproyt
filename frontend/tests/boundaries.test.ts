@@ -1180,6 +1180,9 @@ test("shared Rust client-command fixture covers exactly the TypeScript discrimin
     if (typeof frame.type === "string") variants.add(frame.type);
   }
   assert.deepEqual([...variants].sort(), [...clientCommandTypes].sort());
+  assert.equal(isClientCommand({ type: "list_joinable_channels", payload: { circle_id: null } }), true);
+  assert.equal(isClientCommand({ type: "list_joinable_channels", payload: {} }), true);
+  assert.equal(isClientCommand({ type: "list_joinable_channels", payload: { circle_id: 1 } }), false);
   assert.equal(isClientCommand({ type: "add_channel_member", payload: { channel_id: "c1", participant_id: "u1" } }), false);
   assert.equal(isClientCommand({ type: "send_message", payload: { channel_id: "c1", body: "hei", unexpected: true } }), false);
   assert.equal(isClientCommand({ type: "set_task_done", payload: { task_id: "t1", done: "yes" } }), false);

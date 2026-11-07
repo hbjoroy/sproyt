@@ -5,7 +5,7 @@ use crate::{
     process::{ProcessRepository, ProcessService, StartedProcess},
     web::assets::{CONNECTION_SOURCE, NAVIGATION_SOURCE, SESSION_SOURCE},
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 use std::{
     sync::{
         Arc,
@@ -1673,6 +1673,7 @@ async fn start_test_server_with_state(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        topics: None,
         native_sessions: None,
         media_store: None,
         imagegen: None,
@@ -1711,6 +1712,7 @@ async fn start_postgres_test_server(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        topics: None,
         native_sessions: None,
         media_store: None,
         imagegen: None,
@@ -1749,6 +1751,7 @@ async fn start_test_server_with_gateway(
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        topics: None,
         native_sessions: None,
         media_store: None,
         imagegen: None,
@@ -2743,6 +2746,242 @@ async fn portable_export_is_private_complete_and_not_cacheable() {
     );
     assert!(!export.to_string().contains("must not leak"));
     server.abort();
+}
+
+#[tokio::test]
+async fn postgres_portable_export_bounds_replicas_and_keeps_its_authorized_snapshot() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let suffix = uuid::Uuid::now_v7().simple().to_string();
+    let database = format!("sproyt_export_{suffix}");
+    let admin = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    sqlx::query(&format!("create database {database}"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let mut isolated_url = reqwest::Url::parse(&url).unwrap();
+    isolated_url.set_path(&format!("/{database}"));
+    let result =
+        std::panic::AssertUnwindSafe(exercise_postgres_export(isolated_url.as_str(), &suffix))
+            .catch_unwind()
+            .await;
+    sqlx::query(&format!("drop database {database} with (force)"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
+async fn exercise_postgres_export(url: &str, suffix: &str) {
+    const MESSAGES: u64 = 2048;
+    let owner = format!("export-owner-{suffix}");
+    let peer = format!("export-peer-{suffix}");
+    let third = format!("export-third-{suffix}");
+    let first_repository = Arc::new(PostgresChatRepository::connect(url).await.unwrap());
+    first_repository.migrate().await.unwrap();
+    let (first, first_server) =
+        start_postgres_test_server(first_repository, Duration::from_secs(60)).await;
+    let second_repository = Arc::new(PostgresChatRepository::connect(url).await.unwrap());
+    let (second, second_server) =
+        start_postgres_test_server(second_repository, Duration::from_secs(60)).await;
+    let third_repository = Arc::new(PostgresChatRepository::connect(url).await.unwrap());
+    let (last, last_server) =
+        start_postgres_test_server(third_repository, Duration::from_secs(60)).await;
+    let mut owner_socket = connect_as(first, &owner).await;
+    let mut peer_socket = connect_as(second, &peer).await;
+    let own_channel = command(
+        &mut owner_socket,
+        "own-export-channel",
+        "create_channel",
+        serde_json::json!({"slug":format!("own-{suffix}"),"name":"Export history","kind":"private"}),
+    )
+    .await["payload"]["channel"]["id"]
+        .clone();
+    let peer_channel = command(
+        &mut peer_socket,
+        "peer-export-channel",
+        "create_channel",
+        serde_json::json!({"slug":format!("peer-{suffix}"),"name":"Shared history","kind":"public"}),
+    )
+    .await["payload"]["channel"]["id"]
+        .clone();
+    command(
+        &mut owner_socket,
+        "share-channel-for-export",
+        "join_channel",
+        serde_json::json!({"channel":{"type":"id","value":peer_channel}}),
+    )
+    .await;
+
+    // Keep both responses above local TCP buffers so leaving the bodies unread
+    // deterministically holds the admission slots on distinct replicas.
+    let seed = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(url)
+        .await
+        .unwrap();
+    for channel in [&own_channel, &peer_channel] {
+        let id = uuid::Uuid::parse_str(channel.as_str().unwrap()).unwrap();
+        sqlx::query("insert into messages (id,channel_id,sender_id,sender_display_name,sequence,body) select gen_random_uuid(),c.id,c.created_by,'Export fixture',seq,repeat('synthetic export data ',512) from channels c cross join generate_series(1,$2::bigint) seq where c.id=$1")
+            .bind(id)
+            .bind(MESSAGES as i64)
+            .execute(&seed)
+            .await
+            .unwrap();
+        sqlx::query("update channel_sequences set next_sequence=$2 where channel_id=$1")
+            .bind(id)
+            .bind(MESSAGES as i64 + 1)
+            .execute(&seed)
+            .await
+            .unwrap();
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let export = |address, participant: &str| {
+        client.get(format!(
+            "http://{address}/api/v1/me/export?participant={participant}"
+        ))
+    };
+    let first_export = export(first, &owner).send().await.unwrap();
+    assert_eq!(first_export.status(), reqwest::StatusCode::OK);
+    for address in [first, second] {
+        let busy = export(address, &owner).send().await.unwrap();
+        assert_eq!(busy.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(busy.headers()["retry-after"], "5");
+    }
+    let second_export = export(second, &peer).send().await.unwrap();
+    assert_eq!(second_export.status(), reqwest::StatusCode::OK);
+    let busy = export(last, &third).send().await.unwrap();
+    assert_eq!(busy.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(busy.headers()["retry-after"], "5");
+
+    let accepted = command(
+        &mut owner_socket,
+        "post-snapshot-chat",
+        "send_message",
+        serde_json::json!({"channel_id":own_channel,"body":"sent while both exports are open"}),
+    )
+    .await;
+    assert_eq!(accepted["payload"]["message"]["sequence"], MESSAGES + 1);
+    command(
+        &mut owner_socket,
+        "leave-after-export-admission",
+        "leave_channel",
+        serde_json::json!({"channel_id":peer_channel}),
+    )
+    .await;
+
+    drop(second_export);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let response = export(last, &third).send().await.unwrap();
+            if response.status() == reqwest::StatusCode::OK {
+                let _: serde_json::Value = response.json().await.unwrap();
+                break;
+            }
+            assert_eq!(response.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("dropping an unread export must release its global slot");
+
+    let snapshot: serde_json::Value = first_export.json().await.unwrap();
+    for channel in [&own_channel, &peer_channel] {
+        let entry = snapshot["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| &entry["channel"]["id"] == channel)
+            .expect("snapshot membership must remain consistent");
+        let messages = entry["messages"].as_array().unwrap();
+        assert_eq!(messages.len() as u64, MESSAGES);
+        for (sequence, message) in (1..=MESSAGES).zip(messages) {
+            assert_eq!(message["sequence"], sequence);
+        }
+    }
+    let fresh: serde_json::Value = export(first, &owner)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let channels = fresh["channels"].as_array().unwrap();
+    assert!(
+        channels
+            .iter()
+            .all(|entry| entry["channel"]["id"] != peer_channel)
+    );
+    let latest = channels
+        .iter()
+        .find(|entry| entry["channel"]["id"] == own_channel)
+        .unwrap()["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    assert_eq!(latest["sequence"], MESSAGES + 1);
+    assert_eq!(latest["body"], "sent while both exports are open");
+
+    let latest_id = uuid::Uuid::parse_str(latest["id"].as_str().unwrap()).unwrap();
+    sqlx::query("update messages set body=repeat('x',65537) where id=$1")
+        .bind(latest_id)
+        .execute(&seed)
+        .await
+        .unwrap();
+    let interrupted = export(first, &owner).send().await.unwrap();
+    let status = interrupted.status();
+    let received = interrupted.bytes().await;
+    sqlx::query("update messages set body=$2 where id=$1")
+        .bind(latest_id)
+        .bind("sent while both exports are open")
+        .execute(&seed)
+        .await
+        .unwrap();
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let error = received.expect_err("an error after headers must fail the body transfer");
+    assert!(
+        !error.is_timeout(),
+        "transfer must fail rather than hang: {error}"
+    );
+
+    let single_connection = Arc::new(
+        PostgresChatRepository::connect_with_pool(url, seed)
+            .await
+            .unwrap(),
+    );
+    let (scarce, scarce_server) =
+        start_postgres_test_server(single_connection, Duration::from_secs(60)).await;
+    let unavailable = export(scarce, &owner).send().await.unwrap();
+    assert_eq!(
+        unavailable.status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let mut scarce_chat = connect_as(scarce, &owner).await;
+    command(
+        &mut scarce_chat,
+        "still-available",
+        "list_my_channels",
+        serde_json::Value::Null,
+    )
+    .await;
+    scarce_server.abort();
+    first_server.abort();
+    second_server.abort();
+    last_server.abort();
 }
 
 async fn command(

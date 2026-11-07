@@ -171,7 +171,10 @@ impl Fixture {
                         .await
                         .map_err(crate::chatbot::storage)?;
                 }
-                let output = export_memory!(tx, $pg, self.owner);
+                let mut output = Vec::new();
+                for_each_export_memory!(tx, $pg, self.owner, view, {
+                    output.push(serde_json::to_value(view).map_err(crate::chatbot::storage)?);
+                });
                 tx.commit().await.map_err(crate::chatbot::storage)?;
                 Ok(output)
             }};

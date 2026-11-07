@@ -141,7 +141,8 @@ export function isClientCommand(value: unknown): value is ClientCommand {
   if ((value.type === "mark_read" || value.type === "mark_thread_read") && (typeof value.payload.sequence !== "number" || !Number.isSafeInteger(value.payload.sequence) || value.payload.sequence < 0)) return false;
   const payload = value.payload;
   switch (value.type) {
-    case "list_circle_users": case "list_joinable_channels": case "delete_circle": case "leave_circle": case "create_circle_invitation": return hasFields(payload, ["circle_id"]) && isString(payload.circle_id);
+    case "list_circle_users": case "delete_circle": case "leave_circle": case "create_circle_invitation": return hasFields(payload, ["circle_id"]) && isString(payload.circle_id);
+    case "list_joinable_channels": return hasFields(payload, [], ["circle_id"]) && (payload.circle_id == null || isString(payload.circle_id));
     case "set_status": return hasFields(payload, ["text", "emoji", "expires_at"]) && strings(payload, ["text", "emoji"]) && (payload.expires_at === null || isString(payload.expires_at));
     case "update_profile": return hasFields(payload, ["display_name"]) && isString(payload.display_name);
     case "open_direct_channel": return hasFields(payload, ["user_id"]) && isString(payload.user_id);
