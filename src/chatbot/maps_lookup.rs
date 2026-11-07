@@ -8,7 +8,7 @@ use super::{
     place_lookup::PlaceLookupDescriptor,
 };
 use aes_gcm::{
-    Aes256Gcm, Nonce,
+    Aes256Gcm,
     aead::{Aead, KeyInit},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -347,7 +347,7 @@ impl RouteSigner {
         getrandom::fill(&mut nonce).map_err(|_| MapsLookupError::Unavailable)?;
         let ciphertext = self
             .0
-            .encrypt(Nonce::from_slice(&nonce), plaintext.as_ref())
+            .encrypt(&nonce.into(), plaintext.as_ref())
             .map_err(|_| MapsLookupError::Unavailable)?;
         let mut result = nonce.to_vec();
         result.extend(ciphertext);
@@ -368,9 +368,12 @@ impl RouteSigner {
         if bytes.len() < 28 {
             return Err(MapsLookupError::NotFound);
         }
+        let nonce: [u8; 12] = bytes[..12]
+            .try_into()
+            .map_err(|_| MapsLookupError::NotFound)?;
         let plaintext = self
             .0
-            .decrypt(Nonce::from_slice(&bytes[..12]), &bytes[12..])
+            .decrypt(&nonce.into(), &bytes[12..])
             .map_err(|_| MapsLookupError::NotFound)?;
         let claims: RouteClaims =
             serde_json::from_slice(&plaintext).map_err(|_| MapsLookupError::NotFound)?;
@@ -715,10 +718,7 @@ mod tests {
         let nonce = [3u8; 12];
         let encrypted = signer
             .0
-            .encrypt(
-                Nonce::from_slice(&nonce),
-                serde_json::to_vec(&claims).unwrap().as_ref(),
-            )
+            .encrypt(&nonce.into(), serde_json::to_vec(&claims).unwrap().as_ref())
             .unwrap();
         let mut bytes = nonce.to_vec();
         bytes.extend(encrypted);
