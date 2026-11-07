@@ -31,3 +31,9 @@
 .sp-event-response legend { font-weight:600; }
 .sp-event-response label { display:inline-flex; align-items:center; gap:6px; min-height:44px; margin-inline-end:12px; }
 @container (max-width:430px) { .sp-events-panel { padding:12px; } .sp-event-pills { padding-inline:8px; } }
+/* On short screens, recover surrounding whitespace while retaining every
+   tab, writing control and its full touch target. */
+@media (max-height:430px) {
+  .sp-channel-tabs { padding-block:0; }
+  #sproyt-react-preview .sp-channel-events .sp-composer { margin-bottom:0; padding-block:.125rem; }
+}
