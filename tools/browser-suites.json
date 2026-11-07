@@ -1,5 +1,6 @@
 {
   "webkit": [
+    "ui-react-circle-processes.spec.ts",
     "ui-react-channel-references.spec.ts",
     "ui-react-felles-discovery.spec.ts",
     "ui-react-layout-refinement.spec.ts",
@@ -44,6 +45,7 @@
     "ui-react-channel-topics.spec.ts"
   ],
   "layout": [
+    "ui-react-circle-processes.spec.ts",
     "ui-react-layout-refinement.spec.ts",
     "ui-react-panel-resize.spec.ts",
     "ui-react-visual-restoration.spec.ts",

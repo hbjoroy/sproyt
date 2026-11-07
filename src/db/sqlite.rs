@@ -2538,6 +2538,13 @@ impl ChatRepository for SqliteChatRepository {
 }
 
 impl ProcessRepository for SqliteChatRepository {
+    fn circle_processes<'a>(
+        &'a self,
+        query: crate::process::CircleProcessQuery,
+    ) -> ProcessRepositoryFuture<'a, crate::process::CircleProcessPage> {
+        Box::pin(crate::process::overview::list_sqlite(&self.pool, query))
+    }
+
     fn configure_task_route<'a>(
         &'a self,
         command: crate::process::ConfigureTaskRoute,

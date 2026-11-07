@@ -2884,6 +2884,13 @@ async fn notify_presence(
 }
 
 impl ProcessRepository for PostgresChatRepository {
+    fn circle_processes<'a>(
+        &'a self,
+        query: crate::process::CircleProcessQuery,
+    ) -> ProcessRepositoryFuture<'a, crate::process::CircleProcessPage> {
+        Box::pin(crate::process::overview::list_postgres(&self.pool, query))
+    }
+
     fn configure_task_route<'a>(
         &'a self,
         command: crate::process::ConfigureTaskRoute,

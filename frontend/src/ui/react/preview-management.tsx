@@ -17,6 +17,7 @@ import { AgentSettingsDrafts } from "./agent-settings-drafts";
 import { GettingStarted } from "./getting-started";
 import { ThreadDirectory } from "./thread-directory";
 import type { ThreadPreviewApi } from "../../thread-previews";
+import { CircleProcesses } from "./circle-processes";
 
 export type { ManagementTarget } from "../../application/management-target";
 type SettingsRow = { label: string; detail: string; target: ManagementTarget; aliases?: string };
@@ -269,6 +270,9 @@ export function PreviewManagement({ snapshot, capabilities, settings, community,
           {community.agentMemory && row({ label: "Mitt agentminne", detail: "Sjå, rett og slett ditt eige minne", target: { kind: "memory", circleId: circle.id } })}
           {circle.role === "owner" && row({ label: "Endre kretsnamn", detail: "Namnet alle medlemmene ser", target: { kind: "community", destination: { kind: "rename-circle", circleId: circle.id } } })}
         </section>
+        {administrator(circle.role) && community.circleProcesses && selfId && <CircleProcesses
+          key={`${selfId}:${circle.id}:${accessEpoch}`} api={community.circleProcesses} circleId={circle.id} owner={selfId}
+          admitted={() => agentScopeCurrent(circle.id, accessEpoch)} />}
       </div>
     </DestinationPage>}
     {isDirectory && available && <CircleDirectory key={`${selfId}:${activeKey}`} onRetry={onRetryDirectory} invitationOnly={active?.kind === "community" && active.destination.kind === "accept-invitation"} snapshot={snapshot} host={community} onClose={close} row={row} />}

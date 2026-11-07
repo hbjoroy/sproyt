@@ -1,3 +1,6 @@
+pub mod overview;
+pub use overview::{CircleProcessPage, CircleProcessQuery};
+
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
@@ -199,6 +202,11 @@ pub struct OutboxJob {
 }
 
 pub trait ProcessRepository: Send + Sync + 'static {
+    fn circle_processes<'a>(
+        &'a self,
+        query: CircleProcessQuery,
+    ) -> ProcessRepositoryFuture<'a, CircleProcessPage>;
+
     fn enqueue_start<'a>(
         &'a self,
         command: EnqueueProcessStart,
@@ -404,6 +412,13 @@ impl ProcessService {
             return Err(RepositoryError::Conflict);
         }
         self.repository.configure_process_role(command).await
+    }
+
+    pub async fn circle_processes(
+        &self,
+        query: CircleProcessQuery,
+    ) -> Result<CircleProcessPage, RepositoryError> {
+        self.repository.circle_processes(query).await
     }
 
     pub async fn list_process_applications(

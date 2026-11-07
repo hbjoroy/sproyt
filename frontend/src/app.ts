@@ -41,6 +41,7 @@
       import { NavigationController, readMessageLink, type MessageLink } from "./navigation";
       import { ChannelTopicsApi } from "./channel-topics";
       import { ChannelReferenceApi } from "./channel-references";
+      import { CircleProcessApi } from "./circle-processes";
       import { ViewHistory, readViewTarget, type ViewTarget, type ViewPosition } from "./view-history";
       import { managementParent, type ManagementTarget } from "./application/management-target";
       import { clientCapabilities } from "./application/client-capabilities";
@@ -6585,7 +6586,8 @@
               },
               selfId: () => currentParticipantId, channels: () => knownChannels, circles: () => knownCircles,
               slugify, channelSlug: scopedCircleChannelSlug, invitationToken: invitationValueToToken,
-              enrollment: enrollmentApi, chatAgents: circleChatAgentsApi, agentMemory: agentMemoryApi
+              enrollment: enrollmentApi, chatAgents: circleChatAgentsApi, agentMemory: agentMemoryApi,
+              circleProcesses: new CircleProcessApi(http)
             }),
             inboxState: () => ({
               channels: knownChannels,
