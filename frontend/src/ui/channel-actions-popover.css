@@ -3,10 +3,9 @@
 .sp-theme .sp-channel-actions-popover .sp-button { width: 100%; min-height: 36px; height: auto; justify-content: flex-start; text-align: start; white-space: normal; padding: 8px 10px; }
 .sp-theme .sp-channel-actions-popover .sp-button:focus-visible, .sp-theme .sp-channel-actions-more summary:focus-visible { outline: 2px solid var(--sp-text); outline-offset: -2px; }
 .sp-theme .sp-channel-actions-more { border-top: 1px solid var(--sp-line); margin-top: 4px; }
-.sp-theme .sp-channel-actions-more summary { display: flex; align-items: center; min-height: 36px; padding: 8px 10px; cursor: pointer; list-style: none; }
+.sp-theme .sp-channel-actions-more summary { display: flex; align-items: center; min-height: 44px; padding: 8px 10px; padding-inline-start: calc(10px + 1.25rem + .6rem); border: 1px solid transparent; line-height: 1.35; cursor: pointer; list-style: none; }
 .sp-theme .sp-channel-actions-more summary::after { content: "›"; margin-inline-start: auto; }
 .sp-theme .sp-channel-actions-more[open] summary::after { content: "⌄"; }
-@media (pointer: coarse) { .sp-theme .sp-channel-actions-popover .sp-button, .sp-theme .sp-channel-actions-more summary { min-height: 44px; } }
 
 .sp-theme .sp-channel-actions-inline { display: grid; gap: 2px; }
 .sp-theme :is(.sp-channel-actions-popover, .sp-channel-actions-inline) .sp-button { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); column-gap: .6rem; width: 100%; min-height: 44px; height: auto; text-align: start; white-space: normal; padding: 8px 10px; }

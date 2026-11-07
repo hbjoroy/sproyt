@@ -40,6 +40,9 @@
 .sp-theme .sp-community-dialog .sp-direct-people .sp-person-info { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .875rem; }
 .sp-theme .sp-direct-people .sp-person-info small { display: inline; margin-inline-start: .5rem; font-size: .75rem; }
 @media (pointer: fine) {
+  @container sp-app (min-width: 901px) {
+    .sp-theme .sp-product-navigation > .sp-field > .sp-input { min-height: 36px; padding-block: .3125rem; }
+  }
   .sp-theme [data-conversation-group="scope:direct"] .sp-conversation { min-height: 36px; }
   .sp-theme .sp-community-dialog .sp-direct-people .sp-person { min-height: 36px; }
   .sp-theme .sp-direct-people .sp-community-direct.sp-button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
