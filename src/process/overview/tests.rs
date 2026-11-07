@@ -16,7 +16,7 @@ insert into circles(id,slug,name,created_by) values('{circle}','overview-{circle
 insert into circle_memberships(circle_id,user_id,role) values('{circle}','{owner}','owner'),('{circle}','{moderator}','moderator'),('{circle}','{member}','member'),('{circle}','{agent}','moderator'),('{other}','{owner}','owner');
 insert into channels(id,slug,name,kind,created_by,circle_id) values('{channel}','overview-{channel}','Visible','public','{owner}','{circle}'),('{hidden}','overview-{hidden}','Hidden','private','{owner}','{circle}'),('{cross}','overview-{cross}','Other','public','{owner}','{other}');
 insert into channel_memberships(channel_id,user_id,role) values('{channel}','{owner}','owner'),('{channel}','{moderator}','member'),('{channel}','{member}','moderator'),('{channel}','{agent}','moderator'),('{cross}','{owner}','owner');
-insert into messages(id,channel_id,sender_id,sequence,body) values('{message}','{channel}','{owner}',1,'SECRET-SOURCE');
+insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values('{message}','{channel}','{owner}','Owner',1,'SECRET-SOURCE');
 insert into work_applications(id,key,name,owner_circle_id,updated_by,created_at,updated_at) values('{application}','a-{application}','Application','{circle}','{owner}',current_timestamp,current_timestamp);
 insert into channel_process_bindings(id,channel_id,process_key,namespace,definition_name,definition_version,updated_at) values('{binding}','{channel}','review','sproyt','work-item-review','1.1.0',current_timestamp);
 insert into channel_task_routes(id,binding_id,channel_id,task_key,process_role) values('{export_route}','{binding}','{channel}','status','reviewer');
