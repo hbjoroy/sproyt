@@ -29,6 +29,16 @@ test("event references retain UUID identity and old aliases, preserve rich Markd
   assert.ok(html.includes(`event=${event.id}`));
   assert.ok(!html.includes("channel=wrong"));
 });
+test("GFM still autolinks safe web URLs beside event references with the normal link protections", () => {
+  const html = render("Sjå https://example.org/agenda og #arr:konsert.\n\n| Tid | Stad |\n| --- | --- |\n| 19:00 | Salen |");
+  assert.match(html, /href="https:\/\/example\.org\/agenda"/u);
+  assert.ok(html.includes('target="_blank"'));
+  assert.ok(html.includes('rel="noopener noreferrer"'));
+  assert.ok(html.includes('referrerPolicy="no-referrer"'));
+  assert.ok(html.includes("<table>"));
+  assert.ok(html.includes('data-event-reference="'));
+  assert.ok(!html.includes('<img'));
+});
 test("event references skip code, escaped tokens, existing links, HTML and incomplete suffixes", () => {
   for (const source of ["`#arr:konsert`", "\\#arr:konsert", "[#arr:konsert](https://example.org)", "#arr:konsert_foo", "#arr:konsertø", "#arr:konsert-extra", "abc#arr:konsert"]) {
     assert.ok(!render(source).includes("data-event-reference="), source);
