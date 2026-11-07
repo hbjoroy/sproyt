@@ -207,7 +207,7 @@ impl SourceMetadata {
             self.deleted_at,
             raw_body,
         ))?;
-        self.version = Some(SourceVersion(format!("{:x}", Sha256::digest(bytes))));
+        self.version = Some(SourceVersion(hex::encode(Sha256::digest(bytes))));
         Ok(())
     }
 

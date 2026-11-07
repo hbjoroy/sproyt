@@ -1441,7 +1441,7 @@ mod tests {
         let path = output.join(format!("agent-maria-{}.png", job.id));
         std::fs::write(&path, &bytes).unwrap();
         use sha2::Digest;
-        std::fs::write(output.join("comfy-proof.json"),serde_json::to_vec_pretty(&json!({"job_id":job.id,"prompt_id":job.prompt_id,"identity_id":identity.id,"identity_sha256":identity.sha256(),"image_sha256":format!("{:x}",sha2::Sha256::digest(&bytes)),"image_bytes":bytes.len(),"file":path,"channel_posted":false,"expansion":"explicit canonical identity, server fallback","visual_age_check":"pending"})).unwrap()).unwrap();
+        std::fs::write(output.join("comfy-proof.json"),serde_json::to_vec_pretty(&json!({"job_id":job.id,"prompt_id":job.prompt_id,"identity_id":identity.id,"identity_sha256":identity.sha256(),"image_sha256":hex::encode(sha2::Sha256::digest(&bytes)),"image_bytes":bytes.len(),"file":path,"channel_posted":false,"expansion":"explicit canonical identity, server fallback","visual_age_check":"pending"})).unwrap()).unwrap();
     }
 
     #[tokio::test]

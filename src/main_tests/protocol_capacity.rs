@@ -106,7 +106,7 @@ async fn chunk_upload_http_preserves_large_video_and_enforces_admission() {
             .put(format!(
                 "{upload_url}/chunks/{index}?participant=chunk-owner"
             ))
-            .header("x-chunk-sha256", format!("{:x}", Sha256::digest(chunk)))
+            .header("x-chunk-sha256", hex::encode(Sha256::digest(chunk)))
             .body(chunk.to_vec())
             .send()
             .await
@@ -123,7 +123,7 @@ async fn chunk_upload_http_preserves_large_video_and_enforces_admission() {
     assert_eq!(completed["media"]["size_bytes"], bytes.len());
     assert_eq!(
         completed["media"]["sha256"],
-        format!("{:x}", Sha256::digest(&bytes))
+        hex::encode(Sha256::digest(&bytes))
     );
     let media_id = completed["media"]["id"].as_str().unwrap();
     let repeated: serde_json::Value = client
@@ -143,8 +143,8 @@ async fn chunk_upload_http_preserves_large_video_and_enforces_admission() {
         hash.update(&chunk);
     }
     assert_eq!(
-        format!("{:x}", hash.finalize()),
-        format!("{:x}", Sha256::digest(&bytes))
+        hex::encode(hash.finalize()),
+        hex::encode(Sha256::digest(&bytes))
     );
     let response = client
         .get(&media_url)
@@ -189,7 +189,7 @@ async fn chunk_upload_http_preserves_large_video_and_enforces_admission() {
             staged.id,
             0,
             &jpeg,
-            &format!("{:x}", Sha256::digest(&jpeg)),
+            &hex::encode(Sha256::digest(&jpeg)),
         )
         .await
         .unwrap();

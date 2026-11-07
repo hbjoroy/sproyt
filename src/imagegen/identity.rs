@@ -20,7 +20,7 @@ static MARIA: Identity = Identity {
 
 impl Identity {
     pub fn sha256(&self) -> String {
-        format!("{:x}", Sha256::digest(self.reference))
+        hex::encode(Sha256::digest(self.reference))
     }
 }
 

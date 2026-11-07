@@ -96,13 +96,10 @@ fn view(r: Record) -> RollView {
 }
 fn consent_binding(d: &PlaceLookupDescriptor) -> String {
     use sha2::{Digest, Sha256};
-    format!(
-        "{:x}",
-        Sha256::digest(format!(
-            "geoapify-roll-v1:1500:bar,pub:{}",
-            d.preview_binding()
-        ))
-    )
+    hex::encode(Sha256::digest(format!(
+        "geoapify-roll-v1:1500:bar,pub:{}",
+        d.preview_binding()
+    )))
 }
 impl CircleChatAgents {
     fn roll_now(&self) -> &'static str {

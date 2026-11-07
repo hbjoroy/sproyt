@@ -103,7 +103,7 @@ async fn write_original(store: &MediaStore, job: &PreviewJob, input: &Path) -> R
         index += 1;
     }
     file.flush().await?;
-    if format!("{:x}", hash.finalize()) != job.sha256 {
+    if hex::encode(hash.finalize()) != job.sha256 {
         return Err("original hash mismatch".into());
     }
     Ok(())

@@ -756,7 +756,7 @@ impl Harness {
                 upload["id"].as_str().unwrap()
             ),
         )
-        .header("x-chunk-sha256", format!("{:x}", Sha256::digest(bytes)))
+        .header("x-chunk-sha256", hex::encode(Sha256::digest(bytes)))
         .body(bytes.to_vec())
         .send()
         .await

@@ -517,7 +517,7 @@ impl MediaStore {
         if bytes.is_empty() || bytes.len() > CHUNK_BYTES {
             return Err(UploadError::Invalid);
         }
-        let hash = format!("{:x}", Sha256::digest(bytes));
+        let hash = hex::encode(Sha256::digest(bytes));
         if hash != claimed_hash {
             return Err(UploadError::Invalid);
         }
@@ -629,7 +629,7 @@ impl MediaStore {
         if !attachment.is_some_and(attachments::Validator::finish) {
             return Err(UploadError::Unsupported);
         }
-        let sha256 = format!("{:x}", hash.finalize());
+        let sha256 = hex::encode(hash.finalize());
         with_store!(self, |pool, pg| {
             let mut tx = write_transaction!(pool, pg);
             // The all-writer trigger uses this same lock. Always budget ->
