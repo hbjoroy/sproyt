@@ -1972,11 +1972,11 @@ impl ChatRepository for InMemoryChatRepository {
                 role: MembershipRole::Member,
                 last_read_sequence: ChannelSequence::new(0),
             };
-            state
+            Ok(state
                 .memberships
                 .entry((command.channel_id, command.user_id))
-                .or_insert(membership.clone());
-            Ok(membership)
+                .or_insert(membership)
+                .clone())
         })
     }
 

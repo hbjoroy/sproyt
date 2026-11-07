@@ -441,6 +441,24 @@ where
             "ordinary channel members cannot add people"
         );
     }
+    let direct = repository
+        .open_direct_channel(actor.clone(), later_human.clone())
+        .await
+        .unwrap();
+    let personal = repository.open_personal_space(actor.clone()).await.unwrap();
+    for restricted in [direct, personal] {
+        assert_eq!(
+            repository
+                .add_channel_member(AddChannelMember {
+                    actor: actor.clone(),
+                    channel_id: restricted.id,
+                    user_id: later_human.clone(),
+                })
+                .await,
+            Err(RepositoryError::PermissionDenied),
+            "direct and personal channels do not allow membership management"
+        );
+    }
     let general_id = match repository
         .create_channel(CreateChannel {
             actor: actor.clone(),
@@ -1145,6 +1163,67 @@ where
             .add_channel_member(AddChannelMember {
                 actor: actor.clone(),
                 channel_id: circle_channel.id.clone(),
+                user_id: outsider.clone(),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    let shared_channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("chat-shared-{suffix}")).unwrap(),
+            name: DisplayName::new("Shared channel").unwrap(),
+            kind: ChannelKind::Public,
+            circle_id: None,
+        })
+        .await
+        .unwrap();
+    let owner_membership = repository
+        .add_channel_member(AddChannelMember {
+            actor: actor.clone(),
+            channel_id: shared_channel.id.clone(),
+            user_id: actor.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(owner_membership.role, crate::domain::MembershipRole::Owner);
+    for _ in 0..2 {
+        let membership = repository
+            .add_channel_member(AddChannelMember {
+                actor: actor.clone(),
+                channel_id: shared_channel.id.clone(),
+                user_id: outsider.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(membership.user_id, outsider);
+        assert_eq!(membership.role, crate::domain::MembershipRole::Member);
+    }
+    assert_eq!(
+        repository
+            .add_channel_member(AddChannelMember {
+                actor: outsider.clone(),
+                channel_id: shared_channel.id,
+                user_id: member.clone(),
+            })
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
+    let private_channel = repository
+        .create_channel(CreateChannel {
+            actor: actor.clone(),
+            slug: ChannelSlug::new(format!("chat-private-outsider-{suffix}")).unwrap(),
+            name: DisplayName::new("Private channel").unwrap(),
+            kind: ChannelKind::Private,
+            circle_id: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .add_channel_member(AddChannelMember {
+                actor: actor.clone(),
+                channel_id: private_channel.id,
                 user_id: outsider,
             })
             .await,
