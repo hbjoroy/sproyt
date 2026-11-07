@@ -59,7 +59,7 @@ pub enum ClientCommand {
         description: String,
     },
     ListJoinableChannels {
-        circle_id: crate::CircleId,
+        circle_id: Option<crate::CircleId>,
     },
     AddChannelMember {
         channel_id: ChannelId,

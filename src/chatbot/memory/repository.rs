@@ -204,24 +204,39 @@ macro_rules! read_memory {
 }
 pub(crate) use read_memory;
 
-macro_rules! export_memory {
-    ($tx:expr,$pg:expr,$actor:expr) => {{
-        use crate::chatbot::{sql,storage};
-        use crate::chatbot::memory::repository as memory;
+macro_rules! for_each_export_memory {
+    ($tx:ident, $pg:expr, $actor:expr, $view:ident, $visit:block) => {{
+        use crate::chatbot::{sql, storage};
         use sqlx::Row;
-        let rows = sqlx::query(&sql("select cast(p.circle_id as text) as circle_id,cast(p.agent_id as text) as agent_id from agent_memory_profiles p join circle_memberships cm on cm.circle_id=p.circle_id and cm.user_id=p.user_id join users u on u.id=p.user_id where p.user_id=?uuid and u.kind='human' order by p.circle_id,p.agent_id",$pg))
-            .bind($actor.to_string()).fetch_all(&mut *$tx).await.map_err(storage)?;
-        let mut output=Vec::new();
-        for row in rows {
-            let circle: String=row.try_get("circle_id").map_err(storage)?;
-            let agent: String=row.try_get("agent_id").map_err(storage)?;
-            let view=memory::read_memory!($tx,$pg,$actor,circle,agent);
-            output.push(serde_json::to_value(view).map_err(storage)?);
+        let actor_id = $actor.to_string();
+        let profile_query = sql(
+            "select cast(p.circle_id as text) as circle_id,cast(p.agent_id as text) as agent_id
+             from agent_memory_profiles p join circle_memberships cm on cm.circle_id=p.circle_id and cm.user_id=p.user_id
+             join users u on u.id=p.user_id where p.user_id=?uuid and u.kind='human'
+             and (?uuid is null or (p.circle_id,p.agent_id)>(?uuid,?uuid)) order by p.circle_id,p.agent_id limit 1",
+            $pg,
+        );
+        let mut last_circle: Option<String> = None;
+        let mut last_agent: Option<String> = None;
+        while let Some(row) = sqlx::query(&profile_query)
+            .bind(&actor_id)
+            .bind(last_circle.as_deref())
+            .bind(last_circle.as_deref())
+            .bind(last_agent.as_deref())
+            .fetch_optional(&mut *$tx)
+            .await
+            .map_err(storage)?
+        {
+            let circle: String = row.try_get("circle_id").map_err(storage)?;
+            let agent: String = row.try_get("agent_id").map_err(storage)?;
+            let $view = crate::chatbot::memory::repository::read_memory!($tx, $pg, $actor, circle, agent);
+            $visit
+            last_circle = Some(circle);
+            last_agent = Some(agent);
         }
-        output
     }};
 }
-pub(crate) use export_memory;
+pub(crate) use for_each_export_memory;
 
 macro_rules! authorize {
     ($tx:expr,$pg:expr,$actor:expr,$circle:expr,$agent:expr,$lock:expr) => {{

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useId, useRef, useSyncExternalStore } from "react";
 import type { ReactNode, Ref } from "react";
 import { AppShell, Button, ConversationList, Message, Status, TextField, Theme } from "@sproyt/ui/react";
 import type { Conversation, ThemeMode } from "@sproyt/ui/react";
@@ -46,6 +46,8 @@ export function ConversationNavigation(props: ConversationNavigationProps) {
 }
 
 export interface TimelineProps {
+  readonly id?: string;
+  readonly hidden?: boolean;
   readonly channelId: string | null;
   readonly parentMessageId?: string | null;
   readonly messages: readonly ChatMessage[];
@@ -63,6 +65,8 @@ export interface TimelineProps {
   readonly viewportRef?: Ref<HTMLDivElement>;
   readonly onScroll?: () => void;
   readonly notices?: readonly string[];
+  /** Search results keep server order and can include both roots and replies. */
+  readonly matches?: Readonly<{ label: string; onOpen: (message: ChatMessage, anchor: HTMLElement) => void }>;
   readonly formatTime: (sentAt: string) => string;
   readonly formatAuthor?: (message: ChatMessage) => string;
   /** Marks public first-50 members without exposing their private signup number. */
@@ -89,7 +93,10 @@ export function messagesForTimeline(props: Pick<TimelineProps, "messages" | "cha
 }
 
 export function ConversationTimeline(props: TimelineProps) {
-  const messages = messagesForTimeline(props);
+  const matches = props.matches;
+  const messages = matches
+    ? props.messages.filter(message => message.channel_id === props.channelId && !message.deleted_at)
+    : messagesForTimeline(props);
   const entries: readonly ConversationTimelineItem[] = props.items ?? [
     ...(props.notices ?? []).map(text => ({ type: "system" as const, text })),
     ...messages.map(message => ({ type: "message" as const, message }))
@@ -97,23 +104,31 @@ export function ConversationTimeline(props: TimelineProps) {
   const visibleIds = new Set(messages.map(message => message.id));
   const visibleEntries = entries.filter(item => item.type === "system"
     || visibleIds.has(item.message.id));
-  return <div className="sp-timeline" ref={props.viewportRef} onScroll={props.onScroll}
-    aria-label={props.parentMessageId ? "Svar i tråden" : "Meldingar"} aria-busy={props.loading || undefined}>
-    {props.hasOlder && !props.error && props.onLoadOlder && <Button busy={props.loading} disabled={props.loading} onClick={props.onLoadOlder}>Last eldre meldingar</Button>}
+  const loadOlder = props.hasOlder && !props.error && props.onLoadOlder && <Button busy={props.loading}
+    disabled={props.loading} onClick={props.onLoadOlder}>{matches ? "Last eldre treff" : "Last eldre meldingar"}</Button>;
+  return <div className="sp-timeline" id={props.id} hidden={props.hidden} ref={props.viewportRef} onScroll={props.onScroll}
+    aria-label={matches?.label ?? (props.parentMessageId ? "Svar i tråden" : "Meldingar")} aria-busy={props.loading || undefined}>
+    {!matches && loadOlder}
     {props.error && <Status tone="error">{props.error}{props.onRetry && <Button onClick={props.onRetry}>Prøv igjen</Button>}</Status>}
-    {props.loading && <Status>Lastar meldingar …</Status>}
-    {!props.loading && !props.error && !props.hasOlder && visibleEntries.length === 0 && <Status>Ingen meldingar enno.</Status>}
-    {!props.loading && !props.error && !props.hasOlder && messages.length > 0 && props.onLoadOlder && <Status>Starten på samtalen</Status>}
+    {props.loading && <Status>{matches ? "Lastar emnetreff …" : "Lastar meldingar …"}</Status>}
+    {!props.loading && !props.error && !props.hasOlder && visibleEntries.length === 0 && <Status>{matches ? "Ingen meldingar med dette emnet." : "Ingen meldingar enno."}</Status>}
+    {!matches && !props.loading && !props.error && !props.hasOlder && messages.length > 0 && props.onLoadOlder && <Status>Starten på samtalen</Status>}
     {visibleEntries.map((item, index) => item.type === "system"
       ? <Status key={`notice-${index}`}>{item.text}</Status>
-      : <ConversationMessage key={item.message.id} message={item.message} {...props}
+      : <Fragment key={item.message.id}><ConversationMessage message={item.message} {...props}
           unreadBoundary={props.unreadAfterSequence !== undefined && item.message.sequence > props.unreadAfterSequence
             && !visibleEntries.slice(0, index).some(entry => entry.type === "message" && entry.message.sequence > props.unreadAfterSequence!)}
           dateLabel={index === 0 || (() => {
             const previous = visibleEntries.slice(0, index).reverse().find(entry => entry.type === "message");
             return previous?.type !== "message" || new Date(previous.message.sent_at).toLocaleDateString(["nn-NO", "nb-NO"])
               !== new Date(item.message.sent_at).toLocaleDateString(["nn-NO", "nb-NO"]);
-          })() ? new Date(item.message.sent_at).toLocaleDateString(["nn-NO", "nb-NO"], { day: "numeric", month: "long", year: "numeric" }) : undefined} />)}
+          })() ? new Date(item.message.sent_at).toLocaleDateString(["nn-NO", "nb-NO"], { day: "numeric", month: "long", year: "numeric" }) : undefined} />
+          {matches && <Button className="sp-topic-open-message" variant="quiet" data-topic-open={item.message.id}
+            onClick={event => matches.onOpen(item.message, event.currentTarget)}>
+            {item.message.parent_message_id ? "Opne i tråden" : "Opne i samtalen"}
+          </Button>}
+        </Fragment>)}
+    {matches && loadOlder}
   </div>;
 }
 
@@ -128,9 +143,10 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   const message = props.message;
   const wrapper = useRef<HTMLDivElement>(null);
   const fullTimestamp = formatMessageDateTime(message.sent_at);
-  const timestampTooltipId = `message-time-${message.id}`;
+  const accessibilityId = useId();
+  const timestampTooltipId = `message-time-${accessibilityId}`;
   const earlyAdopter = props.earlyAdopter?.(message) ?? false;
-  const earlyAdopterTooltipId = `early-adopter-${message.id}`;
+  const earlyAdopterTooltipId = `early-adopter-${accessibilityId}`;
   const deliveryStatus = props.messageStatus?.(message);
   const visibleStatus = deliveryStatus === "Sendt" ? undefined : deliveryStatus?.replace(/^Sendt · /, "");
   useEffect(() => {
@@ -284,6 +300,7 @@ export interface ConversationViewProps {
   readonly isPersonal?: boolean;
   readonly onBack: () => void;
   readonly timeline: TimelineProps;
+  readonly renderTimeline?: (timeline: TimelineProps) => ReactNode;
   /** Host-owned composer adapter preserves drafts and attachment-only sending. */
   readonly composer: ReactNode;
   /** Supply a ThreadPane; the channel stays mounted underneath on narrow views. */
@@ -310,7 +327,7 @@ export function ConversationView(props: ConversationViewProps) {
             <div className="sp-conversation-toolbar">{props.contextActions}</div>
           </header>}
           <PersonalSpacePanes space={props.personalSpace} active={Boolean(props.personalSpace && props.isPersonal)}
-            chat={props.emptyContent == null && <><ConversationTimeline {...props.timeline} />{props.composer}</>} />
+            chat={props.emptyContent == null && <>{props.renderTimeline?.(props.timeline) ?? <ConversationTimeline {...props.timeline} />}{props.composer}</>} />
           {props.emptyContent}
         </section>
         {props.thread}

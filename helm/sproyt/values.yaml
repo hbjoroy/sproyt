@@ -53,6 +53,10 @@ config:
   processPilotHeartUrl: ""
   comfyuiUrl: ""
   vllmUrl: ""
+  # Topic extraction is opt-in operationally; channel settings remain available.
+  channelTopicsWorkerEnabled: false
+  channelTopicsModel: ""
+  channelTopicsModelUrl: "" # Empty reuses vllmUrl and its API key.
   chatAgentsEnabled: false
   # Enable only after all workers sharing the chat DB run migration-0051 code.
   channelChatAgentsEnabled: false
@@ -128,6 +132,8 @@ heart:
   databasePodSelector: {}
 
 secret:
+  channelTopicsExistingSecret: ""
+  channelTopicsApiKeyKey: api-key
   vllmExistingSecret: ""
   vllmApiKeyKey: api-key
   # Optional server-side Maps Grounding Lite credential; never expose to clients.

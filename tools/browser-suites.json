@@ -1,5 +1,6 @@
 {
   "webkit": [
+    "ui-react-felles-discovery.spec.ts",
     "ui-react-layout-refinement.spec.ts",
     "ui-react-panel-resize.spec.ts",
     "ui-react-badge.spec.ts",
@@ -38,7 +39,8 @@
     "ui-react-weather-agent.spec.ts",
     "ui-react-app-update.spec.ts",
     "ui-react-share-target.spec.ts",
-    "ui-react-agent-location.spec.ts"
+    "ui-react-agent-location.spec.ts",
+    "ui-react-channel-topics.spec.ts"
   ],
   "layout": [
     "ui-react-layout-refinement.spec.ts",
@@ -53,7 +55,8 @@
     "ui-react-reactions.spec.ts",
     "ui-react-composer.spec.ts",
     "ui-react-markdown.spec.ts",
-    "ui-react-media.spec.ts"
+    "ui-react-media.spec.ts",
+    "ui-react-channel-topics.spec.ts"
   ],
   "imagegen": [
     "imagegen.spec.ts",

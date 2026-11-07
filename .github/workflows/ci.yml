@@ -337,6 +337,7 @@ jobs:
           cargo test db::postgres::tests --locked
           TEST_DATABASE_URL="$SPROYT_POSTGRES_TEST_URL" cargo test native_sessions::tests::postgres_ --locked -- --test-threads=1
           cargo test media_store::tests::postgres_ --locked -- --test-threads=1
+          cargo test topics::tests::postgres_ --locked -- --test-threads=1
           cargo test postgres_saved_status_history_contract --locked
           cargo test postgres_notifications_share_the_repository_connection_budget --locked
           cargo test postgres_imagegen_uses_the_shared_connection_budget --locked
@@ -348,6 +349,7 @@ jobs:
           cargo test postgres_agent_image_publication_contract --locked
           cargo test postgres_geoapify_roll_contract --locked -- --test-threads=1
           cargo test postgres_two_replica_realtime_and_restart_catch_up_gate --locked
+          cargo test postgres_portable_export_bounds_replicas_and_keeps_its_authorized_snapshot --locked
           cargo test chatbot::tests::postgres_ --locked -- --test-threads=1
           cargo test postgres_handoff_admission_contract --locked -- --test-threads=1
           SPROYT_SEA_TEMPERATURE_AGENTS_ENABLED=true cargo test chatbot::sea_temperature_publication_tests --locked -- --test-threads=1
@@ -382,9 +384,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     env:
-      # Remove the pin after RustSec replaces e11d6b3, which accidentally
-      # published crates/gettext-rs/RUSTSEC-0000-0000.md on 2026-08-09.
-      RUSTSEC_ADVISORY_DB_REVISION: 309ad29d8fe448bf986019e05d47b9e0e29a2218
+      CARGO_AUDIT_VERSION: 0.22.2
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -395,21 +395,24 @@ jobs:
           path: |
             ~/.cargo/bin/cargo-audit
             ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-audit-v1
+          key: ${{ runner.os }}-cargo-audit-${{ env.CARGO_AUDIT_VERSION }}
 
       - name: Install cargo-audit
-        run: command -v cargo-audit || cargo install cargo-audit --locked
-
-      - name: Check out verified RustSec advisory database
         run: |
-          git init "$RUNNER_TEMP/rustsec-advisory-db"
-          git -C "$RUNNER_TEMP/rustsec-advisory-db" remote add origin https://github.com/RustSec/advisory-db.git
-          git -C "$RUNNER_TEMP/rustsec-advisory-db" fetch --depth=1 origin "$RUSTSEC_ADVISORY_DB_REVISION"
-          git -C "$RUNNER_TEMP/rustsec-advisory-db" checkout --detach FETCH_HEAD
+          if ! cargo audit --version 2>/dev/null | grep -Fx "cargo-audit $CARGO_AUDIT_VERSION"; then
+            cargo install cargo-audit --version "$CARGO_AUDIT_VERSION" --locked --force
+          fi
+          cargo audit --version
+
+      - name: Fetch current RustSec advisory database and record revision
+        run: |
+          git clone --depth=1 https://github.com/RustSec/advisory-db.git "$RUNNER_TEMP/rustsec-advisory-db"
+          git -C "$RUNNER_TEMP/rustsec-advisory-db" log -1 --format='%H %cI'
 
       - name: Audit locked dependencies
-        # No fixed release exists. Sproyt performs public-key verification only;
-        # see docs/security-exceptions.md for the bounded acceptance.
+        # The rsa exception covers public verification and test-only keys.
+        # GitHub private-key signing uses ring; all other vulnerability findings
+        # still block publication. See docs/security-exceptions.md.
         run: cargo audit --db "$RUNNER_TEMP/rustsec-advisory-db" --no-fetch --ignore RUSTSEC-2023-0071
 
   recovery-drill:

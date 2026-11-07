@@ -38,6 +38,11 @@ settings and keep the downloaded PEM file outside the repository. Do not
 paste its contents into chat, Git, issue descriptions or configuration files.
 The owner performs credential creation and repository permission approval.
 
+The application signer accepts unencrypted PKCS#1 or PKCS#8 PEM for conventional
+two-prime RSA keys with a 2048–4096-bit modulus and ring-compatible parameters.
+An unsupported configured key fails at startup. See the
+[signing risk review](security-exceptions.md#rustsec-2023-0071).
+
 On 2026-10-02 the owner registered `sproyt-issues-hbjoroy`, App ID
 `5160764`, generated its first private key and installed the app on hbjoroy,
 Installation ID `167150170`. The installed settings were verified in GitHub:

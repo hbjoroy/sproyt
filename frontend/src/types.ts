@@ -47,7 +47,7 @@ export type ClientCommand =
   | Command<"leave_channel", { channel_id: string }>
   | Command<"list_channel_users", { channel_id: string }>
   | Command<"update_channel_description", { channel_id: string; description: string }>
-  | Command<"list_joinable_channels", { circle_id: string }>
+  | Command<"list_joinable_channels", { circle_id?: string | null }>
   | Command<"add_channel_member", { channel_id: string; user_id: string }>
   | Command<"load_recent_messages", { channel_id: string; limit?: number | null; after?: number | null; before?: number | null }>
   | Command<"load_thread", { root_message_id: string }>

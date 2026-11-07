@@ -860,6 +860,7 @@ mod tests {
             .await
             .unwrap();
         let state = AppState {
+            topics: None,
             media_store: None,
             imagegen: None,
             process_pilot: None,

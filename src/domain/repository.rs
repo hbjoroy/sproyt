@@ -12,16 +12,16 @@ use super::{
     CreateCircleInvitation, DeleteCircle, DeleteMessage, DiscoverableChannel, DisplayName,
     EditMessage, EnrollmentInvitation, InboxMention, IssuedEnrollmentInvitation, IssuedInvitation,
     JoinChannel, LeaveChannel, LoadRecentMessages, MarkRead, MediaId, MediaObject, MediaUpload,
-    MediaVariant, Membership, MessageId, PersonalNote, PortableUserExport,
-    PrepareEnrollmentInvitation, RenameCircle, SavedStatus, SendMessage, SetCircleMemberRole,
-    ThreadSummary, UpdateChannelDescription, User, UserId, UserProfile, UserTask,
+    MediaVariant, Membership, MessageId, PersonalNote, PrepareEnrollmentInvitation, RenameCircle,
+    SavedStatus, SendMessage, SetCircleMemberRole, ThreadSummary, UpdateChannelDescription, User,
+    UserId, UserProfile, UserTask,
 };
 #[cfg(test)]
 use super::{
     ChannelKind, ChannelRef, ChannelSlug, CircleInvitation, EnrollmentInvitationState,
     ExportedChannel, ExportedCircle, InvitationId, MembershipRole, PORTABLE_USER_EXPORT_FORMAT,
-    Policy, RepositoryError::NotFound, enrollment_email_hash, enrollment_token_hash,
-    generate_enrollment_token,
+    Policy, PortableUserExport, RepositoryError::NotFound, enrollment_email_hash,
+    enrollment_token_hash, generate_enrollment_token,
 };
 #[cfg(test)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -31,6 +31,8 @@ use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use uuid::Uuid;
+
+use super::account_export::AccountExportFuture;
 
 pub(crate) fn personal_channel(owner: UserId) -> Channel {
     let id = ChannelId::generate();
@@ -267,7 +269,41 @@ pub trait ChatRepository: Send + Sync + 'static {
         owner: UserId,
         source_id: MessageId,
     ) -> RepositoryFuture<'_, Option<MessageId>>;
-    fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport>;
+    fn start_user_export(
+        &self,
+        actor: UserId,
+        deadline: tokio::time::Instant,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> AccountExportFuture<'_>;
+    #[cfg(test)]
+    fn export_user_data(&self, actor: UserId) -> RepositoryFuture<'_, PortableUserExport> {
+        Box::pin(async move {
+            use futures_util::{TryStreamExt, pin_mut};
+            let permit = std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+                .try_acquire_owned()
+                .expect("test export permit");
+            let export = self
+                .start_user_export(
+                    actor,
+                    tokio::time::Instant::now() + super::account_export::ACCOUNT_EXPORT_TIMEOUT,
+                    permit,
+                )
+                .await
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+            let stream = export.into_stream();
+            pin_mut!(stream);
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream
+                .try_next()
+                .await
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?
+            {
+                bytes.extend(chunk);
+            }
+            serde_json::from_slice(&bytes)
+                .map_err(|error| RepositoryError::Storage(error.to_string()))
+        })
+    }
     fn favorite_circles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<CircleId>>;
     fn set_circle_favorite<'a>(
         &'a self,
@@ -344,7 +380,7 @@ pub trait ChatRepository: Send + Sync + 'static {
     fn list_joinable_channels<'a>(
         &'a self,
         actor: UserId,
-        circle_id: CircleId,
+        circle_id: Option<CircleId>,
     ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>>;
     fn add_channel_member<'a>(
         &'a self,
@@ -1247,6 +1283,15 @@ impl ChatRepository for InMemoryChatRepository {
         })
     }
 
+    fn start_user_export(
+        &self,
+        _actor: UserId,
+        _deadline: tokio::time::Instant,
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> AccountExportFuture<'_> {
+        Box::pin(async { Err(super::account_export::AccountExportError::Unavailable) })
+    }
+
     fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
         Box::pin(async move {
             let state = self.lock_state()?;
@@ -1852,21 +1897,24 @@ impl ChatRepository for InMemoryChatRepository {
     fn list_joinable_channels<'a>(
         &'a self,
         actor: UserId,
-        circle_id: CircleId,
+        circle_id: Option<CircleId>,
     ) -> RepositoryFuture<'a, Vec<DiscoverableChannel>> {
         Box::pin(async move {
             let state = self.lock_state()?;
-            if !state
-                .circle_memberships
-                .contains_key(&(circle_id.clone(), actor.clone()))
+            if !state.users.contains_key(&actor)
+                || circle_id.as_ref().is_some_and(|id| {
+                    !state
+                        .circle_memberships
+                        .contains_key(&(id.clone(), actor.clone()))
+                })
             {
                 return Err(RepositoryError::PermissionDenied);
             }
-            Ok(state
+            let mut channels: Vec<_> = state
                 .channels
                 .values()
                 .filter(|channel| {
-                    channel.circle_id.as_ref() == Some(&circle_id)
+                    channel.circle_id == circle_id
                         && channel.kind != ChannelKind::Private
                         && !state
                             .memberships
@@ -1880,7 +1928,11 @@ impl ChatRepository for InMemoryChatRepository {
                         .unwrap_or_default(),
                     channel: channel.clone(),
                 })
-                .collect())
+                .collect();
+            channels.sort_unstable_by(|left, right| {
+                left.channel.slug.as_str().cmp(right.channel.slug.as_str())
+            });
+            Ok(channels)
         })
     }
 
@@ -1899,13 +1951,19 @@ impl ChatRepository for InMemoryChatRepository {
                 .memberships
                 .get(&(command.channel_id.clone(), command.actor))
                 .map(|m| &m.role);
-            if !Policy::can_moderate_channel(actor_role)
-                || !channel.circle_id.as_ref().is_some_and(|circle_id| {
-                    state
-                        .circle_memberships
-                        .contains_key(&(circle_id.clone(), command.user_id.clone()))
-                })
-            {
+            let target_allowed = match channel.circle_id {
+                Some(circle_id) => state
+                    .circle_memberships
+                    .contains_key(&(circle_id, command.user_id.clone())),
+                None => {
+                    matches!(channel.kind, ChannelKind::Public | ChannelKind::Local)
+                        && state
+                            .users
+                            .get(&command.user_id)
+                            .is_some_and(|user| user.kind == crate::domain::PrincipalKind::Human)
+                }
+            };
+            if !Policy::can_moderate_channel(actor_role) || !target_allowed {
                 return Err(RepositoryError::PermissionDenied);
             }
             let membership = Membership {

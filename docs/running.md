@@ -284,6 +284,14 @@ Push is optional: Sprøyt starts normally when these values are absent. Generate
 one VAPID key pair for the installation and keep it across releases. The
 private key is a secret; do not commit it or paste it into logs or issues.
 
+The Web Push crypto update in #372 preserves the existing base64url-encoded
+32-byte private scalar and 65-byte uncompressed public point. Keep the same
+Secret and stored subscriptions when upgrading; no key rotation, database
+migration or browser re-subscription is required. Startup validates the key
+pair and rejects invalid or mismatched configured keys. Correct a configuration
+error using the matching existing pair rather than generating a new identity.
+See the [crypto review and validation](security-exceptions.md#web-push-crypto-remediation-372).
+
 ```sh
 npx --yes web-push generate-vapid-keys --json > /tmp/sproyt-vapid.json
 VAPID_PUBLIC_KEY="$(jq -r .publicKey /tmp/sproyt-vapid.json)"

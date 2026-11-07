@@ -47,6 +47,104 @@ HTTP 5xx ratio above 2%, browser session/WebSocket regression tickets, and the
 Sproyt overview dashboard with connection, refresh and upload outcomes. Add the Prometheus
 selector labels required by the cluster through each `additionalLabels` map.
 
+## Account data export
+
+`GET /api/v1/me/export` streams the existing portable JSON format directly from
+one database snapshot. It includes the complete accessible channel history;
+the interactive history limit does not apply. It does not create a stored
+archive, download token or temporary file. Account/data-export owns the
+contract; operations owns capacity and timeout reviews.
+
+| Resource | Bound |
+| --- | --- |
+| Local generation/response buffering | One export per application process; no waiting queue |
+| PostgreSQL snapshot generation | Two across all replicas sharing the database, at most one per account, enforced by transaction advisory locks |
+| PostgreSQL connections | One per active snapshot; exports return 503 when the configured pool has fewer than two connections |
+| PostgreSQL duration | 120 s absolute request deadline, 10 s per statement, 120 s idle-transaction backstop |
+| SQLite snapshot and buffering deadline | At most 4 s after user upsert, below the existing 5 s busy timeout |
+| Message reads | Keyset pages of at most 16 messages; SQL rejects oversized bodies/sender names before returning their contents |
+| Application output buffering | One queued chunk, at most 1 MiB per serialized record; no whole-export JSON buffer |
+| Temporary archive storage | None |
+
+There is no export-specific waiting queue and advisory locks are nonblocking;
+normal user upsert and database connection acquisition can still wait. Busy
+exports return 429 with `Retry-After: 5`; clients
+should wait before starting a fresh attempt. PostgreSQL advisory locks apply
+to generation and are released when the snapshot commits or rolls back. Local
+admission remains held until the final queued payload is consumed or the
+deadline discards it. The HTTP server and socket retain their normal transport
+buffers. These limits bound server export work, not the number of bytes a user
+may legitimately have in their history.
+SQLx rollback cleanup is asynchronous: a cancelled query may briefly retain its
+connection after local admission is released. The PostgreSQL statement timeout
+also bounds that outstanding database work; the advisory locks remain owned by
+the transaction until cleanup completes.
+
+Authentication and access are checked when the request starts. Content and
+memberships come from the same snapshot. A membership revoked during an
+accepted export affects subsequent requests; the accepted snapshot can finish
+within its deadline. Already delivered bytes cannot be recalled. There is no
+later download that can bypass a fresh authentication or membership check.
+
+The response remains `application/json` with attachment disposition,
+`Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. JSON is complete
+only after all selected records have been written and the snapshot transaction
+has completed successfully. A database error, record-size limit or timeout
+after headers interrupts the response body; it must not be accepted as a
+successful partial export. The browser's existing download handler reports a
+failed body read instead of saving it as a successful export. Retry the entire
+request to obtain a new snapshot.
+The memory budget applies to the server. The existing hidden browser export
+handler collects a download blob in browser memory; this change does not expose
+that control or change its client-side storage behavior.
+
+Client disconnection cancels generation. A deadline also cancels work when the
+client stops reading, so a slow client cannot retain a database snapshot
+indefinitely. No export content, authentication credentials or user identifiers
+should be added to resource-measurement logs.
+
+Use PostgreSQL for replicated deployment and representative concurrent-chat
+capacity measurements. SQLite is a single-process deployment option; its read
+snapshot can delay writers, so its export deadline must be shorter than the
+database busy timeout. Do not enable WAL as an export optimization without a
+separate dependency and recovery assessment.
+
+Review the limits if complete legitimate exports regularly exceed the time or
+record budget. Measure the relevant bottleneck before increasing capacity or
+introducing an asynchronous archive service. Raising the interactive history
+limit or silently omitting rows is not a fallback.
+
+### Export measurement, 5 November 2026
+
+The #351 candidate was measured with a fresh Windows application process and
+an isolated PostgreSQL 17.10 database for each sample. Each synthetic message
+contained 2 KiB. The application used its four-connection pool; the database
+fixture had two CPUs and a 768 MiB memory limit. The build used locked
+dependencies, prebuilt frontend assets and development debug information off.
+
+| Messages | Complete JSON bytes | Download time | App working-set increase / peak | Private-bytes increase | Concurrent chat acknowledgements | Chat p95 / maximum |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4,000 | 9,208,401 | 0.763 s | 1.86 / 26.49 MiB | 1.44 MiB | 12 | 48.45 / 48.45 ms |
+| 40,000 | 92,110,406 | 21.297 s | 3.69 / 27.79 MiB | 3.33 MiB | 380 | 17.48 / 46.56 ms |
+
+Both samples verified every message and sequence, valid complete JSON, and
+exclusion of messages sent after the snapshot. Each observed export held one
+PostgreSQL connection and two advisory locks. The tenfold output increase did
+not produce a proportional increase in application memory. These are two
+single-host synthetic samples with compressible data, not production capacity
+or latency-SLO evidence. The different chat sample counts do not establish a
+latency improvement for the larger export.
+
+[`tools/measure-account-export.mjs`](../tools/measure-account-export.mjs)
+contains the reproduction procedure. It samples server working set and private
+bytes at a requested 25 ms interval, streams the response to a disk sink in a
+separate client process, pauses 12 ms per 256 KiB received, and sends chat
+messages roughly every 40 ms. It stops memory sampling before parsing the
+downloaded JSON in the client. Its synthetic database and output file are
+removed afterward. The separate PostgreSQL HTTP regression verifies admission
+across three application instances, snapshot membership after revocation,
+disconnect cleanup and interrupted-body errors.
+
 ## Backup and restore drill
 
 Use the managed PostgreSQL provider's encrypted point-in-time recovery when
