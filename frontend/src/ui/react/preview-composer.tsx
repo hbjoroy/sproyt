@@ -63,7 +63,7 @@ export function PreviewComposer({ host, target }: {
   const match = !dismissed && !composing.current && caret !== null
     ? state.value.slice(0, caret).match(/(?:^|\s)@([\p{L}\p{N}_.-]*)$/u) : null;
   const query = match?.[1]?.toLocaleLowerCase();
-  const eventMatch = !dismissed && !composing.current && caret !== null
+  const eventMatch = eventReferences?.suggest && !dismissed && !composing.current && caret !== null
     ? state.value.slice(0, caret).match(/(?:^|\s)#arr:([a-z0-9-]*)$/iu) : null;
   const eventQuery = eventMatch?.[1]?.toLowerCase();
   const [eventSuggestions, setEventSuggestions] = useState<{ query: string; events: readonly ChannelEvent[] }>();
