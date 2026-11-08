@@ -2,6 +2,12 @@
 
 All routes are under `/api/v1/channels/{channel}/events`; require current human `x-sproyt-account`, current channel (and circle) membership. Responses private/no-store. IDs UUID strings. Times RFC3339 UTC strings; timezone an IANA name.
 
+Channel availability is exposed as `events_enabled` in channel summaries, governance and event responses. Owners and channel moderators can `PUT /api/v1/channels/{channel}/events-enabled` with `{enabled:boolean}`; the response is the current governance document. The setting uses the existing channel-change invalidation.
+
+An unset policy enables existing events and leaves empty channels disabled. An explicit choice always wins, including after older application instances create or edit events. Turning the feature off preserves events, responses and images. Normal chat shows no event navigation, pills or autocomplete; authorized existing links and history remain readable as an archive. New application instances reject event mutations while disabled with HTTP 409, distinct from revoked membership (403). Membership-removal cleanup remains active.
+
+The availability predicate is checked atomically with writes and serialized against setting changes. During rolling upgrades, older 4172333 application instances do not enforce this new availability policy; their existing authorization still applies and their writes do not overwrite an explicit choice. Availability is not a new access-control boundary. Retain a schema-77-capable migrator when rolling back the application.
+
 - GET collection: `{events: Event[]}` upcoming/ongoing first by start ascending, ended next by start descending, cancelled last by start descending; UUID ascending breaks ties. `?after=<opaque cursor>` and `next_after`, at most 100 per page; never interpret the cursor as an event ID. `attention_count` is the current actor's global material-change notice count across every page. List summaries include cover but `images:[]`; open detail for library.
 - POST collection / PUT `/{id}` body `{title,code,starts_at,timezone,ends_at:null|string,location:null|string,description}`. Create returns Event. Update full replacement; creator/owner/moderator only.
 - GET `/{id}` returns Event.

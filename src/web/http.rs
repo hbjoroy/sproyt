@@ -30,7 +30,8 @@ pub(crate) fn repository_response(
         crate::domain::RepositoryError::Quota => axum::http::StatusCode::INSUFFICIENT_STORAGE,
         crate::domain::RepositoryError::PermissionDenied => axum::http::StatusCode::FORBIDDEN,
         crate::domain::RepositoryError::NotFound => axum::http::StatusCode::NOT_FOUND,
-        crate::domain::RepositoryError::Conflict => axum::http::StatusCode::CONFLICT,
+        crate::domain::RepositoryError::Conflict
+        | crate::domain::RepositoryError::EventsDisabled => axum::http::StatusCode::CONFLICT,
         crate::domain::RepositoryError::Storage(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, error.public_message()).into_response()
@@ -59,9 +60,10 @@ pub(crate) fn chat_error_response(error: ChatError) -> axum::response::Response 
         ChatError::Repository(crate::domain::RepositoryError::NotFound) => {
             axum::http::StatusCode::NOT_FOUND
         }
-        ChatError::Repository(crate::domain::RepositoryError::Conflict) => {
-            axum::http::StatusCode::CONFLICT
-        }
+        ChatError::Repository(
+            crate::domain::RepositoryError::Conflict
+            | crate::domain::RepositoryError::EventsDisabled,
+        ) => axum::http::StatusCode::CONFLICT,
         ChatError::Repository(crate::domain::RepositoryError::Storage(_)) => {
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         }

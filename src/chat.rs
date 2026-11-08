@@ -77,6 +77,16 @@ impl ChatEngine {
     ) -> Result<crate::domain::ChannelGovernance, crate::domain::RepositoryError> {
         self.repository.channel_governance(actor, channel).await
     }
+    pub(crate) async fn set_channel_events_enabled(
+        &self,
+        actor: crate::domain::UserId,
+        channel: crate::domain::ChannelId,
+        enabled: bool,
+    ) -> Result<(), crate::domain::RepositoryError> {
+        self.repository
+            .set_channel_events_enabled(actor, channel, enabled)
+            .await
+    }
     pub(crate) async fn set_channel_hidden(
         &self,
         actor: crate::domain::UserId,

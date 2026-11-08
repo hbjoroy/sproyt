@@ -122,6 +122,16 @@ for ($attempt=0; $attempt -lt 120; $attempt++) {
     Start-Sleep -Seconds 2
 }
 if (!$ready) { throw ('Isolated Authentik is not ready; inspect only owned lab containers from ' + (Join-Path $run 'environment.json')) }
+# Server readiness does not establish that the asynchronous mail/task worker
+# has started. The pinned worker exposes health only after Worker.start().
+$workerReady = $false
+$workerWatch = [Diagnostics.Stopwatch]::StartNew()
+while ($workerWatch.Elapsed.TotalSeconds -lt 90) {
+    & $containerCli exec $worker timeout 5s ak healthcheck *> $null
+    if ($LASTEXITCODE -eq 0) { $workerReady = $true; break }
+    Start-Sleep -Seconds 2
+}
+if (!$workerReady) { throw ('Isolated Authentik worker did not become ready; inspect only owned lab containers from ' + (Join-Path $run 'environment.json')) }
 # The worker loads default flows/keys asynchronously. Wait for those fixtures.
 $configured = $null
 for ($attempt=0; $attempt -lt 20; $attempt++) {

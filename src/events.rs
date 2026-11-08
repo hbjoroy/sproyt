@@ -168,22 +168,51 @@ impl EventStore {
         event: Option<&str>,
         manage: bool,
     ) -> Result<u64> {
-        let mut guard=" exists(select 1 from channel_memberships em join channels ec on ec.id=em.channel_id where em.user_id=?uuid and em.channel_id=?uuid and (ec.circle_id is null or exists(select 1 from circle_memberships ecm where ecm.circle_id=ec.circle_id and ecm.user_id=em.user_id))".to_owned();
+        self.require_enabled(actor, channel).await?;
+        let mut guard=" exists(select 1 from channel_memberships em join channels ec on ec.id=em.channel_id where em.user_id=?uuid and em.channel_id=?uuid and (ec.circle_id is null or exists(select 1 from circle_memberships ecm where ecm.circle_id=ec.circle_id and ecm.user_id=em.user_id)) and coalesce(ec.events_enabled,exists(select 1 from channel_events current_event where current_event.channel_id=ec.id))".to_owned();
         args.extend([actor.into(), channel.into()]);
         if manage {
             guard.push_str(" and (em.role in ('owner','moderator') or exists(select 1 from channel_events ee where ee.id=? and ee.creator_id=em.user_id))");
             args.push(event.unwrap_or("").into());
         }
-        if matches!(&self.0, TopicStore::Postgres(_)) {
+        let pg = matches!(&self.0, TopicStore::Postgres(_));
+        if pg {
             guard = guard.replace(
                 "ecm.user_id=em.user_id))",
                 "ecm.user_id=em.user_id for share))",
             );
-            guard.push_str(" for share of em");
+            guard.push_str(" and ec.id in (select id from event_channel_gate) for share of em");
         }
         guard.push(')');
-        let statement = statement.replace("/*ACCESS*/", &guard);
-        self.execute(&statement, &args).await
+        let mut statement = statement.replace("/*ACCESS*/", &guard);
+        if pg {
+            // Materialization and a SHARE row lock recheck availability after
+            // a competing channel toggle, and retain it through the mutation.
+            statement = format!(
+                "with event_channel_gate as materialized (select c.id from channels c where c.id=?uuid and coalesce(c.events_enabled,exists(select 1 from channel_events current_event where current_event.channel_id=c.id)) for share of c) {statement}"
+            );
+            args.insert(0, channel.into());
+        }
+        let changed = self.execute(&statement, &args).await?;
+        if changed == 0 {
+            self.require_enabled(actor, channel).await?;
+        }
+        Ok(changed)
+    }
+    pub(crate) async fn availability(&self, actor: &str, channel: &str) -> Result<bool> {
+        self.access(actor, channel).await?;
+        let rows=self.query("select cast(coalesce(c.events_enabled,exists(select 1 from channel_events e where e.channel_id=c.id)) as text) as enabled from channels c where c.id=?uuid",&[channel.into()]).await?;
+        Ok(matches!(
+            value(rows.first().ok_or(RepositoryError::NotFound)?, "enabled").as_str(),
+            "1" | "true"
+        ))
+    }
+    async fn require_enabled(&self, actor: &str, channel: &str) -> Result<()> {
+        if self.availability(actor, channel).await? {
+            Ok(())
+        } else {
+            Err(RepositoryError::EventsDisabled)
+        }
     }
     pub(crate) async fn access(&self, actor: &str, channel: &str) -> Result<String> {
         let r=self.query("select m.role from channel_memberships m join channels c on c.id=m.channel_id where m.channel_id=?uuid and m.user_id=?uuid and (c.circle_id is null or exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=m.user_id)) and not exists(select 1 from personal_spaces p where p.channel_id=c.id) and not exists(select 1 from direct_conversations d where d.channel_id=c.id) and not exists(select 1 from direct_group_conversations d where d.channel_id=c.id)",&[channel.into(),actor.into()]).await?;
@@ -192,6 +221,7 @@ impl EventStore {
             .ok_or(RepositoryError::PermissionDenied)
     }
     async fn manager(&self, actor: &str, channel: &str, id: &str) -> Result<()> {
+        self.require_enabled(actor, channel).await?;
         let role = self.access(actor, channel).await?;
         let r=self.query("select cast(creator_id as text) as creator_id from channel_events where channel_id=?uuid and id=?",&[channel.into(),id.into()]).await?;
         let e = r.first().ok_or(RepositoryError::NotFound)?;
@@ -222,8 +252,11 @@ impl EventStore {
         let revision = value(r, "revision").parse::<i64>().map_err(storage)?;
         out["revision"] = json!(revision);
         out["cancelled"] = json!(value(r, "cancelled") == "1");
-        out["can_manage"] =
-            json!(value(r, "creator_id") == actor || role == "owner" || role == "moderator");
+        let enabled = matches!(value(r, "events_enabled").as_str(), "1" | "true");
+        out["events_enabled"] = json!(enabled);
+        out["can_manage"] = json!(
+            enabled && (value(r, "creator_id") == actor || role == "owner" || role == "moderator")
+        );
         out["needs_attention"] = json!(
             matches!(value(r, "my_rsvp").as_str(), "attending" | "following")
                 && value(r, "seen_revision").parse::<i64>().unwrap_or(revision) < revision
@@ -244,7 +277,7 @@ impl EventStore {
         let mut args = vec![actor.into(), channel.into()];
         args.extend(extra);
         let statement = format!(
-            "select e.id,cast(e.channel_id as text) as channel_id,cast(e.creator_id as text) as creator_id,e.title,e.code,e.starts_at,e.ends_at,e.timezone,e.location,e.description,cast(e.cancelled as text) as cancelled,cast(e.revision as text) as revision,e.updated_at,cast(e.cover_media_id as text) as cover_media_id,coalesce(r.status,'unanswered') as my_rsvp,cast(r.seen_revision as text) as seen_revision from channel_events e left join channel_event_responses r on r.event_id=e.id and r.user_id=?uuid where e.channel_id=?uuid and {clause}"
+            "select cast((select coalesce(c.events_enabled,exists(select 1 from channel_events ce where ce.channel_id=c.id)) from channels c where c.id=e.channel_id) as text) as events_enabled,e.id,cast(e.channel_id as text) as channel_id,cast(e.creator_id as text) as creator_id,e.title,e.code,e.starts_at,e.ends_at,e.timezone,e.location,e.description,cast(e.cancelled as text) as cancelled,cast(e.revision as text) as revision,e.updated_at,cast(e.cover_media_id as text) as cover_media_id,coalesce(r.status,'unanswered') as my_rsvp,cast(r.seen_revision as text) as seen_revision from channel_events e left join channel_event_responses r on r.event_id=e.id and r.user_id=?uuid where e.channel_id=?uuid and {clause}"
         );
         let rows = self.query(&statement, &args).await?;
         let mut events = rows
@@ -300,6 +333,11 @@ impl EventStore {
         value(&rows[0], "count").parse().map_err(storage)
     }
     pub(crate) async fn list(&self, actor: &str, channel: &str, after: &str) -> Result<Value> {
+        if !self.availability(actor, channel).await? {
+            return Ok(
+                json!({"events":[],"next_after":null,"attention_count":0,"events_enabled":false}),
+            );
+        }
         let cursor = if after.is_empty() {
             None
         } else {
@@ -358,7 +396,14 @@ impl EventStore {
         events.truncate(100);
         let attention = self.attention_count(actor, channel).await?;
         self.access(actor, channel).await?;
-        Ok(json!({"events":events,"next_after":next,"attention_count":attention}))
+        if !self.availability(actor, channel).await? {
+            return Ok(
+                json!({"events":[],"next_after":null,"attention_count":0,"events_enabled":false}),
+            );
+        }
+        Ok(
+            json!({"events":events,"next_after":next,"attention_count":attention,"events_enabled":true}),
+        )
     }
     pub(crate) async fn suggestions(
         &self,
@@ -366,6 +411,9 @@ impl EventStore {
         channel: &str,
         prefix: &str,
     ) -> Result<Value> {
+        if !self.availability(actor, channel).await? {
+            return Ok(json!({"events":[],"next_after":null,"events_enabled":false}));
+        }
         let prefix = prefix.to_ascii_lowercase();
         if prefix.len() > 48
             || !prefix
@@ -378,7 +426,10 @@ impl EventStore {
         // codes. Empty prefix still reads at most twelve alias rows.
         let upper = format!("{prefix}~");
         let events=self.summaries(actor,channel,"e.id in (select event_id from channel_event_codes where channel_id=?uuid and code>=? and code<? order by code limit 12) order by e.code",vec![channel.into(),prefix,upper]).await?;
-        Ok(json!({"events":events,"next_after":null}))
+        if !self.availability(actor, channel).await? {
+            return Ok(json!({"events":[],"next_after":null,"events_enabled":false}));
+        }
+        Ok(json!({"events":events,"next_after":null,"events_enabled":true}))
     }
     pub(crate) async fn save(
         &self,
@@ -387,6 +438,7 @@ impl EventStore {
         id: Option<&str>,
         mut input: EventInput,
     ) -> Result<Value> {
+        self.require_enabled(actor, channel).await?;
         input.validate()?;
         self.access(actor, channel).await?;
         let event_id = id
@@ -442,14 +494,14 @@ impl EventStore {
         id: &str,
         status: &str,
     ) -> Result<Value> {
-        self.access(actor, channel).await?;
+        self.require_enabled(actor, channel).await?;
         if !["attending", "declined", "following", "unanswered"].contains(&status) {
             return Err(RepositoryError::Conflict);
         }
         if status == "unanswered" {
             self.mutate("delete from channel_event_responses where event_id=? and user_id=?uuid and exists(select 1 from channel_events where id=? and channel_id=?uuid) and /*ACCESS*/",vec![id.into(),actor.into(),id.into(),channel.into()],actor,channel,Some(id),false).await?;
         } else {
-            let count=self.execute("insert into channel_event_responses(event_id,user_id,status,updated_at,seen_revision) select e.id,?uuid,?,?,e.revision from channel_events e where e.id=? and e.channel_id=?uuid and e.cancelled=0 on conflict(event_id,user_id) do update set status=excluded.status,updated_at=excluded.updated_at,seen_revision=excluded.seen_revision",&[actor.into(),status.into(),now(),id.into(),channel.into()]).await?;
+            let count=self.mutate("insert into channel_event_responses(event_id,user_id,status,updated_at,seen_revision) select e.id,?uuid,?,?,e.revision from channel_events e where e.id=? and e.channel_id=?uuid and e.cancelled=0 and /*ACCESS*/ on conflict(event_id,user_id) do update set status=excluded.status,updated_at=excluded.updated_at,seen_revision=excluded.seen_revision",vec![actor.into(),status.into(),now(),id.into(),channel.into()],actor,channel,Some(id),false).await?;
             if count == 0 {
                 return Err(RepositoryError::Conflict);
             }
@@ -491,6 +543,7 @@ impl EventStore {
         media: &str,
         remove: bool,
     ) -> Result<Value> {
+        self.require_enabled(actor, channel).await?;
         self.detail(actor, channel, id).await?;
         if remove {
             let manager = self.manager(actor, channel, id).await.is_ok();
@@ -718,6 +771,12 @@ mod database_tests {
             .await
             .unwrap();
         }
+        s.execute(
+            "update channels set events_enabled=true where id=?uuid",
+            std::slice::from_ref(&channel),
+        )
+        .await
+        .unwrap();
         (s, owner, member, channel)
     }
     fn input(code: &str, days: i64) -> EventInput {
@@ -784,6 +843,12 @@ mod database_tests {
         let past = past["id"].as_str().unwrap();
         s.rsvp(&member, &c, future, "attending").await.unwrap();
         s.rsvp(&member, &c, past, "following").await.unwrap();
+        s.execute(
+            "update channels set events_enabled=false where id=?uuid",
+            std::slice::from_ref(&c),
+        )
+        .await
+        .unwrap();
         // The old binary knows nothing about events: this is its unchanged delete.
         s.execute(
             "delete from channel_memberships where channel_id=?uuid and user_id=?uuid",
@@ -814,6 +879,12 @@ mod database_tests {
             s.detail(&member, &c, past).await.unwrap()["my_rsvp"],
             "following"
         );
+        s.execute(
+            "update channels set events_enabled=true where id=?uuid",
+            std::slice::from_ref(&c),
+        )
+        .await
+        .unwrap();
         s.rsvp(&member, &c, future, "attending").await.unwrap();
         s.rsvp(&member, &c, future, "attending").await.unwrap();
         let responses = s.responses(&owner, &c, future, "").await.unwrap();
@@ -952,6 +1023,167 @@ mod database_tests {
         assert_eq!(seen.last().unwrap(), cancelled_id);
         assert!(s.list(&owner, &c, "not-a-valid-cursor").await.is_err());
     }
+    async fn availability_archive_and_rolling_writer_contract(
+        setup: (EventStore, String, String, String),
+    ) {
+        let (s, owner, member, c) = setup;
+        s.execute(
+            "update channels set events_enabled=null where id=?uuid",
+            std::slice::from_ref(&c),
+        )
+        .await
+        .unwrap();
+        assert!(!s.availability(&owner, &c).await.unwrap());
+        assert_eq!(
+            s.save(&owner, &c, None, input("new-denied", 2))
+                .await
+                .unwrap_err(),
+            RepositoryError::EventsDisabled
+        );
+        let id = uuid::Uuid::now_v7().to_string();
+        let starts =
+            (Utc::now() + chrono::Duration::days(2)).to_rfc3339_opts(SecondsFormat::Millis, true);
+        // Unchanged 417 SQL can still create during overlap. NULL derives ON;
+        // an explicit false must stay false even after another old-writer insert.
+        let old_insert = "insert into channel_events(id,channel_id,creator_id,title,code,starts_at,timezone,description,updated_at) values(?,?uuid,?uuid,'Old writer',?,?,'Europe/Oslo','Retained Markdown',?)";
+        s.execute(
+            old_insert,
+            &[
+                id.clone(),
+                c.clone(),
+                owner.clone(),
+                "old-writer".into(),
+                starts.clone(),
+                now(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert!(s.availability(&owner, &c).await.unwrap());
+        s.rsvp(&member, &c, &id, "attending").await.unwrap();
+        let media = uuid::Uuid::now_v7().to_string();
+        s.execute("insert into media_objects(id,owner_id,channel_id,storage_key,original_filename,content_type,size_bytes,sha256,created_at) values(?uuid,?uuid,?uuid,?,'image.png','image/png',1,'test',current_timestamp)",&[media.clone(),member.clone(),c.clone(),media.clone()]).await.unwrap();
+        s.image(&member, &c, &id, &media, false).await.unwrap();
+        s.cover(&owner, &c, &id, Some(&media)).await.unwrap();
+        let before = s.detail(&member, &c, &id).await.unwrap();
+        s.execute(
+            "update channels set events_enabled=false where id=?uuid",
+            std::slice::from_ref(&c),
+        )
+        .await
+        .unwrap();
+        let archived = s.detail(&member, &c, &id).await.unwrap();
+        assert_eq!(archived["events_enabled"], false);
+        assert_eq!(archived["can_manage"], false);
+        for key in [
+            "id",
+            "description",
+            "my_rsvp",
+            "images",
+            "cover_media_id",
+            "revision",
+            "updated_at",
+        ] {
+            assert_eq!(archived[key], before[key], "disabled preserves {key}");
+        }
+        assert_eq!(
+            s.references(&member, &c, vec!["old-writer".into()])
+                .await
+                .unwrap()["events"][0]["id"],
+            id
+        );
+        assert_eq!(
+            s.responses(&member, &c, &id, "").await.unwrap()["counts"]["attending"],
+            1
+        );
+        assert!(
+            s.list(&member, &c, "").await.unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            s.suggestions(&member, &c, "old").await.unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            s.save(&owner, &c, None, input("blocked", 2))
+                .await
+                .unwrap_err(),
+            RepositoryError::EventsDisabled
+        );
+        assert_eq!(
+            s.save(&owner, &c, Some(&id), input("old-writer", 2))
+                .await
+                .unwrap_err(),
+            RepositoryError::EventsDisabled
+        );
+        assert_eq!(
+            s.cancel(&owner, &c, &id).await.unwrap_err(),
+            RepositoryError::EventsDisabled
+        );
+        for status in ["attending", "declined", "following", "unanswered"] {
+            assert_eq!(
+                s.rsvp(&member, &c, &id, status).await.unwrap_err(),
+                RepositoryError::EventsDisabled
+            );
+        }
+        assert_eq!(
+            s.image(&member, &c, &id, &media, false).await.unwrap_err(),
+            RepositoryError::EventsDisabled
+        );
+        assert_eq!(
+            s.image(&member, &c, &id, &media, true).await.unwrap_err(),
+            RepositoryError::EventsDisabled
+        );
+        assert_eq!(
+            s.cover(&owner, &c, &id, None).await.unwrap_err(),
+            RepositoryError::EventsDisabled
+        );
+        assert_eq!(
+            s.acknowledge(&member, &c, &id).await.unwrap_err(),
+            RepositoryError::EventsDisabled
+        );
+        let second = uuid::Uuid::now_v7().to_string();
+        s.execute(
+            old_insert,
+            &[
+                second,
+                c.clone(),
+                owner.clone(),
+                "old-while-off".into(),
+                starts,
+                now(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert!(!s.availability(&owner, &c).await.unwrap());
+        s.execute(
+            "update channels set events_enabled=true where id=?uuid",
+            std::slice::from_ref(&c),
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.detail(&owner, &c, &id).await.unwrap()["can_manage"], true);
+        assert_eq!(
+            s.detail(&member, &c, &id).await.unwrap()["my_rsvp"],
+            "attending"
+        );
+        assert_eq!(
+            s.list(&owner, &c, "").await.unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+    #[tokio::test]
+    async fn availability_archive_and_rolling_writer() {
+        availability_archive_and_rolling_writer_contract(fixture().await).await;
+    }
     #[tokio::test]
     async fn globally_ordered_pagination() {
         globally_ordered_pagination_contract(fixture().await).await;
@@ -1020,6 +1252,7 @@ mod database_tests {
         image_channel_owner_and_cover_guards_contract(seed(s.clone()).await).await;
         prefix_suggestions_beyond_first_page_contract(seed(s.clone()).await).await;
         globally_ordered_pagination_contract(seed(s.clone()).await).await;
+        availability_archive_and_rolling_writer_contract(seed(s.clone()).await).await;
 
         pool.close().await;
         sqlx::query(&format!("drop schema {schema} cascade"))
@@ -1089,6 +1322,11 @@ mod http_tests {
         sqlx::query("insert into channel_memberships(channel_id,user_id,role) values(?,?,'owner')")
             .bind(&channel)
             .bind(alice.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("update channels set events_enabled=true where id=?")
+            .bind(&channel)
             .execute(&pool)
             .await
             .unwrap();
@@ -1225,6 +1463,12 @@ mod export_tests {
         s.execute(
             "insert into channel_memberships(channel_id,user_id,role) values(?uuid,?uuid,'owner')",
             &[channel.clone(), owner.clone()],
+        )
+        .await
+        .unwrap();
+        s.execute(
+            "update channels set events_enabled=true where id=?uuid",
+            std::slice::from_ref(&channel),
         )
         .await
         .unwrap();

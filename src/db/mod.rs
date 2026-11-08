@@ -3627,6 +3627,27 @@ async fn verify_channel_governance_contract<R: ChatRepository>(repository: &R, s
             .await
             .unwrap();
     }
+    assert!(
+        !repository
+            .channel_governance(owner.clone(), channel.id.clone())
+            .await
+            .unwrap()
+            .events_enabled
+    );
+    repository
+        .set_channel_events_enabled(owner.clone(), channel.id.clone(), true)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .list_channels_for_user(member.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == channel.id)
+            .unwrap()
+            .events_enabled
+    );
     let original = repository
         .append_message(SendMessage {
             actor: owner.clone(),
@@ -3638,6 +3659,13 @@ async fn verify_channel_governance_contract<R: ChatRepository>(repository: &R, s
         .unwrap();
 
     for actor in [&member, &outsider] {
+        assert_eq!(
+            repository
+                .set_channel_events_enabled(actor.clone(), channel.id.clone(), false)
+                .await,
+            Err(RepositoryError::PermissionDenied)
+        );
+
         assert_eq!(
             repository
                 .set_channel_hidden(actor.clone(), channel.id.clone(), true)
@@ -3725,6 +3753,30 @@ async fn verify_channel_governance_contract<R: ChatRepository>(repository: &R, s
         Err(RepositoryError::PermissionDenied)
     );
     let mut updates = repository.subscribe_circle_updates().unwrap();
+    repository
+        .set_channel_events_enabled(moderator.clone(), channel.id.clone(), false)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), updates.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !repository
+            .channel_governance(member.clone(), channel.id.clone())
+            .await
+            .unwrap()
+            .events_enabled
+    );
+    repository
+        .set_channel_events_enabled(owner.clone(), channel.id.clone(), true)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), updates.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
     repository
         .set_channel_hidden(moderator.clone(), channel.id.clone(), true)
         .await
@@ -3852,6 +3904,12 @@ async fn verify_channel_governance_contract<R: ChatRepository>(repository: &R, s
         .open_direct_channel(owner.clone(), moderator.clone())
         .await
         .unwrap();
+    assert_eq!(
+        repository
+            .set_channel_events_enabled(owner.clone(), direct.id.clone(), true)
+            .await,
+        Err(RepositoryError::PermissionDenied)
+    );
     assert_eq!(
         repository
             .set_channel_hidden(owner.clone(), direct.id.clone(), true)

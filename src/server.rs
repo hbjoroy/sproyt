@@ -213,6 +213,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             get(crate::web::channel_governance::get),
         )
         .route(
+            "/api/v1/channels/{channel}/events-enabled",
+            axum::routing::put(crate::web::channel_governance::set_events_enabled),
+        )
+        .route(
             "/api/v1/channels/{channel}/hidden",
             axum::routing::put(crate::web::channel_governance::set_hidden),
         )

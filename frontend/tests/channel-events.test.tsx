@@ -5,10 +5,12 @@ import { HttpClient } from "../src/api";
 import { ChannelEventsApi, EventReferenceDiscovery, decodeChannelEvent, type ChannelEvent } from "../src/channel-events";
 import { EventReferencesContext } from "../src/ui/react/event-references";
 import { MarkdownContent } from "../src/ui/react/markdown-content";
+import { ChannelGovernanceApi } from "../src/channel-governance";
 import corpus from "../../docs/fixtures/event-references.json" with { type: "json" };
 
 const channel = "00000000-0000-7000-8000-000000000001";
 const event: ChannelEvent = {
+  events_enabled: true,
   id: "00000000-0000-7000-8000-000000000002", channel_id: channel, creator_id: channel,
   title: "Konsert", code: "konsert", aliases: ["gammal"], starts_at: "2027-01-01T18:00:00Z", timezone: "Europe/Oslo",
   ends_at: null, location: null, description: "**Velkomen**", cancelled: false, revision: 1,
@@ -59,6 +61,18 @@ test("event decoder refuses cross-channel data and untrusted media paths", () =>
   assert.throws(() => decodeChannelEvent({ ...event, channel_id: event.id }, channel));
   assert.throws(() => decodeChannelEvent({ ...event, cover_media_id: "../secret" }, channel));
   assert.throws(() => decodeChannelEvent({ ...event, my_rsvp: "maybe" }, channel));
+  assert.equal(decodeChannelEvent({ ...event, events_enabled: false }, channel).events_enabled, false);
+  assert.throws(() => decodeChannelEvent({ ...event, events_enabled: "false" }, channel));
+});
+test("availability governance keeps false typed and rejects a stale account write result", async () => {
+  let owner = "owner", epoch = 1;
+  let release!: (value: Response) => void;
+  const api = new ChannelGovernanceApi(new HttpClient({ fetch: () => new Promise(resolve => { release = resolve; }) }), () => owner, () => epoch);
+  const pending = api.request(channel, "/events-enabled", { enabled: false });
+  owner = "other"; epoch++; release(Response.json({ hidden: false, events_enabled: false, members: [] }));
+  await assert.rejects(pending, /Kontoen eller sambandet vart endra/u);
+  const current = new ChannelGovernanceApi(new HttpClient({ fetch: async () => Response.json({ hidden: false, events_enabled: false, members: [] }) }), () => owner, () => epoch);
+  assert.equal((await current.request(channel)).events_enabled, false);
 });
 test("event SDK bounds collection pages with account-bound admission and aborts stale account results", async () => {
   let owner = "owner"; let epoch = 1;

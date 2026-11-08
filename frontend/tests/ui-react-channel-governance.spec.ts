@@ -9,7 +9,7 @@ const agentId = "00000000-0000-7000-8000-000000008713";
 async function setup(page: Page, channelRole: string, circleRole: string, withAgent = false) {
   await page.route("**/api/v1/me/favorite-circles?**", route => route.fulfill({ json: [] }));
   const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
-  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+  if (process.env.SPROYT_E2E_EMBEDDED_CLIENT !== "1") await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
   let currentRole = channelRole, hidden = false;
   const memberId = "channel-governance-member";
   const roles = new Map([["channel-settings-owner", channelRole], [memberId, "member"]]);

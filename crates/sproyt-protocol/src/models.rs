@@ -245,6 +245,9 @@ impl Eq for DirectActivity {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSummary {
+    /// Effective channel event availability; absent on older servers.
+    #[serde(default)]
+    pub events_enabled: bool,
     /// Globally hidden from the ordinary directory, without changing access.
     #[serde(default)]
     pub hidden: bool,
@@ -274,6 +277,8 @@ pub struct ChannelSummary {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChannelGovernance {
+    #[serde(default)]
+    pub events_enabled: bool,
     pub hidden: bool,
     pub members: Vec<ChannelMemberRole>,
 }

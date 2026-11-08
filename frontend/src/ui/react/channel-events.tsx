@@ -31,7 +31,8 @@ export function eventWhen(event: ChannelEvent) {
 }
 
 /** Both panes stay mounted: drafts, attachment state and timeline scroll survive tab switches. */
-export function ChannelEventSpace({ api, owner, channelId, chat, composer, timeline, uploadImage, onTabChange }: Scope & {
+export function ChannelEventSpace({ api, owner, channelId, enabled, chat, composer, timeline, uploadImage, onTabChange }: Scope & {
+  enabled: boolean;
   chat: ReactNode; composer?: ReactNode; timeline: TimelineProps; uploadImage(file: File, progress: (text: string) => void): Promise<string>;
   onTabChange?(events: boolean): void;
 }) {
@@ -62,14 +63,26 @@ export function ChannelEventSpace({ api, owner, channelId, chat, composer, timel
   const root = useRef<HTMLDivElement>(null);
   const id = useId();
   const current = useRef(true);
+  const previousEnabled = useRef(enabled);
+  const [disabledNotice, setDisabledNotice] = useState(false);
   const reload = () => setRevision(value => value + 1);
-  useEffect(() => { bridge?.publish({ events: referenceEvents, collect, suggest }); }, [referenceEvents, collect, suggest, bridge?.publish]);
+  useEffect(() => { bridge?.publish({ events: referenceEvents, collect, suggest: enabled ? suggest : undefined }); }, [referenceEvents, collect, suggest, enabled, bridge?.publish]);
+  useEffect(() => {
+    if (previousEnabled.current && !enabled) {
+      if (tab === "events" || filter || editing) setDisabledNotice(true);
+      setTab("chat"); setFilter(null); setEditing(null); setSelectedId(null); updateUrl(null);
+      setAfter(null); setNextAfter(null); setEvents([]); setLoaded(false); setError("");
+      if (document.activeElement === document.body) requestAnimationFrame(() => root.current?.querySelector<HTMLTextAreaElement>(".sp-composer textarea")?.focus({ preventScroll: true }));
+    }
+    previousEnabled.current = enabled;
+  }, [enabled]);
   useEffect(() => {
     const event = referenceEvents.find(event => event.id === bridge?.request?.id);
     if (event) open(event);
   }, [bridge?.request]);
   useEffect(() => { current.current = true; return () => { current.current = false; }; }, []);
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     setLoadingMore(true);
     void api.list(owner, channelId, controller.signal, after).then(value => {
@@ -81,7 +94,7 @@ export function ChannelEventSpace({ api, owner, channelId, chat, composer, timel
       setLoadingMore(false);
     });
     return () => controller.abort();
-  }, [api, owner, channelId, revision, after]);
+  }, [api, owner, channelId, revision, after, enabled]);
   useEffect(() => {
     // Explicitly paged history stays where the reader left it. Refreshing that
     // collection is a visible action rather than a timer discarding old pages.
@@ -111,33 +124,38 @@ export function ChannelEventSpace({ api, owner, channelId, chat, composer, timel
   }
   function revoke() { setEvents([]); setAttentionCount(0); discovery.dispose(); setReferenceVersion(value => value + 1); setEditing(null); }
   const attention = attentionCount ?? events.filter(event => event.needs_attention).length;
-  return <EventReferencesContext.Provider value={{ events: referenceEvents, collect, suggest, href: event => eventHref(channelId, event.id), open }}>
+  const activeFilter = enabled ? filter : null;
+  return <EventReferencesContext.Provider value={{ events: referenceEvents, collect, suggest: enabled ? suggest : undefined, href: event => eventHref(channelId, event.id), open }}>
     <style>{css}</style>
     <div className="sp-channel-events" ref={root}>
-      <div className="sp-channel-tabs" role="tablist" aria-label="Innhald i kanalen">
-        <Button id={`${id}-chat-tab`} role="tab" tabIndex={tab === "chat" ? 0 : -1} aria-selected={tab === "chat"} aria-controls={`${id}-chat`} onClick={() => { setTab("chat"); updateUrl(null); }}
-          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("events"); updateUrl(selectedId); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-events-tab"]`)?.focus(); } }}>Meldingar</Button>
-        <Button id={`${id}-events-tab`} role="tab" tabIndex={tab === "events" ? 0 : -1} aria-selected={tab === "events"} aria-controls={`${id}-events`} onClick={() => { setTab("events"); updateUrl(selectedId); }}
-          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("chat"); updateUrl(null); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-chat-tab"]`)?.focus(); } }}>Arrangement{attention > 0 ? ` (${attention} endra)` : ""}</Button>
-      </div>
-      <div className="sp-event-chat" id={`${id}-chat`} role="tabpanel" aria-labelledby={`${id}-chat-tab`} hidden={tab !== "chat"} inert={tab !== "chat"}>
-        <EventPills events={events} selected={filter} onSelect={setFilter} more={nextAfter !== null} loading={loadingMore} onLoadMore={() => setAfter(nextAfter)} />
-        <div className="sp-event-chat" hidden={Boolean(filter)} inert={Boolean(filter)}>{chat}</div>
-        {filter && <EventMessageResults key={filter} api={api} owner={owner} channelId={channelId} eventId={filter} timeline={timeline} onDenied={() => { revoke(); setFilter(null); }} />}
+      {enabled && <div className="sp-channel-tabs" role="tablist" aria-label="Innhald i kanalen"
+        onKeyDownCapture={event => { event.currentTarget.dataset.keyboardNav = "true"; }}
+        onPointerDownCapture={event => { delete event.currentTarget.dataset.keyboardNav; }}
+        onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) delete event.currentTarget.dataset.keyboardNav; }}>
+        <button type="button" id={`${id}-chat-tab`} role="tab" tabIndex={tab === "chat" ? 0 : -1} aria-selected={tab === "chat"} aria-controls={`${id}-chat`} onClick={() => { setTab("chat"); updateUrl(null); }}
+          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("events"); updateUrl(selectedId); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-events-tab"]`)?.focus(); } }}>Meldingar</button>
+        <button type="button" id={`${id}-events-tab`} role="tab" tabIndex={tab === "events" ? 0 : -1} aria-selected={tab === "events"} aria-controls={`${id}-events`} onClick={() => { setTab("events"); updateUrl(selectedId); }}
+          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("chat"); updateUrl(null); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-chat-tab"]`)?.focus(); } }}>Arrangement{attention > 0 ? ` (${attention} endra)` : ""}</button>
+      </div>}
+      <div className="sp-event-chat" id={`${id}-chat`} role={enabled ? "tabpanel" : undefined} aria-labelledby={enabled ? `${id}-chat-tab` : undefined} hidden={tab !== "chat"} inert={tab !== "chat"}>
+        {disabledNotice && <Status>Arrangement er slått av i denne kanalen. Meldingar og utkast er bevarte. <Button variant="quiet" onClick={() => setDisabledNotice(false)}>Lukk</Button></Status>}
+        {enabled && <EventPills events={events} selected={filter} onSelect={setFilter} more={nextAfter !== null} loading={loadingMore} onLoadMore={() => setAfter(nextAfter)} />}
+        <div className="sp-event-chat" hidden={Boolean(activeFilter)} inert={Boolean(activeFilter)}>{chat}</div>
+        {activeFilter && <EventMessageResults key={activeFilter} api={api} owner={owner} channelId={channelId} eventId={activeFilter} timeline={timeline} onDenied={() => { revoke(); setFilter(null); }} />}
         {composer}
       </div>
-      <section className="sp-events-panel" id={`${id}-events`} role="tabpanel" aria-labelledby={`${id}-events-tab`} hidden={tab !== "events"} inert={tab !== "events"}>
+      <section className="sp-events-panel" id={`${id}-events`} role={enabled ? "tabpanel" : "region"} aria-label={enabled ? undefined : "Arkivert arrangement"} aria-labelledby={enabled ? `${id}-events-tab` : undefined} hidden={tab !== "events"} inert={tab !== "events"}>
         <div className="sp-events-inner">
           {error && <Status tone="error">{error} <Button onClick={reload}>Prøv igjen</Button></Status>}
-          {!loaded && <Status>Lastar arrangement …</Status>}
-          {editing ? <EventEditor key={editing === "new" ? "new" : editing.id} event={editing === "new" ? undefined : editing}
+          {!loaded && enabled && <Status>Lastar arrangement …</Status>}
+          {editing && enabled ? <EventEditor key={editing === "new" ? "new" : editing.id} event={editing === "new" ? undefined : editing}
             onClose={() => setEditing(null)} onSave={async input => {
               const created = await api.save(owner, channelId, input, editing === "new" ? undefined : editing.id);
               if (!current.current) return;
               upsert(created); setEditing(null); open(created); reload();
             }} /> : selectedId ? <EventDetail key={selectedId} api={api} owner={owner} channelId={channelId} eventId={selectedId}
-              refresh={revision} onUpdate={upsert} onEdit={setEditing} uploadImage={uploadImage}
-              onDenied={revoke} onBack={() => { setSelectedId(null); updateUrl(null); }} /> : <>
+              refresh={revision} onUpdate={upsert} onEdit={setEditing} uploadImage={uploadImage} readOnly={!enabled}
+              onDenied={revoke} onBack={() => { setSelectedId(null); if (!enabled) setTab("chat"); updateUrl(null); }} /> : <>
             <div className="sp-event-actions"><h2 tabIndex={-1}>Arrangement</h2><Button variant="primary" onClick={() => setEditing("new")} disabled={Boolean(error)}>Nytt arrangement</Button>
               {after !== null && <Button onClick={() => { setAfter(null); reload(); }}>Oppdater arrangement</Button>}</div>
             <p>Alle i kanalen kan opprette arrangement og bidra med bilete.</p>
@@ -215,7 +233,8 @@ function EventMessageResults({ api, owner, channelId, eventId, timeline, onDenie
     } }} /></div>;
 }
 
-function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit, onBack, onDenied, uploadImage }: Scope & {
+function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit, onBack, onDenied, uploadImage, readOnly = false }: Scope & {
+  readOnly?: boolean;
   eventId: string; refresh: number; onUpdate(event: ChannelEvent): void; onEdit(event: ChannelEvent): void; onBack(): void; onDenied(): void;
   uploadImage(file: File, progress: (text: string) => void): Promise<string>;
 }) {
@@ -231,6 +250,7 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
   const [copied, setCopied] = useState(false);
   const [lightbox, setLightbox] = useState<string>();
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [featureDisabled, setFeatureDisabled] = useState(false);
   const alive = useRef(true);
   const imageRequest = useRef<AbortController | null>(null);
   const peopleRequest = useRef<AbortController | null>(null);
@@ -243,9 +263,10 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
     void api.detail(owner, channelId, eventId, controller.signal).then(value => {
       if (controller.signal.aborted) return;
       setEvent(value); setError(""); onUpdate(value);
+      if (value.events_enabled === true) setFeatureDisabled(false);
     }, cause => { if (!controller.signal.aborted) { setError(`Arrangementet kunne ikkje lastast. ${errorText(cause)}`); if (denied(cause)) { setEvent(undefined); setPeople([]); setLightbox(undefined); onDenied(); } } });
     return () => controller.abort();
-  }, [api, owner, channelId, eventId, refresh, attempt]);
+  }, [api, owner, channelId, eventId, refresh, attempt, readOnly]);
   useEffect(() => {
     const controller = new AbortController(); setPeopleError(false);
     peopleRequest.current?.abort(); peopleRequest.current = controller;
@@ -255,30 +276,34 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
     return () => controller.abort();
   }, [api, owner, channelId, eventId, event?.revision, event?.my_rsvp, attempt, refresh]);
   async function mutate(action: () => Promise<ChannelEvent>) {
+    if (readOnly || featureDisabled || event?.events_enabled !== true) return;
     setBusy(true); setError("");
     try { const value = await action(); if (alive.current) { setEvent(value); onUpdate(value); setAttempt(value => value + 1); } }
-    catch (cause) { if (alive.current) { setError(`Endringa kunne ikkje lagrast. ${errorText(cause)}`); if (denied(cause)) { setEvent(undefined); setPeople([]); onDenied(); } } }
+    catch (cause) { if (alive.current) { setError(`Endringa kunne ikkje lagrast. ${errorText(cause)}`); if (cause instanceof HttpError && cause.status === 409 && /slått av|disabled/iu.test(cause.message)) setFeatureDisabled(true); if (denied(cause)) { setEvent(undefined); setPeople([]); onDenied(); } } }
     finally { if (alive.current) { setBusy(false); setStatus(""); } }
   }
+  const archived = readOnly || featureDisabled || event?.events_enabled === false;
+  const canWrite = !readOnly && !featureDisabled && event?.events_enabled === true;
   return <article className="sp-event-detail">
-    <Button variant="quiet" onClick={onBack}>← Alle arrangement</Button>
+    <Button variant="quiet" onClick={onBack}>{readOnly ? "← Tilbake til meldingane" : "← Alle arrangement"}</Button>
+    {archived && <Status>Arrangement er slått av i denne kanalen. Du kan lese arkivet, men ikkje endre arrangement eller svar.</Status>}
     {error && <Status tone="error">{error} <Button onClick={() => setAttempt(value => value + 1)}>Prøv igjen</Button></Status>}
     {!event && !error && <Status>Lastar arrangement …</Status>}
     {event && <>
       <h2 ref={heading} tabIndex={-1}>{event.title}</h2>
       {event.cancelled && <Status>Arrangementet er avlyst.</Status>}
-      {event.needs_attention && <div className="sp-event-notice" role="status"><p>Arrangementet er endra sidan du svarte. Sjå gjennom tid, stad og omtale.</p><Button disabled={busy} onClick={() => void mutate(() => api.change(owner, channelId, event.id, "acknowledge"))}>Markér som lesen</Button></div>}
+      {event.needs_attention && <div className="sp-event-notice" role="status"><p>Arrangementet er endra sidan du svarte. Sjå gjennom tid, stad og omtale.</p>{canWrite && <Button disabled={busy} onClick={() => void mutate(() => api.change(owner, channelId, event.id, "acknowledge"))}>Markér som lesen</Button>}</div>}
       <p>{eventWhen(event)}</p>{event.location && <p>{event.location}</p>}
-      <fieldset className="sp-event-response" disabled={busy || event.cancelled}><legend>Ditt svar</legend>{eventResponses.map(response => <label key={response}>
+      <fieldset className="sp-event-response" disabled={busy || event.cancelled || !canWrite}><legend>Ditt svar</legend>{eventResponses.map(response => <label key={response}>
         <input type="radio" name={`rsvp-${event.id}`} value={response} checked={event.my_rsvp === response} onChange={() => void mutate(() => api.change(owner, channelId, event.id, "rsvp", { status: response }))} />{responseLabels[response]}</label>)}</fieldset>
       <p>Bruk <code>#arr:{event.code}</code> for å merke ei melding med dette arrangementet.</p>
       {event.cover_media_id && <PreviewImage className="sp-event-cover" id={event.cover_media_id} name={`Forside for ${event.title}`} />}
       <MarkdownContent source={event.description} />
       <div className="sp-event-actions"><Button onClick={() => { void navigator.clipboard.writeText(`#arr:${event.code}`).then(() => setCopied(true), () => setError("Kopiering feila. Marker og kopier koden ovanfor.")); }}>{copied ? "Kopiert" : "Kopier #arr-kode"}</Button>
         <a href={eventHref(channelId, event.id)}>Detaljlenkje</a>
-        {event.can_manage && <><Button disabled={busy} onClick={() => onEdit(event)}>Rediger</Button>{!event.cancelled && <Button disabled={busy} onClick={() => setConfirmCancel(true)}>Avlys arrangement</Button>}</>}
+        {canWrite && event.can_manage && <><Button disabled={busy} onClick={() => onEdit(event)}>Rediger</Button>{!event.cancelled && <Button disabled={busy} onClick={() => setConfirmCancel(true)}>Avlys arrangement</Button>}</>}
       </div>
-      {confirmCancel && <div className="sp-event-notice"><p>Avlyse {event.title}? Arrangementet og tidlegare svar blir bevarte.</p><Button variant="danger" disabled={busy} onClick={() => { setConfirmCancel(false); void mutate(() => api.change(owner, channelId, event.id, "cancel")); }}>Stadfest avlysing</Button><Button onClick={() => setConfirmCancel(false)}>Behald arrangementet</Button></div>}
+      {confirmCancel && canWrite && <div className="sp-event-notice"><p>Avlyse {event.title}? Arrangementet og tidlegare svar blir bevarte.</p><Button variant="danger" disabled={busy} onClick={() => { setConfirmCancel(false); void mutate(() => api.change(owner, channelId, event.id, "cancel")); }}>Stadfest avlysing</Button><Button onClick={() => setConfirmCancel(false)}>Behald arrangementet</Button></div>}
       <section aria-label="Deltakarsvar"><h3>Deltakarsvar</h3>{peopleError ? <Status tone="error">Deltakarsvara kunne ikkje lastast. <Button onClick={() => setAttempt(value => value + 1)}>Prøv igjen</Button></Status> : eventResponses.map(response => {
         const respondents = people.filter(person => person.status === response);
         return <details key={response}><summary>{responseLabels[response]} ({peopleCounts?.[response] ?? respondents.length}{!peopleCounts && peopleNext ? "+" : ""})</summary>{respondents.length ? <ul>{respondents.map(person => <li key={person.user_id}>{person.display_name}</li>)}</ul> : <p>{peopleNext ? "Last fleire for å sjå fleire namn." : "Ingen registrerte svar."}</p>}</details>;
@@ -290,8 +315,8 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
           .finally(() => { if (!controller.signal.aborted) setBusy(false); });
       }}>Vis fleire deltakarar</Button>}</section>
       <section aria-label="Biletbibliotek"><h3>Biletbibliotek</h3><p>Alle i kanalen kan bidra. Du kan fjerne eigne bilete; arrangementsansvarlege kan administrere alle.</p>
-        <Button disabled={busy} onClick={() => fileInput.current?.click()}>Legg til bilete</Button>
-        <input ref={fileInput} aria-label="Legg til bilete" hidden type="file" accept="image/*" multiple disabled={busy} onChange={action => {
+        {canWrite && <Button disabled={busy} onClick={() => fileInput.current?.click()}>Legg til bilete</Button>}
+        <input ref={fileInput} aria-label="Legg til bilete" hidden type="file" accept="image/*" multiple disabled={busy || !canWrite} onChange={action => {
           const files = [...(action.currentTarget.files ?? [])]; action.currentTarget.value = "";
           if (!files.length) return;
           void mutate(async () => {
@@ -309,8 +334,8 @@ function EventDetail({ api, owner, channelId, eventId, refresh, onUpdate, onEdit
         {!event.images.length && <p>Ingen bilete enno.</p>}
         <div className="sp-event-gallery">{event.images.map(image => <figure key={image.media_id}><Button variant="quiet" aria-label="Opne bilete" onClick={() => setLightbox(image.media_id)}><PreviewImage id={image.media_id} name="Bilete frå arrangementet" /></Button><figcaption>
           {event.cover_media_id === image.media_id && <span>Forside</span>}
-          {event.can_manage && <Button variant="quiet" disabled={busy} onClick={() => void mutate(() => api.change(owner, channelId, event.id, "cover", { media_id: event.cover_media_id === image.media_id ? null : image.media_id }))}>{event.cover_media_id === image.media_id ? "Fjern forside" : "Bruk som forside"}</Button>}
-          {(event.can_manage || image.contributor_id === owner) && <Button variant="quiet" disabled={busy} onClick={() => void mutate(() => api.removeImage(owner, channelId, event.id, image.media_id))}>Fjern bilete</Button>}
+          {canWrite && event.can_manage && <Button variant="quiet" disabled={busy} onClick={() => void mutate(() => api.change(owner, channelId, event.id, "cover", { media_id: event.cover_media_id === image.media_id ? null : image.media_id }))}>{event.cover_media_id === image.media_id ? "Fjern forside" : "Bruk som forside"}</Button>}
+          {canWrite && (event.can_manage || image.contributor_id === owner) && <Button variant="quiet" disabled={busy} onClick={() => void mutate(() => api.removeImage(owner, channelId, event.id, image.media_id))}>Fjern bilete</Button>}
         </figcaption></figure>)}</div>
         {event.images_next_after && <Button disabled={busy} onClick={() => {
           imageRequest.current?.abort(); const controller = new AbortController(); imageRequest.current = controller; setBusy(true); setError("");

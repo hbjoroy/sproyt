@@ -6,6 +6,8 @@ export type EventResponse = typeof eventResponses[number];
 export type EventInput = Readonly<{ title: string; code: string; starts_at: string; timezone: string; ends_at: string | null; location: string | null; description: string }>;
 export type ChannelEvent = EventInput & Readonly<{
   id: string; channel_id: string; creator_id: string; cancelled: boolean; revision: number; updated_at: string;
+  /** Missing only when a new bundle overlaps the earlier event backend. */
+  events_enabled?: boolean;
   cover_media_id: string | null; my_rsvp: EventResponse; can_manage: boolean;
   needs_attention: boolean; aliases: readonly string[]; images_next_after: string | null;
   images: readonly Readonly<{ media_id: string; contributor_id: string }>[];
@@ -18,6 +20,7 @@ export function decodeChannelEvent(value: unknown, channelId: string): ChannelEv
     || value.channel_id !== channelId || !["title", "code", "starts_at", "timezone", "description", "updated_at"].every(key => typeof value[key] === "string")
     || !/^[a-z0-9-]{1,48}$/u.test(value.code as string) || !Number.isFinite(Date.parse(value.starts_at as string))
     || !["ends_at", "location", "cover_media_id"].every(key => value[key] === null || typeof value[key] === "string")
+    || (value.events_enabled !== undefined && typeof value.events_enabled !== "boolean")
     || typeof value.cancelled !== "boolean" || typeof value.can_manage !== "boolean" || !Number.isSafeInteger(value.revision)
     || typeof value.needs_attention !== "boolean" || !Array.isArray(value.aliases) || value.aliases.some(alias => typeof alias !== "string" || !/^[a-z0-9-]{1,48}$/u.test(alias))
     || !eventResponses.includes(value.my_rsvp as EventResponse) || !Array.isArray(value.images)

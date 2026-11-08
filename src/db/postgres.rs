@@ -1905,6 +1905,35 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn set_channel_events_enabled(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        enabled: bool,
+    ) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            if sqlx::query("update channels set events_enabled=events_enabled where id=$1 and not exists(select 1 from direct_conversations where channel_id=$1) and not exists(select 1 from direct_group_conversations where channel_id=$1) and not exists(select 1 from personal_spaces where channel_id=$1)").bind(*channel.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?.rows_affected()!=1 {return Err(RepositoryError::PermissionDenied)}
+            let actor_row=sqlx::query("select m.user_id from channel_memberships m join channels c on c.id=m.channel_id where m.channel_id=$1 and m.user_id=$2 and m.role in ('owner','moderator') and (c.circle_id is null or exists(select 1 from circle_memberships cm where cm.circle_id=c.circle_id and cm.user_id=m.user_id for share)) for share of m").bind(*channel.as_uuid()).bind(*actor.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)?;
+            if actor_row.is_none() {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            sqlx::query("update channels set events_enabled=$1 where id=$2")
+                .bind(enabled)
+                .bind(*channel.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            let payload = serde_json::json!({"enabled":enabled});
+            sqlx::query("insert into audit_events(actor_id,action,target_kind,target_id,payload) values($1,'channel.events_availability_changed','channel',$2,$3)").bind(*actor.as_uuid()).bind(channel.to_string()).bind(payload).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("select pg_notify('sproyt_circle_updates','')")
+                .execute(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
     fn set_channel_hidden(
         &self,
         actor: UserId,
@@ -1963,8 +1992,9 @@ impl ChatRepository for PostgresChatRepository {
         channel: ChannelId,
     ) -> RepositoryFuture<'_, crate::domain::ChannelGovernance> {
         Box::pin(async move {
-            let rows=sqlx::query("select c.hidden,m.user_id,m.role from channels c join channel_memberships a on a.channel_id=c.id join channel_memberships m on m.channel_id=c.id where c.id=$1 and a.user_id=$2 order by m.user_id").bind(*channel.as_uuid()).bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
+            let rows=sqlx::query("select c.hidden,coalesce(c.events_enabled,exists(select 1 from channel_events ce where ce.channel_id=c.id)) as events_enabled,m.user_id,m.role from channels c join channel_memberships a on a.channel_id=c.id join channel_memberships m on m.channel_id=c.id where c.id=$1 and a.user_id=$2 order by m.user_id").bind(*channel.as_uuid()).bind(*actor.as_uuid()).fetch_all(&self.pool).await.map_err(sql_error)?;
             let row = rows.first().ok_or(RepositoryError::PermissionDenied)?;
+            let events_enabled = row.try_get("events_enabled").map_err(storage)?;
             let hidden = row.try_get("hidden").map_err(storage)?;
             let members = rows
                 .into_iter()
@@ -1978,7 +2008,11 @@ impl ChatRepository for PostgresChatRepository {
                     })
                 })
                 .collect::<Result<Vec<_>, RepositoryError>>()?;
-            Ok(crate::domain::ChannelGovernance { hidden, members })
+            Ok(crate::domain::ChannelGovernance {
+                hidden,
+                events_enabled,
+                members,
+            })
         })
     }
     fn list_channels_for_user<'a>(
@@ -1986,7 +2020,7 @@ impl ChatRepository for PostgresChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,c.hidden,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,c.hidden,coalesce(c.events_enabled,exists(select 1 from channel_events ce where ce.channel_id=c.id)) as events_enabled,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
                 .await
@@ -3872,6 +3906,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
+        events_enabled: row.try_get("events_enabled").map_err(storage)?,
         hidden: row.try_get("hidden").map_err(storage)?,
         direct_activity: None,
         id: ChannelId::from_uuid(id),
