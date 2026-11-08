@@ -16,6 +16,7 @@ async function command(request: APIRequestContext, participant: string, type: st
 }
 
 test("real event backend and React UI retain rich messages, RSVP, aliases, media and current membership authority", async ({ request, page }) => {
+  test.setTimeout(90_000);
   const suffix = randomUUID(); const owner = `events-owner-${suffix}`; const member = `events-member-${suffix}`; const outsider = `events-outside-${suffix}`;
   for (const participant of [owner, member, outsider]) expect((await request.get(`/api/v1/me/emojis?participant=${participant}`)).ok()).toBeTruthy();
   const self = (await command(request, owner, "hello")).payload.participant_id;
@@ -32,7 +33,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   const actor = (participant: string, user: string) => ({ query: `?participant=${encodeURIComponent(participant)}`, headers: { "x-sproyt-account": user } });
   const a = actor(owner, self); const b = actor(member, memberId); const c = actor(outsider, outsiderId);
   const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
-  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+  if (process.env.SPROYT_E2E_EMBEDDED_CLIENT !== "1") await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
   await page.goto(`/?participant=${owner}&channel=${channel}&ui=react`);
   const app = page.locator("#sproyt-react-preview");
   await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
@@ -147,4 +148,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   expect((await request.put(`${path}/${event.id}/rsvp${a.query}`, { headers: a.headers, data: { status: "attending" } })).status()).toBe(409);
   await app.getByRole("button", { name: "Tilbake til meldingane", exact: false }).click();
   await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeVisible();
+  expect((await request.put(`${root}/members/${memberId}/role${a.query}`, { headers: a.headers, data: { role: "moderator" } })).ok()).toBeTruthy();
+  expect((await request.put(`${root}/events-enabled${b.query}`, { headers: b.headers, data: { enabled: true } })).ok()).toBeTruthy();
+  expect((await request.put(`${root}/events-enabled${b.query}`, { headers: b.headers, data: { enabled: false } })).ok()).toBeTruthy();
 });

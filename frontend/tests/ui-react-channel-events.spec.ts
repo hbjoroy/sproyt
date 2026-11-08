@@ -14,7 +14,7 @@ async function setup(page: Page, deep = false, offPage = false, initialEnabled =
   const image = await eventImage(page);
   await page.route("**/api/v1/me/favorite-circles?**", route => route.fulfill({ json: [] }));
   const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
-  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+  if (process.env.SPROYT_E2E_EMBEDDED_CLIENT !== "1") await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
   let event = { id: eventId, channel_id: channel, creator_id: channel, events_enabled: enabled, title: "Konsert med eit langt og lesbart namn", code: "konsert", aliases: ["gammal"],
     starts_at: "2027-01-01T18:00:00Z", timezone: "Europe/Oslo", ends_at: null, location: "Grendahuset", description: "**Ta med vener**", cancelled: false,
     revision: 2, updated_at: date, cover_media_id: mediaId as string | null, my_rsvp: "following", can_manage: true, needs_attention: true, images: [{ media_id: mediaId, contributor_id: owner }], images_next_after: null };
@@ -68,6 +68,7 @@ async function setup(page: Page, deep = false, offPage = false, initialEnabled =
   await page.goto(`/?participant=${owner}&channel=${channel}&ui=react${deep ? `&event=${eventId}` : ""}`);
   const app = page.locator("#sproyt-react-preview");
   if (enabled) await expect(app.getByRole("tab", { name: /Arrangement/ })).toBeVisible();
+  else if (deep) await expect(app.getByRole("heading", { name: /Konsert med/, level: 2 })).toBeVisible();
   else await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
   return { app, changes, prefixes, collectionReads, revoke: () => { revoked = true; }, setEnabled(value: boolean) {
     enabled = value; event = { ...event, events_enabled: value };
@@ -135,6 +136,9 @@ for (const from of ["detail", "filter"] as const) test(`availability invalidatio
   server.setEnabled(false);
   await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
   await expect(composer).toBeVisible(); await expect(composer).toHaveValue("Utkastet skal bevarast");
+  await composer.fill("Utkastet skal bevarast #arr:ko");
+  await expect(app.getByRole("listbox", { name: "Arrangementsforslag" })).toHaveCount(0);
+  await composer.fill("Utkastet skal bevarast");
   expect(await field!.evaluate(element => element.isConnected)).toBe(true);
   expect(await viewport!.evaluate(element => element.isConnected)).toBe(true);
   await app.getByRole("button", { name: "Lukk", exact: true }).click();
@@ -148,6 +152,16 @@ for (const from of ["detail", "filter"] as const) test(`availability invalidatio
   await expect(app.getByRole("button", { name: "Rediger", exact: true })).toBeVisible();
   await app.getByRole("tab", { name: "Meldingar", exact: true }).click();
   await expect(composer).toHaveValue("Utkastet skal bevarast");
+});
+test("an off deep link opens a read-only archive without an irrelevant navigation row", async ({ page }) => {
+  const { app } = await setup(page, true, false, false);
+  await expect(app.getByRole("heading", { name: /Konsert med/, level: 2 })).toBeVisible();
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+  await expect(app.getByText("Lastar arrangement …", { exact: true })).toHaveCount(0);
+  await expect(app.getByRole("radio", { name: "Deltek", exact: true })).toBeDisabled();
+  await expect(app.getByRole("button", { name: "Legg til bilete", exact: true })).toHaveCount(0);
+  await app.getByRole("button", { name: "Tilbake til meldingane", exact: false }).click();
+  await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeVisible();
 });
 for (const [width, theme] of [[320, "light"], [320, "dark"], [390, "light"], [390, "dark"], [1440, "light"], [1440, "dark"]] as const) {
   test(`disabled events leave ordinary chat full height at ${width} ${theme}`, async ({ page }) => {
@@ -208,4 +222,16 @@ test("background refresh preserves explicitly loaded event pages and reading pos
   expect(collectionReads).toEqual([null, "next-page"]);
   await app.getByRole("button", { name: "Oppdater arrangement", exact: true }).click();
   await expect.poll(() => collectionReads.length).toBe(3);
+});
+for (const [width, height, theme] of [[320, 360, "light"], [667, 375, "dark"]] as const) test(`quiet event navigation remains usable on a short ${width}x${height} viewport`, async ({ page }) => {
+  await page.setViewportSize({ width, height });
+  await page.addInitScript(mode => localStorage.setItem("sproyt.theme.v1", mode), theme);
+  const { app } = await setup(page);
+  const tabs = app.getByRole("tablist", { name: "Innhald i kanalen" });
+  const coarse = await page.evaluate(() => matchMedia("(pointer:coarse)").matches);
+  expect((await tabs.boundingBox())!.height).toBe(coarse ? 45 : 37);
+  const send = app.getByRole("button", { name: "Send ↑", exact: true });
+  await expect(send).toBeInViewport({ ratio: 1 });
+  expect(await app.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/events-short-${width}-${theme}.png` });
 });
