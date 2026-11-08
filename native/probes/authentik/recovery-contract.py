@@ -31,6 +31,7 @@ from authentik.stages.email.stage import EMAIL_RECOVERY_CACHE_KEY
 phase = "guard"
 observed_component = "none"
 observed_status = 0
+smtp_queue_diagnostics = None
 HOST = "localhost:19090"
 BASELINE = "n01f-email-baseline"
 GUARDED = "n01f-recovery"
@@ -63,15 +64,35 @@ def mail_ids():
     return {message["ID"] for message in messages["messages"]}
 
 
+def mail_queue_states():
+    """Only aggregate task states: never fetch mail arguments, logs or bodies."""
+    try:
+        from django.db.models import Count
+        from authentik.tasks.models import Task
+        states = {"waiting_for_dependencies", "queued", "consumed", "preprocess", "running", "postprocess", "rejected", "done"}
+        counts = {}
+        for row in Task.objects.filter(actor_name="authentik.stages.email.tasks.send_mail").values("state").annotate(count=Count("pk")):
+            state = row["state"] if row["state"] in states else "other"
+            counts[state] = counts.get(state, 0) + row["count"]
+        return {"emailTaskStates": counts}
+    except Exception:
+        return {"emailTaskStatesAvailable": False}
+
+
 def wait_mail(before):
-    for _ in range(40):
+    global smtp_queue_diagnostics
+    # The pinned Postgres task consumer's fallback interval is 30 seconds.
+    # A 10-second poll could fail before that first asynchronous delivery.
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
         added = mail_ids() - before
         if added:
             require(len(added) == 1)
             identity = added.pop()
             require(re.fullmatch(r"[A-Za-z0-9-]{1,80}", identity) is not None)
             return mail_json("/api/v1/message/" + identity)
-        time.sleep(0.25)
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+    smtp_queue_diagnostics = mail_queue_states()
     raise AssertionError("N01f SMTP delivery timeout")
 
 
@@ -416,7 +437,8 @@ try:
     print("N01F_RESULT " + json.dumps({"passed": True, "scope": "n01f_recovery_link_contract", "hardwarePasskeyVerified": False, "fullRecoveryVerified": False, **results}))
 except (Exception, ContractDeadline) as error:
     location = next((frame.lineno for frame in reversed(traceback.extract_tb(error.__traceback__)) if frame.filename.endswith("recovery-contract.py") and frame.name != "require"), 0)
-    print("N01F_FAILED " + phase + " " + type(error).__name__ + " line=" + str(location) + " component=" + observed_component + " status=" + str(observed_status))
+    queue_summary = " queue=" + json.dumps(smtp_queue_diagnostics, sort_keys=True) if smtp_queue_diagnostics is not None else ""
+    print("N01F_FAILED " + phase + " " + type(error).__name__ + " line=" + str(location) + " component=" + observed_component + " status=" + str(observed_status) + queue_summary)
     raise SystemExit(1)
 finally:
     http.close()
