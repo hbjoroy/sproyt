@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator, type Page, type WebSocketRoute } from "@playwright/test";
 
@@ -8,7 +9,11 @@ const directId = "00000000-0000-7000-8000-000000007301";
 const otherDirectId = "00000000-0000-7000-8000-000000007302";
 type Command = { type: string; request_id?: string; payload?: { channel_id?: string; circle_id?: string; sequence?: number } };
 
-async function fixture(page: Page, start = `channel=${channelId(29)}`, ranked = false) {
+async function fixture(page: Page, start = `channel=${channelId(29)}`, ranked = false, withHidden = false) {
+  if (process.env.SPROYT_E2E_EMBEDDED_CLIENT !== "1") {
+    const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
+    await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+  }
   let socket: WebSocketRoute;
   let identity = "navigation-owner";
   const commands: Command[] = [];
@@ -26,8 +31,9 @@ async function fixture(page: Page, start = `channel=${channelId(29)}`, ranked = 
     created_by: "owner", created_at: "2026-01-01T00:00:00Z" }));
   const channels = circles.map((circle, index) => ({ id: channelId(index), slug: `channel-${index}`,
     name: `Kanal ${String(index + 1).padStart(2, "0")}`, kind: "private", circle_id: circle.id,
-    direct_user_id: null, is_direct: false, description: "", role: "member", last_read_sequence: 0,
+    direct_user_id: null, is_direct: false, description: "", role: "member", hidden: false, last_read_sequence: 0,
     latest_sequence: index === 0 ? 5 : 0 }));
+  if (withHidden) channels.push(...channels.slice(0, 2).map((channel, index) => ({ ...channel, id: channelId(40 + index), name: `Arkiv ${index + 1}`, hidden: true, latest_sequence: 0 })));
   const directs = [
     { id: directId, slug: "direct-ada", name: "Ada", direct_user_id: "ada" },
     { id: otherDirectId, slug: "direct-bert", name: "Bert", direct_user_id: "bert" }
@@ -238,4 +244,36 @@ test("direct conversations rank server activity and defer movement during keyboa
   await composer.fill("");
   await composer.press("ArrowLeft");
   await expect(rows).toHaveText(["Bert", "Ada"]);
+});
+
+test("hidden channels remain compact within their own circles and searchable", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const { app } = await fixture(page, `channel=${channelId(0)}`, false, true);
+  const nav = await navigation(app);
+  const first = nav.locator(`[data-conversation-group="circle:${circleId(0)}"]`);
+  const second = nav.locator(`[data-conversation-group="circle:${circleId(1)}"]`);
+  await nav.getByRole("button", { name: /Andre kretsar/ }).click();
+  await second.getByRole("button", { name: "Krets 02", exact: true }).click();
+  for (const group of [first, second]) await expect(group.getByRole("button", { name: "Andre kanalar (1)", exact: true })).toHaveAttribute("aria-expanded", "false");
+  expect(await first.getByRole("button", { name: "Andre kanalar (1)", exact: true }).evaluate(element => getComputedStyle(element).fontSize)).toBe("13px");
+  await first.getByRole("button", { name: "Andre kanalar (1)", exact: true }).click();
+  await expect(first.getByRole("button", { name: "# Arkiv 1", exact: true })).toBeVisible();
+  await expect(second.getByRole("button", { name: "# Arkiv 2", exact: true })).not.toBeVisible();
+  await expect(nav.getByRole("button", { name: /Gøymde kanalar/ })).toHaveCount(0);
+  await nav.getByRole("searchbox", { name: "Finn samtale" }).fill("Arkiv");
+  await expect(first.getByRole("button", { name: "# Arkiv 1", exact: true })).toBeVisible();
+  await expect(second.getByRole("button", { name: "# Arkiv 2", exact: true })).toBeVisible();
+  await nav.getByRole("searchbox", { name: "Finn samtale" }).fill("");
+  await first.getByRole("button", { name: "# Arkiv 1", exact: true }).click();
+  await expect(first.getByRole("button", { name: "Andre kanalar (1)", exact: true })).toHaveAttribute("aria-expanded", "true");
+  await first.getByRole("button", { name: "Andre kanalar (1)", exact: true }).click();
+  await expect(first.getByRole("button", { name: "# Arkiv 1", exact: true })).not.toBeVisible();
+  for (const mode of ["light", "dark"] as const) for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: mode });
+    await navigation(app);
+    await expect(nav).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+    if (process.env.SPROYT_HIDDEN_SCREENSHOTS) await page.screenshot({ path: `${process.env.SPROYT_HIDDEN_SCREENSHOTS}/${testInfo.project.name}-${mode}-${width}.png` });
+  }
 });

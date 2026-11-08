@@ -188,11 +188,10 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
       {governanceManager && host.hideChannel && <section aria-label="Synlegheit for kanalen">
         <Button variant="quiet" disabled={op.busy} onClick={() => void op.run(async admitted => {
           const hidden = !governance!.hidden;
-          setGovernance(undefined);
           const result = await host.hideChannel!(channel.id, hidden);
           if (admitted()) setGovernance(result);
-        }, governance?.hidden ? "Kanalen er synleg att." : "Kanalen er gøymd for alle.")}>{governance?.hidden ? "Vis kanalen for alle" : "Gøym kanalen for alle"}</Button>
-        <p>Gøymde kanalar ligg samla nedst i kanaloversikta. Varsel og tilgang blir bevarte.</p>
+        }, governance?.hidden ? "Kanalen er synleg att." : "Kanalen er gøymd for alle.")}>{governance?.hidden ? "Ta fram kanal" : "Gøym kanalen for alle"}</Button>
+        <p>Gøymde kanalar ligg under «Andre kanalar» i sin eigen krets. Ta fram kanalen her for å vise han i den vanlege kanallista att. Varsel og tilgang blir bevarte.</p>
       </section>}
       {governanceError && <Status tone="error">{governanceError}</Status>}
       {governanceManager && !channel.is_personal && host.setEventsEnabled && <section className="sp-settings-group" aria-label="Arrangement i kanalen">
