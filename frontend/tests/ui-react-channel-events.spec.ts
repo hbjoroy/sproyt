@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
 import { eventImage } from "./support/event-image";
 
 const owner = "events-viewer";
@@ -8,12 +8,14 @@ const eventId = "00000000-0000-7000-8000-000000009912";
 const mediaId = "00000000-0000-7000-8000-000000009913";
 const date = "2026-01-01T00:00:00Z";
 const row = (id: string, sequence: number, body: string) => ({ id, channel_id: channel, parent_message_id: null, sequence, body, sent_at: date, sender_id: owner, sender_display_name: "Nora" });
-async function setup(page: Page, deep = false, offPage = false) {
+async function setup(page: Page, deep = false, offPage = false, initialEnabled = true) {
+  let enabled = initialEnabled;
+  let socket: WebSocketRoute | undefined;
   const image = await eventImage(page);
   await page.route("**/api/v1/me/favorite-circles?**", route => route.fulfill({ json: [] }));
   const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
   await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
-  let event = { id: eventId, channel_id: channel, creator_id: channel, title: "Konsert med eit langt og lesbart namn", code: "konsert", aliases: ["gammal"],
+  let event = { id: eventId, channel_id: channel, creator_id: channel, events_enabled: enabled, title: "Konsert med eit langt og lesbart namn", code: "konsert", aliases: ["gammal"],
     starts_at: "2027-01-01T18:00:00Z", timezone: "Europe/Oslo", ends_at: null, location: "Grendahuset", description: "**Ta med vener**", cancelled: false,
     revision: 2, updated_at: date, cover_media_id: mediaId as string | null, my_rsvp: "following", can_manage: true, needs_attention: true, images: [{ media_id: mediaId, contributor_id: owner }], images_next_after: null };
   let revoked = false;
@@ -46,15 +48,15 @@ async function setup(page: Page, deep = false, offPage = false) {
   await page.route(new RegExp(`/api/v1/channels/${channel}/topics(?:[/?]|$)`), route => route.fulfill({ json: { enabled: false, can_manage: true, topics: [] } }));
   await page.route(new RegExp(`/api/v1/media/${mediaId}(?:[/?]|$)`), route => new URL(route.request().url()).pathname.endsWith("/status")
     ? route.fulfill({ json: { state: "legacy" } }) : route.fulfill({ contentType: "image/png", body: image }));
-  await page.routeWebSocket(/\/ws(?:\?|$)/, socket => socket.onMessage(data => {
+  await page.routeWebSocket(/\/ws(?:\?|$)/, connection => { socket = connection; connection.onMessage(data => {
     const command = JSON.parse(String(data));
-    const reply = (type: string, payload: unknown = {}) => socket.send(JSON.stringify({ protocol: "sproyt.chat.v1", type, request_id: command.request_id, payload }));
+    const reply = (type: string, payload: unknown = {}) => connection.send(JSON.stringify({ protocol: "sproyt.chat.v1", type, request_id: command.request_id, payload }));
     switch (command.type) {
       case "hello": reply("hello", { participant_id: owner }); break;
       case "ping": reply("pong"); break;
       case "list_users": reply("users_listed", { users: [] }); break;
       case "list_my_circles": reply("circles_listed", { circles: [] }); break;
-      case "list_my_channels": reply("channels_listed", { channels: [{ id: channel, slug: "events", name: "Arrangementskanalen", kind: "public", circle_id: null, direct_user_id: null, description: "", role: "owner", last_read_sequence: 10, latest_sequence: 10 }] }); break;
+      case "list_my_channels": reply("channels_listed", { channels: [{ id: channel, slug: "events", events_enabled: enabled, name: "Arrangementskanalen", kind: "public", circle_id: null, direct_user_id: null, description: "", role: "owner", last_read_sequence: 10, latest_sequence: 10 }] }); break;
       case "list_channel_users": reply("channel_users_listed", { channel_id: channel, users: [] }); break;
       case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
       case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
@@ -62,18 +64,27 @@ async function setup(page: Page, deep = false, offPage = false) {
       case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: [] }); break;
       case "list_channel_reactions": reply("channel_reactions_listed", { channel_id: channel, reactions: [] }); break;
     }
-  }));
+  }); });
   await page.goto(`/?participant=${owner}&channel=${channel}&ui=react${deep ? `&event=${eventId}` : ""}`);
   const app = page.locator("#sproyt-react-preview");
-  await expect(app.getByRole("tab", { name: /Arrangement/ })).toBeVisible();
-  return { app, changes, prefixes, collectionReads, revoke: () => { revoked = true; } };
+  if (enabled) await expect(app.getByRole("tab", { name: /Arrangement/ })).toBeVisible();
+  else await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
+  return { app, changes, prefixes, collectionReads, revoke: () => { revoked = true; }, setEnabled(value: boolean) {
+    enabled = value; event = { ...event, events_enabled: value };
+    socket!.send(JSON.stringify({ protocol: "sproyt.chat.v1", type: "circles_changed" }));
+  } };
 }
 
-for (const [width, theme] of [[320, "light"], [390, "dark"], [1440, "light"]] as const) {
+for (const [width, theme] of [[320, "light"], [320, "dark"], [390, "light"], [390, "dark"], [1440, "light"], [1440, "dark"]] as const) {
   test(`event tabs preserve drafts, rich references and independent filters at ${width} ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.addInitScript(mode => localStorage.setItem("sproyt.theme.v1", mode), theme);
     const { app } = await setup(page);
+    const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+    const tabs = app.getByRole("tablist", { name: "Innhald i kanalen" });
+    for (const tab of await tabs.getByRole("tab").all()) expect((await tab.boundingBox())!.height).toBe(coarse ? 44 : 36);
+    expect((await tabs.boundingBox())!.height).toBe(coarse ? 45 : 37);
+    if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/events-nav-${width}-${theme}.png` });
     const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
     await composer.fill("Utkast #arr:ko");
     await expect(app.getByRole("listbox", { name: "Arrangementsforslag" })).toBeVisible();
@@ -101,6 +112,7 @@ for (const [width, theme] of [[320, "light"], [390, "dark"], [1440, "light"]] as
     await app.getByRole("tab", { name: /Arrangement/ }).focus();
     await page.keyboard.press("ArrowLeft");
     await expect(app.getByRole("tab", { name: "Meldingar", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(app.getByRole("tab", { name: "Meldingar", exact: true })).toHaveCSS("outline-width", "2px");
     await expect(composer).toHaveValue("Utkast #arr:konsert ");
     const pills = app.getByRole("group", { name: "Arrangement i meldingane" });
     await pills.getByRole("button", { name: "#arr:konsert", exact: true }).click();
@@ -111,6 +123,41 @@ for (const [width, theme] of [[320, "light"], [390, "dark"], [1440, "light"]] as
     await pills.getByRole("button", { name: "Alle meldingar" }).click();
     await expect(composer).toHaveValue("Utkast #arr:konsert ");
     if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/events-${width}-${theme}.png` });
+  });
+}
+for (const from of ["detail", "filter"] as const) test(`availability invalidation closes ${from} without remounting chat and keeps the off archive readable`, async ({ page }) => {
+  const server = await setup(page); const { app } = server;
+  const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
+  await composer.fill("Utkastet skal bevarast"); const field = await composer.elementHandle();
+  const timeline = app.locator(".sp-timeline[aria-label='Meldingar']"); const viewport = await timeline.elementHandle();
+  if (from === "filter") await app.getByRole("group", { name: "Arrangement i meldingane" }).getByRole("button", { name: "#arr:konsert", exact: true }).click();
+  else await app.getByRole("link", { name: "#arr:gammal", exact: true }).click();
+  server.setEnabled(false);
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+  await expect(composer).toBeVisible(); await expect(composer).toHaveValue("Utkastet skal bevarast");
+  expect(await field!.evaluate(element => element.isConnected)).toBe(true);
+  expect(await viewport!.evaluate(element => element.isConnected)).toBe(true);
+  await app.getByRole("button", { name: "Lukk", exact: true }).click();
+  await app.getByRole("link", { name: "#arr:gammal", exact: true }).click();
+  await expect(app.getByRole("heading", { level: 2, name: /Konsert med/ })).toBeVisible();
+  await expect(app.getByText(/^Arrangement er slått av i denne kanalen\./u)).toBeVisible();
+  await expect(app.getByText("Lastar arrangement …", { exact: true })).toHaveCount(0);
+  await expect(app.getByRole("button", { name: "Rediger", exact: true })).toHaveCount(0);
+  await expect(app.getByRole("radio", { name: "Deltek", exact: true })).toBeDisabled();
+  server.setEnabled(true);
+  await expect(app.getByRole("button", { name: "Rediger", exact: true })).toBeVisible();
+  await app.getByRole("tab", { name: "Meldingar", exact: true }).click();
+  await expect(composer).toHaveValue("Utkastet skal bevarast");
+});
+for (const [width, theme] of [[320, "light"], [320, "dark"], [390, "light"], [390, "dark"], [1440, "light"], [1440, "dark"]] as const) {
+  test(`disabled events leave ordinary chat full height at ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width === 320 ? 360 : 900 });
+    await page.addInitScript(mode => localStorage.setItem("sproyt.theme.v1", mode), theme);
+    const { app, collectionReads } = await setup(page, false, false, false);
+    await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+    await expect(app.getByRole("group", { name: "Arrangement i meldingane" })).toHaveCount(0);
+    expect(collectionReads).toEqual([]);
+    if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/events-off-${width}-${theme}.png` });
   });
 }
 test("event deep link reload, editing failure and membership revocation clear private detail", async ({ page }) => {

@@ -56,6 +56,11 @@ export function createCommunityHost(deps: {
   };
   return {
     channelGovernance: governance ? id => governance.request(id) : undefined,
+    setEventsEnabled: governance ? async (id, enabled) => {
+      const result = await governance.request(id, "/events-enabled", { enabled });
+      await request("channels_listed", () => deps.send("list_my_channels"));
+      return result;
+    } : undefined,
     hideChannel: governance ? async (id, hidden) => {
       const result = await governance.request(id, "/hidden", { hidden });
       await request("channels_listed", () => deps.send("list_my_channels"));

@@ -909,7 +909,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     renderDiscussion: owner && source && !source.is_direct && !source.is_personal ? discussion => <ChannelEventBoundary
       key={`${owner}:${accountEpoch}:${source.id}`} href={event => eventHref(source.id, event.id)}>{discussion}</ChannelEventBoundary> : undefined,
     renderChannel: owner && source && !source.is_direct && !source.is_personal ? (chat, timeline, composer) => <ChannelEventSpace
-      key={`${owner}:${accountEpoch}:${source.id}`} api={host.channelEvents} owner={owner} channelId={source.id} chat={chat} composer={composer} timeline={timeline}
+      key={`${owner}:${accountEpoch}:${source.id}`} api={host.channelEvents} owner={owner} channelId={source.id} enabled={source.events_enabled ?? false} chat={chat} composer={composer} timeline={timeline}
       uploadImage={(file, progress) => host.uploadEventImage(source.id, file, progress)}
       onTabChange={events => { eventsTabOpen = events; channelScroll.setPaused(events || workspacePageOpen); }} /> : undefined,
     renderTimeline: owner && snapshot.activeChannel ? timeline => <ChannelTopics

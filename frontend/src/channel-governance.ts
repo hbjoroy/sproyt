@@ -3,11 +3,12 @@ import { isRecord, type Channel } from "./types";
 
 export interface ChannelGovernance {
   hidden: boolean;
+  events_enabled?: boolean;
   members: Array<{ user_id: string; role: Channel["role"] }>;
 }
 function decode(value: unknown): ChannelGovernance {
-  if (!isRecord(value) || typeof value.hidden !== "boolean" || !Array.isArray(value.members)) throw new Error("Ugyldige kanalrettar.");
-  return { hidden: value.hidden, members: value.members.map(member => {
+  if (!isRecord(value) || typeof value.hidden !== "boolean" || (value.events_enabled !== undefined && typeof value.events_enabled !== "boolean") || !Array.isArray(value.members)) throw new Error("Ugyldige kanalrettar.");
+  return { hidden: value.hidden, events_enabled: value.events_enabled as boolean | undefined, members: value.members.map(member => {
     if (!isRecord(member) || typeof member.user_id !== "string" || !["owner", "moderator", "member", "observer"].includes(String(member.role))) throw new Error("Ugyldig kanalrolle.");
     return { user_id: member.user_id, role: member.role as Channel["role"] };
   }) };

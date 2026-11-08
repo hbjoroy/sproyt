@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { eventImage } from "./support/event-image";
+import { openChannelMenu } from "./support/channel-menu";
+import { destinationSurface } from "./support/destination-surface";
 
 async function command(request: APIRequestContext, participant: string, type: string, payload?: unknown) {
   const response = await request.post(`/api/v1/commands?participant=${encodeURIComponent(participant)}`, {
@@ -29,6 +31,16 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   const path = `${root}/events`;
   const actor = (participant: string, user: string) => ({ query: `?participant=${encodeURIComponent(participant)}`, headers: { "x-sproyt-account": user } });
   const a = actor(owner, self); const b = actor(member, memberId); const c = actor(outsider, outsiderId);
+  const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
+  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+  await page.goto(`/?participant=${owner}&channel=${channel}&ui=react`);
+  const app = page.locator("#sproyt-react-preview");
+  await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+  expect(await (await request.get(`${root}/governance${a.query}`, { headers: a.headers })).json()).toMatchObject({ events_enabled: false });
+  expect((await request.put(`${root}/events-enabled${b.query}`, { headers: b.headers, data: { enabled: true } })).status()).toBe(403);
+  expect((await request.put(`${root}/events-enabled${a.query}`, { headers: a.headers, data: { enabled: true } })).ok()).toBeTruthy();
+  await expect(app.getByRole("tab", { name: "Arrangement", exact: true })).toBeVisible();
   const input = { title: "Konsert frå ekte backend", code: "konsert", starts_at: "2027-06-01T17:00:00Z", timezone: "Europe/Oslo", ends_at: null, location: "Grendahuset", description: "**Ta med vener**" };
   const createdEvent = await request.post(`${path}${b.query}`, { headers: b.headers, data: input });
   expect(createdEvent.ok(), await createdEvent.text()).toBeTruthy(); const event = await createdEvent.json();
@@ -69,10 +81,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   }
   // Force rich hits out of the ordinary fifty-message subscription window.
   for (let index = 0; index < 60; index++) await command(request, owner, "send_message", { channel_id: channel, body: `Nyare melding ${index}` });
-  const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
-  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
   await page.goto(`/?participant=${owner}&channel=${channel}&ui=react&event=${event.id}`);
-  const app = page.locator("#sproyt-react-preview");
   await expect(app.getByRole("heading", { level: 2, name: input.title })).toBeVisible();
   await expect(app.getByText(/^Arrangementet er endra sidan du svarte\./u)).toBeVisible();
   await app.getByRole("button", { name: "Markér som lesen" }).click();
@@ -121,4 +130,21 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   await app.getByRole("button", { name: "Avlys arrangement", exact: true }).click();
   await app.getByRole("button", { name: "Stadfest avlysing", exact: true }).click();
   await expect(app.getByText("Arrangementet er avlyst.", { exact: true })).toBeVisible();
+  await openChannelMenu(app);
+  await app.getByRole("button", { name: "Kanaldetaljar", exact: true }).click();
+  const settings = destinationSurface(app, "Kanaldetaljar: Ekte arrangementsprøve", true);
+  const availability = settings.getByRole("switch", { name: "Arrangement", exact: true });
+  await expect(availability).toBeChecked(); await availability.click(); await expect(availability).not.toBeChecked();
+  await settings.getByRole("button", { name: "Lukk", exact: true }).click();
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+  await page.goto(`/?participant=${owner}&channel=${channel}&event=${event.id}&ui=react`);
+  await expect(app.getByRole("heading", { name: input.title, exact: true })).toBeVisible();
+  await expect(app.getByText(/^Arrangement er slått av i denne kanalen\./u)).toBeVisible();
+  await expect(app.getByRole("radio", { name: "Deltek", exact: true })).toBeDisabled();
+  await expect(app.getByRole("button", { name: "Rediger", exact: true })).toHaveCount(0);
+  const archive = await request.get(`${path}/${event.id}${a.query}`, { headers: a.headers });
+  expect(await archive.json()).toMatchObject({ events_enabled: false, my_rsvp: "following", cover_media_id: mediaId, images: expect.arrayContaining([expect.objectContaining({ media_id: mediaId })]) });
+  expect((await request.put(`${path}/${event.id}/rsvp${a.query}`, { headers: a.headers, data: { status: "attending" } })).status()).toBe(409);
+  await app.getByRole("button", { name: "Tilbake til meldingane", exact: false }).click();
+  await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeVisible();
 });

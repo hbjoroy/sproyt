@@ -408,6 +408,12 @@ pub trait ChatRepository: Send + Sync + 'static {
         actor: UserId,
         channel: ChannelId,
     ) -> RepositoryFuture<'_, super::ChannelGovernance>;
+    fn set_channel_events_enabled(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        enabled: bool,
+    ) -> RepositoryFuture<'_, ()>;
     fn set_channel_hidden(
         &self,
         actor: UserId,
@@ -556,6 +562,7 @@ pub trait ChatRepository: Send + Sync + 'static {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RepositoryError {
+    EventsDisabled,
     Quota,
     Conflict,
     NotFound,
@@ -566,6 +573,7 @@ pub enum RepositoryError {
 impl fmt::Display for RepositoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EventsDisabled => formatter.write_str("channel events are disabled"),
             Self::Quota => formatter.write_str("media storage budget is full"),
             Self::Conflict => formatter.write_str("repository conflict"),
             Self::NotFound => formatter.write_str("repository resource not found"),
@@ -578,6 +586,7 @@ impl fmt::Display for RepositoryError {
 impl RepositoryError {
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::EventsDisabled => "events_disabled",
             Self::Quota => "quota",
             Self::Conflict => "conflict",
             Self::NotFound => "not_found",
@@ -588,6 +597,7 @@ impl RepositoryError {
 
     pub const fn public_message(&self) -> &'static str {
         match self {
+            Self::EventsDisabled => "events are disabled for this channel",
             Self::Quota => "media storage budget is full",
             Self::Conflict => "resource conflict",
             Self::NotFound => "resource not found",
@@ -1360,6 +1370,7 @@ impl ChatRepository for InMemoryChatRepository {
                     let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
                     Some(ExportedChannel {
                         channel: ChannelSummary {
+                            events_enabled: state.events_enabled_channels.contains(&channel.id),
                             hidden: state.hidden_channels.contains(&channel.id),
                             is_personal: state
                                 .personal_spaces
@@ -2114,6 +2125,7 @@ impl ChatRepository for InMemoryChatRepository {
                 return Err(RepositoryError::PermissionDenied);
             }
             Ok(super::ChannelGovernance {
+                events_enabled: state.events_enabled_channels.contains(&channel),
                 hidden: state.hidden_channels.contains(&channel),
                 members: state
                     .memberships
@@ -2125,6 +2137,36 @@ impl ChatRepository for InMemoryChatRepository {
                     })
                     .collect(),
             })
+        })
+    }
+    fn set_channel_events_enabled(
+        &self,
+        actor: UserId,
+        channel: ChannelId,
+        enabled: bool,
+    ) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let role = state
+                .memberships
+                .get(&(channel.clone(), actor))
+                .ok_or(RepositoryError::PermissionDenied)?
+                .role
+                .clone();
+            if !matches!(role, MembershipRole::Owner | MembershipRole::Moderator)
+                || state.direct_conversations.values().any(|id| id == &channel)
+                || state.direct_group_conversations.contains_key(&channel)
+                || state.personal_spaces.values().any(|(id, _)| id == &channel)
+            {
+                return Err(RepositoryError::PermissionDenied);
+            }
+            if enabled {
+                state.events_enabled_channels.insert(channel);
+            } else {
+                state.events_enabled_channels.remove(&channel);
+            }
+            let _ = self.circle_updates.send(());
+            Ok(())
         })
     }
     fn set_channel_hidden(
@@ -2210,6 +2252,7 @@ impl ChatRepository for InMemoryChatRepository {
                 .filter_map(|membership| {
                     let channel = state.channels.get(&membership.channel_id)?;
                     Some(ChannelSummary {
+                        events_enabled: state.events_enabled_channels.contains(&channel.id),
                         hidden: state.hidden_channels.contains(&channel.id),
                         is_personal: state
                             .personal_spaces
@@ -2966,6 +3009,7 @@ struct RepositoryState {
     direct_expansions: HashMap<(ChannelId, UserId), ChannelId>,
     memberships: HashMap<(ChannelId, UserId), Membership>,
     hidden_channels: HashSet<ChannelId>,
+    events_enabled_channels: HashSet<ChannelId>,
     messages: HashMap<ChannelId, Vec<ChatMessage>>,
     next_sequences: HashMap<ChannelId, ChannelSequence>,
     users: HashMap<UserId, User>,

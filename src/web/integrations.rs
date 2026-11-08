@@ -349,9 +349,9 @@ async fn authenticate_integration(
             );
             Err(response)
         }
-        Err(RepositoryError::Storage(_) | RepositoryError::Quota) => {
-            Err((StatusCode::SERVICE_UNAVAILABLE, "mellombels utilgjengeleg").into_response())
-        }
+        Err(
+            RepositoryError::Storage(_) | RepositoryError::Quota | RepositoryError::EventsDisabled,
+        ) => Err((StatusCode::SERVICE_UNAVAILABLE, "mellombels utilgjengeleg").into_response()),
         Err(RepositoryError::NotFound) => {
             Err((StatusCode::UNAUTHORIZED, "ugyldig nøkkel").into_response())
         }
@@ -370,6 +370,9 @@ fn integration_repository_response(error: RepositoryError) -> axum::response::Re
             (StatusCode::SERVICE_UNAVAILABLE, "mellombels utilgjengeleg").into_response()
         }
         RepositoryError::Conflict => (StatusCode::CONFLICT, "konflikt").into_response(),
+        RepositoryError::EventsDisabled => {
+            (StatusCode::CONFLICT, error.public_message()).into_response()
+        }
         RepositoryError::NotFound => {
             (StatusCode::NOT_FOUND, "ressursen finst ikkje").into_response()
         }

@@ -16,6 +16,7 @@ import type { CommunityDestination } from "../../application/management-target";
 export type { CommunityDestination } from "../../application/management-target";
 export interface CommunityHost {
   channelGovernance?(channelId: string): Promise<import("../../channel-governance").ChannelGovernance>;
+  setEventsEnabled?(channelId: string, enabled: boolean): Promise<import("../../channel-governance").ChannelGovernance>;
   hideChannel?(channelId: string, hidden: boolean): Promise<import("../../channel-governance").ChannelGovernance>;
   channelMemberRole?(channelId: string, userId: string, role: "member" | "moderator"): Promise<import("../../channel-governance").ChannelGovernance>;
   chatAgents?: CircleChatAgentApi;
@@ -84,7 +85,7 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
   const [selected, setSelected] = useState("");
   const [description, setDescription] = useState(channel.description);
   const [loaded, setLoaded] = useState(false);
-  const governanceKey = JSON.stringify([channel.id, channel.role, channel.hidden, scope.owner]);
+  const governanceKey = JSON.stringify([channel.id, channel.role, channel.hidden, channel.events_enabled, scope.owner]);
   const [governanceState, setGovernanceState] = useState<{ key: string; value: import("../../channel-governance").ChannelGovernance }>();
   const governance = governanceState?.key === governanceKey ? governanceState.value : undefined;
   const setGovernance = (value: import("../../channel-governance").ChannelGovernance | undefined) => setGovernanceState(value ? { key: governanceKey, value } : undefined);
@@ -133,7 +134,7 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
     const timer = window.setInterval(() => void refresh(), 10_000);
     window.addEventListener("focus", refresh);
     return () => { disposed = true; window.clearInterval(timer); window.removeEventListener("focus", refresh); };
-  }, [channel.id, channel.role, channel.hidden, scope.owner]);
+  }, [channel.id, channel.role, channel.hidden, channel.events_enabled, scope.owner]);
   useEffect(() => {
     if (!focusMemberAction || section !== "members" || !loaded || op.busy || memberActionFocused.current || direct) return;
     const frame = requestAnimationFrame(() => {
@@ -194,6 +195,17 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
         <p>Gøymde kanalar ligg samla nedst i kanaloversikta. Varsel og tilgang blir bevarte.</p>
       </section>}
       {governanceError && <Status tone="error">{governanceError}</Status>}
+      {governanceManager && !channel.is_personal && host.setEventsEnabled && <section className="sp-settings-group" aria-label="Arrangement i kanalen">
+        <h3>Arrangement</h3>
+        <label className="sp-topic-setting"><input type="checkbox" role="switch" checked={governance!.events_enabled ?? false} disabled={op.busy} onChange={event => {
+          const enabled = event.currentTarget.checked;
+          void op.run(async admitted => {
+            const result = await host.setEventsEnabled!(channel.id, enabled);
+            if (admitted()) setGovernance(result);
+          }, enabled ? "Arrangement er slått på." : "Arrangement er slått av. Tidlegare arrangement og svar er bevarte.");
+        }} /> Arrangement</label>
+        <p>Vis arrangementsoversikt og filter i denne kanalen. Når du slår av, blir arrangement, bilete og svar bevarte som eit lesbart arkiv.</p>
+      </section>}
       {channel.description ? <Markdown text={channel.description} /> : <p>Ingen kanalomtale enno.</p>}
       {channel.role === "owner" && <form onSubmit={event => { event.preventDefault(); void op.run(() => host.description(channel.id, description), "Omtalen er lagra."); }}>
         <label htmlFor="community-description">Kanalomtale (Markdown)</label>

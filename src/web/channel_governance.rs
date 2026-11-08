@@ -87,3 +87,25 @@ pub(crate) async fn set_role(
         .map_err(failure)?;
     response(&state, actor, channel).await
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EventsEnabledInput {
+    enabled: bool,
+}
+pub(crate) async fn set_events_enabled(
+    State(state): State<AppState>,
+    Path(channel): Path<Uuid>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(input): Json<EventsEnabledInput>,
+) -> Result<Response, Response> {
+    let actor = authenticated_user(&state, query, &headers).await?.id;
+    let channel = ChannelId::from_uuid(channel);
+    state
+        .chat
+        .set_channel_events_enabled(actor.clone(), channel.clone(), input.enabled)
+        .await
+        .map_err(failure)?;
+    response(&state, actor, channel).await
+}

@@ -108,7 +108,7 @@ macro_rules! write_account_export {
         let channel_query = sql("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,
             (select case when d.user_a_id=?uuid then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,
             (exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,
-            exists(select 1 from personal_spaces p where p.channel_id=c.id) as is_personal, c.hidden,
+            exists(select 1 from personal_spaces p where p.channel_id=c.id) as is_personal, c.hidden,coalesce(c.events_enabled,exists(select 1 from channel_events ce where ce.channel_id=c.id)) as events_enabled,
             m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence
             from channels c join channel_memberships m on m.channel_id=c.id
             where m.user_id=?uuid and (cast(? as text) is null or c.slug>?) order by c.slug limit 1", $pg);

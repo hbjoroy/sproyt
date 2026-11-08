@@ -782,6 +782,7 @@ pub(crate) fn error_event(error: ChatError) -> ServerEvent {
         ChatError::Repository(RepositoryError::Quota) => "quota",
         ChatError::EngineStopped => "engine_stopped",
         ChatError::Repository(RepositoryError::Conflict) => "conflict",
+        ChatError::Repository(RepositoryError::EventsDisabled) => "events_disabled",
         ChatError::Repository(RepositoryError::NotFound) => "not_found",
         ChatError::Repository(RepositoryError::PermissionDenied) => "permission_denied",
         ChatError::Repository(RepositoryError::Storage(_)) => "storage_error",
