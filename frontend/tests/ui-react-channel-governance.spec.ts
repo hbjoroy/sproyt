@@ -6,17 +6,19 @@ import { destinationSurface } from "./support/destination-surface";
 const circleId = "00000000-0000-7000-8000-000000008711";
 const channelId = "00000000-0000-7000-8000-000000008712";
 const agentId = "00000000-0000-7000-8000-000000008713";
-async function setup(page: Page, channelRole: string, circleRole: string, withAgent = false) {
+async function setup(page: Page, channelRole: string, circleRole: string, withAgent = false, initialHidden = false) {
   await page.route("**/api/v1/me/favorite-circles?**", route => route.fulfill({ json: [] }));
   const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
   if (process.env.SPROYT_E2E_EMBEDDED_CLIENT !== "1") await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
-  let currentRole = channelRole, hidden = false;
+  let currentRole = channelRole, hidden = initialHidden;
+  let failNextHide = false;
   const memberId = "channel-governance-member";
   const roles = new Map([["channel-settings-owner", channelRole], [memberId, "member"]]);
   const governanceWrites: unknown[] = [];
   const governance = () => ({ hidden, members: [...roles].map(([user_id, role]) => ({ user_id, role })) });
   await page.route("**/api/v1/channels/*/governance?**", route => route.fulfill({ json: governance() }));
   await page.route("**/api/v1/channels/*/hidden?**", route => {
+    if (failNextHide) { failNextHide = false; return route.fulfill({ status: 503, json: { error: "Prøv igjen seinare" } }); }
     const body = route.request().postDataJSON(); governanceWrites.push(body); hidden = body.hidden;
     return route.fulfill({ json: governance() });
   });
@@ -61,7 +63,7 @@ async function setup(page: Page, channelRole: string, circleRole: string, withAg
   await openChannelMenu(preview);
   await preview.getByRole("group", { name: "Kanalval: Privat kanalflate", exact: true })
     .getByRole("button", { name: "Kanaldetaljar", exact: true }).click();
-  return { surface: destinationSurface(preview, "Kanaldetaljar: Privat kanalflate", true), reads: () => reads, writes, governanceWrites, revoke: () => { currentRole = "member"; roles.set("channel-settings-owner", "member"); } };
+  return { failHide: () => { failNextHide = true; }, surface: destinationSurface(preview, "Kanaldetaljar: Privat kanalflate", true), reads: () => reads, writes, governanceWrites, revoke: () => { currentRole = "member"; roles.set("channel-settings-owner", "member"); } };
 }
 
 
@@ -69,18 +71,18 @@ test("moderator can hide globally and step down; no authority remains after fres
   await page.setViewportSize({ width: 1440, height: 900 });
   const server = await setup(page, "moderator", "member");
   await server.surface.getByRole("button", { name: "Gøym kanalen for alle", exact: true }).click();
-  await expect(server.surface.getByRole("button", { name: "Vis kanalen for alle", exact: true })).toBeVisible();
-  const hidden = page.getByRole("button", { name: "Gøymde kanalar (1)", exact: true });
-  await expect(hidden).toHaveAttribute("aria-expanded", "false");
-  await hidden.click();
-  await expect(page.getByRole("button", { name: "Innstillingskrets · # Privat kanalflate", exact: true })).toBeVisible();
+  await expect(server.surface.getByRole("button", { name: "Ta fram kanal", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Gøymde kanalar (1)", exact: true })).toHaveCount(0);
+  const circle = page.locator(`[data-conversation-group="circle:${circleId}"]`);
+  await expect(circle.getByRole("button", { name: "Andre kanalar (1)", exact: true })).toHaveAttribute("aria-expanded", "true");
+  await expect(circle.getByRole("button", { name: "# Privat kanalflate", exact: true })).toBeVisible();
   await server.surface.getByRole("tab", { name: "Medlemmer", exact: true }).click();
   await server.surface.getByRole("button", { name: "Gjer Kari til moderator", exact: true }).click();
   await expect(server.surface.getByRole("button", { name: "Fjern moderatorrettar for Kari", exact: true })).toHaveCount(0);
   await server.surface.getByRole("button", { name: "Tre ut som moderator", exact: true }).click();
   await expect(server.surface.getByRole("button", { name: "Tre ut som moderator", exact: true })).toHaveCount(0);
   await server.surface.getByRole("tab", { name: "Om", exact: true }).click();
-  await expect(server.surface.getByRole("button", { name: "Vis kanalen for alle", exact: true })).toHaveCount(0);
+  await expect(server.surface.getByRole("button", { name: "Ta fram kanal", exact: true })).toHaveCount(0);
   expect(server.governanceWrites).toEqual([{ hidden: true }, { role: "moderator" }, { role: "member" }]);
 });
 
@@ -93,5 +95,26 @@ test("stale directory role cannot authorize controls after focus revalidation", 
   await expect(server.surface.getByRole("button", { name: "Gøym kanalen for alle", exact: true })).toHaveCount(0);
   await server.surface.getByRole("tab", { name: "Medlemmer", exact: true }).click();
   await expect(server.surface.getByRole("button", { name: "Gjer Kari til moderator", exact: true })).toHaveCount(0);
+  expect(server.governanceWrites).toEqual([]);
+});
+
+for (const role of ["owner", "moderator"]) test(`${role} can retry a failed restore without losing the action`, async ({ page }) => {
+  const server = await setup(page, role, "member");
+  await server.surface.getByRole("button", { name: "Gøym kanalen for alle", exact: true }).click();
+  const restore = server.surface.getByRole("button", { name: "Ta fram kanal", exact: true });
+  await expect(restore).toBeVisible();
+  server.failHide();
+  await restore.click();
+  await expect(restore).toBeEnabled();
+  await restore.click();
+  await expect(server.surface.getByRole("button", { name: "Gøym kanalen for alle", exact: true })).toBeVisible();
+  expect(server.governanceWrites).toEqual([{ hidden: true }, { hidden: false }]);
+  await expect(page.getByRole("button", { name: "Andre kanalar (1)", exact: true })).toHaveCount(0);
+});
+
+test("ordinary members cannot restore a channel", async ({ page }) => {
+  const server = await setup(page, "member", "owner", false, true);
+  await expect(server.surface.getByRole("button", { name: "Ta fram kanal", exact: true })).toHaveCount(0);
+  await expect(server.surface.getByRole("button", { name: "Gøym kanalen for alle", exact: true })).toHaveCount(0);
   expect(server.governanceWrites).toEqual([]);
 });

@@ -104,14 +104,16 @@ function AccountNavigation(props: NavigationProps) {
   const legacyPins = props.favorites && profileReady ? localPreferences.entries.filter(entry => entry.pinned && !pinned.has(entry.id)
     && props.groups.some(group => group.id === entry.id)).map(entry => entry.id) : [];
   const directGroups = props.groups.filter(group => group.id === directGroupId);
-  const visibleGroups = props.groups.map(group => ({ ...group, conversations: group.conversations.filter(item => !item.hidden) }));
-  const hiddenGroups = props.groups.filter(group => group.id !== directGroupId).map(group => ({ ...group,
-    conversations: group.conversations.filter(item => item.hidden).map(item => ({ ...item, name: `${group.name} · ${item.name}` }))
-  })).filter(group => group.conversations.length > 0);
-  const hiddenCount = hiddenGroups.reduce((count, group) => count + group.conversations.length, 0);
-  const [hiddenOpen, setHiddenOpen] = useState(false);
-  const sharedGroups = visibleGroups.filter(group => group.id === "scope:shared");
-  const circles = visibleGroups.filter(group => group.id !== directGroupId && group.id !== "scope:shared");
+  const hiddenCount = props.groups.filter(group => group.id !== directGroupId)
+    .reduce((count, group) => count + group.conversations.filter(item => item.hidden).length, 0);
+  const selectedHiddenGroup = selectedGroup?.conversations.some(item => item.id === props.selectedId && item.hidden)
+    ? selectedGroup.id : undefined;
+  const [hiddenOpenGroups, setHiddenOpenGroups] = useState<ReadonlySet<string>>(() => new Set(selectedHiddenGroup ? [selectedHiddenGroup] : []));
+  useEffect(() => {
+    if (selectedHiddenGroup) setHiddenOpenGroups(previous => new Set([...previous, selectedHiddenGroup]));
+  }, [props.selectedId, selectedHiddenGroup]);
+  const sharedGroups = props.groups.filter(group => group.id === "scope:shared");
+  const circles = props.groups.filter(group => group.id !== directGroupId && group.id !== "scope:shared");
   const { preferred, others } = partitionNavigationCircles(circles, preferences, selectedGroup?.id);
   const foldOthers = circles.length > 7 && others.length > 0;
   const othersOpen = searching || preferences.othersExpanded;
@@ -171,6 +173,9 @@ function AccountNavigation(props: NavigationProps) {
   }
 
   function groupSection(group: ConversationGroup) {
+    const visible = { ...group, conversations: group.conversations.filter(item => !item.hidden) };
+    const hidden = { ...group, conversations: group.conversations.filter(item => item.hidden) };
+    const hiddenOpen = searching || hiddenOpenGroups.has(group.id);
     const preference = preferences.entries.find(entry => entry.id === group.id);
     const isCircle = group.id.startsWith("circle:");
     const open = searching || revealedGroup === group.id || (preference?.expanded ?? selectedGroup?.id === group.id);
@@ -193,7 +198,22 @@ function AccountNavigation(props: NavigationProps) {
         </button>}
         {group.actions && <div className="sp-product-nav-group-actions">{group.actions}</div>}
       </div>
-      <div id={panelId} hidden={!open}>{rows(group)}</div>
+      <div id={panelId} hidden={!open}>
+        {(visible.conversations.length > 0 || hidden.conversations.length === 0) && rows(visible)}
+        {hidden.conversations.length > 0 && <div className="sp-product-nav-others">
+          <button type="button" className="sp-product-nav-disclosure" aria-expanded={hiddenOpen} aria-controls={`${panelId}-hidden`}
+            aria-disabled={searching || undefined}
+            onClick={() => { if (searching) return; setHiddenOpenGroups(previous => {
+              const next = new Set(previous);
+              if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
+              return next;
+            }); }}>
+            <span className="sp-product-nav-chevron" aria-hidden="true">{hiddenOpen ? "⌄" : ">"}</span>
+            <span className="sp-product-nav-name">Andre kanalar ({hidden.conversations.length})</span><UnreadBadge count={unreadCount([hidden])} />
+          </button>
+          <div id={`${panelId}-hidden`} hidden={!hiddenOpen}>{rows(hidden)}</div>
+        </div>}
+      </div>
     </section>;
   }
 
@@ -240,12 +260,6 @@ function AccountNavigation(props: NavigationProps) {
         </button>
         <div id={`${id}-others`} hidden={!othersOpen}>{others.map(groupSection)}</div>
       </div>}
-      {hiddenCount > 0 && <section className="sp-product-nav-group" data-conversation-group="scope:hidden">
-        <h2><button type="button" className="sp-product-nav-disclosure" aria-expanded={hiddenOpen} aria-controls={`${id}-hidden`}
-          onClick={() => setHiddenOpen(!hiddenOpen)}><span className="sp-product-nav-chevron" aria-hidden="true">{hiddenOpen ? "⌄" : ">"}</span>
-          <span className="sp-product-nav-name">Gøymde kanalar ({hiddenCount})</span></button></h2>
-        <div id={`${id}-hidden`} hidden={!hiddenOpen}>{hiddenGroups.map(group => <div key={group.id}>{rows(group)}</div>)}</div>
-      </section>}
       {sharedGroups.length + circles.length === 0 && hiddenCount === 0 && <DirectoryEmptyState scope="circles" searching={searching} onFindChannels={props.onFindChannels} onInvitation={props.onInvitation} />}
       {sharedGroups.length + circles.length > 0 && hiddenCount === 0 && !searching && [...sharedGroups, ...circles].every(group => !group.conversations.length)
         && <p className="sp-product-nav-empty">Ingen kanalar enno. Opne menyen ved ein krets for å finne eller opprette ein kanal.</p>}
