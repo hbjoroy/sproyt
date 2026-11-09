@@ -1,9 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Button, Status } from "@sproyt/ui/react";
 import { HttpError } from "../../api";
 import type { ChannelTopic, ChannelTopicMatch, ChannelTopicPage, ChannelTopicSummary, ChannelTopicsApi } from "../../channel-topics";
 import type { ChatMessage } from "../../types";
 import { ConversationTimeline, type TimelineProps } from "./conversation-view";
+
+import { ChannelEventFilterContext } from "./channel-events";
 
 type TopicScope = Readonly<{ api: ChannelTopicsApi; owner: string; channelId: string }>;
 
@@ -68,9 +70,11 @@ export function ChannelTopics({ api, owner, channelId, timeline, resetRequest, a
   readonly active: boolean;
   readonly onThread: (match: ChannelTopicMatch) => void;
 }) {
+  const eventFilter = useContext(ChannelEventFilterContext);
   const { summary } = useSummary({ api, owner, channelId }, active);
   const [selection, setSelection] = useState<{ topic: ChannelTopic; resetRequest: number }>();
-  const selected = summary?.enabled && selection?.resetRequest === resetRequest ? selection.topic : undefined;
+  const selected = !eventFilter?.selected && summary?.enabled && selection?.resetRequest === resetRequest ? selection.topic : undefined;
+  useEffect(() => { if (eventFilter?.selected) setSelection(undefined); }, [eventFilter?.selected]);
   const [results, setResults] = useState<Results>(emptyResults);
   const request = useRef<AbortController>(null);
   const [context, setContext] = useState<ChannelTopicMatch>();
@@ -133,18 +137,20 @@ export function ChannelTopics({ api, owner, channelId, timeline, resetRequest, a
 
   const available = summary?.enabled ? summary.topics : [];
   const topics = selected && !available.some(topic => topic.key === selected.key) ? [...available.slice(0, 5), selected] : available;
-  const hidden = Boolean(selectedKey);
+  const hidden = Boolean(selectedKey) || Boolean(eventFilter?.selected);
   const latestMessages = hidden ? new Map(timeline.messages.map(message => [message.id, message])) : null;
   const resultMessages = results.matches.map(match => latestMessages?.get(match.message_id) ?? match.message);
   const contextRows = contextMessages?.map(message => latestMessages?.get(message.id) ?? message);
   const targetRemoved = activeContext && latestMessages?.get(activeContext.message_id)?.deleted_at;
   return <>
-    {topics.length > 0 && <div className="sp-topic-pills" role="group" aria-label="Emne i samtalen">
-      <Button variant="quiet" aria-pressed={!selected} aria-controls={resultId} onClick={() => setSelection(undefined)}>Alle</Button>
+    {(topics.length > 0 || eventFilter?.available) && <div className="sp-topic-pills" role="group" aria-label="Filtrer meldingar">
+      <Button variant="quiet" aria-pressed={!selected && !eventFilter?.selected} aria-controls={eventFilter?.selected ? undefined : resultId} onClick={() => { setSelection(undefined); eventFilter?.clear(); }}>Alle</Button>
+      {eventFilter?.controls}
       {topics.map(topic => <Button variant="quiet" key={topic.key} aria-pressed={selectedKey === topic.key}
-        aria-controls={resultId} onClick={() => setSelection({ topic, resetRequest })}>{topic.label}</Button>)}
+        aria-controls={eventFilter?.selected ? undefined : resultId} onClick={() => { eventFilter?.clear(); setSelection({ topic, resetRequest }); }}>{topic.label}</Button>)}
     </div>}
     <ConversationTimeline {...timeline} id={hidden ? undefined : resultId} hidden={hidden} />
+    {eventFilter?.results}
     {selected && <div className="sp-topic-viewport" id={resultId}>
         <ConversationTimeline {...timeline} id={undefined} hidden={Boolean(activeContext)} items={undefined} notices={undefined}
           messages={resultMessages} viewportRef={activeResults} onScroll={undefined} unreadAfterSequence={undefined}

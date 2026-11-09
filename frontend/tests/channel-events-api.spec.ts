@@ -88,7 +88,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   await app.getByRole("button", { name: "Markér som lesen" }).click();
   await expect(app.getByRole("button", { name: "Markér som lesen" })).toHaveCount(0);
   await app.getByRole("tab", { name: "Meldingar", exact: true }).click();
-  const pills = app.getByRole("group", { name: "Arrangement i meldingane" });
+  const pills = app.getByRole("group", { name: "Filtrer meldingar" });
   await pills.getByRole("button", { name: "#arr:ny-konsert", exact: true }).click();
   const results = app.getByLabel("Meldingar om arrangementet");
   await expect(results.getByText("Rik melding", { exact: true })).toBeVisible();

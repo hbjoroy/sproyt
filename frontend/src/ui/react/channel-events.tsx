@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, Status } from "@sproyt/ui/react";
 import { HttpError } from "../../api";
 import { EventReferenceDiscovery, eventResponses, type ChannelEvent, type ChannelEventsApi, type EventInput, type EventMessages, type EventPerson, type EventResponse } from "../../channel-events";
@@ -8,6 +8,11 @@ import { MarkdownContent } from "./markdown-content";
 import { ImageViewer } from "./image-viewer";
 import { PreviewImage } from "./preview-media";
 import css from "./channel-events.css";
+
+/** Event and topic filters share presentation while retaining their own result sources. */
+export const ChannelEventFilterContext = createContext<{
+  selected: boolean; available: boolean; clear(): void; controls: ReactNode; results: ReactNode;
+} | null>(null);
 
 export const responseLabels: Record<EventResponse, string> = { attending: "Deltek", declined: "Deltek ikkje", following: "Følgjer", unanswered: "Ikkje svart" };
 type Scope = { api: ChannelEventsApi; owner: string; channelId: string };
@@ -139,9 +144,11 @@ export function ChannelEventSpace({ api, owner, channelId, enabled, chat, compos
       </div>}
       <div className="sp-event-chat" id={`${id}-chat`} role={enabled ? "tabpanel" : undefined} aria-labelledby={enabled ? `${id}-chat-tab` : undefined} hidden={tab !== "chat"} inert={tab !== "chat"}>
         {disabledNotice && <Status>Arrangement er slått av i denne kanalen. Meldingar og utkast er bevarte. <Button variant="quiet" onClick={() => setDisabledNotice(false)}>Lukk</Button></Status>}
-        {enabled && <EventPills events={events} selected={filter} onSelect={setFilter} more={nextAfter !== null} loading={loadingMore} onLoadMore={() => setAfter(nextAfter)} />}
-        <div className="sp-event-chat" hidden={Boolean(activeFilter)} inert={Boolean(activeFilter)}>{chat}</div>
-        {activeFilter && <EventMessageResults key={activeFilter} api={api} owner={owner} channelId={channelId} eventId={activeFilter} timeline={timeline} onDenied={() => { revoke(); setFilter(null); }} />}
+        <ChannelEventFilterContext.Provider value={{
+          selected: Boolean(activeFilter), available: enabled && events.length > 0, clear: () => setFilter(null),
+          controls: enabled ? <EventPills events={events} selected={filter} onSelect={setFilter} more={nextAfter !== null} loading={loadingMore} onLoadMore={() => setAfter(nextAfter)} /> : null,
+          results: activeFilter ? <EventMessageResults key={activeFilter} api={api} owner={owner} channelId={channelId} eventId={activeFilter} timeline={timeline} onDenied={() => { revoke(); setFilter(null); }} /> : null
+        }}>{chat}</ChannelEventFilterContext.Provider>
         {composer}
       </div>
       <section className="sp-events-panel" id={`${id}-events`} role={enabled ? "tabpanel" : "region"} aria-label={enabled ? undefined : "Arkivert arrangement"} aria-labelledby={enabled ? `${id}-events-tab` : undefined} hidden={tab !== "events"} inert={tab !== "events"}>
@@ -178,17 +185,18 @@ export function ChannelEventSpace({ api, owner, channelId, enabled, chat, compos
 }
 
 export function EventPills({ events, selected, onSelect, more: hasMore, loading, onLoadMore }: { events: readonly ChannelEvent[]; selected: string | null; onSelect(id: string | null): void; more?: boolean; loading?: boolean; onLoadMore?(): void }) {
+  const [expanded, setExpanded] = useState(false);
   if (!events.length) return null;
   const ordered = [...events].sort((a, b) => a.id.localeCompare(b.id));
-  const visible = ordered.slice(0, 3);
+  const visible = expanded ? ordered : ordered.slice(0, 3);
   const active = ordered.find(event => event.id === selected);
   if (active && !visible.some(event => event.id === active.id)) visible.push(active);
   const more = ordered.filter(event => !visible.some(item => item.id === event.id));
-  return <div className="sp-event-pills" role="group" aria-label="Arrangement i meldingane">
-    <Button variant="quiet" aria-pressed={!selected} onClick={() => onSelect(null)}>Alle meldingar</Button>
-    {visible.map(event => <Button variant="quiet" key={event.id} aria-pressed={selected === event.id} onClick={() => onSelect(event.id)}>#arr:{event.code}</Button>)}
-    {(more.length > 0 || hasMore) && <details><summary>Fleire arrangement ({more.length}{hasMore ? "+" : ""})</summary><div>{more.map(event => <Button key={event.id} variant="quiet" aria-pressed={selected === event.id} onClick={action => { onSelect(event.id); action.currentTarget.closest("details")?.removeAttribute("open"); }}>#arr:{event.code} · {event.title}</Button>)}{hasMore && <Button disabled={loading} onClick={onLoadMore}>Last fleire arrangement</Button>}</div></details>}
-  </div>;
+  return <>
+    {visible.map(event => <Button variant="quiet" key={event.id} aria-pressed={selected === event.id} title={event.title} onClick={() => onSelect(event.id)}>#arr:{event.code}</Button>)}
+    {ordered.length > 3 && <Button variant="quiet" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? "Færre arrangement" : `Fleire arrangement (${more.length})`}</Button>}
+    {hasMore && <Button variant="quiet" disabled={loading} onClick={onLoadMore}>Last fleire arrangement</Button>}
+  </>;
 }
 
 function EventMessageResults({ api, owner, channelId, eventId, timeline, onDenied }: Scope & { eventId: string; timeline: TimelineProps; onDenied(): void }) {

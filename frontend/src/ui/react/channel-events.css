@@ -1,11 +1,10 @@
 .sp-channel-events { display:flex; flex:1; min-height:0; min-width:0; flex-direction:column; }
-.sp-channel-tabs,.sp-event-actions,.sp-event-pills { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.sp-channel-tabs,.sp-event-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .sp-channel-tabs { flex:0 0 auto; flex-wrap:nowrap; gap:16px; padding:0 12px; border-bottom:1px solid var(--sp-line); }
 .sp-channel-tabs > button { appearance:none; min-height:36px; padding:4px 0; border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:var(--sp-muted); font:inherit; font-size:14px; cursor:pointer; white-space:nowrap; }
 .sp-channel-tabs > button[aria-selected=true] { color:var(--sp-text); border-bottom-color:var(--sp-rule); }
 .sp-channel-tabs > button:focus-visible,.sp-channel-tabs[data-keyboard-nav] > button:focus { outline:2px solid var(--sp-text); outline-offset:-2px; }
 @media (pointer:coarse) { .sp-channel-tabs > button { min-height:44px; } }
-.sp-event-pills [aria-pressed=true] { text-decoration:underline; text-underline-offset:5px; }
 .sp-event-chat { display:flex; flex:1; min-height:0; flex-direction:column; }
 .sp-event-chat[hidden],.sp-events-panel[hidden] { display:none; }
 .sp-events-panel { overflow:auto; padding:16px; min-width:0; flex:1; }
@@ -23,18 +22,13 @@
 .sp-event-gallery img,.sp-event-cover { width:100%; max-height:360px; object-fit:contain; }
 .sp-event-cover { max-height:220px; }
 .sp-event-gallery figcaption { display:flex; flex-wrap:wrap; gap:4px; }
-.sp-event-pills { padding:6px 12px; border-bottom:1px solid var(--sp-line); }
-.sp-event-pills details { position:relative; }
-.sp-event-pills summary { cursor:pointer; padding:10px; }
-.sp-event-pills details[open] > div { position:absolute; z-index:5; right:0; max-height:260px; overflow:auto; min-width:220px; background:var(--sp-canvas); border:1px solid var(--sp-line); box-shadow:0 4px 12px #0002; }
-.sp-event-pills details[open] > div button { display:block; width:100%; text-align:start; }
 .sp-event-results { flex:1; display:flex; min-height:0; flex-direction:column; }
 .sp-event-results[hidden] { display:none; }
 .sp-event-notice { border-inline-start:3px solid var(--sp-accent); padding:8px 12px; }
 .sp-event-response { margin:12px 0; }
 .sp-event-response legend { font-weight:600; }
 .sp-event-response label { display:inline-flex; align-items:center; gap:6px; min-height:44px; margin-inline-end:12px; }
-@container (max-width:430px) { .sp-events-panel { padding:12px; } .sp-event-pills { padding-inline:8px; } }
+@container (max-width:430px) { .sp-events-panel { padding:12px; } }
 /* On short screens, recover surrounding whitespace while retaining every
    tab, writing control and its full touch target. */
 @media (max-height:430px) {
