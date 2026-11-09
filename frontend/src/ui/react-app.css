@@ -539,23 +539,35 @@
   display: flex;
   flex: none;
   gap: .35rem;
+  align-items: center;
   overflow-x: auto;
-  padding: .3rem 1rem;
+  padding: .2rem 1rem;
   border-bottom: 1px solid var(--sp-line);
   scrollbar-width: thin;
 }
 .sp-theme .sp-topic-pills .sp-button {
+  position: relative;
+  isolation: isolate;
   flex: 0 0 auto;
+  white-space: nowrap;
   min-height: 32px;
   border-radius: 999px;
   padding: .15rem .75rem;
   font-size: .8125rem;
 }
 .sp-theme .sp-topic-pills .sp-button[aria-pressed="true"] {
-  background: var(--sp-accent);
+  background: transparent;
   color: var(--sp-on-accent);
-  border-color: var(--sp-accent);
+  border-color: transparent;
   box-shadow: none;
+}
+.sp-theme .sp-topic-pills .sp-button[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--sp-accent);
 }
 .sp-theme .sp-topic-pills .sp-button:focus-visible { outline-offset: -3px; }
 .sp-theme :is(.sp-topic-viewport, .sp-topic-context) {
@@ -576,6 +588,7 @@
 }
 @media (pointer: coarse) {
   .sp-theme .sp-topic-pills .sp-button { min-height: 44px; }
+  .sp-theme .sp-topic-pills .sp-button[aria-pressed="true"]::before { inset-block: 6px; }
 }
 .sp-theme .sp-product-nav-tabs.sp-personal-tabs { flex: none; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .sp-theme .sp-personal-note { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openChannelMenu } from "./support/channel-menu";
 
@@ -25,6 +26,8 @@ const source = { ...message(sourceId, 4, `${older.body}\n\n${image("lagra.png")}
 const saved = { ...older, body: `[Lagra melding](/?channel=${sourceChannel}&message=${sourceId}&sequence=4)` };
 
 async function setup(page: Page, canManage = true, personal = false) {
+  const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
+  if (process.env.SPROYT_E2E_EMBEDDED_CLIENT !== "1") await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
   let enabled = true;
   const writes: unknown[] = [];
   const cursors: (string | null)[] = [];
@@ -99,7 +102,7 @@ test("topic pills page server history and open old context with the composer dra
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => localStorage.setItem("sproyt.theme.v1", "dark"));
   const { app, cursors, writes } = await setup(page, true, true);
-  const pills = app.getByRole("group", { name: "Emne i samtalen" });
+  const pills = app.getByRole("group", { name: "Filtrer meldingar" });
   const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
   await expect(pills.getByRole("button")).toHaveCount(4);
   expect(await app.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy();
@@ -157,7 +160,7 @@ test("topic pills page server history and open old context with the composer dra
 
 test("channel owners can disable topics", async ({ page }) => {
   const { app, writes } = await setup(page);
-  await expect(app.getByRole("group", { name: "Emne i samtalen" })).toBeVisible();
+  await expect(app.getByRole("group", { name: "Filtrer meldingar" })).toBeVisible();
   await capturePreview(page, app, process.env.SPROYT_TOPICS_LIGHT_SCREENSHOT);
   await (await openChannelMenu(app)).getByRole("button", { name: "Kanaldetaljar", exact: true }).click();
   const control = app.getByRole("switch", { name: "Vis automatiske emne" });
@@ -167,7 +170,7 @@ test("channel owners can disable topics", async ({ page }) => {
   expect(writes).toEqual([{ enabled: false }]);
   await page.goBack();
   await expect(app.getByText(latest.body)).toBeVisible();
-  await expect(app.getByRole("group", { name: "Emne i samtalen" })).toHaveCount(0);
+  await expect(app.getByRole("group", { name: "Filtrer meldingar" })).toHaveCount(0);
 });
 
 test("members can filter with no channel topic setting control", async ({ page }) => {

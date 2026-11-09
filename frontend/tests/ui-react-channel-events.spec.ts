@@ -8,7 +8,7 @@ const eventId = "00000000-0000-7000-8000-000000009912";
 const mediaId = "00000000-0000-7000-8000-000000009913";
 const date = "2026-01-01T00:00:00Z";
 const row = (id: string, sequence: number, body: string) => ({ id, channel_id: channel, parent_message_id: null, sequence, body, sent_at: date, sender_id: owner, sender_display_name: "Nora" });
-async function setup(page: Page, deep = false, offPage = false, initialEnabled = true) {
+async function setup(page: Page, deep = false, offPage = false, initialEnabled = true, topics = false) {
   let enabled = initialEnabled;
   let socket: WebSocketRoute | undefined;
   const image = await eventImage(page);
@@ -45,7 +45,11 @@ async function setup(page: Page, deep = false, offPage = false, initialEnabled =
     }
     return route.fulfill({ json: path.endsWith("/events") ? offPage ? { events: Array.from({ length: 100 }, (_, index) => ({ ...event, id: `00000000-0000-7000-8000-${String(index + 20000).padStart(12, "0")}`, title: `Andre arrangement ${index}`, code: `event-${index}`, aliases: [], needs_attention: false })), next_after: "next-page", attention_count: 7 } : { events: [event], next_after: null, attention_count: event.needs_attention ? 1 : 0 } : event });
   });
-  await page.route(new RegExp(`/api/v1/channels/${channel}/topics(?:[/?]|$)`), route => route.fulfill({ json: { enabled: false, can_manage: true, topics: [] } }));
+  await page.route(new RegExp(`/api/v1/channels/${channel}/topics(?:[/?]|$)`), route => route.fulfill({ json:
+    new URL(route.request().url()).pathname.endsWith("/matches")
+      ? { matches: [{ message_id: "topic-match", parent_message_id: null, sequence: 7, body: "Turprat", sender_display_name: "Nora", created_at: date, message: row("topic-match", 7, "**Turprat**") }], next_before: null }
+      : { enabled: topics, can_manage: true, topics: topics ? [{ key: "tur", label: "Tur", count: 2 }, { key: "mat", label: "Mat og oppskrifter", count: 3 }, { key: "hus", label: "Hus og hage", count: 2 }] : [] }
+  }));
   await page.route(new RegExp(`/api/v1/media/${mediaId}(?:[/?]|$)`), route => new URL(route.request().url()).pathname.endsWith("/status")
     ? route.fulfill({ json: { state: "legacy" } }) : route.fulfill({ contentType: "image/png", body: image }));
   await page.routeWebSocket(/\/ws(?:\?|$)/, connection => { socket = connection; connection.onMessage(data => {
@@ -115,13 +119,13 @@ for (const [width, theme] of [[320, "light"], [320, "dark"], [390, "light"], [39
     await expect(app.getByRole("tab", { name: "Meldingar", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(app.getByRole("tab", { name: "Meldingar", exact: true })).toHaveCSS("outline-width", "2px");
     await expect(composer).toHaveValue("Utkast #arr:konsert ");
-    const pills = app.getByRole("group", { name: "Arrangement i meldingane" });
+    const pills = app.getByRole("group", { name: "Filtrer meldingar" });
     await pills.getByRole("button", { name: "#arr:konsert", exact: true }).click();
     const results = app.getByLabel("Meldingar om arrangementet");
     await expect(results.getByText("Rik melding", { exact: true })).toBeVisible();
     await expect(results.getByRole("img", { name: "konsert.png", exact: true })).toBeVisible();
     expect(await app.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy();
-    await pills.getByRole("button", { name: "Alle meldingar" }).click();
+    await pills.getByRole("button", { name: "Alle", exact: true }).click();
     await expect(composer).toHaveValue("Utkast #arr:konsert ");
     if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/events-${width}-${theme}.png` });
   });
@@ -131,7 +135,7 @@ for (const from of ["detail", "filter"] as const) test(`availability invalidatio
   const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
   await composer.fill("Utkastet skal bevarast"); const field = await composer.elementHandle();
   const timeline = app.locator(".sp-timeline[aria-label='Meldingar']"); const viewport = await timeline.elementHandle();
-  if (from === "filter") await app.getByRole("group", { name: "Arrangement i meldingane" }).getByRole("button", { name: "#arr:konsert", exact: true }).click();
+  if (from === "filter") await app.getByRole("group", { name: "Filtrer meldingar" }).getByRole("button", { name: "#arr:konsert", exact: true }).click();
   else await app.getByRole("link", { name: "#arr:gammal", exact: true }).click();
   server.setEnabled(false);
   await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
@@ -169,7 +173,7 @@ for (const [width, theme] of [[320, "light"], [320, "dark"], [390, "light"], [39
     await page.addInitScript(mode => localStorage.setItem("sproyt.theme.v1", mode), theme);
     const { app, collectionReads } = await setup(page, false, false, false);
     await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
-    await expect(app.getByRole("group", { name: "Arrangement i meldingane" })).toHaveCount(0);
+    await expect(app.getByRole("group", { name: "Filtrer meldingar" })).toHaveCount(0);
     expect(collectionReads).toEqual([]);
     if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/events-off-${width}-${theme}.png` });
   });
@@ -234,4 +238,72 @@ for (const [width, height, theme] of [[320, 360, "light"], [667, 375, "dark"]] a
   await expect(send).toBeInViewport({ ratio: 1 });
   expect(await app.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/events-short-${width}-${theme}.png` });
+});
+
+for (const [width, theme] of [[390, "light"], [390, "dark"], [1440, "light"], [1440, "dark"]] as const) {
+  test(`event and topic filters share one compact row and reset at ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(mode => {
+      localStorage.setItem("sproyt.theme.v1", mode);
+      localStorage.setItem("sproyt.device-notice.install.dismissed", "1");
+      localStorage.setItem("sproyt.device-notice.notifications.dismissed", "1");
+    }, theme);
+    const { app } = await setup(page, false, false, true, true);
+    const filters = app.getByRole("group", { name: "Filtrer meldingar" });
+    await expect(filters).toHaveCount(1);
+    const all = filters.getByRole("button", { name: "Alle", exact: true });
+    const event = filters.getByRole("button", { name: "#arr:konsert", exact: true });
+    const topic = filters.getByRole("button", { name: "Tur", exact: true });
+    await expect(topic).toBeVisible();
+    const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+    const boxes = await filters.getByRole("button").evaluateAll(buttons => buttons.map(button => ({ y: button.getBoundingClientRect().y, height: button.getBoundingClientRect().height })));
+    expect(new Set(boxes.map(box => box.y)).size).toBe(1);
+    expect(boxes.every(box => box.height === (coarse ? 44 : 32))).toBe(true);
+    expect((await filters.boundingBox())!.height).toBeLessThan(coarse ? 60 : 48);
+    expect(await app.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
+    await composer.fill("Utkastet mitt");
+    const field = await composer.elementHandle();
+    if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/unified-filters-${width}-${theme}.png` });
+    await topic.focus();
+    await page.keyboard.press("Enter");
+    await expect(app.getByLabel("Meldingar om Tur").getByText("Turprat", { exact: true })).toBeVisible();
+    await expect(topic).toHaveAttribute("aria-pressed", "true");
+    await event.click();
+    await expect(topic).toHaveAttribute("aria-pressed", "false");
+    await expect(app.getByLabel("Meldingar om arrangementet").getByText("Rik melding", { exact: true })).toBeVisible();
+    await expect(app.getByLabel("Meldingar om arrangementet").getByRole("img", { name: "konsert.png", exact: true })).toBeVisible();
+    await topic.click();
+    await expect(event).toHaveAttribute("aria-pressed", "false");
+    await expect(app.getByLabel("Meldingar om Tur").getByText("Turprat", { exact: true })).toBeVisible();
+    await all.click();
+    await expect(all).toHaveAttribute("aria-pressed", "true");
+    await expect(app.getByRole("link", { name: "#arr:gammal", exact: true })).toBeVisible();
+    await expect(composer).toHaveValue("Utkastet mitt");
+    expect(await field!.evaluate(element => element.isConnected)).toBe(true);
+    await event.click();
+    await all.click();
+    await expect(all).toHaveAttribute("aria-pressed", "true");
+    await expect(event).toHaveAttribute("aria-pressed", "false");
+  });
+}
+
+
+test("more event filters expand in the same row and retain keyboard focus", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { app } = await setup(page, false, true);
+  const filters = app.getByRole("group", { name: "Filtrer meldingar" });
+  const more = filters.getByRole("button", { name: "Fleire arrangement (97)", exact: true });
+  await more.focus();
+  await page.keyboard.press("Enter");
+  const less = filters.getByRole("button", { name: "Færre arrangement", exact: true });
+  await expect(less).toBeFocused();
+  await expect(less).toHaveAttribute("aria-expanded", "true");
+  await expect(filters.getByRole("button")).toHaveCount(103);
+  expect(await filters.getByRole("button").evaluateAll(buttons => new Set(buttons.map(button => button.getBoundingClientRect().y)).size)).toBe(1);
+  expect(await app.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(more).toBeFocused();
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  await expect(filters.getByRole("button")).toHaveCount(6);
 });
