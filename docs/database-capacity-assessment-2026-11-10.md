@@ -4,6 +4,10 @@ Status: gjennomført lokal leveranse B under #353 og #345, med Astra si metode- 
 
 **Avgjerd: behald dagens modulære form.** Behald pooltak og replikaetal. Prøva gir ikkje grunnlag for ny broker, kanalpartisjonering eller arbeidarisolering. Prioriter eit gjennomførbart Heart-utrullingsbudsjett. Dersom faktisk trafikk krev det målte mettingsnivået, mål socket-/protokollventing og databaseutføring før ei avgrensa effektivisering; låg acquire-venting åleine forklarer ikkje ende-til-ende-latensen.
 
+## Prioritering frå produkteigar
+
+10. november 2026: færre enn 30 aktive brukarar. Dei lokale 160/s-prøvene gir tilstrekkeleg grunnlag for dagens prioritering; vidare arbeid med overlast, admission-frist og kontrollert avvising blir utsett. Dette gjer ikkje den lokale prøva til ein produksjonsgaranti. Vurder på nytt ved vedvarande kø/latens, fleire timeoutar, minnepress eller vesentleg trafikk-/ressursendring. Neste prioritet er [Heart sitt utrullingsbudsjett](heart-rollout-budget.md).
+
 ## Lokal prøve og gyldigheit
 
 - App: commit `8b35d137631de152b38b33b7fd1bb113647816d3`, Windows ARM64 **release/optimized**, låste avhengnader; binær-SHA256 `63d480eba8381a4fc9025b20a692b41746f175e16e2c6108207eb4b9fae4eb44`. Maskin: Snapdragon X2 Elite, 12 logiske CPU-ar.

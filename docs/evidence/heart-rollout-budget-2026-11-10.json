@@ -1,0 +1,369 @@
+{
+  "schema": "sproyt.heart-rollout-image-contract.v1",
+  "at": "2026-11-10T09:01:08.225Z",
+  "image": "oci.bjoroy.me/sproyt/heart@sha256:fe2eb544a14006504dbbb20e2c0a3489a0035eababefc5c93dba9f10c7ec1955",
+  "roleLimit": 8,
+  "runtimeProcesses": 3,
+  "runtimePoolEach": 2,
+  "runtimeV2Enabled": true,
+  "simultaneousMaintenanceProcesses": 2,
+  "phases": [
+    {
+      "name": "migration",
+      "observedPeak": 8,
+      "samples": [
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_migration-0-1",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_migration-1-2",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_migration-0-1",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_migration-1-2",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_migration-0-1",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_migration-1-2",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_migration-0-1",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_migration-1-2",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        }
+      ],
+      "ninthRejected": true,
+      "containerStats": "{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"c865d716fd5063f04ca5f972a206ef1a69f13eccc8f11bf41357651a711b3b67\",\"MemPerc\":\"0.95%\",\"MemUsage\":\"2.438MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-production-0\",\"NetIO\":\"19.9kB / 31.4kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"70fe84a81dbac9b202eefab296493a96708f12bbf27f4b862b712ca22d089640\",\"MemPerc\":\"0.93%\",\"MemUsage\":\"2.379MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-production-1\",\"NetIO\":\"18.3kB / 29.3kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"57248d7d45cf8a06aaf3b47dea619a67a612a99767060d6e70b76e7c9187a6d8\",\"MemPerc\":\"0.97%\",\"MemUsage\":\"2.488MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-canary-0\",\"NetIO\":\"16.5kB / 27.2kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"fecec6f2cc5a52b80a80a9b5203e7ab942cdf772927b5e9349592d35ee3e151c\",\"MemPerc\":\"0.71%\",\"MemUsage\":\"1.824MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-migration-0-1\",\"NetIO\":\"2.84kB / 2.45kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"3eed0f918f3775c5a4f6068b52c4417496aecb83e2373311a72163612d5079e5\",\"MemPerc\":\"0.92%\",\"MemUsage\":\"2.344MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-migration-1-2\",\"NetIO\":\"2.39kB / 1.81kB\",\"PIDs\":3}",
+      "ninthAttempted": true
+    },
+    {
+      "name": "event-bootstrap",
+      "observedPeak": 8,
+      "samples": [
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_event-bootstrap-0-3",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_event-bootstrap-1-4",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_event-bootstrap-0-3",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_event-bootstrap-1-4",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_event-bootstrap-0-3",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_event-bootstrap-1-4",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_event-bootstrap-0-3",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_event-bootstrap-1-4",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        }
+      ],
+      "ninthRejected": null,
+      "containerStats": "{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"c865d716fd5063f04ca5f972a206ef1a69f13eccc8f11bf41357651a711b3b67\",\"MemPerc\":\"0.55%\",\"MemUsage\":\"1.41MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-production-0\",\"NetIO\":\"25kB / 36.9kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"70fe84a81dbac9b202eefab296493a96708f12bbf27f4b862b712ca22d089640\",\"MemPerc\":\"0.45%\",\"MemUsage\":\"1.156MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-production-1\",\"NetIO\":\"23.3kB / 34.8kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"57248d7d45cf8a06aaf3b47dea619a67a612a99767060d6e70b76e7c9187a6d8\",\"MemPerc\":\"0.58%\",\"MemUsage\":\"1.496MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-canary-0\",\"NetIO\":\"21.6kB / 32.7kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"fcb8b13efcf09de371d36ecc8bf881fef3657b92d2e2c97ecee81f2bc5a5c6c6\",\"MemPerc\":\"0.84%\",\"MemUsage\":\"2.145MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-event-bootstrap-0-3\",\"NetIO\":\"2.04kB / 1.47kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"5dc661d26f87195b1a90bfaf9aac9edc71210bb6b4c6cf1f8ad4ed5317d50525\",\"MemPerc\":\"0.90%\",\"MemUsage\":\"2.301MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-event-bootstrap-1-4\",\"NetIO\":\"2.01kB / 1.5kB\",\"PIDs\":3}",
+      "ninthAttempted": false
+    },
+    {
+      "name": "pilot-bootstrap",
+      "observedPeak": 8,
+      "samples": [
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_pilot-bootstrap-0-5",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_pilot-bootstrap-1-6",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_pilot-bootstrap-0-5",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_pilot-bootstrap-1-6",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_pilot-bootstrap-0-5",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_pilot-bootstrap-1-6",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        },
+        {
+          "total": 8,
+          "byApplication": [
+            {
+              "application_name": "maintenance_pilot-bootstrap-0-5",
+              "connections": 1
+            },
+            {
+              "application_name": "maintenance_pilot-bootstrap-1-6",
+              "connections": 1
+            },
+            {
+              "application_name": "runtime_canary-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-0",
+              "connections": 2
+            },
+            {
+              "application_name": "runtime_production-1",
+              "connections": 2
+            }
+          ]
+        }
+      ],
+      "ninthRejected": null,
+      "containerStats": "{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"c865d716fd5063f04ca5f972a206ef1a69f13eccc8f11bf41357651a711b3b67\",\"MemPerc\":\"0.45%\",\"MemUsage\":\"1.156MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-production-0\",\"NetIO\":\"29.1kB / 41.8kB\",\"PIDs\":2}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"70fe84a81dbac9b202eefab296493a96708f12bbf27f4b862b712ca22d089640\",\"MemPerc\":\"0.45%\",\"MemUsage\":\"1.16MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-production-1\",\"NetIO\":\"27.4kB / 39.6kB\",\"PIDs\":2}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"57248d7d45cf8a06aaf3b47dea619a67a612a99767060d6e70b76e7c9187a6d8\",\"MemPerc\":\"0.55%\",\"MemUsage\":\"1.41MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-canary-0\",\"NetIO\":\"25.7kB / 37.4kB\",\"PIDs\":2}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"fde5e56ba5718312f2ed21fbd0307a8187e440f8a5c71b0c6b414abc01b91867\",\"MemPerc\":\"0.88%\",\"MemUsage\":\"2.242MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-pilot-bootstrap-0-5\",\"NetIO\":\"2.1kB / 1.59kB\",\"PIDs\":3}\r\n{\"BlockIO\":\"0B / 0B\",\"CPUPerc\":\"0.00%\",\"ID\":\"cc8283c256a44b39e03a85bf7f1d48a599db72d2910aa7fe09bdca63bb4f4e23\",\"MemPerc\":\"0.91%\",\"MemUsage\":\"2.324MiB / 256MiB\",\"Name\":\"sproyt-heart-budget-30b64eacaa58-pilot-bootstrap-1-6\",\"NetIO\":\"1.94kB / 1.54kB\",\"PIDs\":3}",
+      "ninthAttempted": false
+    },
+    {
+      "name": "failed-bootstrap-retry",
+      "failedBeforeRetry": true,
+      "noDuplicateDefinitions": true,
+      "definitionCount": 2
+    },
+    {
+      "name": "controlled-drain-and-replace",
+      "oldStillRunningDuringDrain": [
+        true,
+        true
+      ],
+      "oldExitCodes": [
+        0,
+        0
+      ],
+      "connectionsBeforeReplacement": 2,
+      "newRuntimeCount": 3,
+      "controllerGuaranteeTested": false
+    }
+  ],
+  "errors": [],
+  "controllerRecreateTested": false,
+  "productionChanges": false,
+  "cleaned": true,
+  "imageId": "sha256:26ab52096443361b92b399a6d8ff84cf386310f8f74d64f82f0a2ffb929702b9",
+  "imageRevision": "11758e27a8db7fa22f7f3d81ff44cc0a01707b2a",
+  "databaseRole": {
+    "superuser": false,
+    "limit": 8
+  }
+}

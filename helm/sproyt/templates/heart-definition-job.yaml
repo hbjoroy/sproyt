@@ -10,14 +10,21 @@ metadata:
     helm.sh/hook-weight: "-2"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
+  parallelism: 1
+  completions: 1
+  # Do not overlap a retry with a still-terminating maintenance pod.
+  podReplacementPolicy: Failed
+  activeDeadlineSeconds: 180
   backoffLimit: 3
   ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
         {{- include "sproyt.heart.labels" . | nindent 8 }}
+        app.kubernetes.io/component: maintenance
     spec:
       restartPolicy: Never
+      terminationGracePeriodSeconds: 30
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -29,12 +36,65 @@ spec:
         runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      {{- if .Values.config.processPilotEnabled }}
+      # Ordinary init containers finish before the main container starts.
+      initContainers:
+        - name: bootstrap-definition
+          image: {{ include "sproyt.heart.image" . | quote }}
+          imagePullPolicy: {{ .Values.heart.image.pullPolicy }}
+          args: ["bootstrap-definition", "/definitions/event-planning.yaml"]
+          env:
+            - name: HEART_DB_MAX_CONNECTIONS
+              value: "1"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.heart.secret.existingSecret }}
+                  key: {{ .Values.heart.secret.databaseUrlKey }}
+          volumeMounts:
+            - name: definitions
+              mountPath: /definitions
+              readOnly: true
+          resources:
+            {{- toYaml .Values.heart.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: bootstrap-user-task-pilot
+          image: {{ include "sproyt.heart.image" . | quote }}
+          imagePullPolicy: {{ .Values.heart.image.pullPolicy }}
+          args: ["bootstrap-definition", "/definitions/user-task-pilot.yaml"]
+          env:
+            - name: HEART_DB_MAX_CONNECTIONS
+              value: "1"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.heart.secret.existingSecret }}
+                  key: {{ .Values.heart.secret.databaseUrlKey }}
+          volumeMounts:
+            - name: definitions
+              mountPath: /definitions
+              readOnly: true
+          resources:
+            {{- toYaml .Values.heart.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      {{- else }}
       containers:
         - name: bootstrap-definition
           image: {{ include "sproyt.heart.image" . | quote }}
           imagePullPolicy: {{ .Values.heart.image.pullPolicy }}
           args: ["bootstrap-definition", "/definitions/event-planning.yaml"]
           env:
+            - name: HEART_DB_MAX_CONNECTIONS
+              value: "1"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -44,32 +104,14 @@ spec:
             - name: definitions
               mountPath: /definitions
               readOnly: true
+          resources:
+            {{- toYaml .Values.heart.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-        {{- if .Values.config.processPilotEnabled }}
-        - name: bootstrap-user-task-pilot
-          image: {{ include "sproyt.heart.image" . | quote }}
-          imagePullPolicy: {{ .Values.heart.image.pullPolicy }}
-          args: ["bootstrap-definition", "/definitions/user-task-pilot.yaml"]
-          env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.heart.secret.existingSecret }}
-                  key: {{ .Values.heart.secret.databaseUrlKey }}
-          volumeMounts:
-            - name: definitions
-              mountPath: /definitions
-              readOnly: true
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
-        {{- end }}
+      {{- end }}
       volumes:
         - name: definitions
           configMap:

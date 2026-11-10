@@ -193,6 +193,10 @@ jobs:
         if: needs.changes.outputs.auth == 'true'
         run: bash tools/test-oidc-provider-verifier.sh
 
+      - name: Install Helm for delivery contracts
+        if: needs.changes.outputs.operations == 'true'
+        uses: azure/setup-helm@v5
+
       - name: Validate operational contracts
         if: needs.changes.outputs.operations == 'true'
         run: |
@@ -200,6 +204,9 @@ jobs:
           bash tools/test-production-rollout-verifier.sh
           node tools/test-mcp-load.mjs
           node --test tools/test-capacity-probe.mjs
+          python3 -m pip install -r tools/requirements-heart-rollout-tests.txt
+          python3 tools/test-heart-rollout-budget.py
+          node --check tools/heart-rollout-probe.mjs
 
   browser:
     name: Browser ${{ matrix.project }} ${{ matrix.shard }}

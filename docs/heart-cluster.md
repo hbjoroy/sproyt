@@ -102,7 +102,17 @@ kubectl -n sproyt run heart-check --rm -i --restart=Never --image=curlimages/cur
   curl --fail --silent http://sproyt-sproyt-heart:3000/ready
 ```
 
-## Rolling-update acceptance
+## Rollout budget and acceptance
+
+The [bounded rollout contract](heart-rollout-budget.md) replaces rolling Heart
+updates with Recreate and serial maintenance. It includes the two shared-role
+releases, transition/rollback steps and remaining isolated Kubernetes acceptance.
+The historical database-creation example above is not the current shared-role
+budget. Before running the commands below, both releases must use the new
+contract, the preflight must pass and rollout must be authorized. These commands
+exercise a real service pause; ordinary chat and its durable process outbox must
+remain available.
+
 
 Start one event-planning process, restart one Sprøyt pod while its durable
 outbox item is leased, and roll both Deployments:

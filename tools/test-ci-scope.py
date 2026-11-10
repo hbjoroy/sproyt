@@ -82,6 +82,18 @@ class ScopeTests(unittest.TestCase):
                              ('none', 'false', 'false'), path)
         self.assertEqual(ci_scope.scope(paths + ['src/db/postgres.rs'])['postgres'], 'true')
 
+    def test_heart_only_delivery_runs_rendered_budget_contracts(self):
+        for path in ci_scope.HEART_DELIVERY:
+            result = ci_scope.scope([path])
+            self.assertEqual((result['operations'], result['browser'], result['backend']),
+                             ('true', 'none', 'false'), path)
+        for path in ('helm/sproyt/values.yaml', 'helm/sproyt/templates/_helpers.tpl',
+                     'helm/sproyt/templates/deployment.yaml'):
+            self.assertEqual(ci_scope.scope([path])['browser'], 'full', path)
+        result = ci_scope.scope(['helm/sproyt/templates/heart.yaml', 'src/chat.rs'])
+        self.assertEqual((result['operations'], result['postgres'], result['browser']),
+                         ('true', 'true', 'full'))
+
     def test_release_news_source_runs_publication_and_operational_contracts(self):
         result = ci_scope.scope(['src/release_news.rs'])
         self.assertEqual((result['operations'], result['backend'], result['postgres']),

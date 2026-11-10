@@ -33,6 +33,12 @@ OPERATIONS_TOOLS = {'tools/verify-production-rollout.sh', 'tools/test-production
                     'tools/mcp-load.mjs', 'tools/test-mcp-load.mjs',
                     'tools/capacity-core.mjs', 'tools/capacity-runtime.mjs', 'tools/capacity-probe.mjs',
                     'tools/capacity-sample.ps1', 'tools/test-capacity-probe.mjs'}
+# Heart-only delivery contracts have their own rendered topology/budget checks.
+# Shared values/helpers and other chart paths retain the full application gate.
+HEART_DELIVERY = {'helm/sproyt/templates/heart.yaml', 'helm/sproyt/templates/heart-migration-job.yaml',
+                  'helm/sproyt/templates/heart-definition-job.yaml', 'tools/verify-heart-rollout-budget.py',
+                  'tools/test-heart-rollout-budget.py', 'tools/requirements-heart-rollout-tests.txt',
+                  'tools/heart-rollout-probe.mjs'}
 CODEC_TOOLS = {'tools/verify-media-runtime.sh'}
 RECOVERY_TOOLS = {'tools/seed-media-recovery.sql', 'tools/verify-media-recovery.sql',
                   'tools/reset-agent-memory-after-restore.sql'}
@@ -140,9 +146,9 @@ def application_scope(paths, force_full=False):
         return result('none', 'documentation/skill only', frontend=False)
     if paths <= POLICY:
         return result('none', 'CI policy only; selector and workflow contracts apply', frontend=False)
-    standalone_tools = IDENTITY | OIDC_TOOLS | CODEC_TOOLS | OPERATIONS_TOOLS
+    standalone_tools = IDENTITY | OIDC_TOOLS | CODEC_TOOLS | OPERATIONS_TOOLS | HEART_DELIVERY
     auth_tools = bool(paths & (IDENTITY | OIDC_TOOLS))
-    operations_tools = bool(paths & (OPERATIONS_TOOLS | OIDC_TOOLS))
+    operations_tools = bool(paths & (OPERATIONS_TOOLS | OIDC_TOOLS | HEART_DELIVERY))
     codec_tools = bool(paths & CODEC_TOOLS)
     if paths <= POLICY | standalone_tools:
         return result('none', 'standalone provider, codec or operational contracts', frontend=False,
