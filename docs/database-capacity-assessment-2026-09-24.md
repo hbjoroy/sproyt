@@ -1,5 +1,7 @@
 # Databasekapasitet: første samla budsjett
 
+**Historisk kartlegging:** sjå [oppdatert kartlegging og isolert prøve 10. november 2026](database-capacity-assessment-2026-11-10.md). Tala og målehola nedanfor gjeld september og skal ikkje brukast som dagens budsjett.
+
 Status: kartlegging 24. september 2026, **ikkje eit godkjent kapasitetsbudsjett**.
 Dette er steg 2 i [arkitekturvurderinga](architecture-scaling-assessment-plan.md).
 Kjelde er Sprøyt `main`, gjeldande GitOps-konfigurasjon og avgrensa, lesande

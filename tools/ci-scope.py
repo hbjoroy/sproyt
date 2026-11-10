@@ -30,7 +30,9 @@ OIDC_TOOLS = {'tools/verify-oidc-provider.sh', 'tools/test-oidc-provider-verifie
               'tools/fixtures/authentik-discovery.json'}
 OPERATIONS_TOOLS = {'tools/verify-production-rollout.sh', 'tools/test-production-rollout-verifier.sh',
                     'tools/publish-production-release-news.sh',
-                    'tools/mcp-load.mjs', 'tools/test-mcp-load.mjs'}
+                    'tools/mcp-load.mjs', 'tools/test-mcp-load.mjs',
+                    'tools/capacity-core.mjs', 'tools/capacity-runtime.mjs', 'tools/capacity-probe.mjs',
+                    'tools/capacity-sample.ps1', 'tools/test-capacity-probe.mjs'}
 CODEC_TOOLS = {'tools/verify-media-runtime.sh'}
 RECOVERY_TOOLS = {'tools/seed-media-recovery.sql', 'tools/verify-media-recovery.sql',
                   'tools/reset-agent-memory-after-restore.sql'}

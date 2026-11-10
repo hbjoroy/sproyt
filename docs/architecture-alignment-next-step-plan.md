@@ -85,6 +85,8 @@ Tilbakeføring: reverser målekoden. Ingen data eller konfigurasjonsgrenser er e
 
 ## 4. Leveranse B – avgrensa kapasitet og avgjerd (#353 → #354)
 
+**Oppfølging 10. november:** [lokal kapasitetsprøve og oppdatert ressurskartlegging](database-capacity-assessment-2026-11-10.md) er gjennomførte. 30 valde prøver samanliknar 1/2 API ved fast poolbudsjett, med ekte emnearbeid og reconnect. Avgjerda er å behalde forma. Heart sitt samtidige utrullingsbudsjett må avklarast først; samla clusterbudsjett og eigaraksept står att under #353. Målekoden i [PR #402](https://github.com/hbjoroy/sproyt/pull/402) er føresetnad; ingen av desse leveransane er utrulla som del av prøva. Resten av avsnittet er gjennomføringskriteria.
+
 Avhengnad: A og eit **faktisk isolert** prøvemiljø. Canary deler database/arbeid med produksjon og er ikkje automatisk isolert. Bruk syntetiske data, eigne køar og avgrensa/stubba push-/modellendepunkt. Kontroller `wslc --help` før lokal containerbruk; bruk den etablerte DevCache-rutinen ved Cargo-bygg.
 
 Drift samlar lesande oppdatert konfigurasjon og tidsseriar før budsjettet blir godkjent. Skil målt bruk, konfigurerte tak og ukjent for API, arbeidarar, LISTEN-samband, migrering, Heart, identitet, backup og andre databaseklientar. Chart-standardar er ikkje driftsfakta.

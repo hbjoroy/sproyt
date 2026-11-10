@@ -199,6 +199,7 @@ jobs:
           docker compose config --quiet
           bash tools/test-production-rollout-verifier.sh
           node tools/test-mcp-load.mjs
+          node --test tools/test-capacity-probe.mjs
 
   browser:
     name: Browser ${{ matrix.project }} ${{ matrix.shard }}
