@@ -86,9 +86,16 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
   const [description, setDescription] = useState(channel.description);
   const [loaded, setLoaded] = useState(false);
   const governanceKey = JSON.stringify([channel.id, channel.role, channel.hidden, channel.events_enabled, scope.owner]);
+  const latestGovernanceKey = useRef(governanceKey);
+  latestGovernanceKey.current = governanceKey;
   const [governanceState, setGovernanceState] = useState<{ key: string; value: import("../../channel-governance").ChannelGovernance }>();
   const governance = governanceState?.key === governanceKey ? governanceState.value : undefined;
-  const setGovernance = (value: import("../../channel-governance").ChannelGovernance | undefined) => setGovernanceState(value ? { key: governanceKey, value } : undefined);
+  const setGovernance = (value: import("../../channel-governance").ChannelGovernance | undefined) => {
+    // A mutation can refresh channel props before its promise resolves. Do not
+    // overwrite the new key's authoritative read with that older callback.
+    if (latestGovernanceKey.current !== governanceKey) return;
+    setGovernanceState(value ? { key: governanceKey, value } : undefined);
+  };
   const [governanceError, setGovernanceError] = useState("");
   const [confirmLeave, setConfirmLeave] = useState(false);
   const op = useOperation(scope.capture);
