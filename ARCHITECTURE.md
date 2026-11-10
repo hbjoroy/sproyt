@@ -189,6 +189,16 @@ See [docs/development.md](docs/development.md) for the full local and CI gate,
 and [docs/protocol.md](docs/protocol.md) for the stable WebSocket and MCP
 contracts.
 
+## Capacity observations
+
+Capacity observations separate chat admission, time in the mailbox and actor
+execution. Every actor producer uses the same measured mailbox, preserving its
+bounded Tokio queue and accepted-command behaviour. Selected PostgreSQL
+acquisitions are measured separately from SQL execution; the web runtime also
+exposes snapshots of its existing shared pool. These measurements introduce no
+new pools or admission limits. Coverage, fixed labels and cancellation semantics
+are documented in [operations](docs/operations.md#database-and-chat-capacity-observations).
+
 ## Deployment
 
 OCI-compatible images support local Podman/Docker-style use and Helm-managed

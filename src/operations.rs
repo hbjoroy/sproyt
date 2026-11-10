@@ -12,6 +12,7 @@ use axum::{
     response::Response,
 };
 use tokio::sync::watch;
+pub(crate) mod capacity;
 pub(crate) mod dependencies;
 mod measurements;
 pub(crate) use measurements::Transport;
@@ -23,6 +24,7 @@ pub struct OperationalState {
 
 #[derive(Debug)]
 struct OperationalStateInner {
+    postgres_pool: Mutex<Option<sqlx::PgPool>>,
     measurements: Mutex<measurements::Measurements>,
     active_connections: [AtomicU64; 2],
     opened_connections: [AtomicU64; 2],
@@ -55,6 +57,7 @@ impl Default for OperationalState {
     fn default() -> Self {
         Self {
             inner: Arc::new(OperationalStateInner {
+                postgres_pool: Mutex::new(None),
                 measurements: Mutex::default(),
                 active_connections: Default::default(),
                 opened_connections: Default::default(),
@@ -87,6 +90,14 @@ impl Default for OperationalState {
 }
 
 impl OperationalState {
+    pub(crate) fn observe_postgres_pool(&self, pool: Option<&sqlx::PgPool>) {
+        *self
+            .inner
+            .postgres_pool
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = pool.cloned();
+    }
+
     pub fn record_integration(&self, outcome: IntegrationOutcome, elapsed_micros: u64) {
         let counter = match outcome {
             IntegrationOutcome::Accepted => &self.inner.integration_accepted,
@@ -340,7 +351,17 @@ pub async fn healthz() -> &'static str {
 }
 
 pub async fn metrics(State(operations): State<OperationalState>) -> String {
+    let pool = operations
+        .inner
+        .postgres_pool
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(capacity::render_pool)
+        .unwrap_or_default();
     operations.metrics()
+        + &pool
+        + &capacity::shared().render()
         + &dependencies::render()
         + &crate::chatbot::memory::builder::metrics()
         + &crate::media_store::monitoring::metrics()

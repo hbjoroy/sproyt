@@ -5,7 +5,7 @@ use chrono::Duration;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{
-    PgPool, Row,
+    Acquire, PgPool, Row,
     postgres::{PgListener, PgPoolOptions, PgRow},
 };
 use tokio::sync::broadcast;
@@ -42,6 +42,7 @@ use crate::process::{
 };
 
 use super::{media_ids_from_body, sql_error, storage};
+use crate::operations::capacity::{PoolOperation, acquire};
 
 async fn integration_channel_postgres(
     executor: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -2112,21 +2113,25 @@ impl ChatRepository for PostgresChatRepository {
                 return Err(RepositoryError::Conflict);
             }
             let limit = i64::try_from(usize::from(query.limit)).map_err(storage)?;
+            let mut connection = acquire(&self.pool, PoolOperation::HistoryRead)
+                .await
+                .map_err(sql_error)?;
             let (rows, reverse) = if let Some(after) = query.after {
                 let after = i64::try_from(u64::from(after)).map_err(storage)?;
                 (sqlx::query("select id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = $1 and sequence > $2 order by sequence asc limit $3")
                     .bind(*query.channel_id.as_uuid()).bind(after).bind(limit)
-                    .fetch_all(&self.pool).await.map_err(sql_error)?, false)
+                    .fetch_all(&mut *connection).await.map_err(sql_error)?, false)
             } else if let Some(before) = query.before {
                 let before = i64::try_from(u64::from(before)).map_err(storage)?;
                 (sqlx::query("select id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = $1 and sequence < $2 order by sequence desc limit $3")
                     .bind(*query.channel_id.as_uuid()).bind(before).bind(limit)
-                    .fetch_all(&self.pool).await.map_err(sql_error)?, true)
+                    .fetch_all(&mut *connection).await.map_err(sql_error)?, true)
             } else {
                 (sqlx::query("select id, channel_id, parent_message_id, sender_id, sender_display_name, sequence, body, created_at, edited_at, deleted_at from messages where channel_id = $1 order by sequence desc limit $2")
                     .bind(*query.channel_id.as_uuid()).bind(limit)
-                    .fetch_all(&self.pool).await.map_err(sql_error)?, true)
+                    .fetch_all(&mut *connection).await.map_err(sql_error)?, true)
             };
+            drop(connection);
             let mut messages = rows
                 .into_iter()
                 .map(chat_message)
@@ -2140,7 +2145,10 @@ impl ChatRepository for PostgresChatRepository {
 
     fn append_message<'a>(&'a self, command: SendMessage) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
-            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let mut connection = acquire(&self.pool, PoolOperation::Send)
+                .await
+                .map_err(sql_error)?;
+            let mut transaction = connection.begin().await.map_err(sql_error)?;
             let membership: Option<String> = sqlx::query_scalar(
                 "select role from channel_memberships where channel_id = $1 and user_id = $2",
             )
@@ -2207,6 +2215,9 @@ impl ChatRepository for PostgresChatRepository {
             enqueue_message_postgres(&mut transaction, &message).await?;
             crate::chatbot::enqueue_postgres(&mut transaction, &message).await?;
             transaction.commit().await.map_err(sql_error)?;
+            // The transaction borrows this connection; release before NOTIFY
+            // takes another pool connection, including when the pool has size 1.
+            drop(connection);
             if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())
                 .execute(&self.pool)
@@ -2331,7 +2342,10 @@ impl ChatRepository for PostgresChatRepository {
         request_id: String,
     ) -> RepositoryFuture<'a, ChatMessage> {
         Box::pin(async move {
-            let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+            let mut connection = acquire(&self.pool, PoolOperation::SendIdempotent)
+                .await
+                .map_err(sql_error)?;
+            let mut transaction = connection.begin().await.map_err(sql_error)?;
             let reservation = sqlx::query("insert into command_receipts (principal_id, request_id) values ($1, $2) on conflict(principal_id, request_id) do nothing")
                 .bind(*command.actor.as_uuid())
                 .bind(&request_id)
@@ -2477,6 +2491,7 @@ impl ChatRepository for PostgresChatRepository {
                 .await?;
             }
             transaction.commit().await.map_err(sql_error)?;
+            drop(connection);
             if sqlx::query("select pg_notify('sproyt_messages', $1)")
                 .bind(message.id.as_uuid().to_string())
                 .execute(&self.pool)
@@ -3800,12 +3815,15 @@ async fn ensure_membership(
     channel_id: &ChannelId,
     actor: &UserId,
 ) -> Result<(), RepositoryError> {
+    let mut connection = acquire(pool, PoolOperation::HistoryAccess)
+        .await
+        .map_err(sql_error)?;
     let role: Option<String> = sqlx::query_scalar(
         "select role from channel_memberships where channel_id = $1 and user_id = $2",
     )
     .bind(*channel_id.as_uuid())
     .bind(*actor.as_uuid())
-    .fetch_optional(pool)
+    .fetch_optional(&mut *connection)
     .await
     .map_err(sql_error)?;
     let role = role.as_deref().and_then(MembershipRole::parse);
@@ -4419,6 +4437,93 @@ mod tests {
     use super::*;
     use crate::domain::{PrincipalKind, User};
     use tokio::sync::Barrier;
+
+    #[tokio::test]
+    async fn postgres_measured_sends_release_single_connection_before_notify() {
+        let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+            return;
+        };
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect(&url)
+            .await
+            .unwrap();
+        let repository = PostgresChatRepository::connect_with_pool(&url, pool.clone())
+            .await
+            .unwrap();
+        repository.migrate().await.unwrap();
+        let actor = UserId::from_uuid(Uuid::now_v7());
+        repository
+            .upsert_user(User {
+                id: actor.clone(),
+                kind: PrincipalKind::Human,
+                display_name: DisplayName::new("Measured send").unwrap(),
+                handle: None,
+                external_provider: None,
+                external_subject: None,
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+        let suffix = Uuid::now_v7().simple().to_string();
+        let circle = repository
+            .create_circle(CreateCircle {
+                actor: actor.clone(),
+                slug: ChannelSlug::new(format!("measured-{suffix}")).unwrap(),
+                name: DisplayName::new("Measured send").unwrap(),
+            })
+            .await
+            .unwrap();
+        let channel = repository
+            .create_channel(CreateChannel {
+                actor: actor.clone(),
+                slug: ChannelSlug::new(format!("measured-{suffix}")).unwrap(),
+                name: DisplayName::new("Measured send").unwrap(),
+                kind: ChannelKind::Public,
+                circle_id: Some(circle.id),
+            })
+            .await
+            .unwrap();
+        let command = || SendMessage {
+            actor: actor.clone(),
+            channel_id: channel.id.clone(),
+            parent_message_id: None,
+            body: MessageBody::new("One shared connection").unwrap(),
+        };
+        let mut notifications = repository.subscribe_messages().unwrap();
+        let ordinary = repository.append_message(command()).await.unwrap();
+        let idempotent = repository
+            .append_message_idempotent(command(), "measured-request".into())
+            .await
+            .unwrap();
+        let replay = repository
+            .append_message_idempotent(command(), "measured-request".into())
+            .await
+            .unwrap();
+        assert_eq!(idempotent.id, replay.id);
+        // LISTEN is database-wide; unrelated parallel fixtures may publish too.
+        let mut expected = HashSet::from([ordinary.id, idempotent.id]);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !expected.is_empty() {
+                expected.remove(&notifications.recv().await.unwrap());
+            }
+        })
+        .await
+        .unwrap();
+        let history = repository
+            .load_recent_messages(LoadRecentMessages {
+                actor,
+                channel_id: channel.id,
+                after: None,
+                before: None,
+                limit: crate::domain::MessageLimit::new(10),
+            })
+            .await
+            .unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(pool.options().get_max_connections(), 1);
+    }
 
     #[tokio::test]
     async fn postgres_moderated_delete_waits_for_role_revocation_and_rechecks_authority() {

@@ -285,6 +285,107 @@ every authenticated user. These deterministic gates catch protocol,
 cross-replica and recovery regressions early; they do not replace the
 production-sized exercise required before a material traffic increase.
 
+## Database and chat capacity observations
+
+`/metrics` adds process-local observations for the first #353 measurement slice.
+No queue size, pool limit, timeout or retry policy is changed. Pool snapshot
+gauges exist only when the web runtime registers its existing shared PostgreSQL
+pool; SQLite has chat phase observations without PostgreSQL series.
+
+| Metric | Meaning |
+| --- | --- |
+| `sproyt_pool_connections_size`, `_idle`, `_max` | Independently sampled pool gauges, labelled only `pool="shared_postgres"`; they are not pool waiting time. |
+| `sproyt_pool_selected_acquire_duration_seconds` | Histogram from polling an explicit acquire until connection, timeout, closed pool, other error or cancellation. Includes any SQLx connection creation/validation during checkout; excludes query and `BEGIN` time. |
+| `sproyt_chat_phase_duration_seconds` | Histograms for `admission` (seeking queue space), `queued` (admitted until dequeue), and `execution` (actor handling). |
+| `sproyt_chat_phase_in_flight`, `_peak` | Current and process-lifetime peak phase counts, aggregated across local chat engines. Admission includes attempts that obtain space immediately. Queued excludes executing commands. |
+
+Pool timing is deliberately **selected coverage**, not all database calls:
+
+- `send` / `send_idempotent`: the transaction acquire in `append_message` /
+  `append_message_idempotent`. After commit the connection is released before
+  the existing separate `pg_notify` acquire, which is not measured here.
+- `history_access` / `history_read`: the membership check and the selected
+  page query in `load_recent_messages`, including the reconnect `after` path.
+  They retain separate acquisitions and the same access checks.
+- `push_select` / `push_claim`: candidate lookup and conditional lease update
+  in `NotificationService::claim`. `push_complete` covers each existing SQL
+  statement for delivered, expired or retry outcomes, including the separate
+  subscription-status update. No connection spans external delivery.
+
+Other acquire paths, queries/transaction duration, listeners, push startup
+backfill, and other application pools remain outside this histogram. Check
+that coverage before attributing total database contention to these samples.
+Acquire latency is not exclusively time parked waiting for a free connection.
+Missing histogram series mean no observed attempt in that process, not zero
+latency. All observations reset at process restart; peak gauges are not sums
+to compare with a single engine's 1,024-place mailbox limit.
+
+Chat labels use only the 13 fixed command classes. Admission outcomes are
+`admitted`, `closed`, `cancelled`; queued outcomes are `dequeued`, `discarded`;
+execution outcomes are `completed`, `cancelled`. Completed includes handled
+domain rejection and does not claim successful persistence or client delivery.
+Dropping a reply receiver after admission does not cancel the accepted command.
+Receiver shutdown counts discarded queued commands; aborting actor execution
+records cancellation. There are no identifiers, SQL or error messages in labels.
+
+Histograms use seconds with bounds 0.001, 0.005, 0.025, 0.1, 0.5, 0.75, 1, 5
+and `+Inf`. Only observed combinations are rendered. The upper bound is 1,395
+new time series per process: 385 pool histogram samples, 1,001 chat histogram
+samples, six phase gauges and three registered-pool gauges.
+
+For example, compare successful selected acquire p99 with chat admission and
+queued p99, rather than treating HTTP header latency as message acknowledgement:
+
+```promql
+histogram_quantile(0.99, sum by (le, operation) (
+  rate(sproyt_pool_selected_acquire_duration_seconds_bucket{result="acquired"}[5m])))
+histogram_quantile(0.99, sum by (le, phase) (
+  rate(sproyt_chat_phase_duration_seconds_bucket{result=~"admitted|dequeued|completed"}[5m])))
+sum by (operation, result) (
+  rate(sproyt_pool_selected_acquire_duration_seconds_count{result!="acquired"}[5m]))
+```
+
+These observations support the isolated capacity exercise in the
+[next-step plan](architecture-alignment-next-step-plan.md). They do not establish
+a production resource budget or justify more replicas, higher pool limits or
+channel partitioning. Rollback is a code revert; there is no migration or new
+configuration to undo.
+
+### Local verification, 10 November 2026
+
+The measurement slice was exercised on Windows with locked dependencies and
+development/test debug information disabled, using its managed S: build cache.
+The broad Rust run passed 479 tests with 12 explicit ignores, using one test
+thread. Legacy fixtures that use `./target` require that directory even when
+Cargo output is redirected; the directory contained test data only. The first
+parallel run also encountered a transient SQLite file-removal lock.
+
+An isolated PostgreSQL 17 container ran the eight repository tests and all four
+capacity tests. This includes holding the only pool connection to distinguish
+wait/success, timeout, cancellation and closed-pool outcomes, and sending plus
+idempotent replay/history with a one-connection pool while receiving the
+post-commit notifications. Existing shared-budget, two-replica recovery and
+bounded-export contracts also passed. An initial all-`postgres_` invocation
+mixed agent job fixtures and omitted the marine feature flag; the six affected
+agent contracts each passed with a fresh database and the required flag.
+Their test setup was corrected locally without changing application policy.
+
+The explicit mailbox diagnostic compared raw Tokio and instrumented channels
+with identical commands/capacity, 10,000 commands per sample and three samples:
+
+| Sample | Raw channel | Instrumented | Added time per command |
+| --- | ---: | ---: | ---: |
+| 1 | 6,767 µs | 11,939 µs | 517 ns |
+| 2 | 6,653 µs | 11,646 µs | 499 ns |
+| 3 | 6,691 µs | 11,787 µs | 509 ns |
+
+Run it with `cargo test chat::mailbox::tests::mailbox_instrumentation_overhead_sample
+--locked -- --ignored --nocapture` (through the managed wrapper on Windows).
+This single-task diagnostic has no database, network or producer contention;
+it measures mailbox instrumentation overhead only. It is not a production
+capacity or latency result. The separate isolated load matrix remains #353
+delivery B.
+
 ## Heart failure isolation
 
 Heart is an optional internal dependency, not part of the ordinary chat write

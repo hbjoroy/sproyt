@@ -123,6 +123,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     let operations = OperationalState::default();
     let postgres_pool =
         db::connect_postgres_pool(config.database(), config.db_max_connections()).await?;
+    operations.observe_postgres_pool(postgres_pool.as_ref());
     let repositories = db::connect_repositories(config.database(), postgres_pool.as_ref()).await?;
     let notifications =
         NotificationService::connect(config.database(), postgres_pool.as_ref()).await?;

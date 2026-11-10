@@ -2,6 +2,10 @@
 
 Status: plan for avgjerd, ikkje vedteken implementering. Oppretta 24. september 2026.
 
+Vidareføring 10. november 2026: [neste steg i arkitekturalignmenten under #345](architecture-alignment-next-step-plan.md)
+samlar oppdatert sakstatus, kjeldegrunnlag og gjennomføringspakkar for #353–356.
+Septemberobservasjonane nedanfor er historiske og skal ikkje brukast som dagens kapasitetsbudsjett.
+
 Grunnlag: det private driftsnotatet
 `S:/Source/rocket/inventory/SPROYT-ARKITEKTUR-SKALERING-2026-09-23.md`,
 Sprøyt-koden og driftsrapporten
