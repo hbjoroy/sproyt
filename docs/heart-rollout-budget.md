@@ -1,6 +1,6 @@
 # Heart sitt utrullingsbudsjett
 
-Dato: 10. november 2026. Arkitekturvurdering: Astra. Status: **implementert chart-kandidat, ikkje utrulla; Kubernetes-aksept står att**. Forelder #353/#345. [Kapasitetskartlegginga](database-capacity-assessment-2026-11-10.md) er historisk grunnlag for avviket.
+Dato: 10. november 2026. Arkitekturvurdering: Astra. Status: **chart-kandidat med isolert Kubernetes-/Argo-budsjettprøve; ikkje utrulla. Eit separat prosessintegrasjonsavvik står att**. Forelder #353/#345. [Kapasitetskartlegginga](database-capacity-assessment-2026-11-10.md) er historisk grunnlag for avviket.
 
 ## Avgjerda og budsjettet
 
@@ -29,7 +29,7 @@ Runtime-poddar får `component=runtime`; Service og PDB vel denne komponenten. V
 
 ## Overgang og tilbakeføring
 
-Dette er planen for ei seinare driftsendring. **Den isolerte Kubernetes-/Argo-prøva må vere ferdig før canary blir endra i drift.** I prøvemiljøet skal ein først øve gammal → ny canary → ny produksjon, deretter samtidige synkar og avbroten bootstrap med full opprydding før retry. Ingen slike driftsendringar er utførte her.
+Dette er planen for ei seinare driftsendring. **Den isolerte controller-/budsjettprøva er no gjennomført**, med gammal → ny canary → ny produksjon, samtidige synkar og avbroten bootstrap med full opprydding før retry. Original event-planlegging avdekte eit separat integrasjonsavvik som må følgjast opp før ein godtek den flyten. Ingen driftsendringar er utførte her.
 
 1. Før ei endring: sjekk at begge Argo-applikasjonane har avslutta siste operasjon; ingen gamle vedlikehalds-/terminerande Heart-poddar og ingen ekstra klientar av Heart-rolla. Stadfest faktiske pooltak, rollegrense åtte og effektive sync-options. Køyr render-validatoren mot **dei faktiske prod/canary-verdiane**, ikkje berre chart-standardar.
 2. Lever først til **canary åleine**, med produksjon i ro. Vent på ferdige hooks, fjerna gamle poddar, rette Service-endepunkt og frisk ny Heart. Lever deretter produksjon på same måte. Gamle og nye hook-former må ikkje oppdaterast samstundes i denne første overgangen.
@@ -59,7 +59,19 @@ Det eksakte utrulla Heart-imaget `sha256:fe2eb544a14006504dbbb20e2c0a3489a0035ea
 
 Ti render-kontraktar dekkjer pilot av/på, samtidige budsjett, usikre replika-/strategi-overstyringar, retry, tidsfristar, sekvens, pool-/ressursgrenser, endepunkt og immutable selector. Streng server-dry-run på dagens Kubernetes 1.35.8 godtek Deployment-/Service-/PDB-endringane og begge jobbar. Den eksisterande Rust-kontrakten `heart_unavailable_does_not_interrupt_chat_and_recovers_once` består på nytt.
 
-**Attståande akseptanse:** ingen lokal isolert Kubernetes-context eller controller var tilgjengeleg. Containerprøva styrer sjølv stop/start og er **ikkje** bevis for Kubernetes/Argo si utskiftingsrekkjefølgje, første selector-overgang eller avbroten sync. Server-dry-run validerer API-et, men køyrer ingen kontroller. Den isolerte controller-/Argo-prøva før overgangssteg 1 må gjennomførast før utrulling, også Job-retry etter langsam terminering og tidsfrist; #353 står open. Ingen driftsressursar er endra.
+[Isolert Kubernetes-/Argo-bevis](evidence/heart-kubernetes-argo-2026-11-10.json) og [prøveoppsett/metode](heart-kubernetes-argo-test.md): ei eiga ARM64 WSLC-VM køyrde K3s **1.35.8+k3s1** og Argo **3.4.8**, med lokal Git, syntetiske løyndomar og PostgreSQL 18.6. Hjarta i prøva var dei faktiske chart-revisjonane og dei same kompilerte Heart-/Sprøyt-imaga som i drift; WSLC si manifestnormalisering er dokumentert med identisk image-konfigurasjon og rootfs-digestar.
+
+- Første stegvis selector-overgang og seinare samtidige fulle synkar blei `Synced/Healthy`. Gamle runtime-**prosessar** var terminale med exit 0 før nye poddar blei oppretta. Gamle podobjekt kunne framleis vente på garbage collection.
+- Samtidig prod/canary nådde **åtte samband**: seks runtime og to migreringar. Fem rå databaseprøver målte denne toppen; ingen av alle databaseprøvene gjekk over åtte, og PostgreSQL logga ingen rollegrensefeil.
+- Same Job fekk ny pod først etter at den gamle var terminal. Ekte `argocd app terminate-op --core`, full foreground-opprydding og ny full sync bestod; piloten hadde éi definisjonsrad etter retry. Blokkerte hooks enda med exit 137 etter normal avsluttingsfrist. Ingen force-sletting blei brukt.
+- Ein testforkorta åttesekunds Job-frist stoppa Argo i PreSync og bevarte runtime-UID-en. Korrigert retry med normal frist 180 sekund blei frisk.
+- Under ein controllerstyrt pause sende klienten ei chatmelding og ein gyldig minimal `start → end`-prosess **etter** at begge gamle Heart-prosessane hadde stoppa. Chatmeldinga blei lagra; START venta, fekk fire leveringsforsøk og gav éin fullført outbox-operasjon, éin startnøkkel/instans og éi start-hending. Heart nådde `completed/done`; Sprøyt-lenkja blir verande `active`, som er gjeldande lenkjesemantikk.
+
+**Separat avvik:** den opphavlege event-planlegginga bestod ikkje. Sprøyt sende START utan `metadata.process_link_id`, som Lua-steget `prepare` krev. Den prøvde Heart-revisjonen kan då lagre ein instans som blir ståande `running/prepare`; eit idempotent START-replay kan returnere den eksisterande instansen utan å fullføre flyten. Den feila instansen og outbox-payloaden blei bevarte uendra. Den minimale START-prøva godkjenner ikkje denne forretningsflyten. Sjå det konkrete funnet og kjeldestadene i prøverapporten.
+
+Observasjonsavgrensing: pod-watch stoppa kl. 10:27 UTC, og gjenopptakinga fekk `410 Expired`. Job-, Argo-, EndpointSlice- og databaseobservasjon heldt fram. Avbrot/fristscenarioet er støtta av desse straumane og eksplisitte levande gate-/runtime-UID-sjekkar. Den siste E2E-prøva blei gjenteken etter reparert pod-watch og har komplett podrekkjefølgje. Tidlege feil i prøveskriptet er førte i beviset. Dette er ikkje ein påstand om uavbroten poddekning gjennom heile økta.
+
+Den disponible VM-en, Kubernetes-ressursane, testdatabasane og proxyane er avslutta og rydda. Standard WSLC-økt og produksjonscontext er urørte. #353 står framleis open for samla PostgreSQL-budsjett og ansvarleg driftseigar; integrasjonsavviket må følgjast opp separat. Ingen driftsutrulling er utført.
 
 Gjenta lokalt (PowerShell 7, `wslc`; les relevant underkommandohjelp fyrst):
 
