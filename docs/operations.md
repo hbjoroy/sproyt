@@ -359,6 +359,9 @@ The broad Rust run passed 479 tests with 12 explicit ignores, using one test
 thread. Legacy fixtures that use `./target` require that directory even when
 Cargo output is redirected; the directory contained test data only. The first
 parallel run also encountered a transient SQLite file-removal lock.
+Formatting and Clippy with warnings denied passed. All six Chromium smoke
+tests passed against the built server, including real IndexedDB reload/replay
+of a dropped send with the original request ID.
 
 An isolated PostgreSQL 17 container ran the eight repository tests and all four
 capacity tests. This includes holding the only pool connection to distinguish
