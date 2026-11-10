@@ -2886,7 +2886,8 @@ impl ProcessRepository for SqliteChatRepository {
                     definition_name: command.definition_name.clone(),
                     version: command.definition_version.clone(),
                     metadata: command.metadata,
-                },
+                }
+                .with_process_link(link_id)?,
             };
             sqlx::query("insert into process_links (id, channel_id, namespace, definition_name, definition_version, initiated_by, request_id, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(link_id.as_uuid().to_string()).bind(command.channel_id.to_string()).bind(&command.namespace)

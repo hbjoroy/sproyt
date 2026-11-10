@@ -50,7 +50,7 @@ Den opphavlege prøva kalla det reelle start-API-et med tittelmetadata. Sprøyt 
 
 Den prøvde Heart-revisjonen `11758e27a8db7fa22f7f3d81ff44cc0a01707b2a` kan persistere instansen før motoren feilar i Lua. Eit idempotent START-replay returnerer den eksisterande instansen. Resultatet var fullført START-outbox og `active` Sprøyt-lenkje medan Heart stod i `running/prepare`. Den faktiske payloaden og instansmetadataen ligg i beviset; instansen blei ikkje reparert eller manuelt stega.
 
-Den minimale, gyldige fixture-definisjonen `fixture-start` (`start → done`, der `done` er `type: end`) blei brukt separat for å prøve leveringskontrakten under utrulling utan denne Lua-føresetnaden. Han ryddar ikkje avviket frå event-planlegging. Oppfølginga må sikre servergenerert korrelasjonsmetadata og gjennomprøve den opphavlege flyten mot reell Heart, også feil før/etter persistert instans. Ingen slik kodeendring er gjort i denne chart-/prøverunden.
+Den minimale, gyldige fixture-definisjonen `fixture-start` (`start → done`, der `done` er `type: end`) blei brukt separat for å prøve leveringskontrakten under utrulling utan denne Lua-føresetnaden. Han ryddar ikkje avviket frå event-planlegging. Den separate oppfølginga har no retta den servergenererte korrelasjonsmetadataen i begge databaseadapterane og [prøvd den opphavlege flyten mot reell Heart på nytt](evidence/heart-event-planning-2026-11-10.json). Ho består for tittelmetadata, klientforfalska ID og utelaten metadata, inkludert retry etter Heart-pause. Dette endrar ikkje den historiske feilen eller beviset frå Kubernetes-økta. Retting av Heart sitt generelle replay etter motorfeil er ikkje del av Sprøyt-rettinga.
 
 ## Observasjonskvalitet og feila prøveforsøk
 
