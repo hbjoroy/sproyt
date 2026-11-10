@@ -386,8 +386,12 @@ Run it with `cargo test chat::mailbox::tests::mailbox_instrumentation_overhead_s
 --locked -- --ignored --nocapture` (through the managed wrapper on Windows).
 This single-task diagnostic has no database, network or producer contention;
 it measures mailbox instrumentation overhead only. It is not a production
-capacity or latency result. The separate isolated load matrix remains #353
-delivery B.
+capacity or latency result. The [isolated load matrix and current resource
+assessment](database-capacity-assessment-2026-11-10.md) now record #353 delivery B.
+The guarded Windows runner is `tools/capacity-probe.mjs`; its fixture isolation,
+traffic scheduling, metrics aggregation and verdict contracts run with
+`node --test tools/test-capacity-probe.mjs`. The local result keeps the current
+architecture and leaves the shared production budget unapproved.
 
 ## Heart failure isolation
 

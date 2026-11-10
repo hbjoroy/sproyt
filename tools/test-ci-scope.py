@@ -72,6 +72,16 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual((oidc['auth'], oidc['operations'], oidc['backend'], oidc['postgres']),
                          ('true', 'true', 'false', 'false'))
 
+    def test_capacity_probe_changes_run_operational_contracts(self):
+        paths = ['tools/capacity-core.mjs', 'tools/capacity-runtime.mjs', 'tools/capacity-probe.mjs',
+                 'tools/capacity-sample.ps1', 'tools/test-capacity-probe.mjs']
+        for path in paths:
+            result = ci_scope.scope([path])
+            self.assertEqual(result['operations'], 'true', path)
+            self.assertEqual((result['browser'], result['backend'], result['postgres']),
+                             ('none', 'false', 'false'), path)
+        self.assertEqual(ci_scope.scope(paths + ['src/db/postgres.rs'])['postgres'], 'true')
+
     def test_release_news_source_runs_publication_and_operational_contracts(self):
         result = ci_scope.scope(['src/release_news.rs'])
         self.assertEqual((result['operations'], result['backend'], result['postgres']),

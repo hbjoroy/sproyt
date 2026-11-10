@@ -1,0 +1,418 @@
+{
+  "heartRole": {
+    "mappingConfirmed": true,
+    "normalPoolTotal": 6,
+    "connectionLimit": 8,
+    "simultaneousRolloutPoolTotal": 10
+  },
+  "readOnly": true,
+  "containsCredentialsOrAddresses": false,
+  "samples": [
+    {
+      "at": "2026-11-10T09:07:08.099036+01:00",
+      "version": "18.6",
+      "maxConnections": 100,
+      "superuserReserved": 3,
+      "reserved": 0,
+      "clients": 73,
+      "connections": [
+        {
+          "client_group": "identity",
+          "clients": 13,
+          "active": 0
+        },
+        {
+          "client_group": "other",
+          "clients": 41,
+          "active": 0
+        },
+        {
+          "client_group": "sproyt",
+          "clients": 14,
+          "active": 0
+        },
+        {
+          "client_group": "sproyt-heart",
+          "clients": 5,
+          "active": 0
+        }
+      ],
+      "databaseBytes": 3886362470,
+      "sproytBytes": 2784941759
+    },
+    {
+      "at": "2026-11-10T09:09:08.001083+01:00",
+      "clients": 72,
+      "groups": [
+        {
+          "client_group": "identity",
+          "clients": 13,
+          "active": 0
+        },
+        {
+          "client_group": "other",
+          "clients": 40,
+          "active": 0
+        },
+        {
+          "client_group": "sproyt-api-media",
+          "clients": 14,
+          "active": 0
+        },
+        {
+          "client_group": "sproyt-heart",
+          "clients": 5,
+          "active": 0
+        }
+      ],
+      "databaseBytes": 3887673190,
+      "sproytBytes": 2786252479
+    },
+    {
+      "at": "2026-11-10T09:11:28.17617+01:00",
+      "clients": 71,
+      "groups": [
+        {
+          "client_group": "identity",
+          "clients": 13,
+          "active": 0
+        },
+        {
+          "client_group": "other",
+          "clients": 40,
+          "active": 0
+        },
+        {
+          "client_group": "sproyt-api-media",
+          "clients": 13,
+          "active": 0
+        },
+        {
+          "client_group": "sproyt-heart",
+          "clients": 5,
+          "active": 0
+        }
+      ],
+      "databaseBytes": 3888729958,
+      "sproytBytes": 2787309247
+    }
+  ],
+  "completeBudgetApproved": false,
+  "schema": "sproyt.capacity-live-snapshot.v1",
+  "postgres": {
+    "topSamples": [
+      {
+        "memoryMiB": 437,
+        "cpuMillicores": 99
+      },
+      {
+        "memoryMiB": 445,
+        "cpuMillicores": 71
+      },
+      {
+        "memoryMiB": 438,
+        "cpuMillicores": 75
+      }
+    ],
+    "memoryLimitBytes": 1610612736,
+    "superuserReserved": 3,
+    "pvcBytes": 8589934592,
+    "ordinarySlots": 97,
+    "cpuLimit": 0.5,
+    "version": "18.6",
+    "filesystemKiB": {
+      "available": 4117892,
+      "used": 4020312,
+      "total": 8154588
+    },
+    "reserved": 0,
+    "maxConnections": 100
+  },
+  "at": "2026-11-10T09:11:27.3313336+01:00",
+  "knownApplicationConnectionBudget": {
+    "heartPools": 6,
+    "duringSimultaneousRollouts": 33,
+    "apiAndHeartSurge": 12,
+    "terminatingPodsAndMaintenanceIncluded": false,
+    "normal": 21,
+    "mediaPool": 2,
+    "apiPools": 10,
+    "apiListeners": 3
+  },
+  "backup": {
+    "concurrencyPolicy": "Forbid",
+    "connectionBound": "unverified",
+    "resourceLimitsConfigured": false,
+    "parallelDumpOption": false,
+    "schedule": "0 3 * * *"
+  },
+  "grafanaMaxOpenConnections": 10,
+  "workloads": [
+    {
+      "namespace": "authentik",
+      "containers": [
+        {
+          "resources": {},
+          "name": "server",
+          "budgetEnv": []
+        }
+      ],
+      "strategy": {
+        "rollingUpdate": {
+          "maxSurge": "25%",
+          "maxUnavailable": "25%"
+        },
+        "type": "RollingUpdate"
+      },
+      "terminationSeconds": 30,
+      "updateStrategy": null,
+      "replicas": 1,
+      "name": "authentik-server"
+    },
+    {
+      "namespace": "authentik",
+      "containers": [
+        {
+          "resources": {},
+          "name": "worker",
+          "budgetEnv": []
+        }
+      ],
+      "strategy": {
+        "rollingUpdate": {
+          "maxSurge": "25%",
+          "maxUnavailable": "25%"
+        },
+        "type": "RollingUpdate"
+      },
+      "terminationSeconds": 30,
+      "updateStrategy": null,
+      "replicas": 1,
+      "name": "authentik-worker"
+    },
+    {
+      "namespace": "monitoring",
+      "containers": [
+        {
+          "resources": {
+            "limits": {
+              "cpu": "750m",
+              "memory": "768Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          },
+          "name": "grafana",
+          "budgetEnv": []
+        }
+      ],
+      "strategy": {
+        "type": "Recreate"
+      },
+      "terminationSeconds": 30,
+      "updateStrategy": null,
+      "replicas": 1,
+      "name": "grafana"
+    },
+    {
+      "namespace": "sproyt-canary",
+      "containers": [
+        {
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "50m",
+              "memory": "64Mi"
+            }
+          },
+          "name": "sproyt",
+          "budgetEnv": []
+        }
+      ],
+      "strategy": {
+        "rollingUpdate": {
+          "maxSurge": 1,
+          "maxUnavailable": 0
+        },
+        "type": "RollingUpdate"
+      },
+      "terminationSeconds": 30,
+      "updateStrategy": null,
+      "replicas": 1,
+      "name": "sproyt-canary-sproyt"
+    },
+    {
+      "namespace": "sproyt-canary",
+      "containers": [
+        {
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "25m",
+              "memory": "48Mi"
+            }
+          },
+          "name": "heart",
+          "budgetEnv": [
+            {
+              "name": "HEART_DB_MAX_CONNECTIONS",
+              "value": "2"
+            }
+          ]
+        }
+      ],
+      "strategy": {
+        "rollingUpdate": {
+          "maxSurge": 1,
+          "maxUnavailable": 0
+        },
+        "type": "RollingUpdate"
+      },
+      "terminationSeconds": 30,
+      "updateStrategy": null,
+      "replicas": 1,
+      "name": "sproyt-canary-sproyt-heart"
+    },
+    {
+      "namespace": "sproyt",
+      "containers": [
+        {
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "50m",
+              "memory": "64Mi"
+            }
+          },
+          "name": "sproyt",
+          "budgetEnv": []
+        }
+      ],
+      "strategy": {
+        "rollingUpdate": {
+          "maxSurge": 1,
+          "maxUnavailable": 0
+        },
+        "type": "RollingUpdate"
+      },
+      "terminationSeconds": 30,
+      "updateStrategy": null,
+      "replicas": 2,
+      "name": "sproyt-sproyt"
+    },
+    {
+      "namespace": "sproyt",
+      "containers": [
+        {
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "25m",
+              "memory": "48Mi"
+            }
+          },
+          "name": "heart",
+          "budgetEnv": [
+            {
+              "name": "HEART_DB_MAX_CONNECTIONS",
+              "value": "2"
+            }
+          ]
+        }
+      ],
+      "strategy": {
+        "rollingUpdate": {
+          "maxSurge": 1,
+          "maxUnavailable": 0
+        },
+        "type": "RollingUpdate"
+      },
+      "terminationSeconds": 30,
+      "updateStrategy": null,
+      "replicas": 2,
+      "name": "sproyt-sproyt-heart"
+    },
+    {
+      "namespace": "sproyt",
+      "containers": [
+        {
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "ephemeral-storage": "2Gi",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "50m",
+              "ephemeral-storage": "1Gi",
+              "memory": "64Mi"
+            }
+          },
+          "name": "media-worker",
+          "budgetEnv": []
+        }
+      ],
+      "strategy": {
+        "type": "Recreate"
+      },
+      "terminationSeconds": 30,
+      "updateStrategy": null,
+      "replicas": 1,
+      "name": "sproyt-sproyt-media-worker"
+    },
+    {
+      "namespace": "database",
+      "containers": [
+        {
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "1536Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          },
+          "name": "postgresql",
+          "budgetEnv": []
+        }
+      ],
+      "strategy": null,
+      "terminationSeconds": 30,
+      "updateStrategy": {
+        "rollingUpdate": {
+          "partition": 0
+        },
+        "type": "RollingUpdate"
+      },
+      "replicas": 1,
+      "name": "postgres-postgresql"
+    }
+  ],
+  "apiPoolMaxPerReplica": {
+    "source": "live ConfigMaps read-only",
+    "production": 4,
+    "canary": 2
+  },
+  "nodes": {
+    "allocatableMemoryKiBEach": 8255904,
+    "allocatableCpuEach": 4,
+    "architecture": "arm64",
+    "count": 3
+  }
+}
