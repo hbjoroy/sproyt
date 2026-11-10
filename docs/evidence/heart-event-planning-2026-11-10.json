@@ -1,0 +1,153 @@
+{
+  "schema": "sproyt.heart-event-planning.v1",
+  "at": "2026-11-10T11:22:24.156Z",
+  "heartImage": "oci.bjoroy.me/sproyt/heart@sha256:fe2eb544a14006504dbbb20e2c0a3489a0035eababefc5c93dba9f10c7ec1955",
+  "application": "fresh native Windows ARM64 Sprøyt build; real PostgreSQL and ARM64 Heart containers",
+  "binarySha256": "16d01caba29a95eb0b10c47bc81e63c3ae8688c0ac3c905b5f0c18f85f1c0ad2",
+  "definitionSha256": "6e3501846bdaec50cfa75a5980af828e895a8ca27b8ccae826ba9a9ac2a1f6f2",
+  "productionChanges": false,
+  "kubernetesControllerRetested": false,
+  "scenarios": [
+    {
+      "name": "original-title-only",
+      "processLinkId": "01a1c532-1aa0-7291-83a9-330cb6b57371",
+      "heartInstanceId": "01a1c532-5384-7101-8729-301f3c44a0b4",
+      "chatPersisted": true,
+      "queuedWhileUnavailable": "starting",
+      "pauseOutbox": {
+        "attempts": 1,
+        "status": "pending",
+        "lastError": "Heart Unavailable: Heart transport failure"
+      },
+      "startOutbox": {
+        "rows": 1,
+        "metadata": {
+          "title": "Original event planning",
+          "process_link_id": "01a1c532-1aa0-7291-83a9-330cb6b57371"
+        },
+        "attempts": 2,
+        "status": "completed"
+      },
+      "waitingNode": "wait-for-decision",
+      "completedInstance": {
+        "id": "01a1c532-5384-7101-8729-301f3c44a0b4",
+        "status": "completed",
+        "current_node": "completed",
+        "metadata": {
+          "state": "completed",
+          "title": "Original event planning",
+          "decision": "yes",
+          "process_link_id": "01a1c532-1aa0-7291-83a9-330cb6b57371"
+        }
+      },
+      "startKeys": {
+        "count": 1,
+        "instances": [
+          "01a1c532-5384-7101-8729-301f3c44a0b4"
+        ]
+      },
+      "startedEvents": 1,
+      "correlatedEvents": 1
+    },
+    {
+      "name": "client-spoof",
+      "processLinkId": "01a1c532-5779-778f-9554-d5ac0b608714",
+      "heartInstanceId": "01a1c532-57ca-7861-b2b6-eede25469416",
+      "chatPersisted": null,
+      "queuedWhileUnavailable": null,
+      "pauseOutbox": null,
+      "startOutbox": {
+        "rows": 1,
+        "metadata": {
+          "title": "Server correlation wins",
+          "process_link_id": "01a1c532-5779-778f-9554-d5ac0b608714"
+        },
+        "attempts": 1,
+        "status": "completed"
+      },
+      "waitingNode": "wait-for-decision",
+      "completedInstance": {
+        "id": "01a1c532-57ca-7861-b2b6-eede25469416",
+        "status": "completed",
+        "current_node": "completed",
+        "metadata": {
+          "state": "completed",
+          "title": "Server correlation wins",
+          "decision": "yes",
+          "process_link_id": "01a1c532-5779-778f-9554-d5ac0b608714"
+        }
+      },
+      "startKeys": {
+        "count": 1,
+        "instances": [
+          "01a1c532-57ca-7861-b2b6-eede25469416"
+        ]
+      },
+      "startedEvents": 1,
+      "correlatedEvents": 1
+    },
+    {
+      "name": "omitted-metadata",
+      "processLinkId": "01a1c532-5bc7-74e3-9d22-142cdda21e5c",
+      "heartInstanceId": "01a1c532-5c19-7f90-bd8d-584baf3b266c",
+      "chatPersisted": null,
+      "queuedWhileUnavailable": null,
+      "pauseOutbox": null,
+      "startOutbox": {
+        "rows": 1,
+        "metadata": {
+          "process_link_id": "01a1c532-5bc7-74e3-9d22-142cdda21e5c"
+        },
+        "attempts": 1,
+        "status": "completed"
+      },
+      "waitingNode": "wait-for-decision",
+      "completedInstance": {
+        "id": "01a1c532-5c19-7f90-bd8d-584baf3b266c",
+        "status": "completed",
+        "current_node": "completed",
+        "metadata": {
+          "state": "completed",
+          "decision": "yes",
+          "process_link_id": "01a1c532-5bc7-74e3-9d22-142cdda21e5c"
+        }
+      },
+      "startKeys": {
+        "count": 1,
+        "instances": [
+          "01a1c532-5c19-7f90-bd8d-584baf3b266c"
+        ]
+      },
+      "startedEvents": 1,
+      "correlatedEvents": 1
+    }
+  ],
+  "errors": [],
+  "cleaned": true,
+  "heartImageId": "sha256:26ab52096443361b92b399a6d8ff84cf386310f8f74d64f82f0a2ffb929702b9",
+  "heartRevision": "11758e27a8db7fa22f7f3d81ff44cc0a01707b2a",
+  "postgresRepositoryContract": "passed",
+  "sourceRevision": "72f4450e4ad4ed35052f7ea439f34101be5647de",
+  "sourceSha256": {
+    "src/process.rs": "e5f6eec4f51e68cc2f6d171f144ec85868e22ff7ef01ec7dd224a94d43198a59",
+    "src/db/postgres.rs": "0dcfae0abc8ee1ca4353db11eac8c23d8f1a607bd50b3a6b386cc3f39c87caf2",
+    "src/db/sqlite.rs": "310eb17fbad54fe32169863463cd2f1455a1a973542e6ebecb25958579aae68a",
+    "src/db/mod.rs": "231a1a81db5fba089ab30af528339e957345e5baed86da1f31e09d69081eecc1"
+  },
+  "setupAttempt": {
+    "internalNetworkWindowsConnection": "failed before application workflow: PostgreSQL loopback connection reset; fixture cleaned",
+    "successfulNetwork": "dedicated labelled bridge; PostgreSQL and Heart published only on loopback"
+  },
+  "validation": {
+    "negativeRegression": "SQLite shared contract failed on old code with client-spoof in durable START; passed after fix",
+    "rustUnitAndRepository": "2 metadata tests + SQLite shared contract passed; real PostgreSQL shared contract passed",
+    "localBroadRun": {
+      "passed": 480,
+      "failed": 1,
+      "ignored": 12,
+      "failure": "personal_emojis_survive_repository_reconnect: Windows file-in-use during test cleanup",
+      "isolatedRerun": "passed"
+    },
+    "clippyAllTargetsAllFeatures": "passed"
+  }
+}

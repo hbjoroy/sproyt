@@ -1,6 +1,6 @@
 # Heart sitt utrullingsbudsjett
 
-Dato: 10. november 2026. Arkitekturvurdering: Astra. Status: **chart-kandidat med isolert Kubernetes-/Argo-budsjettprøve; ikkje utrulla. Eit separat prosessintegrasjonsavvik står att**. Forelder #353/#345. [Kapasitetskartlegginga](database-capacity-assessment-2026-11-10.md) er historisk grunnlag for avviket.
+Dato: 10. november 2026. Arkitekturvurdering: Astra. Status: **chart-kandidat med isolert Kubernetes-/Argo-budsjettprøve; ikkje utrulla. Prosessintegrasjonsavviket er retta og prøvd separat**. Forelder #353/#345. [Kapasitetskartlegginga](database-capacity-assessment-2026-11-10.md) er historisk grunnlag for avviket.
 
 ## Avgjerda og budsjettet
 
@@ -29,7 +29,7 @@ Runtime-poddar får `component=runtime`; Service og PDB vel denne komponenten. V
 
 ## Overgang og tilbakeføring
 
-Dette er planen for ei seinare driftsendring. **Den isolerte controller-/budsjettprøva er no gjennomført**, med gammal → ny canary → ny produksjon, samtidige synkar og avbroten bootstrap med full opprydding før retry. Original event-planlegging avdekte eit separat integrasjonsavvik som må følgjast opp før ein godtek den flyten. Ingen driftsendringar er utførte her.
+Dette er planen for ei seinare driftsendring. **Den isolerte controller-/budsjettprøva er no gjennomført**, med gammal → ny canary → ny produksjon, samtidige synkar og avbroten bootstrap med full opprydding før retry. Original event-planlegging avdekte eit separat integrasjonsavvik; rettinga og ei ny reell prosessprøve er dokumenterte nedanfor. Ingen driftsendringar er utførte her.
 
 1. Før ei endring: sjekk at begge Argo-applikasjonane har avslutta siste operasjon; ingen gamle vedlikehalds-/terminerande Heart-poddar og ingen ekstra klientar av Heart-rolla. Stadfest faktiske pooltak, rollegrense åtte og effektive sync-options. Køyr render-validatoren mot **dei faktiske prod/canary-verdiane**, ikkje berre chart-standardar.
 2. Lever først til **canary åleine**, med produksjon i ro. Vent på ferdige hooks, fjerna gamle poddar, rette Service-endepunkt og frisk ny Heart. Lever deretter produksjon på same måte. Gamle og nye hook-former må ikkje oppdaterast samstundes i denne første overgangen.
@@ -67,11 +67,13 @@ Ti render-kontraktar dekkjer pilot av/på, samtidige budsjett, usikre replika-/s
 - Ein testforkorta åttesekunds Job-frist stoppa Argo i PreSync og bevarte runtime-UID-en. Korrigert retry med normal frist 180 sekund blei frisk.
 - Under ein controllerstyrt pause sende klienten ei chatmelding og ein gyldig minimal `start → end`-prosess **etter** at begge gamle Heart-prosessane hadde stoppa. Chatmeldinga blei lagra; START venta, fekk fire leveringsforsøk og gav éin fullført outbox-operasjon, éin startnøkkel/instans og éi start-hending. Heart nådde `completed/done`; Sprøyt-lenkja blir verande `active`, som er gjeldande lenkjesemantikk.
 
-**Separat avvik:** den opphavlege event-planlegginga bestod ikkje. Sprøyt sende START utan `metadata.process_link_id`, som Lua-steget `prepare` krev. Den prøvde Heart-revisjonen kan då lagre ein instans som blir ståande `running/prepare`; eit idempotent START-replay kan returnere den eksisterande instansen utan å fullføre flyten. Den feila instansen og outbox-payloaden blei bevarte uendra. Den minimale START-prøva godkjenner ikkje denne forretningsflyten. Sjå det konkrete funnet og kjeldestadene i prøverapporten.
+**Separat avvik:** den opphavlege event-planlegginga bestod ikkje. Sprøyt sende START utan `metadata.process_link_id`, som Lua-steget `prepare` krev. Den prøvde Heart-revisjonen kan då lagre ein instans som blir ståande `running/prepare`; eit idempotent START-replay kan returnere den eksisterande instansen utan å fullføre flyten. Den feila instansen og outbox-payloaden blei bevarte uendra. Den minimale START-prøva godkjende ikkje denne forretningsflyten. Sjå det konkrete funnet og kjeldestadene i prøverapporten.
+
+**Rett og prøvd på nytt:** begge databaseadapterane lagrar no servergenerert `process_link_id` i START-payloaden, overskriv klientverdien og bevarer ID/payload ved replay. [Ny event-planleggingsprøve](evidence/heart-event-planning-2026-11-10.json) med fersk Sprøyt-binær, faktisk pinna Heart og PostgreSQL fullfører den uendra originale definisjonen for tittelmetadata, falsk klient-ID og utelaten metadata. Alle når `wait-for-decision`, tek imot «ja» og endar `completed/completed`. Eitt scenario beviser varig retry og chat under Heart-pause. Dette er ei ny isolert app-/prosessprøve; Kubernetes-controllerprøva er ikkje køyrd om att. Historiske feila instansar/outbox-rader er ikkje skrivne om.
 
 Observasjonsavgrensing: pod-watch stoppa kl. 10:27 UTC, og gjenopptakinga fekk `410 Expired`. Job-, Argo-, EndpointSlice- og databaseobservasjon heldt fram. Avbrot/fristscenarioet er støtta av desse straumane og eksplisitte levande gate-/runtime-UID-sjekkar. Den siste E2E-prøva blei gjenteken etter reparert pod-watch og har komplett podrekkjefølgje. Tidlege feil i prøveskriptet er førte i beviset. Dette er ikkje ein påstand om uavbroten poddekning gjennom heile økta.
 
-Den disponible VM-en, Kubernetes-ressursane, testdatabasane og proxyane er avslutta og rydda. Standard WSLC-økt og produksjonscontext er urørte. #353 står framleis open for samla PostgreSQL-budsjett og ansvarleg driftseigar; integrasjonsavviket må følgjast opp separat. Ingen driftsutrulling er utført.
+Den disponible VM-en, Kubernetes-ressursane, testdatabasane og proxyane er avslutta og rydda. Standard WSLC-økt og produksjonscontext er urørte. #353 står framleis open for samla PostgreSQL-budsjett og ansvarleg driftseigar; integrasjonsrettinga må følgje med ved ei seinare levering av event-planlegging. Ingen driftsutrulling er utført.
 
 Gjenta lokalt (PowerShell 7, `wslc`; les relevant underkommandohjelp fyrst):
 
