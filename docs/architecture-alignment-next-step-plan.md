@@ -105,6 +105,8 @@ Foreslått start er minst 1 000 sendeforsøk per lastprofil og tre like repetisj
 
 Avgjerda frå B skal vere éi av: **behald** eksisterande form, **effektiviser** dokumentert flaskehals, eller **isoler** namngjeven arbeidar. Ved global chatkøkopling vurderer ein først dyre kommandoar/SQL; eventuell kanalpartisjonering krev eiga bestilling og bevart rekkjefølgje på tvers av replikaer. Ingen automatisk auke av pooltak.
 
+**Vidare oppfølging 10. november:** [Heart sitt utrullingsbudsjett](heart-rollout-budget.md) har ein implementert chart-kandidat med Recreate og sekvensielle vedlikehaldsjobbar innanfor 6 + 2 samband. Eksakt Heart-image er prøvd isolert; controller-/Argo-aksept og utrulling står att. Vidare overlastarbeid er utsett etter produkteigar si prioritering om dagens bruk.
+
 ## 5. Leveranse C – kontodata som første vertikal (#355)
 
 Dette er eit konkret forslag til modularitetsprøve, ikkje nytt eksportprodukt. Behovet er vidare datalivsløpsarbeid i #356 og nye dataområde. #351 har allereie gitt eit eigna lite skilje med eksporttypar og SQL-hjelparar. Alternativa er å halde alt i chat-kjernen, eller starte i agentdialog/minne; det første bevarer koplinga, det andre har større publiserings- og personvernrisiko.

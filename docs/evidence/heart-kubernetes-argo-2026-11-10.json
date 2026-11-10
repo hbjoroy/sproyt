@@ -1,0 +1,2454 @@
+{
+  "schema": "sproyt.heart-kubernetes-argo-evidence.v1",
+  "date": "2026-11-10",
+  "architectureReview": "Astra",
+  "sourceChart": {
+    "old": "7b6af96f186c1ab7619e2f8debc11a3fd8e8c1f1",
+    "new": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+    "sourceOld": "0241b5b89b36cd00954e41a93a82f164f152ee08",
+    "sourceNew": "cde974480cc9c93bacda43cb6e9d0b12b5d539ed",
+    "injections": [
+      "runtime preStop sleep from fixture values",
+      "runtime rollout annotation",
+      "migration and pilot-main preStop sleep 5s",
+      "fixture-controlled maintenance deadline, default180s",
+      "E2E only: 10s init sleep before new Heart runtime starts; no Heart connection during delay"
+    ],
+    "e2e": "dd20f251736371fead53fa81a654544b075725d5"
+  },
+  "environment": {
+    "isolated": true,
+    "productionChanges": false,
+    "platform": "ARM64 WSLC independent VM, Microsoft.WSL.Containers 3.0.3",
+    "cpu": 4,
+    "memoryMiB": 8192,
+    "diskGiB": 8,
+    "clusterUid": "7b27fd55-0d42-4c10-88b1-c0424d8f469f",
+    "context": "sproyt-heart-isolated",
+    "kubernetes": "v1.35.8+k3s1",
+    "containerd": "2.2.7-k3s1",
+    "argo": "3.4.8",
+    "argoImageDigest": "sha256:527df4ae3f60662a06334d4f3ada018bea056f29f53639fc618a4bf5bfb6c585",
+    "postgres": "18.6-alpine",
+    "namespaces": [
+      "argocd",
+      "heart-infra",
+      "heart-prod",
+      "heart-canary"
+    ],
+    "network": "Synthetic credentials and DBs; test Pod egress restricted to own Pod/Service CIDRs and own API endpoint; local Git; no production credentials"
+  },
+  "images": {
+    "heart": {
+      "registryReference": "oci.bjoroy.me/sproyt/heart@sha256:fe2eb544a14006504dbbb20e2c0a3489a0035eababefc5c93dba9f10c7ec1955",
+      "fixtureReference": "oci.bjoroy.me/sproyt/heart@sha256:b6f692fab8a866102035c5fee97a5229c70453e412fcec61c5fc7b3edccff940",
+      "configSha256": "sha256:26ab52096443361b92b399a6d8ff84cf386310f8f74d64f82f0a2ffb929702b9",
+      "rootfsDiffIds": [
+        "sha256:5e4de15184c962ce65e18e326c9494cf1917ebd799cf6e57e2c85966196cb16e",
+        "sha256:9a6ab50d9b87e4ebb1a959d41fc6c33171f7425801155bb1e56117f95f11a8d6"
+      ],
+      "identicalConfigAndRootfs": true,
+      "manifestNormalization": "WSLC save normalizes the manifest to OCI; config and unpacked rootfs identities are unchanged"
+    },
+    "sproyt": {
+      "registryReference": "oci.bjoroy.me/sproyt/sproyt@sha256:87793eff55ee5aa6df68d617dd5cd21ad190237a29ee24c1ebc88b82888b7c92",
+      "fixtureReference": "oci.bjoroy.me/sproyt/sproyt@sha256:313ea577fbd252d78812d620543c496f6f6ce944db68f720e282989e0cadcc1c",
+      "configSha256": "sha256:d819881c16f604d4b4ef20b2effe60ae762c01809566c5bb33b922a20e6eb553",
+      "rootfsDiffIds": [
+        "sha256:f59be3072f183b405d7942e9d0e68e798d67597e0f60eadf61e06e65c0e97ad2",
+        "sha256:00b08d9f9acdfa8db6c361dbd13cd4aed17488f24ee984b556e93465cee8f180",
+        "sha256:b26a24f0218de436f9eecf865d796c6e9904b08edb33c3d2e1fb58db84009cad"
+      ],
+      "identicalConfigAndRootfs": true,
+      "manifestNormalization": "WSLC save normalizes the manifest to OCI; config and unpacked rootfs identities are unchanged"
+    }
+  },
+  "observation": {
+    "rawSha256": "b35d013b11efdc24ba52b378c27766c7294c32a40a056ad72348a3bc9b4d3f3f",
+    "rawBytes": 6623540,
+    "counts": {
+      "Application": 313,
+      "database": 3555,
+      "Job": 323,
+      "Pod": 420,
+      "EndpointSlice": 105,
+      "observer_error": 1,
+      "observer_resume": 2,
+      "observer_resume_error": 1,
+      "observer_coverage_start": 1
+    },
+    "firstAt": "2026-11-10T09:57:02.918611+00:00",
+    "lastAt": "2026-11-10T10:34:43.814775+00:00",
+    "issues": [
+      {
+        "kind": "observer_error",
+        "resource": "pods",
+        "error": "",
+        "observedAt": "2026-11-10T10:27:07.913879+00:00"
+      },
+      {
+        "kind": "observer_resume",
+        "resource": "pods",
+        "fromRv": "3101",
+        "observedAt": "2026-11-10T10:32:00.649875+00:00"
+      },
+      {
+        "kind": "observer_resume",
+        "resource": "pods",
+        "fromRv": "3101",
+        "observedAt": "2026-11-10T10:32:13.090454+00:00"
+      },
+      {
+        "kind": "observer_resume_error",
+        "object": {
+          "type": "ERROR",
+          "object": {
+            "kind": "Status",
+            "apiVersion": "v1",
+            "metadata": {},
+            "status": "Failure",
+            "message": "too old resource version: 3101 (3473)",
+            "reason": "Expired",
+            "code": 410
+          }
+        },
+        "observedAt": "2026-11-10T10:32:13.168873+00:00"
+      },
+      {
+        "kind": "observer_coverage_start",
+        "resource": "pods",
+        "fromRv": "",
+        "observedAt": "2026-11-10T10:32:58.445155+00:00"
+      }
+    ],
+    "limitation": "Pod watch stopped at10:27:07; resume returned410 Expired. Abort/deadline use independent Job/Application/EndpointSlice plus live gate/runtime-UID snapshots. Final E2E repeated with repaired Pod watch. No claim of uninterrupted full-run Pod coverage."
+  },
+  "database": {
+    "roleLimit": 8,
+    "runtimeProcesses": 3,
+    "runtimePoolEach": 2,
+    "runtimeV2": true,
+    "simultaneousMaintenanceProcesses": 2,
+    "sampleCount": 3555,
+    "observedPeak": 8,
+    "peakSamples": [
+      {
+        "kind": "database",
+        "at": "2026-11-10T10:19:47.98425+00:00",
+        "total": 8,
+        "sessions": [
+          {
+            "pid": 22763,
+            "backendStart": "2026-11-10T10:19:47.947815+00:00",
+            "address": "10.190.0.37",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "advisory"
+          },
+          {
+            "pid": 22764,
+            "backendStart": "2026-11-10T10:19:47.947979+00:00",
+            "address": "10.190.0.36",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12377,
+            "backendStart": "2026-11-10T10:08:05.652368+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12378,
+            "backendStart": "2026-11-10T10:08:05.661448+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15871,
+            "backendStart": "2026-11-10T10:12:02.348647+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15872,
+            "backendStart": "2026-11-10T10:12:02.353194+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15873,
+            "backendStart": "2026-11-10T10:12:02.359503+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15874,
+            "backendStart": "2026-11-10T10:12:02.364473+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          }
+        ],
+        "observedAt": "2026-11-10T10:19:47.991439+00:00"
+      },
+      {
+        "kind": "database",
+        "at": "2026-11-10T10:19:48.60306+00:00",
+        "total": 8,
+        "sessions": [
+          {
+            "pid": 22763,
+            "backendStart": "2026-11-10T10:19:47.947815+00:00",
+            "address": "10.190.0.37",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "advisory"
+          },
+          {
+            "pid": 22764,
+            "backendStart": "2026-11-10T10:19:47.947979+00:00",
+            "address": "10.190.0.36",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12377,
+            "backendStart": "2026-11-10T10:08:05.652368+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12378,
+            "backendStart": "2026-11-10T10:08:05.661448+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15871,
+            "backendStart": "2026-11-10T10:12:02.348647+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15872,
+            "backendStart": "2026-11-10T10:12:02.353194+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15873,
+            "backendStart": "2026-11-10T10:12:02.359503+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15874,
+            "backendStart": "2026-11-10T10:12:02.364473+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          }
+        ],
+        "observedAt": "2026-11-10T10:19:48.608670+00:00"
+      },
+      {
+        "kind": "database",
+        "at": "2026-11-10T10:19:49.217104+00:00",
+        "total": 8,
+        "sessions": [
+          {
+            "pid": 22763,
+            "backendStart": "2026-11-10T10:19:47.947815+00:00",
+            "address": "10.190.0.37",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "advisory"
+          },
+          {
+            "pid": 22764,
+            "backendStart": "2026-11-10T10:19:47.947979+00:00",
+            "address": "10.190.0.36",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12377,
+            "backendStart": "2026-11-10T10:08:05.652368+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12378,
+            "backendStart": "2026-11-10T10:08:05.661448+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15871,
+            "backendStart": "2026-11-10T10:12:02.348647+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15872,
+            "backendStart": "2026-11-10T10:12:02.353194+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15873,
+            "backendStart": "2026-11-10T10:12:02.359503+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15874,
+            "backendStart": "2026-11-10T10:12:02.364473+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          }
+        ],
+        "observedAt": "2026-11-10T10:19:49.223352+00:00"
+      },
+      {
+        "kind": "database",
+        "at": "2026-11-10T10:19:49.830886+00:00",
+        "total": 8,
+        "sessions": [
+          {
+            "pid": 22763,
+            "backendStart": "2026-11-10T10:19:47.947815+00:00",
+            "address": "10.190.0.37",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "advisory"
+          },
+          {
+            "pid": 22764,
+            "backendStart": "2026-11-10T10:19:47.947979+00:00",
+            "address": "10.190.0.36",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12377,
+            "backendStart": "2026-11-10T10:08:05.652368+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12378,
+            "backendStart": "2026-11-10T10:08:05.661448+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15871,
+            "backendStart": "2026-11-10T10:12:02.348647+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15872,
+            "backendStart": "2026-11-10T10:12:02.353194+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15873,
+            "backendStart": "2026-11-10T10:12:02.359503+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15874,
+            "backendStart": "2026-11-10T10:12:02.364473+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          }
+        ],
+        "observedAt": "2026-11-10T10:19:49.837080+00:00"
+      },
+      {
+        "kind": "database",
+        "at": "2026-11-10T10:19:50.443108+00:00",
+        "total": 8,
+        "sessions": [
+          {
+            "pid": 22763,
+            "backendStart": "2026-11-10T10:19:47.947815+00:00",
+            "address": "10.190.0.37",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "advisory"
+          },
+          {
+            "pid": 22764,
+            "backendStart": "2026-11-10T10:19:47.947979+00:00",
+            "address": "10.190.0.36",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12377,
+            "backendStart": "2026-11-10T10:08:05.652368+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 12378,
+            "backendStart": "2026-11-10T10:08:05.661448+00:00",
+            "address": "10.190.0.23",
+            "application": "heart-canary",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15871,
+            "backendStart": "2026-11-10T10:12:02.348647+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15872,
+            "backendStart": "2026-11-10T10:12:02.353194+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15873,
+            "backendStart": "2026-11-10T10:12:02.359503+00:00",
+            "address": "10.190.0.33",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          },
+          {
+            "pid": 15874,
+            "backendStart": "2026-11-10T10:12:02.364473+00:00",
+            "address": "10.190.0.32",
+            "application": "heart-prod",
+            "state": "active",
+            "waitType": "Lock",
+            "wait": "relation"
+          }
+        ],
+        "observedAt": "2026-11-10T10:19:50.449337+00:00"
+      }
+    ],
+    "roleLimitErrors": 0,
+    "ninthConnectionTest": "Not attempted in Kubernetes; separate container evidence tests explicit rejection."
+  },
+  "results": {
+    "firstTransition": {
+      "result": "passed",
+      "order": "old canary -> new canary -> new prod",
+      "processOrderRvs": {
+        "canary": [
+          1715,
+          1722
+        ],
+        "prod": [
+          1895,
+          1902
+        ]
+      },
+      "oldRuntimeExitCodes": [
+        0
+      ],
+      "note": "Terminal processes precede new Pod creation. Old Pod objects may remain until later GC. Legacy maintenance endpoints were observed only ready=false."
+    },
+    "concurrentSync": {
+      "result": "passed",
+      "peak": 8,
+      "peakComposition": "6 runtime + 2 migrations",
+      "runtimeOrderRvs": {
+        "canary": [
+          2615,
+          2623
+        ],
+        "prod": [
+          2642,
+          2647,
+          2655,
+          2661
+        ]
+      }
+    },
+    "sameJobReplacement": {
+      "result": "passed",
+      "jobUid": "2c29c238-7f68-4356-9786-595f90b7fc32",
+      "oldPodUid": "86bc1b62-2336-404e-ad71-d100402875f4",
+      "newPodUid": "51f0d988-9396-4ff2-8a92-1aade69d384d",
+      "terminatingRv": 2758,
+      "terminalRv": 2772,
+      "replacementAddedRv": 2782,
+      "oldExitCode": 137,
+      "note": "Blocked command reached normal grace deadline; no replacement while predecessor was terminating."
+    },
+    "abortCleanupRetry": {
+      "result": "passed",
+      "genuineArgoTerminateOperation": true,
+      "gateBlockedWhileHookTerminating": true,
+      "oldJobsDeletedRvs": [
+        3259,
+        3264
+      ],
+      "newMigrationAddedRv": 3307,
+      "pilotDefinitionRowsAfterRetry": 1,
+      "note": "30s foreground observation timeout preserved; corrected bounded cleanup and official Argo CLI full sync completed. No force deletion."
+    },
+    "deadline": {
+      "result": "passed",
+      "injectedDeadlineSeconds": 8,
+      "deadlineFailureRvs": [
+        3493,
+        3511
+      ],
+      "runtimePodUidsUnchanged": [
+        "b8c092ac-1fcd-4584-abfb-68e249786042"
+      ],
+      "correctedDeadlineSeconds": 180,
+      "correctedRetry": "Synced/Healthy",
+      "proof": "Job DeadlineExceeded; Argo failed at PreSync; unchanged live runtime UID and union of EndpointSlices retains old ready Pod until corrected retry."
+    },
+    "durableStartAndChat": {
+      "result": "passed",
+      "client": {
+        "sentAt": "2026-11-10T10:33:52.655Z",
+        "processId": "01a1c505-7916-74f5-a733-4e3146ec7108",
+        "heartInstanceId": "01a1c505-a806-7263-b6f6-934fcadb69b3",
+        "queuedWhileUnavailable": "starting",
+        "chatMessageId": "01a1c505-7921-72d6-a4e4-ee7727a05fa5",
+        "chatPersisted": true,
+        "startedEvents": 1,
+        "linkStatus": "active",
+        "heartStatus": "completed",
+        "currentNode": "done",
+        "finishedAt": "2026-11-10T10:34:05.356Z"
+      },
+      "database": {
+        "outbox": [
+          {
+            "operation": "start",
+            "status": "completed",
+            "attempts": 4,
+            "completed_at": "2026-11-10T10:34:04.686568+00:00",
+            "last_error": "Heart Unavailable: Heart transport failure"
+          },
+          {
+            "operation": "inspect",
+            "status": "completed",
+            "attempts": 1,
+            "completed_at": "2026-11-10T10:34:05.197192+00:00",
+            "last_error": null
+          }
+        ],
+        "events": [
+          {
+            "startedEvents": 1,
+            "total": 2
+          }
+        ],
+        "instance": [
+          {
+            "id": "01a1c505-a806-7263-b6f6-934fcadb69b3",
+            "status": "completed",
+            "current_node": "done",
+            "metadata": {
+              "title": "Isolated valid START"
+            },
+            "created_at": "2026-11-10T10:34:04.6785+00:00",
+            "completed_at": "2026-11-10T10:34:04.683843+00:00"
+          }
+        ],
+        "keyColumns": [
+          "namespace",
+          "client_id",
+          "idempotency_key",
+          "definition_id",
+          "metadata",
+          "instance_id",
+          "created_at"
+        ],
+        "startKeys": {
+          "keyCount": 1,
+          "instanceIds": [
+            "01a1c505-a806-7263-b6f6-934fcadb69b3"
+          ]
+        }
+      },
+      "oldTerminalRvs": [
+        4092,
+        4097
+      ],
+      "newPodsAddedRvs": [
+        4105,
+        4111
+      ],
+      "testOnlyStartupDelaySeconds": 10,
+      "note": "START sent after both old processes exited, while new Heart containers waited on init. Four delivery attempts, one completed START outbox, one start key/instance, one started event. Sprøyt link remains active; Heart instance completed/done."
+    },
+    "originalEventPlanning": {
+      "result": "failed-existing-integration-defect",
+      "processId": "01a1c4f1-6964-764b-a85a-341a76a5f361",
+      "instance": {
+        "id": "01a1c4f1-6a36-7633-8851-3c2ea159c2cc",
+        "status": "running",
+        "metadata": {
+          "title": "Isolated recovery"
+        }
+      },
+      "startOutbox": {
+        "process_link_id": "01a1c4f1-6964-764b-a85a-341a76a5f361",
+        "operation": "start",
+        "payload": {
+          "command": {
+            "version": "1.0.0",
+            "metadata": {
+              "title": "Isolated recovery"
+            },
+            "namespace": "sproyt",
+            "definition_name": "sproyt-event-planning"
+          },
+          "operation": "start"
+        },
+        "status": "completed",
+        "attempts": 1,
+        "last_error": null,
+        "completed_at": "2026-11-10T10:11:58.247908+00:00"
+      },
+      "cause": "Sprøyt START payload lacks generated metadata.process_link_id required by event-planning prepare Lua. Heart can persist instance before engine execution fails; idempotent retry returns existing instance without completing flow. Original instance preserved unmodified. Separate defect; minimal START acceptance does not clear this failure."
+    }
+  },
+  "witnessEvents": [
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-5d9d6d9d57-8rjcr",
+      "uid": "07506cbc-09c8-47eb-9332-4dca90c5e82a",
+      "rv": "1715",
+      "createdAt": "2026-11-10T10:02:48Z",
+      "deletedAt": "2026-11-10T10:08:30Z",
+      "observedAt": "2026-11-10T10:08:05.408412+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "94c103a3-9c93-4cf6-9180-d6c8ca06bd9d"
+        }
+      ],
+      "phase": "Succeeded",
+      "component": null,
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://b6b307ca5e12401603fc89b689f245e8a0ac42ba8f713ee38e3f663a98972a58",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:08:05Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:02:48Z"
+            }
+          }
+        }
+      ],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "ADDED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-54ff6475f7-cwt4w",
+      "uid": "ce86da1a-36bf-4c6e-b6ea-838c757ad1ee",
+      "rv": "1722",
+      "createdAt": "2026-11-10T10:08:05Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:08:05.416015+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "9ebad3cb-71e2-41d6-9eae-95632a258b78"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-6455f478bf-rkfm9",
+      "uid": "ff52a0e6-1831-4f9c-a5f5-d88708be4f35",
+      "rv": "1895",
+      "createdAt": "2026-11-10T10:00:48Z",
+      "deletedAt": "2026-11-10T10:08:53Z",
+      "observedAt": "2026-11-10T10:08:28.548846+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "94f9f164-79ca-40a6-84bb-20a02b32d309"
+        }
+      ],
+      "phase": "Succeeded",
+      "component": null,
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://3f304a835baf473d10a38717c6bcede9d35c50015fbd1f62db7659cf578af787",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:08:28Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:00:48Z"
+            }
+          }
+        }
+      ],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "ADDED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-7b4dc4b9dd-p4vrn",
+      "uid": "238d6611-1d5a-4526-b5e0-c633db20dd78",
+      "rv": "1902",
+      "createdAt": "2026-11-10T10:08:28Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:08:28.568759+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "6cb18fcb-379f-48d8-af3b-17f542455592"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-54ff6475f7-cwt4w",
+      "uid": "ce86da1a-36bf-4c6e-b6ea-838c757ad1ee",
+      "rv": "2615",
+      "createdAt": "2026-11-10T10:08:05Z",
+      "deletedAt": "2026-11-10T10:20:32Z",
+      "observedAt": "2026-11-10T10:20:07.204856+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "9ebad3cb-71e2-41d6-9eae-95632a258b78"
+        }
+      ],
+      "phase": "Succeeded",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://b02cb17f8e0c4724ce426795d59a2779edaa7288ff35de6476373ed3ee90e406",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:20:07Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:08:05Z"
+            }
+          }
+        }
+      ],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "ADDED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-777485db57-sp9vm",
+      "uid": "793b0d70-a9e6-47bc-ad51-aa664bd32e42",
+      "rv": "2623",
+      "createdAt": "2026-11-10T10:20:07Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:20:07.214157+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "3a615c64-29a6-4358-b5f6-ee41d22320ce"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-647dfdcbcd-fc2b6",
+      "uid": "4c5690bc-7f24-4870-a6dc-8a922b8bc284",
+      "rv": "2642",
+      "createdAt": "2026-11-10T10:12:02Z",
+      "deletedAt": "2026-11-10T10:20:32Z",
+      "observedAt": "2026-11-10T10:20:08.122756+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "dae7e92e-bd62-428c-b506-b5970426299d"
+        }
+      ],
+      "phase": "Succeeded",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://7f173b162d3e8424c551a87177e39edd7d2aaa7a639f179de03743afd5d331b6",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:20:07Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:12:02Z"
+            }
+          }
+        }
+      ],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-647dfdcbcd-zzqbh",
+      "uid": "d7127a0e-e4e6-4849-889c-f6e0fdb98229",
+      "rv": "2647",
+      "createdAt": "2026-11-10T10:12:02Z",
+      "deletedAt": "2026-11-10T10:20:32Z",
+      "observedAt": "2026-11-10T10:20:08.142044+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "dae7e92e-bd62-428c-b506-b5970426299d"
+        }
+      ],
+      "phase": "Succeeded",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://31692f6ac8f851445b49d62c51b1de693448e2f75f9d9e8216a8b44df84b2272",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:20:08Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:12:02Z"
+            }
+          }
+        }
+      ],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "ADDED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-57694ccdbd-58btq",
+      "uid": "0020acc0-4b5f-4e46-81da-947fb325d018",
+      "rv": "2655",
+      "createdAt": "2026-11-10T10:20:08Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:20:08.148590+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "68f2d0ed-7fe1-42a9-a600-dad685c12d73"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "ADDED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-57694ccdbd-lcdzp",
+      "uid": "cc9d080c-76b6-4f31-8df5-4bbdc34487f1",
+      "rv": "2661",
+      "createdAt": "2026-11-10T10:20:08Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:20:08.154980+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "68f2d0ed-7fe1-42a9-a600-dad685c12d73"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-migrate-1-r6q9f",
+      "uid": "86bc1b62-2336-404e-ad71-d100402875f4",
+      "rv": "2758",
+      "createdAt": "2026-11-10T10:20:15Z",
+      "deletedAt": "2026-11-10T10:20:46Z",
+      "observedAt": "2026-11-10T10:20:16.705963+00:00",
+      "owners": [
+        {
+          "kind": "Job",
+          "uid": "2c29c238-7f68-4356-9786-595f90b7fc32"
+        }
+      ],
+      "phase": "Running",
+      "component": "maintenance",
+      "containers": [
+        {
+          "name": "migrate",
+          "state": {
+            "running": {
+              "startedAt": "2026-11-10T10:20:16Z"
+            }
+          }
+        }
+      ],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-migrate-1-r6q9f",
+      "uid": "86bc1b62-2336-404e-ad71-d100402875f4",
+      "rv": "2772",
+      "createdAt": "2026-11-10T10:20:15Z",
+      "deletedAt": "2026-11-10T10:20:46Z",
+      "observedAt": "2026-11-10T10:20:47.661779+00:00",
+      "owners": [
+        {
+          "kind": "Job",
+          "uid": "2c29c238-7f68-4356-9786-595f90b7fc32"
+        }
+      ],
+      "phase": "Failed",
+      "component": "maintenance",
+      "containers": [
+        {
+          "name": "migrate",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://4a1c6885593ff226a8eb5d22ade0dd482d00d0d120ab44f4a33090b2efc8a87a",
+              "exitCode": 137,
+              "finishedAt": "2026-11-10T10:20:47Z",
+              "reason": "Error",
+              "startedAt": "2026-11-10T10:20:16Z"
+            }
+          }
+        }
+      ],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "ADDED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-migrate-1-nx8lw",
+      "uid": "51f0d988-9396-4ff2-8a92-1aade69d384d",
+      "rv": "2782",
+      "createdAt": "2026-11-10T10:20:57Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:20:57.008639+00:00",
+      "owners": [
+        {
+          "kind": "Job",
+          "uid": "2c29c238-7f68-4356-9786-595f90b7fc32"
+        }
+      ],
+      "phase": "Pending",
+      "component": "maintenance",
+      "containers": [],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-definitions-1-cvg4d",
+      "uid": "d7fa86e8-8835-4ea2-a36b-0a24ca784522",
+      "rv": "2985",
+      "createdAt": "2026-11-10T10:21:27Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:21:27.759456+00:00",
+      "owners": [
+        {
+          "kind": "Job",
+          "uid": "f20a25b8-cf5c-456c-b6f5-669faa3a1e52"
+        }
+      ],
+      "phase": "Pending",
+      "component": "maintenance",
+      "containers": [
+        {
+          "name": "bootstrap-user-task-pilot",
+          "state": {
+            "waiting": {
+              "reason": "PodInitializing"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "bootstrap-definition",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://66f8bba3fea30162fd10ee97186f8e4ddc4acee92a7a0318aec701d4216e200c",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:21:27Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:21:27Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-definitions-1-cvg4d",
+      "uid": "d7fa86e8-8835-4ea2-a36b-0a24ca784522",
+      "rv": "2989",
+      "createdAt": "2026-11-10T10:21:27Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:21:28.769364+00:00",
+      "owners": [
+        {
+          "kind": "Job",
+          "uid": "f20a25b8-cf5c-456c-b6f5-669faa3a1e52"
+        }
+      ],
+      "phase": "Running",
+      "component": "maintenance",
+      "containers": [
+        {
+          "name": "bootstrap-user-task-pilot",
+          "state": {
+            "running": {
+              "startedAt": "2026-11-10T10:21:27Z"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "bootstrap-definition",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://66f8bba3fea30162fd10ee97186f8e4ddc4acee92a7a0318aec701d4216e200c",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:21:27Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:21:27Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-definitions-1-cvg4d",
+      "uid": "d7fa86e8-8835-4ea2-a36b-0a24ca784522",
+      "rv": "3012",
+      "createdAt": "2026-11-10T10:21:27Z",
+      "deletedAt": "2026-11-10T10:21:59Z",
+      "observedAt": "2026-11-10T10:21:59.866854+00:00",
+      "owners": [
+        {
+          "kind": "Job",
+          "uid": "f20a25b8-cf5c-456c-b6f5-669faa3a1e52"
+        }
+      ],
+      "phase": "Failed",
+      "component": "maintenance",
+      "containers": [
+        {
+          "name": "bootstrap-user-task-pilot",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://51e8fa6b76cd7ea5c9d3fbdb086a903f105840638fc31e34c66c2432f3b9535f",
+              "exitCode": 137,
+              "finishedAt": "2026-11-10T10:21:59Z",
+              "reason": "Error",
+              "startedAt": "2026-11-10T10:21:27Z"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "bootstrap-definition",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://66f8bba3fea30162fd10ee97186f8e4ddc4acee92a7a0318aec701d4216e200c",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:21:27Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:21:27Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "DELETED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-definitions-1-cvg4d",
+      "uid": "d7fa86e8-8835-4ea2-a36b-0a24ca784522",
+      "rv": "3015",
+      "createdAt": "2026-11-10T10:21:27Z",
+      "deletedAt": "2026-11-10T10:22:00Z",
+      "observedAt": "2026-11-10T10:22:00.842506+00:00",
+      "owners": [
+        {
+          "kind": "Job",
+          "uid": "f20a25b8-cf5c-456c-b6f5-669faa3a1e52"
+        }
+      ],
+      "phase": "Failed",
+      "component": "maintenance",
+      "containers": [
+        {
+          "name": "bootstrap-user-task-pilot",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://51e8fa6b76cd7ea5c9d3fbdb086a903f105840638fc31e34c66c2432f3b9535f",
+              "exitCode": 137,
+              "finishedAt": "2026-11-10T10:21:59Z",
+              "reason": "Error",
+              "startedAt": "2026-11-10T10:21:27Z"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "bootstrap-definition",
+          "state": {
+            "terminated": {
+              "containerID": "containerd://66f8bba3fea30162fd10ee97186f8e4ddc4acee92a7a0318aec701d4216e200c",
+              "exitCode": 0,
+              "finishedAt": "2026-11-10T10:21:27Z",
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:21:27Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Job",
+      "event": "DELETED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-definitions-1",
+      "uid": "0c48daac-b31b-44f9-a521-8ac789dbec09",
+      "rv": "3259",
+      "createdAt": "2026-11-10T10:28:18Z",
+      "deletedAt": "2026-11-10T10:28:21Z",
+      "observedAt": "2026-11-10T10:28:52.761151+00:00",
+      "replacement": "Failed",
+      "conditions": []
+    },
+    {
+      "kind": "Job",
+      "event": "DELETED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-migrate-1",
+      "uid": "ca4761b3-9c70-4550-94e7-b61ac535bae6",
+      "rv": "3264",
+      "createdAt": "2026-11-10T10:28:11Z",
+      "deletedAt": "2026-11-10T10:28:52Z",
+      "observedAt": "2026-11-10T10:28:52.946674+00:00",
+      "replacement": "Failed",
+      "conditions": [
+        {
+          "lastProbeTime": "2026-11-10T10:28:14Z",
+          "lastTransitionTime": "2026-11-10T10:28:14Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "SuccessCriteriaMet"
+        },
+        {
+          "lastProbeTime": "2026-11-10T10:28:14Z",
+          "lastTransitionTime": "2026-11-10T10:28:14Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "Complete"
+        }
+      ]
+    },
+    {
+      "kind": "Job",
+      "event": "ADDED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-migrate-1",
+      "uid": "80729111-7858-433e-8159-5a8d5daa6030",
+      "rv": "3307",
+      "createdAt": "2026-11-10T10:29:00Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:29:00.161510+00:00",
+      "replacement": "Failed",
+      "conditions": []
+    },
+    {
+      "kind": "Job",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-migrate-1",
+      "uid": "99ad8f1d-0934-4e54-9c6e-90e75c69a338",
+      "rv": "3493",
+      "createdAt": "2026-11-10T10:29:25Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:29:33.009453+00:00",
+      "replacement": "Failed",
+      "conditions": [
+        {
+          "lastProbeTime": "2026-11-10T10:29:33Z",
+          "lastTransitionTime": "2026-11-10T10:29:33Z",
+          "message": "Job was active longer than specified deadline",
+          "reason": "DeadlineExceeded",
+          "status": "True",
+          "type": "FailureTarget"
+        }
+      ]
+    },
+    {
+      "kind": "Job",
+      "event": "MODIFIED",
+      "namespace": "heart-canary",
+      "name": "heart-canary-sproyt-heart-migrate-1",
+      "uid": "99ad8f1d-0934-4e54-9c6e-90e75c69a338",
+      "rv": "3511",
+      "createdAt": "2026-11-10T10:29:25Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:30:04.142947+00:00",
+      "replacement": "Failed",
+      "conditions": [
+        {
+          "lastProbeTime": "2026-11-10T10:29:33Z",
+          "lastTransitionTime": "2026-11-10T10:29:33Z",
+          "message": "Job was active longer than specified deadline",
+          "reason": "DeadlineExceeded",
+          "status": "True",
+          "type": "FailureTarget"
+        },
+        {
+          "lastProbeTime": "2026-11-10T10:30:04Z",
+          "lastTransitionTime": "2026-11-10T10:30:04Z",
+          "message": "Job was active longer than specified deadline",
+          "reason": "DeadlineExceeded",
+          "status": "True",
+          "type": "Failed"
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-7cc5c978d4-5lrmn",
+      "uid": "5b97f165-6476-4c4c-93b3-177a6b186af4",
+      "rv": "4092",
+      "createdAt": "2026-11-10T10:31:02Z",
+      "deletedAt": "2026-11-10T10:34:15Z",
+      "observedAt": "2026-11-10T10:33:51.133227+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "978eeb64-c47c-4c75-9b77-29e3877c4e70"
+        }
+      ],
+      "phase": "Succeeded",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "terminated": {
+              "exitCode": 0,
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:31:19Z",
+              "finishedAt": "2026-11-10T10:33:51Z",
+              "containerID": "containerd://adc9ac7d8d95e961fa097cc4d46038ad655a290295ae82add64a7beaee38b07a"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "fixture-startup-delay",
+          "state": {
+            "terminated": {
+              "exitCode": 0,
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:31:08Z",
+              "finishedAt": "2026-11-10T10:31:18Z",
+              "containerID": "containerd://7223cc42f22f085260524df2f9476fbbdbd2783c417b057aa27ca95595c99ca1"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-7cc5c978d4-ndtw7",
+      "uid": "3958482b-64a2-4728-8da9-c61be8ef5d0e",
+      "rv": "4097",
+      "createdAt": "2026-11-10T10:31:02Z",
+      "deletedAt": "2026-11-10T10:34:15Z",
+      "observedAt": "2026-11-10T10:33:51.154366+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "978eeb64-c47c-4c75-9b77-29e3877c4e70"
+        }
+      ],
+      "phase": "Succeeded",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "terminated": {
+              "exitCode": 0,
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:31:18Z",
+              "finishedAt": "2026-11-10T10:33:51Z",
+              "containerID": "containerd://52325066e238b9eecd36029a9ae7cffb756a5a84f40a6e2b940fa08b5be3eb86"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "fixture-startup-delay",
+          "state": {
+            "terminated": {
+              "exitCode": 0,
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:31:08Z",
+              "finishedAt": "2026-11-10T10:31:18Z",
+              "containerID": "containerd://0c2c7dcdd1933c17cdfb7ee519c23e2bb92df6ba29ce4070d7aa76bd17ff012f"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "ADDED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-549cd76984-hcd7f",
+      "uid": "1a457fbf-8d6e-45d3-9c8d-ee82a1ab108d",
+      "rv": "4105",
+      "createdAt": "2026-11-10T10:33:51Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:33:51.164540+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "a3f9e766-31a1-44d9-9e59-39cb2092e483"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "ADDED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-549cd76984-gh49j",
+      "uid": "4c359580-137e-4eb1-90b3-827ba7507c31",
+      "rv": "4111",
+      "createdAt": "2026-11-10T10:33:51Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:33:51.171866+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "a3f9e766-31a1-44d9-9e59-39cb2092e483"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [],
+      "init": []
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-549cd76984-gh49j",
+      "uid": "4c359580-137e-4eb1-90b3-827ba7507c31",
+      "rv": "4131",
+      "createdAt": "2026-11-10T10:33:51Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:33:51.550765+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "a3f9e766-31a1-44d9-9e59-39cb2092e483"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "waiting": {
+              "reason": "PodInitializing"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "fixture-startup-delay",
+          "state": {
+            "running": {
+              "startedAt": "2026-11-10T10:33:51Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-549cd76984-hcd7f",
+      "uid": "1a457fbf-8d6e-45d3-9c8d-ee82a1ab108d",
+      "rv": "4137",
+      "createdAt": "2026-11-10T10:33:51Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:33:51.562368+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "a3f9e766-31a1-44d9-9e59-39cb2092e483"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "waiting": {
+              "reason": "PodInitializing"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "fixture-startup-delay",
+          "state": {
+            "running": {
+              "startedAt": "2026-11-10T10:33:51Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-549cd76984-gh49j",
+      "uid": "4c359580-137e-4eb1-90b3-827ba7507c31",
+      "rv": "4144",
+      "createdAt": "2026-11-10T10:33:51Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:34:01.588947+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "a3f9e766-31a1-44d9-9e59-39cb2092e483"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "waiting": {
+              "reason": "PodInitializing"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "fixture-startup-delay",
+          "state": {
+            "terminated": {
+              "exitCode": 0,
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:33:51Z",
+              "finishedAt": "2026-11-10T10:34:01Z",
+              "containerID": "containerd://6e8b78a6bf5aee6f08314259d5eae8dc603327533b3c5661b6d587140aefa8d5"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-549cd76984-hcd7f",
+      "uid": "1a457fbf-8d6e-45d3-9c8d-ee82a1ab108d",
+      "rv": "4146",
+      "createdAt": "2026-11-10T10:33:51Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:34:01.597119+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "a3f9e766-31a1-44d9-9e59-39cb2092e483"
+        }
+      ],
+      "phase": "Pending",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "waiting": {
+              "reason": "PodInitializing"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "fixture-startup-delay",
+          "state": {
+            "terminated": {
+              "exitCode": 0,
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:33:51Z",
+              "finishedAt": "2026-11-10T10:34:01Z",
+              "containerID": "containerd://070305492a6ed5da70bf9b84bda1eccecec97505f2087785361dc855cbfdef59"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-549cd76984-gh49j",
+      "uid": "4c359580-137e-4eb1-90b3-827ba7507c31",
+      "rv": "4151",
+      "createdAt": "2026-11-10T10:33:51Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:34:02.604171+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "a3f9e766-31a1-44d9-9e59-39cb2092e483"
+        }
+      ],
+      "phase": "Running",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "running": {
+              "startedAt": "2026-11-10T10:34:01Z"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "fixture-startup-delay",
+          "state": {
+            "terminated": {
+              "exitCode": 0,
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:33:51Z",
+              "finishedAt": "2026-11-10T10:34:01Z",
+              "containerID": "containerd://6e8b78a6bf5aee6f08314259d5eae8dc603327533b3c5661b6d587140aefa8d5"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "event": "MODIFIED",
+      "namespace": "heart-prod",
+      "name": "heart-prod-sproyt-heart-549cd76984-hcd7f",
+      "uid": "1a457fbf-8d6e-45d3-9c8d-ee82a1ab108d",
+      "rv": "4152",
+      "createdAt": "2026-11-10T10:33:51Z",
+      "deletedAt": null,
+      "observedAt": "2026-11-10T10:34:02.606953+00:00",
+      "owners": [
+        {
+          "kind": "ReplicaSet",
+          "uid": "a3f9e766-31a1-44d9-9e59-39cb2092e483"
+        }
+      ],
+      "phase": "Running",
+      "component": "runtime",
+      "containers": [
+        {
+          "name": "heart",
+          "state": {
+            "running": {
+              "startedAt": "2026-11-10T10:34:01Z"
+            }
+          }
+        }
+      ],
+      "init": [
+        {
+          "name": "fixture-startup-delay",
+          "state": {
+            "terminated": {
+              "exitCode": 0,
+              "reason": "Completed",
+              "startedAt": "2026-11-10T10:33:51Z",
+              "finishedAt": "2026-11-10T10:34:01Z",
+              "containerID": "containerd://070305492a6ed5da70bf9b84bda1eccecec97505f2087785361dc855cbfdef59"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "endpointUnionChanges": [
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:00:48.105072+00:00",
+      "rv": "1157",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:00:50.861727+00:00",
+      "rv": "1249",
+      "readyPodUids": [
+        "750e567e-dcf3-422c-9129-dfc3398fcb73"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:00:50.874992+00:00",
+      "rv": "1252",
+      "readyPodUids": [
+        "750e567e-dcf3-422c-9129-dfc3398fcb73",
+        "ff52a0e6-1831-4f9c-a5f5-d88708be4f35"
+      ]
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:02:48.402470+00:00",
+      "rv": "1411",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:02:51.129946+00:00",
+      "rv": "1472",
+      "readyPodUids": [
+        "07506cbc-09c8-47eb-9332-4dca90c5e82a"
+      ]
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:08:00.217934+00:00",
+      "rv": "1674",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:08:07.857641+00:00",
+      "rv": "1747",
+      "readyPodUids": [
+        "ce86da1a-36bf-4c6e-b6ea-838c757ad1ee"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:08:23.308559+00:00",
+      "rv": "1850",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:08:30.939271+00:00",
+      "rv": "1939",
+      "readyPodUids": [
+        "f62fdc34-66cc-4869-94a1-0eb10cf27ee4"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:08:30.946235+00:00",
+      "rv": "1946",
+      "readyPodUids": [
+        "238d6611-1d5a-4526-b5e0-c633db20dd78",
+        "f62fdc34-66cc-4869-94a1-0eb10cf27ee4"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:11:56.879959+00:00",
+      "rv": "2112",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:12:04.420726+00:00",
+      "rv": "2195",
+      "readyPodUids": [
+        "4c5690bc-7f24-4870-a6dc-8a922b8bc284"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:12:05.426830+00:00",
+      "rv": "2204",
+      "readyPodUids": [
+        "4c5690bc-7f24-4870-a6dc-8a922b8bc284",
+        "d7127a0e-e4e6-4849-889c-f6e0fdb98229"
+      ]
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:20:02.092639+00:00",
+      "rv": "2542",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:20:03.001196+00:00",
+      "rv": "2591",
+      "readyPodUids": [
+        "d7127a0e-e4e6-4849-889c-f6e0fdb98229"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:20:03.008295+00:00",
+      "rv": "2598",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:20:09.540254+00:00",
+      "rv": "2693",
+      "readyPodUids": [
+        "793b0d70-a9e6-47bc-ad51-aa664bd32e42"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:20:10.552431+00:00",
+      "rv": "2704",
+      "readyPodUids": [
+        "cc9d080c-76b6-4f31-8df5-4bbdc34487f1"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:20:10.556432+00:00",
+      "rv": "2709",
+      "readyPodUids": [
+        "0020acc0-4b5f-4e46-81da-947fb325d018",
+        "cc9d080c-76b6-4f31-8df5-4bbdc34487f1"
+      ]
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:21:08.187715+00:00",
+      "rv": "2844",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:21:15.718918+00:00",
+      "rv": "2905",
+      "readyPodUids": [
+        "764f46d1-df8c-4948-b180-2d56f2a500cf"
+      ]
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:29:11.303573+00:00",
+      "rv": "3381",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:29:18.841650+00:00",
+      "rv": "3436",
+      "readyPodUids": [
+        "b8c092ac-1fcd-4584-abfb-68e249786042"
+      ]
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:30:24.681211+00:00",
+      "rv": "3624",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-canary",
+      "service": "heart-canary-sproyt-heart",
+      "observedAt": "2026-11-10T10:30:32.062667+00:00",
+      "rv": "3691",
+      "readyPodUids": [
+        "dba5083f-f21e-467b-9c47-27794f1daf1d"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:30:57.589596+00:00",
+      "rv": "3805",
+      "readyPodUids": [
+        "0020acc0-4b5f-4e46-81da-947fb325d018"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:30:57.622650+00:00",
+      "rv": "3824",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:31:21.215084+00:00",
+      "rv": "3911",
+      "readyPodUids": [
+        "3958482b-64a2-4728-8da9-c61be8ef5d0e"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:31:21.221099+00:00",
+      "rv": "3916",
+      "readyPodUids": [
+        "3958482b-64a2-4728-8da9-c61be8ef5d0e",
+        "5b97f165-6476-4c4c-93b3-177a6b186af4"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:33:45.996628+00:00",
+      "rv": "4059",
+      "readyPodUids": []
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:34:03.614147+00:00",
+      "rv": "4162",
+      "readyPodUids": [
+        "1a457fbf-8d6e-45d3-9c8d-ee82a1ab108d"
+      ]
+    },
+    {
+      "namespace": "heart-prod",
+      "service": "heart-prod-sproyt-heart",
+      "observedAt": "2026-11-10T10:34:03.621849+00:00",
+      "rv": "4168",
+      "readyPodUids": [
+        "1a457fbf-8d6e-45d3-9c8d-ee82a1ab108d",
+        "4c359580-137e-4eb1-90b3-827ba7507c31"
+      ]
+    }
+  ],
+  "scenarioLog": [
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T09:58:11.038888+00:00",
+      "app": "heart-prod",
+      "revision": "7b6af96f186c1ab7619e2f8debc11a3fd8e8c1f1",
+      "fixture": {
+        "deadline": 180,
+        "revision": "baseline",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T09:58:41.547962+00:00",
+      "app": "heart-prod",
+      "revision": "7b6af96f186c1ab7619e2f8debc11a3fd8e8c1f1",
+      "fixture": {
+        "deadline": 180,
+        "revision": "baseline",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T09:59:19.834417+00:00",
+      "app": "heart-prod",
+      "revision": "7b6af96f186c1ab7619e2f8debc11a3fd8e8c1f1",
+      "fixture": {
+        "deadline": 180,
+        "revision": "baseline",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:02:35.632058+00:00",
+      "app": "heart-prod"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:02:35.810694+00:00",
+      "app": "heart-canary",
+      "revision": "7b6af96f186c1ab7619e2f8debc11a3fd8e8c1f1",
+      "fixture": {
+        "deadline": 180,
+        "revision": "baseline",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:02:52.206412+00:00",
+      "app": "heart-canary"
+    },
+    {
+      "scenario": "old-baseline-healthy",
+      "at": "2026-11-10T10:02:52.206644+00:00"
+    },
+    {
+      "scenario": "first-transition-start",
+      "at": "2026-11-10T10:07:45.629594+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:07:45.834039+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "first-new-canary",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:08:08.798507+00:00",
+      "app": "heart-canary"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:08:08.991467+00:00",
+      "app": "heart-prod",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "first-new-production",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "first-transition-verified-by-continuous-watch",
+      "at": "2026-11-10T10:11:40.692833+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:11:40.869224+00:00",
+      "app": "heart-prod",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "e2e-controller-update",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "controller-heart-pause",
+      "at": "2026-11-10T10:11:57.533344+00:00",
+      "oldRuntimeUids": [
+        "f62fdc34-66cc-4869-94a1-0eb10cf27ee4",
+        "238d6611-1d5a-4526-b5e0-c633db20dd78"
+      ],
+      "readyEndpoints": 0
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:12:05.250256+00:00",
+      "app": "heart-prod"
+    },
+    {
+      "scenario": "e2e-controller-update-complete",
+      "at": "2026-11-10T10:12:05.250454+00:00"
+    },
+    {
+      "scenario": "concurrent-new-sync-start",
+      "at": "2026-11-10T10:19:43.123934+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:19:44.034240+00:00",
+      "app": "heart-prod",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "concurrent-new-heart-prod",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:19:44.241411+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "concurrent-new-heart-canary",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "concurrent-peak-observed",
+      "at": "2026-11-10T10:19:50.410465+00:00",
+      "connections": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "runtimeUids": [
+        "4c5690bc-7f24-4870-a6dc-8a922b8bc284",
+        "d7127a0e-e4e6-4849-889c-f6e0fdb98229",
+        "ce86da1a-36bf-4c6e-b6ea-838c757ad1ee"
+      ],
+      "maintenanceUids": [
+        "c4332d73-b0f6-4fbf-bb1e-616de541477d",
+        "3573169f-85f9-4977-b606-dba410310447"
+      ]
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:20:11.336813+00:00",
+      "app": "heart-prod"
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:20:11.423116+00:00",
+      "app": "heart-canary"
+    },
+    {
+      "scenario": "concurrent-new-sync-complete",
+      "at": "2026-11-10T10:20:11.632751+00:00"
+    },
+    {
+      "scenario": "job-replacement-start",
+      "at": "2026-11-10T10:20:11.786510+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:20:12.133464+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "job-retry",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "job-replacement-blocked-during-termination",
+      "at": "2026-11-10T10:20:19.411570+00:00",
+      "oldPodUid": "86bc1b62-2336-404e-ad71-d100402875f4",
+      "jobUid": "2c29c238-7f68-4356-9786-595f90b7fc32"
+    },
+    {
+      "scenario": "job-replacement-created",
+      "at": "2026-11-10T10:20:57.189650+00:00",
+      "oldPodUid": "86bc1b62-2336-404e-ad71-d100402875f4",
+      "newPodUid": "51f0d988-9396-4ff2-8a92-1aade69d384d",
+      "jobUid": "2c29c238-7f68-4356-9786-595f90b7fc32"
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:21:15.930653+00:00",
+      "app": "heart-canary"
+    },
+    {
+      "scenario": "job-replacement-complete",
+      "at": "2026-11-10T10:21:16.405113+00:00"
+    },
+    {
+      "scenario": "aborted-bootstrap-start",
+      "at": "2026-11-10T10:21:16.569135+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:21:17.034615+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "abort-pilot-main",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "retry-gate-blocked",
+      "at": "2026-11-10T10:21:30.492896+00:00",
+      "oldHookPodUid": "d7fa86e8-8835-4ea2-a36b-0a24ca784522"
+    },
+    {
+      "scenario": "aborted-bootstrap-harness-timeout",
+      "at": "2026-11-10T10:25:54.450927+00:00",
+      "reason": "30s foreground-delete observer deadline was shorter than graceful controller cleanup; no force deletion used"
+    },
+    {
+      "scenario": "aborted-bootstrap-start",
+      "at": "2026-11-10T10:25:55.482863+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:25:56.283835+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "abort-pilot-main",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "aborted-bootstrap-start",
+      "at": "2026-11-10T10:28:08.014015+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:28:08.919598+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "abort-pilot-main",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "retry-gate-blocked",
+      "at": "2026-11-10T10:28:22.489300+00:00",
+      "oldHookPodUid": "8d52edf8-4b35-4f63-9ff3-a3a851d8d51b"
+    },
+    {
+      "scenario": "retry-gate-passed",
+      "at": "2026-11-10T10:28:53.401426+00:00",
+      "oldHookPodUid": "8d52edf8-4b35-4f63-9ff3-a3a851d8d51b"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:28:54.501270+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "retry-after-full-hook-cleanup",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:29:19.705561+00:00",
+      "app": "heart-canary"
+    },
+    {
+      "scenario": "aborted-bootstrap-retry-complete",
+      "at": "2026-11-10T10:29:20.246060+00:00",
+      "pilotDefinitionRows": 1
+    },
+    {
+      "scenario": "deadline-start",
+      "at": "2026-11-10T10:29:20.413695+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:29:21.786957+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 8,
+        "revision": "deadline-must-not-roll-runtime",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "deadline-stopped-before-runtime",
+      "at": "2026-11-10T10:30:04.577878+00:00",
+      "runtimeUids": [
+        "b8c092ac-1fcd-4584-abfb-68e249786042"
+      ]
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:30:06.517335+00:00",
+      "app": "heart-canary",
+      "revision": "0a4155f3a68762b3ce527eb7e3bf3c4d6efac94d",
+      "fixture": {
+        "deadline": 180,
+        "revision": "deadline-corrected-retry",
+        "runtimeDelay": 5
+      }
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:30:32.788673+00:00",
+      "app": "heart-canary"
+    },
+    {
+      "scenario": "deadline-retry-complete",
+      "at": "2026-11-10T10:30:32.969004+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:30:42.515792+00:00",
+      "app": "heart-prod",
+      "revision": "dd20f251736371fead53fa81a654544b075725d5",
+      "fixture": {
+        "deadline": 180,
+        "revision": "valid-start-after-terminal",
+        "runtimeDelay": 5,
+        "startupDelay": 10
+      }
+    },
+    {
+      "scenario": "valid-start-controller-process-gap",
+      "at": "2026-11-10T10:31:09.421935+00:00",
+      "oldRuntimeUids": [
+        "0020acc0-4b5f-4e46-81da-947fb325d018",
+        "cc9d080c-76b6-4f31-8df5-4bbdc34487f1"
+      ],
+      "newRuntimeUids": [
+        "5b97f165-6476-4c4c-93b3-177a6b186af4",
+        "3958482b-64a2-4728-8da9-c61be8ef5d0e"
+      ],
+      "readyEndpoints": 0
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:31:21.437089+00:00",
+      "app": "heart-prod"
+    },
+    {
+      "scenario": "valid-start-controller-complete",
+      "at": "2026-11-10T10:31:21.437273+00:00"
+    },
+    {
+      "scenario": "sync-start",
+      "at": "2026-11-10T10:33:31.697361+00:00",
+      "app": "heart-prod",
+      "revision": "dd20f251736371fead53fa81a654544b075725d5",
+      "fixture": {
+        "deadline": 180,
+        "revision": "valid-start-after-terminal-confirmed",
+        "runtimeDelay": 5,
+        "startupDelay": 10
+      }
+    },
+    {
+      "scenario": "valid-start-controller-process-gap",
+      "at": "2026-11-10T10:33:52.458789+00:00",
+      "oldRuntimeUids": [
+        "5b97f165-6476-4c4c-93b3-177a6b186af4",
+        "3958482b-64a2-4728-8da9-c61be8ef5d0e"
+      ],
+      "newRuntimeUids": [
+        "4c359580-137e-4eb1-90b3-827ba7507c31",
+        "1a457fbf-8d6e-45d3-9c8d-ee82a1ab108d"
+      ],
+      "readyEndpoints": 0
+    },
+    {
+      "scenario": "sync-healthy",
+      "at": "2026-11-10T10:34:04.529664+00:00",
+      "app": "heart-prod"
+    },
+    {
+      "scenario": "valid-start-controller-complete",
+      "at": "2026-11-10T10:34:04.529851+00:00"
+    }
+  ],
+  "cleanup": {
+    "cleaned": true,
+    "at": "2026-11-10T10:36:00.468981+00:00",
+    "session": "sproyt-heart-kube",
+    "vmDiskDeleted": true,
+    "defaultSessionRemaining": "wslc-cli-haral",
+    "productionChanges": false
+  },
+  "acceptance": "Chart-budget controller/recovery checks passed with documented observation limitations; original event-planning integration did not pass. Not production rollout or whole-PostgreSQL budget approval."
+}

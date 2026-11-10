@@ -9,6 +9,7 @@ spec:
   selector:
     app.kubernetes.io/name: heart
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: runtime
   ports:
     - name: http
       port: {{ .Values.heart.service.port }}
@@ -23,10 +24,9 @@ metadata:
 spec:
   replicas: {{ .Values.heart.replicaCount }}
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+    # Wait for every old runtime pod to terminate before starting replacements.
+    # Runtime pools (6) + one maintenance process per release (2) fit role cap 8.
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: heart
@@ -35,6 +35,7 @@ spec:
     metadata:
       labels:
         {{- include "sproyt.heart.labels" . | nindent 8 }}
+        app.kubernetes.io/component: runtime
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
@@ -106,4 +107,5 @@ spec:
     matchLabels:
       app.kubernetes.io/name: heart
       app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: runtime
 {{- end }}
