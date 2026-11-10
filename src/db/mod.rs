@@ -2498,7 +2498,7 @@ where
         namespace: "contract".to_owned(),
         definition_name: "contract".to_owned(),
         definition_version: None,
-        metadata: serde_json::json!({}),
+        metadata: serde_json::json!({"title":"Contract event", "process_link_id":"client-spoof"}),
     };
     assert_eq!(
         repository.enqueue_start(process_start.clone()).await,
@@ -2948,6 +2948,17 @@ where
         .unwrap();
     assert_eq!(job.id, abandoned_job.id, "expired lease was not recovered");
     assert_eq!(job.process_link_id, link.id);
+    let crate::process::OutboxOperation::Start { command } = &job.operation else {
+        panic!("expected a durable START command");
+    };
+    assert_eq!(
+        command.metadata,
+        serde_json::json!({
+            "title": "Contract event",
+            "process_link_id": link.id.as_uuid().to_string(),
+        }),
+        "persisted START must use the server-generated link ID, including after replay and lease recovery"
+    );
     let completed_job = job.clone();
     let instance_id = uuid::Uuid::now_v7();
     repository

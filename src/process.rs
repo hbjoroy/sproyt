@@ -607,6 +607,27 @@ pub struct StartProcess {
     pub metadata: Value,
 }
 
+impl StartProcess {
+    pub(crate) fn with_process_link(
+        mut self,
+        link_id: ProcessLinkId,
+    ) -> Result<Self, RepositoryError> {
+        if self.metadata.is_null() {
+            self.metadata = serde_json::json!({});
+        }
+        // Correlation belongs to the durable server-generated link. Never trust
+        // a caller-supplied value or leave this only in the transient worker.
+        self.metadata
+            .as_object_mut()
+            .ok_or(RepositoryError::Conflict)?
+            .insert(
+                "process_link_id".into(),
+                Value::String(link_id.as_uuid().to_string()),
+            );
+        Ok(self)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct StartedProcess {
     pub instance_id: Uuid,
@@ -885,6 +906,50 @@ mod tests {
         response::IntoResponse,
         routing::{get, post},
     };
+
+    #[test]
+    fn start_metadata_uses_server_process_link() {
+        let link_id = ProcessLinkId::generate();
+        for metadata in [
+            Value::Null,
+            serde_json::json!({"title":"Dinner", "process_link_id":"spoofed"}),
+        ] {
+            let command = StartProcess {
+                namespace: "sproyt".into(),
+                definition_name: "sproyt-event-planning".into(),
+                version: Some("1.0.0".into()),
+                metadata: metadata.clone(),
+            }
+            .with_process_link(link_id)
+            .unwrap();
+            assert_eq!(
+                command.metadata["process_link_id"],
+                link_id.as_uuid().to_string()
+            );
+            if let Some(title) = metadata.get("title") {
+                assert_eq!(&command.metadata["title"], title);
+            }
+        }
+    }
+
+    #[test]
+    fn start_metadata_rejects_non_objects() {
+        for metadata in [
+            serde_json::json!([]),
+            serde_json::json!("value"),
+            serde_json::json!(1),
+            serde_json::json!(true),
+        ] {
+            let result = StartProcess {
+                namespace: "sproyt".into(),
+                definition_name: "sproyt-event-planning".into(),
+                version: Some("1.0.0".into()),
+                metadata,
+            }
+            .with_process_link(ProcessLinkId::generate());
+            assert!(matches!(result, Err(RepositoryError::Conflict)));
+        }
+    }
 
     #[derive(Clone)]
     struct HeartContractState {
