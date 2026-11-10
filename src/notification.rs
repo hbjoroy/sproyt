@@ -14,6 +14,8 @@ mod push_tests;
 mod web_push;
 use web_push::PushSender;
 
+use crate::operations::capacity::{PoolOperation, acquire};
+
 use crate::{
     config::{DatabaseConfig, DatabaseKind},
     domain::{ChannelId, ChatMessage, RepositoryError, UserId},
@@ -520,7 +522,11 @@ impl NotificationService {
         let select_pg = "select o.subscription_id,o.message_id,s.endpoint,s.p256dh,s.auth,m.sender_display_name,c.id,c.name,m.body,o.kind,m.sequence,m.parent_message_id from notification_outbox o join push_subscriptions s on s.id=o.subscription_id join messages m on m.id=o.message_id join channels c on c.id=m.channel_id where o.delivered_at is null and o.available_at<=now() and (o.leased_until is null or o.leased_until<now()) order by o.created_at limit 1";
         let row = match &self.store {
             NotificationStore::Postgres(pool) => sqlx::query(select_pg)
-                .fetch_optional(pool)
+                .fetch_optional(
+                    &mut *acquire(pool, PoolOperation::PushSelect)
+                        .await
+                        .map_err(storage)?,
+                )
                 .await
                 .map_err(storage)?
                 .map(push_job_pg),
@@ -535,7 +541,7 @@ impl NotificationService {
         .transpose()?;
         let Some(job) = row else { return Ok(None) };
         let claimed = match &self.store {
-            NotificationStore::Postgres(pool) => sqlx::query("update notification_outbox set leased_until=now()+interval '30 seconds',attempts=attempts+1 where subscription_id=$1 and message_id=$2 and delivered_at is null and (leased_until is null or leased_until<now())").bind(job.subscription_id).bind(job.message_id).execute(pool).await.map_err(storage)?.rows_affected(),
+            NotificationStore::Postgres(pool) => sqlx::query("update notification_outbox set leased_until=now()+interval '30 seconds',attempts=attempts+1 where subscription_id=$1 and message_id=$2 and delivered_at is null and (leased_until is null or leased_until<now())").bind(job.subscription_id).bind(job.message_id).execute(&mut *acquire(pool, PoolOperation::PushClaim).await.map_err(storage)?).await.map_err(storage)?.rows_affected(),
             NotificationStore::Sqlite(pool) => sqlx::query("update notification_outbox set leased_until=datetime('now','+30 seconds'),attempts=attempts+1 where subscription_id=? and message_id=? and delivered_at is null and (leased_until is null or leased_until<current_timestamp)").bind(job.subscription_id.to_string()).bind(job.message_id.to_string()).execute(pool).await.map_err(storage)?.rows_affected(),
         };
         if claimed == 0 {
@@ -547,8 +553,8 @@ impl NotificationService {
     async fn complete(&self, job: PushJob, result: DeliveryResult) -> Result<(), RepositoryError> {
         match (&self.store, result) {
             (NotificationStore::Postgres(pool), DeliveryResult::Delivered) => {
-                sqlx::query("update notification_outbox set delivered_at=now(),leased_until=null,last_error=null where subscription_id=$1 and message_id=$2").bind(job.subscription_id).bind(job.message_id).execute(pool).await.map_err(storage)?;
-                sqlx::query("update push_subscriptions set last_success_at=now(),failure_count=0 where id=$1").bind(job.subscription_id).execute(pool).await.map_err(storage)?;
+                sqlx::query("update notification_outbox set delivered_at=now(),leased_until=null,last_error=null where subscription_id=$1 and message_id=$2").bind(job.subscription_id).bind(job.message_id).execute(&mut *acquire(pool, PoolOperation::PushComplete).await.map_err(storage)?).await.map_err(storage)?;
+                sqlx::query("update push_subscriptions set last_success_at=now(),failure_count=0 where id=$1").bind(job.subscription_id).execute(&mut *acquire(pool, PoolOperation::PushComplete).await.map_err(storage)?).await.map_err(storage)?;
             }
             (NotificationStore::Sqlite(pool), DeliveryResult::Delivered) => {
                 sqlx::query("update notification_outbox set delivered_at=current_timestamp,leased_until=null,last_error=null where subscription_id=? and message_id=?").bind(job.subscription_id.to_string()).bind(job.message_id.to_string()).execute(pool).await.map_err(storage)?;
@@ -557,7 +563,11 @@ impl NotificationService {
             (NotificationStore::Postgres(pool), DeliveryResult::Expired) => {
                 sqlx::query("delete from push_subscriptions where id=$1")
                     .bind(job.subscription_id)
-                    .execute(pool)
+                    .execute(
+                        &mut *acquire(pool, PoolOperation::PushComplete)
+                            .await
+                            .map_err(storage)?,
+                    )
                     .await
                     .map_err(storage)?;
             }
@@ -569,7 +579,7 @@ impl NotificationService {
                     .map_err(storage)?;
             }
             (NotificationStore::Postgres(pool), DeliveryResult::Retry(error)) => {
-                sqlx::query("update notification_outbox set leased_until=null,available_at=now()+interval '30 seconds',last_error=$3 where subscription_id=$1 and message_id=$2").bind(job.subscription_id).bind(job.message_id).bind(redact_error(error)).execute(pool).await.map_err(storage)?;
+                sqlx::query("update notification_outbox set leased_until=null,available_at=now()+interval '30 seconds',last_error=$3 where subscription_id=$1 and message_id=$2").bind(job.subscription_id).bind(job.message_id).bind(redact_error(error)).execute(&mut *acquire(pool, PoolOperation::PushComplete).await.map_err(storage)?).await.map_err(storage)?;
             }
             (NotificationStore::Sqlite(pool), DeliveryResult::Retry(error)) => {
                 sqlx::query("update notification_outbox set leased_until=null,available_at=datetime('now','+30 seconds'),last_error=? where subscription_id=? and message_id=?").bind(redact_error(error)).bind(job.subscription_id.to_string()).bind(job.message_id.to_string()).execute(pool).await.map_err(storage)?;

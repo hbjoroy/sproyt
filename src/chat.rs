@@ -25,6 +25,8 @@ use crate::domain::{
 };
 
 const MAILBOX_CAPACITY: usize = 1024;
+mod mailbox;
+use mailbox::Mailbox;
 const CHANNEL_EVENT_CAPACITY: usize = 256;
 const PUBLISHED_MESSAGE_CACHE: usize = 4096;
 const PRESENCE_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(75);
@@ -58,7 +60,7 @@ fn is_reaction_emoji(value: &str) -> bool {
 
 #[derive(Clone)]
 pub struct ChatEngine {
-    mailbox: mpsc::Sender<Command>,
+    mailbox: Mailbox,
     repository: Arc<dyn ChatRepository>,
     export_slot: Arc<tokio::sync::Semaphore>,
 }
@@ -109,7 +111,7 @@ impl ChatEngine {
             .await
     }
     pub fn start(repository: Arc<dyn ChatRepository>) -> Self {
-        let (mailbox, receiver) = mpsc::channel(MAILBOX_CAPACITY);
+        let (mailbox, receiver) = Mailbox::channel(MAILBOX_CAPACITY);
         if let Some(mut notifications) = repository.subscribe_messages() {
             let notification_mailbox = mailbox.clone();
             tokio::spawn(async move {
@@ -1416,8 +1418,9 @@ impl ChatActor {
         }
     }
 
-    async fn run(mut self, mut receiver: mpsc::Receiver<Command>) {
-        while let Some(command) = receiver.recv().await {
+    async fn run(mut self, mut receiver: mpsc::Receiver<mailbox::Envelope>) {
+        while let Some(envelope) = receiver.recv().await {
+            let (command, execution) = envelope.begin();
             match command {
                 Command::ChannelCreated {
                     source_channel_id,
@@ -1564,6 +1567,7 @@ impl ChatActor {
                     }
                 }
             }
+            execution.finish();
         }
     }
 
@@ -1797,6 +1801,31 @@ mod tests {
         assert_eq!(
             next_message_event(&mut bob_subscription.receiver).await,
             message
+        );
+    }
+
+    #[tokio::test]
+    async fn accepted_send_persists_when_reply_receiver_is_dropped() {
+        let (chat, channel, alice, _) = chat_fixture().await;
+        let (reply, response) = oneshot::channel();
+        chat.mailbox
+            .send(Command::SendMessage {
+                channel_id: channel.clone(),
+                sender_id: alice.clone(),
+                parent_message_id: None,
+                body: MessageBody::new("Accepted before caller left").unwrap(),
+                request_id: Some("dropped-reply-fixture".into()),
+                reply,
+            })
+            .await
+            .unwrap();
+        drop(response);
+        // A subsequent subscription is behind the send in the same FIFO.
+        let subscription = chat.subscribe(channel, alice).await.unwrap();
+        assert_eq!(subscription.history.len(), 1);
+        assert_eq!(
+            subscription.history[0].body.as_str(),
+            "Accepted before caller left"
         );
     }
 
