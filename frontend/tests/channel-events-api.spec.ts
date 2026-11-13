@@ -41,10 +41,16 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   expect(await (await request.get(`${root}/governance${a.query}`, { headers: a.headers })).json()).toMatchObject({ events_enabled: false });
   expect((await request.put(`${root}/events-enabled${b.query}`, { headers: b.headers, data: { enabled: true } })).status()).toBe(403);
   expect((await request.put(`${root}/events-enabled${a.query}`, { headers: a.headers, data: { enabled: true } })).ok()).toBeTruthy();
-  await expect(app.getByRole("tab", { name: "Arrangement", exact: true })).toBeVisible();
+  await expect(app.getByRole("tab", { name: /^Arrangement/ })).toBeVisible();
   const input = { title: "Konsert frå ekte backend", code: "konsert", starts_at: "2027-06-01T17:00:00Z", timezone: "Europe/Oslo", ends_at: null, location: "Grendahuset", description: "**Ta med vener**" };
-  const createdEvent = await request.post(`${path}${b.query}`, { headers: b.headers, data: input });
+  const creationHeaders = { ...b.headers, "Idempotency-Key": randomUUID() };
+  const createdEvent = await request.post(`${path}${b.query}`, { headers: creationHeaders, data: input });
   expect(createdEvent.ok(), await createdEvent.text()).toBeTruthy(); const event = await createdEvent.json();
+  const replay = await request.post(`${path}${b.query}`, { headers: creationHeaders, data: input });
+  expect(replay.ok()).toBeTruthy();
+  expect((await replay.json()).id).toBe(event.id);
+  expect((await request.post(`${path}${b.query}`, { headers: creationHeaders, data: { ...input, title: "Endra forsøk" } })).status()).toBe(409);
+  expect((await request.post(`${path}${b.query}`, { headers: { ...b.headers, "Idempotency-Key": "invalid" }, data: input })).status()).toBe(400);
   expect(event.can_manage).toBe(true);
   expect(await (await request.get(`${root}/topics${a.query}`, { headers: a.headers })).json()).toMatchObject({ enabled: true });
   expect((await request.put(`${root}/topics${a.query}`, { headers: a.headers, data: { enabled: false } })).ok()).toBeTruthy();
@@ -89,7 +95,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   await expect(app.getByRole("button", { name: "Markér som lesen" })).toHaveCount(0);
   await app.getByRole("tab", { name: "Meldingar", exact: true }).click();
   const pills = app.getByRole("group", { name: "Filtrer meldingar" });
-  await pills.getByRole("button", { name: "#arr:ny-konsert", exact: true }).click();
+  await pills.getByRole("button", { name: /^Konsert frå ekte backend, / }).click();
   const results = app.getByLabel("Meldingar om arrangementet");
   await expect(results.getByText("Rik melding", { exact: true })).toBeVisible();
   await expect(results.getByRole("img", { name: "konsert.png", exact: true })).toBeVisible();
@@ -109,14 +115,29 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   expect(await (await request.get(`${path}/${event.id}${b.query}`, { headers: b.headers })).json()).toMatchObject({ my_rsvp: "unanswered" });
   // Exercise the create, edit, RSVP, image and cancellation commands through the real UI as well.
   await app.getByRole("tab", { name: /Arrangement/ }).click();
-  await app.getByRole("button", { name: "Alle arrangement", exact: false }).click();
   await app.getByRole("button", { name: "Nytt arrangement", exact: true }).click();
   await app.getByRole("textbox", { name: "Tittel", exact: true }).fill("Oppretta i grensesnittet");
+  await app.locator(".sp-event-form").getByText("Fleire val", { exact: true }).click();
   await app.getByRole("textbox", { name: "Kode i kanalen", exact: true }).fill("friluft");
   await app.getByRole("textbox", { name: "Tidssone", exact: true }).fill("Europe/Oslo");
   await app.getByLabel("Start", { exact: true }).fill("2027-06-02T19:00");
   await app.getByRole("textbox", { name: "Omtale (Markdown)", exact: true }).fill("**Tur frå ekte grensesnitt**");
   await app.getByRole("button", { name: "Lagre arrangement" }).click();
+  await expect(app.getByRole("heading", { level: 2, name: "Oppretta i grensesnittet" })).toBeVisible();
+  const secondId = new URL(page.url()).searchParams.get("event");
+  expect(secondId).toBeTruthy(); expect(secondId).not.toBe(event.id);
+  await page.reload();
+  await expect(app.getByRole("heading", { level: 2, name: "Oppretta i grensesnittet" })).toBeVisible();
+  await app.getByRole("button", { name: "Skriv om arrangementet", exact: true }).click();
+  const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
+  await expect(app.getByRole("group", { name: "Arrangement for meldinga" })).toContainText("Oppretta i grensesnittet");
+  await composer.fill("Vi møtest ved grinda"); await composer.press("Enter");
+  await expect(composer).toHaveValue("");
+  await expect.poll(async () => (await (await request.get(`${path}/${secondId}/messages${a.query}`, { headers: a.headers })).json())
+    .messages.some((item: { body: string }) => item.body === "Vi møtest ved grinda\n\n#arr:friluft")).toBe(true);
+  expect((await (await request.get(`${path}/${event.id}/messages${a.query}`, { headers: a.headers })).json())
+    .messages.some((item: { body: string }) => item.body.includes("Vi møtest ved grinda"))).toBe(false);
+  await page.goto(`/?participant=${owner}&channel=${channel}&event=${secondId}&ui=react`);
   await expect(app.getByRole("heading", { level: 2, name: "Oppretta i grensesnittet" })).toBeVisible();
   expect(await (await request.get(`${root}/topics${a.query}`, { headers: a.headers })).json()).toMatchObject({ enabled: false });
   await app.getByRole("radio", { name: "Deltek", exact: true }).click();
@@ -131,6 +152,9 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   await app.getByRole("button", { name: "Avlys arrangement", exact: true }).click();
   await app.getByRole("button", { name: "Stadfest avlysing", exact: true }).click();
   await expect(app.getByText("Arrangementet er avlyst.", { exact: true })).toBeVisible();
+  expect(await (await request.get(`${path}/${event.id}${a.query}`, { headers: a.headers })).json()).toMatchObject({
+    cancelled: false, location: "Ny sal", my_rsvp: "following", cover_media_id: mediaId, aliases: expect.arrayContaining(["konsert"])
+  });
   await openChannelMenu(app);
   await app.getByRole("button", { name: "Kanaldetaljar", exact: true }).click();
   const settings = destinationSurface(app, "Kanaldetaljar: Ekte arrangementsprøve", true);

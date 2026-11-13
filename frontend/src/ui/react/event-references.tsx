@@ -1,9 +1,16 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import type { ChannelEvent } from "../../channel-events";
 
+export const SPROYT_EVENT_COMPOSE_EVENT = "sproyt:compose-event";
+/** An explicit detail action; never dispatched by opening a message filter. */
+export function composeEventInChat(event: ChannelEvent) {
+  window.dispatchEvent(new CustomEvent<ChannelEvent>(SPROYT_EVENT_COMPOSE_EVENT, { detail: event }));
+}
+
 export type EventReferences = Readonly<{
   events: readonly ChannelEvent[];
   collect?(codes: ReadonlySet<string>): void;
+  search?(query: string, signal: AbortSignal): Promise<readonly ChannelEvent[]>;
   suggest?(prefix: string, signal: AbortSignal): Promise<readonly ChannelEvent[]>;
   href(event: ChannelEvent): string;
   open(event: ChannelEvent): void;
@@ -11,20 +18,20 @@ export type EventReferences = Readonly<{
 export const EventReferencesContext = createContext<EventReferences | null>(null);
 export const useEventReferences = () => useContext(EventReferencesContext);
 export const EventBridgeContext = createContext<{
-  publish(references: Pick<EventReferences, "events" | "collect" | "suggest">): void;
+  publish(references: Pick<EventReferences, "events" | "collect" | "suggest" | "search">): void;
   request: { id: string } | null;
 } | null>(null);
 
 /** Share the active channel's already-authorized discovery with its thread pane. */
 export function ChannelEventBoundary({ children, href }: { children: ReactNode; href(event: ChannelEvent): string }) {
-  const [references, setReferences] = useState<Pick<EventReferences, "events" | "collect" | "suggest">>({ events: [] });
+  const [references, setReferences] = useState<Pick<EventReferences, "events" | "collect" | "suggest" | "search">>({ events: [] });
   const [request, setRequest] = useState<{ id: string } | null>(null);
   return <EventBridgeContext.Provider value={{ publish: setReferences, request }}>
     <EventReferencesContext.Provider value={{ ...references, href, open: event => setRequest({ id: event.id }) }}>{children}</EventReferencesContext.Provider>
   </EventBridgeContext.Provider>;
 }
 
-type Node = { type: string; value?: string; children?: Node[]; url?: string; data?: { hProperties: Record<string, string> };
+type Node = { type: string; value?: string; children?: Node[]; url?: string; data?: { hProperties?: object };
   position?: { start: { offset?: number }; end: { offset?: number } } };
 const literal = new Set(["link", "linkReference", "image", "imageReference", "inlineCode", "code", "html"]);
 /** Runs before channel discovery: #arr:code must never become a #arr channel. */
@@ -48,8 +55,8 @@ export function eventReferencePlugin(source: string, references: EventReferences
         if (!event) continue;
         const start = match.index + match[1]!.length;
         if (start > end) result.push({ type: "text", value: text.slice(end, start) });
-        result.push({ type: "link", url: references.href(event), data: { hProperties: { "data-event-reference": event.id } },
-          children: [{ type: "text", value: text.slice(start, match.index + match[0].length) }] });
+        result.push({ type: "link", url: references.href(event), data: { hProperties: { "data-event-reference": event.id, title: `#arr:${match[2]}` } },
+          children: [{ type: "text", value: event.title }] });
         end = match.index + match[0].length;
       }
       if (!end) return [child];

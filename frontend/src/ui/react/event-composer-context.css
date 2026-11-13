@@ -1,0 +1,8 @@
+.sp-event-compose-context { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0; padding:6px 0; font-size:13px; }
+.sp-event-compose-context > span { min-width:0; overflow-wrap:anywhere; flex:1 1 160px; }
+.sp-event-compose-picker { display:grid; gap:8px; min-width:0; }
+.sp-event-compose-picker input { width:100%; min-width:0; box-sizing:border-box; font-size:16px; }
+.sp-event-compose-options { display:grid; gap:4px; max-height:45vh; overflow:auto; }
+.sp-event-compose-options button { white-space:normal; text-align:left; overflow-wrap:anywhere; justify-content:flex-start; }
+.sp-event-compose-options button > span { min-width:0; }
+.sp-event-compose-option-time { display:block; margin-top:2px; font-size:12px; font-weight:400; color:var(--sp-muted); }

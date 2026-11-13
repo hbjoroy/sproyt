@@ -14,7 +14,23 @@ export type ChannelEvent = EventInput & Readonly<{
 }>;
 export type EventPerson = Readonly<{ user_id: string; display_name: string; status: EventResponse }>;
 export type EventMessages = Readonly<{ messages: readonly ChatMessage[]; next_before: number | null }>;
+export type EventCollectionSummary = Readonly<{
+  as_of: string; upcoming_count: number; ongoing_count: number;
+  next_event: Pick<ChannelEvent, "id" | "title" | "starts_at" | "ends_at" | "timezone"> | null;
+}>;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+export function decodeEventCollectionSummary(value: unknown): EventCollectionSummary {
+  if (!isRecord(value) || typeof value.as_of !== "string" || !Number.isFinite(Date.parse(value.as_of))
+    || !["upcoming_count", "ongoing_count"].every(key => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0))
+    throw new Error("Ugyldig arrangementssamandrag.");
+  const next = value.next_event;
+  if (next !== null && (!isRecord(next) || typeof next.id !== "string" || !uuid.test(next.id)
+    || typeof next.title !== "string" || typeof next.timezone !== "string"
+    || typeof next.starts_at !== "string" || !Number.isFinite(Date.parse(next.starts_at))
+    || (next.ends_at !== null && (typeof next.ends_at !== "string" || !Number.isFinite(Date.parse(next.ends_at))))))
+    throw new Error("Ugyldig neste arrangement.");
+  return value as unknown as EventCollectionSummary;
+}
 export function decodeChannelEvent(value: unknown, channelId: string): ChannelEvent {
   if (!isRecord(value) || !["id", "channel_id", "creator_id"].every(key => typeof value[key] === "string" && uuid.test(value[key] as string))
     || value.channel_id !== channelId || !["title", "code", "starts_at", "timezone", "description", "updated_at"].every(key => typeof value[key] === "string")
@@ -38,7 +54,7 @@ export class ChannelEventsApi {
     const epoch = this.epoch();
     const admitted = () => this.owner() === owner && this.epoch() === epoch;
     const result = await this.http.json(this.#path(channelId, suffix), decode, { ...options,
-      headers: { "x-sproyt-account": owner, ...(options.body ? { "content-type": "application/json" } : {}) } }, admitted);
+      headers: { ...Object.fromEntries(new Headers(options.headers)), "x-sproyt-account": owner, ...(options.body ? { "content-type": "application/json" } : {}) } }, admitted);
     if (!admitted()) throw new Error("Kontoen vart endra.");
     return result;
   }
@@ -47,8 +63,11 @@ export class ChannelEventsApi {
       if (!isRecord(value) || !Array.isArray(value.events)) throw new Error("Ugyldig arrangementsoversikt.");
       if (value.next_after !== null && typeof value.next_after !== "string") throw new Error("Ugyldig arrangementsmarkør.");
       if (value.attention_count !== undefined && (!Number.isSafeInteger(value.attention_count) || Number(value.attention_count) < 0)) throw new Error("Ugyldig arrangementsvarsel.");
+      if (value.events_enabled !== undefined && typeof value.events_enabled !== "boolean") throw new Error("Ugyldig arrangementsinnstilling.");
       return { events: value.events.map(event => decodeChannelEvent(event, channelId)), next_after: value.next_after,
-        attention_count: typeof value.attention_count === "number" ? value.attention_count : null };
+        attention_count: typeof value.attention_count === "number" ? value.attention_count : null,
+        events_enabled: typeof value.events_enabled === "boolean" ? value.events_enabled : undefined,
+        summary: value.summary === undefined ? null : decodeEventCollectionSummary(value.summary) };
     }, { signal });
   }
   references(owner: string, channelId: string, codes: readonly string[], signal: AbortSignal) {
@@ -63,12 +82,18 @@ export class ChannelEventsApi {
       return value.events.map(event => decodeChannelEvent(event, channelId));
     }, { signal });
   }
+  search(owner: string, channelId: string, query: string, signal: AbortSignal) {
+    return this.#request(owner, channelId, `?search=${encodeURIComponent(query)}`, value => {
+      if (!isRecord(value) || !Array.isArray(value.events) || value.events.length > 12) throw new Error("Ugyldige arrangementstreff.");
+      return value.events.map(event => decodeChannelEvent(event, channelId));
+    }, { signal });
+  }
   detail(owner: string, channelId: string, id: string, signal?: AbortSignal) {
     return this.#request(owner, channelId, `/${encodeURIComponent(id)}`, value => decodeChannelEvent(value, channelId), { signal });
   }
-  save(owner: string, channelId: string, input: EventInput, id?: string) {
+  save(owner: string, channelId: string, input: EventInput, id?: string, requestId?: string) {
     return this.#request(owner, channelId, id ? `/${encodeURIComponent(id)}` : "", value => decodeChannelEvent(value, channelId),
-      { method: id ? "PUT" : "POST", body: JSON.stringify(input) });
+      { method: id ? "PUT" : "POST", body: JSON.stringify(input), ...(!id && requestId ? { headers: { "Idempotency-Key": requestId } } : {}) });
   }
   change(owner: string, channelId: string, id: string, action: "cancel" | "acknowledge" | "rsvp" | "images" | "cover", body?: unknown) {
     return this.#request(owner, channelId, `/${encodeURIComponent(id)}/${action}`, value => decodeChannelEvent(value, channelId),

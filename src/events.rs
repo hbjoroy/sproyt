@@ -57,10 +57,11 @@ impl EventCursor {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EventInput {
     pub title: String,
+    #[serde(default)]
     pub code: String,
     pub starts_at: DateTime<Utc>,
     pub timezone: String,
@@ -332,6 +333,32 @@ impl EventStore {
         let rows=self.query("select cast(count(*) as text) as count from channel_events e join channel_event_responses r on r.event_id=e.id where e.channel_id=?uuid and r.user_id=?uuid and r.status in ('attending','following') and r.seen_revision<e.revision",&[channel.into(),actor.into()]).await?;
         value(&rows[0], "count").parse().map_err(storage)
     }
+    // The collection page is bounded; navigation counts must cover the whole
+    // channel without loading event bodies, aliases, images or responses.
+    async fn collection_summary(&self, channel: &str, as_of: &str) -> Result<Value> {
+        let counts = self.query(
+            "select cast(count(case when starts_at>? then 1 end) as text) as upcoming_count,cast(count(case when starts_at<=? and ends_at>? then 1 end) as text) as ongoing_count from channel_events where channel_id=?uuid and cancelled=0",
+            &[as_of.into(), as_of.into(), as_of.into(), channel.into()],
+        ).await?;
+        let next = self.query(
+            "select id,title,starts_at,ends_at,timezone from channel_events where channel_id=?uuid and cancelled=0 and coalesce(ends_at,starts_at)>? order by case when starts_at<=? and ends_at>? then 0 else 1 end,starts_at,id limit 1",
+            &[channel.into(), as_of.into(), as_of.into(), as_of.into()],
+        ).await?;
+        let counts = &counts[0];
+        let next = next.first().map(|row| {
+            json!({
+                "id":value(row,"id"),"title":value(row,"title"),
+                "starts_at":value(row,"starts_at"),"ends_at":optional(row,"ends_at"),
+                "timezone":value(row,"timezone")
+            })
+        });
+        Ok(json!({
+            "as_of":as_of,
+            "upcoming_count":value(counts,"upcoming_count").parse::<i64>().map_err(storage)?,
+            "ongoing_count":value(counts,"ongoing_count").parse::<i64>().map_err(storage)?,
+            "next_event":next
+        }))
+    }
     pub(crate) async fn list(&self, actor: &str, channel: &str, after: &str) -> Result<Value> {
         if !self.availability(actor, channel).await? {
             return Ok(
@@ -383,7 +410,7 @@ impl EventStore {
             Some(
                 EventCursor {
                     v: 1,
-                    as_of,
+                    as_of: as_of.clone(),
                     bucket,
                     starts_at: start.into(),
                     id: event["id"].as_str().unwrap().into(),
@@ -394,6 +421,7 @@ impl EventStore {
             None
         };
         events.truncate(100);
+        let summary = self.collection_summary(channel, &as_of).await?;
         let attention = self.attention_count(actor, channel).await?;
         self.access(actor, channel).await?;
         if !self.availability(actor, channel).await? {
@@ -402,8 +430,42 @@ impl EventStore {
             );
         }
         Ok(
-            json!({"events":events,"next_after":next,"attention_count":attention,"events_enabled":true}),
+            json!({"events":events,"next_after":next,"attention_count":attention,"events_enabled":true,"summary":summary}),
         )
+    }
+    pub(crate) async fn search_suggestions(
+        &self,
+        actor: &str,
+        channel: &str,
+        search: &str,
+    ) -> Result<Value> {
+        if !self.availability(actor, channel).await? {
+            return Ok(json!({"events":[],"next_after":null,"events_enabled":false}));
+        }
+        let search = search.trim();
+        if search.chars().count() > 160 {
+            return Err(RepositoryError::Conflict);
+        }
+        // Use a portable, explicit escape character. SQL wildcards and a
+        // backslash in an event title are always searched as literal text.
+        let pattern = format!(
+            "%{}%",
+            search
+                .to_lowercase()
+                .replace('!', "!!")
+                .replace('%', "!%")
+                .replace('_', "!_")
+        );
+        // SQLite's LOWER only folds ASCII. Normalize Norwegian letters too so
+        // the application's primary language behaves the same on both stores.
+        let events = self.summaries(actor, channel,
+            "(lower(replace(replace(replace(e.title,'Æ','æ'),'Ø','ø'),'Å','å')) like ? escape '!' or exists(select 1 from channel_event_codes a where a.event_id=e.id and a.code like ? escape '!')) order by e.code,e.id limit 12",
+            vec![pattern.clone(), pattern],
+        ).await?;
+        if !self.availability(actor, channel).await? {
+            return Ok(json!({"events":[],"next_after":null,"events_enabled":false}));
+        }
+        Ok(json!({"events":events,"next_after":null,"events_enabled":true}))
     }
     pub(crate) async fn suggestions(
         &self,
@@ -436,11 +498,65 @@ impl EventStore {
         actor: &str,
         channel: &str,
         id: Option<&str>,
+        input: EventInput,
+    ) -> Result<Value> {
+        self.save_with_request(actor, channel, id, input, None)
+            .await
+    }
+    async fn creation_receipt(
+        &self,
+        actor: &str,
+        channel: &str,
+        request: &str,
+        fingerprint: &str,
+    ) -> Result<Option<Value>> {
+        let rows = self.query("select id,creation_fingerprint from channel_events where channel_id=?uuid and creator_id=?uuid and creation_request_id=?", &[channel.into(), actor.into(), request.into()]).await?;
+        if let Some(row) = rows.first() {
+            if value(row, "creation_fingerprint") != fingerprint {
+                return Err(RepositoryError::Conflict);
+            }
+            return self
+                .detail(actor, channel, &value(row, "id"))
+                .await
+                .map(Some);
+        }
+        Ok(None)
+    }
+    pub(crate) async fn save_with_request(
+        &self,
+        actor: &str,
+        channel: &str,
+        id: Option<&str>,
         mut input: EventInput,
+        request_id: Option<&str>,
     ) -> Result<Value> {
         self.require_enabled(actor, channel).await?;
+        if request_id.is_some_and(|key| id.is_some() || uuid::Uuid::parse_str(key).is_err()) {
+            return Err(RepositoryError::Conflict);
+        }
+        input.title = input.title.trim().into();
+        input.code = input.code.trim().to_ascii_lowercase();
+        // Hash the requested blank code, not the generated code: exact retries
+        // must resolve even after that event has been edited or cancelled.
+        let fingerprint = if request_id.is_some() {
+            use sha2::{Digest, Sha256};
+            hex::encode(Sha256::digest(serde_json::to_vec(&input).map_err(storage)?))
+        } else {
+            String::new()
+        };
+        let automatic_code = id.is_none() && input.code.trim().is_empty();
+        if automatic_code {
+            input.code = format!("e-{}", uuid::Uuid::now_v7().simple());
+        }
         input.validate()?;
         self.access(actor, channel).await?;
+        if let Some(request) = request_id
+            && let Some(receipt) = self
+                .creation_receipt(actor, channel, request, &fingerprint)
+                .await?
+        {
+            return Ok(receipt);
+        }
         let event_id = id
             .map(str::to_owned)
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
@@ -473,9 +589,26 @@ impl EventStore {
                 return Err(RepositoryError::PermissionDenied);
             }
         } else {
-            let mut args = vec![event_id.clone(), channel.into(), actor.into()];
-            args.extend(fields);
-            self.mutate("insert into channel_events(id,channel_id,creator_id,title,code,starts_at,ends_at,timezone,location,description,updated_at) select ?,?uuid,?uuid,?,?,?,nullif(?,''),?,nullif(?,''),?,? where /*ACCESS*/",args,actor,channel,None,false).await?;
+            let mut fields = fields;
+            // The database reserves current and retired codes atomically.
+            // Retry a generated collision; an explicit code keeps its conflict.
+            for attempt in 0..3 {
+                let mut args = vec![event_id.clone(), channel.into(), actor.into()];
+                args.extend(fields.clone());
+                args.extend([request_id.unwrap_or("").into(), fingerprint.clone()]);
+                match self.mutate("insert into channel_events(id,channel_id,creator_id,title,code,starts_at,ends_at,timezone,location,description,updated_at,creation_request_id,creation_fingerprint) select ?,?uuid,?uuid,?,?,?,nullif(?,''),?,nullif(?,''),?,?,nullif(?,''),nullif(?,'') where /*ACCESS*/",args,actor,channel,None,false).await {
+                    Err(RepositoryError::Conflict) => {
+                        if let Some(request) = request_id
+                            && let Some(receipt) = self.creation_receipt(actor, channel, request, &fingerprint).await? {
+                            return Ok(receipt);
+                        }
+                        if automatic_code && attempt < 2 {
+                            fields[1] = format!("e-{}", uuid::Uuid::now_v7().simple());
+                        } else { return Err(RepositoryError::Conflict); }
+                    }
+                    result => { result?; break; }
+                }
+            }
         }
         self.detail(actor, channel, &event_id).await
     }
@@ -945,6 +1078,13 @@ mod database_tests {
             .unwrap();
         let first = s.list(&owner, &c, "").await.unwrap();
         assert_eq!(first["events"].as_array().unwrap().len(), 100);
+        assert_eq!(first["summary"]["upcoming_count"], 102);
+        assert_eq!(first["summary"]["ongoing_count"], 0);
+        let second = s
+            .list(&owner, &c, first["next_after"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(second["summary"], first["summary"]);
         assert!(
             !first["events"]
                 .as_array()
@@ -962,6 +1102,89 @@ mod database_tests {
                 .unwrap()
                 .len()
                 <= 12
+        );
+    }
+    async fn title_and_alias_search_beyond_first_page_contract(
+        setup: (EventStore, String, String, String),
+    ) {
+        let (s, owner, member, c) = setup;
+        for n in 0..101 {
+            s.save(&owner, &c, None, input(&format!("search-filler-{n:03}"), 1))
+                .await
+                .unwrap();
+        }
+        let mut target = input("reserved-search-code", 2);
+        target.title = r"ÆØÅ Treff %_!\ avslutning".into();
+        let target = s.save(&owner, &c, None, target).await.unwrap();
+        let id = target["id"].as_str().unwrap();
+        let mut renamed = input("renamed-search-code", 2);
+        renamed.title = target["title"].as_str().unwrap().into();
+        s.save(&owner, &c, Some(id), renamed).await.unwrap();
+        let first = s.list(&member, &c, "").await.unwrap();
+        assert!(
+            !first["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["id"] == id)
+        );
+        for query in [
+            "æøå treff",
+            "ÆØÅ TREFF",
+            "reserved-search-code",
+            "RENAMED-SEARCH",
+            "%",
+            "_",
+            "!",
+            "\\",
+        ] {
+            let result = s.search_suggestions(&member, &c, query).await.unwrap();
+            assert_eq!(result["events"].as_array().unwrap().len(), 1, "{query}");
+            assert_eq!(result["events"][0]["id"], id, "{query}");
+        }
+        assert_eq!(
+            s.search_suggestions(&member, &c, "").await.unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .len(),
+            12
+        );
+        assert!(
+            s.search_suggestions(&member, &c, "not found")
+                .await
+                .unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            s.search_suggestions(&member, &c, &"x".repeat(161))
+                .await
+                .is_err()
+        );
+        s.execute(
+            "update channels set events_enabled=false where id=?uuid",
+            std::slice::from_ref(&c),
+        )
+        .await
+        .unwrap();
+        assert!(
+            s.search_suggestions(&member, &c, "treff").await.unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        s.execute(
+            "delete from channel_memberships where channel_id=?uuid and user_id=?uuid",
+            &[c.clone(), member.clone()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            s.search_suggestions(&member, &c, "treff")
+                .await
+                .unwrap_err(),
+            RepositoryError::PermissionDenied
         );
     }
     async fn globally_ordered_pagination_contract(setup: (EventStore, String, String, String)) {
@@ -1022,6 +1245,141 @@ mod database_tests {
         );
         assert_eq!(seen.last().unwrap(), cancelled_id);
         assert!(s.list(&owner, &c, "not-a-valid-cursor").await.is_err());
+    }
+    async fn creation_retry_contract(setup: (EventStore, String, String, String)) {
+        let (s, owner, member, channel) = setup;
+        let request = uuid::Uuid::now_v7().to_string();
+        let original = input("", 3);
+        let (first, retry) = tokio::join!(
+            s.save_with_request(&owner, &channel, None, original.clone(), Some(&request)),
+            s.save_with_request(&owner, &channel, None, original.clone(), Some(&request))
+        );
+        let first = first.unwrap();
+        assert_eq!(first["id"], retry.unwrap()["id"]);
+        assert_eq!(
+            s.list(&owner, &channel, "").await.unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let mut changed = original.clone();
+        changed.title = "Different request".into();
+        assert!(matches!(
+            s.save_with_request(&owner, &channel, None, changed.clone(), Some(&request))
+                .await,
+            Err(RepositoryError::Conflict)
+        ));
+        let id = first["id"].as_str().unwrap();
+        changed.code = "edited-code".into();
+        s.save(&owner, &channel, Some(id), changed).await.unwrap();
+        s.cancel(&owner, &channel, id).await.unwrap();
+        let replay = s
+            .save_with_request(&owner, &channel, None, original.clone(), Some(&request))
+            .await
+            .unwrap();
+        assert_eq!(replay["id"], first["id"]);
+        assert_eq!(replay["cancelled"], true);
+        let other = s
+            .save_with_request(&member, &channel, None, original.clone(), Some(&request))
+            .await
+            .unwrap();
+        assert_ne!(other["id"], first["id"]);
+        s.execute(
+            "update channels set events_enabled=false where id=?uuid",
+            std::slice::from_ref(&channel),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            s.save_with_request(&owner, &channel, None, original.clone(), Some(&request))
+                .await,
+            Err(RepositoryError::EventsDisabled)
+        ));
+        s.execute(
+            "update channels set events_enabled=true where id=?uuid",
+            std::slice::from_ref(&channel),
+        )
+        .await
+        .unwrap();
+        s.execute(
+            "delete from channel_memberships where channel_id=?uuid and user_id=?uuid",
+            &[channel.clone(), owner.clone()],
+        )
+        .await
+        .unwrap();
+        assert!(
+            s.save_with_request(&owner, &channel, None, original, Some(&request))
+                .await
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn creation_retry() {
+        creation_retry_contract(fixture().await).await;
+    }
+    async fn collection_summary_time_and_multiple_create_contract(
+        setup: (EventStore, String, String, String),
+    ) {
+        let (s, owner, member, c) = setup;
+        let at = Utc::now();
+        let as_of = at.to_rfc3339_opts(SecondsFormat::Millis, true);
+        let a = s.save(&member, &c, None, input("", 2)).await.unwrap();
+        let b = s.save(&member, &c, None, input("", 3)).await.unwrap();
+        assert_ne!(a["id"], b["id"]);
+        assert_ne!(a["code"], b["code"]);
+        assert_eq!(a["title"], b["title"]);
+        assert!(valid_code(a["code"].as_str().unwrap()));
+        let a_id = a["id"].as_str().unwrap();
+        let b_id = b["id"].as_str().unwrap();
+        s.rsvp(&owner, &c, a_id, "attending").await.unwrap();
+        s.rsvp(&owner, &c, b_id, "following").await.unwrap();
+        let mut active = input("ongoing", -1);
+        active.ends_at = Some(at + chrono::Duration::days(1));
+        let active = s.save(&member, &c, None, active).await.unwrap();
+        // A started event without an end uses its start as the end. It must
+        // never acquire an invented duration in the navigation summary.
+        s.save(&member, &c, None, input("no-end", -1))
+            .await
+            .unwrap();
+        let mut ended = input("ended", -2);
+        ended.ends_at = Some(at);
+        s.save(&member, &c, None, ended).await.unwrap();
+        let cancelled = s
+            .save(&member, &c, None, input("cancelled", 1))
+            .await
+            .unwrap();
+        s.cancel(&member, &c, cancelled["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        let summary = s.collection_summary(&c, &as_of).await.unwrap();
+        assert_eq!(summary["upcoming_count"], 2);
+        assert_eq!(summary["ongoing_count"], 1);
+        assert_eq!(summary["next_event"]["id"], active["id"]);
+        assert_eq!(summary["next_event"]["timezone"], "Europe/Oslo");
+        assert!(summary["next_event"].get("description").is_none());
+        s.cancel(&member, &c, active["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            s.collection_summary(&c, &as_of).await.unwrap()["next_event"]["id"],
+            a["id"]
+        );
+        s.cancel(&member, &c, b_id).await.unwrap();
+        assert_eq!(
+            s.detail(&owner, &c, a_id).await.unwrap()["my_rsvp"],
+            "attending"
+        );
+        assert_eq!(
+            s.detail(&owner, &c, a_id).await.unwrap()["cancelled"],
+            false
+        );
+        assert!(s.save(&member, &c, Some(a_id), input("", 2)).await.is_err());
+        s.cancel(&member, &c, a_id).await.unwrap();
+        let summary = s.collection_summary(&c, &as_of).await.unwrap();
+        assert_eq!(summary["upcoming_count"], 0);
+        assert_eq!(summary["ongoing_count"], 0);
+        assert!(summary["next_event"].is_null());
     }
     async fn availability_archive_and_rolling_writer_contract(
         setup: (EventStore, String, String, String),
@@ -1181,6 +1539,10 @@ mod database_tests {
         );
     }
     #[tokio::test]
+    async fn collection_summary_time_and_multiple_create() {
+        collection_summary_time_and_multiple_create_contract(fixture().await).await;
+    }
+    #[tokio::test]
     async fn availability_archive_and_rolling_writer() {
         availability_archive_and_rolling_writer_contract(fixture().await).await;
     }
@@ -1191,6 +1553,10 @@ mod database_tests {
     #[tokio::test]
     async fn prefix_suggestions_beyond_first_page() {
         prefix_suggestions_beyond_first_page_contract(fixture().await).await;
+    }
+    #[tokio::test]
+    async fn title_and_alias_search_beyond_first_page() {
+        title_and_alias_search_beyond_first_page_contract(fixture().await).await;
     }
     #[tokio::test]
     async fn aliases_rights_material_notice_and_acknowledgment() {
@@ -1251,7 +1617,10 @@ mod database_tests {
         first_event_enables_topics_only_once_contract(seed(s.clone()).await).await;
         image_channel_owner_and_cover_guards_contract(seed(s.clone()).await).await;
         prefix_suggestions_beyond_first_page_contract(seed(s.clone()).await).await;
+        title_and_alias_search_beyond_first_page_contract(seed(s.clone()).await).await;
         globally_ordered_pagination_contract(seed(s.clone()).await).await;
+        collection_summary_time_and_multiple_create_contract(seed(s.clone()).await).await;
+        creation_retry_contract(seed(s.clone()).await).await;
         availability_archive_and_rolling_writer_contract(seed(s.clone()).await).await;
 
         pool.close().await;

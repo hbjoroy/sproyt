@@ -1,6 +1,7 @@
 {
   "webkit": [
     "ui-react-channel-events.spec.ts",
+    "ui-react-event-composer.spec.ts",
     "ui-react-channel-governance.spec.ts",
     "ui-react-circle-processes.spec.ts",
     "ui-react-channel-references.spec.ts",
@@ -48,6 +49,7 @@
   ],
   "layout": [
     "ui-react-channel-events.spec.ts",
+    "ui-react-event-composer.spec.ts",
     "ui-react-channel-governance.spec.ts",
     "ui-react-circle-processes.spec.ts",
     "ui-react-layout-refinement.spec.ts",
