@@ -4209,6 +4209,27 @@ mod tests {
     use crate::domain::{MessageLimit, PrincipalKind, User};
     use tokio::sync::Barrier;
 
+    #[tokio::test]
+    async fn bundled_sqlite_contains_the_wal_page_size_security_fix() {
+        let repository = SqliteChatRepository::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let version: String = sqlx::query_scalar("select sqlite_version()")
+            .fetch_one(&repository.pool)
+            .await
+            .unwrap();
+        let parts: Vec<u32> = version
+            .split('.')
+            .map(|part| part.parse().unwrap())
+            .collect();
+        assert_eq!(parts.len(), 3, "unexpected SQLite version: {version}");
+        assert!(
+            (parts[0], parts[1], parts[2]) >= (3, 54, 0),
+            "bundled SQLite {version} predates the RUSTSEC-2026-0459 fix"
+        );
+        repository.pool.close().await;
+    }
+
     async fn remove_temporary_sqlite_file(path: &std::path::Path) -> std::io::Result<()> {
         let mut retries = 0;
         loop {

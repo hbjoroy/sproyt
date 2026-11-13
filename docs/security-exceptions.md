@@ -132,3 +132,33 @@ Security/release and the notification capability owner maintain this adapter.
 Recheck its backend initialization, key compatibility and independent protocol
 tests when the ECE, curve, KDF or AEAD interfaces change. The existing RSA
 exception remains scoped above; RUSTSEC-2026-0387 has no ignore.
+
+## SQLite remediation (RUSTSEC-2026-0459)
+
+The 13 November 2026 channel-events publication was blocked by
+RUSTSEC-2026-0459 in bundled `libsqlite3-sys 0.30.1`. No exception is granted.
+The advisory describes a local attacker-controlled database/WAL pair exposing
+uninitialized memory when SQLite opens it. Production uses PostgreSQL; SQLite
+still needs remediation for local deployments, tests and the shipped binary.
+[RustSec advisory](https://rustsec.org/advisories/RUSTSEC-2026-0459.html).
+
+Released SQLx 0.8.6 pins the affected binding. SQLx 0.9.0 also excludes the
+patched binding and would require unrelated application API changes. Keep the
+SQLx 0.8.6 drivers and vendor only `sqlx-sqlite`, changing its native binding
+dependency to `libsqlite3-sys 0.39.1`, which bundles SQLite 3.54.1. The driver
+source and PostgreSQL driver remain unchanged. The vendor provenance records
+the original crate checksum, licenses and exact manifest change. Remove the
+patch when a compatible upstream release admits the fixed binding.
+[Published SQLx 0.9.0 manifest](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-sqlite/Cargo.toml),
+[upstream binding-range update](https://github.com/transact-rs/sqlx/commit/10462fa4414c6c7f1ed1d39bb31678e3b726878c).
+
+The release gate must audit the resulting lockfile against fresh advisories,
+verify the actual runtime SQLite version, exercise SQLite and PostgreSQL
+contracts, and retain ARM64 image build, SBOM and vulnerability-scan evidence.
+The database migration and rollback rehearsal remains required for the events
+release. This change does not alter the existing RSA exception.
+
+The remediated lockfile passed local `cargo-audit 0.22.2` on 13 November against
+fresh RustSec revision `af7b3ec33460b8e2de8d422e16d628518891a519`, with no remaining
+findings or warnings beyond the existing RSA ignore. Publication must repeat
+the audit for the reviewed release revision.

@@ -21,6 +21,7 @@ RUN --mount=type=cache,id=sproyt-cargo-registry,target=/usr/local/cargo/registry
     apk add --no-cache zig=0.15.2-r0 \
     && cargo install --locked --version 0.23.0 cargo-zigbuild
 COPY Cargo.toml Cargo.lock ./
+COPY vendor/sqlx-sqlite/ ./vendor/sqlx-sqlite/
 COPY crates/sproyt-client-core/Cargo.toml crates/sproyt-client-core/Cargo.toml
 COPY crates/sproyt-protocol/Cargo.toml crates/sproyt-protocol/Cargo.toml
 ARG TARGETARCH
@@ -58,6 +59,7 @@ RUN case "$TARGETARCH" in \
 
 FROM build-base AS native-builder
 COPY Cargo.toml Cargo.lock ./
+COPY vendor/sqlx-sqlite/ ./vendor/sqlx-sqlite/
 COPY crates/sproyt-client-core/Cargo.toml crates/sproyt-client-core/Cargo.toml
 COPY crates/sproyt-protocol/Cargo.toml crates/sproyt-protocol/Cargo.toml
 RUN mkdir -p src crates/sproyt-client-core/src crates/sproyt-protocol/src \
