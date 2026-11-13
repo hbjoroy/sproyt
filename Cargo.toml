@@ -7,6 +7,7 @@ publish = false
 
 [workspace]
 members = ["crates/sproyt-client-core", "crates/sproyt-protocol"]
+exclude = ["vendor/sqlx-sqlite"]
 resolver = "3"
 
 [dependencies]
@@ -48,3 +49,8 @@ zeroize = "1"
 [dev-dependencies]
 rsa = { version = "0.9", features = ["sha2"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
+
+[patch.crates-io]
+# Upstream 0.8.6 driver sources, with only the native SQLite dependency updated.
+# See vendor/sqlx-sqlite/PROVENANCE.json and upstream SQLx PR #4502.
+sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
