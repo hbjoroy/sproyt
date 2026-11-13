@@ -4209,6 +4209,21 @@ mod tests {
     use crate::domain::{MessageLimit, PrincipalKind, User};
     use tokio::sync::Barrier;
 
+    async fn remove_temporary_sqlite_file(path: &std::path::Path) -> std::io::Result<()> {
+        let mut retries = 0;
+        loop {
+            match std::fs::remove_file(path) {
+                // A closed pool's SQLite worker can briefly retain its Windows
+                // file handle. Retry only that sharing violation, for 200 ms.
+                Err(error) if cfg!(windows) && error.raw_os_error() == Some(32) && retries < 10 => {
+                    retries += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                result => return result,
+            }
+        }
+    }
+
     #[tokio::test]
     async fn sqlite_portable_export_deadline_releases_a_waiting_writer() {
         use futures_util::{StreamExt, pin_mut};
@@ -4264,7 +4279,7 @@ mod tests {
         assert!(stream.next().await.unwrap().is_err());
 
         repository.pool.close().await;
-        std::fs::remove_file(path).unwrap();
+        remove_temporary_sqlite_file(&path).await.unwrap();
     }
 
     #[tokio::test]
@@ -4878,7 +4893,7 @@ mod tests {
             .unwrap();
         assert!(reopened.saved_statuses(owner).await.unwrap().is_empty());
         reopened.pool.close().await;
-        std::fs::remove_file(path).unwrap();
+        remove_temporary_sqlite_file(&path).await.unwrap();
     }
 
     #[tokio::test]
@@ -4910,7 +4925,7 @@ mod tests {
             .unwrap();
         assert!(reopened.saved_emojis(owner).await.unwrap().is_empty());
         reopened.pool.close().await;
-        std::fs::remove_file(path).unwrap();
+        remove_temporary_sqlite_file(&path).await.unwrap();
     }
 
     #[tokio::test]
