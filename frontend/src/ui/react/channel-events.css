@@ -1,10 +1,22 @@
 .sp-channel-events { display:flex; flex:1; min-height:0; min-width:0; flex-direction:column; }
 .sp-channel-tabs,.sp-event-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-.sp-channel-tabs { flex:0 0 auto; flex-wrap:nowrap; gap:16px; padding:0 12px; border-bottom:1px solid var(--sp-line); }
+.sp-channel-navigation { display:flex; flex:0 0 auto; min-width:0; align-items:center; gap:16px; padding:0 12px; border-bottom:1px solid var(--sp-line); }
+.sp-channel-tabs { flex:0 0 auto; flex-wrap:nowrap; gap:16px; min-width:0; }
+.sp-channel-events { container-type:inline-size; }
+.sp-events-count,.sp-events-attention,.sp-events-ongoing { font-size:12px; }
+.sp-events-ongoing { display:none; }
+.sp-events-attention { color:var(--sp-muted); }
+.sp-events-next { appearance:none; flex:0 1 auto; min-width:0; max-width:50%; height:36px; border:0; padding:0; background:transparent; color:var(--sp-muted); font:inherit; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:start; cursor:pointer; }
+.sp-events-next:focus-visible { outline:2px solid var(--sp-text); outline-offset:-2px; }
+@container (max-width:760px) { .sp-events-next { display:none; } .sp-events-ongoing { display:inline; } }
+@container (max-width:500px) { .sp-events-count-label,.sp-events-attention { display:none; } }
+.sp-event-options { min-width:0; }
+.sp-event-options > summary { cursor:pointer; padding-block:6px; }
+.sp-event-options[open] > label { margin-block:8px; }
 .sp-channel-tabs > button { appearance:none; min-height:36px; padding:4px 0; border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:var(--sp-muted); font:inherit; font-size:14px; cursor:pointer; white-space:nowrap; }
 .sp-channel-tabs > button[aria-selected=true] { color:var(--sp-text); border-bottom-color:var(--sp-rule); }
 .sp-channel-tabs > button:focus-visible,.sp-channel-tabs[data-keyboard-nav] > button:focus { outline:2px solid var(--sp-text); outline-offset:-2px; }
-@media (pointer:coarse) { .sp-channel-tabs > button { min-height:44px; } }
+@media (pointer:coarse) { .sp-channel-tabs > button { min-height:44px; } .sp-events-next { height:44px; } }
 .sp-event-chat { display:flex; flex:1; min-height:0; flex-direction:column; }
 .sp-event-chat[hidden],.sp-events-panel[hidden] { display:none; }
 .sp-events-panel { overflow:auto; padding:16px; min-width:0; flex:1; }
@@ -35,3 +47,8 @@
   .sp-channel-tabs { padding-block:0; }
   #sproyt-react-preview .sp-channel-events .sp-composer { margin-bottom:0; padding-block:.125rem; }
 }
+
+/* Event identity stays readable even when its generated reference code is long.
+   The existing filter strip remains a single horizontally scrollable row. */
+.sp-event-pill { max-width:min(180px,55cqi); }
+.sp-event-pill > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

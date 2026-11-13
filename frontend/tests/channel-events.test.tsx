@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HttpClient } from "../src/api";
-import { ChannelEventsApi, EventReferenceDiscovery, decodeChannelEvent, type ChannelEvent } from "../src/channel-events";
+import { ChannelEventsApi, EventReferenceDiscovery, decodeChannelEvent, decodeEventCollectionSummary, type ChannelEvent } from "../src/channel-events";
 import { EventReferencesContext } from "../src/ui/react/event-references";
 import { MarkdownContent } from "../src/ui/react/markdown-content";
 import { ChannelGovernanceApi } from "../src/channel-governance";
@@ -64,6 +64,20 @@ test("event decoder refuses cross-channel data and untrusted media paths", () =>
   assert.equal(decodeChannelEvent({ ...event, events_enabled: false }, channel).events_enabled, false);
   assert.throws(() => decodeChannelEvent({ ...event, events_enabled: "false" }, channel));
 });
+test("collection summary preserves exact server counts and rejects malformed minimal next events", async () => {
+  const summary = { as_of: "2026-11-13T12:00:00Z", upcoming_count: 102, ongoing_count: 1,
+    next_event: { id: event.id, title: event.title, starts_at: event.starts_at, ends_at: null, timezone: event.timezone } };
+  assert.deepEqual(decodeEventCollectionSummary(summary), summary);
+  assert.throws(() => decodeEventCollectionSummary({ ...summary, upcoming_count: -1 }));
+  assert.throws(() => decodeEventCollectionSummary({ ...summary, next_event: { ...summary.next_event, id: "bad" } }));
+  assert.throws(() => decodeEventCollectionSummary({ ...summary, next_event: { ...summary.next_event, ends_at: "bad" } }));
+  let payload: unknown = { events: [event], next_after: "page-two", summary };
+  const api = new ChannelEventsApi(new HttpClient({ fetch: async () => Response.json(payload) }), () => "owner", () => 1);
+  const page = await api.list("owner", channel, new AbortController().signal);
+  assert.equal(page.summary?.upcoming_count, 102);
+  payload = { events: [], next_after: null };
+  assert.equal((await api.list("owner", channel, new AbortController().signal)).summary, null);
+});
 test("availability governance keeps false typed and rejects a stale account write result", async () => {
   let owner = "owner", epoch = 1;
   let release!: (value: Response) => void;
@@ -109,4 +123,14 @@ test("responses stay paged with exact aggregate counts and reference discovery c
   discovery.dispose(); complete(Response.json({ events: [event] }));
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(published, 0); assert.deepEqual(discovery.events(), []);
+});
+test("event picker search encodes literal title queries and bounds authorized results", async () => {
+  let path = "";
+  let payload: unknown = { events: [event], next_after: null };
+  const api = new ChannelEventsApi(new HttpClient({ fetch: async input => { path = String(input); return Response.json(payload); } }), () => "owner", () => 1);
+  const result = await api.search("owner", channel, "ÆØÅ %_!\\", new AbortController().signal);
+  assert.equal(result[0]?.id, event.id);
+  assert.ok(path.endsWith(`?search=${encodeURIComponent("ÆØÅ %_!\\")}`));
+  payload = { events: Array.from({ length: 13 }, () => event), next_after: null };
+  await assert.rejects(api.search("owner", channel, "", new AbortController().signal));
 });

@@ -8,8 +8,10 @@ import { DraftComposer } from "./draft-composer";
 import { PreviewAttachments } from "./preview-media";
 import type { AgentLocationApi } from "../../agent-locations";
 import { AgentLocationSharingDialog } from "./agent-location-sharing";
-import { useEventReferences } from "./event-references";
+import { SPROYT_EVENT_COMPOSE_EVENT, useEventReferences } from "./event-references";
 import type { ChannelEvent } from "../../channel-events";
+import { eventContextWhen, messageWithEventContext } from "./event-composer-context";
+import eventContextCss from "./event-composer-context.css";
 
 export interface PreviewMention {
   readonly id: string;
@@ -53,9 +55,58 @@ export function PreviewComposer({ host, target }: {
   const [selected, setSelected] = useState(0);
   const [expansion, setExpansion] = useState<PreviewMention | null>(null);
   const [locationOpen, setLocationOpen] = useState(false);
+  const [eventContext, setEventContext] = useState<ChannelEvent | null>(null);
+  const [eventSendError, setEventSendError] = useState("");
+  const [eventPickerOpen, setEventPickerOpen] = useState(false);
+  const [eventSearch, setEventSearch] = useState("");
+  const [pickerResults, setPickerResults] = useState<readonly ChannelEvent[]>([]);
+  const [pickerError, setPickerError] = useState("");
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerAttempt, setPickerAttempt] = useState(0);
+  const preparedEventDraft = useRef<{ before: string; after: string } | null>(null);
   const listId = useId();
   const state = host.composer(target);
   const input = () => container.current?.querySelector("textarea");
+  const eventContextAvailable = !target.parentMessageId && Boolean(eventReferences?.suggest);
+  const activeEventContext = eventContextAvailable && eventContext?.channel_id === target.channelId
+    ? eventReferences?.events.find(event => event.id === eventContext.id) ?? eventContext : null;
+  const pickerEvents = [...new Map([...(eventReferences?.events ?? []), ...pickerResults].map(event => [event.id, event])).values()]
+    .filter(event => !event.cancelled && event.channel_id === target.channelId && (!eventSearch || `${event.title} ${event.code} ${event.aliases.join(" ")}`.toLocaleLowerCase().includes(eventSearch.toLocaleLowerCase())))
+    .sort((left, right) => left.title.localeCompare(right.title));
+  const chooseEventContext = (event: ChannelEvent | null) => {
+    const draft = host.composer(target);
+    if (draft.disabled || draft.busy) return;
+    // An unsuccessfully sent suffix is ours only while the draft is unchanged.
+    // Text the user has edited, including manual references, remains theirs.
+    if (preparedEventDraft.current && draft.value === preparedEventDraft.current.after) host.changeDraft(target, preparedEventDraft.current.before);
+    preparedEventDraft.current = null;
+    setEventContext(event); setEventPickerOpen(false); setEventSendError("");
+    queueMicrotask(() => input()?.focus({ preventScroll: true }));
+  };
+  useEffect(() => {
+    if (!eventContextAvailable) { setEventContext(null); setEventPickerOpen(false); setEventSendError(""); preparedEventDraft.current = null; }
+  }, [eventContextAvailable, target.channelId]);
+  useEffect(() => { setEventContext(null); setEventPickerOpen(false); setEventSendError(""); preparedEventDraft.current = null; }, [target.channelId]);
+  useEffect(() => {
+    if (!eventContextAvailable) return;
+    const compose = (action: Event) => {
+      const event = (action as CustomEvent<ChannelEvent>).detail;
+      if (event?.channel_id === target.channelId) chooseEventContext(event);
+    };
+    window.addEventListener(SPROYT_EVENT_COMPOSE_EVENT, compose);
+    return () => window.removeEventListener(SPROYT_EVENT_COMPOSE_EVENT, compose);
+  }, [eventContextAvailable, target.channelId, state.disabled, state.busy, host]);
+  useEffect(() => {
+    if (!eventPickerOpen || !eventReferences?.search) return;
+    const controller = new AbortController();
+    setPickerLoading(true); setPickerError(""); setPickerResults([]);
+    const timer = window.setTimeout(() => {
+      void eventReferences.search!(eventSearch.trim(), controller.signal).then(events => {
+        if (!controller.signal.aborted) { setPickerResults(events); setPickerLoading(false); }
+      }, () => { if (!controller.signal.aborted) { setPickerError("Arrangementa kunne ikkje lastast."); setPickerLoading(false); } });
+    }, 150);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [eventPickerOpen, eventSearch, eventReferences?.search, pickerAttempt]);
   const updateSelection = (element: HTMLTextAreaElement) => {
     selection.current = { start: element.selectionStart, end: element.selectionEnd };
     setCaret(element.selectionStart === element.selectionEnd ? element.selectionStart : null);
@@ -188,21 +239,44 @@ export function PreviewComposer({ host, target }: {
         if (!state.disabled && !state.busy) host.upload(target, files);
       }
     }}>
+    <style>{eventContextCss}</style>
     <DraftComposer hasAttachments={state.media.length > 0} label={target.parentMessageId ? "Svar i tråden" : "Skriv melding"}
       value={state.value} onChange={value => {
         const field = input();
         if (field) updateSelection(field);
         setDismissed(false);
         setSelected(0);
+        setEventSendError("");
         host.changeDraft(target, value);
       }}
       onSend={() => {
         if (composing.current || expansion) return;
+        const draft = host.composer(target);
+        if (draft.disabled || draft.busy || (!draft.value.trim() && !draft.media.length)) return;
+        if (activeEventContext) {
+          let prepared: string;
+          try { prepared = messageWithEventContext(draft.value, activeEventContext); }
+          catch (error) { setEventSendError(error instanceof Error ? error.message : "Arrangementskonteksten kunne ikkje leggjast til."); return; }
+          if (prepared !== draft.value) {
+            preparedEventDraft.current = { before: draft.value, after: prepared };
+            // This token came from the explicit context, not from typing a
+            // partial code. A restored failed draft must remain ready to retry.
+            setDismissed(true);
+            host.changeDraft(target, prepared);
+          }
+          // Hosts own the draft. Never submit stale text if a host declined it.
+          if (host.composer(target).value !== prepared) return;
+        }
         host.send(target);
       }} disabled={state.disabled} busy={state.busy}
-      sendOnEnter={state.sendOnEnter} error={state.error}
+      sendOnEnter={state.sendOnEnter} error={eventSendError || state.error}
       hint={state.sendOnEnter ? "Enter sender · Shift+Enter gir ny linje" : "Bruk Send for å sende"}
       leading={<>
+        {activeEventContext && <div className="sp-event-compose-context" role="group" aria-label="Arrangement for meldinga">
+          <span>Skriv om <strong title={`#arr:${activeEventContext.code}`}>{activeEventContext.title}</strong></span>
+          <Button variant="quiet" disabled={state.disabled || state.busy} onClick={() => { setEventSearch(""); setEventPickerOpen(true); }}>Byt arrangement</Button>
+          <Button variant="quiet" aria-label="Fjern arrangement frå meldinga" disabled={state.disabled || state.busy} onClick={() => chooseEventContext(null)}>Fjern</Button>
+        </div>}
         {emojiSaveError && <Status tone="error">{emojiSaveError}</Status>}
         {eventQuery && eventSuggestionError && <Status tone="error">Arrangementsforslaga kunne ikkje lastast. Du kan framleis skrive koden eller opne Arrangement-fana.</Status>}
         {matches.length > 0 && <div id={listId} role="listbox" aria-label={eventQuery !== undefined ? "Arrangementsforslag" : "Omtaleforslag"}>
@@ -216,6 +290,9 @@ export function PreviewComposer({ host, target }: {
           busy={state.busy || state.disabled} onRemove={id => host.removeMedia(target, id)} />}
       </>}
       tools={<div className="sp-writing-tools" role="toolbar" aria-label="Skriveverktøy">
+        {eventContextAvailable && <Button className="sp-composer-symbol" variant="quiet" aria-label="Skriv om arrangement" title="Skriv om arrangement" disabled={state.disabled || state.busy} onClick={() => { setEventSearch(""); setEventPickerOpen(true); }}>
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 11h18M8 15h3" /></svg>
+        </Button>}
         <Button className="sp-composer-symbol" variant="quiet" aria-label="Set inn emoji" title="Set inn emoji" disabled={state.disabled || state.busy} onClick={event => {
           const field = input();
           if (field) updateSelection(field);
@@ -241,6 +318,20 @@ export function PreviewComposer({ host, target }: {
         <Button className="sp-composer-symbol" variant="quiet" aria-label="Del posisjon med agent" title="Del posisjon med agent"
           disabled={state.disabled || state.busy} onClick={() => setLocationOpen(true)}><span aria-hidden="true">⌖</span></Button>
       </div>} />
+    {eventPickerOpen && eventContextAvailable && <Dialog open title="Vel arrangement for meldinga" closeLabel="Avbryt" onClose={() => { setEventPickerOpen(false); queueMicrotask(restoreCaret); }}>
+      <div className="sp-event-compose-picker">
+        <label>Søk etter arrangement<input autoFocus type="search" maxLength={160} value={eventSearch} onChange={event => setEventSearch(event.currentTarget.value)} /></label>
+        {pickerLoading && <Status>Lastar arrangement …</Status>}
+        {pickerError && <Status tone="error">{pickerError} <Button onClick={() => setPickerAttempt(value => value + 1)}>Prøv igjen</Button></Status>}
+        {!pickerLoading && !pickerError && !pickerEvents.length && <p>Ingen arrangement funne. Prøv eit anna namn eller ein kode.</p>}
+        <div className="sp-event-compose-options">
+          {pickerEvents.map(event => <Button key={event.id} title={`#arr:${event.code}`} aria-pressed={activeEventContext?.id === event.id} onClick={() => chooseEventContext(event)}>
+            <span><strong>{event.title}</strong><span className="sp-event-compose-option-time">{eventContextWhen(event)}</span></span>
+          </Button>)}
+        </div>
+        <Button variant="quiet" onClick={() => chooseEventContext(null)}>Vanleg kanalmelding</Button>
+      </div>
+    </Dialog>}
     {locationOpen && <AgentLocationSharingDialog api={host.agentLocations} channelId={target.channelId} channelName="denne kanalen"
       onClose={() => { setLocationOpen(false); queueMicrotask(restoreCaret); }} />}
     {expansion && <Dialog open title="Ny gruppesamtale" closeLabel="Avbryt" onClose={() => { setExpansion(null); queueMicrotask(restoreCaret); }}>

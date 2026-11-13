@@ -41,6 +41,7 @@ pub(crate) struct Page {
     after: Option<String>,
     before: Option<i64>,
     prefix: Option<String>,
+    search: Option<String>,
 }
 pub(crate) async fn list(
     State(s): State<AppState>,
@@ -50,6 +51,13 @@ pub(crate) async fn list(
     h: HeaderMap,
 ) -> Result<Response, Response> {
     let (a, e) = context(&s, q, &h).await?;
+    if let Some(search) = page.search {
+        return Ok(response(
+            e.search_suggestions(&a, &c.to_string(), &search)
+                .await
+                .map_err(fail)?,
+        ));
+    }
     if let Some(prefix) = page.prefix {
         return Ok(response(
             e.suggestions(&a, &c.to_string(), &prefix)
@@ -71,8 +79,20 @@ pub(crate) async fn create(
     Json(input): Json<EventInput>,
 ) -> Result<Response, Response> {
     let (a, e) = context(&s, q, &h).await?;
+    let request_id = h
+        .get("Idempotency-Key")
+        .map(|value| {
+            value
+                .to_str()
+                .ok()
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .map(|id| id.to_string())
+                .ok_or(StatusCode::BAD_REQUEST)
+        })
+        .transpose()
+        .map_err(IntoResponse::into_response)?;
     Ok(response(
-        e.save(&a, &c.to_string(), None, input)
+        e.save_with_request(&a, &c.to_string(), None, input, request_id.as_deref())
             .await
             .map_err(fail)?,
     ))

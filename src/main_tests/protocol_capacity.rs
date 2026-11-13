@@ -489,6 +489,14 @@ impl BrowserClient {
             || NAVIGATION_SOURCE.contains(needle)
             || INDEX_HTML.contains(needle)
     }
+
+    fn contains_with_normalized_newlines(&self, needle: &str) -> bool {
+        // include_str! preserves a Windows checkout's CRLF line endings.
+        // Keep multiline source assertions independent of that checkout detail.
+        [APP_SOURCE, APP_BUNDLE, NAVIGATION_SOURCE, INDEX_HTML]
+            .iter()
+            .any(|source| source.replace("\r\n", "\n").contains(needle))
+    }
 }
 
 const BROWSER_CLIENT: BrowserClient = BrowserClient;
@@ -957,7 +965,9 @@ fn browser_uses_a_compact_composer_with_safe_keyboard_semantics() {
     assert!(BROWSER_CLIENT.contains("height: 44px; min-width: 44px; min-height: 44px"));
     assert!(BROWSER_CLIENT.contains("resize: none; overflow-y: hidden"));
     assert!(BROWSER_CLIENT.contains("function resizeComposer()"));
-    assert!(BROWSER_CLIENT.contains("channelComposer.draft.length === 0\n          ? minimum"));
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
+        "channelComposer.draft.length === 0\n          ? minimum"
+    ));
     assert!(
         BROWSER_CLIENT
             .contains("channelComposer.draft.length > 0 && bodyInput.scrollHeight > maximum")
@@ -1382,10 +1392,10 @@ fn browser_exposes_author_owned_soft_deletion() {
     assert!(BROWSER_CLIENT.contains("event.type === \"message_deleted\""));
     assert!(BROWSER_CLIENT.contains("Meldinga er sletta."));
     assert!(BROWSER_CLIENT.contains("window.confirm(\"Vil du slette meldinga?"));
-    assert!(BROWSER_CLIENT.contains(
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
         "if (!message.deleted_at) {\n          footer = renderMessageReactions(message, (open) => {"
     ));
-    assert!(BROWSER_CLIENT.contains(
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
         "if (!message.deleted_at) {\n          const menu = document.createElement(\"details\");"
     ));
 }
@@ -1639,7 +1649,7 @@ fn browser_uses_one_complete_theme_contract_for_dark_mode_controls() {
 
 #[test]
 fn browser_refreshes_unread_summaries_when_a_background_tab_returns() {
-    assert!(BROWSER_CLIENT.contains(
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
             "if (document.visibilityState !== \"visible\") { hiddenSince = Date.now(); return; }\n        resumeAfterBackground(false);\n        hiddenSince = null;\n        sendCommand(\"list_my_channels\");"
         ));
 }
@@ -2126,7 +2136,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("message?.channel_id !== pending.channelId"));
     assert!(BROWSER_CLIENT.contains("message?.body !== pending.body"));
     assert!(BROWSER_CLIENT.contains("failPendingMessage(event.request_id"));
-    assert!(BROWSER_CLIENT.contains(
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
             "const channelId = activeChannelId;\n        const scopeGeneration = composerScopeGeneration;"
         ));
     assert!(BROWSER_CLIENT.contains(
@@ -2147,10 +2157,10 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("function restoreActiveDraft()"));
     assert!(NAVIGATION_SOURCE.contains("this.write(key, draft)"));
     assert!(NAVIGATION_SOURCE.contains("bindOwner(ownerId: string)"));
-    assert!(BROWSER_CLIENT.contains(
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
             "if (pendingMessageLink && pendingMessageLink.channelId !== channel.id) pendingMessageLink = null;\n        messageLinkHistoryRequestId = null;\n        composerScopeGeneration += 1;\n        persistActiveDraft();"
         ));
-    assert!(BROWSER_CLIENT.contains(
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
         "navigation.setActiveChannel(channel);\n        syncRenderedNavigation();\n        restoreActiveDraft();"
     ));
     assert!(body.contains("class=\"advanced-tools\" hidden"));
@@ -2168,7 +2178,7 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains(
             "agentAccessNotice.textContent = \"Klar til å lage kortliva agenttilgang for denne samtalen.\""
         ));
-    assert!(BROWSER_CLIENT.contains(
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
             "updateAgentAccessControls();\n          agentAccessNotice.textContent = \"Agenttilgangen er trekt tilbake.\";"
         ));
     assert!(CONNECTION_SOURCE.contains("start: (): void => connectSocket()"));
@@ -2263,10 +2273,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains("restoreConversationScrollOffset(scrollOffset)"));
     assert!(CONNECTION_SOURCE.contains("previousSocket.close(4000, \"session refreshed\")"));
     assert!(!BROWSER_CLIENT.contains("sessionRefreshReconnect"));
-    assert!(
-        !BROWSER_CLIENT
-            .contains("if (response.status === 401) {\n          window.location.assign")
-    );
+    assert!(!BROWSER_CLIENT.contains_with_normalized_newlines(
+        "if (response.status === 401) {\n          window.location.assign"
+    ));
     assert!(!BROWSER_CLIENT.contains("window.location.reload()"));
     assert!(CONNECTION_SOURCE.contains("Fråkopla (${detail})"));
     // Visible read acknowledgement and opening/return priorities are verified
@@ -2350,7 +2359,10 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
         BROWSER_CLIENT
             .contains("class=\"bottom-navigation\" aria-label=\"Område- og kanalveljar\"")
     );
-    assert!(BROWSER_CLIENT.contains("</form>\n        <nav class=\"bottom-navigation\""));
+    assert!(
+        BROWSER_CLIENT
+            .contains_with_normalized_newlines("</form>\n        <nav class=\"bottom-navigation\"")
+    );
     assert!(BROWSER_CLIENT.contains("id=\"bottom-channel-panel\""));
     assert!(BROWSER_CLIENT.contains("id=\"bottom-circle-panel\""));
     assert!(
@@ -2360,10 +2372,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains(
         "if (event.target instanceof Node && bottomNavigation.contains(event.target)) return;"
     ));
-    assert!(
-        BROWSER_CLIENT
-            .contains("bottomChannelPanel.open = false;\n        bottomCirclePanel.open = false;")
-    );
+    assert!(BROWSER_CLIENT.contains_with_normalized_newlines(
+        "bottomChannelPanel.open = false;\n        bottomCirclePanel.open = false;"
+    ));
     assert!(APP_SOURCE.contains(
         "function pendingMessageToReveal(message: ChatMessage, requestId: string | null = null): PendingMessage | null"
     ));
@@ -2384,7 +2395,9 @@ async fn browser_entrypoint_uses_per_response_csp_and_security_headers() {
     assert!(BROWSER_CLIENT.contains(
         "aria-label=\"Vel område\"><span class=\"bottom-navigation-label\">◎ Felles</span>"
     ));
-    assert!(BROWSER_CLIENT.contains("height: 40px;\n        min-height: 40px"));
+    assert!(
+        BROWSER_CLIENT.contains_with_normalized_newlines("height: 40px;\n        min-height: 40px")
+    );
     assert!(BROWSER_CLIENT.contains("function renderBottomNavigation()"));
     assert!(BROWSER_CLIENT.contains("const channelLabel = activeChannel"));
     assert!(BROWSER_CLIENT.contains(
