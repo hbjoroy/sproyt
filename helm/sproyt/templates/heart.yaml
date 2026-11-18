@@ -1,4 +1,14 @@
 {{- if .Values.heart.enabled }}
+{{- $jobs := .Values.heart.runtimeV2.externalJobs | default dict }}
+{{- $tls := $jobs.tls | default dict }}
+{{- $worker := and .Values.heart.runtimeV2.enabled $jobs.credentialsSecret }}
+{{- $remoteWorker := and $worker $tls.existingSecret }}
+{{- if and $tls.existingSecret (not $jobs.credentialsSecret) }}
+{{- fail "Heart worker TLS requires a worker credentials Secret" }}
+{{- end }}
+{{- if and $jobs.newWorkEnabled (not (and .Values.heart.runtimeV2.enabled $jobs.credentialsSecret)) }}
+{{- fail "Heart external job admission requires runtime v2 and a worker credentials Secret" }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -14,6 +24,11 @@ spec:
     - name: http
       port: {{ .Values.heart.service.port }}
       targetPort: http
+    {{- if $remoteWorker }}
+    - name: external-jobs
+      port: 3001
+      targetPort: external-jobs
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -60,6 +75,20 @@ spec:
               value: {{ .Values.heart.dbMaxConnections | quote }}
             - name: HEART_RUNTIME_V2_ENABLED
               value: {{ .Values.heart.runtimeV2.enabled | quote }}
+            {{- if $worker }}
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_ADMISSION_ENABLED
+              value: {{ default false $jobs.newWorkEnabled | quote }}
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_CREDENTIALS_FILE
+              value: /etc/heart/external-workers/credentials.json
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_BIND_ADDR
+              value: {{ ternary "0.0.0.0:3001" "127.0.0.1:3001" (not (empty $tls.existingSecret)) | quote }}
+            {{- if $tls.existingSecret }}
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_TLS_CERT_FILE
+              value: /etc/heart/external-worker-tls/tls.crt
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_TLS_KEY_FILE
+              value: /etc/heart/external-worker-tls/tls.key
+            {{- end }}
+            {{- end }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -68,6 +97,10 @@ spec:
           ports:
             - name: http
               containerPort: 3000
+            {{- if $remoteWorker }}
+            - name: external-jobs
+              containerPort: 3001
+            {{- end }}
           startupProbe:
             httpGet: {path: /health, port: http}
             failureThreshold: 30
@@ -86,6 +119,31 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          {{- if $worker }}
+          volumeMounts:
+            - name: external-worker-credentials
+              mountPath: /etc/heart/external-workers
+              readOnly: true
+            {{- if $tls.existingSecret }}
+            - name: external-worker-tls
+              mountPath: /etc/heart/external-worker-tls
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if $worker }}
+      volumes:
+        - name: external-worker-credentials
+          secret:
+            secretName: {{ $jobs.credentialsSecret | quote }}
+            items:
+              - key: {{ default "credentials.json" $jobs.credentialsSecretKey | quote }}
+                path: credentials.json
+        {{- if $tls.existingSecret }}
+        - name: external-worker-tls
+          secret:
+            secretName: {{ $tls.existingSecret | quote }}
+        {{- end }}
+      {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

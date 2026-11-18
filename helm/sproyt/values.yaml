@@ -104,6 +104,12 @@ heart:
   # Keep the sequential v2 runtime opt-in until a canary explicitly enables it.
   runtimeV2:
     enabled: false
+    externalJobs:
+      newWorkEnabled: false
+      credentialsSecret: ""
+      credentialsSecretKey: credentials.json
+      tls:
+        existingSecret: ""
   dbMaxConnections: 2
   replicaCount: 2
   image:
