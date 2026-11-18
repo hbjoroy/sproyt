@@ -213,7 +213,8 @@ jobs:
     needs: [changes, quality]
     if: needs.changes.outputs.browser != 'none'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # WebKit installs additional Ubuntu packages before running the shard.
+    timeout-minutes: ${{ matrix.engine == 'webkit' && 55 || 25 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.browser_matrix) }}
