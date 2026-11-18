@@ -21,7 +21,7 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    {{- if and $jobs.credentialsSecret ($jobs.tls | default dict).existingSecret }}
+    {{- if and .Values.heart.runtimeV2.enabled $jobs.credentialsSecret ($jobs.tls | default dict).existingSecret }}
     - from:
         - podSelector:
             matchLabels:

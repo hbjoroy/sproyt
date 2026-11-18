@@ -1,6 +1,8 @@
 {{- if .Values.heart.enabled }}
 {{- $jobs := .Values.heart.runtimeV2.externalJobs | default dict }}
 {{- $tls := $jobs.tls | default dict }}
+{{- $worker := and .Values.heart.runtimeV2.enabled $jobs.credentialsSecret }}
+{{- $remoteWorker := and $worker $tls.existingSecret }}
 {{- if and $tls.existingSecret (not $jobs.credentialsSecret) }}
 {{- fail "Heart worker TLS requires a worker credentials Secret" }}
 {{- end }}
@@ -22,7 +24,7 @@ spec:
     - name: http
       port: {{ .Values.heart.service.port }}
       targetPort: http
-    {{- if $jobs.credentialsSecret }}
+    {{- if $remoteWorker }}
     - name: external-jobs
       port: 3001
       targetPort: external-jobs
@@ -73,13 +75,13 @@ spec:
               value: {{ .Values.heart.dbMaxConnections | quote }}
             - name: HEART_RUNTIME_V2_ENABLED
               value: {{ .Values.heart.runtimeV2.enabled | quote }}
-            {{- if $jobs.credentialsSecret }}
+            {{- if $worker }}
             - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_ADMISSION_ENABLED
               value: {{ default false $jobs.newWorkEnabled | quote }}
             - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_CREDENTIALS_FILE
               value: /etc/heart/external-workers/credentials.json
             - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_BIND_ADDR
-              value: 0.0.0.0:3001
+              value: {{ ternary "0.0.0.0:3001" "127.0.0.1:3001" (not (empty $tls.existingSecret)) | quote }}
             {{- if $tls.existingSecret }}
             - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_TLS_CERT_FILE
               value: /etc/heart/external-worker-tls/tls.crt
@@ -95,7 +97,7 @@ spec:
           ports:
             - name: http
               containerPort: 3000
-            {{- if $jobs.credentialsSecret }}
+            {{- if $remoteWorker }}
             - name: external-jobs
               containerPort: 3001
             {{- end }}
@@ -117,7 +119,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-          {{- if $jobs.credentialsSecret }}
+          {{- if $worker }}
           volumeMounts:
             - name: external-worker-credentials
               mountPath: /etc/heart/external-workers
@@ -128,7 +130,7 @@ spec:
               readOnly: true
             {{- end }}
           {{- end }}
-      {{- if $jobs.credentialsSecret }}
+      {{- if $worker }}
       volumes:
         - name: external-worker-credentials
           secret:
