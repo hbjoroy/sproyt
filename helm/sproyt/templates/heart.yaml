@@ -1,4 +1,8 @@
 {{- if .Values.heart.enabled }}
+{{- $jobs := .Values.heart.runtimeV2.externalJobs | default dict }}
+{{- if and $jobs.newWorkEnabled (not (and .Values.heart.runtimeV2.enabled $jobs.credentialsSecret)) }}
+{{- fail "Heart external job admission requires runtime v2 and a worker credentials Secret" }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -60,6 +64,12 @@ spec:
               value: {{ .Values.heart.dbMaxConnections | quote }}
             - name: HEART_RUNTIME_V2_ENABLED
               value: {{ .Values.heart.runtimeV2.enabled | quote }}
+            {{- if $jobs.credentialsSecret }}
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_ADMISSION_ENABLED
+              value: {{ default false $jobs.newWorkEnabled | quote }}
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_CREDENTIALS_FILE
+              value: /etc/heart/external-workers/credentials.json
+            {{- end }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -86,6 +96,21 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          {{- if $jobs.credentialsSecret }}
+          volumeMounts:
+            - name: external-worker-credentials
+              mountPath: /etc/heart/external-workers
+              readOnly: true
+          {{- end }}
+      {{- if $jobs.credentialsSecret }}
+      volumes:
+        - name: external-worker-credentials
+          secret:
+            secretName: {{ $jobs.credentialsSecret | quote }}
+            items:
+              - key: {{ default "credentials.json" $jobs.credentialsSecretKey | quote }}
+                path: credentials.json
+      {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
