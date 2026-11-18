@@ -137,8 +137,17 @@ backup for the target database and run the pinned `heart-api migrate` on its
 restored copy, including the new external-job migration. Retain the verified
 image and database checkpoints for recovery.
 
-Roll out the runtime with external admission off first. Verify an existing
-v1/v2 integration against the upgraded server. To enable the pilot, configure
+**Shared database ordering.** On 18 November 2026, the canary Heart pod and
+both production Heart pods used the same database. Migrations 001–007 matched
+the SQLx source checksums. Recheck the migration ledger and database identities
+before rollout. Serialize the two releases. First deploy the pinned image in
+canary with external admission off. During this window keep the old production
+migration hook idle and avoid restarting an old release through its hook.
+Verify an existing v1/v2 integration. Then deploy the identical digest in
+production, still with external admission off, and verify every old Heart
+replica has stopped. An old scheduler could pick an activation containing a
+new node once work is admitted. To run a pilot before upgrading both releases,
+use an isolated Heart database. To enable the pilot on the shared database, configure
 an existing private Secret and the worker's own service token, authorize the
 exact namespace/type/version in the credential file, and issue a TLS certificate
 for the private Service DNS name used by the SDK. Put the certificate chain
