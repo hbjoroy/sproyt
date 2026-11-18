@@ -21,14 +21,14 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    {{- if $jobs.credentialsSecret }}
+    {{- if and $jobs.credentialsSecret ($jobs.tls | default dict).existingSecret }}
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/component: heart-external-worker
       ports:
-        - {protocol: TCP, port: 3000}
+        - {protocol: TCP, port: 3001}
     {{- end }}
   egress:
     - to:

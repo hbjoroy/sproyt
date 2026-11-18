@@ -140,9 +140,10 @@ image and database checkpoints for recovery.
 Roll out the runtime with external admission off first. Verify an existing
 v1/v2 integration against the upgraded server. To enable the pilot, configure
 an existing private Secret and the worker's own service token, authorize the
-exact namespace/type/version in the credential file, and run the worker over
-authenticated encrypted transport or a loopback tunnel. The ClusterIP and
-NetworkPolicy scope connectivity; transport encryption is provided separately.
+exact namespace/type/version in the credential file, and issue a TLS certificate
+for the private Service DNS name used by the SDK. Put the certificate chain
+and key in a TLS Secret. Give workers the issuing CA through their trust store.
+Check the hostname and certificate verification from the worker pod.
 
 ```yaml
 heart:
@@ -152,13 +153,15 @@ heart:
       credentialsSecret: heart-worker-credentials
       credentialsSecretKey: credentials.json
       newWorkEnabled: true
+      tls:
+        existingSecret: heart-worker-serving-tls
 ```
 
 Heart reads the mounted file on startup. To rotate credentials, add an
 overlapping token under the same principal, roll out the updated credential
 file (use a versioned Secret name), update workers, then remove the old token
 in a subsequent rollout. Grant same-namespace worker pods access to the
-private Service using the release's instance label and
+worker-only Service port 3001 using the release's instance label and
 `app.kubernetes.io/component: heart-external-worker`. Apply the worker's
 own matching egress policy. Application/tenant identity headers do not grant
 worker access.

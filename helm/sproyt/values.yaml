@@ -108,6 +108,8 @@ heart:
       newWorkEnabled: false
       credentialsSecret: ""
       credentialsSecretKey: credentials.json
+      tls:
+        existingSecret: ""
   dbMaxConnections: 2
   replicaCount: 2
   image:

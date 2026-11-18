@@ -1,5 +1,9 @@
 {{- if .Values.heart.enabled }}
 {{- $jobs := .Values.heart.runtimeV2.externalJobs | default dict }}
+{{- $tls := $jobs.tls | default dict }}
+{{- if and $tls.existingSecret (not $jobs.credentialsSecret) }}
+{{- fail "Heart worker TLS requires a worker credentials Secret" }}
+{{- end }}
 {{- if and $jobs.newWorkEnabled (not (and .Values.heart.runtimeV2.enabled $jobs.credentialsSecret)) }}
 {{- fail "Heart external job admission requires runtime v2 and a worker credentials Secret" }}
 {{- end }}
@@ -18,6 +22,11 @@ spec:
     - name: http
       port: {{ .Values.heart.service.port }}
       targetPort: http
+    {{- if $jobs.credentialsSecret }}
+    - name: external-jobs
+      port: 3001
+      targetPort: external-jobs
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -69,6 +78,14 @@ spec:
               value: {{ default false $jobs.newWorkEnabled | quote }}
             - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_CREDENTIALS_FILE
               value: /etc/heart/external-workers/credentials.json
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_BIND_ADDR
+              value: 0.0.0.0:3001
+            {{- if $tls.existingSecret }}
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_TLS_CERT_FILE
+              value: /etc/heart/external-worker-tls/tls.crt
+            - name: HEART_RUNTIME_V2_EXTERNAL_JOBS_TLS_KEY_FILE
+              value: /etc/heart/external-worker-tls/tls.key
+            {{- end }}
             {{- end }}
             - name: DATABASE_URL
               valueFrom:
@@ -78,6 +95,10 @@ spec:
           ports:
             - name: http
               containerPort: 3000
+            {{- if $jobs.credentialsSecret }}
+            - name: external-jobs
+              containerPort: 3001
+            {{- end }}
           startupProbe:
             httpGet: {path: /health, port: http}
             failureThreshold: 30
@@ -101,6 +122,11 @@ spec:
             - name: external-worker-credentials
               mountPath: /etc/heart/external-workers
               readOnly: true
+            {{- if $tls.existingSecret }}
+            - name: external-worker-tls
+              mountPath: /etc/heart/external-worker-tls
+              readOnly: true
+            {{- end }}
           {{- end }}
       {{- if $jobs.credentialsSecret }}
       volumes:
@@ -110,6 +136,11 @@ spec:
             items:
               - key: {{ default "credentials.json" $jobs.credentialsSecretKey | quote }}
                 path: credentials.json
+        {{- if $tls.existingSecret }}
+        - name: external-worker-tls
+          secret:
+            secretName: {{ $tls.existingSecret | quote }}
+        {{- end }}
       {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1
