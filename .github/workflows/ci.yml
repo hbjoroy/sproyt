@@ -841,8 +841,13 @@ jobs:
 
   publish-heart-image:
     name: Publish verified Heart image
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_heart_image
-    needs: [quality, browser-gate]
+    # The browser gate verifies either the selected shards or an intentional skip.
+    if: >-
+      always() && !cancelled() &&
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_heart_image &&
+      needs.quality.result == 'success' && needs.browser-gate.result == 'success' &&
+      needs.security-audit.result == 'success'
+    needs: [quality, browser-gate, security-audit]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
