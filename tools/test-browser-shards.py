@@ -73,7 +73,15 @@ class BrowserShardTests(unittest.TestCase):
         self.assertIn('      - browser-gate\n', publish)
         self.assertNotIn('continue-on-error', browser)
         self.assertNotIn('branches: [main]', workflow.split('permissions:', 1)[0])
-        self.assertIn('needs: [quality, browser-gate]', workflow.split('  publish-heart-image:\n', 1)[1])
+        heart_publish = workflow.split('  publish-heart-image:\n', 1)[1].split('    runs-on:', 1)[0]
+        self.assertIn('needs: [quality, browser-gate, security-audit]', heart_publish)
+        for condition in (
+                'always() && !cancelled()',
+                "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_heart_image",
+                "needs.quality.result == 'success' && needs.browser-gate.result == 'success'",
+                "needs.security-audit.result == 'success'"):
+            with self.subTest(heart_publication_condition=condition):
+                self.assertIn(condition, heart_publish)
 
 
     def test_database_job_publication_guards_require_success_or_explicit_scope_skip(self):
